@@ -1,0 +1,58 @@
+{
+  "name": "@itlackey/agentikit",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Simplified OpenCode tools for searching, opening, and running extension assets from a stash directory.",
+  "keywords": [
+    "opencode",
+    "opencode-ai",
+    "opencode-plugin",
+    "opencode-extensions",
+    "agentikit",
+    "ai-agent",
+    "agent-framework",
+    "developer-tools",
+    "plugin",
+    "tools",
+    "skills",
+    "commands"
+  ],
+  "homepage": "https://github.com/itlackey/agentikit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itlackey/agentikit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/itlackey/agentikit/issues"
+  },
+  "license": "CC-BY-4.0",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json --emitDeclarationOnly false --declaration false --outDir dist",
+    "build:types": "tsc --project ./tsconfig.build.json",
+    "test": "node ./scripts/run-tests.cjs",
+    "prepublishOnly": "npm run build && npm run build:types"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.2.10"
+  }
+}
