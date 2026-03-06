@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.2.3)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: bun-linux-x64
+            artifact: agentikit-linux-x64
+          - target: bun-linux-arm64
+            artifact: agentikit-linux-arm64
+          - target: bun-darwin-x64
+            artifact: agentikit-darwin-x64
+          - target: bun-darwin-arm64
+            artifact: agentikit-darwin-arm64
+          - target: bun-windows-x64
+            artifact: agentikit-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+
+      - name: Compile binary
+        run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub release
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --generate-notes \
+            artifacts/agentikit-linux-x64/agentikit-linux-x64 \
+            artifacts/agentikit-linux-arm64/agentikit-linux-arm64 \
+            artifacts/agentikit-darwin-x64/agentikit-darwin-x64 \
+            artifacts/agentikit-darwin-arm64/agentikit-darwin-arm64 \
+            artifacts/agentikit-windows-x64.exe/agentikit-windows-x64.exe
+        env:
+          GH_TOKEN: ${{ github.token }}

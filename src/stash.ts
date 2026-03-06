@@ -12,7 +12,7 @@ export interface SearchHit {
   openRef: string
   summary?: string
   runCmd?: string
-  kind?: "bash" | "bun"
+  kind?: "bash" | "bun" | "powershell" | "cmd"
 }
 
 export interface SearchResponse {
@@ -32,7 +32,7 @@ export interface OpenResponse {
   toolPolicy?: unknown
   modelHint?: unknown
   runCmd?: string
-  kind?: "bash" | "bun"
+  kind?: "bash" | "bun" | "powershell" | "cmd"
 }
 
 export interface RunResponse {
@@ -57,12 +57,13 @@ interface ToolExecution {
 
 interface ToolInfo {
   runCmd: string
-  kind: "bash" | "bun"
+  kind: "bash" | "bun" | "powershell" | "cmd"
   install?: ToolExecution
   execute: ToolExecution
 }
 
-const TOOL_EXTENSIONS = new Set([".sh", ".ts", ".js"])
+const IS_WINDOWS = process.platform === "win32"
+const TOOL_EXTENSIONS = new Set([".sh", ".ts", ".js", ".ps1", ".cmd", ".bat"])
 const DEFAULT_LIMIT = 20
 
 export function resolveStashDir(): string {
@@ -334,7 +335,7 @@ function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: stri
     throw new Error("Ref resolves outside the stash root.")
   }
   if (type === "tool" && !TOOL_EXTENSIONS.has(path.extname(resolvedTarget).toLowerCase())) {
-    throw new Error("Tool ref must resolve to a .sh, .ts, or .js file.")
+    throw new Error("Tool ref must resolve to a .sh, .ts, .js, .ps1, .cmd, or .bat file.")
   }
   return realTarget
 }
@@ -360,6 +361,7 @@ function readTypeRootStat(root: string, type: AgentikitAssetType, name: string):
 
 function buildToolInfo(stashDir: string, filePath: string): ToolInfo {
   const ext = path.extname(filePath).toLowerCase()
+
   if (ext === ".sh") {
     return {
       runCmd: `bash ${shellQuote(filePath)}`,
@@ -367,6 +369,23 @@ function buildToolInfo(stashDir: string, filePath: string): ToolInfo {
       execute: { command: "bash", args: [filePath] },
     }
   }
+
+  if (ext === ".ps1") {
+    return {
+      runCmd: `powershell -ExecutionPolicy Bypass -File ${shellQuote(filePath)}`,
+      kind: "powershell",
+      execute: { command: "powershell", args: ["-ExecutionPolicy", "Bypass", "-File", filePath] },
+    }
+  }
+
+  if (ext === ".cmd" || ext === ".bat") {
+    return {
+      runCmd: IS_WINDOWS ? shellQuote(filePath) : `cmd /c ${shellQuote(filePath)}`,
+      kind: "cmd",
+      execute: { command: IS_WINDOWS ? filePath : "cmd", args: IS_WINDOWS ? [] : ["/c", filePath] },
+    }
+  }
+
   if (ext !== ".ts" && ext !== ".js") {
     throw new Error(`Unsupported tool extension: ${ext}`)
   }
@@ -385,10 +404,12 @@ function buildToolInfo(stashDir: string, filePath: string): ToolInfo {
 
   const quotedPkgDir = shellQuote(pkgDir)
   const quotedFilePath = shellQuote(filePath)
+  const cdCmd = IS_WINDOWS ? `cd /d ${quotedPkgDir}` : `cd ${quotedPkgDir}`
+  const chain = IS_WINDOWS ? " & " : " && "
   return {
     runCmd: shouldInstall
-      ? `cd ${quotedPkgDir} && bun install && bun ${quotedFilePath}`
-      : `cd ${quotedPkgDir} && bun ${quotedFilePath}`,
+      ? `${cdCmd}${chain}bun install${chain}bun ${quotedFilePath}`
+      : `${cdCmd}${chain}bun ${quotedFilePath}`,
     kind: "bun",
     install: shouldInstall ? { command: "bun", args: ["install"], cwd: pkgDir } : undefined,
     execute: { command: "bun", args: [filePath], cwd: pkgDir },
@@ -481,6 +502,9 @@ function toStringOrUndefined(value: unknown): string | undefined {
 function shellQuote(input: string): string {
   if (/[\r\n\t\0]/.test(input)) {
     throw new Error("Unsupported control characters in stash path.")
+  }
+  if (IS_WINDOWS) {
+    return `"${input.replace(/"/g, '""')}"`
   }
   const escaped = input
     .replace(/\\/g, "\\\\")
