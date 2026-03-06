@@ -380,9 +380,9 @@ function buildToolInfo(stashDir: string, filePath: string): ToolInfo {
 
   if (ext === ".cmd" || ext === ".bat") {
     return {
-      runCmd: IS_WINDOWS ? shellQuote(filePath) : `cmd /c ${shellQuote(filePath)}`,
+      runCmd: `cmd /c ${shellQuote(filePath)}`,
       kind: "cmd",
-      execute: { command: IS_WINDOWS ? filePath : "cmd", args: IS_WINDOWS ? [] : ["/c", filePath] },
+      execute: { command: "cmd", args: ["/c", filePath] },
     }
   }
 
