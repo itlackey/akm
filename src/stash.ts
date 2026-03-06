@@ -1,0 +1,461 @@
+import { execSync } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
+
+export type AgentikitAssetType = "tool" | "skill" | "command" | "agent"
+export type AgentikitSearchType = AgentikitAssetType | "any"
+
+export interface SearchHit {
+  type: AgentikitAssetType
+  name: string
+  path: string
+  openRef: string
+  summary?: string
+  runCmd?: string
+  kind?: "bash" | "bun"
+}
+
+export interface SearchResponse {
+  stashDir: string
+  hits: SearchHit[]
+  tip?: string
+}
+
+export interface OpenResponse {
+  type: AgentikitAssetType
+  name: string
+  path: string
+  content?: string
+  template?: string
+  prompt?: string
+  description?: string
+  toolPolicy?: unknown
+  modelHint?: unknown
+  runCmd?: string
+  kind?: "bash" | "bun"
+}
+
+export interface RunResponse {
+  type: "tool"
+  name: string
+  path: string
+  output: string
+  exitCode: number
+}
+
+type IndexedAsset = {
+  type: AgentikitAssetType
+  name: string
+  path: string
+}
+
+const TOOL_EXTENSIONS = new Set([".sh", ".ts", ".js"])
+const DEFAULT_LIMIT = 20
+
+export function resolveStashDir(): string {
+  const raw = process.env.AGENTIKIT_STASH_DIR?.trim()
+  if (!raw) {
+    throw new Error("AGENTIKIT_STASH_DIR is not set. Set it to your Agentikit stash path.")
+  }
+  const stashDir = path.resolve(raw)
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(stashDir)
+  } catch {
+    throw new Error(`Unable to read AGENTIKIT_STASH_DIR at "${stashDir}".`)
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`AGENTIKIT_STASH_DIR must point to a directory: "${stashDir}".`)
+  }
+  return stashDir
+}
+
+export function agentikitSearch(input: {
+  query: string
+  type?: AgentikitSearchType
+  limit?: number
+}): SearchResponse {
+  const query = input.query.trim().toLowerCase()
+  const searchType = input.type ?? "any"
+  const limit = normalizeLimit(input.limit)
+  const stashDir = resolveStashDir()
+  const assets = indexAssets(stashDir, searchType)
+  const hits = assets
+    .filter((asset) => asset.name.toLowerCase().includes(query))
+    .sort(compareAssets)
+    .slice(0, limit)
+    .map((asset): SearchHit => {
+      if (asset.type !== "tool") {
+        return {
+          type: asset.type,
+          name: asset.name,
+          path: asset.path,
+          openRef: makeOpenRef(asset.type, asset.name),
+        }
+      }
+
+      const toolInfo = buildToolInfo(stashDir, asset.path)
+      return {
+        type: "tool",
+        name: asset.name,
+        path: asset.path,
+        openRef: makeOpenRef("tool", asset.name),
+        runCmd: toolInfo.runCmd,
+        kind: toolInfo.kind,
+      }
+    })
+
+  return {
+    stashDir,
+    hits,
+    tip: hits.length === 0 ? "No matching stash assets were found." : undefined,
+  }
+}
+
+export function agentikitOpen(input: { ref: string }): OpenResponse {
+  const parsed = parseOpenRef(input.ref)
+  const stashDir = resolveStashDir()
+  const assetPath = resolveAssetPath(stashDir, parsed.type, parsed.name)
+  const content = fs.readFileSync(assetPath, "utf8")
+
+  switch (parsed.type) {
+    case "skill":
+      return {
+        type: "skill",
+        name: parsed.name,
+        path: assetPath,
+        content,
+      }
+    case "command": {
+      const parsedMd = parseFrontmatter(content)
+      return {
+        type: "command",
+        name: parsed.name,
+        path: assetPath,
+        description: toStringOrUndefined(parsedMd.data.description),
+        template: parsedMd.content,
+      }
+    }
+    case "agent": {
+      const parsedMd = parseFrontmatter(content)
+      return {
+        type: "agent",
+        name: parsed.name,
+        path: assetPath,
+        description: toStringOrUndefined(parsedMd.data.description),
+        prompt: parsedMd.content,
+        toolPolicy: parsedMd.data.tools,
+        modelHint: parsedMd.data.model,
+      }
+    }
+    case "tool": {
+      const toolInfo = buildToolInfo(stashDir, assetPath)
+      return {
+        type: "tool",
+        name: parsed.name,
+        path: assetPath,
+        runCmd: toolInfo.runCmd,
+        kind: toolInfo.kind,
+      }
+    }
+  }
+}
+
+export function agentikitRun(input: { ref: string }): RunResponse {
+  const parsed = parseOpenRef(input.ref)
+  if (parsed.type !== "tool") {
+    throw new Error(`agentikitRun only supports tool refs. Got: "${parsed.type}".`)
+  }
+  const stashDir = resolveStashDir()
+  const assetPath = resolveAssetPath(stashDir, "tool", parsed.name)
+  const toolInfo = buildToolInfo(stashDir, assetPath)
+
+  let output = ""
+  let exitCode = 0
+  try {
+    output = execSync(toolInfo.runCmd, { encoding: "utf8", timeout: 60_000 })
+  } catch (error: unknown) {
+    exitCode = 1
+    if (
+      typeof error === "object"
+      && error !== null
+      && "stdout" in error
+      && "status" in error
+    ) {
+      const execError = error as { stdout?: string; stderr?: string; status?: number }
+      const stdout = typeof execError.stdout === "string" ? execError.stdout : ""
+      const stderr = typeof execError.stderr === "string" ? execError.stderr : ""
+      output = stdout || stderr || String(error)
+      exitCode = typeof execError.status === "number" ? execError.status : 1
+    } else {
+      output = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  return {
+    type: "tool",
+    name: parsed.name,
+    path: assetPath,
+    output,
+    exitCode,
+  }
+}
+
+function normalizeLimit(limit?: number): number {
+  if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {
+    return DEFAULT_LIMIT
+  }
+  return Math.min(Math.floor(limit), 200)
+}
+
+function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
+  const assets: IndexedAsset[] = []
+  if (type === "any" || type === "tool") {
+    const root = path.join(stashDir, "tools")
+    walkFiles(root, (file) => {
+      if (!TOOL_EXTENSIONS.has(path.extname(file).toLowerCase())) return
+      const rel = toPosix(path.relative(root, file))
+      assets.push({ type: "tool", name: rel, path: file })
+    })
+  }
+  if (type === "any" || type === "skill") {
+    const root = path.join(stashDir, "skills")
+    walkFiles(root, (file) => {
+      if (path.basename(file) !== "SKILL.md") return
+      const relDir = toPosix(path.dirname(path.relative(root, file)))
+      if (!relDir || relDir === ".") return
+      assets.push({ type: "skill", name: relDir, path: file })
+    })
+  }
+  if (type === "any" || type === "command") {
+    const root = path.join(stashDir, "commands")
+    walkFiles(root, (file) => {
+      if (path.extname(file).toLowerCase() !== ".md") return
+      const rel = toPosix(path.relative(root, file))
+      assets.push({ type: "command", name: rel, path: file })
+    })
+  }
+  if (type === "any" || type === "agent") {
+    const root = path.join(stashDir, "agents")
+    walkFiles(root, (file) => {
+      if (path.extname(file).toLowerCase() !== ".md") return
+      const rel = toPosix(path.relative(root, file))
+      assets.push({ type: "agent", name: rel, path: file })
+    })
+  }
+  return assets
+}
+
+function walkFiles(root: string, onFile: (file: string) => void): void {
+  if (!fs.existsSync(root)) return
+  const stack = [root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) continue
+    const entries = fs.readdirSync(current, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(fullPath)
+      } else if (entry.isFile()) {
+        onFile(fullPath)
+      }
+    }
+  }
+}
+
+function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
+  if (a.type !== b.type) return a.type.localeCompare(b.type)
+  return a.name.localeCompare(b.name)
+}
+
+function parseOpenRef(ref: string): { type: AgentikitAssetType; name: string } {
+  const separator = ref.indexOf(":")
+  if (separator <= 0) {
+    throw new Error("Invalid open ref. Expected format '<type>:<name>'.")
+  }
+  const rawType = ref.slice(0, separator)
+  const rawName = ref.slice(separator + 1)
+  if (!isAssetType(rawType)) {
+    throw new Error(`Invalid open ref type: "${rawType}".`)
+  }
+  const name = decodeURIComponent(rawName)
+  const normalized = path.posix.normalize(name.replace(/\\/g, "/"))
+  if (
+    !name
+    || name.includes("\0")
+    || /^[A-Za-z]:/.test(name)
+    || path.posix.isAbsolute(normalized)
+    || normalized === ".."
+    || normalized.startsWith("../")
+  ) {
+    throw new Error("Invalid open ref name.")
+  }
+  return { type: rawType, name: normalized }
+}
+
+function makeOpenRef(type: AgentikitAssetType, name: string): string {
+  return `${type}:${encodeURIComponent(name)}`
+}
+
+function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: string): string {
+  const root = path.join(stashDir, type === "tool" ? "tools" : `${type}s`)
+  const target = type === "skill" ? path.join(root, name, "SKILL.md") : path.join(root, name)
+  const resolvedRoot = resolveAndValidateTypeRoot(root, type, name)
+  const resolvedTarget = path.resolve(target)
+  if (!resolvedTarget.startsWith(ensureTrailingSep(path.resolve(root)))) {
+    throw new Error("Ref resolves outside the stash root.")
+  }
+  if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
+    throw new Error(`Stash asset not found for ref: ${type}:${name}`)
+  }
+  const realTarget = fs.realpathSync(resolvedTarget)
+  if (!realTarget.startsWith(resolvedRoot)) {
+    throw new Error("Ref resolves outside the stash root.")
+  }
+  if (type === "tool" && !TOOL_EXTENSIONS.has(path.extname(resolvedTarget).toLowerCase())) {
+    throw new Error("Tool ref must resolve to a .sh, .ts, or .js file.")
+  }
+  return realTarget
+}
+
+function resolveAndValidateTypeRoot(root: string, type: AgentikitAssetType, name: string): string {
+  const rootStat = readTypeRootStat(root, type, name)
+  if (!rootStat.isDirectory()) {
+    throw new Error(`Stash type root is not a directory for ref: ${type}:${name}`)
+  }
+  return ensureTrailingSep(fs.realpathSync(root))
+}
+
+function readTypeRootStat(root: string, type: AgentikitAssetType, name: string): fs.Stats {
+  try {
+    return fs.statSync(root)
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      throw new Error(`Stash type root not found for ref: ${type}:${name}`)
+    }
+    throw error
+  }
+}
+
+function buildToolInfo(stashDir: string, filePath: string): { runCmd: string; kind: "bash" | "bun" } {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === ".sh") {
+    return { runCmd: `bash ${shellQuote(filePath)}`, kind: "bash" }
+  }
+  if (ext !== ".ts" && ext !== ".js") {
+    throw new Error(`Unsupported tool extension: ${ext}`)
+  }
+
+  const toolsRoot = path.resolve(path.join(stashDir, "tools"))
+  const pkgDir = findNearestPackageDir(path.dirname(filePath), toolsRoot)
+  if (!pkgDir) {
+    return { runCmd: `bun ${shellQuote(filePath)}`, kind: "bun" }
+  }
+  return {
+    runCmd: `cd ${shellQuote(pkgDir)} && bun install && bun ${shellQuote(filePath)}`,
+    kind: "bun",
+  }
+}
+
+function findNearestPackageDir(startDir: string, toolsRoot: string): string | undefined {
+  let current = path.resolve(startDir)
+  const root = path.resolve(toolsRoot)
+  while (isWithin(current, root)) {
+    if (fs.existsSync(path.join(current, "package.json"))) {
+      return current
+    }
+    if (current === root) return undefined
+    current = path.dirname(current)
+  }
+  return undefined
+}
+
+function isWithin(candidate: string, root: string): boolean {
+  const rel = path.relative(root, candidate)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+
+function ensureTrailingSep(input: string): string {
+  return input.endsWith(path.sep) ? input : `${input}${path.sep}`
+}
+
+function toPosix(input: string): string {
+  return input.split(path.sep).join("/")
+}
+
+function parseFrontmatter(raw: string): { data: Record<string, unknown>; content: string } {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+  if (!match) {
+    return { data: {}, content: raw }
+  }
+
+  const data: Record<string, unknown> = {}
+  let currentKey: string | null = null
+  let nested: Record<string, unknown> | null = null
+
+  for (const line of match[1].split(/\r?\n/)) {
+    const indented = line.match(/^  (\w[\w-]*):\s*(.+)$/)
+    if (indented && currentKey && nested) {
+      nested[indented[1]] = parseYamlScalar(indented[2].trim())
+      continue
+    }
+
+    const top = line.match(/^(\w[\w-]*):\s*(.*)$/)
+    if (!top) {
+      continue
+    }
+
+    currentKey = top[1]
+    const value = top[2].trim()
+    if (value === "") {
+      nested = {}
+      data[currentKey] = nested
+    } else {
+      nested = null
+      data[currentKey] = parseYamlScalar(value)
+    }
+  }
+  return { data, content: match[2] }
+}
+
+function parseYamlScalar(value: string): unknown {
+  if (value === "") return ""
+  if (value === "true") return true
+  if (value === "false") return false
+  const asNumber = Number(value)
+  if (!Number.isNaN(asNumber)) return asNumber
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1)
+  }
+  return value
+}
+
+function isAssetType(type: string): type is AgentikitAssetType {
+  return type === "tool" || type === "skill" || type === "command" || type === "agent"
+}
+
+function toStringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function shellQuote(input: string): string {
+  if (/[\r\n\t\0]/.test(input)) {
+    throw new Error("Unsupported control characters in stash path.")
+  }
+  const escaped = input
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`")
+  return `"${escaped}"`
+}
+
+function isErrnoWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === code
+  )
+}
