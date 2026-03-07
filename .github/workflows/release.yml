@@ -30,6 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Bump version
         run: npm version "${{ inputs.version }}" --no-git-tag-version
 
