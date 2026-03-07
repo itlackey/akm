@@ -238,7 +238,6 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     timing: {
       totalMs: tEnd - t0,
       walkMs: tWalkEnd - tWalkStart, // includes metadata generation (interleaved)
-      metadataMs: 0, // included in walkMs (walk + metadata are interleaved)
       embedMs: tEmbedEnd - tTfidfEnd,
       tfidfMs: tTfidfEnd - tWalkEnd,
     },
