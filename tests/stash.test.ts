@@ -6,6 +6,7 @@ import {
   agentikitSearch,
   agentikitOpen,
   agentikitRun,
+  agentikitInit,
   type SearchHit,
 } from "../src/stash"
 
@@ -158,4 +159,144 @@ test("agentikitOpen blocks symlink escapes outside stash type root", () => {
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
   expect(() => agentikitOpen({ ref: "tool:link.sh" })).toThrow(/Ref resolves outside the stash root/)
+})
+
+// ── Knowledge tests ─────────────────────────────────────────────────────────
+
+const KNOWLEDGE_DOC = `---
+title: API Guide
+description: "API documentation"
+---
+# Overview
+
+This is the API guide.
+
+## Authentication
+
+Use bearer tokens.
+
+## Endpoints
+
+### GET /users
+
+Returns all users.
+
+### POST /users
+
+Creates a user.
+`
+
+test("agentikitSearch finds knowledge assets", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitSearch({ query: "", type: "knowledge" })
+
+  expect(result.hits.length).toBe(1)
+  expect(result.hits[0].type).toBe("knowledge")
+  expect(result.hits[0].name).toBe("api-guide.md")
+})
+
+test("agentikitOpen returns full content for knowledge by default", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:api-guide.md" })
+
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("# Overview")
+  expect(result.content).toContain("## Authentication")
+})
+
+test("agentikitOpen returns TOC for knowledge with view toc", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:api-guide.md", view: { mode: "toc" } })
+
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("# Overview")
+  expect(result.content).toContain("## Authentication")
+  expect(result.content).toContain("## Endpoints")
+  expect(result.content).toContain("lines total")
+})
+
+test("agentikitOpen extracts section for knowledge", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Authentication" } })
+
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("bearer tokens")
+  expect(result.content).not.toContain("Endpoints")
+})
+
+test("agentikitOpen extracts line range for knowledge", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } })
+
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("# Overview")
+})
+
+test("agentikitOpen extracts frontmatter for knowledge", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } })
+
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("title: API Guide")
+  expect(result.content).not.toContain("# Overview")
+})
+
+test("agentikitOpen returns no-frontmatter message when missing", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Just a heading\nSome text.\n")
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = agentikitOpen({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } })
+
+  expect(result.content).toBe("(no frontmatter)")
+})
+
+test("agentikitOpen throws for missing section in knowledge", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  expect(() =>
+    agentikitOpen({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } }),
+  ).toThrow(/Section "Nonexistent" not found/)
+})
+
+test("agentikitRun throws helpful error for knowledge refs", () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "knowledge", "doc.md"), "# Doc\n")
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  expect(() => agentikitRun({ ref: "knowledge:doc.md" })).toThrow(/Knowledge assets are read-only/)
+})
+
+test("agentikitInit creates knowledge directory", () => {
+  const origHome = process.env.HOME
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-home-"))
+  process.env.HOME = tmpHome
+  delete process.env.AGENTIKIT_STASH_DIR
+
+  try {
+    const result = agentikitInit()
+    expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true)
+  } finally {
+    process.env.HOME = origHome
+  }
 })

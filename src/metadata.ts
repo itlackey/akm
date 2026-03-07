@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import type { AgentikitAssetType } from "./stash"
+import { parseMarkdownToc, type TocHeading } from "./markdown"
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export interface StashEntry {
   intent?: StashIntent
   entry?: string
   generated?: boolean
+  toc?: TocHeading[]
 }
 
 export interface StashFile {
@@ -77,12 +79,22 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   }
   if (typeof e.entry === "string" && e.entry) result.entry = e.entry
   if (e.generated === true) result.generated = true
+  if (Array.isArray(e.toc)) {
+    const validated = e.toc.filter(
+      (h: unknown): h is TocHeading =>
+        typeof h === "object" && h !== null
+        && typeof (h as any).level === "number"
+        && typeof (h as any).text === "string"
+        && typeof (h as any).line === "number",
+    )
+    if (validated.length > 0) result.toc = validated
+  }
 
   return result
 }
 
 function isValidType(type: string): boolean {
-  return type === "tool" || type === "skill" || type === "command" || type === "agent"
+  return type === "tool" || type === "skill" || type === "command" || type === "agent" || type === "knowledge"
 }
 
 // ── Metadata Generation ─────────────────────────────────────────────────────
@@ -102,7 +114,7 @@ export function generateMetadata(
 
     // Skip non-relevant files
     if (assetType === "tool" && !SCRIPT_EXTENSIONS.has(ext)) continue
-    if ((assetType === "command" || assetType === "agent") && ext !== ".md") continue
+    if ((assetType === "command" || assetType === "agent" || assetType === "knowledge") && ext !== ".md") continue
     if (assetType === "skill" && path.basename(file) !== "SKILL.md") continue
 
     const entry: StashEntry = {
@@ -122,6 +134,17 @@ export function generateMetadata(
     if (ext === ".md") {
       const fm = extractFrontmatterDescription(file)
       if (fm) entry.description = fm
+    }
+
+    // Knowledge entries: generate TOC from headings
+    if (assetType === "knowledge") {
+      try {
+        const mdContent = fs.readFileSync(file, "utf8")
+        const toc = parseMarkdownToc(mdContent)
+        if (toc.headings.length > 0) entry.toc = toc.headings
+      } catch {
+        // Non-fatal: skip TOC if file can't be read
+      }
     }
 
     // Priority 4: Code comments (for script files)

@@ -44,6 +44,7 @@ const TYPE_DIRS: Record<AgentikitAssetType, string> = {
   skill: "skills",
   command: "commands",
   agent: "agents",
+  knowledge: "knowledge",
 }
 
 // ── Index Path ──────────────────────────────────────────────────────────────
@@ -179,6 +180,7 @@ function isRelevantFile(fileName: string, assetType: AgentikitAssetType): boolea
       return fileName === "SKILL.md"
     case "command":
     case "agent":
+    case "knowledge":
       return ext === ".md"
     default:
       return false
@@ -194,6 +196,9 @@ export function buildSearchText(entry: StashEntry): string {
     if (entry.intent.when) parts.push(entry.intent.when)
     if (entry.intent.input) parts.push(entry.intent.input)
     if (entry.intent.output) parts.push(entry.intent.output)
+  }
+  if (entry.toc) {
+    parts.push(entry.toc.map((h) => h.text).join(" "))
   }
   return parts.join(" ").toLowerCase()
 }

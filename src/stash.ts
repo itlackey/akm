@@ -4,8 +4,9 @@ import path from "node:path"
 import { loadSearchIndex, buildSearchText } from "./indexer"
 import { TfIdfAdapter, type ScoredEntry } from "./similarity"
 import { rgFilterCandidates, ensureRg } from "./ripgrep"
+import { parseMarkdownToc, extractSection, extractLineRange, extractFrontmatterOnly, formatToc } from "./markdown"
 
-export type AgentikitAssetType = "tool" | "skill" | "command" | "agent"
+export type AgentikitAssetType = "tool" | "skill" | "command" | "agent" | "knowledge"
 export type AgentikitSearchType = AgentikitAssetType | "any"
 
 export interface SearchHit {
@@ -48,6 +49,13 @@ export interface RunResponse {
   output: string
   exitCode: number
 }
+
+export type KnowledgeView =
+  | { mode: "full" }
+  | { mode: "toc" }
+  | { mode: "frontmatter" }
+  | { mode: "section"; heading: string }
+  | { mode: "lines"; start: number; end: number }
 
 type IndexedAsset = {
   type: AgentikitAssetType
@@ -228,7 +236,7 @@ function deriveOpenRefName(
   return toPosix(path.relative(root, filePath))
 }
 
-export function agentikitOpen(input: { ref: string }): OpenResponse {
+export function agentikitOpen(input: { ref: string; view?: KnowledgeView }): OpenResponse {
   const parsed = parseOpenRef(input.ref)
   const stashDir = resolveStashDir()
   const assetPath = resolveAssetPath(stashDir, parsed.type, parsed.name)
@@ -274,11 +282,41 @@ export function agentikitOpen(input: { ref: string }): OpenResponse {
         kind: toolInfo.kind,
       }
     }
+    case "knowledge": {
+      const v = input.view ?? { mode: "full" }
+      switch (v.mode) {
+        case "toc": {
+          const toc = parseMarkdownToc(content)
+          return { type: "knowledge", name: parsed.name, path: assetPath, content: formatToc(toc) }
+        }
+        case "frontmatter": {
+          const fm = extractFrontmatterOnly(content)
+          return { type: "knowledge", name: parsed.name, path: assetPath, content: fm ?? "(no frontmatter)" }
+        }
+        case "section": {
+          const section = extractSection(content, v.heading)
+          if (!section) throw new Error(`Section "${v.heading}" not found in ${parsed.name}`)
+          return { type: "knowledge", name: parsed.name, path: assetPath, content: section.content }
+        }
+        case "lines": {
+          return { type: "knowledge", name: parsed.name, path: assetPath, content: extractLineRange(content, v.start, v.end) }
+        }
+        default: {
+          return { type: "knowledge", name: parsed.name, path: assetPath, content }
+        }
+      }
+    }
   }
 }
 
 export function agentikitRun(input: { ref: string }): RunResponse {
   const parsed = parseOpenRef(input.ref)
+  if (parsed.type === "knowledge") {
+    throw new Error(
+      `Knowledge assets are read-only. Use agentikitOpen with ref "${input.ref}" instead.`
+      + ` You can pass a view parameter to retrieve specific sections, line ranges, or the table of contents.`,
+    )
+  }
   if (parsed.type !== "tool") {
     throw new Error(`agentikitRun only supports tool refs. Got: "${parsed.type}".`)
   }
@@ -368,6 +406,13 @@ const ASSET_INDEXERS: Record<AgentikitAssetType, { dir: string; collect: (root: 
       return { type: "agent", name: toPosix(path.relative(root, file)), path: file }
     },
   },
+  knowledge: {
+    dir: "knowledge",
+    collect(root, file) {
+      if (path.extname(file).toLowerCase() !== ".md") return undefined
+      return { type: "knowledge", name: toPosix(path.relative(root, file)), path: file }
+    },
+  },
 }
 
 function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
@@ -442,7 +487,7 @@ function makeOpenRef(type: AgentikitAssetType, name: string): string {
 }
 
 function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: string): string {
-  const root = path.join(stashDir, type === "tool" ? "tools" : `${type}s`)
+  const root = path.join(stashDir, ASSET_INDEXERS[type].dir)
   const target = type === "skill" ? path.join(root, name, "SKILL.md") : path.join(root, name)
   const resolvedRoot = resolveAndValidateTypeRoot(root, type, name)
   const resolvedTarget = path.resolve(target)
@@ -614,7 +659,7 @@ function parseYamlScalar(value: string): unknown {
 }
 
 function isAssetType(type: string): type is AgentikitAssetType {
-  return type === "tool" || type === "skill" || type === "command" || type === "agent"
+  return type === "tool" || type === "skill" || type === "command" || type === "agent" || type === "knowledge"
 }
 
 function toStringOrUndefined(value: unknown): string | undefined {
@@ -704,7 +749,7 @@ export function agentikitInit(): InitResponse {
     created = true
   }
 
-  for (const sub of ["tools", "skills", "commands", "agents"]) {
+  for (const sub of ["tools", "skills", "commands", "agents", "knowledge"]) {
     const subDir = path.join(stashDir, sub)
     if (!fs.existsSync(subDir)) {
       fs.mkdirSync(subDir, { recursive: true })

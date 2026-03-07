@@ -2,11 +2,11 @@ import { test, expect } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { agentikitIndex, getIndexPath, loadSearchIndex } from "../src/indexer"
+import { agentikitIndex, getIndexPath, loadSearchIndex, buildSearchText } from "../src/indexer"
 
 function tmpStash(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-idx-"))
-  for (const sub of ["tools", "skills", "commands", "agents"]) {
+  for (const sub of ["tools", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true })
   }
   return dir
@@ -103,4 +103,39 @@ test("agentikitIndex handles markdown assets", () => {
 
   const result = agentikitIndex({ stashDir })
   expect(result.totalEntries).toBe(2)
+})
+
+test("agentikitIndex generates TOC in stash.json for knowledge entries", () => {
+  const stashDir = tmpStash()
+  writeFile(
+    path.join(stashDir, "knowledge", "guide.md"),
+    "---\ndescription: \"A guide\"\n---\n# Getting Started\n\nIntro.\n\n## Installation\n\nInstall steps.\n",
+  )
+
+  const result = agentikitIndex({ stashDir })
+  expect(result.totalEntries).toBe(1)
+
+  const stashJson = JSON.parse(
+    fs.readFileSync(path.join(stashDir, "knowledge", ".stash.json"), "utf8"),
+  )
+  expect(stashJson.entries[0].toc).toBeDefined()
+  expect(stashJson.entries[0].toc.length).toBe(2)
+  expect(stashJson.entries[0].toc[0].text).toBe("Getting Started")
+  expect(stashJson.entries[0].toc[1].text).toBe("Installation")
+})
+
+test("buildSearchText includes TOC heading text for knowledge entries", () => {
+  const entry = {
+    name: "guide",
+    type: "knowledge" as const,
+    description: "A guide",
+    toc: [
+      { level: 1, text: "Getting Started", line: 4 },
+      { level: 2, text: "Installation", line: 8 },
+    ],
+  }
+
+  const text = buildSearchText(entry)
+  expect(text).toContain("getting started")
+  expect(text).toContain("installation")
 })
