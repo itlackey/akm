@@ -201,9 +201,8 @@ export function generateMetadata(
     entry.tags = normalizeTerms(entry.tags ?? [])
     entry.aliases = buildAliases(canonicalName, entry.tags)
 
-    // Generate intents from description and tags
-    entry.intents = generateIntents(entry.description ?? "", entry.tags ?? [], canonicalName)
-    if (entry.intents.length === 0) delete entry.intents
+    // Intents are only generated when LLM is configured (via enhanceStashWithLlm)
+    // Heuristic intents are too noisy to be useful for search quality
 
     entry.entry = path.basename(file)
     entries.push(entry)

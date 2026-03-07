@@ -20,6 +20,8 @@ export interface SearchResponse {
   stashDir: string
   hits: SearchHit[]
   tip?: string
+  /** Timing counters in milliseconds */
+  timing?: { totalMs: number; rankMs?: number; embedMs?: number }
 }
 
 export interface ShowResponse {

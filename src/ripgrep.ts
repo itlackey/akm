@@ -1,5 +1,3 @@
 export { resolveRg, isRgAvailable } from "./ripgrep-resolve"
-export { rgFilterCandidates } from "./ripgrep-filter"
-export type { RgCandidateResult } from "./ripgrep-filter"
 export { ensureRg } from "./ripgrep-install"
 export type { EnsureRgResult } from "./ripgrep-install"

@@ -202,7 +202,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(result.hits.length).toBeLessThanOrEqual(3)
   })
 
-  test("show atool returns runCmd and kind", async () => {
+  test("show a tool returns runCmd and kind", async () => {
     const searchResult = await agentikitSearch({ query: "deploy", type: "tool" })
     const deployHit = searchResult.hits.find((h) => h.name.includes("deploy"))
     expect(deployHit).toBeDefined()
@@ -213,21 +213,21 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(openResult.kind).toBe("bash")
   })
 
-  test("show askill returns full SKILL.md content", async () => {
+  test("show a skill returns full SKILL.md content", async () => {
     const openResult = agentikitShow({ ref: "skill:code-review" })
     expect(openResult.type).toBe("skill")
     expect(openResult.content).toContain("Code Review Skill")
     expect(openResult.content).toContain("security vulnerabilities")
   })
 
-  test("show acommand returns template and description", async () => {
+  test("show a command returns template and description", async () => {
     const openResult = agentikitShow({ ref: "command:release.md" })
     expect(openResult.type).toBe("command")
     expect(openResult.description).toBe("Create a new release with changelog and version bump")
     expect(openResult.template).toContain("npm version")
   })
 
-  test("open an agent returns prompt, description, model hint, and tool policy", async () => {
+  test("show an agent returns prompt, description, model hint, and tool policy", async () => {
     const openResult = agentikitShow({ ref: "agent:architect.md" })
     expect(openResult.type).toBe("agent")
     expect(openResult.description).toContain("architect")
@@ -659,7 +659,7 @@ describe("Scenario: Error handling and edge cases", () => {
     }
   })
 
-  test("show withinvalid ref format throws", async () => {
+  test("show with invalid ref format throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AGENTIKIT_STASH_DIR = stashDir
     try {
@@ -669,7 +669,7 @@ describe("Scenario: Error handling and edge cases", () => {
     }
   })
 
-  test("show withunknown type throws", async () => {
+  test("show with unknown type throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AGENTIKIT_STASH_DIR = stashDir
     try {
@@ -679,7 +679,7 @@ describe("Scenario: Error handling and edge cases", () => {
     }
   })
 
-  test("show withpath traversal attempt throws", async () => {
+  test("show with path traversal attempt throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true })
     process.env.AGENTIKIT_STASH_DIR = stashDir
@@ -745,7 +745,7 @@ describe("Scenario: Cross-type discovery", () => {
     expect(types.size).toBeGreaterThan(1)
   })
 
-  test("each hit has a valid openRef that can be used with open", async () => {
+  test("each hit has a valid openRef that can be used with show", async () => {
     const result = await agentikitSearch({ query: "", type: "any", limit: 10 })
     for (const hit of result.hits) {
       expect(hit.openRef).toBeTruthy()

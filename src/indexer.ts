@@ -44,6 +44,8 @@ export interface IndexResponse {
   mode: "full" | "incremental"
   directoriesScanned: number
   directoriesSkipped: number
+  /** Timing counters in milliseconds */
+  timing?: { totalMs: number; walkMs: number; metadataMs: number; embedMs: number; tfidfMs: number }
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -88,6 +90,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     } catch { /* skip nonexistent dirs */ }
   }
 
+  const t0 = Date.now()
   const allEntries: IndexedEntry[] = []
   let generatedCount = 0
   let scannedDirs = 0
@@ -109,6 +112,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
   }
 
   const seenPaths = new Set<string>()
+  const tWalkStart = Date.now()
 
   for (const currentStashDir of allStashDirs) {
     for (const assetType of ASSET_TYPES as AgentikitAssetType[]) {
@@ -171,6 +175,8 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     }
   }
 
+  const tWalkEnd = Date.now()
+
   // Build TF-IDF index
   const adapter = new TfIdfAdapter()
   const scoredEntries: ScoredEntry[] = allEntries.map((ie) => ({
@@ -180,6 +186,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     path: ie.path,
   }))
   adapter.buildIndex(scoredEntries)
+  const tTfidfEnd = Date.now()
 
   // Generate embeddings if semantic search is enabled
   let hasEmbeddings = false
@@ -197,6 +204,8 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
       // Embedding provider not available, continue without embeddings
     }
   }
+
+  const tEmbedEnd = Date.now()
 
   // Persist index
   const indexPath = getIndexPath()
@@ -216,6 +225,8 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
   }
   fs.writeFileSync(indexPath, JSON.stringify(index) + "\n", "utf8")
 
+  const tEnd = Date.now()
+
   return {
     stashDir,
     totalEntries: allEntries.length,
@@ -224,6 +235,13 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     mode: isIncremental ? "incremental" : "full",
     directoriesScanned: scannedDirs,
     directoriesSkipped: skippedDirs,
+    timing: {
+      totalMs: tEnd - t0,
+      walkMs: tWalkEnd - tWalkStart, // includes metadata generation (interleaved)
+      metadataMs: 0, // included in walkMs (walk + metadata are interleaved)
+      embedMs: tEmbedEnd - tTfidfEnd,
+      tfidfMs: tTfidfEnd - tWalkEnd,
+    },
   }
 }
 

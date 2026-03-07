@@ -366,13 +366,12 @@ test("loadStashFile parses intents field", () => {
 
 // ── generateMetadata populates intents ──────────────────────────────────────
 
-test("generateMetadata populates intents on generated entries", () => {
+test("generateMetadata does not generate heuristic intents (LLM-only)", () => {
   const dir = tmpDir()
   const tool = path.join(dir, "summarize-diff.ts")
   writeFile(tool, `/**\n * Summarize git diff changes\n */\n`)
 
   const stash = generateMetadata(dir, "tool", [tool])
-  expect(stash.entries[0].intents).toBeDefined()
-  expect(stash.entries[0].intents!.length).toBeGreaterThan(0)
-  expect(stash.entries[0].intents!.some((i) => i.includes("summarize"))).toBe(true)
+  // Intents are only generated when LLM is configured, not heuristically
+  expect(stash.entries[0].intents).toBeUndefined()
 })

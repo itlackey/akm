@@ -239,7 +239,7 @@ test("buildSearchText handles entries with both intents and intent fields", () =
   expect(text).toContain("service name")
 })
 
-test("agentikitIndex generates intents in .stash.json for new entries", async () => {
+test("agentikitIndex does not generate heuristic intents (LLM-only)", async () => {
   const stashDir = tmpStash()
   writeFile(path.join(stashDir, "tools", "deploy", "deploy.sh"), "#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n")
 
@@ -248,6 +248,6 @@ test("agentikitIndex generates intents in .stash.json for new entries", async ()
   const stashJson = JSON.parse(
     fs.readFileSync(path.join(stashDir, "tools", "deploy", ".stash.json"), "utf8"),
   )
-  expect(stashJson.entries[0].intents).toBeDefined()
-  expect(stashJson.entries[0].intents.length).toBeGreaterThan(0)
+  // Intents are only generated when LLM is configured
+  expect(stashJson.entries[0].intents).toBeUndefined()
 })

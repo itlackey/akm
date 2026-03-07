@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { resolveRg, isRgAvailable, rgFilterCandidates } from "../src/ripgrep"
+import { resolveRg, isRgAvailable } from "../src/ripgrep"
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-rg-"))
@@ -105,90 +105,9 @@ test("isRgAvailable returns true when rg is on PATH", () => {
   }
 })
 
-// ── rgFilterCandidates ──────────────────────────────────────────────────────
+// ── Integration: indexed search pipeline ────────────────────────────────────
 
-test("rgFilterCandidates returns null for empty query", () => {
-  const dir = tmpDir()
-  expect(rgFilterCandidates("", dir)).toBeNull()
-  expect(rgFilterCandidates("   ", dir)).toBeNull()
-})
-
-test("rgFilterCandidates finds matching .stash.json files", () => {
-  if (!resolveRg()) return
-
-  const dir = tmpDir()
-
-  // Create .stash.json files with different content
-  writeFile(
-    path.join(dir, "tools", "docker", ".stash.json"),
-    JSON.stringify({
-      entries: [{ name: "docker-build", type: "tool", description: "build docker images", tags: ["docker", "build"] }],
-    }),
-  )
-  writeFile(
-    path.join(dir, "tools", "git", ".stash.json"),
-    JSON.stringify({
-      entries: [{ name: "git-diff", type: "tool", description: "summarize git diff", tags: ["git", "diff"] }],
-    }),
-  )
-
-  const result = rgFilterCandidates("docker build", dir)
-  expect(result).not.toBeNull()
-  expect(result!.usedRg).toBe(true)
-  expect(result!.matchedFiles.length).toBeGreaterThanOrEqual(1)
-  expect(result!.matchedFiles.some((f) => f.includes("docker"))).toBe(true)
-})
-
-test("rgFilterCandidates returns empty list for non-matching query", () => {
-  if (!resolveRg()) return
-
-  const dir = tmpDir()
-  writeFile(
-    path.join(dir, "tools", "git", ".stash.json"),
-    JSON.stringify({
-      entries: [{ name: "git-diff", type: "tool", description: "summarize git diff" }],
-    }),
-  )
-
-  const result = rgFilterCandidates("xyznonexistent", dir)
-  expect(result).not.toBeNull()
-  expect(result!.matchedFiles).toHaveLength(0)
-})
-
-test("rgFilterCandidates only searches .stash.json files", () => {
-  if (!resolveRg()) return
-
-  const dir = tmpDir()
-
-  // A regular .ts file with "docker" — should NOT be matched
-  writeFile(path.join(dir, "tools", "docker", "build.ts"), 'console.log("docker")\n')
-  // No .stash.json in this directory
-
-  const result = rgFilterCandidates("docker", dir)
-  expect(result).not.toBeNull()
-  // Should not match the .ts file
-  expect(result!.matchedFiles.every((f) => f.endsWith(".stash.json"))).toBe(true)
-})
-
-test("rgFilterCandidates returns null on rg process error status > 1", () => {
-  if (process.platform === "win32") return
-
-  const stashDir = tmpDir()
-  const searchDir = tmpDir()
-  const binDir = path.join(stashDir, "bin")
-  fs.mkdirSync(binDir, { recursive: true })
-
-  const fakeRg = path.join(binDir, "rg")
-  fs.writeFileSync(fakeRg, "#!/bin/sh\nexit 2\n")
-  fs.chmodSync(fakeRg, 0o755)
-
-  const result = rgFilterCandidates("docker", searchDir, stashDir)
-  expect(result).toBeNull()
-})
-
-// ── Integration: ripgrep + semantic search ──────────────────────────────────
-
-test("search pipeline uses ripgrep pre-filtering when index exists", async () => {
+test("search pipeline returns ranked results when index exists", async () => {
   const stashDir = tmpDir()
   for (const sub of ["tools", "skills", "commands", "agents"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true })
@@ -227,7 +146,7 @@ test("search pipeline uses ripgrep pre-filtering when index exists", async () =>
     const { agentikitIndex } = await import("../src/indexer")
     await agentikitIndex({ stashDir })
 
-    // Search — ripgrep should filter candidates before TF-IDF ranks them
+    // Search — TF-IDF should rank docker-related results first
     const { agentikitSearch } = await import("../src/stash")
     const result = await agentikitSearch({ query: "docker", type: "any" })
 
