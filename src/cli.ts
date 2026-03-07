@@ -45,7 +45,7 @@ function parseCliArgs(
 }
 
 function usage(): never {
-  console.error("Usage: agentikit <init|search|show> [options]")
+  console.error("Usage: agentikit <init|index|search|show|config> [options]")
   console.error("")
   console.error("Commands:")
   console.error("  init                 Initialize agentikit stash directory and set AGENTIKIT_STASH_DIR")
