@@ -1,5 +1,5 @@
 export { plugin } from "./src/plugin"
-export { agentikitSearch, agentikitOpen, agentikitRun } from "./src/stash"
+export { agentikitSearch, agentikitOpen, agentikitRun, agentikitInit } from "./src/stash"
 export type {
   AgentikitAssetType,
   AgentikitSearchType,
@@ -7,4 +7,5 @@ export type {
   SearchResponse,
   OpenResponse,
   RunResponse,
+  InitResponse,
 } from "./src/stash"

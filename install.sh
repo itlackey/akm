@@ -85,3 +85,6 @@ else
 fi
 
 echo "agentikit installed to ${INSTALL_DIR}/agentikit"
+
+echo "Running agentikit init..."
+"${INSTALL_DIR}/agentikit" init

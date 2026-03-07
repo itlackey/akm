@@ -37,3 +37,6 @@ if ($UserPath -notlike "*$InstallDir*") {
 }
 
 Write-Host "agentikit installed to $OutFile"
+
+Write-Host "Running agentikit init..."
+& $OutFile init
