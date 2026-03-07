@@ -1,5 +1,5 @@
 {
-  "name": "@itlackey/agentikit",
+  "name": "agentikit",
   "version": "0.0.2",
   "type": "module",
   "description": "Search, open, and run extension assets from a stash directory. Works as both an OpenCode plugin and a Claude Code plugin.",
@@ -48,8 +48,8 @@
     }
   },
   "scripts": {
-    "build": "bun run tsc --project ./tsconfig.build.json --emitDeclarationOnly false --declaration false --outDir dist",
-    "build:types": "bun run tsc --project ./tsconfig.build.json",
+    "build": "bun run tsc --project ./tsconfig.json --emitDeclarationOnly false --declaration false --outDir dist",
+    "build:types": "bun run tsc --project ./tsconfig.json",
     "test": "bun test",
     "prepublishOnly": "bun run build && bun run build:types"
   },
@@ -57,10 +57,10 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "^22.13.10",
-    "typescript": "^5.9.2"
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.2.10"
+    "@opencode-ai/plugin": "^1.2.20"
   }
 }
