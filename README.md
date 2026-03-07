@@ -30,13 +30,11 @@ The shell installer verifies the downloaded binary against release `checksums.tx
 
 ### OpenCode plugin
 
-Add agentikit as a plugin in your OpenCode config:
+Add agentikit to the `plugin` array in your OpenCode config (`opencode.json`):
 
 ```json
 {
-  "plugins": {
-    "agentikit": "@itlackey/agentikit"
-  }
+  "plugin": ["@itlackey/agentikit"]
 }
 ```
 
@@ -67,7 +65,7 @@ Expected stash layout:
 
 ```
 $AGENTIKIT_STASH_DIR/
-├── tools/      # recursive files, only .sh/.ts/.js are eligible
+├── tools/      # recursive files (.sh, .ts, .js, .ps1, .cmd, .bat)
 ├── skills/     # skill directories containing SKILL.md
 ├── commands/   # markdown files
 └── agents/     # markdown files
@@ -94,6 +92,8 @@ Returns typed hits with `openRef` and, for tools, execution-ready `runCmd`.
 Tool command generation:
 
 - `.sh` → `bash "<absolute-file>"`
+- `.ps1` → `powershell -ExecutionPolicy Bypass -File "<absolute-file>"`
+- `.cmd`/`.bat` → `cmd /c "<absolute-file>"`
 - `.ts`/`.js`:
   - find nearest `package.json` from script dir upward to stash `tools/` root
   - if found: `cd "<pkgDir>" && bun "<absolute-file>"`
