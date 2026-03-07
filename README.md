@@ -14,22 +14,19 @@ bun add @itlackey/agentikit
 
 ### Standalone binary
 
-Download a prebuilt binary from the [latest GitHub release](https://github.com/itlackey/agentikit/releases/latest):
-
-| Platform      | Binary                    |
-| ------------- | ------------------------- |
-| Linux x64     | `agentikit-linux-x64`     |
-| Linux arm64   | `agentikit-linux-arm64`   |
-| macOS x64     | `agentikit-darwin-x64`    |
-| macOS arm64   | `agentikit-darwin-arm64`  |
-| Windows x64   | `agentikit-windows-x64.exe` |
+Use the install scripts for a copy/paste install:
 
 ```sh
-# Example: Linux x64
-curl -L -o agentikit https://github.com/itlackey/agentikit/releases/latest/download/agentikit-linux-x64
-chmod +x agentikit
-sudo mv agentikit /usr/local/bin/
+# macOS / Linux (recommended: pin a release tag)
+curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash -s -- v1.2.3
 ```
+
+```sh
+# PowerShell (Windows)
+irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1 v1.2.3
+```
+
+The shell installer verifies the downloaded binary against release `checksums.txt` before installing it.
 
 ### OpenCode plugin
 
