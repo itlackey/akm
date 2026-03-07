@@ -1,6 +1,6 @@
 # agentikit
 
-Agentikit is a CLI tool and library for managing a stash of extension assets for AI coding assistants. It lets you **search** and **read** tools, skills, commands, and agents from a stash directory.
+Agentikit is a CLI tool and library for managing a stash of extension assets for AI coding assistants. It lets you **search** and **show** tools, skills, commands, and agents from a stash directory.
 
 ## Installation
 
@@ -53,7 +53,7 @@ $AGENTIKIT_STASH_DIR/
 agentikit init                 # Initialize stash directory and set AGENTIKIT_STASH_DIR
 agentikit index [--full]       # Build search index (incremental by default)
 agentikit search [query]       # Search the stash
-agentikit read <type:name>     # Read a stash asset by ref
+agentikit show <type:name>     # Read a stash asset by ref
 ```
 
 ### search
@@ -70,15 +70,15 @@ agentikit search "deploy" --type tool --limit 10
 
 Returns typed hits with `openRef`, score/explainability details (`score`, `whyMatched`), and, for tools, execution-ready `runCmd`.
 
-### read
+### show
 
-Read a hit using `openRef` from search results.
+Show a hit using `openRef` from search results.
 
 ```sh
-agentikit read skill:code-review
-agentikit read knowledge:guide.md --view toc
-agentikit read knowledge:guide.md --view section --heading "Getting Started"
-agentikit read knowledge:guide.md --view lines --start 10 --end 30
+agentikit show skill:code-review
+agentikit show knowledge:guide.md --view toc
+agentikit show knowledge:guide.md --view section --heading "Getting Started"
+agentikit show knowledge:guide.md --view lines --start 10 --end 30
 ```
 
 Returns full payload by type:
@@ -94,11 +94,11 @@ Returns full payload by type:
 Agentikit also exports its core functions for use as a library:
 
 ```ts
-import { agentikitSearch, agentikitRead, agentikitInit, agentikitIndex } from "agentikit"
+import { agentikitSearch, agentikitShow, agentikitInit, agentikitIndex } from "agentikit"
 ```
 
 - `agentikitSearch({ query, type?, limit? })` — search the stash
-- `agentikitRead({ ref, view? })` — read a stash asset
+- `agentikitShow({ ref, view? })` — show a stash asset
 - `agentikitInit()` — initialize stash directory
 - `agentikitIndex()` — build/rebuild search index
 

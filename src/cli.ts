@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { agentikitSearch, agentikitRead, type KnowledgeView } from "./stash"
+import { agentikitSearch, agentikitShow, type KnowledgeView } from "./stash"
 import { agentikitInit } from "./init"
 import { agentikitIndex } from "./indexer"
 import { loadConfig, updateConfig, type AgentikitConfig } from "./config"
@@ -45,13 +45,13 @@ function parseCliArgs(
 }
 
 function usage(): never {
-  console.error("Usage: agentikit <init|search|read> [options]")
+  console.error("Usage: agentikit <init|search|show> [options]")
   console.error("")
   console.error("Commands:")
   console.error("  init                 Initialize agentikit stash directory and set AGENTIKIT_STASH_DIR")
   console.error("  index [--full]       Build search index (incremental by default; --full forces full reindex)")
   console.error("  search [query]       Search the stash (--type tool|skill|command|agent|knowledge|any) (--limit N)")
-  console.error("  read <type:name>     Read a stash asset by ref")
+  console.error("  show <type:name>     Show a stash asset by ref")
   console.error("       Knowledge view options: --view full|toc|frontmatter|section|lines")
   console.error("         --heading <text>   Section heading (for --view section)")
   console.error("         --start <N>        Start line (for --view lines)")
@@ -84,7 +84,7 @@ async function main() {
       console.log(JSON.stringify(await agentikitSearch({ query, type, limit }), null, 2))
       break
     }
-    case "read": {
+    case "show": {
       const ref = args[1]
       if (!ref) { console.error("Error: missing ref argument\n"); return usage() }
       const parsed = parseCliArgs(args.slice(2), {
@@ -120,7 +120,7 @@ async function main() {
             usage()
         }
       }
-      console.log(JSON.stringify(agentikitRead({ ref, view }), null, 2))
+      console.log(JSON.stringify(agentikitShow({ ref, view }), null, 2))
       break
     }
     case "config": {

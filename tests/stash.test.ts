@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import {
   agentikitSearch,
-  agentikitRead,
+  agentikitShow,
   agentikitInit,
   type SearchHit,
 } from "../src/stash"
@@ -100,7 +100,7 @@ test("agentikitSearch includes explainability reasons for indexed hits", async (
   expect(result.hits[0].whyMatched).toContain("matched name tokens")
 })
 
-test("agentikitRead returns full payloads for skill/command/agent", () => {
+test("agentikitShow returns full payloads for skill/command/agent", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\n")
   writeFile(path.join(stashDir, "commands", "release.md"), '---\ndescription: "Release command"\n---\nrun release\n')
@@ -108,9 +108,9 @@ test("agentikitRead returns full payloads for skill/command/agent", () => {
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
 
-  const skill = agentikitRead({ ref: "skill:ops" })
-  const command = agentikitRead({ ref: "command:release.md" })
-  const agent = agentikitRead({ ref: "agent:coach.md" })
+  const skill = agentikitShow({ ref: "skill:ops" })
+  const command = agentikitShow({ ref: "command:release.md" })
+  const agent = agentikitShow({ ref: "agent:coach.md" })
 
   expect(skill.type).toBe("skill")
   expect(skill.content ?? "").toMatch(/Ops/)
@@ -122,11 +122,11 @@ test("agentikitRead returns full payloads for skill/command/agent", () => {
   expect(agent.modelHint).toBe("gpt-5")
 })
 
-test("agentikitRead returns clear error when stash type root is missing", () => {
+test("agentikitShow returns clear error when stash type root is missing", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   try {
     process.env.AGENTIKIT_STASH_DIR = stashDir
-    expect(() => agentikitRead({ ref: "agent:missing.md" })).toThrow(
+    expect(() => agentikitShow({ ref: "agent:missing.md" })).toThrow(
       /Stash type root not found for ref: agent:missing\.md/,
     )
   } finally {
@@ -134,21 +134,21 @@ test("agentikitRead returns clear error when stash type root is missing", () => 
   }
 })
 
-test("agentikitRead rejects malformed open ref encoding", () => {
+test("agentikitShow rejects malformed open ref encoding", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  expect(() => agentikitRead({ ref: "tool:%E0%A4%A" })).toThrow(/Invalid open ref encoding/)
+  expect(() => agentikitShow({ ref: "tool:%E0%A4%A" })).toThrow(/Invalid open ref encoding/)
 })
 
-test("agentikitRead rejects traversal and absolute path refs", () => {
+test("agentikitShow rejects traversal and absolute path refs", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   process.env.AGENTIKIT_STASH_DIR = stashDir
 
-  expect(() => agentikitRead({ ref: "tool:..%2Foutside.sh" })).toThrow(/Invalid open ref name/)
-  expect(() => agentikitRead({ ref: "tool:%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
+  expect(() => agentikitShow({ ref: "tool:..%2Foutside.sh" })).toThrow(/Invalid open ref name/)
+  expect(() => agentikitShow({ ref: "tool:%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
 })
 
-test("agentikitRead blocks symlink escapes outside stash type root", () => {
+test("agentikitShow blocks symlink escapes outside stash type root", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-outside-"))
   const outsideFile = path.join(outsideDir, "outside.sh")
@@ -164,7 +164,7 @@ test("agentikitRead blocks symlink escapes outside stash type root", () => {
   }
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  expect(() => agentikitRead({ ref: "tool:link.sh" })).toThrow(/Ref resolves outside the stash root/)
+  expect(() => agentikitShow({ ref: "tool:link.sh" })).toThrow(/Ref resolves outside the stash root/)
 })
 
 // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -204,24 +204,24 @@ test("agentikitSearch finds knowledge assets", async () => {
   expect(result.hits[0].name).toBe("api-guide.md")
 })
 
-test("agentikitRead returns full content for knowledge by default", () => {
+test("agentikitShow returns full content for knowledge by default", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:api-guide.md" })
+  const result = agentikitShow({ ref: "knowledge:api-guide.md" })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
   expect(result.content).toContain("## Authentication")
 })
 
-test("agentikitRead returns TOC for knowledge with view toc", () => {
+test("agentikitShow returns TOC for knowledge with view toc", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:api-guide.md", view: { mode: "toc" } })
+  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
@@ -230,67 +230,67 @@ test("agentikitRead returns TOC for knowledge with view toc", () => {
   expect(result.content).toContain("lines total")
 })
 
-test("agentikitRead extracts section for knowledge", () => {
+test("agentikitShow extracts section for knowledge", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Authentication" } })
+  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Authentication" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("bearer tokens")
   expect(result.content).not.toContain("Endpoints")
 })
 
-test("agentikitRead extracts line range for knowledge", () => {
+test("agentikitShow extracts line range for knowledge", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } })
+  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
 })
 
-test("agentikitRead extracts frontmatter for knowledge", () => {
+test("agentikitShow extracts frontmatter for knowledge", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } })
+  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("title: API Guide")
   expect(result.content).not.toContain("# Overview")
 })
 
-test("agentikitRead returns no-frontmatter message when missing", () => {
+test("agentikitShow returns no-frontmatter message when missing", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Just a heading\nSome text.\n")
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } })
+  const result = agentikitShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } })
 
   expect(result.content).toBe("(no frontmatter)")
 })
 
-test("agentikitRead throws for missing section in knowledge", () => {
+test("agentikitShow throws for missing section in knowledge", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
   expect(() =>
-    agentikitRead({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } }),
+    agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } }),
   ).toThrow(/Section "Nonexistent" not found/)
 })
 
-test("agentikitRead for tool type returns runCmd and kind", () => {
+test("agentikitShow for tool type returns runCmd and kind", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  const result = agentikitRead({ ref: "tool:deploy.sh" })
+  const result = agentikitShow({ ref: "tool:deploy.sh" })
 
   expect(result.type).toBe("tool")
   expect(result.runCmd).toBeTruthy()
@@ -321,14 +321,14 @@ test("agentikitInit returns created false when stash dir already exists", () => 
   }
 })
 
-test("agentikitRead throws unsupported tool extension for .txt file", () => {
+test("agentikitShow throws unsupported tool extension for .txt file", () => {
   const origStashDir = process.env.AGENTIKIT_STASH_DIR
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "tools", "readme.txt"), "not a tool\n")
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
   try {
-    expect(() => agentikitRead({ ref: "tool:readme.txt" })).toThrow(
+    expect(() => agentikitShow({ ref: "tool:readme.txt" })).toThrow(
       /Tool ref must resolve to a \.sh/,
     )
   } finally {

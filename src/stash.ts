@@ -5,12 +5,12 @@ export type { InitResponse } from "./init"
 export type { ToolKind } from "./tool-runner"
 
 export { agentikitSearch } from "./stash-search"
-export { agentikitRead } from "./stash-read"
+export { agentikitShow } from "./stash-show"
 
 export type {
   AgentikitSearchType,
   SearchHit,
   SearchResponse,
-  ReadResponse,
+  ShowResponse,
   KnowledgeView,
 } from "./stash-types"

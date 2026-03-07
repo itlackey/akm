@@ -5,7 +5,7 @@
  * stash directory with tools, skills, commands, and agents.
  *
  * Tests cover:
- * - Full lifecycle: index → search → read
+ * - Full lifecycle: index → search → show
  * - CLI interface via subprocess
  * - Metadata generation and persistence
  * - Semantic search ranking quality
@@ -19,7 +19,7 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { agentikitSearch, agentikitRead } from "../src/stash"
+import { agentikitSearch, agentikitShow } from "../src/stash"
 import { agentikitIndex, loadSearchIndex, getIndexPath } from "../src/indexer"
 import { loadStashFile } from "../src/metadata"
 
@@ -87,7 +87,7 @@ afterAll(() => {
 // Scenario 1: Full lifecycle — user sets up stash, indexes, searches, runs
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("Scenario: Full lifecycle (index → search → read)", () => {
+describe("Scenario: Full lifecycle (index → search → show)", () => {
   let stashDir: string
 
   beforeAll(async () => {
@@ -202,33 +202,33 @@ describe("Scenario: Full lifecycle (index → search → read)", () => {
     expect(result.hits.length).toBeLessThanOrEqual(3)
   })
 
-  test("open a tool returns runCmd and kind", async () => {
+  test("show atool returns runCmd and kind", async () => {
     const searchResult = await agentikitSearch({ query: "deploy", type: "tool" })
     const deployHit = searchResult.hits.find((h) => h.name.includes("deploy"))
     expect(deployHit).toBeDefined()
 
-    const openResult = agentikitRead({ ref: deployHit!.openRef })
+    const openResult = agentikitShow({ ref: deployHit!.openRef })
     expect(openResult.type).toBe("tool")
     expect(openResult.runCmd).toBeTruthy()
     expect(openResult.kind).toBe("bash")
   })
 
-  test("open a skill returns full SKILL.md content", async () => {
-    const openResult = agentikitRead({ ref: "skill:code-review" })
+  test("show askill returns full SKILL.md content", async () => {
+    const openResult = agentikitShow({ ref: "skill:code-review" })
     expect(openResult.type).toBe("skill")
     expect(openResult.content).toContain("Code Review Skill")
     expect(openResult.content).toContain("security vulnerabilities")
   })
 
-  test("open a command returns template and description", async () => {
-    const openResult = agentikitRead({ ref: "command:release.md" })
+  test("show acommand returns template and description", async () => {
+    const openResult = agentikitShow({ ref: "command:release.md" })
     expect(openResult.type).toBe("command")
     expect(openResult.description).toBe("Create a new release with changelog and version bump")
     expect(openResult.template).toContain("npm version")
   })
 
   test("open an agent returns prompt, description, model hint, and tool policy", async () => {
-    const openResult = agentikitRead({ ref: "agent:architect.md" })
+    const openResult = agentikitShow({ ref: "agent:architect.md" })
     expect(openResult.type).toBe("agent")
     expect(openResult.description).toContain("architect")
     expect(openResult.prompt).toContain("software architect")
@@ -284,7 +284,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(result.hits.some((h) => h.name.includes("architect"))).toBe(true)
   })
 
-  test("agent workflow: search → read (end-to-end)", async () => {
+  test("agent workflow: search → show (end-to-end)", async () => {
     // Step 1: Agent searches for a tool to run tests
     const searchResult = await agentikitSearch({ query: "run tests" })
     expect(searchResult.hits.length).toBeGreaterThan(0)
@@ -292,8 +292,8 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(testTool).toBeDefined()
 
     // Step 2: Agent reads the tool to get runCmd for host execution
-    const readResult = agentikitRead({ ref: testTool!.openRef })
-    expect(readResult.runCmd).toBeTruthy()
+    const showResult = agentikitShow({ ref: testTool!.openRef })
+    expect(showResult.runCmd).toBeTruthy()
   })
 })
 
@@ -349,8 +349,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.length).toBeLessThanOrEqual(2)
   })
 
-  test("cli: agentikit read returns asset content", async () => {
-    const result = runCli("read", "skill:code-review")
+  test("cli: agentikit show returns asset content", async () => {
+    const result = runCli("show", "skill:code-review")
     expect(result.exitCode).toBe(0)
 
     const json = parseJson(result.stdout)
@@ -358,8 +358,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.content).toContain("Code Review Skill")
   })
 
-  test("cli: agentikit read command returns template", async () => {
-    const result = runCli("read", "command:release.md")
+  test("cli: agentikit show command returns template", async () => {
+    const result = runCli("show", "command:release.md")
     expect(result.exitCode).toBe(0)
 
     const json = parseJson(result.stdout)
@@ -391,8 +391,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(result.stderr).toContain("Usage:")
   })
 
-  test("cli: agentikit read with no ref prints error", async () => {
-    const result = runCli("read")
+  test("cli: agentikit show with no ref prints error", async () => {
+    const result = runCli("show")
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toContain("missing ref")
   })
@@ -414,8 +414,8 @@ describe("Scenario: CLI knowledge --view flags", () => {
     fs.rmSync(stashDir, { recursive: true, force: true })
   })
 
-  test("cli: open knowledge with --view toc", async () => {
-    const result = runCli("read", "knowledge:guide.md", "--view", "toc")
+  test("cli: show knowledge with --view toc", async () => {
+    const result = runCli("show", "knowledge:guide.md", "--view", "toc")
     expect(result.exitCode).toBe(0)
 
     const json = parseJson(result.stdout)
@@ -425,8 +425,8 @@ describe("Scenario: CLI knowledge --view flags", () => {
     expect(json.content).toContain("lines total")
   })
 
-  test("cli: open knowledge with --view section --heading", async () => {
-    const result = runCli("read", "knowledge:guide.md", "--view", "section", "--heading", "Getting Started")
+  test("cli: show knowledge with --view section --heading", async () => {
+    const result = runCli("show", "knowledge:guide.md", "--view", "section", "--heading", "Getting Started")
     expect(result.exitCode).toBe(0)
 
     const json = parseJson(result.stdout)
@@ -438,8 +438,8 @@ describe("Scenario: CLI knowledge --view flags", () => {
     expect(json.content).not.toContain("Authentication")
   })
 
-  test("cli: open knowledge with --view lines --start --end", async () => {
-    const result = runCli("read", "knowledge:guide.md", "--view", "lines", "--start", "1", "--end", "5")
+  test("cli: show knowledge with --view lines --start --end", async () => {
+    const result = runCli("show", "knowledge:guide.md", "--view", "lines", "--start", "1", "--end", "5")
     expect(result.exitCode).toBe(0)
 
     const json = parseJson(result.stdout)
@@ -659,32 +659,32 @@ describe("Scenario: Error handling and edge cases", () => {
     }
   })
 
-  test("open with invalid ref format throws", async () => {
+  test("show withinvalid ref format throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AGENTIKIT_STASH_DIR = stashDir
     try {
-      expect(() => agentikitRead({ ref: "badref" })).toThrow(/Invalid open ref/)
+      expect(() => agentikitShow({ ref: "badref" })).toThrow(/Invalid open ref/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
   })
 
-  test("open with unknown type throws", async () => {
+  test("show withunknown type throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AGENTIKIT_STASH_DIR = stashDir
     try {
-      expect(() => agentikitRead({ ref: "widget:foo" })).toThrow(/Invalid open ref type/)
+      expect(() => agentikitShow({ ref: "widget:foo" })).toThrow(/Invalid open ref type/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
   })
 
-  test("open with path traversal attempt throws", async () => {
+  test("show withpath traversal attempt throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true })
     process.env.AGENTIKIT_STASH_DIR = stashDir
     try {
-      expect(() => agentikitRead({ ref: "tool:..%2F..%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
+      expect(() => agentikitShow({ ref: "tool:..%2F..%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -752,7 +752,7 @@ describe("Scenario: Cross-type discovery", () => {
       expect(hit.openRef).toContain(":")
 
       // Should not throw when opening
-      const openResult = agentikitRead({ ref: hit.openRef })
+      const openResult = agentikitShow({ ref: hit.openRef })
       expect(openResult.type).toBe(hit.type)
     }
   })

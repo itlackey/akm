@@ -3,11 +3,11 @@ import { parseFrontmatter, toStringOrUndefined } from "./frontmatter"
 import { resolveStashDir } from "./common"
 import { parseOpenRef } from "./stash-ref"
 import { resolveAssetPath } from "./stash-resolve"
-import type { KnowledgeView, ReadResponse } from "./stash-types"
+import type { KnowledgeView, ShowResponse } from "./stash-types"
 import { parseMarkdownToc, extractSection, extractLineRange, extractFrontmatterOnly, formatToc } from "./markdown"
 import { buildToolInfo } from "./tool-runner"
 
-export function agentikitRead(input: { ref: string; view?: KnowledgeView }): ReadResponse {
+export function agentikitShow(input: { ref: string; view?: KnowledgeView }): ShowResponse {
   const parsed = parseOpenRef(input.ref)
   const stashDir = resolveStashDir()
   const assetPath = resolveAssetPath(stashDir, parsed.type, parsed.name)

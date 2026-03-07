@@ -22,7 +22,7 @@ export interface SearchResponse {
   tip?: string
 }
 
-export interface ReadResponse {
+export interface ShowResponse {
   type: AgentikitAssetType
   name: string
   path: string
