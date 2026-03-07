@@ -1,6 +1,6 @@
 {
   "name": "agentikit",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "type": "module",
   "description": "Search, open, and run extension assets from a stash directory. Works as both an OpenCode plugin and a Claude Code plugin.",
   "keywords": [
