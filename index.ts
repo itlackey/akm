@@ -9,3 +9,6 @@ export type {
   RunResponse,
   InitResponse,
 } from "./src/stash"
+export { agentikitIndex } from "./src/indexer"
+export type { IndexResponse } from "./src/indexer"
+export type { StashEntry, StashFile, StashIntent } from "./src/metadata"

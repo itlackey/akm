@@ -1,5 +1,6 @@
 import { type Plugin, tool } from "@opencode-ai/plugin"
 import { agentikitOpen, agentikitRun, agentikitSearch } from "./stash"
+import { agentikitIndex } from "./indexer"
 
 function tryJson(fn: () => unknown, action: string): string {
   try {
@@ -42,6 +43,13 @@ export const plugin: Plugin = async () => ({
       },
       async execute({ ref }) {
         return tryJson(() => agentikitRun({ ref }), "run stash tool")
+      },
+    }),
+    agentikit_index: tool({
+      description: "Build or rebuild the Agentikit search index. Scans stash directories, generates missing .stash.json metadata, and builds a semantic search index.",
+      args: {},
+      async execute() {
+        return tryJson(() => agentikitIndex(), "build Agentikit index")
       },
     }),
   },
