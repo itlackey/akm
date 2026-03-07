@@ -1,6 +1,6 @@
 # agentikit
 
-Agentikit is a simplified OpenCode stash toolkit. It exposes three tools to OpenCode sessions so agents can **search**, **open**, and **run** extension assets directly from a stash directory — with no concept of copying files into OpenCode directories.
+Agentikit is a stash toolkit for AI coding assistants. It exposes three tools so agents can **search**, **open**, and **run** extension assets directly from a stash directory. Works as both an **OpenCode plugin** and a **Claude Code plugin**.
 
 ## Installation
 
@@ -40,6 +40,21 @@ Add agentikit as a plugin in your OpenCode config:
 }
 ```
 
+### Claude Code plugin
+
+Install agentikit as a Claude Code plugin by pointing to the repo directory:
+
+```sh
+claude --plugin-dir /path/to/agentikit
+```
+
+Or add it to a plugin marketplace for team distribution. See the [Claude Code plugins documentation](https://code.claude.com/docs/en/plugins) for details.
+
+Once installed, the plugin provides:
+
+- **Skill** (`agentikit:stash`) — Claude automatically uses this when you ask about stash assets
+- **Commands** — `/agentikit:search`, `/agentikit:open`, `/agentikit:run` slash commands
+
 ## Stash model
 
 Set a stash path via `AGENTIKIT_STASH_DIR`.
@@ -58,9 +73,9 @@ $AGENTIKIT_STASH_DIR/
 └── agents/     # markdown files
 ```
 
-## OpenCode tools
+## Tools
 
-When loaded as an OpenCode plugin, Agentikit provides three tools:
+When loaded as a plugin (OpenCode or Claude Code), Agentikit provides three tools:
 
 - `agentikit_search({ query, type?, limit? })`
 - `agentikit_open({ ref })`
@@ -122,15 +137,11 @@ Or:
 
 ## Notes
 
-- Agentikit does not write to `.opencode/`.
+- Agentikit does not write to `.opencode/` or `.claude/`.
 - Agentikit does not install or copy kit files.
 - Missing or unreadable stash paths return friendly errors.
 
 ## Docs
 
-- [Plugins](https://opencode.ai/docs/plugins/)
-- [Commands](https://opencode.ai/docs/commands/)
-- [Agents](https://opencode.ai/docs/agents/)
-- [Agent Skills](https://opencode.ai/docs/skills/)
-- [Custom tools](https://opencode.ai/docs/custom-tools/)
-- [Config](https://opencode.ai/docs/config/)
+- **OpenCode**: [Plugins](https://opencode.ai/docs/plugins/) · [Commands](https://opencode.ai/docs/commands/) · [Agents](https://opencode.ai/docs/agents/) · [Agent Skills](https://opencode.ai/docs/skills/) · [Custom tools](https://opencode.ai/docs/custom-tools/) · [Config](https://opencode.ai/docs/config/)
+- **Claude Code**: [Plugins](https://code.claude.com/docs/en/plugins) · [Skills](https://code.claude.com/docs/en/skills) · [Plugins reference](https://code.claude.com/docs/en/plugins-reference)

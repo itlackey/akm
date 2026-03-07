@@ -2,12 +2,14 @@
   "name": "@itlackey/agentikit",
   "version": "0.0.1",
   "type": "module",
-  "description": "Simplified OpenCode tools for searching, opening, and running extension assets from a stash directory.",
+  "description": "Search, open, and run extension assets from a stash directory. Works as both an OpenCode plugin and a Claude Code plugin.",
   "keywords": [
     "opencode",
     "opencode-ai",
     "opencode-plugin",
     "opencode-extensions",
+    "claude-code",
+    "claude-code-plugin",
     "agentikit",
     "ai-agent",
     "agent-framework",
@@ -29,6 +31,9 @@
   "files": [
     "dist",
     "src",
+    ".claude-plugin",
+    "skills",
+    "commands",
     "README.md"
   ],
   "bin": {

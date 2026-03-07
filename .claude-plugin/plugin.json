@@ -1,0 +1,21 @@
+{
+  "name": "agentikit",
+  "description": "Search, open, and run extension assets from an Agentikit stash directory. Provides tools, skills, commands, and agents management for AI coding assistants.",
+  "version": "0.0.1",
+  "author": {
+    "name": "itlackey",
+    "url": "https://github.com/itlackey"
+  },
+  "homepage": "https://github.com/itlackey/agentikit#readme",
+  "repository": "https://github.com/itlackey/agentikit",
+  "license": "CC-BY-4.0",
+  "keywords": [
+    "agentikit",
+    "stash",
+    "tools",
+    "skills",
+    "commands",
+    "agents",
+    "plugin"
+  ]
+}
