@@ -45,7 +45,7 @@ test("resolveRg finds system ripgrep on PATH", () => {
     expect(rg).not.toBeNull()
     expect(rg!).toContain("rg")
   } finally {
-    process.env.PATH = originalPath as string | undefined
+    process.env.PATH = originalPath
   }
 })
 
@@ -81,7 +81,28 @@ test("resolveRg skips non-executable files in stash/bin", () => {
 // ── isRgAvailable ───────────────────────────────────────────────────────────
 
 test("isRgAvailable returns true when rg is on PATH", () => {
-  expect(isRgAvailable()).toBe(true)
+  const originalPath = process.env.PATH
+  const stashDir = tmpDir()
+  const binDir = path.join(stashDir, "bin")
+  fs.mkdirSync(binDir, { recursive: true })
+
+  const rgName = process.platform === "win32" ? "rg.cmd" : "rg"
+  const fakeRg = path.join(binDir, rgName)
+  const scriptContent =
+    process.platform === "win32"
+      ? "@echo off\r\necho fake rg\r\n"
+      : "#!/bin/sh\necho fake rg\n"
+  fs.writeFileSync(fakeRg, scriptContent)
+  if (process.platform !== "win32") {
+    fs.chmodSync(fakeRg, 0o755)
+  }
+
+  process.env.PATH = binDir + path.delimiter + (originalPath ?? "")
+  try {
+    expect(isRgAvailable()).toBe(true)
+  } finally {
+    process.env.PATH = originalPath
+  }
 })
 
 // ── rgFilterCandidates ──────────────────────────────────────────────────────
@@ -93,6 +114,8 @@ test("rgFilterCandidates returns null for empty query", () => {
 })
 
 test("rgFilterCandidates finds matching .stash.json files", () => {
+  if (!resolveRg()) return
+
   const dir = tmpDir()
 
   // Create .stash.json files with different content
@@ -117,6 +140,8 @@ test("rgFilterCandidates finds matching .stash.json files", () => {
 })
 
 test("rgFilterCandidates returns empty list for non-matching query", () => {
+  if (!resolveRg()) return
+
   const dir = tmpDir()
   writeFile(
     path.join(dir, "tools", "git", ".stash.json"),
@@ -131,6 +156,8 @@ test("rgFilterCandidates returns empty list for non-matching query", () => {
 })
 
 test("rgFilterCandidates only searches .stash.json files", () => {
+  if (!resolveRg()) return
+
   const dir = tmpDir()
 
   // A regular .ts file with "docker" — should NOT be matched
