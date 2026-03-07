@@ -17,13 +17,13 @@ bun add -g agentikit
 Use the install scripts for a copy/paste install:
 
 ```sh
-# macOS / Linux (recommended: pin a release tag)
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+# pin a release tag)
 curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash -s -- v1.2.3
-```
 
-```sh
 # PowerShell (Windows)
-irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1 v1.2.3
+irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1
 ```
 
 The shell installer verifies the downloaded binary against release `checksums.txt` before installing it.
