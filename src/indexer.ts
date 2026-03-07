@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { type AgentikitAssetType, SCRIPT_EXTENSIONS, TYPE_DIRS, resolveStashDir } from "./common"
+import { type AgentikitAssetType, TYPE_DIRS, resolveStashDir } from "./common"
 import {
   type StashFile,
   type StashEntry,
@@ -9,6 +9,7 @@ import {
   generateMetadata,
 } from "./metadata"
 import { TfIdfAdapter, type ScoredEntry } from "./similarity"
+import { walkStash } from "./walker"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -90,9 +91,9 @@ export function agentikitIndex(options?: { stashDir?: string; full?: boolean }):
     if (!fs.existsSync(typeRoot) || !fs.statSync(typeRoot).isDirectory()) continue
 
     // Group files by their immediate parent directory
-    const dirGroups = collectDirectoryGroups(typeRoot, assetType)
+    const dirGroups = walkStash(typeRoot, assetType)
 
-    for (const [dirPath, files] of dirGroups) {
+    for (const { dirPath, files } of dirGroups) {
       // Incremental: skip directories that haven't changed
       const prevEntries = previousEntriesByDir.get(dirPath)
       if (isIncremental && prevEntries && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
@@ -201,52 +202,6 @@ function isDirStale(
   }
 
   return false
-}
-
-function collectDirectoryGroups(
-  typeRoot: string,
-  assetType: AgentikitAssetType,
-): Map<string, string[]> {
-  const groups = new Map<string, string[]>()
-
-  const walk = (dir: string): void => {
-    if (!fs.existsSync(dir)) return
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (entry.name === ".stash.json") continue
-      const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        walk(fullPath)
-      } else if (entry.isFile() && isRelevantFile(entry.name, assetType)) {
-        const parentDir = path.dirname(fullPath)
-        const existing = groups.get(parentDir)
-        if (existing) {
-          existing.push(fullPath)
-        } else {
-          groups.set(parentDir, [fullPath])
-        }
-      }
-    }
-  }
-
-  walk(typeRoot)
-  return groups
-}
-
-function isRelevantFile(fileName: string, assetType: AgentikitAssetType): boolean {
-  const ext = path.extname(fileName).toLowerCase()
-  switch (assetType) {
-    case "tool":
-      return SCRIPT_EXTENSIONS.has(ext)
-    case "skill":
-      return fileName === "SKILL.md"
-    case "command":
-    case "agent":
-    case "knowledge":
-      return ext === ".md"
-    default:
-      return false
-  }
 }
 
 export function buildSearchText(entry: StashEntry): string {

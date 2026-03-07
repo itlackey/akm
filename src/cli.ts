@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { agentikitSearch, agentikitOpen, agentikitRun, agentikitInit, type KnowledgeView } from "./stash"
+import { agentikitSearch, agentikitOpen, agentikitRun, type KnowledgeView } from "./stash"
+import { agentikitInit } from "./init"
 import { agentikitIndex } from "./indexer"
 
 const args = process.argv.slice(2)

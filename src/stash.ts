@@ -1,14 +1,20 @@
-import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import { type AgentikitAssetType, IS_WINDOWS, SCRIPT_EXTENSIONS, TYPE_DIRS, isAssetType, resolveStashDir, toPosix, hasErrnoCode } from "./common"
+import { type AgentikitAssetType, SCRIPT_EXTENSIONS, TYPE_DIRS, isAssetType, resolveStashDir, toPosix, hasErrnoCode } from "./common"
+import { parseFrontmatter, toStringOrUndefined } from "./frontmatter"
+import { agentikitInit, type InitResponse } from "./init"
 import { loadSearchIndex, buildSearchText } from "./indexer"
 import { TfIdfAdapter, type ScoredEntry } from "./similarity"
-import { rgFilterCandidates, ensureRg } from "./ripgrep"
+import { rgFilterCandidates } from "./ripgrep"
 import { parseMarkdownToc, extractSection, extractLineRange, extractFrontmatterOnly, formatToc } from "./markdown"
+import { buildToolInfo, runToolExecution, type ToolKind } from "./tool-runner"
+import { walkStash } from "./walker"
 
 export type { AgentikitAssetType } from "./common"
 export { resolveStashDir } from "./common"
+export { agentikitInit } from "./init"
+export type { InitResponse } from "./init"
+export type { ToolKind } from "./tool-runner"
 export type AgentikitSearchType = AgentikitAssetType | "any"
 
 export interface SearchHit {
@@ -16,12 +22,11 @@ export interface SearchHit {
   name: string
   path: string
   openRef: string
-  summary?: string
   description?: string
   tags?: string[]
   score?: number
   runCmd?: string
-  kind?: "bash" | "bun" | "powershell" | "cmd"
+  kind?: ToolKind
 }
 
 export interface SearchResponse {
@@ -41,7 +46,7 @@ export interface OpenResponse {
   toolPolicy?: unknown
   modelHint?: unknown
   runCmd?: string
-  kind?: "bash" | "bun" | "powershell" | "cmd"
+  kind?: ToolKind
 }
 
 export interface RunResponse {
@@ -63,19 +68,6 @@ type IndexedAsset = {
   type: AgentikitAssetType
   name: string
   path: string
-}
-
-interface ToolExecution {
-  command: string
-  args: string[]
-  cwd?: string
-}
-
-interface ToolInfo {
-  runCmd: string
-  kind: "bash" | "bun" | "powershell" | "cmd"
-  install?: ToolExecution
-  execute: ToolExecution
 }
 
 const DEFAULT_LIMIT = 20
@@ -356,29 +348,20 @@ function normalizeLimit(limit?: number): number {
   return Math.min(Math.floor(limit), 200)
 }
 
-const ASSET_COLLECTORS: Record<AgentikitAssetType, (root: string, file: string) => IndexedAsset | undefined> = {
-  tool(root, file) {
-    if (!SCRIPT_EXTENSIONS.has(path.extname(file).toLowerCase())) return undefined
-    return { type: "tool", name: toPosix(path.relative(root, file)), path: file }
-  },
-  skill(root, file) {
-    if (path.basename(file) !== "SKILL.md") return undefined
-    const relDir = toPosix(path.dirname(path.relative(root, file)))
-    if (!relDir || relDir === ".") return undefined
-    return { type: "skill", name: relDir, path: file }
-  },
-  command(root, file) {
-    if (path.extname(file).toLowerCase() !== ".md") return undefined
-    return { type: "command", name: toPosix(path.relative(root, file)), path: file }
-  },
-  agent(root, file) {
-    if (path.extname(file).toLowerCase() !== ".md") return undefined
-    return { type: "agent", name: toPosix(path.relative(root, file)), path: file }
-  },
-  knowledge(root, file) {
-    if (path.extname(file).toLowerCase() !== ".md") return undefined
-    return { type: "knowledge", name: toPosix(path.relative(root, file)), path: file }
-  },
+function fileToAsset(assetType: AgentikitAssetType, root: string, file: string): IndexedAsset | undefined {
+  switch (assetType) {
+    case "tool":
+      return { type: "tool", name: toPosix(path.relative(root, file)), path: file }
+    case "skill": {
+      const relDir = toPosix(path.dirname(path.relative(root, file)))
+      if (!relDir || relDir === ".") return undefined
+      return { type: "skill", name: relDir, path: file }
+    }
+    case "command":
+    case "agent":
+    case "knowledge":
+      return { type: assetType, name: toPosix(path.relative(root, file)), path: file }
+  }
 }
 
 function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
@@ -386,31 +369,15 @@ function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[
   const types = type === "any" ? (Object.keys(TYPE_DIRS) as AgentikitAssetType[]) : [type]
   for (const assetType of types) {
     const root = path.join(stashDir, TYPE_DIRS[assetType])
-    const collect = ASSET_COLLECTORS[assetType]
-    walkFiles(root, (file) => {
-      const asset = collect(root, file)
-      if (asset) assets.push(asset)
-    })
-  }
-  return assets
-}
-
-function walkFiles(root: string, onFile: (file: string) => void): void {
-  if (!fs.existsSync(root)) return
-  const stack = [root]
-  while (stack.length > 0) {
-    const current = stack.pop()
-    if (!current) continue
-    const entries = fs.readdirSync(current, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name)
-      if (entry.isDirectory()) {
-        stack.push(fullPath)
-      } else if (entry.isFile()) {
-        onFile(fullPath)
+    const groups = walkStash(root, assetType)
+    for (const { files } of groups) {
+      for (const file of files) {
+        const asset = fileToAsset(assetType, root, file)
+        if (asset) assets.push(asset)
       }
     }
   }
+  return assets
 }
 
 function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
@@ -492,76 +459,6 @@ function readTypeRootStat(root: string, type: AgentikitAssetType, name: string):
   }
 }
 
-function buildToolInfo(stashDir: string, filePath: string): ToolInfo {
-  const ext = path.extname(filePath).toLowerCase()
-
-  if (ext === ".sh") {
-    return {
-      runCmd: `bash ${shellQuote(filePath)}`,
-      kind: "bash",
-      execute: { command: "bash", args: [filePath] },
-    }
-  }
-
-  if (ext === ".ps1") {
-    return {
-      runCmd: `powershell -ExecutionPolicy Bypass -File ${shellQuote(filePath)}`,
-      kind: "powershell",
-      execute: { command: "powershell", args: ["-ExecutionPolicy", "Bypass", "-File", filePath] },
-    }
-  }
-
-  if (ext === ".cmd" || ext === ".bat") {
-    return {
-      runCmd: `cmd /c ${shellQuote(filePath)}`,
-      kind: "cmd",
-      execute: { command: "cmd", args: ["/c", filePath] },
-    }
-  }
-
-  if (ext !== ".ts" && ext !== ".js") {
-    throw new Error(`Unsupported tool extension: ${ext}`)
-  }
-
-  const toolsRoot = path.resolve(path.join(stashDir, "tools"))
-  const pkgDir = findNearestPackageDir(path.dirname(filePath), toolsRoot)
-  if (!pkgDir) {
-    return {
-      runCmd: `bun ${shellQuote(filePath)}`,
-      kind: "bun",
-      execute: { command: "bun", args: [filePath] },
-    }
-  }
-  const installFlag = process.env.AGENTIKIT_BUN_INSTALL
-  const shouldInstall = installFlag === "1" || installFlag === "true" || installFlag === "yes"
-
-  const quotedPkgDir = shellQuote(pkgDir)
-  const quotedFilePath = shellQuote(filePath)
-  const cdCmd = IS_WINDOWS ? `cd /d ${quotedPkgDir}` : `cd ${quotedPkgDir}`
-  const chain = IS_WINDOWS ? " & " : " && "
-  return {
-    runCmd: shouldInstall
-      ? `${cdCmd}${chain}bun install${chain}bun ${quotedFilePath}`
-      : `${cdCmd}${chain}bun ${quotedFilePath}`,
-    kind: "bun",
-    install: shouldInstall ? { command: "bun", args: ["install"], cwd: pkgDir } : undefined,
-    execute: { command: "bun", args: [filePath], cwd: pkgDir },
-  }
-}
-
-function findNearestPackageDir(startDir: string, toolsRoot: string): string | undefined {
-  let current = path.resolve(startDir)
-  const root = path.resolve(toolsRoot)
-  while (isWithin(current, root)) {
-    if (fs.existsSync(path.join(current, "package.json"))) {
-      return current
-    }
-    if (current === root) return undefined
-    current = path.dirname(current)
-  }
-  return undefined
-}
-
 function isWithin(candidate: string, root: string): boolean {
   const normalizedRoot = normalizeFsPathForComparison(path.resolve(root))
   const normalizedCandidate = normalizeFsPathForComparison(path.resolve(candidate))
@@ -571,189 +468,5 @@ function isWithin(candidate: string, root: string): boolean {
 
 function normalizeFsPathForComparison(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value
-}
-
-function parseFrontmatter(raw: string): { data: Record<string, unknown>; content: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
-  if (!match) {
-    return { data: {}, content: raw }
-  }
-
-  const data: Record<string, unknown> = {}
-  let currentKey: string | null = null
-  let nested: Record<string, unknown> | null = null
-
-  for (const line of match[1].split(/\r?\n/)) {
-    const indented = line.match(/^  (\w[\w-]*):\s*(.+)$/)
-    if (indented && currentKey && nested) {
-      nested[indented[1]] = parseYamlScalar(indented[2].trim())
-      continue
-    }
-
-    const top = line.match(/^(\w[\w-]*):\s*(.*)$/)
-    if (!top) {
-      continue
-    }
-
-    currentKey = top[1]
-    const value = top[2].trim()
-    if (value === "") {
-      nested = {}
-      data[currentKey] = nested
-    } else {
-      nested = null
-      data[currentKey] = parseYamlScalar(value)
-    }
-  }
-  return { data, content: match[2] }
-}
-
-function parseYamlScalar(value: string): unknown {
-  if (value === "") return ""
-  if (value === "true") return true
-  if (value === "false") return false
-  const asNumber = Number(value)
-  if (!Number.isNaN(asNumber)) return asNumber
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1)
-  }
-  return value
-}
-
-function toStringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined
-}
-
-function shellQuote(input: string): string {
-  if (/[\r\n\t\0]/.test(input)) {
-    throw new Error("Unsupported control characters in stash path.")
-  }
-  if (IS_WINDOWS) {
-    return `"${input.replace(/"/g, '""')}"`
-  }
-  const escaped = input
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, "\\$")
-    .replace(/`/g, "\\`")
-  return `"${escaped}"`
-}
-
-function runToolExecution(execution: ToolExecution): { output: string; exitCode: number } {
-  const result = spawnSync(execution.command, execution.args, {
-    cwd: execution.cwd,
-    encoding: "utf8",
-    timeout: 60_000,
-  })
-
-  const stdout = typeof result.stdout === "string" ? result.stdout : ""
-  const stderr = typeof result.stderr === "string" ? result.stderr : ""
-  const combinedOutput = combineProcessOutput(stdout, stderr)
-  if (typeof result.status === "number") {
-    return { output: combinedOutput, exitCode: result.status }
-  }
-  if (result.error) {
-    return {
-      output: `${combinedOutput}${result.error.message ? `\n${result.error.message}` : ""}`.trim(),
-      exitCode: 1,
-    }
-  }
-  return {
-    output: combinedOutput || `Unexpected process termination while running "${execution.command}": no status code or error information available.`,
-    exitCode: 1,
-  }
-}
-
-function combineProcessOutput(stdout: string, stderr: string): string {
-  if (stdout && stderr) {
-    return `stdout:\n${stdout.trim()}\n\nstderr:\n${stderr.trim()}`
-  }
-  return `${stdout}${stderr}`.trim()
-}
-
-export interface InitResponse {
-  stashDir: string
-  created: boolean
-  envSet: boolean
-  profileUpdated?: string
-  ripgrep?: {
-    rgPath: string
-    installed: boolean
-    version: string
-  }
-}
-
-export function agentikitInit(): InitResponse {
-  let stashDir: string
-  const home = process.env.HOME || ""
-  if (IS_WINDOWS) {
-    const docs = process.env.USERPROFILE
-      ? path.join(process.env.USERPROFILE, "Documents")
-      : ""
-    if (!docs) {
-      throw new Error("Unable to determine Documents folder. Ensure USERPROFILE is set.")
-    }
-    stashDir = path.join(docs, "agentikit")
-  } else {
-    if (!home) {
-      throw new Error("Unable to determine home directory. Set HOME.")
-    }
-    stashDir = path.join(home, "agentikit")
-  }
-
-  let created = false
-  if (!fs.existsSync(stashDir)) {
-    fs.mkdirSync(stashDir, { recursive: true })
-    created = true
-  }
-
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge"]) {
-    const subDir = path.join(stashDir, sub)
-    if (!fs.existsSync(subDir)) {
-      fs.mkdirSync(subDir, { recursive: true })
-    }
-  }
-
-  let envSet = false
-  let profileUpdated: string | undefined
-
-  if (IS_WINDOWS) {
-    const result = spawnSync("setx", ["AGENTIKIT_STASH_DIR", stashDir], {
-      encoding: "utf8",
-      timeout: 10_000,
-    })
-    envSet = result.status === 0
-  } else {
-    const shell = process.env.SHELL || ""
-    let profile: string
-    if (shell.endsWith("/zsh")) {
-      profile = path.join(home, ".zshrc")
-    } else if (shell.endsWith("/bash")) {
-      profile = path.join(home, ".bashrc")
-    } else {
-      profile = path.join(home, ".profile")
-    }
-
-    const exportLine = `export AGENTIKIT_STASH_DIR="${stashDir}"`
-    const existing = fs.existsSync(profile) ? fs.readFileSync(profile, "utf8") : ""
-    if (!existing.includes("AGENTIKIT_STASH_DIR")) {
-      fs.appendFileSync(profile, `\n# Agentikit stash directory\n${exportLine}\n`)
-      envSet = true
-      profileUpdated = profile
-    }
-  }
-
-  process.env.AGENTIKIT_STASH_DIR = stashDir
-
-  // Ensure ripgrep is available (install to stash/bin if needed)
-  let ripgrep: InitResponse["ripgrep"]
-  try {
-    const rgResult = ensureRg(stashDir)
-    ripgrep = rgResult
-  } catch {
-    // Non-fatal: ripgrep is optional, search works without it
-  }
-
-  return { stashDir, created, envSet, profileUpdated, ripgrep }
 }
 

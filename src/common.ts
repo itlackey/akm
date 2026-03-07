@@ -21,7 +21,7 @@ export const TYPE_DIRS: Record<AgentikitAssetType, string> = {
 // ── Validators ──────────────────────────────────────────────────────────────
 
 export function isAssetType(type: string): type is AgentikitAssetType {
-  return type === "tool" || type === "skill" || type === "command" || type === "agent" || type === "knowledge"
+  return type in TYPE_DIRS
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

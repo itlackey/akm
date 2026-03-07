@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { type AgentikitAssetType, SCRIPT_EXTENSIONS, isAssetType } from "./common"
+import { parseFrontmatter, toStringOrUndefined } from "./frontmatter"
 import { parseMarkdownToc, type TocHeading } from "./markdown"
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -212,14 +213,8 @@ export function extractFrontmatterDescription(filePath: string): string | null {
     return null
   }
 
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!match) return null
-
-  for (const line of match[1].split(/\r?\n/)) {
-    const m = line.match(/^description:\s*"?(.+?)"?\s*$/)
-    if (m) return m[1]
-  }
-  return null
+  const parsed = parseFrontmatter(content)
+  return toStringOrUndefined(parsed.data.description) ?? null
 }
 
 export function extractPackageMetadata(
