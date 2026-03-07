@@ -64,6 +64,25 @@ function parseJson(text: string): any {
   return JSON.parse(text)
 }
 
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME
+let testCacheDir = ""
+
+beforeAll(() => {
+  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-cache-"))
+  process.env.XDG_CACHE_HOME = testCacheDir
+})
+
+afterAll(() => {
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome
+  }
+  if (testCacheDir) {
+    fs.rmSync(testCacheDir, { recursive: true, force: true })
+  }
+})
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Scenario 1: Full lifecycle — user sets up stash, indexes, searches, runs
 // ═══════════════════════════════════════════════════════════════════════════

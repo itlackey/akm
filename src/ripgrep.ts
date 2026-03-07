@@ -7,6 +7,49 @@ import path from "node:path"
 const IS_WINDOWS = process.platform === "win32"
 const RG_BINARY = IS_WINDOWS ? "rg.exe" : "rg"
 
+function canExecute(filePath: string): boolean {
+  if (!fs.existsSync(filePath)) return false
+  if (IS_WINDOWS) return true
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveFromPath(): string | null {
+  const rawPath = process.env.PATH
+  if (!rawPath) return null
+
+  const pathEntries = rawPath.split(path.delimiter).filter(Boolean)
+
+  if (IS_WINDOWS) {
+    const pathext = (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM")
+      .split(";")
+      .filter(Boolean)
+      .map((ext) => ext.toLowerCase())
+
+    for (const entry of pathEntries) {
+      const directCandidate = path.join(entry, "rg")
+      if (canExecute(directCandidate)) return directCandidate
+
+      for (const ext of pathext) {
+        const candidate = path.join(entry, `rg${ext}`)
+        if (canExecute(candidate)) return candidate
+      }
+    }
+    return null
+  }
+
+  for (const entry of pathEntries) {
+    const candidate = path.join(entry, "rg")
+    if (canExecute(candidate)) return candidate
+  }
+
+  return null
+}
+
 /**
  * Resolve the path to a usable ripgrep binary.
  * Checks in order:
@@ -18,24 +61,10 @@ export function resolveRg(stashDir?: string): string | null {
   // Check stash bin directory first
   if (stashDir) {
     const stashRg = path.join(stashDir, "bin", RG_BINARY)
-    if (fs.existsSync(stashRg)) {
-      try {
-        fs.accessSync(stashRg, fs.constants.X_OK)
-        return stashRg
-      } catch {
-        // Not executable — skip
-      }
-    }
+    if (canExecute(stashRg)) return stashRg
   }
 
-  // Check system PATH
-  const which = IS_WINDOWS ? "where" : "which"
-  const result = spawnSync(which, ["rg"], { encoding: "utf8", timeout: 5_000 })
-  if (result.status === 0 && result.stdout?.trim()) {
-    return result.stdout.trim().split(/\r?\n/)[0]
-  }
-
-  return null
+  return resolveFromPath()
 }
 
 /**
@@ -83,6 +112,8 @@ export function rgFilterCandidates(
   const result = spawnSync(rgPath, [
     "-i",                        // case insensitive
     "-l",                        // files-with-matches only
+    "--hidden",                  // include hidden files such as .stash.json
+    "--no-ignore",               // include ignored files to ensure metadata is searchable
     "--glob", ".stash.json",     // only search .stash.json files
     pattern,
     searchDir,
@@ -243,7 +274,9 @@ function downloadAndExtractTarGz(url: string, archiveName: string, destBinary: s
 }
 
 function downloadAndExtractZip(url: string, archiveName: string, destBinary: string): void {
-  const tmpZip = path.join(path.dirname(destBinary), "rg-download.zip")
+  const destDir = path.dirname(destBinary)
+  const tmpZip = path.join(destDir, "rg-download.zip")
+  const expandedDir = path.join(destDir, archiveName)
   try {
     // Download
     const dlResult = spawnSync("curl", ["-fsSL", "-o", tmpZip, url], {
@@ -257,8 +290,8 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
     // Extract just the rg.exe
     const extractResult = spawnSync("powershell", [
       "-Command",
-      `Expand-Archive -Path "${tmpZip}" -DestinationPath "${path.dirname(destBinary)}" -Force; ` +
-      `Move-Item -Force "${path.join(path.dirname(destBinary), archiveName, "rg.exe")}" "${destBinary}"`,
+      `Expand-Archive -Path "${tmpZip}" -DestinationPath "${destDir}" -Force; ` +
+      `Move-Item -Force "${path.join(destDir, archiveName, "rg.exe")}" "${destBinary}"`,
     ], {
       encoding: "utf8",
       timeout: 60_000,
@@ -268,6 +301,7 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
     }
   } finally {
     if (fs.existsSync(tmpZip)) fs.unlinkSync(tmpZip)
+    if (fs.existsSync(expandedDir)) fs.rmSync(expandedDir, { recursive: true, force: true })
   }
 }
 
