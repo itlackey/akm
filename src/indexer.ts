@@ -32,6 +32,9 @@ export interface IndexResponse {
   totalEntries: number
   generatedMetadata: number
   indexPath: string
+  mode: "full" | "incremental"
+  directoriesScanned: number
+  directoriesSkipped: number
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -60,10 +63,27 @@ export function loadSearchIndex(): SearchIndex | null {
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
-export function agentikitIndex(options?: { stashDir?: string }): IndexResponse {
+export function agentikitIndex(options?: { stashDir?: string; full?: boolean }): IndexResponse {
   const stashDir = options?.stashDir || resolveStashDir()
   const allEntries: IndexedEntry[] = []
   let generatedCount = 0
+  let scannedDirs = 0
+  let skippedDirs = 0
+
+  // Load previous index for incremental mode
+  const previousIndex = !options?.full ? loadSearchIndex() : null
+  const isIncremental = previousIndex !== null && previousIndex.stashDir === stashDir
+  const builtAtMs = isIncremental ? new Date(previousIndex.builtAt).getTime() : 0
+
+  // Build lookup of previous entries by dirPath
+  const previousEntriesByDir = new Map<string, IndexedEntry[]>()
+  if (isIncremental) {
+    for (const ie of previousIndex.entries) {
+      const list = previousEntriesByDir.get(ie.dirPath) || []
+      list.push(ie)
+      previousEntriesByDir.set(ie.dirPath, list)
+    }
+  }
 
   for (const assetType of Object.keys(TYPE_DIRS) as AgentikitAssetType[]) {
     const typeRoot = path.join(stashDir, TYPE_DIRS[assetType])
@@ -73,6 +93,16 @@ export function agentikitIndex(options?: { stashDir?: string }): IndexResponse {
     const dirGroups = collectDirectoryGroups(typeRoot, assetType)
 
     for (const [dirPath, files] of dirGroups) {
+      // Incremental: skip directories that haven't changed
+      const prevEntries = previousEntriesByDir.get(dirPath)
+      if (isIncremental && prevEntries && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+        allEntries.push(...prevEntries)
+        skippedDirs++
+        continue
+      }
+
+      scannedDirs++
+
       // Try loading existing .stash.json
       let stash = loadStashFile(dirPath)
 
@@ -127,10 +157,51 @@ export function agentikitIndex(options?: { stashDir?: string }): IndexResponse {
     totalEntries: allEntries.length,
     generatedMetadata: generatedCount,
     indexPath,
+    mode: isIncremental ? "incremental" : "full",
+    directoriesScanned: scannedDirs,
+    directoriesSkipped: skippedDirs,
   }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+function isDirStale(
+  dirPath: string,
+  currentFiles: string[],
+  previousEntries: IndexedEntry[],
+  builtAtMs: number,
+): boolean {
+  // Check if file set changed (additions or deletions)
+  const prevFileNames = new Set(
+    previousEntries
+      .map((ie) => ie.entry.entry)
+      .filter((e): e is string => !!e),
+  )
+  const currFileNames = new Set(currentFiles.map((f) => path.basename(f)))
+  if (prevFileNames.size !== currFileNames.size) return true
+  for (const name of currFileNames) {
+    if (!prevFileNames.has(name)) return true
+  }
+
+  // Check modification times of current files
+  for (const file of currentFiles) {
+    try {
+      if (fs.statSync(file).mtimeMs > builtAtMs) return true
+    } catch {
+      return true
+    }
+  }
+
+  // Check .stash.json modification time
+  const stashPath = path.join(dirPath, ".stash.json")
+  try {
+    if (fs.existsSync(stashPath) && fs.statSync(stashPath).mtimeMs > builtAtMs) return true
+  } catch {
+    // ignore
+  }
+
+  return false
+}
 
 function collectDirectoryGroups(
   typeRoot: string,

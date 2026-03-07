@@ -15,7 +15,7 @@ function usage(): never {
   console.error("")
   console.error("Commands:")
   console.error("  init                 Initialize agentikit stash directory and set AGENTIKIT_STASH_DIR")
-  console.error("  index                Build search index with metadata generation")
+  console.error("  index [--full]       Build search index (incremental by default; --full forces full reindex)")
   console.error("  search [query]       Search the stash (--type tool|skill|command|agent|knowledge|any) (--limit N)")
   console.error("  open <type:name>     Open a stash asset by ref")
   console.error("       Knowledge view options: --view full|toc|frontmatter|section|lines")
@@ -33,7 +33,8 @@ switch (command) {
     break
   }
   case "index": {
-    const result = agentikitIndex()
+    const full = args.includes("--full")
+    const result = agentikitIndex({ full })
     console.log(JSON.stringify(result, null, 2))
     break
   }
