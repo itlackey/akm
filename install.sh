@@ -30,22 +30,49 @@ TAG="${1:-latest}"
 
 if [ "$TAG" = "latest" ]; then
   DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
+  CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/checksums.txt"
 else
   DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${BINARY}"
+  CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/checksums.txt"
 fi
 
 TMPFILE="$(mktemp)"
-trap 'rm -f "$TMPFILE"' EXIT
+CHECKSUM_FILE="$(mktemp)"
+trap 'rm -f "$TMPFILE" "$CHECKSUM_FILE"' EXIT
 
 echo "Downloading ${BINARY}..."
 if command -v curl &>/dev/null; then
   curl -fsSL -o "$TMPFILE" "$DOWNLOAD_URL"
+  curl -fsSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL"
 elif command -v wget &>/dev/null; then
   wget -qO "$TMPFILE" "$DOWNLOAD_URL"
+  wget -qO "$CHECKSUM_FILE" "$CHECKSUM_URL"
 else
   echo "Error: curl or wget is required" >&2
   exit 1
 fi
+
+EXPECTED_HASH="$(awk -v f="$BINARY" '$2 == f { print $1 }' "$CHECKSUM_FILE")"
+if [ -z "$EXPECTED_HASH" ]; then
+  echo "Error: checksum not found for ${BINARY}" >&2
+  exit 1
+fi
+
+if command -v sha256sum &>/dev/null; then
+  ACTUAL_HASH="$(sha256sum "$TMPFILE" | awk '{ print $1 }')"
+elif command -v shasum &>/dev/null; then
+  ACTUAL_HASH="$(shasum -a 256 "$TMPFILE" | awk '{ print $1 }')"
+else
+  echo "Error: sha256sum or shasum is required" >&2
+  exit 1
+fi
+
+if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+  echo "Error: checksum verification failed for ${BINARY}" >&2
+  exit 1
+fi
+
+echo "Checksum verified for ${BINARY}."
 
 chmod +x "$TMPFILE"
 

@@ -1,6 +1,6 @@
 {
   "name": "@itlackey/agentikit",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "description": "Simplified OpenCode tools for searching, opening, and running extension assets from a stash directory.",
   "keywords": [

@@ -1,18 +1,87 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Tag to release (e.g. v1.2.3)"
+      version:
+        description: "Version to release (e.g. 1.2.3). Bumps package.json, publishes to npm, builds binaries, and creates a GitHub release."
         required: true
         type: string
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+
+      - run: bun test
+
+  version:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Ensure workflow runs from default branch
+        if: ${{ github.ref_name != github.event.repository.default_branch }}
+        run: |
+          echo "Releases must be dispatched from ${{ github.event.repository.default_branch }}."
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bump version
+        run: npm version "${{ inputs.version }}" --no-git-tag-version
+
+      - name: Commit and tag
+        id: tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${{ inputs.version }}"
+          git tag "v${{ inputs.version }}"
+          git push
+          git push origin "v${{ inputs.version }}"
+          echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: bun install
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   build:
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -29,6 +98,8 @@ jobs:
             artifact: agentikit-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: oven-sh/setup-bun@v2
 
@@ -42,8 +113,8 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
-  release:
-    needs: build
+  github-release:
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -52,13 +123,26 @@ jobs:
         with:
           path: artifacts
 
+      - name: Generate checksums
+        run: |
+          : > artifacts/checksums.txt
+          for file in \
+            artifacts/agentikit-linux-x64/agentikit-linux-x64 \
+            artifacts/agentikit-linux-arm64/agentikit-linux-arm64 \
+            artifacts/agentikit-darwin-x64/agentikit-darwin-x64 \
+            artifacts/agentikit-darwin-arm64/agentikit-darwin-arm64 \
+            artifacts/agentikit-windows-x64.exe/agentikit-windows-x64.exe
+          do
+            printf '%s  %s\n' "$(sha256sum "$file" | awk '{ print $1 }')" "$(basename "$file")" >> artifacts/checksums.txt
+          done
+
       - name: Create GitHub release
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          gh release create "$TAG" \
+          gh release create "${{ needs.version.outputs.tag }}" \
             --repo "${{ github.repository }}" \
-            --title "$TAG" \
+            --title "${{ needs.version.outputs.tag }}" \
             --generate-notes \
+            artifacts/checksums.txt \
             artifacts/agentikit-linux-x64/agentikit-linux-x64 \
             artifacts/agentikit-linux-arm64/agentikit-linux-arm64 \
             artifacts/agentikit-darwin-x64/agentikit-darwin-x64 \

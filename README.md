@@ -2,6 +2,44 @@
 
 Agentikit is a simplified OpenCode stash toolkit. It exposes three tools to OpenCode sessions so agents can **search**, **open**, and **run** extension assets directly from a stash directory — with no concept of copying files into OpenCode directories.
 
+## Installation
+
+### npm / bun
+
+```sh
+npm install @itlackey/agentikit
+# or
+bun add @itlackey/agentikit
+```
+
+### Standalone binary
+
+Use the install scripts for a copy/paste install:
+
+```sh
+# macOS / Linux (recommended: pin a release tag)
+curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash -s -- v1.2.3
+```
+
+```sh
+# PowerShell (Windows)
+irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1 v1.2.3
+```
+
+The shell installer verifies the downloaded binary against release `checksums.txt` before installing it.
+
+### OpenCode plugin
+
+Add agentikit as a plugin in your OpenCode config:
+
+```json
+{
+  "plugins": {
+    "agentikit": "@itlackey/agentikit"
+  }
+}
+```
+
 ## Stash model
 
 Set a stash path via `AGENTIKIT_STASH_DIR`.
