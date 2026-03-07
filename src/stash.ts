@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { loadSearchIndex, buildSearchText } from "./indexer"
+import { TfIdfAdapter, type ScoredEntry } from "./similarity"
 
 export type AgentikitAssetType = "tool" | "skill" | "command" | "agent"
 export type AgentikitSearchType = AgentikitAssetType | "any"
@@ -11,6 +13,9 @@ export interface SearchHit {
   path: string
   openRef: string
   summary?: string
+  description?: string
+  tags?: string[]
+  score?: number
   runCmd?: string
   kind?: "bash" | "bun" | "powershell" | "cmd"
 }
@@ -93,37 +98,83 @@ export function agentikitSearch(input: {
   const searchType = input.type ?? "any"
   const limit = normalizeLimit(input.limit)
   const stashDir = resolveStashDir()
+
+  // Try semantic search via persisted index
+  const semanticHits = trySemanticSearch(query, searchType, limit, stashDir)
+  if (semanticHits) {
+    return {
+      stashDir,
+      hits: semanticHits,
+      tip: semanticHits.length === 0 ? "No matching stash assets were found. Try running 'agentikit index' to rebuild." : undefined,
+    }
+  }
+
+  // Fallback: substring matching (no index built yet)
   const assets = indexAssets(stashDir, searchType)
   const hits = assets
     .filter((asset) => asset.name.toLowerCase().includes(query))
     .sort(compareAssets)
     .slice(0, limit)
-    .map((asset): SearchHit => {
-      if (asset.type !== "tool") {
-        return {
-          type: asset.type,
-          name: asset.name,
-          path: asset.path,
-          openRef: makeOpenRef(asset.type, asset.name),
-        }
-      }
-
-      const toolInfo = buildToolInfo(stashDir, asset.path)
-      return {
-        type: "tool",
-        name: asset.name,
-        path: asset.path,
-        openRef: makeOpenRef("tool", asset.name),
-        runCmd: toolInfo.runCmd,
-        kind: toolInfo.kind,
-      }
-    })
+    .map((asset): SearchHit => assetToSearchHit(asset, stashDir))
 
   return {
     stashDir,
     hits,
     tip: hits.length === 0 ? "No matching stash assets were found." : undefined,
   }
+}
+
+function trySemanticSearch(
+  query: string,
+  searchType: AgentikitSearchType,
+  limit: number,
+  stashDir: string,
+): SearchHit[] | null {
+  const index = loadSearchIndex()
+  if (!index || !index.entries || index.entries.length === 0) return null
+  if (index.stashDir !== stashDir) return null
+
+  const scoredEntries: ScoredEntry[] = index.entries.map((ie) => ({
+    id: `${ie.entry.type}:${ie.entry.name}`,
+    text: buildSearchText(ie.entry),
+    entry: ie.entry,
+    path: ie.path,
+  }))
+
+  let adapter: TfIdfAdapter
+  if (index.tfidf) {
+    adapter = TfIdfAdapter.deserialize(index.tfidf as any, scoredEntries)
+  } else {
+    adapter = new TfIdfAdapter()
+    adapter.buildIndex(scoredEntries)
+  }
+
+  const typeFilter = searchType === "any" ? undefined : searchType
+  const results = adapter.search(query, limit, typeFilter)
+
+  return results.map((r): SearchHit => {
+    const hit: SearchHit = {
+      type: r.entry.type,
+      name: r.entry.name,
+      path: r.path,
+      openRef: makeOpenRef(r.entry.type, r.entry.name),
+      description: r.entry.description,
+      tags: r.entry.tags,
+      score: r.score,
+    }
+
+    if (r.entry.type === "tool") {
+      try {
+        const toolInfo = buildToolInfo(stashDir, r.path)
+        hit.runCmd = toolInfo.runCmd
+        hit.kind = toolInfo.kind
+      } catch {
+        // Tool file may have been removed since indexing
+      }
+    }
+
+    return hit
+  })
 }
 
 export function agentikitOpen(input: { ref: string }): OpenResponse {
@@ -205,6 +256,26 @@ export function agentikitRun(input: { ref: string }): RunResponse {
     path: assetPath,
     output: runResult.output,
     exitCode: runResult.exitCode,
+  }
+}
+
+function assetToSearchHit(asset: IndexedAsset, stashDir: string): SearchHit {
+  if (asset.type !== "tool") {
+    return {
+      type: asset.type,
+      name: asset.name,
+      path: asset.path,
+      openRef: makeOpenRef(asset.type, asset.name),
+    }
+  }
+  const toolInfo = buildToolInfo(stashDir, asset.path)
+  return {
+    type: "tool",
+    name: asset.name,
+    path: asset.path,
+    openRef: makeOpenRef("tool", asset.name),
+    runCmd: toolInfo.runCmd,
+    kind: toolInfo.kind,
   }
 }
 

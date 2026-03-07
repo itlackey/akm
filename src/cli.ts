@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { agentikitSearch, agentikitOpen, agentikitRun, agentikitInit } from "./stash"
+import { agentikitIndex } from "./indexer"
 
 const args = process.argv.slice(2)
 const command = args[0]
@@ -14,6 +15,7 @@ function usage(): never {
   console.error("")
   console.error("Commands:")
   console.error("  init                 Initialize agentikit stash directory and set AGENTIKIT_STASH_DIR")
+  console.error("  index                Build search index with metadata generation")
   console.error("  search [query]       Search the stash (--type tool|skill|command|agent|any) (--limit N)")
   console.error("  open <type:name>     Open a stash asset by ref")
   console.error("  run <type:name>      Run a tool by ref")
@@ -23,6 +25,11 @@ function usage(): never {
 switch (command) {
   case "init": {
     const result = agentikitInit()
+    console.log(JSON.stringify(result, null, 2))
+    break
+  }
+  case "index": {
+    const result = agentikitIndex()
     console.log(JSON.stringify(result, null, 2))
     break
   }

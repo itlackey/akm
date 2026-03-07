@@ -16,9 +16,19 @@ The stash directory is configured via the `AGENTIKIT_STASH_DIR` environment vari
 
 ## Commands
 
+### Build the search index
+
+Scan stash directories, auto-generate missing `.stash.json` metadata, and build a semantic search index.
+
+```bash
+agentikit index
+```
+
+Run this after adding new extensions to enable semantic search ranking.
+
 ### Search the stash
 
-Find assets by name substring. Returns JSON with matching hits including `openRef` identifiers.
+Find assets by semantic similarity (if indexed) or name substring. Returns JSON with matching hits including `openRef` identifiers.
 
 ```bash
 agentikit search [query] [--type tool|skill|command|agent|any] [--limit N]
@@ -50,8 +60,9 @@ Returns the tool's stdout/stderr output and exit code.
 
 ## Workflow
 
-1. Search for assets: `agentikit search "deploy" --type tool`
-2. Inspect a result: `agentikit open <openRef>`
-3. Run a tool: `agentikit run <openRef>`
+1. Build the index: `agentikit index`
+2. Search for assets: `agentikit search "deploy" --type tool`
+3. Inspect a result: `agentikit open <openRef>`
+4. Run a tool: `agentikit run <openRef>`
 
 All output is JSON for easy parsing.
