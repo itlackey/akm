@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import type { AgentikitAssetType } from "./stash"
+import { type AgentikitAssetType, SCRIPT_EXTENSIONS, isAssetType } from "./common"
 import { parseMarkdownToc, type TocHeading } from "./markdown"
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof entry !== "object" || entry === null) return null
   const e = entry as Record<string, unknown>
   if (typeof e.name !== "string" || !e.name) return null
-  if (typeof e.type !== "string" || !isValidType(e.type)) return null
+  if (typeof e.type !== "string" || !isAssetType(e.type)) return null
 
   const result: StashEntry = {
     name: e.name,
@@ -93,13 +93,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   return result
 }
 
-function isValidType(type: string): boolean {
-  return type === "tool" || type === "skill" || type === "command" || type === "agent" || type === "knowledge"
-}
-
 // ── Metadata Generation ─────────────────────────────────────────────────────
-
-const SCRIPT_EXTENSIONS = new Set([".sh", ".ts", ".js", ".ps1", ".cmd", ".bat"])
 
 export function generateMetadata(
   dirPath: string,

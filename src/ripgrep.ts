@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { IS_WINDOWS } from "./common"
 
 // ── ripgrep Resolution ──────────────────────────────────────────────────────
-
-const IS_WINDOWS = process.platform === "win32"
 const RG_BINARY = IS_WINDOWS ? "rg.exe" : "rg"
 
 function canExecute(filePath: string): boolean {

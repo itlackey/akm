@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import type { AgentikitAssetType } from "./stash"
+import { type AgentikitAssetType, SCRIPT_EXTENSIONS, TYPE_DIRS, resolveStashDir } from "./common"
 import {
   type StashFile,
   type StashEntry,
@@ -37,15 +37,6 @@ export interface IndexResponse {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const INDEX_VERSION = 1
-const SCRIPT_EXTENSIONS = new Set([".sh", ".ts", ".js", ".ps1", ".cmd", ".bat"])
-
-const TYPE_DIRS: Record<AgentikitAssetType, string> = {
-  tool: "tools",
-  skill: "skills",
-  command: "commands",
-  agent: "agents",
-  knowledge: "knowledge",
-}
 
 // ── Index Path ──────────────────────────────────────────────────────────────
 
@@ -70,7 +61,7 @@ export function loadSearchIndex(): SearchIndex | null {
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
 export function agentikitIndex(options?: { stashDir?: string }): IndexResponse {
-  const stashDir = options?.stashDir || resolveStashDirForIndex()
+  const stashDir = options?.stashDir || resolveStashDir()
   const allEntries: IndexedEntry[] = []
   let generatedCount = 0
 
@@ -203,14 +194,3 @@ export function buildSearchText(entry: StashEntry): string {
   return parts.join(" ").toLowerCase()
 }
 
-function resolveStashDirForIndex(): string {
-  const raw = process.env.AGENTIKIT_STASH_DIR?.trim()
-  if (!raw) {
-    throw new Error("AGENTIKIT_STASH_DIR is not set. Run 'agentikit init' first.")
-  }
-  const stashDir = path.resolve(raw)
-  if (!fs.existsSync(stashDir) || !fs.statSync(stashDir).isDirectory()) {
-    throw new Error(`AGENTIKIT_STASH_DIR does not exist or is not a directory: "${stashDir}"`)
-  }
-  return stashDir
-}

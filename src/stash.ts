@@ -1,12 +1,14 @@
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import { type AgentikitAssetType, IS_WINDOWS, SCRIPT_EXTENSIONS, TYPE_DIRS, isAssetType, resolveStashDir, toPosix, hasErrnoCode } from "./common"
 import { loadSearchIndex, buildSearchText } from "./indexer"
 import { TfIdfAdapter, type ScoredEntry } from "./similarity"
 import { rgFilterCandidates, ensureRg } from "./ripgrep"
 import { parseMarkdownToc, extractSection, extractLineRange, extractFrontmatterOnly, formatToc } from "./markdown"
 
-export type AgentikitAssetType = "tool" | "skill" | "command" | "agent" | "knowledge"
+export type { AgentikitAssetType } from "./common"
+export { resolveStashDir } from "./common"
 export type AgentikitSearchType = AgentikitAssetType | "any"
 
 export interface SearchHit {
@@ -76,27 +78,7 @@ interface ToolInfo {
   execute: ToolExecution
 }
 
-const IS_WINDOWS = process.platform === "win32"
-const TOOL_EXTENSIONS = new Set([".sh", ".ts", ".js", ".ps1", ".cmd", ".bat"])
 const DEFAULT_LIMIT = 20
-
-export function resolveStashDir(): string {
-  const raw = process.env.AGENTIKIT_STASH_DIR?.trim()
-  if (!raw) {
-    throw new Error("AGENTIKIT_STASH_DIR is not set. Set it to your Agentikit stash path.")
-  }
-  const stashDir = path.resolve(raw)
-  let stat: fs.Stats
-  try {
-    stat = fs.statSync(stashDir)
-  } catch {
-    throw new Error(`Unable to read AGENTIKIT_STASH_DIR at "${stashDir}".`)
-  }
-  if (!stat.isDirectory()) {
-    throw new Error(`AGENTIKIT_STASH_DIR must point to a directory: "${stashDir}".`)
-  }
-  return stashDir
-}
 
 export function agentikitSearch(input: {
   query: string
@@ -226,8 +208,7 @@ function deriveOpenRefName(
   filePath: string,
   stashDir: string,
 ): string {
-  const indexer = ASSET_INDEXERS[type]
-  const root = path.join(stashDir, indexer.dir)
+  const root = path.join(stashDir, TYPE_DIRS[type])
   if (type === "skill") {
     // Skills resolve by directory name relative to skills/
     const rel = toPosix(path.dirname(path.relative(root, filePath)))
@@ -375,54 +356,39 @@ function normalizeLimit(limit?: number): number {
   return Math.min(Math.floor(limit), 200)
 }
 
-const ASSET_INDEXERS: Record<AgentikitAssetType, { dir: string; collect: (root: string, file: string) => IndexedAsset | undefined }> = {
-  tool: {
-    dir: "tools",
-    collect(root, file) {
-      if (!TOOL_EXTENSIONS.has(path.extname(file).toLowerCase())) return undefined
-      return { type: "tool", name: toPosix(path.relative(root, file)), path: file }
-    },
+const ASSET_COLLECTORS: Record<AgentikitAssetType, (root: string, file: string) => IndexedAsset | undefined> = {
+  tool(root, file) {
+    if (!SCRIPT_EXTENSIONS.has(path.extname(file).toLowerCase())) return undefined
+    return { type: "tool", name: toPosix(path.relative(root, file)), path: file }
   },
-  skill: {
-    dir: "skills",
-    collect(root, file) {
-      if (path.basename(file) !== "SKILL.md") return undefined
-      const relDir = toPosix(path.dirname(path.relative(root, file)))
-      if (!relDir || relDir === ".") return undefined
-      return { type: "skill", name: relDir, path: file }
-    },
+  skill(root, file) {
+    if (path.basename(file) !== "SKILL.md") return undefined
+    const relDir = toPosix(path.dirname(path.relative(root, file)))
+    if (!relDir || relDir === ".") return undefined
+    return { type: "skill", name: relDir, path: file }
   },
-  command: {
-    dir: "commands",
-    collect(root, file) {
-      if (path.extname(file).toLowerCase() !== ".md") return undefined
-      return { type: "command", name: toPosix(path.relative(root, file)), path: file }
-    },
+  command(root, file) {
+    if (path.extname(file).toLowerCase() !== ".md") return undefined
+    return { type: "command", name: toPosix(path.relative(root, file)), path: file }
   },
-  agent: {
-    dir: "agents",
-    collect(root, file) {
-      if (path.extname(file).toLowerCase() !== ".md") return undefined
-      return { type: "agent", name: toPosix(path.relative(root, file)), path: file }
-    },
+  agent(root, file) {
+    if (path.extname(file).toLowerCase() !== ".md") return undefined
+    return { type: "agent", name: toPosix(path.relative(root, file)), path: file }
   },
-  knowledge: {
-    dir: "knowledge",
-    collect(root, file) {
-      if (path.extname(file).toLowerCase() !== ".md") return undefined
-      return { type: "knowledge", name: toPosix(path.relative(root, file)), path: file }
-    },
+  knowledge(root, file) {
+    if (path.extname(file).toLowerCase() !== ".md") return undefined
+    return { type: "knowledge", name: toPosix(path.relative(root, file)), path: file }
   },
 }
 
 function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
   const assets: IndexedAsset[] = []
-  const types = type === "any" ? (Object.keys(ASSET_INDEXERS) as AgentikitAssetType[]) : [type]
+  const types = type === "any" ? (Object.keys(TYPE_DIRS) as AgentikitAssetType[]) : [type]
   for (const assetType of types) {
-    const indexer = ASSET_INDEXERS[assetType]
-    const root = path.join(stashDir, indexer.dir)
+    const root = path.join(stashDir, TYPE_DIRS[assetType])
+    const collect = ASSET_COLLECTORS[assetType]
     walkFiles(root, (file) => {
-      const asset = indexer.collect(root, file)
+      const asset = collect(root, file)
       if (asset) assets.push(asset)
     })
   }
@@ -487,7 +453,7 @@ function makeOpenRef(type: AgentikitAssetType, name: string): string {
 }
 
 function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: string): string {
-  const root = path.join(stashDir, ASSET_INDEXERS[type].dir)
+  const root = path.join(stashDir, TYPE_DIRS[type])
   const target = type === "skill" ? path.join(root, name, "SKILL.md") : path.join(root, name)
   const resolvedRoot = resolveAndValidateTypeRoot(root, type, name)
   const resolvedTarget = path.resolve(target)
@@ -501,7 +467,7 @@ function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: stri
   if (!isWithin(realTarget, resolvedRoot)) {
     throw new Error("Ref resolves outside the stash root.")
   }
-  if (type === "tool" && !TOOL_EXTENSIONS.has(path.extname(resolvedTarget).toLowerCase())) {
+  if (type === "tool" && !SCRIPT_EXTENSIONS.has(path.extname(resolvedTarget).toLowerCase())) {
     throw new Error("Tool ref must resolve to a .sh, .ts, .js, .ps1, .cmd, or .bat file.")
   }
   return realTarget
@@ -607,10 +573,6 @@ function normalizeFsPathForComparison(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value
 }
 
-function toPosix(input: string): string {
-  return input.split(path.sep).join("/")
-}
-
 function parseFrontmatter(raw: string): { data: Record<string, unknown>; content: string } {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
   if (!match) {
@@ -656,10 +618,6 @@ function parseYamlScalar(value: string): unknown {
     return value.slice(1, -1)
   }
   return value
-}
-
-function isAssetType(type: string): type is AgentikitAssetType {
-  return type === "tool" || type === "skill" || type === "command" || type === "agent" || type === "knowledge"
 }
 
 function toStringOrUndefined(value: unknown): string | undefined {
@@ -799,7 +757,3 @@ export function agentikitInit(): InitResponse {
   return { stashDir, created, envSet, profileUpdated, ripgrep }
 }
 
-function hasErrnoCode(error: unknown, code: string): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false
-  return (error as Record<string, unknown>).code === code
-}
