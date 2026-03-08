@@ -464,7 +464,8 @@ test("agentikitInit returns created false when stash dir already exists", () => 
     expect(result.created).toBe(false)
     expect(result.stashDir).toBe(stashPath)
   } finally {
-    process.env.HOME = origHome
+    if (origHome === undefined) delete process.env.HOME
+    else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AGENTIKIT_STASH_DIR
     else process.env.AGENTIKIT_STASH_DIR = origStashDir
     fs.rmSync(tmpHome, { recursive: true, force: true })
@@ -499,7 +500,8 @@ test("agentikitInit creates knowledge directory", () => {
     const result = agentikitInit()
     expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true)
   } finally {
-    process.env.HOME = origHome
+    if (origHome === undefined) delete process.env.HOME
+    else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AGENTIKIT_STASH_DIR
     else process.env.AGENTIKIT_STASH_DIR = origStashDir
     fs.rmSync(tmpHome, { recursive: true, force: true })
@@ -520,7 +522,8 @@ test("agentikitInit writes config outside the stash directory", () => {
     expect(fs.existsSync(result.configPath)).toBe(true)
     expect(fs.existsSync(path.join(result.stashDir, "config.json"))).toBe(false)
   } finally {
-    process.env.HOME = origHome
+    if (origHome === undefined) delete process.env.HOME
+    else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AGENTIKIT_STASH_DIR
     else process.env.AGENTIKIT_STASH_DIR = origStashDir
     fs.rmSync(tmpHome, { recursive: true, force: true })

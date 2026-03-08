@@ -257,7 +257,7 @@ import {
 Agentikit stores configuration in a platform-standard config directory:
 
 - Linux/macOS: `$XDG_CONFIG_HOME/agentikit/config.json` (defaults to `~/.config/agentikit/config.json`)
-- Windows: `%APPDATA%\agentikit\config.json`
+- Windows: `%APPDATA%\agentikit\config.json` (falls back to `%USERPROFILE%\AppData\Roaming\agentikit\config.json` when `%APPDATA%` is unset)
 
 ```sh
 akm config                    # Show current config
