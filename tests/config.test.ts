@@ -247,6 +247,26 @@ describe("embedding config", () => {
     expect(loadConfig().embedding?.apiKey).toBe("sk-test123")
   })
 
+  test("loads embedding config with provider and dimension", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        embedding: {
+          provider: "openai",
+          endpoint: "https://api.openai.com/v1/embeddings",
+          model: "text-embedding-3-small",
+          dimension: 384,
+        },
+      }),
+    )
+    expect(loadConfig().embedding).toEqual({
+      provider: "openai",
+      endpoint: "https://api.openai.com/v1/embeddings",
+      model: "text-embedding-3-small",
+      dimension: 384,
+    })
+  })
+
   test("ignores invalid embedding config (missing model)", () => {
     writeRawConfig(
       getConfigPath(),
@@ -315,6 +335,28 @@ describe("llm config", () => {
       }),
     )
     expect(loadConfig().llm?.apiKey).toBe("sk-key")
+  })
+
+  test("loads llm config with provider, temperature, and maxTokens", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        llm: {
+          provider: "openai",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o-mini",
+          temperature: 0.6,
+          maxTokens: 256,
+        },
+      }),
+    )
+    expect(loadConfig().llm).toEqual({
+      provider: "openai",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      model: "gpt-4o-mini",
+      temperature: 0.6,
+      maxTokens: 256,
+    })
   })
 
   test("ignores invalid llm config", () => {

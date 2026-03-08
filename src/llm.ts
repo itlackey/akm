@@ -27,8 +27,8 @@ async function chatCompletion(
     body: JSON.stringify({
       model: config.model,
       messages,
-      temperature: 0.3,
-      max_tokens: 512,
+      temperature: config.temperature ?? 0.3,
+      max_tokens: config.maxTokens ?? 512,
     }),
   })
 

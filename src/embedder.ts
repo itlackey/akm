@@ -47,6 +47,7 @@ async function embedRemote(
     body: JSON.stringify({
       input: text,
       model: config.model,
+      ...(config.dimension ? { dimensions: config.dimension } : {}),
     }),
   })
 

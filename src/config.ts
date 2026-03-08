@@ -5,19 +5,29 @@ import type { RegistryInstalledEntry, RegistrySource } from "./registry-types"
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface EmbeddingConnectionConfig {
+  /** Provider name for display/CLI switching (e.g. "openai", "ollama") */
+  provider?: string
   /** OpenAI-compatible embeddings endpoint (e.g. "http://localhost:11434/v1/embeddings") */
   endpoint: string
   /** Model name to use for embeddings (e.g. "nomic-embed-text") */
   model: string
+  /** Optional output dimension for providers that support it */
+  dimension?: number
   /** Optional API key for authenticated endpoints */
   apiKey?: string
 }
 
 export interface LlmConnectionConfig {
+  /** Provider name for display/CLI switching (e.g. "openai", "ollama") */
+  provider?: string
   /** OpenAI-compatible chat completions endpoint (e.g. "http://localhost:11434/v1/chat/completions") */
   endpoint: string
   /** Model name to use (e.g. "llama3.2") */
   model: string
+  /** Optional sampling temperature */
+  temperature?: number
+  /** Optional response token limit */
+  maxTokens?: number
   /** Optional API key for authenticated endpoints */
   apiKey?: string
 }
@@ -115,10 +125,10 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
     )
   }
 
-  const embedding = parseConnectionConfig(raw.embedding)
+  const embedding = parseEmbeddingConfig(raw.embedding)
   if (embedding) config.embedding = embedding
 
-  const llm = parseConnectionConfig(raw.llm)
+  const llm = parseLlmConfig(raw.llm)
   if (llm) config.llm = llm
 
   const registry = parseRegistryConfig(raw.registry)
@@ -137,16 +147,44 @@ function readConfigObject(configPath: string): Record<string, unknown> | undefin
   }
 }
 
-function parseConnectionConfig(
-  value: unknown,
-): EmbeddingConnectionConfig | LlmConnectionConfig | undefined {
+function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
   const obj = value as Record<string, unknown>
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined
   if (typeof obj.model !== "string" || !obj.model) return undefined
-  const result: { endpoint: string; model: string; apiKey?: string } = {
+  const result: EmbeddingConnectionConfig = {
     endpoint: obj.endpoint,
     model: obj.model,
+  }
+  if (typeof obj.provider === "string" && obj.provider) {
+    result.provider = obj.provider
+  }
+  if (typeof obj.dimension === "number" && Number.isFinite(obj.dimension) && obj.dimension > 0) {
+    result.dimension = Math.floor(obj.dimension)
+  }
+  if (typeof obj.apiKey === "string" && obj.apiKey) {
+    result.apiKey = obj.apiKey
+  }
+  return result
+}
+
+function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const obj = value as Record<string, unknown>
+  if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined
+  if (typeof obj.model !== "string" || !obj.model) return undefined
+  const result: LlmConnectionConfig = {
+    endpoint: obj.endpoint,
+    model: obj.model,
+  }
+  if (typeof obj.provider === "string" && obj.provider) {
+    result.provider = obj.provider
+  }
+  if (typeof obj.temperature === "number" && Number.isFinite(obj.temperature)) {
+    result.temperature = obj.temperature
+  }
+  if (typeof obj.maxTokens === "number" && Number.isFinite(obj.maxTokens) && obj.maxTokens > 0) {
+    result.maxTokens = Math.floor(obj.maxTokens)
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey

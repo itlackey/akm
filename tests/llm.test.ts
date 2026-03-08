@@ -6,10 +6,16 @@ import type { StashEntry } from "../src/metadata"
 // These tests verify the LLM module's response parsing logic.
 // They use a mock server to simulate an OpenAI-compatible endpoint.
 
-function createMockServer(responseBody: string, statusCode = 200): { url: string; server: ReturnType<typeof Bun.serve> } {
+function createMockServer(
+  responseBody: string,
+  statusCode = 200,
+  onRequest?: (body: Record<string, unknown>) => void,
+): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({
     port: 0,
-    fetch() {
+    async fetch(request) {
+      const body = await request.json() as Record<string, unknown>
+      onRequest?.(body)
       return new Response(
         JSON.stringify({
           choices: [{ message: { content: responseBody } }],
@@ -88,6 +94,34 @@ describe("enhanceMetadata", () => {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" }
       const entry: StashEntry = { name: "test", type: "tool" }
       await expect(enhanceMetadata(config, entry)).rejects.toThrow("LLM request failed (500)")
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("uses configured temperature and maxTokens", async () => {
+    let requestBody: Record<string, unknown> | undefined
+    const { url, server } = createMockServer(
+      JSON.stringify({ description: "ok" }),
+      200,
+      (body) => {
+        requestBody = body
+      },
+    )
+    try {
+      const config: LlmConnectionConfig = {
+        endpoint: url,
+        model: "test-model",
+        temperature: 0.7,
+        maxTokens: 256,
+      }
+      const entry: StashEntry = { name: "test", type: "tool" }
+      await enhanceMetadata(config, entry)
+      expect(requestBody).toMatchObject({
+        model: "test-model",
+        temperature: 0.7,
+        max_tokens: 256,
+      })
     } finally {
       server.stop()
     }

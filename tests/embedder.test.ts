@@ -5,13 +5,16 @@ import type { EmbeddingConnectionConfig } from "../src/config"
 function createMockEmbeddingServer(
   embedding: number[] = [0.1, 0.2, 0.3],
   statusCode = 200,
+  onRequest?: (body: Record<string, unknown>) => void,
 ): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({
     port: 0,
-    fetch() {
+    async fetch(request) {
       if (statusCode !== 200) {
         return new Response("error", { status: statusCode })
       }
+      const body = await request.json() as Record<string, unknown>
+      onRequest?.(body)
       return new Response(
         JSON.stringify({
           data: [{ embedding }],
@@ -32,6 +35,28 @@ describe("remote embed", () => {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" }
       const result = await embed("hello world", config)
       expect(result).toEqual([0.5, 0.6, 0.7])
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("sends configured embedding dimensions when provided", async () => {
+    let requestBody: Record<string, unknown> | undefined
+    const { url, server } = createMockEmbeddingServer([0.5, 0.6, 0.7], 200, (body) => {
+      requestBody = body
+    })
+    try {
+      const config: EmbeddingConnectionConfig = {
+        endpoint: url,
+        model: "text-embedding-3-small",
+        dimension: 384,
+      }
+      await embed("hello world", config)
+      expect(requestBody).toMatchObject({
+        input: "hello world",
+        model: "text-embedding-3-small",
+        dimensions: 384,
+      })
     } finally {
       server.stop()
     }

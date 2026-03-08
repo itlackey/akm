@@ -601,6 +601,35 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.mode).toBe("full")
   })
 
+  test("cli: akm config providers embedding lists known providers", async () => {
+    const result = runCli("config", "providers", "embedding")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json).toBeInstanceOf(Array)
+    expect(json.some((provider: any) => provider.name === "local" && provider.current === true)).toBe(true)
+    expect(json.some((provider: any) => provider.name === "ollama")).toBe(true)
+    expect(json.some((provider: any) => provider.name === "openai")).toBe(true)
+  })
+
+  test("cli: akm config use/set/get manages llm settings", async () => {
+    const useResult = runCli("config", "use", "llm", "ollama")
+    expect(useResult.exitCode).toBe(0)
+
+    const setResult = runCli("config", "set", "llm.maxTokens", "256")
+    expect(setResult.exitCode).toBe(0)
+
+    const getResult = runCli("config", "get", "llm")
+    expect(getResult.exitCode).toBe(0)
+
+    const json = parseJson(getResult.stdout)
+    expect(json).toMatchObject({
+      provider: "ollama",
+      model: "llama3.2",
+      maxTokens: 256,
+    })
+  })
+
   test("cli: akm with no command prints usage", async () => {
     const result = runCli()
     expect(result.exitCode).not.toBe(0)
