@@ -63,6 +63,32 @@ akm search [query]       # Search local stash and/or registry
 akm show <type:name>     # Read a stash asset by ref
 ```
 
+### init
+
+Initialize a stash directory and set `AGENTIKIT_STASH_DIR`.
+
+```sh
+akm init
+```
+
+Creates the stash directory structure (`tools/`, `skills/`, `commands/`, `agents/`, `knowledge/`) and generates a `config.json` file.
+
+### index
+
+Build the search index. By default, runs in incremental mode (only reindexes changed directories). Use `--full` for a complete reindex.
+
+```sh
+akm index
+akm index --full
+```
+
+Returns detailed stats including:
+- `totalEntries` — total number of indexed entries
+- `generatedMetadata` — number of entries with auto-generated metadata
+- `directoriesScanned` — directories that were actually scanned
+- `directoriesSkipped` — directories skipped due to no changes (incremental mode)
+- `timing` — breakdown of processing time in milliseconds (total, walk, embed, tfidf)
+
 ### add
 
 Install a registry reference and make it searchable immediately.
@@ -177,6 +203,8 @@ Returns full payload by type:
 - `tool` — `runCmd`/`kind` (the agent uses the host's shell to execute `runCmd`)
 - `knowledge` — content with optional view modes (`full`, `toc`, `frontmatter`, `section`, `lines`)
 
+When a section is not found (e.g., `--view section --heading "Missing"`), returns a helpful message suggesting to use `--view toc` to discover available headings.
+
 ## Library API
 
 Agentikit also exports its core functions for use as a library:
@@ -282,5 +310,6 @@ Both `embedding` and `llm` accept an optional `apiKey` field for authenticated e
 
 - `akm add` installs registry kits into the local cache and adds discovered stash roots to `additionalStashDirs`.
 - Registry lifecycle commands (`list`, `remove`, `reinstall`, `update`) use `config.registry.installed` as the source of truth.
-- When commands fail, CLI errors are returned as structured JSON with `error` and `hint` fields.
+- When commands fail, CLI errors are returned as structured JSON with `error` and `hint` fields for better user guidance.
 - Missing or unreadable stash paths return friendly errors.
+- The `akm show` command returns helpful messages instead of throwing errors when sections are not found.
