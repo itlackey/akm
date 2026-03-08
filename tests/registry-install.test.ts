@@ -174,7 +174,7 @@ describe("local git installs", () => {
     }
   })
 
-  test("installRegistryRef applies nearest package.json include for nested stash roots", async () => {
+  test("applies include from nearest package.json for nested kit roots", async () => {
     const cacheHome = makeTempDir("agentikit-nested-include-cache-")
     const packageDir = makeTempDir("agentikit-nested-include-package-")
     const archivePath = path.join(makeTempDir("agentikit-nested-archive-"), "kit.tgz")

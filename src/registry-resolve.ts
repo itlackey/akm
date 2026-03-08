@@ -117,7 +117,7 @@ function tryParseLocalGitRef(rawRef: string, explicitPath: boolean): ParsedGitRe
   try {
     stat = fs.statSync(resolvedPath)
   } catch {
-    throw new Error("Local add path does not exist.")
+    throw new Error(`Local add path does not exist: ${resolvedPath}`)
   }
 
   if (!stat.isDirectory()) {
