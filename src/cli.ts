@@ -60,9 +60,13 @@ const searchCommand = defineCommand({
 })
 
 const addCommand = defineCommand({
-  meta: { name: "add", description: "Install a registry package into the stash" },
+  meta: { name: "add", description: "Install a registry package or local git directory into the stash" },
   args: {
-    ref: { type: "positional", description: "Registry ref (npm package, owner/repo, or github URL)", required: true },
+    ref: {
+      type: "positional",
+      description: "Registry ref (npm package, owner/repo, github URL, or local git directory)",
+      required: true,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {

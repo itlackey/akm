@@ -7,7 +7,7 @@ import type { AddResponse } from "./stash-types"
 
 export async function agentikitAdd(input: { ref: string }): Promise<AddResponse> {
   const ref = input.ref.trim()
-  if (!ref) throw new Error("Registry ref is required.")
+  if (!ref) throw new Error("Install ref or local git directory is required.")
 
   const stashDir = resolveStashDir()
   const installed = await installRegistryRef(ref)

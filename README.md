@@ -54,7 +54,7 @@ $AGENTIKIT_STASH_DIR/
 ```sh
 akm init                 # Initialize stash directory and set AGENTIKIT_STASH_DIR
 akm index [--full]       # Build search index (incremental by default)
-akm add <ref>            # Install a registry kit by npm/GitHub ref
+akm add <ref>            # Install a registry kit or local git directory
 akm list                 # List installed registry kits from config.registry.installed
 akm remove <target>      # Remove installed kit by id/ref (or parsed ref id)
 akm update [target] [--all]     # Fresh install from current ref(s), report changed revision/version
@@ -91,20 +91,36 @@ Returns detailed stats including:
 
 ### add
 
-Install a registry reference and make it searchable immediately.
+Install a registry reference or a local git directory and make it searchable immediately.
 
 ```sh
 akm add @scope/kit
 akm add npm:@scope/kit@latest
 akm add owner/repo
 akm add github:owner/repo#v1.2.3
+akm add /abs/path/to/your/repo
+akm add /abs/path/to/your/repo/kits/frontend
 ```
 
-- Uses registry resolution + install helpers (`npm` and `github` refs)
+- Uses registry resolution + install helpers (`npm`, `github`, and local git directories)
+- Local paths must point to a directory inside a git repository
+- Passing a directory under a git repo installs that directory as the kit root
 - Updates `config.json` registry install records and syncs `additionalStashDirs`
 - If an existing install with the same id is replaced, old cache directories are cleaned up (best effort)
 - Triggers an incremental index build
 - Returns JSON with install details and index stats
+
+If the installed package/repository contains an `agentikit.include` section in its `package.json`, only those files and directories are copied into the installed kit:
+
+```json
+{
+  "agentikit": {
+    "include": ["tools", "lib/special", "README.md"]
+  }
+}
+```
+
+Paths are resolved relative to the package.json that declares `agentikit.include`, and they are copied into the install cache preserving their relative layout.
 
 ### list
 

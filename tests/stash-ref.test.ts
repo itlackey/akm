@@ -43,6 +43,10 @@ describe("parseOpenRef", () => {
     expect(() => parseOpenRef("badref")).toThrow("Invalid open ref")
   })
 
+  test("throws for slash-separated refs", () => {
+    expect(() => parseOpenRef("skill/code-review")).toThrow("Invalid open ref")
+  })
+
   test("throws for empty type (separator at start)", () => {
     expect(() => parseOpenRef(":name")).toThrow("Invalid open ref")
   })

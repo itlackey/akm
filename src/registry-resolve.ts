@@ -1,4 +1,8 @@
-import type { ParsedGithubRef, ParsedNpmRef, ParsedRegistryRef, ResolvedRegistryArtifact } from "./registry-types"
+import { spawnSync } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
+import type { ParsedGitRef, ParsedGithubRef, ParsedNpmRef, ParsedRegistryRef, ResolvedRegistryArtifact } from "./registry-types"
 
 const GITHUB_API_BASE = "https://api.github.com"
 
@@ -15,6 +19,10 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   if (ref.startsWith("http://") || ref.startsWith("https://")) {
     return parseGithubUrl(ref)
   }
+  const localGitRef = tryParseLocalGitRef(ref)
+  if (localGitRef) {
+    return localGitRef
+  }
 
   if (ref.startsWith("@") || !looksLikeGithubOwnerRepo(ref)) {
     return parseNpmRef(ref, ref)
@@ -26,6 +34,9 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
 export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {
   if (parsed.source === "npm") {
     return resolveNpmArtifact(parsed)
+  }
+  if (parsed.source === "git") {
+    return resolveGitArtifact(parsed)
   }
   return resolveGithubArtifact(parsed)
 }
@@ -93,6 +104,33 @@ function parseGithubUrl(rawUrl: string): ParsedGithubRef {
     owner,
     repo,
     requestedRef,
+  }
+}
+
+function tryParseLocalGitRef(rawRef: string): ParsedGitRef | undefined {
+  const resolvedPath = path.resolve(rawRef)
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(resolvedPath)
+  } catch {
+    return undefined
+  }
+
+  if (!stat.isDirectory()) {
+    throw new Error(`Local add path must point to a directory: ${rawRef}`)
+  }
+
+  const repoRoot = findGitRepoRoot(resolvedPath)
+  if (!repoRoot) {
+    throw new Error(`Local add path must be inside a git repository: ${rawRef}`)
+  }
+
+  return {
+    source: "git",
+    ref: rawRef,
+    id: `git:${encodeURIComponent(resolvedPath)}`,
+    repoRoot,
+    sourcePath: resolvedPath,
   }
 }
 
@@ -197,6 +235,17 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
   }
 }
 
+async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
+  return {
+    id: parsed.id,
+    source: parsed.source,
+    ref: parsed.ref,
+    artifactUrl: pathToFileURL(parsed.sourcePath).toString(),
+    resolvedRevision: readGitValue(parsed.repoRoot, "rev-parse", "HEAD"),
+    resolvedVersion: readGitValue(parsed.repoRoot, "rev-parse", "--abbrev-ref", "HEAD"),
+  }
+}
+
 function splitNpmNameAndVersion(input: string): { packageName: string; requestedVersionOrTag?: string } {
   if (input.startsWith("@")) {
     const secondAt = input.indexOf("@", 1)
@@ -245,6 +294,25 @@ function githubHeaders(): HeadersInit {
   }
   if (token) headers.Authorization = `Bearer ${token}`
   return headers
+}
+
+function findGitRepoRoot(startDir: string): string | undefined {
+  let current = path.resolve(startDir)
+  while (true) {
+    if (fs.existsSync(path.join(current, ".git"))) {
+      return current
+    }
+    const parent = path.dirname(current)
+    if (parent === current) return undefined
+    current = parent
+  }
+}
+
+function readGitValue(repoRoot: string, ...args: string[]): string | undefined {
+  const result = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" })
+  if (result.status !== 0) return undefined
+  const value = result.stdout.trim()
+  return value || undefined
 }
 
 async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
