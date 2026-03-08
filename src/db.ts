@@ -191,26 +191,17 @@ export function upsertEntry(
 }
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
-  const ids = db
-    .prepare("SELECT id FROM entries WHERE dir_path = ?")
-    .all(dirPath) as Array<{ id: number }>
-
-  if (ids.length > 0) {
-    db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath)
+  if (vecAvailable) {
+    const ids = db
+      .prepare("SELECT id FROM entries WHERE dir_path = ?")
+      .all(dirPath) as Array<{ id: number }>
     for (const { id } of ids) {
-      db.prepare("DELETE FROM entries_fts WHERE entry_id = ?").run(String(id))
-      if (vecAvailable) {
-        try {
-          db.prepare("DELETE FROM entries_vec WHERE id = ?").run(id)
-        } catch { /* ignore if vec table missing */ }
-      }
+      try {
+        db.prepare("DELETE FROM entries_vec WHERE id = ?").run(id)
+      } catch { /* ignore if vec table missing */ }
     }
   }
-}
-
-export function syncFtsForEntry(db: Database, entryId: number, searchText: string): void {
-  db.prepare("DELETE FROM entries_fts WHERE entry_id = ?").run(String(entryId))
-  db.prepare("INSERT INTO entries_fts (entry_id, search_text) VALUES (?, ?)").run(String(entryId), searchText)
+  db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath)
 }
 
 export function rebuildFts(db: Database): void {
@@ -365,6 +356,14 @@ export function getAllEntries(
 export function getEntryCount(db: Database): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries").get() as { cnt: number }
   return row.cnt
+}
+
+export function getEntryById(db: Database, id: number): { filePath: string; entry: StashEntry } | undefined {
+  const row = db
+    .prepare("SELECT file_path, entry_json FROM entries WHERE id = ?")
+    .get(id) as { file_path: string; entry_json: string } | undefined
+  if (!row) return undefined
+  return { filePath: row.file_path, entry: JSON.parse(row.entry_json) as StashEntry }
 }
 
 export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[] {

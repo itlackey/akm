@@ -26,6 +26,7 @@ import {
   searchVec,
   getAllEntries,
   getEntryCount,
+  getEntryById,
   isVecAvailable,
   type DbSearchResult,
 } from "./db"
@@ -165,20 +166,22 @@ async function searchLocal(input: {
   try {
     if (fs.existsSync(dbPath)) {
       const db = openDatabase(dbPath)
-      const entryCount = getEntryCount(db)
-      const storedStashDir = getMeta(db, "stashDir")
-      if (entryCount > 0 && storedStashDir === stashDir) {
-        const { hits, usageGuide, embedMs, rankMs } = await searchDatabase(db, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
-        closeDatabase(db)
-        return {
-          hits,
-          usageGuide,
-          tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
-          embedMs,
-          rankMs,
+      try {
+        const entryCount = getEntryCount(db)
+        const storedStashDir = getMeta(db, "stashDir")
+        if (entryCount > 0 && storedStashDir === stashDir) {
+          const { hits, usageGuide, embedMs, rankMs } = await searchDatabase(db, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
+          return {
+            hits,
+            usageGuide,
+            tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
+            embedMs,
+            rankMs,
+          }
         }
+      } finally {
+        closeDatabase(db)
       }
-      closeDatabase(db)
     }
   } catch {
     // DB not available, fall through to substring search
@@ -270,15 +273,12 @@ async function searchDatabase(
   if (embeddingScores) {
     for (const [id, embScore] of embeddingScores) {
       if (seenIds.has(id)) continue
-      // Fetch entry data for this id
-      const row = db
-        .prepare("SELECT file_path, entry_json FROM entries WHERE id = ?")
-        .get(id) as { file_path: string; entry_json: string } | undefined
-      if (row) {
+      const found = getEntryById(db, id)
+      if (found) {
         scored.push({
           id,
-          entry: JSON.parse(row.entry_json),
-          filePath: row.file_path,
+          entry: found.entry,
+          filePath: found.filePath,
           score: embScore,
           rankingMode: "semantic",
         })
