@@ -630,6 +630,38 @@ describe("Scenario: CLI subprocess execution", () => {
     })
   })
 
+  test("cli: akm config <key> [value] supports git-style get/set", async () => {
+    const providerResult = runCli("config", "embedding.provider", "ollama")
+    expect(providerResult.exitCode).toBe(0)
+
+    const dimensionResult = runCli("config", "embedding.dimension", "384")
+    expect(dimensionResult.exitCode).toBe(0)
+
+    const getResult = runCli("config", "embedding")
+    expect(getResult.exitCode).toBe(0)
+
+    const json = parseJson(getResult.stdout)
+    expect(json).toMatchObject({
+      provider: "ollama",
+      model: "nomic-embed-text",
+      dimension: 384,
+    })
+  })
+
+  test("cli: akm config --get/--unset support familiar git-style flags", async () => {
+    expect(runCli("config", "llm.provider", "ollama").exitCode).toBe(0)
+    expect(runCli("config", "llm.apiKey", "secret-key").exitCode).toBe(0)
+
+    const getResult = runCli("config", "--get", "llm.apiKey")
+    expect(getResult.exitCode).toBe(0)
+    expect(parseJson(getResult.stdout)).toBe("***")
+
+    const unsetResult = runCli("config", "--unset", "llm.apiKey")
+    expect(unsetResult.exitCode).toBe(0)
+    const json = parseJson(unsetResult.stdout)
+    expect(json.llm.apiKey).toBeUndefined()
+  })
+
   test("cli: akm with no command prints usage", async () => {
     const result = runCli()
     expect(result.exitCode).not.toBe(0)

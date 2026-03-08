@@ -275,6 +275,20 @@ describe("embedding config", () => {
     expect(loadConfig().embedding).toBeUndefined()
   })
 
+  test("ignores invalid embedding config with non-integer dimension", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        embedding: {
+          endpoint: "https://api.openai.com/v1/embeddings",
+          model: "text-embedding-3-small",
+          dimension: 384.5,
+        },
+      }),
+    )
+    expect(loadConfig().embedding).toBeUndefined()
+  })
+
   test("ignores non-object embedding config", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ embedding: "not-an-object" }))
     expect(loadConfig().embedding).toBeUndefined()
@@ -361,6 +375,20 @@ describe("llm config", () => {
 
   test("ignores invalid llm config", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }))
+    expect(loadConfig().llm).toBeUndefined()
+  })
+
+  test("ignores llm config with non-integer maxTokens", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        llm: {
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o-mini",
+          maxTokens: 256.5,
+        },
+      }),
+    )
     expect(loadConfig().llm).toBeUndefined()
   })
 

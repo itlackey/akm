@@ -4,6 +4,7 @@ import {
   type EmbeddingConnectionConfig,
   type LlmConnectionConfig,
 } from "./config"
+import { EMBEDDING_DIM } from "./db"
 
 export type ConfigProviderScope = "embedding" | "llm"
 
@@ -14,7 +15,6 @@ interface ProviderPreset<TConfig> {
 }
 
 const LOCAL_EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2"
-const LOCAL_EMBEDDING_DIMENSION = 384
 const DEFAULT_LLM_TEMPERATURE = 0.3
 const DEFAULT_LLM_MAX_TOKENS = 512
 
@@ -30,6 +30,7 @@ const EMBEDDING_PROVIDER_PRESETS: Record<string, ProviderPreset<EmbeddingConnect
       provider: "ollama",
       endpoint: "http://localhost:11434/v1/embeddings",
       model: "nomic-embed-text",
+      dimension: EMBEDDING_DIM,
     },
   },
   openai: {
@@ -39,7 +40,7 @@ const EMBEDDING_PROVIDER_PRESETS: Record<string, ProviderPreset<EmbeddingConnect
       provider: "openai",
       endpoint: "https://api.openai.com/v1/embeddings",
       model: "text-embedding-3-small",
-      dimension: LOCAL_EMBEDDING_DIMENSION,
+      dimension: EMBEDDING_DIM,
     },
   },
 }
@@ -317,7 +318,7 @@ function getEmbeddingDisplayConfig(config: AgentikitConfig): Record<string, unkn
     return {
       provider: "local",
       model: LOCAL_EMBEDDING_MODEL,
-      dimension: LOCAL_EMBEDDING_DIMENSION,
+      dimension: EMBEDDING_DIM,
     }
   }
   return {
@@ -435,8 +436,12 @@ function parseNumber(value: string, key: string): number {
 }
 
 function parsePositiveInteger(value: string, key: string): number {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  const trimmed = value.trim()
+  if (!/^[1-9]\d*$/.test(trimmed)) {
+    throw new Error(`Invalid value for ${key}: expected a positive integer`)
+  }
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Invalid value for ${key}: expected a positive integer`)
   }
   return parsed
@@ -450,10 +455,15 @@ function parseUnknownNumber(value: unknown, key: string): number {
 }
 
 function parseUnknownPositiveInteger(value: unknown, key: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value <= 0
+  ) {
     throw new Error(`Invalid value for ${key}: expected a positive integer`)
   }
-  return Math.floor(value)
+  return value
 }
 
 function matchesPreset<TConfig extends { endpoint: string; model: string }>(

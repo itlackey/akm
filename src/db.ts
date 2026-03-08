@@ -32,7 +32,7 @@ export interface DbVecResult {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const DB_VERSION = 5
-const EMBEDDING_DIM = 384
+export const EMBEDDING_DIM = 384
 
 // ── Path ────────────────────────────────────────────────────────────────────
 

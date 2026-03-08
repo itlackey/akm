@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { EMBEDDING_DIM } from "../src/db"
 import type { AgentikitConfig } from "../src/config"
 import {
   getConfigValue,
@@ -16,7 +17,7 @@ describe("config CLI helpers", () => {
     expect(config.embedding).toMatchObject({
       provider: "local",
       model: "Xenova/all-MiniLM-L6-v2",
-      dimension: 384,
+      dimension: EMBEDDING_DIM,
     })
     expect(config.llm).toMatchObject({
       provider: "disabled",
@@ -55,7 +56,7 @@ describe("config CLI helpers", () => {
       provider: "openai",
       endpoint: "https://api.openai.com/v1/embeddings",
       model: "text-embedding-3-small",
-      dimension: 384,
+      dimension: EMBEDDING_DIM,
     })
   })
 
@@ -101,5 +102,31 @@ describe("config CLI helpers", () => {
     const providers = listProviders("embedding", config)
     expect(providers.find((provider) => provider.name === "ollama")).toMatchObject({ current: true })
     expect(providers.find((provider) => provider.name === "openai")).toMatchObject({ current: false })
+    expect(providers.find((provider) => provider.name === "ollama")).toMatchObject({ dimension: EMBEDDING_DIM })
+  })
+
+  test("setConfigValue rejects non-canonical positive integers", () => {
+    const base: AgentikitConfig = {
+      semanticSearch: true,
+      additionalStashDirs: [],
+      embedding: {
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/embeddings",
+        model: "text-embedding-3-small",
+      },
+      llm: {
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/chat/completions",
+        model: "gpt-4o-mini",
+      },
+    }
+
+    expect(() => setConfigValue(base, "embedding.dimension", "256.5")).toThrow("expected a positive integer")
+    expect(() => setConfigValue(base, "llm.maxTokens", "1e3")).toThrow("expected a positive integer")
+    expect(() => setConfigValue(base, "llm.maxTokens", "0384")).toThrow("expected a positive integer")
+    expect(() => parseConfigValue(
+      "embedding",
+      '{"endpoint":"https://api.openai.com/v1/embeddings","model":"text-embedding-3-small","dimension":384.5}',
+    )).toThrow("expected a positive integer")
   })
 })

@@ -159,8 +159,16 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   if (typeof obj.provider === "string" && obj.provider) {
     result.provider = obj.provider
   }
-  if (typeof obj.dimension === "number" && Number.isFinite(obj.dimension) && obj.dimension > 0) {
-    result.dimension = Math.floor(obj.dimension)
+  if ("dimension" in obj) {
+    if (
+      typeof obj.dimension !== "number" ||
+      !Number.isFinite(obj.dimension) ||
+      !Number.isInteger(obj.dimension) ||
+      obj.dimension <= 0
+    ) {
+      return undefined
+    }
+    result.dimension = obj.dimension
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey
@@ -183,8 +191,16 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof obj.temperature === "number" && Number.isFinite(obj.temperature)) {
     result.temperature = obj.temperature
   }
-  if (typeof obj.maxTokens === "number" && Number.isFinite(obj.maxTokens) && obj.maxTokens > 0) {
-    result.maxTokens = Math.floor(obj.maxTokens)
+  if ("maxTokens" in obj) {
+    if (
+      typeof obj.maxTokens !== "number" ||
+      !Number.isFinite(obj.maxTokens) ||
+      !Number.isInteger(obj.maxTokens) ||
+      obj.maxTokens <= 0
+    ) {
+      return undefined
+    }
+    result.maxTokens = obj.maxTokens
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey

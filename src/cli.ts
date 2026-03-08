@@ -171,6 +171,9 @@ const showCommand = defineCommand({
 const configCommand = defineCommand({
   meta: { name: "config", description: "Show configuration, get/set keys, and manage embedding/LLM providers" },
   args: {
+    list: { type: "boolean", description: "List current configuration with effective defaults", default: false },
+    get: { type: "string", description: "Get a configuration value by key" },
+    unset: { type: "string", description: "Unset an optional configuration key or whole embedding/llm section" },
     set: { type: "string", description: "Back-compat alias for updating a key (key=value format)" },
   },
   subCommands: {
@@ -251,6 +254,20 @@ const configCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       if (hasConfigSubcommand(args)) return
+      if (args.list) {
+        console.log(JSON.stringify(listConfig(loadConfig()), null, 2))
+        return
+      }
+      if (args.get) {
+        console.log(JSON.stringify(getConfigValue(loadConfig(), args.get), null, 2))
+        return
+      }
+      if (args.unset) {
+        const updated = unsetConfigValue(loadConfig(), args.unset)
+        saveConfig(updated)
+        console.log(JSON.stringify(listConfig(updated), null, 2))
+        return
+      }
       if (args.set) {
         const eqIndex = args.set.indexOf("=")
         if (eqIndex === -1) {
@@ -288,10 +305,12 @@ const main = defineCommand({
   },
 })
 
-runMain(main)
-
 const SEARCH_USAGE_MODES: SearchUsageMode[] = ["none", "both", "item", "guide"]
 const SEARCH_SOURCES: SearchSource[] = ["local", "registry", "both"]
+const CONFIG_SUBCOMMAND_SET = new Set(["list", "get", "set", "unset", "providers", "use"])
+
+normalizeConfigArgv(process.argv)
+runMain(main)
 
 function parseSearchUsageMode(value: string): SearchUsageMode {
   if ((SEARCH_USAGE_MODES as string[]).includes(value)) return value as SearchUsageMode
@@ -334,5 +353,38 @@ function parseProviderScope(value: string): "embedding" | "llm" {
 
 function hasConfigSubcommand(args: Record<string, unknown>): boolean {
   const command = Array.isArray(args._) ? args._[0] : undefined
-  return typeof command === "string" && ["list", "get", "set", "unset", "providers", "use"].includes(command)
+  return typeof command === "string" && CONFIG_SUBCOMMAND_SET.has(command)
+}
+
+/**
+ * Mutate argv before citty parses it so git-style config forms like
+ * `akm config llm.maxTokens 512` and `akm config --get llm.maxTokens`
+ * are normalized into the existing config subcommands.
+ */
+function normalizeConfigArgv(argv: string[]): void {
+  const [, , command, argAfterCommand, argAfterKey, ...rest] = argv
+  if (command !== "config") return
+  if (!argAfterCommand) return
+  if (argAfterCommand === "--list") {
+    argv.splice(3, argv.length - 3, "list")
+    return
+  }
+  if (argAfterCommand === "--get" && argAfterKey) {
+    argv.splice(3, argv.length - 3, "get", argAfterKey, ...rest)
+    return
+  }
+  if (argAfterCommand === "--unset" && argAfterKey) {
+    argv.splice(3, argv.length - 3, "unset", argAfterKey, ...rest)
+    return
+  }
+  if (argAfterCommand.startsWith("-")) return
+  if (CONFIG_SUBCOMMAND_SET.has(argAfterCommand)) return
+
+  // A single arg after `config` behaves like `git config <key>` and reads the value.
+  if (argAfterKey === undefined) {
+    argv.splice(3, argv.length - 3, "get", argAfterCommand)
+    return
+  }
+
+  argv.splice(3, argv.length - 3, "set", argAfterCommand, argAfterKey, ...rest)
 }
