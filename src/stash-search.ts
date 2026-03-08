@@ -7,8 +7,17 @@ import { TfIdfAdapter, type ScoredEntry } from "./similarity"
 import { buildToolInfo } from "./tool-runner"
 import { walkStash } from "./walker"
 import { makeOpenRef } from "./stash-ref"
-import type { AgentikitSearchType, SearchHit, SearchResponse, SearchUsageMode } from "./stash-types"
+import type {
+  AgentikitSearchType,
+  LocalSearchHit,
+  RegistrySearchResultHit,
+  SearchHit,
+  SearchResponse,
+  SearchSource,
+  SearchUsageMode,
+} from "./stash-types"
 import { loadConfig } from "./config"
+import { searchRegistry } from "./registry-search"
 
 type IndexedAsset = {
   type: AgentikitAssetType
@@ -46,15 +55,93 @@ export async function agentikitSearch(input: {
   type?: AgentikitSearchType
   limit?: number
   usage?: SearchUsageMode
+  source?: SearchSource
 }): Promise<SearchResponse> {
   const t0 = Date.now()
-  const query = input.query.trim().toLowerCase()
+  const query = input.query.trim()
+  const normalizedQuery = query.toLowerCase()
   const searchType = input.type ?? "any"
   const limit = normalizeLimit(input.limit)
   const usageMode = parseSearchUsageMode(input.usage)
+  const source = parseSearchSource(input.source)
   const stashDir = resolveStashDir()
-  const config = loadConfig(stashDir)
+  const localResult = source === "registry"
+    ? undefined
+    : await searchLocal({
+      query: normalizedQuery,
+      searchType,
+      limit,
+      usageMode,
+      stashDir,
+    })
 
+  const registryResult = source === "local"
+    ? undefined
+    : await searchRegistry(query, { limit })
+
+  if (source === "local") {
+    return {
+      stashDir,
+      source,
+      hits: localResult?.hits ?? [],
+      usageGuide: localResult?.usageGuide,
+      tip: localResult?.tip,
+      timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
+    }
+  }
+
+  const registryHits = (registryResult?.hits ?? []).map((hit): RegistrySearchResultHit => {
+    const installRef = hit.source === "npm" ? `npm:${hit.ref}` : `github:${hit.ref}`
+    return {
+      hitSource: "registry",
+      type: "registry",
+      name: hit.title,
+      id: hit.id,
+      registrySource: hit.source,
+      ref: hit.ref,
+      description: hit.description,
+      homepage: hit.homepage,
+      score: hit.score,
+      metadata: hit.metadata,
+      installRef,
+      installCmd: `akm add ${installRef}`,
+    }
+  })
+
+  if (source === "registry") {
+    const hits = registryHits.slice(0, limit)
+    return {
+      stashDir,
+      source,
+      hits,
+      tip: hits.length === 0 ? "No matching registry entries were found." : undefined,
+      warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
+      timing: { totalMs: Date.now() - t0 },
+    }
+  }
+
+  const mergedHits = mergeSearchHits(localResult?.hits ?? [], registryHits, limit)
+
+  return {
+    stashDir,
+    source,
+    hits: mergedHits,
+    usageGuide: localResult?.usageGuide,
+    tip: mergedHits.length === 0 ? "No matching stash assets or registry entries were found." : undefined,
+    warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
+    timing: { totalMs: Date.now() - t0 },
+  }
+}
+
+async function searchLocal(input: {
+  query: string
+  searchType: AgentikitSearchType
+  limit: number
+  usageMode: SearchUsageMode
+  stashDir: string
+}): Promise<{ hits: LocalSearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; tip?: string; embedMs?: number; rankMs?: number }> {
+  const { query, searchType, limit, usageMode, stashDir } = input
+  const config = loadConfig(stashDir)
   const allStashDirs = [
     stashDir,
     ...config.additionalStashDirs.filter((d) => {
@@ -62,31 +149,26 @@ export async function agentikitSearch(input: {
     }),
   ]
 
-  // Try indexed search (single unified pipeline: embedding + TF-IDF as weighted features)
   const index = loadSearchIndex()
   if (index && index.entries && index.entries.length > 0 && index.stashDir === stashDir) {
     const { hits, usageGuide, embedMs, rankMs } = await searchIndex(index, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
     return {
-      stashDir,
       hits,
       usageGuide,
       tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
-      timing: { totalMs: Date.now() - t0, rankMs, embedMs },
+      embedMs,
+      rankMs,
     }
   }
 
-  // No index: fall back to filesystem walk + substring match across all stash dirs
   const hits = allStashDirs
     .flatMap((dir) => substringSearch(query, searchType, limit, dir))
     .slice(0, limit)
   const usageGuide = shouldIncludeUsageGuide(usageMode) ? buildUsageGuide(hits.map((hit) => hit.type), searchType) : undefined
-
   return {
-    stashDir,
     hits,
     usageGuide,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
-    timing: { totalMs: Date.now() - t0 },
   }
 }
 
@@ -101,7 +183,7 @@ async function searchIndex(
   allStashDirs: string[],
   config: import("./config").AgentikitConfig,
   usageMode: SearchUsageMode,
-): Promise<{ hits: SearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; embedMs?: number; rankMs?: number }> {
+): Promise<{ hits: LocalSearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; embedMs?: number; rankMs?: number }> {
   // Filter candidates by type
   let candidates = index.entries
   if (searchType !== "any") {
@@ -250,13 +332,13 @@ function substringSearch(
   searchType: AgentikitSearchType,
   limit: number,
   stashDir: string,
-): SearchHit[] {
+): LocalSearchHit[] {
   const assets = indexAssets(stashDir, searchType)
   return assets
     .filter((asset) => asset.name.toLowerCase().includes(query))
     .sort(compareAssets)
     .slice(0, limit)
-    .map((asset): SearchHit => assetToSearchHit(asset, stashDir))
+    .map((asset) => assetToSearchHit(asset, stashDir))
 }
 
 // ── Hit building ────────────────────────────────────────────────────────────
@@ -278,7 +360,7 @@ function buildIndexedHit(input: {
   defaultStashDir: string
   allStashDirs: string[]
   includeItemUsage: boolean
-}): SearchHit {
+}): LocalSearchHit {
   const entryStashDir = findStashDirForPath(input.path, input.allStashDirs) ?? input.defaultStashDir
   const typeRoot = path.join(entryStashDir, TYPE_DIRS[input.entry.type])
   const openRefName = deriveCanonicalAssetName(input.entry.type, typeRoot, input.path)
@@ -290,7 +372,8 @@ function buildIndexedHit(input: {
 
   const whyMatched = buildWhyMatched(input.entry, input.query, input.rankingMode, qualityBoost, confidenceBoost)
 
-  const hit: SearchHit = {
+  const hit: LocalSearchHit = {
+    hitSource: "local",
     type: input.entry.type,
     name: input.entry.name,
     path: input.path,
@@ -354,9 +437,10 @@ function toScoredEntries(entries: IndexedEntry[]): ScoredEntry[] {
   }))
 }
 
-function assetToSearchHit(asset: IndexedAsset, stashDir: string): SearchHit {
+function assetToSearchHit(asset: IndexedAsset, stashDir: string): LocalSearchHit {
   if (asset.type !== "tool") {
     return {
+      hitSource: "local",
       type: asset.type,
       name: asset.name,
       path: asset.path,
@@ -365,6 +449,7 @@ function assetToSearchHit(asset: IndexedAsset, stashDir: string): SearchHit {
   }
   const toolInfo = buildToolInfo(stashDir, asset.path)
   return {
+    hitSource: "local",
     type: "tool",
     name: asset.name,
     path: asset.path,
@@ -387,6 +472,32 @@ function parseSearchUsageMode(mode: SearchUsageMode | undefined): SearchUsageMod
   }
   if (typeof mode === "undefined") return "both"
   throw new Error(`Invalid usage mode: ${String(mode)}. Expected one of: none|both|item|guide`)
+}
+
+function parseSearchSource(source: SearchSource | undefined): SearchSource {
+  if (source === "local" || source === "registry" || source === "both") return source
+  if (typeof source === "undefined") return "local"
+  throw new Error(`Invalid search source: ${String(source)}. Expected one of: local|registry|both`)
+}
+
+function mergeSearchHits(localHits: LocalSearchHit[], registryHits: RegistrySearchResultHit[], limit: number): SearchHit[] {
+  const merged: SearchHit[] = []
+  let localIndex = 0
+  let registryIndex = 0
+
+  while (merged.length < limit && (localIndex < localHits.length || registryIndex < registryHits.length)) {
+    if (localIndex < localHits.length) {
+      merged.push(localHits[localIndex])
+      localIndex += 1
+      if (merged.length >= limit) break
+    }
+    if (registryIndex < registryHits.length) {
+      merged.push(registryHits[registryIndex])
+      registryIndex += 1
+    }
+  }
+
+  return merged
 }
 
 function shouldIncludeUsageGuide(mode: SearchUsageMode): boolean {

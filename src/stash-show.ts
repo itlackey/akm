@@ -90,7 +90,14 @@ export function agentikitShow(input: { ref: string; view?: KnowledgeView }): Sho
         }
         case "section": {
           const section = extractSection(content, v.heading)
-          if (!section) throw new Error(`Section "${v.heading}" not found in ${parsed.name}`)
+          if (!section) {
+            return {
+              type: "knowledge",
+              name: parsed.name,
+              path: assetPath,
+              content: `Section "${v.heading}" not found in ${parsed.name}. Try --view toc to discover available headings.`,
+            }
+          }
           return { type: "knowledge", name: parsed.name, path: assetPath, content: section.content }
         }
         case "lines": {

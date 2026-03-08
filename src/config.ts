@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { resolveStashDir } from "./common"
+import type { RegistryInstalledEntry, RegistrySource } from "./registry-types"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,12 @@ export interface AgentikitConfig {
   embedding?: EmbeddingConnectionConfig
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
   llm?: LlmConnectionConfig
+  /** Installed registry sources and local cache metadata */
+  registry?: RegistryConfig
+}
+
+export interface RegistryConfig {
+  installed: RegistryInstalledEntry[]
 }
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -103,6 +110,9 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
   const llm = parseConnectionConfig(raw.llm)
   if (llm) config.llm = llm
 
+  const registry = parseRegistryConfig(raw.registry)
+  if (registry) config.registry = registry
+
   return config
 }
 
@@ -121,4 +131,53 @@ function parseConnectionConfig(
     result.apiKey = obj.apiKey
   }
   return result
+}
+
+function parseRegistryConfig(value: unknown): RegistryConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const obj = value as Record<string, unknown>
+  if (!Array.isArray(obj.installed)) return undefined
+
+  const installed = obj.installed
+    .map((entry) => parseRegistryInstalledEntry(entry))
+    .filter((entry): entry is RegistryInstalledEntry => entry !== undefined)
+
+  return { installed }
+}
+
+function parseRegistryInstalledEntry(value: unknown): RegistryInstalledEntry | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const obj = value as Record<string, unknown>
+
+  const id = asNonEmptyString(obj.id)
+  const source = asRegistrySource(obj.source)
+  const ref = asNonEmptyString(obj.ref)
+  const artifactUrl = asNonEmptyString(obj.artifactUrl)
+  const stashRoot = asNonEmptyString(obj.stashRoot)
+  const cacheDir = asNonEmptyString(obj.cacheDir)
+  const installedAt = asNonEmptyString(obj.installedAt)
+  if (!id || !source || !ref || !artifactUrl || !stashRoot || !cacheDir || !installedAt) return undefined
+
+  const entry: RegistryInstalledEntry = {
+    id,
+    source,
+    ref,
+    artifactUrl,
+    stashRoot,
+    cacheDir,
+    installedAt,
+  }
+  const resolvedVersion = asNonEmptyString(obj.resolvedVersion)
+  if (resolvedVersion) entry.resolvedVersion = resolvedVersion
+  const resolvedRevision = asNonEmptyString(obj.resolvedRevision)
+  if (resolvedRevision) entry.resolvedRevision = resolvedRevision
+  return entry
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined
+}
+
+function asRegistrySource(value: unknown): RegistrySource | undefined {
+  return value === "npm" || value === "github" ? value : undefined
 }

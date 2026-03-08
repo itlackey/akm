@@ -1,10 +1,13 @@
 import type { AgentikitAssetType } from "./common"
+import type { RegistrySource } from "./registry-types"
 import type { ToolKind } from "./tool-runner"
 
 export type AgentikitSearchType = AgentikitAssetType | "any"
 export type SearchUsageMode = "none" | "both" | "item" | "guide"
+export type SearchSource = "local" | "registry" | "both"
 
-export interface SearchHit {
+export interface LocalSearchHit {
+  hitSource: "local"
   type: AgentikitAssetType
   name: string
   path: string
@@ -18,13 +21,182 @@ export interface SearchHit {
   usage?: string[]
 }
 
+export interface RegistrySearchResultHit {
+  hitSource: "registry"
+  type: "registry"
+  name: string
+  path?: string
+  openRef?: string
+  id: string
+  registrySource: RegistrySource
+  ref: string
+  description?: string
+  tags?: string[]
+  homepage?: string
+  score?: number
+  whyMatched?: string[]
+  runCmd?: string
+  kind?: ToolKind
+  usage?: string[]
+  metadata?: Record<string, string>
+  installRef: string
+  installCmd: string
+}
+
+export type SearchHit = LocalSearchHit | RegistrySearchResultHit
+
 export interface SearchResponse {
   stashDir: string
+  source: SearchSource
   hits: SearchHit[]
   usageGuide?: Partial<Record<AgentikitAssetType, string[]>>
   tip?: string
+  warnings?: string[]
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; rankMs?: number; embedMs?: number }
+}
+
+export interface AddResponse {
+  stashDir: string
+  ref: string
+  installed: {
+    id: string
+    source: RegistrySource
+    ref: string
+    artifactUrl: string
+    resolvedVersion?: string
+    resolvedRevision?: string
+    stashRoot: string
+    cacheDir: string
+    extractedDir: string
+    installedAt: string
+  }
+  config: {
+    additionalStashDirs: string[]
+    installedRegistryCount: number
+  }
+  index: {
+    mode: "full" | "incremental"
+    totalEntries: number
+    directoriesScanned: number
+    directoriesSkipped: number
+  }
+}
+
+export interface RegistryInstallStatus {
+  id: string
+  source: RegistrySource
+  ref: string
+  artifactUrl: string
+  resolvedVersion?: string
+  resolvedRevision?: string
+  stashRoot: string
+  cacheDir: string
+  extractedDir: string
+  installedAt: string
+}
+
+export interface RegistryListEntry {
+  id: string
+  source: RegistrySource
+  ref: string
+  artifactUrl: string
+  resolvedVersion?: string
+  resolvedRevision?: string
+  stashRoot: string
+  cacheDir: string
+  installedAt: string
+  status: {
+    cacheDirExists: boolean
+    stashRootExists: boolean
+  }
+}
+
+export interface ListResponse {
+  stashDir: string
+  installed: RegistryListEntry[]
+  totalInstalled: number
+}
+
+export interface RemoveResponse {
+  stashDir: string
+  target: string
+  removed: {
+    id: string
+    source: RegistrySource
+    ref: string
+    cacheDir: string
+    stashRoot: string
+  }
+  config: {
+    additionalStashDirs: string[]
+    installedRegistryCount: number
+  }
+  index: {
+    mode: "full" | "incremental"
+    totalEntries: number
+    directoriesScanned: number
+    directoriesSkipped: number
+  }
+}
+
+export interface ReinstallResultItem {
+  id: string
+  source: RegistrySource
+  ref: string
+  previousCacheDir: string
+  installed: RegistryInstallStatus
+}
+
+export interface ReinstallResponse {
+  stashDir: string
+  target?: string
+  all: boolean
+  processed: ReinstallResultItem[]
+  config: {
+    additionalStashDirs: string[]
+    installedRegistryCount: number
+  }
+  index: {
+    mode: "full" | "incremental"
+    totalEntries: number
+    directoriesScanned: number
+    directoriesSkipped: number
+  }
+}
+
+export interface UpdateResultItem {
+  id: string
+  source: RegistrySource
+  ref: string
+  previous: {
+    resolvedVersion?: string
+    resolvedRevision?: string
+    cacheDir: string
+  }
+  installed: RegistryInstallStatus
+  changed: {
+    version: boolean
+    revision: boolean
+    any: boolean
+  }
+}
+
+export interface UpdateResponse {
+  stashDir: string
+  target?: string
+  all: boolean
+  processed: UpdateResultItem[]
+  config: {
+    additionalStashDirs: string[]
+    installedRegistryCount: number
+  }
+  index: {
+    mode: "full" | "incremental"
+    totalEntries: number
+    directoriesScanned: number
+    directoriesSkipped: number
+  }
 }
 
 export interface ShowResponse {

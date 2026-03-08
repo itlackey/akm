@@ -390,14 +390,15 @@ test("agentikitShow returns no-frontmatter message when missing", () => {
   expect(result.content).toBe("(no frontmatter)")
 })
 
-test("agentikitShow throws for missing section in knowledge", () => {
+test("agentikitShow returns helpful message for missing section in knowledge", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AGENTIKIT_STASH_DIR = stashDir
-  expect(() =>
-    agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } }),
-  ).toThrow(/Section "Nonexistent" not found/)
+  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } })
+  expect(result.type).toBe("knowledge")
+  expect(result.content).toContain("Section \"Nonexistent\" not found")
+  expect(result.content).toContain("Try --view toc")
 })
 
 test("agentikitShow for tool type returns runCmd and kind", () => {

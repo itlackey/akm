@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty"
-import { agentikitSearch, agentikitShow, type KnowledgeView } from "./stash"
-import type { SearchUsageMode } from "./stash-types"
+import {
+  agentikitAdd,
+  agentikitList,
+  agentikitReinstall,
+  agentikitRemove,
+  agentikitSearch,
+  agentikitShow,
+  agentikitUpdate,
+  type KnowledgeView,
+} from "./stash"
+import type { SearchSource, SearchUsageMode } from "./stash-types"
 import { agentikitInit } from "./init"
 import { agentikitIndex } from "./indexer"
 import { loadConfig, updateConfig, type AgentikitConfig } from "./config"
@@ -10,8 +19,10 @@ import { resolveStashDir } from "./common"
 const initCommand = defineCommand({
   meta: { name: "init", description: "Initialize agentikit stash directory and set AGENTIKIT_STASH_DIR" },
   run() {
-    const result = agentikitInit()
-    console.log(JSON.stringify(result, null, 2))
+    return runWithJsonErrors(() => {
+      const result = agentikitInit()
+      console.log(JSON.stringify(result, null, 2))
+    })
   },
 })
 
@@ -21,8 +32,10 @@ const indexCommand = defineCommand({
     full: { type: "boolean", description: "Force full reindex", default: false },
   },
   async run({ args }) {
-    const result = await agentikitIndex({ full: args.full })
-    console.log(JSON.stringify(result, null, 2))
+    await runWithJsonErrors(async () => {
+      const result = await agentikitIndex({ full: args.full })
+      console.log(JSON.stringify(result, null, 2))
+    })
   },
 })
 
@@ -33,12 +46,75 @@ const searchCommand = defineCommand({
     type: { type: "string", description: "Asset type filter (tool|skill|command|agent|knowledge|any)" },
     limit: { type: "string", description: "Maximum number of results" },
     usage: { type: "string", description: "Usage metadata mode (none|both|item|guide)", default: "both" },
+    source: { type: "string", description: "Search source (local|registry|both)", default: "local" },
   },
   async run({ args }) {
-    const type = args.type as "tool" | "skill" | "command" | "agent" | "knowledge" | "any" | undefined
-    const limit = args.limit ? parseInt(args.limit, 10) : undefined
-    const usage = parseSearchUsageMode(args.usage)
-    console.log(JSON.stringify(await agentikitSearch({ query: args.query, type, limit, usage }), null, 2))
+    await runWithJsonErrors(async () => {
+      const type = args.type as "tool" | "skill" | "command" | "agent" | "knowledge" | "any" | undefined
+      const limit = args.limit ? parseInt(args.limit, 10) : undefined
+      const usage = parseSearchUsageMode(args.usage)
+      const source = parseSearchSource(args.source)
+      console.log(JSON.stringify(await agentikitSearch({ query: args.query, type, limit, usage, source }), null, 2))
+    })
+  },
+})
+
+const addCommand = defineCommand({
+  meta: { name: "add", description: "Install a registry package into the stash" },
+  args: {
+    ref: { type: "positional", description: "Registry ref (npm package, owner/repo, or github URL)", required: true },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      console.log(JSON.stringify(await agentikitAdd({ ref: args.ref }), null, 2))
+    })
+  },
+})
+
+const listCommand = defineCommand({
+  meta: { name: "list", description: "List installed registry packages from config" },
+  async run() {
+    await runWithJsonErrors(async () => {
+      console.log(JSON.stringify(await agentikitList(), null, 2))
+    })
+  },
+})
+
+const removeCommand = defineCommand({
+  meta: { name: "remove", description: "Remove an installed registry package by id or ref" },
+  args: {
+    target: { type: "positional", description: "Installed target (id or ref)", required: true },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      console.log(JSON.stringify(await agentikitRemove({ target: args.target }), null, 2))
+    })
+  },
+})
+
+const updateCommand = defineCommand({
+  meta: { name: "update", description: "Update one or all installed registry packages" },
+  args: {
+    target: { type: "positional", description: "Installed target (id or ref)", required: false },
+    all: { type: "boolean", description: "Update all installed entries", default: false },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      console.log(JSON.stringify(await agentikitUpdate({ target: args.target, all: args.all }), null, 2))
+    })
+  },
+})
+
+const reinstallCommand = defineCommand({
+  meta: { name: "reinstall", description: "Reinstall one or all installed registry packages" },
+  args: {
+    target: { type: "positional", description: "Installed target (id or ref)", required: false },
+    all: { type: "boolean", description: "Reinstall all installed entries", default: false },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      console.log(JSON.stringify(await agentikitReinstall({ target: args.target, all: args.all }), null, 2))
+    })
   },
 })
 
@@ -52,30 +128,31 @@ const showCommand = defineCommand({
     end: { type: "string", description: "End line (for --view lines)" },
   },
   run({ args }) {
-    let view: KnowledgeView | undefined
-    if (args.view) {
-      switch (args.view) {
-        case "section":
-          view = { mode: "section", heading: args.heading ?? "" }
-          break
-        case "lines":
-          view = {
-            mode: "lines",
-            start: Number(args.start ?? "1"),
-            end: args.end ? parseInt(args.end, 10) : Number.MAX_SAFE_INTEGER,
-          }
-          break
-        case "toc":
-        case "frontmatter":
-        case "full":
-          view = { mode: args.view }
-          break
-        default:
-          console.error(`Unknown view mode: ${args.view}`)
-          process.exit(1)
+    return runWithJsonErrors(() => {
+      let view: KnowledgeView | undefined
+      if (args.view) {
+        switch (args.view) {
+          case "section":
+            view = { mode: "section", heading: args.heading ?? "" }
+            break
+          case "lines":
+            view = {
+              mode: "lines",
+              start: Number(args.start ?? "1"),
+              end: args.end ? parseInt(args.end, 10) : Number.MAX_SAFE_INTEGER,
+            }
+            break
+          case "toc":
+          case "frontmatter":
+          case "full":
+            view = { mode: args.view }
+            break
+          default:
+            throw new Error(`Unknown view mode: ${args.view}. Expected one of: full|toc|frontmatter|section|lines`)
+        }
       }
-    }
-    console.log(JSON.stringify(agentikitShow({ ref: args.ref, view }), null, 2))
+      console.log(JSON.stringify(agentikitShow({ ref: args.ref, view }), null, 2))
+    })
   },
 })
 
@@ -85,23 +162,24 @@ const configCommand = defineCommand({
     set: { type: "string", description: "Update a config key (key=value format)" },
   },
   run({ args }) {
-    const stashDir = resolveStashDir()
+    return runWithJsonErrors(() => {
+      const stashDir = resolveStashDir()
 
-    if (args.set) {
-      const eqIndex = args.set.indexOf("=")
-      if (eqIndex === -1) {
-        console.error("Error: --set expects key=value format")
-        process.exit(1)
+      if (args.set) {
+        const eqIndex = args.set.indexOf("=")
+        if (eqIndex === -1) {
+          throw new Error("--set expects key=value format")
+        }
+        const key = args.set.slice(0, eqIndex)
+        const value = args.set.slice(eqIndex + 1)
+        const partial = parseConfigValue(key, value)
+        const config = updateConfig(partial, stashDir)
+        console.log(JSON.stringify(config, null, 2))
+      } else {
+        const config = loadConfig(stashDir)
+        console.log(JSON.stringify(config, null, 2))
       }
-      const key = args.set.slice(0, eqIndex)
-      const value = args.set.slice(eqIndex + 1)
-      const partial = parseConfigValue(key, value)
-      const config = updateConfig(partial, stashDir)
-      console.log(JSON.stringify(config, null, 2))
-    } else {
-      const config = loadConfig(stashDir)
-      console.log(JSON.stringify(config, null, 2))
-    }
+    })
   },
 })
 
@@ -113,6 +191,11 @@ const main = defineCommand({
   subCommands: {
     init: initCommand,
     index: indexCommand,
+    add: addCommand,
+    list: listCommand,
+    remove: removeCommand,
+    update: updateCommand,
+    reinstall: reinstallCommand,
     search: searchCommand,
     show: showCommand,
     config: configCommand,
@@ -122,10 +205,16 @@ const main = defineCommand({
 runMain(main)
 
 const SEARCH_USAGE_MODES: SearchUsageMode[] = ["none", "both", "item", "guide"]
+const SEARCH_SOURCES: SearchSource[] = ["local", "registry", "both"]
 
 function parseSearchUsageMode(value: string): SearchUsageMode {
   if ((SEARCH_USAGE_MODES as string[]).includes(value)) return value as SearchUsageMode
   throw new Error(`Invalid value for --usage: ${value}. Expected one of: ${SEARCH_USAGE_MODES.join("|")}`)
+}
+
+function parseSearchSource(value: string): SearchSource {
+  if ((SEARCH_SOURCES as string[]).includes(value)) return value as SearchSource
+  throw new Error(`Invalid value for --source: ${value}. Expected one of: ${SEARCH_SOURCES.join("|")}`)
 }
 
 function parseConnectionValue(
@@ -183,4 +272,25 @@ function parseConfigValue(key: string, value: string): Partial<AgentikitConfig> 
     default:
       throw new Error(`Unknown config key: ${key}`)
   }
+}
+
+async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
+  try {
+    await fn()
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    const hint = buildHint(message)
+    console.error(JSON.stringify({ ok: false, error: message, hint }, null, 2))
+    process.exit(1)
+  }
+}
+
+function buildHint(message: string): string | undefined {
+  if (message.includes("AGENTIKIT_STASH_DIR")) return "Run `akm init` or set AGENTIKIT_STASH_DIR to a valid directory."
+  if (message.includes("Either <target> or --all is required")) return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`."
+  if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`."
+  if (message.includes("No installed registry entry matched target")) return "Run `akm list` to view installed ids/refs, then retry with one of those values."
+  if (message.includes("Invalid value for --source")) return "Pick one of: local, registry, both."
+  if (message.includes("Invalid value for --usage")) return "Pick one of: none, both, item, guide."
+  return undefined
 }

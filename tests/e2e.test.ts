@@ -22,6 +22,7 @@ import path from "node:path"
 import { agentikitSearch, agentikitShow } from "../src/stash"
 import { agentikitIndex, loadSearchIndex, getIndexPath } from "../src/indexer"
 import { loadStashFile } from "../src/metadata"
+import { loadConfig, saveConfig } from "../src/config"
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,35 @@ function runCli(...args: string[]): { stdout: string; stderr: string; exitCode: 
 
 function parseJson(text: string): any {
   return JSON.parse(text)
+}
+
+function createEmptyStashDir(prefix: string): string {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  for (const sub of ["tools", "skills", "commands", "agents", "knowledge"]) {
+    fs.mkdirSync(path.join(stashDir, sub), { recursive: true })
+  }
+  return stashDir
+}
+
+async function withMockedFetch<T>(
+  handler: (input: string) => Response,
+  run: () => Promise<T>,
+): Promise<T> {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url
+    return handler(url)
+  }) as typeof fetch
+
+  try {
+    return await run()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME
@@ -204,10 +234,10 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("show a tool returns runCmd and kind", async () => {
     const searchResult = await agentikitSearch({ query: "deploy", type: "tool" })
-    const deployHit = searchResult.hits.find((h) => h.name.includes("deploy"))
+    const deployHit = searchResult.hits.find((h) => h.hitSource === "local" && h.name.includes("deploy"))
     expect(deployHit).toBeDefined()
 
-    const openResult = agentikitShow({ ref: deployHit!.openRef })
+    const openResult = agentikitShow({ ref: deployHit!.openRef! })
     expect(openResult.type).toBe("tool")
     expect(openResult.runCmd).toBeTruthy()
     expect(openResult.kind).toBe("bash")
@@ -274,7 +304,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(result.hits.length).toBeGreaterThan(0)
     // Skill openRef contains "code-review" (directory name), even though display name is "SKILL"
     expect(result.hits.some((h) =>
-      h.openRef.includes("code-review") || h.description?.toLowerCase().includes("review"),
+      (h.hitSource === "local" && h.openRef.includes("code-review")) || h.description?.toLowerCase().includes("review"),
     )).toBe(true)
   })
 
@@ -288,12 +318,106 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     // Step 1: Agent searches for a tool to run tests
     const searchResult = await agentikitSearch({ query: "run tests" })
     expect(searchResult.hits.length).toBeGreaterThan(0)
-    const testTool = searchResult.hits.find((h) => h.type === "tool" && h.name.includes("test"))
+    const testTool = searchResult.hits.find((h) => h.hitSource === "local" && h.type === "tool" && h.name.includes("test"))
     expect(testTool).toBeDefined()
 
     // Step 2: Agent reads the tool to get runCmd for host execution
-    const showResult = agentikitShow({ ref: testTool!.openRef })
+    const showResult = agentikitShow({ ref: testTool!.openRef! })
     expect(showResult.runCmd).toBeTruthy()
+  })
+})
+
+describe("Scenario: Mixed local + registry search compatibility", () => {
+  let stashDir: string
+
+  beforeAll(async () => {
+    stashDir = copyFixturesToTmp()
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+    await agentikitIndex({ stashDir })
+  })
+
+  afterAll(() => {
+    fs.rmSync(stashDir, { recursive: true, force: true })
+  })
+
+  test("local source does not call registry providers", async () => {
+    const result = await withMockedFetch(
+      () => { throw new Error("fetch should not be called for source=local") },
+      () => agentikitSearch({ query: "docker", source: "local" }),
+    )
+
+    expect(result.source).toBe("local")
+    expect(result.hits.length).toBeGreaterThan(0)
+    expect(result.hits.every((h) => h.hitSource === "local")).toBe(true)
+  })
+
+  test("registry source returns install guidance", async () => {
+    const result = await withMockedFetch((url) => {
+      if (url.includes("registry.npmjs.org/-/v1/search")) {
+        return new Response(JSON.stringify({
+          objects: [{
+            package: {
+              name: "@scope/kit",
+              description: "Example registry kit",
+              version: "1.2.3",
+              links: { homepage: "https://www.npmjs.com/package/@scope/kit" },
+            },
+            score: 0.9,
+          }],
+        }), { status: 200 })
+      }
+
+      if (url.includes("api.github.com/search/repositories")) {
+        return new Response(JSON.stringify({
+          items: [{
+            full_name: "itlackey/example-kit",
+            description: "Example GitHub kit",
+            html_url: "https://github.com/itlackey/example-kit",
+            stargazers_count: 42,
+            language: "TypeScript",
+          }],
+        }), { status: 200 })
+      }
+
+      return new Response("not found", { status: 404 })
+    }, () => agentikitSearch({ query: "kit", source: "registry" }))
+
+    expect(result.source).toBe("registry")
+    expect(result.hits.length).toBeGreaterThan(0)
+
+    for (const hit of result.hits) {
+      expect(hit.hitSource).toBe("registry")
+      if (hit.hitSource === "registry") {
+        expect(hit.installCmd.startsWith("akm add ")).toBe(true)
+        expect(hit.installRef.length).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  test("both source includes local and registry hits", async () => {
+    const result = await withMockedFetch((url) => {
+      if (url.includes("registry.npmjs.org/-/v1/search")) {
+        return new Response(JSON.stringify({
+          objects: [{
+            package: {
+              name: "docker-kit",
+              description: "Registry docker helper",
+              version: "0.1.0",
+              links: { homepage: "https://www.npmjs.com/package/docker-kit" },
+            },
+            score: 0.8,
+          }],
+        }), { status: 200 })
+      }
+      if (url.includes("api.github.com/search/repositories")) {
+        return new Response(JSON.stringify({ items: [] }), { status: 200 })
+      }
+      return new Response("not found", { status: 404 })
+    }, () => agentikitSearch({ query: "docker", source: "both", limit: 10 }))
+
+    expect(result.source).toBe("both")
+    expect(result.hits.some((h) => h.hitSource === "local")).toBe(true)
+    expect(result.hits.some((h) => h.hitSource === "registry")).toBe(true)
   })
 })
 
@@ -359,6 +483,15 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true)
   })
 
+  test("cli: akm search default source is local", async () => {
+    const result = runCli("search", "docker")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.source).toBe("local")
+    expect(json.hits.every((h: any) => h.hitSource === "local")).toBe(true)
+  })
+
   test("cli: akm search --usage none excludes usageGuide and per-hit usage", async () => {
     const result = runCli("search", "docker", "--type", "tool", "--usage", "none")
     expect(result.exitCode).toBe(0)
@@ -402,6 +535,13 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(result.exitCode).not.toBe(0)
     const output = result.stdout + result.stderr
     expect(output).toContain("Invalid value for --usage: bad. Expected one of: none|both|item|guide")
+  })
+
+  test("cli: akm search --source invalid value fails with clear error", async () => {
+    const result = runCli("search", "docker", "--source", "bad")
+    expect(result.exitCode).not.toBe(0)
+    const output = result.stdout + result.stderr
+    expect(output).toContain("Invalid value for --source: bad. Expected one of: local|registry|both")
   })
 
   test("cli: akm show returns asset content", async () => {
@@ -452,6 +592,113 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(result.exitCode).not.toBe(0)
     const output = result.stdout + result.stderr
     expect(output).toContain("Missing required positional argument")
+  })
+})
+
+describe("Scenario: Registry lifecycle CLI (no network)", () => {
+  test("cli: akm list returns empty installed set when none configured", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-empty-")
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+
+    try {
+      const result = runCli("list")
+      expect(result.exitCode).toBe(0)
+
+      const json = parseJson(result.stdout)
+      expect(json.totalInstalled).toBe(0)
+      expect(json.installed).toEqual([])
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
+  })
+
+  test("cli: akm remove resolves parsed ref id and removes cache directory", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-remove-")
+    const stashRoot = path.join(stashDir, "registry-kit")
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-cache-remove-"))
+    fs.mkdirSync(path.join(stashRoot, "tools"), { recursive: true })
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+
+    saveConfig({
+      semanticSearch: false,
+      additionalStashDirs: [stashRoot],
+      registry: {
+        installed: [
+          {
+            id: "npm:@scope/kit",
+            source: "npm",
+            ref: "npm:@scope/kit@1.0.0",
+            artifactUrl: "https://registry.npmjs.org/@scope/kit/-/kit-1.0.0.tgz",
+            resolvedVersion: "1.0.0",
+            resolvedRevision: "abc123",
+            stashRoot,
+            cacheDir,
+            installedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    }, stashDir)
+
+    try {
+      const result = runCli("remove", "npm:@scope/kit@latest")
+      expect(result.exitCode).toBe(0)
+
+      const json = parseJson(result.stdout)
+      expect(json.removed.id).toBe("npm:@scope/kit")
+
+      const config = loadConfig(stashDir)
+      expect(config.registry).toBeUndefined()
+      expect(fs.existsSync(cacheDir)).toBe(false)
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+      fs.rmSync(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  test("cli: akm update requires target or --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-update-")
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+
+    try {
+      const result = runCli("update")
+      expect(result.exitCode).not.toBe(0)
+      const output = result.stdout + result.stderr
+      expect(output).toContain("Either <target> or --all is required.")
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
+  })
+
+  test("cli: akm reinstall rejects target with --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-reinstall-")
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+
+    try {
+      const result = runCli("reinstall", "npm:@scope/kit", "--all")
+      expect(result.exitCode).not.toBe(0)
+      const output = result.stdout + result.stderr
+      expect(output).toContain("Specify either <target> or --all, not both.")
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
+  })
+
+  test("cli: akm update missing target returns stable not-installed error", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-missing-")
+    process.env.AGENTIKIT_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+
+    try {
+      const result = runCli("update", "npm:@scope/kit")
+      expect(result.exitCode).not.toBe(0)
+      const output = result.stdout + result.stderr
+      expect(output).toContain("No installed registry entry matched target: npm:@scope/kit")
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -809,7 +1056,7 @@ describe("Scenario: Cross-type discovery", () => {
       expect(hit.openRef).toContain(":")
 
       // Should not throw when opening
-      const openResult = agentikitShow({ ref: hit.openRef })
+      const openResult = agentikitShow({ ref: hit.openRef! })
       expect(openResult.type).toBe(hit.type)
     }
   })
