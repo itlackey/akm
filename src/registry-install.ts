@@ -293,10 +293,10 @@ function copyIncludedPaths(baseDir: string, include: string[], destinationDir: s
   for (const entry of include) {
     const resolvedSource = path.resolve(baseDir, entry)
     if (!isWithin(resolvedSource, baseDir)) {
-      throw new Error(`agentikit.include path must stay within the package root: ${entry}`)
+      throw new Error(`Path in agentikit.include escapes the package root: ${entry}`)
     }
     if (!fs.existsSync(resolvedSource)) {
-      throw new Error(`agentikit.include path not found: ${entry}`)
+      throw new Error(`Path in agentikit.include does not exist: ${entry}`)
     }
     if (path.basename(resolvedSource) === ".git") {
       continue
