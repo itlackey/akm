@@ -28,6 +28,7 @@ export interface StashEntry {
   source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm"
   aliases?: string[]
   toc?: TocHeading[]
+  usage?: string[]
 }
 
 export interface StashFile {
@@ -111,8 +112,23 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     )
     if (validated.length > 0) result.toc = validated
   }
+  const usage = normalizeNonEmptyStringList(e.usage)
+  if (usage) result.usage = usage
 
   return result
+}
+
+function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return trimmed ? [trimmed] : undefined
+  }
+  if (!Array.isArray(value)) return undefined
+  const filtered = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+  return filtered.length > 0 ? filtered : undefined
 }
 
 // ── Metadata Generation ─────────────────────────────────────────────────────

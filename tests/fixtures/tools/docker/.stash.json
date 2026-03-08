@@ -11,6 +11,10 @@
         "input": "Dockerfile path or build context directory",
         "output": "built docker image with tag"
       },
+      "usage": [
+        "Run from the repository root or pass an explicit build context.",
+        "Tag the image before pushing to a registry."
+      ],
       "entry": "build-image.sh"
     },
     {

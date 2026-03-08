@@ -349,6 +349,61 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.length).toBeLessThanOrEqual(2)
   })
 
+  test("cli: akm search default usage mode includes usageGuide", async () => {
+    const result = runCli("search", "docker", "--type", "tool")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.usageGuide).toBeDefined()
+    expect(json.usageGuide.tool).toBeInstanceOf(Array)
+    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true)
+  })
+
+  test("cli: akm search --usage none excludes usageGuide and per-hit usage", async () => {
+    const result = runCli("search", "docker", "--type", "tool", "--usage", "none")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.usageGuide).toBeUndefined()
+    expect(json.hits.some((h: any) => h.usage !== undefined)).toBe(false)
+  })
+
+  test("cli: akm search --usage item includes per-hit usage only", async () => {
+    const result = runCli("search", "docker", "--type", "tool", "--usage", "item")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.usageGuide).toBeUndefined()
+    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true)
+  })
+
+  test("cli: akm search --usage guide includes usageGuide only", async () => {
+    const result = runCli("search", "docker", "--type", "tool", "--usage", "guide")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.usageGuide).toBeDefined()
+    expect(json.usageGuide.tool).toBeInstanceOf(Array)
+    expect(json.hits.some((h: any) => h.usage !== undefined)).toBe(false)
+  })
+
+  test("cli: akm search --usage both includes usageGuide and per-hit usage", async () => {
+    const result = runCli("search", "docker", "--type", "tool", "--usage", "both")
+    expect(result.exitCode).toBe(0)
+
+    const json = parseJson(result.stdout)
+    expect(json.usageGuide).toBeDefined()
+    expect(json.usageGuide.tool).toBeInstanceOf(Array)
+    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true)
+  })
+
+  test("cli: akm search --usage invalid value fails with clear error", async () => {
+    const result = runCli("search", "docker", "--usage", "bad")
+    expect(result.exitCode).not.toBe(0)
+    const output = result.stdout + result.stderr
+    expect(output).toContain("Invalid value for --usage: bad. Expected one of: none|both|item|guide")
+  })
+
   test("cli: akm show returns asset content", async () => {
     const result = runCli("show", "skill:code-review")
     expect(result.exitCode).toBe(0)

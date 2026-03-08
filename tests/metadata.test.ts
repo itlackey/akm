@@ -346,6 +346,44 @@ test("validateStashEntry omits intents if all filtered out", () => {
   expect(result!.intents).toBeUndefined()
 })
 
+test("validateStashEntry accepts usage as string", () => {
+  const result = validateStashEntry({
+    name: "test",
+    type: "tool",
+    usage: "Run after checking branch state",
+  })
+  expect(result).not.toBeNull()
+  expect(result!.usage).toEqual(["Run after checking branch state"])
+})
+
+test("validateStashEntry normalizes usage array", () => {
+  const result = validateStashEntry({
+    name: "test",
+    type: "tool",
+    usage: ["  First step  ", "", "Second step", 2, null],
+  })
+  expect(result).not.toBeNull()
+  expect(result!.usage).toEqual(["First step", "Second step"])
+})
+
+test("loadStashFile parses usage field", () => {
+  const dir = tmpDir()
+  const stash: StashFile = {
+    entries: [
+      {
+        name: "git-diff",
+        type: "tool",
+        usage: ["Run after fetching main", "Use --stat for quick output"],
+        entry: "run.ts",
+      },
+    ],
+  }
+  writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash))
+
+  const result = loadStashFile(dir)
+  expect(result!.entries[0].usage).toEqual(["Run after fetching main", "Use --stat for quick output"])
+})
+
 test("loadStashFile parses intents field", () => {
   const dir = tmpDir()
   const stash: StashFile = {

@@ -63,14 +63,18 @@ akm show <type:name>     # Read a stash asset by ref
 Search the stash for extension assets.
 
 ```sh
-akm search "deploy" --type tool --limit 10
+akm search "deploy" --type tool --limit 10 --usage both
 ```
 
 - `query`: case-insensitive substring over stable names (relative paths)
 - `--type`: `tool | skill | command | agent | knowledge | any` (default: `any`)
 - `--limit`: defaults to `20`
+- `--usage`: `none | both | item | guide` (default: `both`)
 
 Returns typed hits with `openRef`, score/explainability details (`score`, `whyMatched`), and, for tools, execution-ready `runCmd`.
+
+- `usageGuide` is included by default (`--usage both`) and explains how to use each hit type.
+- Per-hit `usage` is optional metadata from `.stash.json` and is included when present.
 
 ### show
 
@@ -99,7 +103,7 @@ Agentikit also exports its core functions for use as a library:
 import { agentikitSearch, agentikitShow, agentikitInit, agentikitIndex } from "agentikit"
 ```
 
-- `agentikitSearch({ query, type?, limit? })` — search the stash
+- `agentikitSearch({ query, type?, limit?, usage? })` — search the stash
 - `agentikitShow({ ref, view? })` — show a stash asset
 - `agentikitInit()` — initialize stash directory
 - `agentikitIndex()` — build/rebuild search index

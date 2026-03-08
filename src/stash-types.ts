@@ -2,6 +2,7 @@ import type { AgentikitAssetType } from "./common"
 import type { ToolKind } from "./tool-runner"
 
 export type AgentikitSearchType = AgentikitAssetType | "any"
+export type SearchUsageMode = "none" | "both" | "item" | "guide"
 
 export interface SearchHit {
   type: AgentikitAssetType
@@ -14,11 +15,13 @@ export interface SearchHit {
   whyMatched?: string[]
   runCmd?: string
   kind?: ToolKind
+  usage?: string[]
 }
 
 export interface SearchResponse {
   stashDir: string
   hits: SearchHit[]
+  usageGuide?: Partial<Record<AgentikitAssetType, string[]>>
   tip?: string
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; rankMs?: number; embedMs?: number }

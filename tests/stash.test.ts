@@ -105,6 +105,116 @@ test("agentikitSearch includes explainability reasons for indexed hits", async (
   expect(result.hits[0].whyMatched).toContain("matched name tokens")
 })
 
+test("agentikitSearch usage mode both includes guide and per-hit metadata usage", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  const toolPath = path.join(stashDir, "tools", "deploy.sh")
+  writeFile(toolPath, "#!/usr/bin/env bash\necho deploy\n")
+  writeFile(path.join(stashDir, "tools", ".stash.json"), JSON.stringify({
+    entries: [
+      {
+        name: "deploy",
+        type: "tool",
+        description: "Deploy app",
+        usage: ["Confirm staging health first", "Run with release tag"],
+        entry: "deploy.sh",
+      },
+    ],
+  }))
+
+  saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+
+  await agentikitIndex({ stashDir, full: true })
+  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "both" })
+
+  expect(result.usageGuide?.tool).toBeDefined()
+  expect(result.hits[0].usage).toEqual(["Confirm staging health first", "Run with release tag"])
+})
+
+test("agentikitSearch usage mode guide omits per-hit usage", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
+  writeFile(path.join(stashDir, "tools", ".stash.json"), JSON.stringify({
+    entries: [
+      {
+        name: "deploy",
+        type: "tool",
+        usage: ["metadata only"],
+        entry: "deploy.sh",
+      },
+    ],
+  }))
+
+  saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+
+  await agentikitIndex({ stashDir, full: true })
+  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "guide" })
+
+  expect(result.usageGuide?.tool).toBeDefined()
+  expect(result.hits[0].usage).toBeUndefined()
+})
+
+test("agentikitSearch usage mode item omits usage guide", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
+  writeFile(path.join(stashDir, "tools", ".stash.json"), JSON.stringify({
+    entries: [
+      {
+        name: "deploy",
+        type: "tool",
+        usage: ["metadata only"],
+        entry: "deploy.sh",
+      },
+    ],
+  }))
+
+  saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+
+  await agentikitIndex({ stashDir, full: true })
+  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "item" })
+
+  expect(result.usageGuide).toBeUndefined()
+  expect(result.hits[0].usage).toEqual(["metadata only"])
+})
+
+test("agentikitSearch usage mode none omits guide and per-hit usage", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
+  writeFile(path.join(stashDir, "tools", ".stash.json"), JSON.stringify({
+    entries: [
+      {
+        name: "deploy",
+        type: "tool",
+        usage: ["metadata only"],
+        entry: "deploy.sh",
+      },
+    ],
+  }))
+
+  saveConfig({ semanticSearch: false, additionalStashDirs: [] }, stashDir)
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+
+  await agentikitIndex({ stashDir, full: true })
+  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "none" })
+
+  expect(result.usageGuide).toBeUndefined()
+  expect(result.hits[0].usage).toBeUndefined()
+})
+
+test("agentikitSearch fallback includes usageGuide for guide mode", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
+  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
+
+  process.env.AGENTIKIT_STASH_DIR = stashDir
+  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "guide" })
+
+  expect(result.hits.length).toBe(1)
+  expect(result.usageGuide?.tool).toBeDefined()
+  expect(result.hits[0].usage).toBeUndefined()
+})
+
 test("agentikitShow returns full payloads for skill/command/agent", () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\n")

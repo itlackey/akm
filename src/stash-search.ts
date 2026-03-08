@@ -7,7 +7,7 @@ import { TfIdfAdapter, type ScoredEntry } from "./similarity"
 import { buildToolInfo } from "./tool-runner"
 import { walkStash } from "./walker"
 import { makeOpenRef } from "./stash-ref"
-import type { AgentikitSearchType, SearchHit, SearchResponse } from "./stash-types"
+import type { AgentikitSearchType, SearchHit, SearchResponse, SearchUsageMode } from "./stash-types"
 import { loadConfig } from "./config"
 
 type IndexedAsset = {
@@ -18,15 +18,40 @@ type IndexedAsset = {
 
 const DEFAULT_LIMIT = 20
 
+const DEFAULT_USAGE_GUIDE_BY_TYPE: Record<AgentikitAssetType, string[]> = {
+  tool: [
+    "Use the hit's runCmd for execution so runtime and working directory stay correct.",
+    "Use `akm show <openRef>` to inspect the tool before running it.",
+  ],
+  skill: [
+    "Read and apply the skill instructions as written, then adapt examples to your current repo state and task.",
+    "Use `akm show <openRef>` to read the full SKILL.md for required steps and constraints.",
+  ],
+  command: [
+    "Read the .md file, fill placeholders, and run it in the current repo context.",
+    "Use `akm show <openRef>` to retrieve the command template body.",
+  ],
+  agent: [
+    "Read the .md file and dispatch and agent using the content of the file. Use modelHint/toolPolicy when present to run the agent with compatible settings.",
+    "Use with `akm show <openRef>` to get the full prompt payload.",
+  ],
+  knowledge: [
+    "Use `akm show <openRef>` to read the document; start with `--view toc` for large files.",
+    "Use `--view section` or `--view lines` to load only the part you need.",
+  ],
+}
+
 export async function agentikitSearch(input: {
   query: string
   type?: AgentikitSearchType
   limit?: number
+  usage?: SearchUsageMode
 }): Promise<SearchResponse> {
   const t0 = Date.now()
   const query = input.query.trim().toLowerCase()
   const searchType = input.type ?? "any"
   const limit = normalizeLimit(input.limit)
+  const usageMode = parseSearchUsageMode(input.usage)
   const stashDir = resolveStashDir()
   const config = loadConfig(stashDir)
 
@@ -40,10 +65,11 @@ export async function agentikitSearch(input: {
   // Try indexed search (single unified pipeline: embedding + TF-IDF as weighted features)
   const index = loadSearchIndex()
   if (index && index.entries && index.entries.length > 0 && index.stashDir === stashDir) {
-    const { hits, embedMs, rankMs } = await searchIndex(index, query, searchType, limit, stashDir, allStashDirs, config)
+    const { hits, usageGuide, embedMs, rankMs } = await searchIndex(index, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
     return {
       stashDir,
       hits,
+      usageGuide,
       tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
       timing: { totalMs: Date.now() - t0, rankMs, embedMs },
     }
@@ -53,10 +79,12 @@ export async function agentikitSearch(input: {
   const hits = allStashDirs
     .flatMap((dir) => substringSearch(query, searchType, limit, dir))
     .slice(0, limit)
+  const usageGuide = shouldIncludeUsageGuide(usageMode) ? buildUsageGuide(hits.map((hit) => hit.type), searchType) : undefined
 
   return {
     stashDir,
     hits,
+    usageGuide,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
     timing: { totalMs: Date.now() - t0 },
   }
@@ -72,20 +100,42 @@ async function searchIndex(
   stashDir: string,
   allStashDirs: string[],
   config: import("./config").AgentikitConfig,
-): Promise<{ hits: SearchHit[]; embedMs?: number; rankMs?: number }> {
+  usageMode: SearchUsageMode,
+): Promise<{ hits: SearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; embedMs?: number; rankMs?: number }> {
   // Filter candidates by type
   let candidates = index.entries
   if (searchType !== "any") {
     candidates = candidates.filter((ie) => ie.entry.type === searchType)
   }
 
-  if (candidates.length === 0) return { hits: [] }
+  if (candidates.length === 0) {
+    return {
+      hits: [],
+      usageGuide: shouldIncludeUsageGuide(usageMode) ? buildUsageGuide([], searchType) : undefined,
+    }
+  }
 
   // Empty query: return all entries (no scoring needed)
   if (!query) {
-    return { hits: candidates.slice(0, limit).map((ie) =>
-      buildIndexedHit({ entry: ie.entry, path: ie.path, score: 1, query, rankingMode: "tfidf", defaultStashDir: stashDir, allStashDirs }),
-    ) }
+    const selectedCandidates = candidates.slice(0, limit)
+    const hits = selectedCandidates.map((ie) =>
+      buildIndexedHit({
+        entry: ie.entry,
+        path: ie.path,
+        score: 1,
+        query,
+        rankingMode: "tfidf",
+        defaultStashDir: stashDir,
+        allStashDirs,
+        includeItemUsage: shouldIncludeItemUsage(usageMode),
+      }),
+    )
+    return {
+      hits,
+      usageGuide: shouldIncludeUsageGuide(usageMode)
+        ? buildUsageGuideFromEntries(selectedCandidates.map((candidate) => candidate.entry), searchType)
+        : undefined,
+    }
   }
 
   // Score each candidate using available signals
@@ -115,7 +165,8 @@ async function searchIndex(
   scored.sort((a, b) => b.score - a.score)
   const rankMs = Date.now() - tRank0
 
-  return { embedMs, rankMs, hits: scored.slice(0, limit).map(({ ie, score, rankingMode }) =>
+  const selected = scored.slice(0, limit)
+  const hits = selected.map(({ ie, score, rankingMode }) =>
     buildIndexedHit({
       entry: ie.entry,
       path: ie.path,
@@ -124,8 +175,18 @@ async function searchIndex(
       rankingMode,
       defaultStashDir: stashDir,
       allStashDirs,
+      includeItemUsage: shouldIncludeItemUsage(usageMode),
     }),
-  ) }
+  )
+
+  return {
+    embedMs,
+    rankMs,
+    hits,
+    usageGuide: shouldIncludeUsageGuide(usageMode)
+      ? buildUsageGuideFromEntries(selected.map((item) => item.ie.entry), searchType)
+      : undefined,
+  }
 }
 
 // ── Embedding scorer ────────────────────────────────────────────────────────
@@ -216,6 +277,7 @@ function buildIndexedHit(input: {
   rankingMode: "semantic" | "tfidf"
   defaultStashDir: string
   allStashDirs: string[]
+  includeItemUsage: boolean
 }): SearchHit {
   const entryStashDir = findStashDirForPath(input.path, input.allStashDirs) ?? input.defaultStashDir
   const typeRoot = path.join(entryStashDir, TYPE_DIRS[input.entry.type])
@@ -237,6 +299,10 @@ function buildIndexedHit(input: {
     tags: input.entry.tags,
     score,
     whyMatched,
+  }
+
+  if (input.includeItemUsage && input.entry.usage && input.entry.usage.length > 0) {
+    hit.usage = input.entry.usage
   }
 
   if (input.entry.type === "tool") {
@@ -313,6 +379,81 @@ function normalizeLimit(limit?: number): number {
     return DEFAULT_LIMIT
   }
   return Math.min(Math.floor(limit), 200)
+}
+
+function parseSearchUsageMode(mode: SearchUsageMode | undefined): SearchUsageMode {
+  if (mode === "none" || mode === "both" || mode === "item" || mode === "guide") {
+    return mode
+  }
+  if (typeof mode === "undefined") return "both"
+  throw new Error(`Invalid usage mode: ${String(mode)}. Expected one of: none|both|item|guide`)
+}
+
+function shouldIncludeUsageGuide(mode: SearchUsageMode): boolean {
+  return mode === "both" || mode === "guide"
+}
+
+function shouldIncludeItemUsage(mode: SearchUsageMode): boolean {
+  return mode === "both" || mode === "item"
+}
+
+function buildUsageGuideFromEntries(
+  entries: IndexedEntry["entry"][],
+  searchType: AgentikitSearchType,
+): Partial<Record<AgentikitAssetType, string[]>> | undefined {
+  const types = entries.map((entry) => entry.type)
+  const fallbackGuide = buildUsageGuide(types, searchType)
+  const metadataByType = new Map<AgentikitAssetType, string[]>()
+
+  for (const entry of entries) {
+    if (!entry.usage || entry.usage.length === 0) continue
+    const current = metadataByType.get(entry.type) ?? []
+    for (const item of entry.usage) {
+      const trimmed = item.trim()
+      if (trimmed && !current.includes(trimmed)) current.push(trimmed)
+    }
+    if (current.length > 0) metadataByType.set(entry.type, current)
+  }
+
+  if (!fallbackGuide && metadataByType.size === 0) return undefined
+
+  const result: Partial<Record<AgentikitAssetType, string[]>> = {}
+  for (const assetType of resolveGuideTypes(types, searchType)) {
+    const lines: string[] = []
+    const metadataLines = metadataByType.get(assetType)
+    if (metadataLines && metadataLines.length > 0) {
+      lines.push(...metadataLines)
+    }
+    const fallbackLines = fallbackGuide?.[assetType]
+    if (fallbackLines && fallbackLines.length > 0) {
+      for (const line of fallbackLines) {
+        if (!lines.includes(line)) lines.push(line)
+      }
+    }
+    if (lines.length > 0) result[assetType] = lines
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function buildUsageGuide(
+  hitTypes: AgentikitAssetType[],
+  searchType: AgentikitSearchType,
+): Partial<Record<AgentikitAssetType, string[]>> | undefined {
+  const result: Partial<Record<AgentikitAssetType, string[]>> = {}
+  for (const assetType of resolveGuideTypes(hitTypes, searchType)) {
+    result[assetType] = usageGuideByType(assetType)
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function resolveGuideTypes(hitTypes: AgentikitAssetType[], searchType: AgentikitSearchType): AgentikitAssetType[] {
+  if (searchType !== "any") return [searchType]
+  return Array.from(new Set(hitTypes))
+}
+
+function usageGuideByType(type: AgentikitAssetType): string[] {
+  return DEFAULT_USAGE_GUIDE_BY_TYPE[type]
 }
 
 function fileToAsset(assetType: AgentikitAssetType, root: string, file: string): IndexedAsset | undefined {

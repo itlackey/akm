@@ -9,6 +9,7 @@ export { agentikitShow } from "./stash-show"
 
 export type {
   AgentikitSearchType,
+  SearchUsageMode,
   SearchHit,
   SearchResponse,
   ShowResponse,

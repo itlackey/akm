@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty"
 import { agentikitSearch, agentikitShow, type KnowledgeView } from "./stash"
+import type { SearchUsageMode } from "./stash-types"
 import { agentikitInit } from "./init"
 import { agentikitIndex } from "./indexer"
 import { loadConfig, updateConfig, type AgentikitConfig } from "./config"
@@ -31,11 +32,13 @@ const searchCommand = defineCommand({
     query: { type: "positional", description: "Search query", required: false, default: "" },
     type: { type: "string", description: "Asset type filter (tool|skill|command|agent|knowledge|any)" },
     limit: { type: "string", description: "Maximum number of results" },
+    usage: { type: "string", description: "Usage metadata mode (none|both|item|guide)", default: "both" },
   },
   async run({ args }) {
     const type = args.type as "tool" | "skill" | "command" | "agent" | "knowledge" | "any" | undefined
     const limit = args.limit ? parseInt(args.limit, 10) : undefined
-    console.log(JSON.stringify(await agentikitSearch({ query: args.query, type, limit }), null, 2))
+    const usage = parseSearchUsageMode(args.usage)
+    console.log(JSON.stringify(await agentikitSearch({ query: args.query, type, limit, usage }), null, 2))
   },
 })
 
@@ -117,6 +120,13 @@ const main = defineCommand({
 })
 
 runMain(main)
+
+const SEARCH_USAGE_MODES: SearchUsageMode[] = ["none", "both", "item", "guide"]
+
+function parseSearchUsageMode(value: string): SearchUsageMode {
+  if ((SEARCH_USAGE_MODES as string[]).includes(value)) return value as SearchUsageMode
+  throw new Error(`Invalid value for --usage: ${value}. Expected one of: ${SEARCH_USAGE_MODES.join("|")}`)
+}
 
 function parseConnectionValue(
   key: string,
