@@ -1,8 +1,17 @@
-import { test, expect } from "bun:test"
+import { test, expect, beforeEach } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { agentikitIndex, getIndexPath, loadSearchIndex, buildSearchText } from "../src/indexer"
+import { agentikitIndex, buildSearchText } from "../src/indexer"
+import { openDatabase, closeDatabase, getDbPath, getMeta, getAllEntries } from "../src/db"
+
+// Each test gets a fresh database
+beforeEach(() => {
+  const dbPath = getDbPath()
+  for (const f of [dbPath, dbPath + "-wal", dbPath + "-shm"]) {
+    try { fs.unlinkSync(f) } catch { /* ignore */ }
+  }
+})
 
 function tmpStash(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-idx-"))
@@ -96,22 +105,28 @@ test("agentikitIndex migrates generated skill metadata name to canonical directo
   expect(stash.entries[0].name).toBe("code-review")
   expect(stash.entries[0].generated).toBe(true)
 
-  const index = loadSearchIndex()
-  expect(index).not.toBeNull()
-  expect(index!.entries[0].entry.name).toBe("code-review")
+  // Check the database
+  const db = openDatabase()
+  const entries = getAllEntries(db)
+  expect(entries.length).toBeGreaterThan(0)
+  expect(entries[0].entry.name).toBe("code-review")
+  closeDatabase(db)
 })
 
-test("agentikitIndex writes index to cache", async () => {
+test("agentikitIndex writes index to SQLite database", async () => {
   const stashDir = tmpStash()
   writeFile(path.join(stashDir, "tools", "hello", "hello.sh"), "#!/bin/bash\necho hi\n")
 
   const result = await agentikitIndex({ stashDir })
   expect(fs.existsSync(result.indexPath)).toBe(true)
+  expect(result.indexPath).toEndWith(".db")
 
-  const index = loadSearchIndex()
-  expect(index).not.toBeNull()
-  expect(index!.version).toBe(4)
-  expect(index!.entries.length).toBeGreaterThan(0)
+  const db = openDatabase()
+  const version = getMeta(db, "version")
+  expect(version).toBe("5")
+  const entries = getAllEntries(db)
+  expect(entries.length).toBeGreaterThan(0)
+  closeDatabase(db)
 })
 
 test("agentikitIndex handles empty stash gracefully", async () => {
@@ -171,7 +186,6 @@ test("isDirStale detects stash.json newer than index", async () => {
   expect(result2.directoriesSkipped).toBeGreaterThanOrEqual(1)
 
   // Now touch the .stash.json to make it newer than the index
-  // We need a small delay to ensure the mtime is strictly newer
   const stashJsonPath = path.join(stashDir, "tools", "deploy", ".stash.json")
   const futureTime = new Date(Date.now() + 2000)
   fs.utimesSync(stashJsonPath, futureTime, futureTime)

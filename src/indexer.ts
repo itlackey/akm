@@ -9,32 +9,26 @@ import {
   writeStashFile,
   generateMetadata,
 } from "./metadata"
-import { TfIdfAdapter, type ScoredEntry, type SerializedTfIdf } from "./similarity"
 import { walkStash } from "./walker"
-import type { EmbeddingVector } from "./embedder"
 import type { LlmConnectionConfig } from "./config"
+import {
+  openDatabase,
+  closeDatabase,
+  getDbPath,
+  getMeta,
+  setMeta,
+  upsertEntry,
+  deleteEntriesByDir,
+  rebuildFts,
+  upsertEmbedding,
+  getEntriesByDir,
+  getEntryCount,
+  isVecAvailable,
+  DB_VERSION,
+  type DbIndexedEntry,
+} from "./db"
 
 // ── Types ───────────────────────────────────────────────────────────────────
-
-export interface IndexedEntry {
-  entry: StashEntry
-  path: string
-  dirPath: string
-  embedding?: EmbeddingVector
-}
-
-export interface SearchIndex {
-  version: number
-  builtAt: string
-  stashDir: string
-  /** All stash directories that were indexed (primary + additional) */
-  stashDirs?: string[]
-  entries: IndexedEntry[]
-  /** Serialized TF-IDF state (term frequencies, idf values) */
-  tfidf?: SerializedTfIdf
-  /** Whether embeddings are included in entries */
-  hasEmbeddings?: boolean
-}
 
 export interface IndexResponse {
   stashDir: string
@@ -45,31 +39,7 @@ export interface IndexResponse {
   directoriesScanned: number
   directoriesSkipped: number
   /** Timing counters in milliseconds */
-  timing?: { totalMs: number; walkMs: number; embedMs: number; tfidfMs: number }
-}
-
-// ── Constants ───────────────────────────────────────────────────────────────
-
-const INDEX_VERSION = 4
-
-// ── Index Path ──────────────────────────────────────────────────────────────
-
-export function getIndexPath(): string {
-  const cacheDir = process.env.XDG_CACHE_HOME
-    || path.join(process.env.HOME || process.env.USERPROFILE || "", ".cache")
-  return path.join(cacheDir, "agentikit", "index.json")
-}
-
-export function loadSearchIndex(): SearchIndex | null {
-  const indexPath = getIndexPath()
-  if (!fs.existsSync(indexPath)) return null
-  try {
-    const raw = JSON.parse(fs.readFileSync(indexPath, "utf8"))
-    if (raw?.version !== INDEX_VERSION) return null
-    return raw as SearchIndex
-  } catch {
-    return null
-  }
+  timing?: { totalMs: number; walkMs: number; embedMs: number; ftsMs: number }
 }
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
@@ -91,165 +61,215 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
   }
 
   const t0 = Date.now()
-  const allEntries: IndexedEntry[] = []
   let generatedCount = 0
   let scannedDirs = 0
   let skippedDirs = 0
 
-  // Load previous index for incremental mode
-  const previousIndex = !options?.full ? loadSearchIndex() : null
-  const isIncremental = previousIndex !== null && previousIndex.stashDir === stashDir
-  const builtAtMs = isIncremental ? new Date(previousIndex.builtAt).getTime() : 0
+  // Open database
+  const dbPath = getDbPath()
+  const db = openDatabase(dbPath)
 
-  // Build lookup of previous entries by dirPath
-  const previousEntriesByDir = new Map<string, IndexedEntry[]>()
-  if (isIncremental) {
-    for (const ie of previousIndex.entries) {
-      const list = previousEntriesByDir.get(ie.dirPath) || []
-      list.push(ie)
-      previousEntriesByDir.set(ie.dirPath, list)
+  // Check if we should do incremental
+  const prevStashDir = getMeta(db, "stashDir")
+  const prevBuiltAt = getMeta(db, "builtAt")
+  const isIncremental = !options?.full && prevStashDir === stashDir && !!prevBuiltAt
+  const builtAtMs = isIncremental ? new Date(prevBuiltAt!).getTime() : 0
+
+  if (options?.full || !isIncremental) {
+    // Wipe all entries for full rebuild or stashDir change
+    db.exec("DELETE FROM entries")
+    db.exec("DELETE FROM entries_fts")
+    if (isVecAvailable()) {
+      try { db.exec("DELETE FROM entries_vec") } catch { /* ignore */ }
     }
   }
 
   const seenPaths = new Set<string>()
+  const scannedPaths = new Set<string>()
   const tWalkStart = Date.now()
 
-  for (const currentStashDir of allStashDirs) {
-    for (const assetType of ASSET_TYPES as AgentikitAssetType[]) {
-      const typeRoot = path.join(currentStashDir, TYPE_DIRS[assetType])
-      try {
-        if (!fs.statSync(typeRoot).isDirectory()) continue
-      } catch { continue }
+  // Collect entries to insert (inside a transaction for speed)
+  const insertTransaction = db.transaction(() => {
+    for (const currentStashDir of allStashDirs) {
+      for (const assetType of ASSET_TYPES as AgentikitAssetType[]) {
+        const typeRoot = path.join(currentStashDir, TYPE_DIRS[assetType])
+        try {
+          if (!fs.statSync(typeRoot).isDirectory()) continue
+        } catch { continue }
 
-      // Group files by their immediate parent directory
-      const dirGroups = walkStash(typeRoot, assetType)
+        const dirGroups = walkStash(typeRoot, assetType)
 
-      for (const { dirPath, files } of dirGroups) {
-        // Deduplicate by dirPath across stash dirs
-        if (seenPaths.has(path.resolve(dirPath))) continue
-        seenPaths.add(path.resolve(dirPath))
+        for (const { dirPath, files } of dirGroups) {
+          if (seenPaths.has(path.resolve(dirPath))) continue
+          seenPaths.add(path.resolve(dirPath))
 
-        // Incremental: skip directories that haven't changed
-        const prevEntries = previousEntriesByDir.get(dirPath)
-        if (isIncremental && prevEntries && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
-          allEntries.push(...prevEntries)
-          skippedDirs++
-          continue
-        }
+          // Incremental: skip directories that haven't changed
+          if (isIncremental) {
+            const prevEntries = getEntriesByDir(db, dirPath)
+            if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+              skippedDirs++
+              continue
+            }
+          }
 
-        scannedDirs++
+          scannedDirs++
+          scannedPaths.add(path.resolve(dirPath))
 
-        // Try loading existing .stash.json
-        let stash = loadStashFile(dirPath)
+          // Delete old entries for this dir (will be re-inserted)
+          deleteEntriesByDir(db, dirPath)
 
-        if (stash) {
-          const migration = migrateGeneratedSkillMetadata(stash, files, typeRoot)
-          if (migration.changed) {
-            stash = migration.stash
-            writeStashFile(dirPath, stash)
+          // Try loading existing .stash.json (user metadata overrides)
+          let stash = loadStashFile(dirPath)
+
+          if (stash) {
+            const migration = migrateGeneratedSkillMetadata(stash, files, typeRoot)
+            if (migration.changed) {
+              stash = migration.stash
+              writeStashFile(dirPath, stash)
+            }
+          }
+
+          if (!stash) {
+            // Generate metadata heuristically
+            stash = generateMetadata(dirPath, assetType, files, typeRoot)
+            if (stash.entries.length > 0) {
+              writeStashFile(dirPath, stash)
+              generatedCount += stash.entries.length
+            }
+          }
+
+          if (stash) {
+            for (const entry of stash.entries) {
+              const entryPath = entry.entry
+                ? path.join(dirPath, entry.entry)
+                : files[0] || dirPath
+              const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`
+              const searchText = buildSearchText(entry)
+
+              upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
+            }
           }
         }
+      }
+    }
+  })
 
-        if (!stash) {
-          // Generate metadata
-          stash = generateMetadata(dirPath, assetType, files, typeRoot)
-          // Enhance with LLM if configured
-          if (config.llm && stash.entries.length > 0) {
-            stash = await enhanceStashWithLlm(config.llm, stash, dirPath, files)
-          }
-          if (stash.entries.length > 0) {
-            writeStashFile(dirPath, stash)
-            generatedCount += stash.entries.length
+  // Run the synchronous transaction first
+  insertTransaction()
+
+  // LLM enhancement needs to happen outside transaction (async)
+  // Collect dirs that need LLM enhancement (after transaction so seenPaths is populated)
+  const dirsNeedingLlm: Array<{ dirPath: string; files: string[]; assetType: AgentikitAssetType; currentStashDir: string }> = []
+
+  if (config.llm) {
+    for (const currentStashDir of allStashDirs) {
+      for (const assetType of ASSET_TYPES as AgentikitAssetType[]) {
+        const typeRoot = path.join(currentStashDir, TYPE_DIRS[assetType])
+        try {
+          if (!fs.statSync(typeRoot).isDirectory()) continue
+        } catch { continue }
+
+        const dirGroups = walkStash(typeRoot, assetType)
+        for (const { dirPath, files } of dirGroups) {
+          const resolved = path.resolve(dirPath)
+          if (!scannedPaths.has(resolved)) continue // only dirs actually re-scanned
+
+          // Check if this dir's entries were generated (not from manual stash)
+          const stash = loadStashFile(dirPath)
+          if (stash && stash.entries.some((e) => e.generated)) {
+            dirsNeedingLlm.push({ dirPath, files, assetType, currentStashDir })
           }
         }
+      }
+    }
+  }
 
-        if (stash) {
-          for (const entry of stash.entries) {
-            const entryPath = entry.entry
-              ? path.join(dirPath, entry.entry)
-              : files[0] || dirPath
-            allEntries.push({ entry, path: entryPath, dirPath })
-          }
-        }
+  // LLM enhancement (async, outside transaction)
+  if (config.llm && dirsNeedingLlm.length > 0) {
+    for (const { dirPath, files, currentStashDir } of dirsNeedingLlm) {
+      let stash = loadStashFile(dirPath)
+      if (!stash) continue
+      stash = await enhanceStashWithLlm(config.llm, stash, dirPath, files)
+      writeStashFile(dirPath, stash)
+
+      // Re-upsert enhanced entries
+      for (const entry of stash.entries) {
+        const entryPath = entry.entry ? path.join(dirPath, entry.entry) : files[0] || dirPath
+        const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`
+        const searchText = buildSearchText(entry)
+        upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
       }
     }
   }
 
   const tWalkEnd = Date.now()
 
-  // Build TF-IDF index
-  const adapter = new TfIdfAdapter()
-  const scoredEntries: ScoredEntry[] = allEntries.map((ie) => ({
-    id: `${ie.entry.type}:${ie.entry.name}`,
-    text: buildSearchText(ie.entry),
-    entry: ie.entry,
-    path: ie.path,
-  }))
-  adapter.buildIndex(scoredEntries)
-  const tTfidfEnd = Date.now()
+  // Rebuild FTS after all inserts
+  rebuildFts(db)
+  const tFtsEnd = Date.now()
 
   // Generate embeddings if semantic search is enabled
   let hasEmbeddings = false
-  if (config.semanticSearch) {
+  if (config.semanticSearch && isVecAvailable()) {
     try {
       const { embed } = await import("./embedder.js")
-      for (const ie of allEntries) {
-        if (!ie.embedding) {
-          const text = buildSearchText(ie.entry)
-          ie.embedding = await embed(text, config.embedding)
-        }
+      const allEntries = getAllEntriesForEmbedding(db)
+      for (const { id, searchText } of allEntries) {
+        const embedding = await embed(searchText, config.embedding)
+        upsertEmbedding(db, id, embedding)
       }
       hasEmbeddings = true
     } catch {
-      // Embedding provider not available, continue without embeddings
+      // Embedding provider not available, continue without
     }
   }
 
   const tEmbedEnd = Date.now()
 
-  // Persist index
-  const indexPath = getIndexPath()
-  const indexDir = path.dirname(indexPath)
-  if (!fs.existsSync(indexDir)) {
-    fs.mkdirSync(indexDir, { recursive: true })
-  }
+  // Update metadata
+  setMeta(db, "version", String(DB_VERSION))
+  setMeta(db, "builtAt", new Date().toISOString())
+  setMeta(db, "stashDir", stashDir)
+  setMeta(db, "stashDirs", JSON.stringify(allStashDirs))
+  setMeta(db, "hasEmbeddings", hasEmbeddings ? "1" : "0")
 
-  const index: SearchIndex = {
-    version: INDEX_VERSION,
-    builtAt: new Date().toISOString(),
-    stashDir,
-    stashDirs: allStashDirs,
-    entries: allEntries,
-    tfidf: adapter.serialize(),
-    hasEmbeddings,
-  }
-  fs.writeFileSync(indexPath, JSON.stringify(index) + "\n", "utf8")
+  const totalEntries = getEntryCount(db)
+  closeDatabase(db)
 
   const tEnd = Date.now()
 
   return {
     stashDir,
-    totalEntries: allEntries.length,
+    totalEntries,
     generatedMetadata: generatedCount,
-    indexPath,
+    indexPath: dbPath,
     mode: isIncremental ? "incremental" : "full",
     directoriesScanned: scannedDirs,
     directoriesSkipped: skippedDirs,
     timing: {
       totalMs: tEnd - t0,
-      walkMs: tWalkEnd - tWalkStart, // includes metadata generation (interleaved)
-      embedMs: tEmbedEnd - tTfidfEnd,
-      tfidfMs: tTfidfEnd - tWalkEnd,
+      walkMs: tWalkEnd - tWalkStart,
+      embedMs: tEmbedEnd - tFtsEnd,
+      ftsMs: tFtsEnd - tWalkEnd,
     },
   }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ id: number; searchText: string }> {
+  return db
+    .prepare(`
+      SELECT e.id, e.search_text AS searchText FROM entries e
+      WHERE NOT EXISTS (SELECT 1 FROM entries_vec v WHERE v.id = e.id)
+    `)
+    .all() as Array<{ id: number; searchText: string }>
+}
+
 function isDirStale(
   dirPath: string,
   currentFiles: string[],
-  previousEntries: IndexedEntry[],
+  previousEntries: DbIndexedEntry[],
   builtAtMs: number,
 ): boolean {
   // Check if file set changed (additions or deletions)
@@ -327,7 +347,6 @@ async function enhanceStashWithLlm(
   const enhanced: StashEntry[] = []
   for (const entry of stash.entries) {
     try {
-      // Find the file matching this entry for content context
       const entryFile = entry.entry
         ? files.find((f) => path.basename(f) === entry.entry) ?? files[0]
         : files[0]
@@ -345,7 +364,6 @@ async function enhanceStashWithLlm(
       if (improvements.tags?.length) updated.tags = improvements.tags
       enhanced.push(updated)
     } catch {
-      // LLM enhancement failed for this entry, keep original
       enhanced.push(entry)
     }
   }

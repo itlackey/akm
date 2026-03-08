@@ -2,8 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { type AgentikitAssetType, hasErrnoCode, resolveStashDir } from "./common"
 import { ASSET_TYPES, TYPE_DIRS, deriveCanonicalAssetName } from "./asset-spec"
-import { loadSearchIndex, buildSearchText, type IndexedEntry } from "./indexer"
-import { TfIdfAdapter, type ScoredEntry } from "./similarity"
+import { buildSearchText } from "./indexer"
 import { buildToolInfo } from "./tool-runner"
 import { walkStash } from "./walker"
 import { makeOpenRef } from "./stash-ref"
@@ -18,6 +17,19 @@ import type {
 } from "./stash-types"
 import { loadConfig } from "./config"
 import { searchRegistry } from "./registry-search"
+import {
+  openDatabase,
+  closeDatabase,
+  getDbPath,
+  getMeta,
+  searchFts,
+  searchVec,
+  getAllEntries,
+  getEntryCount,
+  getEntryById,
+  isVecAvailable,
+  type DbSearchResult,
+} from "./db"
 
 type IndexedAsset = {
   type: AgentikitAssetType
@@ -149,16 +161,30 @@ async function searchLocal(input: {
     }),
   ]
 
-  const index = loadSearchIndex()
-  if (index && index.entries && index.entries.length > 0 && index.stashDir === stashDir) {
-    const { hits, usageGuide, embedMs, rankMs } = await searchIndex(index, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
-    return {
-      hits,
-      usageGuide,
-      tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
-      embedMs,
-      rankMs,
+  // Try to open the database
+  const dbPath = getDbPath()
+  try {
+    if (fs.existsSync(dbPath)) {
+      const db = openDatabase(dbPath)
+      try {
+        const entryCount = getEntryCount(db)
+        const storedStashDir = getMeta(db, "stashDir")
+        if (entryCount > 0 && storedStashDir === stashDir) {
+          const { hits, usageGuide, embedMs, rankMs } = await searchDatabase(db, query, searchType, limit, stashDir, allStashDirs, config, usageMode)
+          return {
+            hits,
+            usageGuide,
+            tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
+            embedMs,
+            rankMs,
+          }
+        }
+      } finally {
+        closeDatabase(db)
+      }
     }
+  } catch {
+    // DB not available, fall through to substring search
   }
 
   const hits = allStashDirs
@@ -172,10 +198,10 @@ async function searchLocal(input: {
   }
 }
 
-// ── Unified indexed search ──────────────────────────────────────────────────
+// ── Database search ─────────────────────────────────────────────────────────
 
-async function searchIndex(
-  index: import("./indexer").SearchIndex,
+async function searchDatabase(
+  db: import("bun:sqlite").Database,
   query: string,
   searchType: AgentikitSearchType,
   limit: number,
@@ -184,29 +210,18 @@ async function searchIndex(
   config: import("./config").AgentikitConfig,
   usageMode: SearchUsageMode,
 ): Promise<{ hits: LocalSearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; embedMs?: number; rankMs?: number }> {
-  // Filter candidates by type
-  let candidates = index.entries
-  if (searchType !== "any") {
-    candidates = candidates.filter((ie) => ie.entry.type === searchType)
-  }
-
-  if (candidates.length === 0) {
-    return {
-      hits: [],
-      usageGuide: shouldIncludeUsageGuide(usageMode) ? buildUsageGuide([], searchType) : undefined,
-    }
-  }
-
-  // Empty query: return all entries (no scoring needed)
+  // Empty query: return all entries
   if (!query) {
-    const selectedCandidates = candidates.slice(0, limit)
-    const hits = selectedCandidates.map((ie) =>
-      buildIndexedHit({
+    const typeFilter = searchType === "any" ? undefined : searchType
+    const allEntries = getAllEntries(db, typeFilter)
+    const selected = allEntries.slice(0, limit)
+    const hits = selected.map((ie) =>
+      buildDbHit({
         entry: ie.entry,
-        path: ie.path,
+        path: ie.filePath,
         score: 1,
         query,
-        rankingMode: "tfidf",
+        rankingMode: "fts",
         defaultStashDir: stashDir,
         allStashDirs,
         includeItemUsage: shouldIncludeItemUsage(usageMode),
@@ -215,32 +230,91 @@ async function searchIndex(
     return {
       hits,
       usageGuide: shouldIncludeUsageGuide(usageMode)
-        ? buildUsageGuideFromEntries(selectedCandidates.map((candidate) => candidate.entry), searchType)
+        ? buildUsageGuideFromEntries(selected.map((e) => e.entry), searchType)
         : undefined,
     }
   }
 
-  // Score each candidate using available signals
+  // Score using FTS5 (BM25) and optionally sqlite-vec
   const tEmbed0 = Date.now()
-  const embeddingScores = await tryEmbeddingScores(candidates, query, config)
+  const embeddingScores = await tryVecScores(db, query, limit * 3, config)
   const embedMs = Date.now() - tEmbed0
 
   const tRank0 = Date.now()
-  const tfidfScores = computeTfidfScores(index, candidates, query, searchType)
+  const typeFilter = searchType === "any" ? undefined : searchType
+  const ftsResults = searchFts(db, query, limit * 3, typeFilter)
 
-  const scored: Array<{ ie: IndexedEntry; score: number; rankingMode: "semantic" | "tfidf" }> = []
+  // Build score map from FTS results (normalize BM25 scores)
+  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>()
+  for (const r of ftsResults) {
+    // BM25 returns negative scores (more negative = better match), normalize to 0-1
+    const absScore = Math.abs(r.bm25Score)
+    const normalized = absScore / (1 + absScore)
+    ftsScoreMap.set(r.id, { score: normalized, result: r })
+  }
 
-  for (const ie of candidates) {
-    const key = ie.path
-    const embScore = embeddingScores?.get(key)
-    const tfidfScore = tfidfScores.get(key) ?? 0
+  // Blend scores
+  const scored: Array<{ id: number; entry: import("./metadata").StashEntry; filePath: string; score: number; rankingMode: "semantic" | "fts" }> = []
+  const seenIds = new Set<number>()
+
+  // Process FTS results
+  for (const [id, { score: ftsScore, result }] of ftsScoreMap) {
+    seenIds.add(id)
+    const embScore = embeddingScores?.get(id)
 
     if (embScore !== undefined) {
-      // Weighted blend: embedding dominates when available, TF-IDF boosts lexical matches
-      const blended = embScore * 0.7 + tfidfScore * 0.3
-      if (blended > 0) scored.push({ ie, score: blended, rankingMode: "semantic" })
-    } else if (tfidfScore > 0) {
-      scored.push({ ie, score: tfidfScore, rankingMode: "tfidf" })
+      const blended = embScore * 0.7 + ftsScore * 0.3
+      if (blended > 0) scored.push({ id, entry: result.entry, filePath: result.filePath, score: blended, rankingMode: "semantic" })
+    } else if (ftsScore > 0) {
+      scored.push({ id, entry: result.entry, filePath: result.filePath, score: ftsScore, rankingMode: "fts" })
+    }
+  }
+
+  // Add vec-only results not already in FTS results
+  if (embeddingScores) {
+    for (const [id, embScore] of embeddingScores) {
+      if (seenIds.has(id)) continue
+      const found = getEntryById(db, id)
+      if (found) {
+        scored.push({
+          id,
+          entry: found.entry,
+          filePath: found.filePath,
+          score: embScore,
+          rankingMode: "semantic",
+        })
+      }
+    }
+  }
+
+  // Apply boosts (tag, intent, name matches)
+  const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean)
+  for (const item of scored) {
+    const entry = item.entry
+    // Tag boost
+    if (entry.tags) {
+      for (const tag of entry.tags) {
+        if (queryTokens.some((t) => tag.toLowerCase() === t)) {
+          item.score += 0.15
+        }
+      }
+    }
+    // Intent boost
+    if (entry.intents) {
+      for (const intent of entry.intents) {
+        const intentLower = intent.toLowerCase()
+        for (const token of queryTokens) {
+          if (intentLower.includes(token)) {
+            item.score += 0.12
+            break
+          }
+        }
+      }
+    }
+    // Name boost
+    const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ")
+    if (queryTokens.some((t) => nameLower.includes(t))) {
+      item.score += 0.1
     }
   }
 
@@ -248,10 +322,10 @@ async function searchIndex(
   const rankMs = Date.now() - tRank0
 
   const selected = scored.slice(0, limit)
-  const hits = selected.map(({ ie, score, rankingMode }) =>
-    buildIndexedHit({
-      entry: ie.entry,
-      path: ie.path,
+  const hits = selected.map(({ entry, filePath, score, rankingMode }) =>
+    buildDbHit({
+      entry,
+      path: filePath,
       score: Math.round(score * 1000) / 1000,
       query,
       rankingMode,
@@ -266,63 +340,38 @@ async function searchIndex(
     rankMs,
     hits,
     usageGuide: shouldIncludeUsageGuide(usageMode)
-      ? buildUsageGuideFromEntries(selected.map((item) => item.ie.entry), searchType)
+      ? buildUsageGuideFromEntries(selected.map((item) => item.entry), searchType)
       : undefined,
   }
 }
 
-// ── Embedding scorer ────────────────────────────────────────────────────────
+// ── Vector scorer ───────────────────────────────────────────────────────────
 
-async function tryEmbeddingScores(
-  candidates: IndexedEntry[],
+async function tryVecScores(
+  db: import("bun:sqlite").Database,
   query: string,
+  k: number,
   config: import("./config").AgentikitConfig,
-): Promise<Map<string, number> | null> {
-  if (!config.semanticSearch) return null
-
-  const withEmbeddings = candidates.filter((ie) => ie.embedding && ie.embedding.length > 0)
-  if (withEmbeddings.length === 0) return null
+): Promise<Map<number, number> | null> {
+  if (!config.semanticSearch || !isVecAvailable()) return null
+  const hasEmbeddings = getMeta(db, "hasEmbeddings")
+  if (hasEmbeddings !== "1") return null
 
   try {
-    const { embed, cosineSimilarity } = await import("./embedder.js")
+    const { embed } = await import("./embedder.js")
     const queryEmbedding = await embed(query, config.embedding)
-    const scores = new Map<string, number>()
-    for (const ie of withEmbeddings) {
-      scores.set(ie.path, cosineSimilarity(queryEmbedding, ie.embedding!))
+    const vecResults = searchVec(db, queryEmbedding, k)
+
+    const scores = new Map<number, number>()
+    for (const { id, distance } of vecResults) {
+      // Convert L2 distance to cosine similarity (vectors are normalized)
+      const cosineSim = 1 - (distance * distance) / 2
+      scores.set(id, Math.max(0, cosineSim))
     }
     return scores
   } catch {
     return null
   }
-}
-
-// ── TF-IDF scorer ───────────────────────────────────────────────────────────
-
-function computeTfidfScores(
-  index: import("./indexer").SearchIndex,
-  candidates: IndexedEntry[],
-  query: string,
-  searchType: AgentikitSearchType,
-): Map<string, number> {
-  const candidateScoredEntries = toScoredEntries(candidates)
-
-  let adapter: TfIdfAdapter
-  if (index.tfidf) {
-    const allScored = toScoredEntries(index.entries)
-    adapter = TfIdfAdapter.deserialize(index.tfidf, allScored)
-  } else {
-    adapter = new TfIdfAdapter()
-    adapter.buildIndex(candidateScoredEntries)
-  }
-
-  const typeFilter = searchType === "any" ? undefined : searchType
-  const results = adapter.search(query, candidates.length, typeFilter)
-
-  const scores = new Map<string, number>()
-  for (const r of results) {
-    scores.set(r.path, r.score)
-  }
-  return scores
 }
 
 // ── Substring fallback (no index) ───────────────────────────────────────────
@@ -351,12 +400,12 @@ function findStashDirForPath(filePath: string, stashDirs: string[]): string | un
   return undefined
 }
 
-function buildIndexedHit(input: {
-  entry: IndexedEntry["entry"]
+function buildDbHit(input: {
+  entry: import("./metadata").StashEntry
   path: string
   score: number
   query: string
-  rankingMode: "semantic" | "tfidf"
+  rankingMode: "semantic" | "fts"
   defaultStashDir: string
   allStashDirs: string[]
   includeItemUsage: boolean
@@ -402,13 +451,13 @@ function buildIndexedHit(input: {
 }
 
 function buildWhyMatched(
-  entry: IndexedEntry["entry"],
+  entry: import("./metadata").StashEntry,
   query: string,
-  rankingMode: "semantic" | "tfidf",
+  rankingMode: "semantic" | "fts",
   qualityBoost: number,
   confidenceBoost: number,
 ): string[] {
-  const reasons: string[] = [rankingMode === "semantic" ? "semantic similarity" : "tf-idf lexical relevance"]
+  const reasons: string[] = [rankingMode === "semantic" ? "semantic similarity" : "fts bm25 relevance"]
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean)
 
   const name = entry.name.toLowerCase()
@@ -427,15 +476,6 @@ function buildWhyMatched(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-function toScoredEntries(entries: IndexedEntry[]): ScoredEntry[] {
-  return entries.map((ie) => ({
-    id: `${ie.entry.type}:${ie.entry.name}`,
-    text: buildSearchText(ie.entry),
-    entry: ie.entry,
-    path: ie.path,
-  }))
-}
 
 function assetToSearchHit(asset: IndexedAsset, stashDir: string): LocalSearchHit {
   if (asset.type !== "tool") {
@@ -509,7 +549,7 @@ function shouldIncludeItemUsage(mode: SearchUsageMode): boolean {
 }
 
 function buildUsageGuideFromEntries(
-  entries: IndexedEntry["entry"][],
+  entries: import("./metadata").StashEntry[],
   searchType: AgentikitSearchType,
 ): Partial<Record<AgentikitAssetType, string[]>> | undefined {
   const types = entries.map((entry) => entry.type)

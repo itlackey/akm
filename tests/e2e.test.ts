@@ -20,7 +20,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { agentikitSearch, agentikitShow } from "../src/stash"
-import { agentikitIndex, loadSearchIndex, getIndexPath } from "../src/indexer"
+import { agentikitIndex } from "../src/indexer"
+import { openDatabase, closeDatabase, getMeta, getAllEntries } from "../src/db"
 import { loadStashFile } from "../src/metadata"
 import { loadConfig, saveConfig } from "../src/config"
 
@@ -897,13 +898,16 @@ describe("Scenario: Index persistence across sessions", () => {
   test("index is persisted and loadable", async () => {
     await agentikitIndex({ stashDir })
 
-    const index = loadSearchIndex()
-    expect(index).not.toBeNull()
-    expect(index!.version).toBe(4)
-    expect(index!.stashDir).toBe(stashDir)
-    expect(index!.entries.length).toBeGreaterThan(0)
-    expect(index!.builtAt).toBeTruthy()
-    expect(index!.tfidf).toBeDefined()
+    const db = openDatabase()
+    const version = getMeta(db, "version")
+    expect(version).toBe("5")
+    const storedStashDir = getMeta(db, "stashDir")
+    expect(storedStashDir).toBe(stashDir)
+    const entries = getAllEntries(db)
+    expect(entries.length).toBeGreaterThan(0)
+    const builtAt = getMeta(db, "builtAt")
+    expect(builtAt).toBeTruthy()
+    closeDatabase(db)
   })
 
   test("search uses persisted index (simulates new session)", async () => {
@@ -919,7 +923,10 @@ describe("Scenario: Index persistence across sessions", () => {
 
   test("re-index updates the persisted index", async () => {
     await agentikitIndex({ stashDir })
-    const index1 = loadSearchIndex()!
+    const db1 = openDatabase()
+    const entries1 = getAllEntries(db1)
+    const builtAt1 = getMeta(db1, "builtAt")!
+    closeDatabase(db1)
 
     // Add a new tool
     fs.mkdirSync(path.join(stashDir, "tools", "new-tool"), { recursive: true })
@@ -929,11 +936,14 @@ describe("Scenario: Index persistence across sessions", () => {
     )
 
     await agentikitIndex({ stashDir })
-    const index2 = loadSearchIndex()!
+    const db2 = openDatabase()
+    const entries2 = getAllEntries(db2)
+    const builtAt2 = getMeta(db2, "builtAt")!
+    closeDatabase(db2)
 
-    expect(index2.entries.length).toBeGreaterThan(index1.entries.length)
-    expect(new Date(index2.builtAt).getTime()).toBeGreaterThanOrEqual(
-      new Date(index1.builtAt).getTime(),
+    expect(entries2.length).toBeGreaterThan(entries1.length)
+    expect(new Date(builtAt2).getTime()).toBeGreaterThanOrEqual(
+      new Date(builtAt1).getTime(),
     )
   })
 })
