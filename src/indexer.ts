@@ -19,7 +19,6 @@ import {
   setMeta,
   upsertEntry,
   deleteEntriesByDir,
-  syncFtsForEntry,
   rebuildFts,
   upsertEmbedding,
   getEntriesByDir,
@@ -86,6 +85,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
   }
 
   const seenPaths = new Set<string>()
+  const scannedPaths = new Set<string>()
   const tWalkStart = Date.now()
 
   // Collect entries to insert (inside a transaction for speed)
@@ -113,6 +113,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
           }
 
           scannedDirs++
+          scannedPaths.add(path.resolve(dirPath))
 
           // Delete old entries for this dir (will be re-inserted)
           deleteEntriesByDir(db, dirPath)
@@ -145,8 +146,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
               const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`
               const searchText = buildSearchText(entry)
 
-              const rowId = upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
-              syncFtsForEntry(db, rowId, searchText)
+              upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
             }
           }
         }
@@ -172,7 +172,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
         const dirGroups = walkStash(typeRoot, assetType)
         for (const { dirPath, files } of dirGroups) {
           const resolved = path.resolve(dirPath)
-          if (!seenPaths.has(resolved)) continue // only dirs handled in main loop
+          if (!scannedPaths.has(resolved)) continue // only dirs actually re-scanned
 
           // Check if this dir's entries were generated (not from manual stash)
           const stash = loadStashFile(dirPath)
@@ -197,8 +197,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
         const entryPath = entry.entry ? path.join(dirPath, entry.entry) : files[0] || dirPath
         const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`
         const searchText = buildSearchText(entry)
-        const rowId = upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
-        syncFtsForEntry(db, rowId, searchText)
+        upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText)
       }
     }
   }
@@ -260,7 +259,10 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
 
 function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ id: number; searchText: string }> {
   return db
-    .prepare("SELECT id, search_text AS searchText FROM entries")
+    .prepare(`
+      SELECT e.id, e.search_text AS searchText FROM entries e
+      WHERE NOT EXISTS (SELECT 1 FROM entries_vec v WHERE v.id = e.id)
+    `)
     .all() as Array<{ id: number; searchText: string }>
 }
 

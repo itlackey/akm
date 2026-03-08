@@ -21,7 +21,7 @@ import os from "node:os"
 import path from "node:path"
 import { agentikitSearch, agentikitShow } from "../src/stash"
 import { agentikitIndex } from "../src/indexer"
-import { openDatabase, closeDatabase, getMeta, getAllEntries, getDbPath } from "../src/db"
+import { openDatabase, closeDatabase, getMeta, getAllEntries } from "../src/db"
 import { loadStashFile } from "../src/metadata"
 import { loadConfig, saveConfig } from "../src/config"
 

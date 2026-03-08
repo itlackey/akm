@@ -70,8 +70,11 @@ export function closeDatabase(db: Database): void {
 // ── sqlite-vec extension ────────────────────────────────────────────────────
 
 let vecAvailable = false
+let vecChecked = false
 
 function loadVecExtension(db: Database): void {
+  if (vecChecked) return
+  vecChecked = true
   try {
     const sqliteVec = require("sqlite-vec")
     sqliteVec.load(db)
@@ -270,7 +273,7 @@ export function searchFts(
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
              bm25(entries_fts) AS bm25Score
       FROM entries_fts f
-      JOIN entries e ON CAST(e.id AS TEXT) = f.entry_id
+      JOIN entries e ON e.id = CAST(f.entry_id AS INTEGER)
       WHERE entries_fts MATCH ?
         AND e.entry_type = ?
       ORDER BY bm25Score
@@ -282,7 +285,7 @@ export function searchFts(
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
              bm25(entries_fts) AS bm25Score
       FROM entries_fts f
-      JOIN entries e ON CAST(e.id AS TEXT) = f.entry_id
+      JOIN entries e ON e.id = CAST(f.entry_id AS INTEGER)
       WHERE entries_fts MATCH ?
       ORDER BY bm25Score
       LIMIT ?
