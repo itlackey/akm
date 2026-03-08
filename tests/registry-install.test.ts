@@ -4,7 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { loadConfig, saveConfig } from "../src/config"
-import { agentikitAdd, agentikitSearch } from "../src/stash"
+import { agentikitAdd, agentikitShow } from "../src/stash"
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -63,8 +63,9 @@ describe("local git installs", () => {
       const config = loadConfig(stashDir)
       expect(config.additionalStashDirs).toContain(result.installed.stashRoot)
 
-      const search = await agentikitSearch({ query: "hello", type: "tool" })
-      expect(search.hits.some((hit) => hit.hitSource === "local" && hit.name === "hello.sh")).toBe(true)
+      const shown = agentikitShow({ ref: "tool:hello.sh" })
+      expect(shown.type).toBe("tool")
+      expect(shown.path).toContain(result.installed.stashRoot)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
       fs.rmSync(cacheHome, { recursive: true, force: true })
