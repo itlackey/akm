@@ -1,8 +1,8 @@
-# agentikit
+# Agent-i-Kit
 
-Agentikit is a CLI tool and library for managing a stash of extension assets for AI coding assistants. It lets you **search** and **show** tools, skills, commands, and agents from a stash directory.
+A CLI tool and library for managing a stash of assets for AI coding assistants. It lets you **search** and **show** tools, skills, commands, and agents from a stash directory.
 
-The CLI is called **akm** (Agentikit Manager).
+The CLI is called **akm** (Agent Kit Manager).
 
 ## Installation
 
