@@ -48,6 +48,8 @@ export interface RegistrySearchResultHit {
   metadata?: Record<string, string>
   installRef: string
   installCmd: string
+  /** Whether this entry was manually reviewed and approved */
+  curated?: boolean
 }
 
 export type SearchHit = LocalSearchHit | RegistrySearchResultHit

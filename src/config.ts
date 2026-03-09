@@ -43,6 +43,8 @@ export interface AgentikitConfig {
   llm?: LlmConnectionConfig
   /** Installed registry sources and local cache metadata */
   registry?: RegistryConfig
+  /** Registry index URLs for kit discovery. Default: official agentikit-registry on GitHub */
+  registryUrls?: string[]
 }
 
 export interface RegistryConfig {
@@ -172,6 +174,12 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
 
   const registry = parseRegistryConfig(raw.registry)
   if (registry) config.registry = registry
+
+  if (Array.isArray(raw.registryUrls)) {
+    config.registryUrls = raw.registryUrls.filter(
+      (u): u is string => typeof u === "string" && u.startsWith("http"),
+    )
+  }
 
   return config
 }

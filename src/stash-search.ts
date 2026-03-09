@@ -67,9 +67,10 @@ export async function agentikitSearch(input: {
       sources,
     })
 
+  const config = loadConfig()
   const registryResult = source === "local"
     ? undefined
-    : await searchRegistry(query, { limit })
+    : await searchRegistry(query, { limit, registryUrls: config.registryUrls })
 
   if (source === "local") {
     return {
@@ -95,6 +96,7 @@ export async function agentikitSearch(input: {
       homepage: hit.homepage,
       score: hit.score,
       metadata: hit.metadata,
+      curated: hit.curated,
       installRef,
       installCmd: `akm add ${installRef}`,
     }

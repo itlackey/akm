@@ -350,11 +350,27 @@ describe("Scenario: Agent discovers capabilities for task", () => {
 
 describe("Scenario: Mixed local + registry search compatibility", () => {
   let stashDir: string
+  let savedCacheDir: string
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp()
     process.env.AKM_STASH_DIR = stashDir
     await agentikitIndex({ stashDir })
+  })
+
+  // Isolate registry index cache per test so mocked fetch responses
+  // aren't shadowed by a cached index from a previous test.
+  beforeEach(() => {
+    savedCacheDir = process.env.XDG_CACHE_HOME ?? ""
+    process.env.XDG_CACHE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-reg-cache-"))
+  })
+
+  afterEach(() => {
+    const tmpCache = process.env.XDG_CACHE_HOME
+    process.env.XDG_CACHE_HOME = savedCacheDir
+    if (tmpCache && tmpCache !== savedCacheDir) {
+      fs.rmSync(tmpCache, { recursive: true, force: true })
+    }
   })
 
   afterAll(() => {
@@ -373,36 +389,35 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
   })
 
   test("registry source returns install guidance", async () => {
-    const result = await withMockedFetch((url) => {
-      if (url.includes("registry.npmjs.org/-/v1/search")) {
-        return new Response(JSON.stringify({
-          objects: [{
-            package: {
-              name: "@scope/kit",
-              description: "Example registry kit",
-              version: "1.2.3",
-              keywords: ["agentikit"],
-              links: { homepage: "https://www.npmjs.com/package/@scope/kit" },
-            },
-            score: 0.9,
-          }],
-        }), { status: 200 })
-      }
-
-      if (url.includes("api.github.com/search/repositories")) {
-        return new Response(JSON.stringify({
-          items: [{
-            full_name: "itlackey/example-kit",
-            description: "Example GitHub kit",
-            html_url: "https://github.com/itlackey/example-kit",
-            stargazers_count: 42,
-            language: "TypeScript",
-          }],
-        }), { status: 200 })
-      }
-
-      return new Response("not found", { status: 404 })
-    }, () => agentikitSearch({ query: "kit", source: "registry" }))
+    const registryIndex = {
+      version: 1,
+      updatedAt: "2026-03-09T00:00:00Z",
+      kits: [
+        {
+          id: "npm:@scope/kit",
+          name: "@scope/kit",
+          description: "Example registry kit",
+          ref: "@scope/kit",
+          source: "npm",
+          homepage: "https://www.npmjs.com/package/@scope/kit",
+          tags: ["kit"],
+          latestVersion: "1.2.3",
+        },
+        {
+          id: "github:itlackey/example-kit",
+          name: "Example Kit",
+          description: "Example GitHub kit",
+          ref: "itlackey/example-kit",
+          source: "github",
+          homepage: "https://github.com/itlackey/example-kit",
+          tags: ["kit"],
+        },
+      ],
+    }
+    const result = await withMockedFetch(
+      () => new Response(JSON.stringify(registryIndex), { status: 200 }),
+      () => agentikitSearch({ query: "kit", source: "registry" }),
+    )
 
     expect(result.source).toBe("registry")
     expect(result.hits.length).toBeGreaterThan(0)
@@ -417,26 +432,25 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
   })
 
   test("both source includes local and registry hits", async () => {
-    const result = await withMockedFetch((url) => {
-      if (url.includes("registry.npmjs.org/-/v1/search")) {
-        return new Response(JSON.stringify({
-          objects: [{
-            package: {
-              name: "docker-kit",
-              description: "Registry docker helper",
-              version: "0.1.0",
-              keywords: ["akm", "docker"],
-              links: { homepage: "https://www.npmjs.com/package/docker-kit" },
-            },
-            score: 0.8,
-          }],
-        }), { status: 200 })
-      }
-      if (url.includes("api.github.com/search/repositories")) {
-        return new Response(JSON.stringify({ items: [] }), { status: 200 })
-      }
-      return new Response("not found", { status: 404 })
-    }, () => agentikitSearch({ query: "docker", source: "both", limit: 10 }))
+    const registryIndex = {
+      version: 1,
+      updatedAt: "2026-03-09T00:00:00Z",
+      kits: [
+        {
+          id: "npm:docker-kit",
+          name: "docker-kit",
+          description: "Registry docker helper",
+          ref: "docker-kit",
+          source: "npm",
+          tags: ["docker"],
+          latestVersion: "0.1.0",
+        },
+      ],
+    }
+    const result = await withMockedFetch(
+      () => new Response(JSON.stringify(registryIndex), { status: 200 }),
+      () => agentikitSearch({ query: "docker", source: "both", limit: 10 }),
+    )
 
     expect(result.source).toBe("both")
     expect(result.hits.some((h) => h.hitSource === "local")).toBe(true)

@@ -61,6 +61,8 @@ export interface RegistrySearchHit {
   homepage?: string
   score?: number
   metadata?: Record<string, string>
+  /** Whether this entry was manually reviewed and approved */
+  curated?: boolean
 }
 
 export interface RegistrySearchResponse {
