@@ -46,9 +46,6 @@ export async function agentikitInit(options?: { dir?: string }): Promise<InitRes
     saveConfig({ ...existing, stashDir })
   }
 
-  // Set env var for the current process so subsequent commands work
-  process.env.AKM_STASH_DIR = stashDir
-
   // Ensure ripgrep is available (install to cache/bin if needed)
   let ripgrep: InitResponse["ripgrep"]
   try {

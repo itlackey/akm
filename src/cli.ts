@@ -56,7 +56,7 @@ function formatHuman(command: string, result: unknown): string {
 
   switch (command) {
     case "init": {
-      let out = `Stash initialized at ${r.stashDir ?? r.path ?? "unknown"}`
+      let out = `Stash initialized at ${r.stashDir ?? "unknown"}`
       if (r.configPath) out += `\nConfig saved to ${r.configPath}`
       return out
     }
@@ -588,7 +588,6 @@ function classifyExitCode(message: string): number {
   }
   // Configuration errors
   if (
-    message.includes("AKM_STASH_DIR") ||
     message.includes("No stash directory found") ||
     message.includes("Unable to determine") ||
     message.includes("config")
@@ -612,7 +611,6 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
 
 function buildHint(message: string): string | undefined {
   if (message.includes("No stash directory found")) return "Run `akm init` to create the default stash, or set stashDir in your config."
-  if (message.includes("AKM_STASH_DIR")) return "Run `akm init` or set stashDir in config with `akm config set stashDir /path/to/stash`."
   if (message.includes("Either <target> or --all is required")) return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`."
   if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`."
   if (message.includes("No installed registry entry matched target")) return "Run `akm list` to view installed ids/refs, then retry with one of those values."

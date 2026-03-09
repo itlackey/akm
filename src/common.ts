@@ -32,10 +32,7 @@ export function resolveStashDir(): string {
   // 1. Env var override (for CI, scripts, testing)
   const envDir = process.env.AKM_STASH_DIR?.trim()
   if (envDir) {
-    // Migration: if env var is set but config doesn't have stashDir, persist it
-    const resolved = validateStashDir(envDir)
-    migrateEnvVarToConfig(resolved)
-    return resolved
+    return validateStashDir(envDir)
   }
 
   // 2. Config file stashDir field
@@ -92,37 +89,6 @@ function readStashDirFromConfig(): string | undefined {
     // Config doesn't exist or is invalid — fall through
   }
   return undefined
-}
-
-/**
- * If AKM_STASH_DIR env var is set but config doesn't have stashDir,
- * persist it to config for future use without the env var.
- */
-function migrateEnvVarToConfig(stashDir: string): void {
-  try {
-    const configPath = getConfigPath()
-    let raw: Record<string, unknown> = {}
-    try {
-      const text = fs.readFileSync(configPath, "utf8")
-      const parsed = JSON.parse(text)
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        raw = parsed
-      }
-    } catch {
-      // No existing config or invalid — start fresh
-    }
-
-    if (!raw.stashDir) {
-      raw.stashDir = stashDir
-      const dir = path.dirname(configPath)
-      fs.mkdirSync(dir, { recursive: true })
-      const tmpPath = configPath + `.tmp.${process.pid}`
-      fs.writeFileSync(tmpPath, JSON.stringify(raw, null, 2) + "\n", "utf8")
-      fs.renameSync(tmpPath, configPath)
-    }
-  } catch {
-    // Non-fatal: migration is best-effort
-  }
 }
 
 export function toPosix(input: string): string {

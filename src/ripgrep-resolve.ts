@@ -52,20 +52,13 @@ function resolveFromPath(): string | null {
  * Resolve the path to a usable ripgrep binary.
  * Checks in order:
  *   1. Provided binDir (or default cache bin dir) for rg
- *   2. Legacy stashDir/bin/rg (backward compatibility)
- *   3. System PATH (rg)
+ *   2. System PATH (rg)
  * Returns null if ripgrep is not available.
  */
-export function resolveRg(binDirOrStashDir?: string): string | null {
-  // Check the provided directory for rg binary
-  if (binDirOrStashDir) {
-    // Direct bin dir (new path: cache/bin/rg)
-    const directRg = path.join(binDirOrStashDir, RG_BINARY)
+export function resolveRg(binDir?: string): string | null {
+  if (binDir) {
+    const directRg = path.join(binDir, RG_BINARY)
     if (canExecute(directRg)) return directRg
-
-    // Legacy path: stashDir/bin/rg
-    const legacyRg = path.join(binDirOrStashDir, "bin", RG_BINARY)
-    if (canExecute(legacyRg)) return legacyRg
   }
 
   // Check default cache bin dir
@@ -81,8 +74,8 @@ export function resolveRg(binDirOrStashDir?: string): string | null {
 }
 
 /**
- * Check if ripgrep is available (in cache/bin, stash/bin, or system PATH).
+ * Check if ripgrep is available (in cache/bin or system PATH).
  */
-export function isRgAvailable(binDirOrStashDir?: string): boolean {
-  return resolveRg(binDirOrStashDir) !== null
+export function isRgAvailable(binDir?: string): boolean {
+  return resolveRg(binDir) !== null
 }

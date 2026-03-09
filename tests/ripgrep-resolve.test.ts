@@ -33,16 +33,14 @@ afterEach(() => {
 // ── resolveRg ───────────────────────────────────────────────────────────────
 
 describe("resolveRg", () => {
-  test("prefers stash bin directory", () => {
-    const stashDir = makeTempDir()
-    const binDir = path.join(stashDir, "bin")
-    fs.mkdirSync(binDir, { recursive: true })
+  test("finds rg in provided bin directory", () => {
+    const binDir = makeTempDir()
 
     const rgPath = path.join(binDir, "rg")
     fs.writeFileSync(rgPath, "#!/bin/sh\necho rg\n")
     fs.chmodSync(rgPath, 0o755)
 
-    const result = resolveRg(stashDir)
+    const result = resolveRg(binDir)
     expect(result).toBe(rgPath)
   })
 
@@ -77,10 +75,8 @@ describe("resolveRg", () => {
     expect(result).toBeNull()
   })
 
-  test("skips non-executable file in stash bin", () => {
-    const stashDir = makeTempDir()
-    const binDir = path.join(stashDir, "bin")
-    fs.mkdirSync(binDir, { recursive: true })
+  test("skips non-executable file in bin dir", () => {
+    const binDir = makeTempDir()
 
     // Create an rg file that is NOT executable
     const rgPath = path.join(binDir, "rg")
@@ -89,7 +85,7 @@ describe("resolveRg", () => {
 
     process.env.PATH = ""
 
-    const result = resolveRg(stashDir)
+    const result = resolveRg(binDir)
     expect(result).toBeNull()
   })
 })
@@ -98,30 +94,28 @@ describe("resolveRg", () => {
 
 describe("isRgAvailable", () => {
   test("returns true when resolveRg finds a binary", () => {
-    const stashDir = makeTempDir()
-    const binDir = path.join(stashDir, "bin")
-    fs.mkdirSync(binDir, { recursive: true })
+    const binDir = makeTempDir()
 
     const rgPath = path.join(binDir, "rg")
     fs.writeFileSync(rgPath, "#!/bin/sh\necho rg\n")
     fs.chmodSync(rgPath, 0o755)
 
-    expect(isRgAvailable(stashDir)).toBe(true)
+    expect(isRgAvailable(binDir)).toBe(true)
   })
 
   test("returns false when resolveRg finds nothing", () => {
-    const emptyStash = makeTempDir()
+    const emptyDir = makeTempDir()
     process.env.PATH = ""
 
-    expect(isRgAvailable(emptyStash)).toBe(false)
+    expect(isRgAvailable(emptyDir)).toBe(false)
   })
 
   test("boolean result matches resolveRg truthiness", () => {
-    const stashDir = makeTempDir()
+    const binDir = makeTempDir()
     process.env.PATH = ""
 
-    const resolved = resolveRg(stashDir)
-    const available = isRgAvailable(stashDir)
+    const resolved = resolveRg(binDir)
+    const available = isRgAvailable(binDir)
     expect(available).toBe(resolved !== null)
   })
 })
