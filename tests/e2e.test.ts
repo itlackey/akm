@@ -1004,7 +1004,7 @@ describe("Scenario: Index persistence across sessions", () => {
 
     const db = openDatabase()
     const version = getMeta(db, "version")
-    expect(version).toBe("5")
+    expect(version).toBe("6")
     const storedStashDir = getMeta(db, "stashDir")
     expect(storedStashDir).toBe(stashDir)
     const entries = getAllEntries(db)

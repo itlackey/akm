@@ -24,6 +24,7 @@ import {
   getEntriesByDir,
   getEntryCount,
   isVecAvailable,
+  warnIfVecMissing,
   DB_VERSION,
   type DbIndexedEntry,
 } from "./db"
@@ -69,11 +70,13 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
 
     if (options?.full || !isIncremental) {
       // Wipe all entries for full rebuild or stashDir change
-      db.exec("DELETE FROM entries")
-      db.exec("DELETE FROM entries_fts")
+      // Delete from child tables first to respect foreign key constraints
+      try { db.exec("DELETE FROM embeddings") } catch { /* ignore */ }
       if (isVecAvailable(db)) {
         try { db.exec("DELETE FROM entries_vec") } catch { /* ignore */ }
       }
+      db.exec("DELETE FROM entries_fts")
+      db.exec("DELETE FROM entries")
     }
 
     const tWalkStart = Date.now()
@@ -103,6 +106,9 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     setMeta(db, "hasEmbeddings", hasEmbeddings ? "1" : "0")
 
     const totalEntries = getEntryCount(db)
+
+    // Warn on every index run if using JS fallback with many entries
+    warnIfVecMissing(db)
 
     const tEnd = Date.now()
 
@@ -261,7 +267,7 @@ async function generateEmbeddingsForDb(
   db: import("bun:sqlite").Database,
   config: import("./config").AgentikitConfig,
 ): Promise<boolean> {
-  if (!config.semanticSearch || !isVecAvailable(db)) return false
+  if (!config.semanticSearch) return false
 
   try {
     const { embedBatch } = await import("./embedder.js")
@@ -285,7 +291,7 @@ function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ i
   return db
     .prepare(`
       SELECT e.id, e.search_text AS searchText FROM entries e
-      WHERE NOT EXISTS (SELECT 1 FROM entries_vec v WHERE v.id = e.id)
+      WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
     `)
     .all() as Array<{ id: number; searchText: string }>
 }

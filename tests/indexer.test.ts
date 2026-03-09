@@ -123,7 +123,7 @@ test("agentikitIndex writes index to SQLite database", async () => {
 
   const db = openDatabase()
   const version = getMeta(db, "version")
-  expect(version).toBe("5")
+  expect(version).toBe("6")
   const entries = getAllEntries(db)
   expect(entries.length).toBeGreaterThan(0)
   closeDatabase(db)

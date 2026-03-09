@@ -7,10 +7,10 @@ scripts into a **stash**, and agents discover what they need through
 
 ## What Is a Kit?
 
-A kit is a shareable package of assets. You can organize a kit however you
+A kit is a shareable package of assets (aka files and directories). You can organize a kit however you
 like -- agentikit classifies assets by their **file extension and content**,
 not by directory structure. A `.sh` file is a script whether it lives in
-`scripts/`, `tools/`, or `my-stuff/`. A `.md` file with `model` in its
+`scripts/`, `tools/`, or `my-stuff/`. A `.md` file with `tools` in its
 frontmatter is an agent definition no matter where you put it.
 
 That said, a recommended directory layout exists as an **opt-in convention**
@@ -28,9 +28,6 @@ my-kit/
 Using these directory names is not required. They act as hints that increase
 classification confidence during indexing. See [Concepts](docs/concepts.md)
 for details on how classification works.
-
-Kits can be published to npm or hosted on GitHub. Tag them with `akm` or
-`agentikit` so others can discover them through registry search.
 
 ## What Is an Asset?
 
@@ -75,34 +72,14 @@ Bun-specific APIs (`bun:sqlite`) that are not available in Node.js.
 ```sh
 # Install Bun if you don't have it
 curl -fsSL https://bun.sh/install | bash
-```
-
-> **Don't want to install Bun?** Use the [standalone binary](#standalone-binary)
-> instead -- it has no runtime dependencies.
-
-## Quick Start
-
-```sh
 # Install
 bun install -g agentikit
-
-# Initialize your stash
-akm init
-
-# Search for assets
-akm search "deploy"
-
-# Show an asset
-akm show tool:deploy.sh
-
-# Install a kit from npm
-akm add @scope/my-kit
-
-# Search installed and registry kits
-akm search "lint" --source both
 ```
 
 ### Standalone Binary
+
+> **Don't want to install Bun?** Use the standalone binary
+> instead -- it has no runtime dependencies.
 
 The standalone binary bundles everything it needs and does **not** require Bun
 or Node.js.
@@ -110,9 +87,68 @@ or Node.js.
 ```sh
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+```
 
+```sh
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1
+```
+
+## Using With AI Agents
+
+Agent-i-Kit is designed to be called by AI coding agents. The agent searches
+for capabilities, reads the results, and acts on them.
+
+### OpenCode
+
+In an OpenCode project, add akm as a tool in your configuration. The agent
+can then search the stash and run tools directly:
+
+```text
+Search the stash for deployment tools, then run the best match.
+```
+
+The agent calls `akm search "deploy" --type tool`, picks the top result,
+reads its `runCmd` from `akm show`, and executes it.
+
+### Claude Code
+
+Add akm commands as tools or reference them from your CLAUDE.md:
+
+```markdown
+## Available Tools
+
+Use `akm search <query>` to find tools, skills, and commands in the stash.
+Use `akm show <ref>` to read asset details before using them.
+```
+
+### Any Agent
+
+The JSON output from `akm search` and `akm show` is designed for machine
+consumption. Any agent that can run shell commands can use akm:
+
+1. `akm search "what you need"` -- Find relevant assets
+2. `akm show <openRef>` -- Get the details
+3. Use the asset (run the `runCmd`, follow the skill instructions, etc.)
+
+
+## Quick Start
+
+```sh
+# Initialize your stash
+akm init
+
+# Install a kit from npm
+akm add @scope/my-kit
+
+# Search for assets
+akm search "deploy"
+
+# Show an asset
+akm show tool:deploy.sh
+
+# Search installed and registry kits
+akm search "lint" --source both
 ```
 
 ## Searching and Showing Assets
@@ -160,43 +196,6 @@ akm show knowledge:api-guide.md --view toc
 akm show knowledge:api-guide.md --view section --heading "Authentication"
 ```
 
-## Using With AI Agents
-
-Agent-i-Kit is designed to be called by AI coding agents. The agent searches
-for capabilities, reads the results, and acts on them.
-
-### OpenCode
-
-In an OpenCode project, add akm as a tool in your configuration. The agent
-can then search the stash and run tools directly:
-
-```text
-Search the stash for deployment tools, then run the best match.
-```
-
-The agent calls `akm search "deploy" --type tool`, picks the top result,
-reads its `runCmd` from `akm show`, and executes it.
-
-### Claude Code
-
-Add akm commands as tools or reference them from your CLAUDE.md:
-
-```markdown
-## Available Tools
-
-Use `akm search <query>` to find tools, skills, and commands in the stash.
-Use `akm show <ref>` to read asset details before using them.
-```
-
-### Any Agent
-
-The JSON output from `akm search` and `akm show` is designed for machine
-consumption. Any agent that can run shell commands can use akm:
-
-1. `akm search "what you need"` -- Find relevant assets
-2. `akm show <openRef>` -- Get the details
-3. Use the asset (run the `runCmd`, follow the skill instructions, etc.)
-
 ## Installing Kits
 
 Install kits from npm, GitHub, any git host, or local directories:
@@ -214,7 +213,7 @@ Search the registry to discover kits:
 akm search "code review" --source registry
 ```
 
-Only packages tagged with `akm` or `agentikit` appear in registry results.
+Only packages tagged with [Agent-i-Kit Registry](https://github.com/itlackey/agentikit-registry) appear in registry results.
 See [docs/registry.md](docs/registry.md) for details.
 
 ## Publishing a Kit

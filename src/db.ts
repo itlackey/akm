@@ -3,7 +3,7 @@ import path from "node:path"
 import { createRequire } from "node:module"
 import { Database } from "bun:sqlite"
 import type { StashEntry } from "./metadata"
-import type { EmbeddingVector } from "./embedder"
+import { cosineSimilarity, type EmbeddingVector } from "./embedder"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 5
+export const DB_VERSION = 6
 export const EMBEDDING_DIM = 384
 
 // ── Path ────────────────────────────────────────────────────────────────────
@@ -66,6 +66,10 @@ export function openDatabase(dbPath?: string, options?: { embeddingDim?: number 
   loadVecExtension(db)
 
   ensureSchema(db, options?.embeddingDim ?? EMBEDDING_DIM)
+
+  // Warn once at init if using JS fallback with many entries
+  warnIfVecMissing(db, { once: true })
+
   return db
 }
 
@@ -92,6 +96,32 @@ export function isVecAvailable(db: Database): boolean {
   return vecStatus.get(db) ?? false
 }
 
+const VEC_DOCS_URL = "https://github.com/itlackey/agentikit/blob/main/docs/configuration.md#sqlite-vec-extension"
+const VEC_FALLBACK_THRESHOLD = 10_000
+let vecInitWarned = false
+
+/**
+ * Warn if sqlite-vec is unavailable and embedding count exceeds threshold.
+ * Called from openDatabase (once at init) and from indexer (each run).
+ */
+export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { once: false }): void {
+  if (isVecAvailable(db)) return
+  if (once && vecInitWarned) return
+
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number } | undefined
+    const count = row?.cnt ?? 0
+    if (count >= VEC_FALLBACK_THRESHOLD) {
+      console.warn(
+        "Semantic search is using JS fallback for %d entries. Install sqlite-vec for faster performance.\n  See: %s",
+        count,
+        VEC_DOCS_URL,
+      )
+      if (once) vecInitWarned = true
+    }
+  } catch { /* embeddings table may not exist yet during init */ }
+}
+
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 function ensureSchema(db: Database, embeddingDim: number): void {
@@ -106,6 +136,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   // Check stored version — if it differs from DB_VERSION, drop and recreate all tables
   const storedVersion = getMeta(db, "version")
   if (storedVersion && storedVersion !== String(DB_VERSION)) {
+    db.exec("DROP TABLE IF EXISTS embeddings")
     db.exec("DROP TABLE IF EXISTS entries_vec")
     db.exec("DROP TABLE IF EXISTS entries_fts")
     db.exec("DROP INDEX IF EXISTS idx_entries_dir")
@@ -128,6 +159,15 @@ function ensureSchema(db: Database, embeddingDim: number): void {
 
     CREATE INDEX IF NOT EXISTS idx_entries_dir ON entries(dir_path);
     CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(entry_type);
+  `)
+
+  // BLOB-based embedding storage (always available, no sqlite-vec needed)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS embeddings (
+      id        INTEGER PRIMARY KEY,
+      embedding BLOB NOT NULL,
+      FOREIGN KEY (id) REFERENCES entries(id)
+    );
   `)
 
   // FTS5 table — standalone with explicit entry_id for joining
@@ -215,14 +255,17 @@ export function upsertEntry(
 }
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
-  if (isVecAvailable(db)) {
-    const ids = db
-      .prepare("SELECT id FROM entries WHERE dir_path = ?")
-      .all(dirPath) as Array<{ id: number }>
-    for (const { id } of ids) {
+  const ids = db
+    .prepare("SELECT id FROM entries WHERE dir_path = ?")
+    .all(dirPath) as Array<{ id: number }>
+  for (const { id } of ids) {
+    try {
+      db.prepare("DELETE FROM embeddings WHERE id = ?").run(id)
+    } catch { /* ignore */ }
+    if (isVecAvailable(db)) {
       try {
         db.prepare("DELETE FROM entries_vec WHERE id = ?").run(id)
-      } catch { /* ignore if vec table missing */ }
+      } catch { /* ignore */ }
     }
   }
   db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath)
@@ -240,12 +283,18 @@ export function upsertEmbedding(
   entryId: number,
   embedding: EmbeddingVector,
 ): void {
-  if (!isVecAvailable(db)) return
   const buf = float32Buffer(embedding)
-  try {
-    db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId)
-  } catch { /* ignore */ }
-  db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf)
+
+  // Always write to BLOB table (works without sqlite-vec)
+  db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding) VALUES (?, ?)").run(entryId, buf)
+
+  // Also write to sqlite-vec table when available (fast path)
+  if (isVecAvailable(db)) {
+    try {
+      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId)
+    } catch { /* ignore */ }
+    db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(entryId, buf)
+  }
 }
 
 export function searchVec(
@@ -253,20 +302,62 @@ export function searchVec(
   queryEmbedding: EmbeddingVector,
   k: number,
 ): DbVecResult[] {
-  if (!isVecAvailable(db)) return []
-  const buf = float32Buffer(queryEmbedding)
-  try {
-    return db
-      .prepare("SELECT id, distance FROM entries_vec WHERE embedding MATCH ? AND k = ?")
-      .all(buf, k) as DbVecResult[]
-  } catch {
-    return []
+  // Fast path: use sqlite-vec when available
+  if (isVecAvailable(db)) {
+    const buf = float32Buffer(queryEmbedding)
+    try {
+      return db
+        .prepare("SELECT id, distance FROM entries_vec WHERE embedding MATCH ? AND k = ?")
+        .all(buf, k) as DbVecResult[]
+    } catch {
+      return []
+    }
   }
+
+  // Fallback: JS-based cosine similarity over BLOB table
+  return searchBlobVec(db, queryEmbedding, k)
 }
 
 function float32Buffer(vec: number[]): Buffer {
   const f32 = new Float32Array(vec)
   return Buffer.from(f32.buffer)
+}
+
+function bufferToFloat32(buf: Buffer): number[] {
+  const f32 = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)
+  return Array.from(f32)
+}
+
+function searchBlobVec(
+  db: Database,
+  queryEmbedding: EmbeddingVector,
+  k: number,
+): DbVecResult[] {
+  try {
+    const rows = db
+      .prepare("SELECT id, embedding FROM embeddings")
+      .all() as Array<{ id: number; embedding: Buffer }>
+
+    if (rows.length === 0) return []
+
+    const scored: Array<{ id: number; similarity: number }> = []
+    for (const row of rows) {
+      const embedding = bufferToFloat32(row.embedding)
+      const similarity = cosineSimilarity(queryEmbedding, embedding)
+      scored.push({ id: row.id, similarity })
+    }
+
+    scored.sort((a, b) => b.similarity - a.similarity)
+
+    // Convert cosine similarity to L2 distance for compatibility with sqlite-vec interface
+    // For normalized vectors: L2² = 2(1 - cos_sim)
+    return scored.slice(0, k).map(({ id, similarity }) => ({
+      id,
+      distance: Math.sqrt(2 * Math.max(0, 1 - similarity)),
+    }))
+  } catch {
+    return []
+  }
 }
 
 // ── FTS5 search ─────────────────────────────────────────────────────────────

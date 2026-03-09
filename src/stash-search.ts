@@ -26,7 +26,6 @@ import {
   getAllEntries,
   getEntryCount,
   getEntryById,
-  isVecAvailable,
   type DbSearchResult,
 } from "./db"
 import { tryGetHandler } from "./asset-type-handler"
@@ -352,7 +351,7 @@ async function tryVecScores(
   k: number,
   config: import("./config").AgentikitConfig,
 ): Promise<Map<number, number> | null> {
-  if (!config.semanticSearch || !isVecAvailable(db)) return null
+  if (!config.semanticSearch) return null
   const hasEmbeddings = getMeta(db, "hasEmbeddings")
   if (hasEmbeddings !== "1") return null
 

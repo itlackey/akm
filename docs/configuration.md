@@ -116,3 +116,38 @@ akm config set llm.model llama3.2
 # Rebuild the index with enhanced metadata
 akm index --full
 ```
+
+## sqlite-vec Extension
+
+Agentikit uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for fast
+vector similarity search. When sqlite-vec is not available (common in compiled
+binaries on macOS), semantic search falls back to a pure JS implementation
+that computes cosine similarity over BLOB-stored embeddings.
+
+The JS fallback works correctly at any scale but becomes noticeably slower
+above ~10,000 indexed entries. If you see this warning:
+
+> Semantic search is using JS fallback for N entries. Install sqlite-vec for
+> faster performance.
+
+Install the extension to use the optimized path:
+
+```sh
+npm install sqlite-vec
+# or
+bun add sqlite-vec
+```
+
+On macOS, Apple's built-in SQLite disables extension loading. If you installed
+agentikit as a compiled binary, you may need to install a full SQLite build
+(e.g. via Homebrew) and point Bun to it:
+
+```sh
+brew install sqlite
+```
+
+After installing, rebuild your index to verify:
+
+```sh
+akm index --full
+```
