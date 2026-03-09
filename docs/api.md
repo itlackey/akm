@@ -90,7 +90,7 @@ import {
 | `agentikitRemove({ target })` | Remove an installed kit and reindex |
 | `agentikitUpdate({ target?, all? })` | Update one or all kits to latest version |
 | `agentikitReinstall({ target?, all? })` | Reinstall one or all kits from stored refs |
-| `agentikitClone({ sourceRef, newName?, force? })` | Copy an asset into the working stash (async) |
+| `agentikitClone({ sourceRef, newName?, force?, dest? })` | Copy an asset into the working stash or custom destination (async). Fetches remote origins automatically |
 | `resolveStashSources()` | Resolve all stash sources in priority order |
 | `resolveAllStashDirs(stashDir)` | Resolve all stash directories including mounted dirs |
 | `findSourceForPath(path, sources)` | Find which stash source a file path belongs to |

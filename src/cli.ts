@@ -114,6 +114,12 @@ function formatHuman(command: string, result: unknown): string {
       }
       return String(result)
     }
+    case "clone": {
+      const dst = (r.destination as Record<string, unknown>)?.path ?? "unknown"
+      const remote = r.remoteFetched ? " (fetched from remote)" : ""
+      const over = r.overwritten ? " (overwritten)" : ""
+      return `Cloned${remote} → ${dst}${over}`
+    }
     case "sources": {
       const sources = (r.sources as Array<Record<string, unknown>>) ?? []
       if (sources.length === 0) return "No stash sources configured."
@@ -405,11 +411,12 @@ const configCommand = defineCommand({
 })
 
 const cloneCommand = defineCommand({
-  meta: { name: "clone", description: "Clone an asset from any stash source into the working stash" },
+  meta: { name: "clone", description: "Clone an asset from any stash source into the working stash or a custom destination" },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. @installed:pkg/tool:script.sh)", required: true },
     name: { type: "string", description: "New name for the cloned asset" },
     force: { type: "boolean", description: "Overwrite if asset already exists in working stash", default: false },
+    dest: { type: "string", description: "Destination directory (default: working stash)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -417,6 +424,7 @@ const cloneCommand = defineCommand({
         sourceRef: args.ref,
         newName: args.name,
         force: args.force,
+        dest: args.dest,
       })
       output("clone", result)
     })
@@ -523,6 +531,7 @@ function buildHint(message: string): string | undefined {
   if (message.includes("Either <target> or --all is required")) return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`."
   if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`."
   if (message.includes("No installed registry entry matched target")) return "Run `akm list` to view installed ids/refs, then retry with one of those values."
+  if (message.includes("remote package fetched but asset not found")) return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type."
   if (message.includes("Invalid value for --source")) return "Pick one of: local, registry, both."
   if (message.includes("Invalid value for --usage")) return "Pick one of: none, both, item, guide."
   if (message.includes("expected JSON object with endpoint and model")) {

@@ -308,6 +308,12 @@ mounted stash directories.
    akm clone tool:deploy.sh
    ```
 
+   Or clone directly to a project directory with `--dest`:
+
+   ```sh
+   akm clone tool:deploy.sh --dest ./my-project/.claude
+   ```
+
 You can mount multiple directories. They are searched in the order listed,
 after the working stash.
 

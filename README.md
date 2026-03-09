@@ -65,7 +65,7 @@ The stash is your local library of assets. It combines three sources:
 
 When you search or open an asset, the working stash takes priority. This
 means you can install a kit and override individual assets by cloning them
-into your working stash.
+into your working stash (or any directory with `--dest`).
 
 ## Prerequisites
 

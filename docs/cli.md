@@ -136,16 +136,43 @@ akm reinstall --all
 
 ### clone
 
-Copy an asset from any source into the working stash for editing.
+Copy an asset from any source into the working stash (or a custom
+destination) for editing.
 
 ```sh
 akm clone tool:deploy.sh
 akm clone "npm:@scope/pkg//tool:deploy.sh"
 akm clone tool:deploy.sh --name my-deploy.sh
 akm clone tool:deploy.sh --force
+akm clone tool:deploy.sh --dest ./project/.claude
+akm clone "npm:@scope/pkg//tool:deploy.sh" --dest /tmp/preview
 ```
 
+| Flag | Description |
+| --- | --- |
+| `--name` | New name for the cloned asset |
+| `--force` | Overwrite if the asset already exists at the destination |
+| `--dest` | Destination directory (default: working stash). The type subdirectory (`tools/`, `skills/`, etc.) is appended automatically |
+
 Skills (directories) are copied recursively. Other types copy a single file.
+
+**Remote clone:** When the origin in the ref points to a package that is not
+installed locally (e.g. an npm package or local path not in your stash
+sources), akm fetches it to the cache automatically and extracts the
+requested asset. The package is **not** registered as an installed kit --
+use `akm add` for that.
+
+```sh
+# Clone a single tool from a remote package without installing the full kit
+akm clone "npm:@scope/pkg//tool:deploy.sh"
+
+# Clone from a local directory that isn't mounted as a stash source
+akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude
+```
+
+When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
+required. This makes clone usable in CI or fresh environments without
+running `akm init` first.
 
 ### sources
 

@@ -172,7 +172,7 @@ akm reinstall --all
 akm remove npm:@scope/my-kit
 ```
 
-### Cloning Into the Working Stash
+### Cloning Assets
 
 Installed kits are read-only. To edit an asset from an installed kit, clone
 it into the working stash:
@@ -186,6 +186,21 @@ akm clone "npm:@scope/my-kit//tool:deploy.sh" --name my-deploy.sh
 
 The cloned asset lives in the working stash and takes priority over the
 installed version in search and show.
+
+Use `--dest` to clone to a custom directory instead of the working stash:
+
+```bash
+# Deploy a tool directly into a project's .claude directory
+akm clone "npm:@scope/my-kit//tool:deploy.sh" --dest ./project/.claude
+```
+
+The type subdirectory (`tools/`, `skills/`, etc.) is appended automatically,
+so the example above produces `./project/.claude/tools/deploy.sh`.
+
+**Remote clone without install:** If the origin in the ref points to a
+package that is not yet installed, `akm clone` fetches it to the cache
+automatically. Unlike `akm add`, this does **not** register the package as
+an installed kit -- it only extracts the single requested asset.
 
 ## Source Priority
 
