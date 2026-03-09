@@ -108,7 +108,7 @@ function createTarGz(sourceDir: string, archivePath: string): void {
   }
 }
 
-describe("local git installs", () => {
+describe("local directory installs", () => {
   test("agentikitAdd installs a subdirectory inside a git repository", async () => {
     const stashDir = createEmptyStashDir("agentikit-git-stash-")
     const cacheHome = makeTempDir("agentikit-git-cache-")
@@ -124,7 +124,7 @@ describe("local git installs", () => {
         () => agentikitAdd({ ref: kitDir }),
       )
 
-      expect(result.installed.source).toBe("git")
+      expect(result.installed.source).toBe("local")
       expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true)
       expect(fs.existsSync(path.join(result.installed.extractedDir, ".git"))).toBe(false)
 
@@ -169,7 +169,7 @@ describe("local git installs", () => {
         () => agentikitAdd({ ref: repoDir }),
       )
 
-      expect(result.installed.source).toBe("git")
+      expect(result.installed.source).toBe("local")
       expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "kept.sh"))).toBe(true)
       expect(fs.existsSync(path.join(result.installed.stashRoot, "README.md"))).toBe(true)
       expect(fs.existsSync(path.join(result.installed.stashRoot, "docs"))).toBe(false)
@@ -177,6 +177,28 @@ describe("local git installs", () => {
       fs.rmSync(stashDir, { recursive: true, force: true })
       fs.rmSync(cacheHome, { recursive: true, force: true })
       fs.rmSync(repoDir, { recursive: true, force: true })
+    }
+  })
+
+  test("agentikitAdd installs a plain directory without git", async () => {
+    const stashDir = createEmptyStashDir("agentikit-nogit-stash-")
+    const cacheHome = makeTempDir("agentikit-nogit-cache-")
+    const kitDir = makeTempDir("agentikit-nogit-kit-")
+    writeFile(path.join(kitDir, "tools", "hello.sh"), "#!/usr/bin/env bash\necho hello\n")
+
+    try {
+      const result = await withEnv(
+        { AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome },
+        () => agentikitAdd({ ref: kitDir }),
+      )
+
+      expect(result.installed.source).toBe("local")
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true)
+      expect(fs.existsSync(path.join(result.installed.extractedDir, ".git"))).toBe(false)
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+      fs.rmSync(cacheHome, { recursive: true, force: true })
+      fs.rmSync(kitDir, { recursive: true, force: true })
     }
   })
 
@@ -207,6 +229,35 @@ describe("local git installs", () => {
       process.chdir(previousCwd)
       fs.rmSync(tempDir, { recursive: true, force: true })
     }
+  })
+
+  test("parseRegistryRef parses git: prefix as git source", () => {
+    const parsed = parseRegistryRef("git:https://gitlab.com/org/kit.git")
+    expect(parsed.source).toBe("git")
+    expect(parsed.id).toBe("git:https://gitlab.com/org/kit")
+    if (parsed.source === "git") {
+      expect(parsed.url).toBe("https://gitlab.com/org/kit.git")
+      expect(parsed.requestedRef).toBeUndefined()
+    }
+  })
+
+  test("parseRegistryRef parses git: prefix with ref suffix", () => {
+    const parsed = parseRegistryRef("git:https://gitlab.com/org/kit#v2.0")
+    expect(parsed.source).toBe("git")
+    if (parsed.source === "git") {
+      expect(parsed.url).toBe("https://gitlab.com/org/kit")
+      expect(parsed.requestedRef).toBe("v2.0")
+    }
+  })
+
+  test("parseRegistryRef routes non-GitHub https URLs to git source", () => {
+    const parsed = parseRegistryRef("https://gitlab.com/org/kit.git")
+    expect(parsed.source).toBe("git")
+  })
+
+  test("parseRegistryRef still routes GitHub https URLs to github source", () => {
+    const parsed = parseRegistryRef("https://github.com/owner/repo")
+    expect(parsed.source).toBe("github")
   })
 
   test("applies include from nearest package.json for nested kit roots", async () => {

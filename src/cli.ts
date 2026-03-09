@@ -77,11 +77,11 @@ const searchCommand = defineCommand({
 })
 
 const addCommand = defineCommand({
-  meta: { name: "add", description: "Install a registry package or local git directory into the stash" },
+  meta: { name: "add", description: "Install a kit from npm, GitHub, any git host, or a local directory" },
   args: {
     ref: {
       type: "positional",
-      description: "Registry ref (npm package, owner/repo, github URL, or local git directory)",
+      description: "Registry ref (npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
   },

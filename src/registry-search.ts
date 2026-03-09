@@ -28,7 +28,7 @@ export interface RegistryKitEntry {
   name: string
   description?: string
   ref: string
-  source: "npm" | "github" | "git"
+  source: "npm" | "github" | "git" | "local"
   homepage?: string
   tags?: string[]
   assetTypes?: string[]
@@ -318,10 +318,9 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined
 }
 
-function asSource(value: unknown): "npm" | "github" | "git" | undefined {
-  return value === "npm" || value === "github" || value === "git"
-    ? value
-    : undefined
+function asSource(value: unknown): "npm" | "github" | "git" | "local" | undefined {
+  if (value === "npm" || value === "github" || value === "git" || value === "local") return value
+  return undefined
 }
 
 function asStringArray(value: unknown): string[] | undefined {

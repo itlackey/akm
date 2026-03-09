@@ -1,4 +1,4 @@
-export type RegistrySource = "npm" | "github" | "git"
+export type RegistrySource = "npm" | "github" | "git" | "local"
 
 export interface RegistryRefBase {
   source: RegistrySource
@@ -21,11 +21,17 @@ export interface ParsedGithubRef extends RegistryRefBase {
 
 export interface ParsedGitRef extends RegistryRefBase {
   source: "git"
-  repoRoot: string
+  url: string
+  requestedRef?: string
+}
+
+export interface ParsedLocalRef extends RegistryRefBase {
+  source: "local"
+  repoRoot?: string
   sourcePath: string
 }
 
-export type ParsedRegistryRef = ParsedNpmRef | ParsedGithubRef | ParsedGitRef
+export type ParsedRegistryRef = ParsedNpmRef | ParsedGithubRef | ParsedGitRef | ParsedLocalRef
 
 export interface ResolvedRegistryArtifact {
   id: string

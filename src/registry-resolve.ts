@@ -3,7 +3,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { fetchWithTimeout } from "./common"
-import type { ParsedGitRef, ParsedGithubRef, ParsedNpmRef, ParsedRegistryRef, ResolvedRegistryArtifact } from "./registry-types"
+import type { ParsedGitRef, ParsedLocalRef, ParsedGithubRef, ParsedNpmRef, ParsedRegistryRef, ResolvedRegistryArtifact } from "./registry-types"
 import { GITHUB_API_BASE, githubHeaders, asRecord, asString } from "./github"
 
 export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
@@ -16,12 +16,15 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   if (ref.startsWith("github:")) {
     return parseGithubShorthand(ref.slice(7), ref)
   }
-  if (ref.startsWith("http://") || ref.startsWith("https://")) {
-    return parseGithubUrl(ref)
+  if (ref.startsWith("git:")) {
+    return parseGitUrl(ref.slice(4), ref)
   }
-  const localGitRef = tryParseLocalGitRef(ref, isPathLikeRef(ref))
-  if (localGitRef) {
-    return localGitRef
+  if (ref.startsWith("http://") || ref.startsWith("https://")) {
+    return parseRemoteUrl(ref)
+  }
+  const localRef = tryParseLocalRef(ref, isPathLikeRef(ref))
+  if (localRef) {
+    return localRef
   }
 
   if (ref.startsWith("@") || !looksLikeGithubOwnerRepo(ref)) {
@@ -34,6 +37,9 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
 export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {
   if (parsed.source === "npm") {
     return resolveNpmArtifact(parsed)
+  }
+  if (parsed.source === "local") {
+    return resolveLocalArtifact(parsed)
   }
   if (parsed.source === "git") {
     return resolveGitArtifact(parsed)
@@ -78,17 +84,22 @@ function parseGithubShorthand(input: string, originalRef: string): ParsedGithubR
   }
 }
 
-function parseGithubUrl(rawUrl: string): ParsedGithubRef {
+function parseRemoteUrl(rawUrl: string): ParsedGithubRef | ParsedGitRef {
   let url: URL
   try {
     url = new URL(rawUrl)
   } catch {
     throw new Error("Invalid registry URL.")
   }
-  if (url.hostname !== "github.com") {
-    throw new Error("Only GitHub URLs are currently supported for URL refs.")
+
+  if (url.hostname === "github.com") {
+    return parseGithubUrl(url, rawUrl)
   }
 
+  return parseGitUrl(rawUrl, rawUrl)
+}
+
+function parseGithubUrl(url: URL, rawUrl: string): ParsedGithubRef {
   const segments = url.pathname.split("/").filter(Boolean)
   if (segments.length < 2) {
     throw new Error("Invalid GitHub URL. Expected https://github.com/owner/repo.")
@@ -107,7 +118,23 @@ function parseGithubUrl(rawUrl: string): ParsedGithubRef {
   }
 }
 
-function tryParseLocalGitRef(rawRef: string, explicitPath: boolean): ParsedGitRef | undefined {
+function parseGitUrl(input: string, originalRef: string): ParsedGitRef {
+  const [urlPart, requestedRef] = splitRefSuffix(input.trim())
+  if (!urlPart) throw new Error("Invalid git ref. A URL is required.")
+
+  // Normalize the URL for the id (strip .git suffix, fragment)
+  const normalized = urlPart.replace(/\.git$/i, "")
+
+  return {
+    source: "git",
+    ref: originalRef,
+    id: `git:${normalized}`,
+    url: urlPart,
+    requestedRef,
+  }
+}
+
+function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef | undefined {
   if (!explicitPath) {
     return undefined
   }
@@ -125,14 +152,11 @@ function tryParseLocalGitRef(rawRef: string, explicitPath: boolean): ParsedGitRe
   }
 
   const repoRoot = findGitRepoRoot(resolvedPath)
-  if (!repoRoot) {
-    throw new Error("Local add path must be inside a git repository.")
-  }
 
   return {
-    source: "git",
+    source: "local",
     ref: rawRef,
-    id: `git:${encodeURIComponent(resolvedPath)}`,
+    id: `local:${encodeURIComponent(resolvedPath)}`,
     repoRoot,
     sourcePath: resolvedPath,
   }
@@ -248,13 +272,32 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
 }
 
 async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
+  const ref = parsed.requestedRef ?? "HEAD"
+  const result = spawnSync("git", ["ls-remote", parsed.url, ref], { encoding: "utf8", timeout: 30_000 })
+  let resolvedRevision: string | undefined
+  if (result.status === 0) {
+    const firstLine = result.stdout.trim().split(/\r?\n/)[0]
+    resolvedRevision = firstLine?.split(/\s/)[0] || undefined
+  }
+
+  return {
+    id: parsed.id,
+    source: parsed.source,
+    ref: parsed.ref,
+    artifactUrl: parsed.url,
+    resolvedVersion: parsed.requestedRef,
+    resolvedRevision,
+  }
+}
+
+async function resolveLocalArtifact(parsed: ParsedLocalRef): Promise<ResolvedRegistryArtifact> {
   return {
     id: parsed.id,
     source: parsed.source,
     ref: parsed.ref,
     artifactUrl: pathToFileURL(parsed.sourcePath).toString(),
-    resolvedRevision: readGitValue(parsed.repoRoot, "rev-parse", "HEAD"),
-    resolvedVersion: readGitValue(parsed.repoRoot, "rev-parse", "--abbrev-ref", "HEAD"),
+    resolvedRevision: parsed.repoRoot ? readGitValue(parsed.repoRoot, "rev-parse", "HEAD") : undefined,
+    resolvedVersion: parsed.repoRoot ? readGitValue(parsed.repoRoot, "rev-parse", "--abbrev-ref", "HEAD") : undefined,
   }
 }
 

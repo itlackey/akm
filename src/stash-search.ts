@@ -84,7 +84,7 @@ export async function agentikitSearch(input: {
   }
 
   const registryHits = (registryResult?.hits ?? []).map((hit): RegistrySearchResultHit => {
-    const installRef = hit.source === "npm" ? `npm:${hit.ref}` : `github:${hit.ref}`
+    const installRef = hit.source === "npm" ? `npm:${hit.ref}` : hit.source === "git" ? `git:${hit.ref}` : `github:${hit.ref}`
     return {
       hitSource: "registry",
       type: "registry",

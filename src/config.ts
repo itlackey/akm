@@ -301,5 +301,6 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 function asRegistrySource(value: unknown): RegistrySource | undefined {
-  return value === "npm" || value === "github" || value === "git" ? value : undefined
+  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as RegistrySource
+  return undefined
 }

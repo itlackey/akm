@@ -4,7 +4,7 @@ import path from "node:path"
 import { fetchWithTimeout, isWithin, TYPE_DIRS } from "./common"
 import { loadConfig, saveConfig, type AgentikitConfig } from "./config"
 import { parseRegistryRef, resolveRegistryArtifact } from "./registry-resolve"
-import type { ParsedGitRef, RegistryInstallResult, RegistryInstalledEntry, RegistrySource } from "./registry-types"
+import type { ParsedGitRef, ParsedLocalRef, RegistryInstallResult, RegistryInstalledEntry, RegistrySource } from "./registry-types"
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS))
 
@@ -15,6 +15,9 @@ export interface InstallRegistryRefOptions {
 
 export async function installRegistryRef(ref: string, options?: InstallRegistryRefOptions): Promise<RegistryInstallResult> {
   const parsed = parseRegistryRef(ref)
+  if (parsed.source === "local") {
+    return installLocalRegistryRef(parsed, options)
+  }
   if (parsed.source === "git") {
     return installGitRegistryRef(parsed, options)
   }
@@ -49,7 +52,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
   }
 }
 
-async function installGitRegistryRef(parsed: ParsedGitRef, options?: InstallRegistryRefOptions): Promise<RegistryInstallResult> {
+async function installLocalRegistryRef(parsed: ParsedLocalRef, options?: InstallRegistryRefOptions): Promise<RegistryInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed)
   const installedAt = (options?.now ?? new Date()).toISOString()
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheRootDir()
@@ -60,7 +63,8 @@ async function installGitRegistryRef(parsed: ParsedGitRef, options?: InstallRegi
   fs.rmSync(extractedDir, { recursive: true, force: true })
   fs.mkdirSync(extractedDir, { recursive: true })
 
-  const includeConfig = findNearestAgentikitIncludeConfig(parsed.sourcePath, parsed.repoRoot)
+  const searchRoot = parsed.repoRoot ?? parsed.sourcePath
+  const includeConfig = findNearestAgentikitIncludeConfig(parsed.sourcePath, searchRoot)
   if (includeConfig) {
     copyIncludedPaths(includeConfig.baseDir, includeConfig.include, extractedDir)
   } else {
@@ -68,6 +72,53 @@ async function installGitRegistryRef(parsed: ParsedGitRef, options?: InstallRegi
   }
 
   const stashRoot = detectStashRoot(extractedDir)
+
+  return {
+    id: resolved.id,
+    source: resolved.source,
+    ref: resolved.ref,
+    artifactUrl: resolved.artifactUrl,
+    resolvedVersion: resolved.resolvedVersion,
+    resolvedRevision: resolved.resolvedRevision,
+    installedAt,
+    cacheDir,
+    extractedDir,
+    stashRoot,
+  }
+}
+
+async function installGitRegistryRef(parsed: ParsedGitRef, options?: InstallRegistryRefOptions): Promise<RegistryInstallResult> {
+  const resolved = await resolveRegistryArtifact(parsed)
+  const installedAt = (options?.now ?? new Date()).toISOString()
+  const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheRootDir()
+  const cacheDir = buildInstallCacheDir(cacheRootDir, parsed.source, parsed.id)
+  const cloneDir = path.join(cacheDir, "clone")
+  const extractedDir = path.join(cacheDir, "extracted")
+
+  fs.mkdirSync(cacheDir, { recursive: true })
+
+  const cloneArgs = ["clone", "--depth", "1"]
+  if (parsed.requestedRef) {
+    cloneArgs.push("--branch", parsed.requestedRef)
+  }
+  cloneArgs.push(parsed.url, cloneDir)
+
+  const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 })
+  if (cloneResult.status !== 0) {
+    const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error"
+    throw new Error(`Failed to clone ${parsed.url}: ${err}`)
+  }
+
+  // Copy contents to extracted dir without .git
+  fs.mkdirSync(extractedDir, { recursive: true })
+  copyDirectoryContents(cloneDir, extractedDir)
+
+  // Clean up the clone dir
+  fs.rmSync(cloneDir, { recursive: true, force: true })
+
+  const provisionalKitRoot = detectStashRoot(extractedDir)
+  const installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot
+  const stashRoot = detectStashRoot(installRoot)
 
   return {
     id: resolved.id,

@@ -78,19 +78,27 @@ akm add github:owner/repo#v1.2.0
 # GitHub URL
 akm add https://github.com/owner/repo
 
-# Local git directory
+# Any git repo (GitLab, Bitbucket, Gitea, self-hosted, etc.)
+akm add git:https://gitlab.com/org/my-kit
+akm add git:https://gitlab.com/org/my-kit#v1.0
+
+# Non-GitHub https URLs are automatically treated as git repos
+akm add https://gitlab.com/org/my-kit
+
+# Local directory
 akm add ./path/to/local/kit
 ```
 
 ### What Happens During Install
 
-1. **Ref parsing** -- The ref is classified as npm, GitHub, or local git.
+1. **Ref parsing** -- The ref is classified as npm, GitHub, git, or local
+   directory.
 2. **Artifact resolution** -- For npm, the latest (or requested) version
    tarball URL is resolved. For GitHub, the latest release tarball is used, or
-   the default branch if no releases exist.
-3. **Download and extract** -- The tarball is downloaded to a cache directory
-   under `~/.cache/agentikit/registry/` and extracted securely (path traversal
-   is rejected).
+   the default branch if no releases exist. For git, the repo is shallow-cloned.
+3. **Download and extract** -- The tarball is downloaded (or repo cloned) to a
+   cache directory under `~/.cache/agentikit/registry/` and extracted securely
+   (path traversal is rejected).
 4. **Stash root detection** -- The extracted contents are scanned for asset
    type directories (`tools/`, `skills/`, etc.) or a `.stash/` marker. If the
    kit nests its stash under an `opencode/` subdirectory, that is detected
