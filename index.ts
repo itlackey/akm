@@ -47,6 +47,7 @@ export { loadConfig, saveConfig, updateConfig } from "./src/config"
 export type { AgentikitConfig, EmbeddingConnectionConfig, LlmConnectionConfig, RegistryConfig } from "./src/config"
 export { parseRegistryRef } from "./src/registry-resolve"
 export { searchRegistry } from "./src/registry-search"
+export { agentikitSubmit } from "./src/submit"
 export { installRegistryRef } from "./src/registry-install"
 export type {
   RegistrySource,
@@ -59,6 +60,7 @@ export type {
   RegistrySearchHit,
   RegistrySearchResponse,
 } from "./src/registry-types"
+export type { AgentikitSubmitOptions, SubmitResponse } from "./src/submit"
 export { readLockfile, writeLockfile, upsertLockEntry, removeLockEntry } from "./src/lockfile"
 export type { LockfileEntry } from "./src/lockfile"
 export { enhanceMetadata, isLlmAvailable } from "./src/llm"
