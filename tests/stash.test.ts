@@ -258,7 +258,7 @@ test("agentikitSearch fallback includes usageGuide for guide mode", async () => 
   expect(result.hits[0].usage).toBeUndefined()
 })
 
-test("agentikitShow returns full payloads for skill/command/agent", () => {
+test("agentikitShow returns full payloads for skill/command/agent", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\n")
   writeFile(path.join(stashDir, "commands", "release.md"), '---\ndescription: "Release command"\n---\nrun release\n')
@@ -266,9 +266,9 @@ test("agentikitShow returns full payloads for skill/command/agent", () => {
 
   process.env.AKM_STASH_DIR = stashDir
 
-  const skill = agentikitShow({ ref: "skill:ops" })
-  const command = agentikitShow({ ref: "command:release.md" })
-  const agent = agentikitShow({ ref: "agent:coach.md" })
+  const skill = await agentikitShow({ ref: "skill:ops" })
+  const command = await agentikitShow({ ref: "command:release.md" })
+  const agent = await agentikitShow({ ref: "agent:coach.md" })
 
   expect(skill.type).toBe("skill")
   expect(skill.content ?? "").toMatch(/Ops/)
@@ -280,11 +280,11 @@ test("agentikitShow returns full payloads for skill/command/agent", () => {
   expect(agent.modelHint).toBe("gpt-5")
 })
 
-test("agentikitShow returns clear error when stash type root is missing", () => {
+test("agentikitShow returns clear error when stash type root is missing", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   try {
     process.env.AKM_STASH_DIR = stashDir
-    expect(() => agentikitShow({ ref: "agent:missing.md" })).toThrow(
+    await expect(agentikitShow({ ref: "agent:missing.md" })).rejects.toThrow(
       /Stash type root not found for ref: agent:missing\.md/,
     )
   } finally {
@@ -292,21 +292,21 @@ test("agentikitShow returns clear error when stash type root is missing", () => 
   }
 })
 
-test("agentikitShow rejects malformed open ref encoding", () => {
+test("agentikitShow rejects malformed open ref encoding", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   process.env.AKM_STASH_DIR = stashDir
-  expect(() => agentikitShow({ ref: "tool:%E0%A4%A" })).toThrow(/Invalid open ref encoding/)
+  await expect(agentikitShow({ ref: "tool:%E0%A4%A" })).rejects.toThrow(/Invalid open ref encoding/)
 })
 
-test("agentikitShow rejects traversal and absolute path refs", () => {
+test("agentikitShow rejects traversal and absolute path refs", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   process.env.AKM_STASH_DIR = stashDir
 
-  expect(() => agentikitShow({ ref: "tool:..%2Foutside.sh" })).toThrow(/Invalid open ref name/)
-  expect(() => agentikitShow({ ref: "tool:%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
+  await expect(agentikitShow({ ref: "tool:..%2Foutside.sh" })).rejects.toThrow(/Invalid open ref name/)
+  await expect(agentikitShow({ ref: "tool:%2Fetc%2Fpasswd" })).rejects.toThrow(/Invalid open ref name/)
 })
 
-test("agentikitShow blocks symlink escapes outside stash type root", () => {
+test("agentikitShow blocks symlink escapes outside stash type root", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-outside-"))
   const outsideFile = path.join(outsideDir, "outside.sh")
@@ -322,7 +322,7 @@ test("agentikitShow blocks symlink escapes outside stash type root", () => {
   }
 
   process.env.AKM_STASH_DIR = stashDir
-  expect(() => agentikitShow({ ref: "tool:link.sh" })).toThrow(/Ref resolves outside the stash root/)
+  await expect(agentikitShow({ ref: "tool:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/)
 })
 
 // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -362,24 +362,24 @@ test("agentikitSearch finds knowledge assets", async () => {
   expect(result.hits[0].name).toBe("api-guide.md")
 })
 
-test("agentikitShow returns full content for knowledge by default", () => {
+test("agentikitShow returns full content for knowledge by default", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md" })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md" })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
   expect(result.content).toContain("## Authentication")
 })
 
-test("agentikitShow returns TOC for knowledge with view toc", () => {
+test("agentikitShow returns TOC for knowledge with view toc", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
@@ -388,68 +388,68 @@ test("agentikitShow returns TOC for knowledge with view toc", () => {
   expect(result.content).toContain("lines total")
 })
 
-test("agentikitShow extracts section for knowledge", () => {
+test("agentikitShow extracts section for knowledge", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Authentication" } })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Authentication" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("bearer tokens")
   expect(result.content).not.toContain("Endpoints")
 })
 
-test("agentikitShow extracts line range for knowledge", () => {
+test("agentikitShow extracts line range for knowledge", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("# Overview")
 })
 
-test("agentikitShow extracts frontmatter for knowledge", () => {
+test("agentikitShow extracts frontmatter for knowledge", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } })
 
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("title: API Guide")
   expect(result.content).not.toContain("# Overview")
 })
 
-test("agentikitShow returns no-frontmatter message when missing", () => {
+test("agentikitShow returns no-frontmatter message when missing", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Just a heading\nSome text.\n")
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } })
+  const result = await agentikitShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } })
 
   expect(result.content).toBe("(no frontmatter)")
 })
 
-test("agentikitShow returns helpful message for missing section in knowledge", () => {
+test("agentikitShow returns helpful message for missing section in knowledge", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC)
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } })
+  const result = await agentikitShow({ ref: "knowledge:api-guide.md", view: { mode: "section", heading: "Nonexistent" } })
   expect(result.type).toBe("knowledge")
   expect(result.content).toContain("Section \"Nonexistent\" not found")
   expect(result.content).toContain("Try --view toc")
 })
 
-test("agentikitShow for tool type returns runCmd and kind", () => {
+test("agentikitShow for tool type returns runCmd and kind", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "tool:deploy.sh" })
+  const result = await agentikitShow({ ref: "tool:deploy.sh" })
 
   expect(result.type).toBe("tool")
   expect(result.runCmd).toBeTruthy()
@@ -482,14 +482,14 @@ test("agentikitInit returns created false when stash dir already exists", () => 
   }
 })
 
-test("agentikitShow throws unsupported tool extension for .txt file", () => {
+test("agentikitShow throws unsupported tool extension for .txt file", async () => {
   const origStashDir = process.env.AKM_STASH_DIR
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "tools", "readme.txt"), "not a tool\n")
 
   process.env.AKM_STASH_DIR = stashDir
   try {
-    expect(() => agentikitShow({ ref: "tool:readme.txt" })).toThrow(
+    await expect(agentikitShow({ ref: "tool:readme.txt" })).rejects.toThrow(
       /Tool ref must resolve to a \.sh/,
     )
   } finally {
@@ -567,14 +567,14 @@ test("agentikitSearch returns runCmd for runnable script extensions", async () =
   }
 })
 
-test("agentikitShow returns content for non-runnable script extensions", () => {
+test("agentikitShow returns content for non-runnable script extensions", async () => {
   const origStashDir = process.env.AKM_STASH_DIR
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "scripts", "process.py"), "# A python script\nprint('hello')\n")
 
   try {
     process.env.AKM_STASH_DIR = stashDir
-    const result = agentikitShow({ ref: "script:process.py" })
+    const result = await agentikitShow({ ref: "script:process.py" })
 
     expect(result.type).toBe("script")
     expect(result.content).toContain("print('hello')")
@@ -588,12 +588,12 @@ test("agentikitShow returns content for non-runnable script extensions", () => {
   }
 })
 
-test("agentikitShow returns runCmd for runnable script", () => {
+test("agentikitShow returns runCmd for runnable script", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-stash-"))
   writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n")
 
   process.env.AKM_STASH_DIR = stashDir
-  const result = agentikitShow({ ref: "script:deploy.sh" })
+  const result = await agentikitShow({ ref: "script:deploy.sh" })
 
   expect(result.type).toBe("script")
   expect(result.runCmd).toBeTruthy()

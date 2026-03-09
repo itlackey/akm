@@ -1,379 +1,201 @@
 # Agent-i-Kit
 
-A CLI tool and library for managing a stash of assets for AI coding assistants. It lets you **search** and **show** tools, skills, commands, and agents from a stash directory.
+Agent-i-Kit gives AI coding agents a shared library of capabilities they can
+search and use. You organize tools, skills, commands, agents, knowledge, and
+scripts into a **stash**, and agents discover what they need through
+`akm` (Agent Kit Manager).
 
-The CLI is called **akm** (Agent Kit Manager).
+## What Is a Kit?
 
-## Installation
+A kit is a shareable package of assets. Any directory with asset
+subdirectories is a valid kit:
 
-### npm / bun
-
-```sh
-npm install -g agentikit
-# or
-bun add -g agentikit
+```text
+my-kit/
+  tools/          # Executable scripts (.sh, .ts, .js)
+  skills/         # Skill definitions (directories with SKILL.md)
+  commands/       # Slash commands (.md)
+  agents/         # Agent definitions (.md)
+  knowledge/      # Reference documents (.md)
+  scripts/        # General scripts (.py, .rb, .go, etc.)
 ```
 
-### Standalone binary
+Kits can be published to npm or hosted on GitHub. Tag them with `akm` or
+`agentikit` so others can discover them through registry search.
 
-Use the install scripts for a copy/paste install:
+## What Is a Stash?
+
+The stash is your local library of assets. It combines three sources:
+
+1. **Working stash** -- Your personal assets (`AKM_STASH_DIR`). Read-write.
+2. **Mounted dirs** -- Shared team directories. Read-only.
+3. **Installed kits** -- Kits from npm or GitHub via `akm add`. Read-only.
+
+When you search or open an asset, the working stash takes priority. This
+means you can install a kit and override individual assets by cloning them
+into your working stash.
+
+## Quick Start
+
+```sh
+# Install
+npm install -g agentikit
+
+# Initialize your stash
+akm init
+
+# Search for assets
+akm search "deploy"
+
+# Show an asset
+akm show tool:deploy.sh
+
+# Install a kit from npm
+akm add @scope/my-kit
+
+# Search installed and registry kits
+akm search "lint" --source both
+```
+
+### Standalone Binary
 
 ```sh
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
-# pin a release tag)
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash -s -- v1.2.3
 
-# PowerShell (Windows)
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1
 ```
 
-The shell installer verifies the downloaded binary against release `checksums.txt` before installing it.
+## Searching and Showing Assets
 
-## Stash model
-
-Set a stash path via `AKM_STASH_DIR`, or run `akm init` to create one automatically.
+Search returns scored results with metadata explaining why each hit matched:
 
 ```sh
-export AKM_STASH_DIR=/abs/path/to/your-stash
+akm search "docker" --type tool
 ```
-
-Expected stash layout:
-
-```
-$AKM_STASH_DIR/
-├── tools/      # recursive files (.sh, .ts, .js, .ps1, .cmd, .bat)
-├── skills/     # skill directories containing SKILL.md
-├── commands/   # markdown files
-├── agents/     # markdown files
-└── knowledge/  # markdown files
-```
-
-## CLI usage
-
-```sh
-akm init                 # Initialize stash directory and set AKM_STASH_DIR
-akm index [--full]       # Build search index (incremental by default)
-akm add <ref>            # Install a registry kit or local git directory
-akm list                 # List installed registry kits from config.registry.installed
-akm remove <target>      # Remove installed kit by id/ref (or parsed ref id)
-akm update [target] [--all]     # Fresh install from current ref(s), report changed revision/version
-akm reinstall [target] [--all]  # Reinstall from stored refs
-akm search [query]       # Search local stash and/or registry
-akm show <type:name>     # Read a stash asset by ref
-akm clone <ref> [--name] [--force]  # Clone an asset into the working stash
-akm sources              # List all stash sources with kind and status
-```
-
-### init
-
-Initialize a stash directory and set `AKM_STASH_DIR`.
-
-```sh
-akm init
-```
-
-Creates the stash directory structure (`tools/`, `skills/`, `commands/`, `agents/`, `knowledge/`) and generates a config file in the platform-standard app config directory:
-
-- Linux/macOS: `$XDG_CONFIG_HOME/agentikit/config.json` (defaults to `~/.config/agentikit/config.json`)
-- Windows: `%APPDATA%\agentikit\config.json` (falls back to `%USERPROFILE%\AppData\Roaming\agentikit\config.json` if `%APPDATA%` is not set)
-
-### index
-
-Build the search index. By default, runs in incremental mode (only reindexes changed directories). Use `--full` for a complete reindex.
-
-```sh
-akm index
-akm index --full
-```
-
-Returns detailed stats including:
-- `totalEntries` — total number of indexed entries
-- `generatedMetadata` — number of entries with auto-generated metadata
-- `directoriesScanned` — directories that were actually scanned
-- `directoriesSkipped` — directories skipped due to no changes (incremental mode)
-- `timing` — breakdown of processing time in milliseconds (total, walk, embed, tfidf)
-
-### add
-
-Install a registry reference or a local git directory and make it searchable immediately.
-
-```sh
-akm add @scope/kit
-akm add npm:@scope/kit@latest
-akm add owner/repo
-akm add github:owner/repo#v1.2.3
-akm add /abs/path/to/your/repo
-akm add /abs/path/to/your/repo/kits/frontend
-```
-
-- Uses registry resolution + install helpers (`npm`, `github`, and local git directories)
-- Local paths must point to a directory inside a git repository
-- Passing a directory under a git repo installs that directory as the kit root
-- Updates the Agentikit config file registry install records
-- If an existing install with the same id is replaced, old cache directories are cleaned up (best effort)
-- Triggers an incremental index build
-- Returns JSON with install details and index stats
-
-If the installed package/repository contains an `agentikit.include` section in its `package.json`, only those files and directories are copied into the installed kit:
 
 ```json
 {
+  "hits": [
+    {
+      "name": "docker-build",
+      "type": "tool",
+      "description": "Build and push Docker images",
+      "openRef": "tool:docker-build.sh",
+      "score": 0.92,
+      "whyMatched": "matched name tokens, fts bm25 relevance"
+    }
+  ]
+}
+```
+
+Use `openRef` from search results to show the full asset:
+
+```sh
+akm show tool:docker-build.sh
+```
+
+```json
+{
+  "type": "tool",
+  "name": "docker-build.sh",
+  "runCmd": "cd \"/path/to/tools\" && bash \"/path/to/tools/docker-build.sh\"",
+  "kind": "bash"
+}
+```
+
+For knowledge assets, views let you navigate large documents:
+
+```sh
+akm show knowledge:api-guide.md --view toc
+akm show knowledge:api-guide.md --view section --heading "Authentication"
+```
+
+## Using With AI Agents
+
+Agent-i-Kit is designed to be called by AI coding agents. The agent searches
+for capabilities, reads the results, and acts on them.
+
+### OpenCode
+
+In an OpenCode project, add akm as a tool in your configuration. The agent
+can then search the stash and run tools directly:
+
+```text
+Search the stash for deployment tools, then run the best match.
+```
+
+The agent calls `akm search "deploy" --type tool`, picks the top result,
+reads its `runCmd` from `akm show`, and executes it.
+
+### Claude Code
+
+Add akm commands as tools or reference them from your CLAUDE.md:
+
+```markdown
+## Available Tools
+
+Use `akm search <query>` to find tools, skills, and commands in the stash.
+Use `akm show <ref>` to read asset details before using them.
+```
+
+### Any Agent
+
+The JSON output from `akm search` and `akm show` is designed for machine
+consumption. Any agent that can run shell commands can use akm:
+
+1. `akm search "what you need"` -- Find relevant assets
+2. `akm show <openRef>` -- Get the details
+3. Use the asset (run the `runCmd`, follow the skill instructions, etc.)
+
+## Installing Kits
+
+Install kits from npm, GitHub, or local directories:
+
+```sh
+akm add @scope/my-kit              # npm package
+akm add github:owner/repo          # GitHub repo
+akm add ./path/to/local/kit        # Local git directory
+```
+
+Search the registry to discover kits:
+
+```sh
+akm search "code review" --source registry
+```
+
+Only packages tagged with `akm` or `agentikit` appear in registry results.
+See [docs/registry.md](docs/registry.md) for details.
+
+## Publishing a Kit
+
+1. Organize your assets into the standard directory structure
+2. Add `"akm"` to `keywords` in `package.json` (for npm) or add the `akm`
+   topic to your GitHub repo
+3. Optionally add an `agentikit.include` array in `package.json` to control
+   which paths are included when installed
+
+```json
+{
+  "name": "@scope/my-kit",
+  "keywords": ["akm"],
   "agentikit": {
-    "include": ["tools", "lib/special", "README.md"]
+    "include": ["tools", "skills", "commands"]
   }
 }
 ```
 
-Paths are resolved relative to the package.json that declares `agentikit.include`, and they are copied into the install cache preserving their relative layout.
-
-### list
-
-Show installed entries from `config.registry.installed`.
-
-- Source of truth is config, not cache directory discovery
-- Each entry includes status flags:
-  - `status.cacheDirExists`
-  - `status.stashRootExists`
-
-### remove
-
-Remove a single installed entry and reindex incrementally.
-
-```sh
-akm remove npm:@scope/kit
-akm remove github:owner/repo
-akm remove owner/repo
-```
-
-- Target resolution order: exact `id`, exact stored `ref`, then parsed ref `id`
-- Removes entry via config helper
-- Deletes prior `cacheDir` best effort
-- Runs one incremental reindex
-
-### reinstall
-
-Reinstall one entry or all entries from stored refs.
-
-```sh
-akm reinstall npm:@scope/kit
-akm reinstall --all
-```
-
-- Uses the same registry install flow as `akm add`
-- Upserts config entries
-- Cleans up replaced cache directories best effort
-- Runs one incremental reindex after all installs
-
-### update
-
-Update one entry or all entries by doing a fresh resolve/install from each current ref.
-
-```sh
-akm update npm:@scope/kit
-akm update --all
-```
-
-- Same target selection rules as `reinstall`
-- Floating refs (for example `@latest` or default branch) resolve to newest available artifact
-- Reports per-entry change flags for version/revision (`changed.version`, `changed.revision`, `changed.any`)
-- Runs one incremental reindex after all installs
-
-### search
-
-Search local stash assets, registry entries, or both.
-
-```sh
-akm search "deploy" --type tool --limit 10 --usage both
-akm search "lint" --source registry
-akm search "docker" --source both
-```
-
-- `query`: case-insensitive substring over stable names (relative paths)
-- `--type`: `tool | skill | command | agent | knowledge | any` (default: `any`)
-- `--limit`: defaults to `20`
-- `--usage`: `none | both | item | guide` (default: `both`)
-- `--source`: `local | registry | both` (default: `local`)
-
-By default (`--source local`), results are the existing stash hits with `openRef`, score/explainability details (`score`, `whyMatched`), and, for tools, execution-ready `runCmd`.
-
-When registry results are included (`--source registry|both`), each registry hit includes explicit install guidance:
-
-- `installRef` (normalized ref for install)
-- `installCmd` (ready-to-run command, e.g. `akm add npm:@scope/kit`)
-
-- `usageGuide` is included by default (`--usage both`) and explains how to use each hit type.
-- Per-hit `usage` is optional metadata from `.stash.json` and is included when present.
-
-### show
-
-Show a hit using `openRef` from search results.
-
-```sh
-akm show skill:code-review
-akm show knowledge:guide.md --view toc
-akm show knowledge:guide.md --view section --heading "Getting Started"
-akm show knowledge:guide.md --view lines --start 10 --end 30
-```
-
-Returns full payload by type:
-
-- `skill` — full `SKILL.md` content
-- `command` — full markdown body as `template` (+ best-effort `description`)
-- `agent` — full markdown body as `prompt` (+ best-effort `description`, `toolPolicy`, `modelHint`)
-- `tool` — `runCmd`/`kind` (the agent uses the host's shell to execute `runCmd`)
-- `knowledge` — content with optional view modes (`full`, `toc`, `frontmatter`, `section`, `lines`)
-
-When a section is not found (e.g., `--view section --heading "Missing"`), returns a helpful message suggesting to use `--view toc` to discover available headings.
-
-### clone
-
-Copy an asset from any stash source into the working stash.
-
-```sh
-akm clone tool:deploy.sh                          # Clone from first source found
-akm clone @installed:npm%3A%40scope%2Fpkg/tool:deploy.sh  # Clone from a specific installed package
-akm clone tool:deploy.sh --name my-deploy.sh       # Clone with a new name
-akm clone tool:deploy.sh --force                   # Overwrite if already in working stash
-```
-
-### sources
-
-List all resolved stash sources with their kind, path, and status.
-
-```sh
-akm sources
-```
-
-Returns an array of sources in priority order: working (writable), mounted (read-only), installed (read-only).
-
-## Library API
-
-Agentikit also exports its core functions for use as a library:
-
-```ts
-import {
-  agentikitAdd,
-  agentikitClone,
-  agentikitList,
-  agentikitRemove,
-  agentikitReinstall,
-  agentikitUpdate,
-  agentikitSearch,
-  agentikitShow,
-  agentikitInit,
-  agentikitIndex,
-  resolveStashSources,
-} from "agentikit"
-```
-
-- `agentikitAdd({ ref })` — install a registry reference and index it
-- `agentikitList()` — list installed registry entries and filesystem status flags
-- `agentikitRemove({ target })` — remove one installed entry and reindex incrementally
-- `agentikitReinstall({ target? , all? })` — reinstall one/all installed entries
-- `agentikitUpdate({ target? , all? })` — fresh resolve/install one/all installed entries with change reporting
-- `agentikitSearch({ query, type?, limit?, usage?, source? })` — search local stash and/or registry
-- `agentikitShow({ ref, view? })` — show a stash asset
-- `agentikitInit()` — initialize stash directory
-- `agentikitIndex()` — build/rebuild search index
-
-## Configuration
-
-Agentikit stores configuration in a platform-standard config directory:
-
-- Linux/macOS: `$XDG_CONFIG_HOME/agentikit/config.json` (defaults to `~/.config/agentikit/config.json`)
-- Windows: `%APPDATA%\agentikit\config.json` (falls back to `%USERPROFILE%\AppData\Roaming\agentikit\config.json` when `%APPDATA%` is unset)
-
-```sh
-akm config                       # Show current config
-akm config --list                # List current config with effective providers
-akm config embedding.provider    # Read one key
-akm config llm.maxTokens 512     # Update one key
-akm config --unset llm.apiKey    # Remove an optional key
-```
-
-### Embedding connection
-
-By default, agentikit uses the local `@xenova/transformers` library for embeddings. You can configure an OpenAI-compatible embedding endpoint instead:
-
-```sh
-akm config providers embedding
-akm config embedding.provider ollama
-akm config embedding.model nomic-embed-text
-akm config embedding.dimension 384
-akm config embedding '{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text","dimension":384}'
-```
-
-To clear the custom embedding config and revert to local embeddings:
-
-```sh
-akm config --unset embedding
-```
-
-### LLM connection
-
-When configured, agentikit uses an OpenAI-compatible LLM to generate richer metadata (descriptions, intents, tags) during indexing:
-
-```sh
-akm config providers llm
-akm config llm.provider ollama
-akm config llm.temperature 0.3
-akm config llm.maxTokens 512
-akm config llm '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}'
-```
-
-To clear:
-
-```sh
-akm config --unset llm
-```
-
-### Using a local Ollama instance
-
-[Ollama](https://ollama.com) provides local models with an OpenAI-compatible API. After installing Ollama and pulling your models:
-
-```sh
-# Pull models
-ollama pull nomic-embed-text
-ollama pull llama3.2
-
-# Configure agentikit to use Ollama for both embeddings and metadata generation
-akm config embedding.provider ollama
-akm config embedding.model nomic-embed-text
-akm config embedding.dimension 384
-akm config llm.provider ollama
-akm config llm.model llama3.2
-
-# Rebuild the index — embeddings use Ollama, metadata is LLM-enhanced
-akm index --full
-```
-
-Both `embedding` and `llm` accept an optional `apiKey` field for authenticated endpoints. Embeddings also support an optional `dimension`, and LLMs support optional `temperature` / `maxTokens`:
-
-```json
-{
-  "endpoint": "https://api.openai.com/v1/embeddings",
-  "model": "text-embedding-3-small",
-  "dimension": 384,
-  "apiKey": "sk-..."
-}
-```
-
-When using a remote embedding provider, make sure `embedding.dimension` matches the search index vector size (`384`). The built-in presets seed this automatically, but custom JSON configs should include it explicitly.
-
-### Config reference
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `semanticSearch` | `boolean` | `true` | Enable semantic search ranking |
-| `mountedStashDirs` | `string[]` | `[]` | User-mounted read-only stash directories |
-| `embedding` | `object` | built-in local provider | Embedding provider settings (`provider?`, `endpoint`, `model`, `dimension?`, `apiKey?`) |
-| `llm` | `object` | disabled | LLM provider settings (`provider?`, `endpoint`, `model`, `temperature?`, `maxTokens?`, `apiKey?`) |
-
-## Notes
-
-- `akm add` installs registry kits into the local cache. Installed stash roots are derived at query time from `config.registry.installed`.
-- Registry lifecycle commands (`list`, `remove`, `reinstall`, `update`) use `config.registry.installed` as the source of truth.
-- When commands fail, CLI errors are returned as structured JSON with `error` and `hint` fields for better user guidance.
-- Missing or unreadable stash paths return friendly errors.
-- The `akm show` command returns helpful messages instead of throwing errors when sections are not found.
+## Documentation
+
+| Doc | Description |
+| --- | --- |
+| [Concepts](docs/concepts.md) | Asset types, stash sources, metadata, tool execution |
+| [CLI Reference](docs/cli.md) | All akm commands and flags |
+| [Kit Maker's Guide](docs/kit-makers.md) | How to build and share a kit |
+| [Registry](docs/registry.md) | Finding, installing, and publishing kits |
+| [Search](docs/search.md) | Hybrid search architecture and scoring |
+| [Indexing](docs/indexing.md) | How the search index is built |
+| [Filesystem](docs/filesystem.md) | Directory layout and `.stash.json` schema |
+| [Configuration](docs/configuration.md) | Providers, settings, and Ollama setup |
+| [Library API](docs/api.md) | Using agentikit as a TypeScript/JS library |

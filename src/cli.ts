@@ -142,8 +142,8 @@ const showCommand = defineCommand({
     start: { type: "string", description: "Start line (for --view lines)" },
     end: { type: "string", description: "End line (for --view lines)" },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
       let view: KnowledgeView | undefined
       if (args.view) {
         switch (args.view) {
@@ -166,7 +166,7 @@ const showCommand = defineCommand({
             throw new Error(`Unknown view mode: ${args.view}. Expected one of: full|toc|frontmatter|section|lines`)
         }
       }
-      console.log(JSON.stringify(agentikitShow({ ref: args.ref, view }), null, 2))
+      console.log(JSON.stringify(await agentikitShow({ ref: args.ref, view }), null, 2))
     })
   },
 })

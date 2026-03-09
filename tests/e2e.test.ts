@@ -258,28 +258,28 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     const deployHit = searchResult.hits.find((h) => h.hitSource === "local" && h.name.includes("deploy"))
     expect(deployHit).toBeDefined()
 
-    const openResult = agentikitShow({ ref: deployHit!.openRef! })
+    const openResult = await agentikitShow({ ref: deployHit!.openRef! })
     expect(openResult.type).toBe("tool")
     expect(openResult.runCmd).toBeTruthy()
     expect(openResult.kind).toBe("bash")
   })
 
   test("show a skill returns full SKILL.md content", async () => {
-    const openResult = agentikitShow({ ref: "skill:code-review" })
+    const openResult = await agentikitShow({ ref: "skill:code-review" })
     expect(openResult.type).toBe("skill")
     expect(openResult.content).toContain("Code Review Skill")
     expect(openResult.content).toContain("security vulnerabilities")
   })
 
   test("show a command returns template and description", async () => {
-    const openResult = agentikitShow({ ref: "command:release.md" })
+    const openResult = await agentikitShow({ ref: "command:release.md" })
     expect(openResult.type).toBe("command")
     expect(openResult.description).toBe("Create a new release with changelog and version bump")
     expect(openResult.template).toContain("npm version")
   })
 
   test("show an agent returns prompt, description, model hint, and tool policy", async () => {
-    const openResult = agentikitShow({ ref: "agent:architect.md" })
+    const openResult = await agentikitShow({ ref: "agent:architect.md" })
     expect(openResult.type).toBe("agent")
     expect(openResult.description).toContain("architect")
     expect(openResult.prompt).toContain("software architect")
@@ -343,7 +343,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(testTool).toBeDefined()
 
     // Step 2: Agent reads the tool to get runCmd for host execution
-    const showResult = agentikitShow({ ref: testTool!.openRef! })
+    const showResult = await agentikitShow({ ref: testTool!.openRef! })
     expect(showResult.runCmd).toBeTruthy()
   })
 })
@@ -381,6 +381,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
               name: "@scope/kit",
               description: "Example registry kit",
               version: "1.2.3",
+              keywords: ["agentikit"],
               links: { homepage: "https://www.npmjs.com/package/@scope/kit" },
             },
             score: 0.9,
@@ -424,6 +425,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
               name: "docker-kit",
               description: "Registry docker helper",
               version: "0.1.0",
+              keywords: ["akm", "docker"],
               links: { homepage: "https://www.npmjs.com/package/docker-kit" },
             },
             score: 0.8,
@@ -1058,7 +1060,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AKM_STASH_DIR = stashDir
     try {
-      expect(() => agentikitShow({ ref: "badref" })).toThrow(/Invalid open ref/)
+      await expect(agentikitShow({ ref: "badref" })).rejects.toThrow(/Invalid open ref/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -1068,7 +1070,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AKM_STASH_DIR = stashDir
     try {
-      expect(() => agentikitShow({ ref: "widget:foo" })).toThrow(/Invalid open ref type/)
+      await expect(agentikitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid open ref type/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -1079,7 +1081,7 @@ describe("Scenario: Error handling and edge cases", () => {
     fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true })
     process.env.AKM_STASH_DIR = stashDir
     try {
-      expect(() => agentikitShow({ ref: "tool:..%2F..%2Fetc%2Fpasswd" })).toThrow(/Invalid open ref name/)
+      await expect(agentikitShow({ ref: "tool:..%2F..%2Fetc%2Fpasswd" })).rejects.toThrow(/Invalid open ref name/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -1147,7 +1149,7 @@ describe("Scenario: Cross-type discovery", () => {
       expect(hit.openRef).toContain(":")
 
       // Should not throw when opening
-      const openResult = agentikitShow({ ref: hit.openRef! })
+      const openResult = await agentikitShow({ ref: hit.openRef! })
       expect(openResult.type).toBe(hit.type)
     }
   })

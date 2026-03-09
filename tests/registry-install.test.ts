@@ -132,7 +132,7 @@ describe("local git installs", () => {
       const installedRoots = (config.registry?.installed ?? []).map((e: { stashRoot: string }) => e.stashRoot)
       expect(installedRoots).toContain(result.installed.stashRoot)
 
-      const shown = withEnv(
+      const shown = await withEnv(
         { AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome },
         () => agentikitShow({ ref: "tool:hello.sh" }),
       )

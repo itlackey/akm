@@ -43,7 +43,9 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
 }
 
 async function searchNpm(query: string, limit: number): Promise<RegistrySearchHit[]> {
-  const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${limit}`
+  // Request more results so we still have enough after filtering by keywords
+  const fetchSize = Math.min(limit * 5, 100)
+  const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${fetchSize}`
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
@@ -57,6 +59,10 @@ async function searchNpm(query: string, limit: number): Promise<RegistrySearchHi
     const pkg = asRecord(obj.package)
     const name = asString(pkg.name)
     if (!name) return []
+
+    // Filter: only include packages with "akm" or "agentikit" in keywords
+    const keywords = asStringArray(pkg.keywords)
+    if (!hasRequiredTag(keywords)) return []
 
     const version = asString(pkg.version)
     const metadata: Record<string, string> = {}
@@ -78,7 +84,9 @@ async function searchNpm(query: string, limit: number): Promise<RegistrySearchHi
 }
 
 async function searchGithub(query: string, limit: number): Promise<RegistrySearchHit[]> {
-  const q = encodeURIComponent(`${query} in:name,description,readme`)
+  // Filter by topic: only repos tagged with "akm" or "agentikit"
+  const topicFilter = "topic:akm OR topic:agentikit"
+  const q = encodeURIComponent(`${query} in:name,description,readme ${topicFilter}`)
   const url = `${GITHUB_API_BASE}/search/repositories?q=${q}&sort=stars&order=desc&per_page=${limit}`
   const response = await fetch(url, { headers: githubHeaders() })
   if (!response.ok) {
@@ -138,6 +146,17 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((v): v is string => typeof v === "string")
+}
+
+const REQUIRED_TAGS = new Set(["akm", "agentikit"])
+
+function hasRequiredTag(keywords: string[]): boolean {
+  return keywords.some((kw) => REQUIRED_TAGS.has(kw.toLowerCase()))
 }
 
 function toErrorMessage(error: unknown): string {

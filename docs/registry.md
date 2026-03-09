@@ -1,0 +1,204 @@
+# Registry
+
+The registry is how akm finds and installs kits from external sources. Kits
+are collections of assets (tools, skills, commands, agents, knowledge, scripts)
+published to npm or hosted on GitHub.
+
+## Discovery
+
+`akm search` can query external registries alongside the local stash:
+
+```bash
+# search local stash only (default)
+akm search "deploy"
+
+# search registries only
+akm search "deploy" --source registry
+
+# search both local and registries
+akm search "deploy" --source both
+```
+
+Registry search queries npm and GitHub in parallel.
+
+### Filtering
+
+Not every npm package or GitHub repo is an agentikit kit. To keep results
+relevant, the registry enforces tag-based filtering:
+
+- **npm** -- Only packages whose `keywords` array in `package.json` includes
+  `"akm"` or `"agentikit"` appear in search results.
+- **GitHub** -- Only repositories with the topic `akm` or `agentikit` appear
+  in search results.
+
+If you are publishing a kit, add these tags so it can be discovered:
+
+```jsonc
+// package.json
+{
+  "keywords": ["akm", "your-other-tags"]
+}
+```
+
+For GitHub repos, add topics via the repository settings page or the
+`gh repo edit --add-topic` command.
+
+### Search Results
+
+Each registry hit includes:
+
+| Field | Description |
+| --- | --- |
+| `source` | `"npm"` or `"github"` |
+| `id` | Unique identifier (e.g. `npm:@scope/kit`) |
+| `ref` | The value you pass to `akm add` |
+| `title` | Package or repo name |
+| `description` | Summary from the registry |
+| `score` | Relevance (npm) or star count (GitHub) |
+| `installRef` | Ready-to-use ref for `akm add` |
+| `installCmd` | Full install command string |
+
+## Installing
+
+Install a kit with `akm add` using any supported ref format:
+
+```bash
+# npm package
+akm add npm:@scope/my-kit
+
+# npm package (shorthand -- bare name, resolved as npm if it doesn't look like owner/repo)
+akm add @scope/my-kit
+
+# GitHub repo
+akm add github:owner/repo
+
+# GitHub repo at a specific tag or branch
+akm add github:owner/repo#v1.2.0
+
+# GitHub URL
+akm add https://github.com/owner/repo
+
+# Local git directory
+akm add ./path/to/local/kit
+```
+
+### What Happens During Install
+
+1. **Ref parsing** -- The ref is classified as npm, GitHub, or local git.
+2. **Artifact resolution** -- For npm, the latest (or requested) version
+   tarball URL is resolved. For GitHub, the latest release tarball is used, or
+   the default branch if no releases exist.
+3. **Download and extract** -- The tarball is downloaded to a cache directory
+   under `~/.cache/agentikit/registry/` and extracted securely (path traversal
+   is rejected).
+4. **Stash root detection** -- The extracted contents are scanned for asset
+   type directories (`tools/`, `skills/`, etc.) or a `.stash/` marker. If the
+   kit nests its stash under an `opencode/` subdirectory, that is detected
+   automatically.
+5. **Selective include** -- If the package's `package.json` contains an
+   `agentikit.include` array, only the listed paths are copied into the
+   install cache. This lets a kit ship a subset of its repo as the stash.
+6. **Config registration** -- The installed entry is saved to
+   `config.registry.installed` with its id, source, ref, resolved version,
+   cache path, and install timestamp.
+7. **Re-index** -- `akm index` runs automatically so the new assets appear in
+   search immediately.
+
+### Selective Include
+
+A kit can declare which paths to include via `package.json`:
+
+```jsonc
+{
+  "agentikit": {
+    "include": [
+      "tools",
+      "skills",
+      "commands"
+    ]
+  }
+}
+```
+
+Only the listed paths are copied into the install cache. Paths must be
+relative to the package root and cannot escape it. The `.git` directory is
+always excluded.
+
+## Auto-Install on Open
+
+When you open an asset ref that points to an installed package
+(`@installed:<registryId>/type:name`) but the package is not yet installed,
+akm automatically installs it before showing the asset. This means refs from
+search results work without a separate install step:
+
+```bash
+# This will install the kit if needed, then show the asset
+akm show "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh"
+```
+
+The auto-install uses the `registryId` embedded in the ref to determine what
+to install. After installation, stash sources are re-resolved and the asset
+lookup is retried.
+
+## Managing Installed Kits
+
+```bash
+# List all installed kits with their status
+akm list
+
+# Update a specific kit to its latest version
+akm update npm:@scope/my-kit
+
+# Update all installed kits
+akm update --all
+
+# Reinstall a kit (re-download and re-extract)
+akm reinstall npm:@scope/my-kit
+
+# Reinstall all kits
+akm reinstall --all
+
+# Remove a kit
+akm remove npm:@scope/my-kit
+```
+
+### Cloning Into the Working Stash
+
+Installed kits are read-only. To edit an asset from an installed kit, clone
+it into the working stash:
+
+```bash
+akm clone "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh"
+
+# Clone with a new name
+akm clone "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh" --name my-deploy.sh
+```
+
+The cloned asset lives in the working stash and takes priority over the
+installed version in search and show.
+
+## Source Priority
+
+When multiple sources provide the same asset name, the first match wins:
+
+1. **Working stash** -- `AKM_STASH_DIR` (read-write)
+2. **Mounted stash dirs** -- Additional directories from config (read-only)
+3. **Installed packages** -- Registry kits from `akm add` (read-only)
+
+This means local edits and clones always override installed versions.
+
+## Cache Layout
+
+Installed kits are cached under `~/.cache/agentikit/registry/`:
+
+```
+~/.cache/agentikit/registry/
+  npm-@scope-my-kit/
+    <timestamp>-<random>/
+      artifact.tar.gz     # Downloaded archive
+      extracted/           # Extracted contents
+      selected/            # Subset from agentikit.include (if applicable)
+```
+
+Each install creates a new timestamped directory. Previous versions are
+cleaned up automatically when a kit is updated or reinstalled.
