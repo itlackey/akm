@@ -306,18 +306,18 @@ test("agentikitShow returns clear error when stash type root is missing", async 
   }
 })
 
-test("agentikitShow rejects malformed open ref encoding", async () => {
+test("agentikitShow rejects invalid asset type in ref", async () => {
   const stashDir = createTmpDir("agentikit-stash-")
   process.env.AKM_STASH_DIR = stashDir
-  await expect(agentikitShow({ ref: "tool:%E0%A4%A" })).rejects.toThrow(/Invalid open ref encoding/)
+  await expect(agentikitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/)
 })
 
 test("agentikitShow rejects traversal and absolute path refs", async () => {
   const stashDir = createTmpDir("agentikit-stash-")
   process.env.AKM_STASH_DIR = stashDir
 
-  await expect(agentikitShow({ ref: "tool:..%2Foutside.sh" })).rejects.toThrow(/Invalid open ref name/)
-  await expect(agentikitShow({ ref: "tool:%2Fetc%2Fpasswd" })).rejects.toThrow(/Invalid open ref name/)
+  await expect(agentikitShow({ ref: "tool:../outside.sh" })).rejects.toThrow(/Path traversal/)
+  await expect(agentikitShow({ ref: "tool:/etc/passwd" })).rejects.toThrow(/Absolute path/)
 })
 
 test("agentikitShow blocks symlink escapes outside stash type root", async () => {

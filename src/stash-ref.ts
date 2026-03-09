@@ -1,115 +1,99 @@
 import path from "node:path"
 import { type AgentikitAssetType, isAssetType } from "./common"
-import type { StashSourceKind } from "./stash-source"
 
-export interface OpenRef {
+// ── Types ───────────────────────────────────────────────────────────────────
+
+export interface AssetRef {
   type: AgentikitAssetType
   name: string
-  /** Which stash source kind this ref targets */
-  sourceKind?: StashSourceKind
-  /** For installed sources, the registry id */
-  registryId?: string
+  /**
+   * Where to find this asset.
+   *   - undefined: search all sources (working → mounted → installed)
+   *   - "local": working stash only
+   *   - registry ref: e.g. "npm:@scope/pkg", "owner/repo", "github:owner/repo#v1"
+   *   - filesystem path: e.g. "/mnt/shared-stash"
+   */
+  origin?: string
 }
 
-const SOURCE_KIND_SET = new Set<string>(["working", "mounted", "installed"])
-
-function isSourceKind(value: string): value is StashSourceKind {
-  return SOURCE_KIND_SET.has(value)
-}
+// ── Construction ────────────────────────────────────────────────────────────
 
 /**
- * Parse a ref in the format `@source/type:name` or `@installed:registryId/type:name`.
+ * Build a ref string from components.
  *
  * Examples:
- *   `@working/tool:script.sh`
- *   `@mounted/skill:code-review`
- *   `@installed:npm%3A%40scope%2Fpkg/tool:deploy.sh`
+ *   makeAssetRef("tool", "deploy.sh")
+ *     → "tool:deploy.sh"
+ *   makeAssetRef("tool", "deploy.sh", "npm:@scope/pkg")
+ *     → "npm:@scope/pkg//tool:deploy.sh"
+ *   makeAssetRef("skill", "code-review", "local")
+ *     → "local//skill:code-review"
+ *   makeAssetRef("tool", "db/migrate/run.sh", "owner/repo")
+ *     → "owner/repo//tool:db/migrate/run.sh"
  */
-export function parseOpenRef(ref: string): OpenRef {
-  let sourceKind: StashSourceKind | undefined
-  let registryId: string | undefined
-  let body = ref
-
-  // Parse @source/ prefix
-  if (body.startsWith("@")) {
-    const slashIdx = body.indexOf("/")
-    if (slashIdx <= 1) {
-      throw new Error("Invalid open ref. Expected format 'type:name' or '@source/type:name'.")
-    }
-    const sourceSegment = body.slice(1, slashIdx)
-    body = body.slice(slashIdx + 1)
-
-    // Check for @installed:registryId format
-    const colonIdx = sourceSegment.indexOf(":")
-    if (colonIdx > 0) {
-      const kind = sourceSegment.slice(0, colonIdx)
-      if (!isSourceKind(kind)) {
-        throw new Error(`Invalid source kind: "${kind}". Expected one of: working, mounted, installed.`)
-      }
-      sourceKind = kind
-      try {
-        registryId = decodeURIComponent(sourceSegment.slice(colonIdx + 1))
-      } catch {
-        throw new Error("Invalid registry id encoding in ref.")
-      }
-      if (!registryId) {
-        throw new Error("Empty registry id in ref.")
-      }
-    } else {
-      if (!isSourceKind(sourceSegment)) {
-        throw new Error(`Invalid source kind: "${sourceSegment}". Expected one of: working, mounted, installed.`)
-      }
-      sourceKind = sourceSegment
-    }
-  }
-
-  const separator = body.indexOf(":")
-  if (separator <= 0) {
-    throw new Error("Invalid open ref. Expected format 'type:name' or '@source/type:name'.")
-  }
-  const rawType = body.slice(0, separator)
-  const rawName = body.slice(separator + 1)
-  if (!isAssetType(rawType)) {
-    throw new Error(`Invalid open ref type: "${rawType}".`)
-  }
-  let name: string
-  try {
-    name = decodeURIComponent(rawName)
-  } catch {
-    throw new Error("Invalid open ref encoding.")
-  }
-  const normalized = path.posix.normalize(name.replace(/\\/g, "/"))
-  if (
-    !name
-    || name.includes("\0")
-    || /^[A-Za-z]:/.test(name)
-    || path.posix.isAbsolute(normalized)
-    || normalized === ".."
-    || normalized.startsWith("../")
-  ) {
-    throw new Error("Invalid open ref name.")
-  }
-  return { type: rawType, name: normalized, sourceKind, registryId }
-}
-
-/**
- * Create a ref string from components.
- *
- * Examples:
- *   makeOpenRef("tool", "script.sh") → "@working/tool:script.sh" (if sourceKind provided)
- *   makeOpenRef("tool", "deploy.sh", "installed", "npm:@scope/pkg") → "@installed:npm%3A%40scope%2Fpkg/tool:deploy.sh"
- */
-export function makeOpenRef(
+export function makeAssetRef(
   type: AgentikitAssetType,
   name: string,
-  sourceKind?: StashSourceKind,
-  registryId?: string,
+  origin?: string,
 ): string {
-  const body = `${type}:${encodeURIComponent(name)}`
-  if (!sourceKind) return body
+  validateName(name)
+  const normalized = normalizeName(name)
+  const asset = `${type}:${normalized}`
+  if (!origin) return asset
+  return `${origin}//${asset}`
+}
 
-  if (sourceKind === "installed" && registryId) {
-    return `@${sourceKind}:${encodeURIComponent(registryId)}/${body}`
+// ── Parsing ─────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a ref string in the format `[origin//]type:name`.
+ */
+export function parseAssetRef(ref: string): AssetRef {
+  const trimmed = ref.trim()
+  if (!trimmed) throw new Error("Empty ref.")
+
+  let origin: string | undefined
+  let body = trimmed
+
+  const boundary = trimmed.indexOf("//")
+  if (boundary >= 0) {
+    origin = trimmed.slice(0, boundary)
+    body = trimmed.slice(boundary + 2)
+    if (!origin) throw new Error("Empty origin in ref.")
   }
-  return `@${sourceKind}/${body}`
+
+  const colon = body.indexOf(":")
+  if (colon <= 0) {
+    throw new Error(`Invalid ref "${trimmed}". Expected [origin//]type:name`)
+  }
+
+  const rawType = body.slice(0, colon)
+  const rawName = body.slice(colon + 1)
+
+  if (!isAssetType(rawType)) {
+    throw new Error(`Invalid asset type: "${rawType}".`)
+  }
+
+  validateName(rawName)
+  const name = normalizeName(rawName)
+
+  return { type: rawType, name, origin: origin || undefined }
+}
+
+// ── Validation ──────────────────────────────────────────────────────────────
+
+function validateName(name: string): void {
+  if (!name) throw new Error("Empty asset name.")
+  if (name.includes("\0")) throw new Error("Null byte in asset name.")
+  if (/^[A-Za-z]:/.test(name)) throw new Error("Windows drive path in asset name.")
+
+  const normalized = path.posix.normalize(name.replace(/\\/g, "/"))
+  if (path.posix.isAbsolute(normalized)) throw new Error("Absolute path in asset name.")
+  if (normalized === ".." || normalized.startsWith("../")) {
+    throw new Error("Path traversal in asset name.")
+  }
+}
+
+function normalizeName(name: string): string {
+  return path.posix.normalize(name.replace(/\\/g, "/"))
 }

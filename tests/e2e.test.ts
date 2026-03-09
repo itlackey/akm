@@ -1074,7 +1074,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AKM_STASH_DIR = stashDir
     try {
-      await expect(agentikitShow({ ref: "badref" })).rejects.toThrow(/Invalid open ref/)
+      await expect(agentikitShow({ ref: "badref" })).rejects.toThrow(/Invalid ref/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -1084,7 +1084,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-err-"))
     process.env.AKM_STASH_DIR = stashDir
     try {
-      await expect(agentikitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid open ref type/)
+      await expect(agentikitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
@@ -1095,7 +1095,7 @@ describe("Scenario: Error handling and edge cases", () => {
     fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true })
     process.env.AKM_STASH_DIR = stashDir
     try {
-      await expect(agentikitShow({ ref: "tool:..%2F..%2Fetc%2Fpasswd" })).rejects.toThrow(/Invalid open ref name/)
+      await expect(agentikitShow({ ref: "tool:../../etc/passwd" })).rejects.toThrow(/Path traversal/)
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }

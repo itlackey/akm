@@ -1,12 +1,13 @@
 import fs from "node:fs"
 import path from "node:path"
 import { TYPE_DIRS } from "./asset-spec"
-import { parseOpenRef, makeOpenRef } from "./stash-ref"
+import { parseAssetRef, makeAssetRef } from "./stash-ref"
+import { resolveSourcesForOrigin } from "./origin-resolve"
 import { resolveAssetPath } from "./stash-resolve"
 import { resolveStashSources, findSourceForPath, type StashSource, type StashSourceKind } from "./stash-source"
 
 export interface CloneOptions {
-  /** Source ref (e.g., @installed:my-pkg/tool:deploy.sh) */
+  /** Source ref (e.g., npm:@scope/pkg//tool:deploy.sh) */
   sourceRef: string
   /** Optional new name for the cloned asset */
   newName?: string
@@ -28,22 +29,14 @@ export interface CloneResponse {
 }
 
 export async function agentikitClone(options: CloneOptions): Promise<CloneResponse> {
-  const parsed = parseOpenRef(options.sourceRef)
-  const sources = resolveStashSources()
-  const workingSource = sources.find((s) => s.kind === "working")
+  const parsed = parseAssetRef(options.sourceRef)
+  const allSources = resolveStashSources()
+  const workingSource = allSources.find((s) => s.kind === "working")
   if (!workingSource) {
     throw new Error("No working stash configured. Run `akm init` first.")
   }
 
-  // Resolve the source asset — search matching sources
-  let searchSources = sources
-  if (parsed.sourceKind) {
-    if (parsed.sourceKind === "installed" && parsed.registryId) {
-      searchSources = sources.filter((s) => s.kind === "installed" && s.registryId === parsed.registryId)
-    } else {
-      searchSources = sources.filter((s) => s.kind === parsed.sourceKind)
-    }
-  }
+  const searchSources = resolveSourcesForOrigin(parsed.origin, allSources)
 
   let sourcePath: string | undefined
   let lastError: Error | undefined
@@ -59,15 +52,14 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
     throw lastError ?? new Error(`Source asset not found for ref: ${options.sourceRef}`)
   }
 
-  const sourceSource = findSourceForPath(sourcePath, sources)
+  const sourceSource = findSourceForPath(sourcePath, allSources)
   const sourceKind = sourceSource?.kind ?? "working"
 
-  // Determine destination name and path
   const destName = options.newName ?? parsed.name
   const typeDir = TYPE_DIRS[parsed.type]
   const workingDir = workingSource.path
 
-  // Guard against self-clone: source and destination resolve to the same location
+  // Guard against self-clone
   if (parsed.type === "skill") {
     const sourceSkillDir = path.resolve(path.dirname(sourcePath))
     const destSkillDir = path.resolve(path.join(workingDir, typeDir, destName))
@@ -88,7 +80,6 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
 
   let destPath: string
   if (parsed.type === "skill") {
-    // Skills are directories — clone the entire skill directory
     const sourceSkillDir = path.dirname(sourcePath)
     const destSkillDir = path.join(workingDir, typeDir, destName)
     const overwritten = fs.existsSync(destSkillDir)
@@ -105,7 +96,7 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
     fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true })
 
     destPath = path.join(destSkillDir, "SKILL.md")
-    const ref = makeOpenRef(parsed.type, destName, "working")
+    const ref = makeAssetRef(parsed.type, destName, "local")
 
     return {
       source: { path: sourcePath, sourceKind, registryId: sourceSource?.registryId },
@@ -114,7 +105,6 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
     }
   }
 
-  // For non-skill assets, copy the single file
   destPath = path.join(workingDir, typeDir, destName)
   const overwritten = fs.existsSync(destPath)
 
@@ -127,7 +117,7 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
   fs.mkdirSync(path.dirname(destPath), { recursive: true })
   fs.copyFileSync(sourcePath, destPath)
 
-  const ref = makeOpenRef(parsed.type, destName, "working")
+  const ref = makeAssetRef(parsed.type, destName, "local")
 
   return {
     source: { path: sourcePath, sourceKind, registryId: sourceSource?.registryId },

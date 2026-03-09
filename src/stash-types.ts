@@ -1,6 +1,5 @@
 import type { AgentikitAssetType } from "./common"
 import type { RegistrySource } from "./registry-types"
-import type { StashSourceKind } from "./stash-source"
 import type { ToolKind } from "./tool-runner"
 
 export type AgentikitSearchType = AgentikitAssetType | "any"
@@ -13,8 +12,6 @@ export interface LocalSearchHit {
   name: string
   path: string
   openRef: string
-  /** Which stash source this hit came from */
-  sourceKind?: StashSourceKind
   /** For installed sources, the registry id */
   registryId?: string
   /** Whether this asset is editable (only true for working stash) */
@@ -220,8 +217,6 @@ export interface ShowResponse {
   modelHint?: unknown
   runCmd?: string
   kind?: ToolKind
-  /** Which stash source this asset came from */
-  sourceKind?: StashSourceKind
   /** For installed sources, the registry id */
   registryId?: string
   /** Whether this asset is editable (only true for working stash) */

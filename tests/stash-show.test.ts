@@ -94,10 +94,10 @@ describe("agentikitShow installed ref", () => {
       },
     })
 
-    // Use the @installed:registryId/type:name format so parseOpenRef sets
-    // registryId, triggering the installCmd error path.
+    // Use an origin that is NOT installed so resolveSourcesForOrigin returns
+    // empty, triggering the installCmd error path.
     await expect(
-      agentikitShow({ ref: "@installed:test-pkg/tool:missing.sh" }),
+      agentikitShow({ ref: "npm:@other/missing-pkg//tool:missing.sh" }),
     ).rejects.toThrow(/akm add/)
   })
 })
@@ -136,7 +136,6 @@ describe("agentikitShow sourceKind and editable", () => {
     const result = await agentikitShow({ ref: "tool:local.sh" })
 
     expect(result.type).toBe("tool")
-    expect(result.sourceKind).toBe("working")
     expect(result.editable).toBe(true)
   })
 
@@ -153,7 +152,6 @@ describe("agentikitShow sourceKind and editable", () => {
     const result = await agentikitShow({ ref: "tool:remote.sh" })
 
     expect(result.type).toBe("tool")
-    expect(result.sourceKind).toBe("mounted")
     expect(result.editable).toBe(false)
   })
 
@@ -183,7 +181,6 @@ describe("agentikitShow sourceKind and editable", () => {
     const result = await agentikitShow({ ref: "tool:deploy.sh" })
 
     expect(result.type).toBe("tool")
-    expect(result.sourceKind).toBe("installed")
     expect(result.editable).toBe(false)
   })
 })

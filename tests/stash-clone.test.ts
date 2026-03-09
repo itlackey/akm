@@ -90,14 +90,14 @@ describe("agentikitClone", () => {
     writeFile(path.join(mountedDir, "tools", "deploy.sh"), "echo mounted\n")
     writeFile(path.join(stashDir, "tools", "deploy.sh"), "echo existing\n")
 
-    await expect(agentikitClone({ sourceRef: "@mounted/tool:deploy.sh" })).rejects.toThrow("already exists")
+    await expect(agentikitClone({ sourceRef: `${mountedDir}//tool:deploy.sh` })).rejects.toThrow("already exists")
   })
 
   test("overwrites with --force", async () => {
     writeFile(path.join(mountedDir, "tools", "deploy.sh"), "echo updated\n")
     writeFile(path.join(stashDir, "tools", "deploy.sh"), "echo old\n")
 
-    const result = await agentikitClone({ sourceRef: "@mounted/tool:deploy.sh", force: true })
+    const result = await agentikitClone({ sourceRef: `${mountedDir}//tool:deploy.sh`, force: true })
 
     expect(result.overwritten).toBe(true)
     expect(fs.readFileSync(path.join(stashDir, "tools", "deploy.sh"), "utf8")).toBe("echo updated\n")
@@ -110,7 +110,7 @@ describe("agentikitClone", () => {
     writeFile(path.join(stashDir, "skills", "review", "SKILL.md"), "# Old\n")
     writeFile(path.join(stashDir, "skills", "review", "stale.md"), "# Stale\n")
 
-    await agentikitClone({ sourceRef: "@mounted/skill:review", force: true })
+    await agentikitClone({ sourceRef: `${mountedDir}//skill:review`, force: true })
 
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true)
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "stale.md"))).toBe(false)

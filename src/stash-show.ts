@@ -1,25 +1,17 @@
 import fs from "node:fs"
-import { parseOpenRef } from "./stash-ref"
+import { parseAssetRef } from "./stash-ref"
+import { resolveSourcesForOrigin } from "./origin-resolve"
 import { resolveAssetPath } from "./stash-resolve"
 import type { KnowledgeView, ShowResponse } from "./stash-types"
 import { getHandler } from "./asset-type-handler"
 import { resolveStashSources, findSourceForPath } from "./stash-source"
 
 export async function agentikitShow(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
-  const parsed = parseOpenRef(input.ref)
-  let sources = resolveStashSources()
+  const parsed = parseAssetRef(input.ref)
+  const allSources = resolveStashSources()
+  const searchSources = resolveSourcesForOrigin(parsed.origin, allSources)
 
-  // If the ref specifies a source kind, filter to matching sources
-  let searchSources = sources
-  if (parsed.sourceKind) {
-    if (parsed.sourceKind === "installed" && parsed.registryId) {
-      searchSources = sources.filter((s) => s.kind === "installed" && s.registryId === parsed.registryId)
-    } else {
-      searchSources = sources.filter((s) => s.kind === parsed.sourceKind)
-    }
-  }
-
-  let allStashDirs = searchSources.map((s) => s.path)
+  const allStashDirs = searchSources.map((s) => s.path)
 
   let assetPath: string | undefined
   let lastError: Error | undefined
@@ -32,11 +24,11 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
     }
   }
 
-  if (!assetPath && parsed.registryId) {
-    const installCmd = `akm add ${parsed.registryId}`
+  if (!assetPath && parsed.origin && searchSources.length === 0) {
+    const installCmd = `akm add ${parsed.origin}`
     throw new Error(
       `Stash asset not found for ref: ${parsed.type}:${parsed.name}. ` +
-      `To install from registry, run: ${installCmd}`
+      `Kit "${parsed.origin}" is not installed. Run: ${installCmd}`
     )
   }
 
@@ -45,7 +37,7 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
   }
   const content = fs.readFileSync(assetPath, "utf8")
 
-  const source = findSourceForPath(assetPath, sources)
+  const source = findSourceForPath(assetPath, allSources)
   const handler = getHandler(parsed.type)
   const response = handler.buildShowResponse({
     name: parsed.name,
@@ -57,7 +49,6 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
 
   return {
     ...response,
-    sourceKind: source?.kind,
     registryId: source?.registryId,
     editable: source?.writable ?? false,
   }

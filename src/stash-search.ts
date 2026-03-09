@@ -4,7 +4,7 @@ import { type AgentikitAssetType } from "./common"
 import { ASSET_TYPES, TYPE_DIRS, deriveCanonicalAssetName } from "./asset-spec"
 import { buildSearchText } from "./indexer"
 import { walkStash } from "./walker"
-import { makeOpenRef } from "./stash-ref"
+import { makeAssetRef } from "./stash-ref"
 import type {
   AgentikitSearchType,
   LocalSearchHit,
@@ -409,8 +409,7 @@ function buildDbHit(input: {
     type: input.entry.type,
     name: input.entry.name,
     path: input.path,
-    openRef: makeOpenRef(input.entry.type, openRefName, source?.kind, source?.registryId),
-    sourceKind: source?.kind,
+    openRef: makeAssetRef(input.entry.type, openRefName, source?.registryId),
     registryId: source?.registryId,
     editable: source?.writable ?? false,
     description: input.entry.description,
@@ -465,8 +464,7 @@ function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashS
     type: asset.type,
     name: asset.name,
     path: asset.path,
-    openRef: makeOpenRef(asset.type, asset.name, source?.kind, source?.registryId),
-    sourceKind: source?.kind,
+    openRef: makeAssetRef(asset.type, asset.name, source?.registryId),
     registryId: source?.registryId,
     editable: source?.writable ?? false,
   }
