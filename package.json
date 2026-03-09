@@ -1,5 +1,5 @@
 {
-  "name": "agentikit",
+  "name": "Agenti-i-Kit",
   "version": "0.0.11",
   "type": "module",
   "description": "CLI tool to search, open, and run extension assets from an agentikit stash directory.",
@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "bun-types": "^1.3.10",
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {

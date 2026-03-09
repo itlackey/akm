@@ -303,7 +303,7 @@ export function searchFts(
   }
 
   try {
-    const rows = db.prepare(sql).all(...params) as Array<{
+    const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<{
       id: number
       filePath: string
       entry_json: string
@@ -350,7 +350,7 @@ export function getAllEntries(
     params = []
   }
 
-  const rows = db.prepare(sql).all(...params) as Array<{
+  const rows = db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as Array<{
     id: number
     entry_key: string
     dir_path: string
