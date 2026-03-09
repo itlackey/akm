@@ -361,15 +361,14 @@ Most show behavior is tested indirectly via `stash.test.ts`. Focus on gaps:
 
 ### Test cases
 
-- `throws with installCmd when registryId present and asset not found` --
-  Parse a ref like `@installed:pkg/tool:missing.sh`. Verify error message
-  contains `akm add`.
+- `throws with installCmd when origin is not installed` --
+  Parse a ref like `npm:@other/missing-pkg//tool:missing.sh`. Verify error
+  message contains `akm add`.
 - `resolves from mounted stash directories` -- Set up a mounted stash with an
   asset, call show, verify it resolves.
 - `resolves from installed stash directories` -- Similar with installed source.
-- `response includes sourceKind and editable flags` -- Show an asset from
-  working stash, verify `editable: true`. Show from installed, verify
-  `editable: false`.
+- `response includes editable flag` -- Show an asset from working stash,
+  verify `editable: true`. Show from installed, verify `editable: false`.
 
 ---
 

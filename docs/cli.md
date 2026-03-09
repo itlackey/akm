@@ -139,7 +139,7 @@ Copy an asset from any source into the working stash for editing.
 
 ```sh
 akm clone tool:deploy.sh
-akm clone @installed:npm%3A%40scope%2Fpkg/tool:deploy.sh
+akm clone "npm:@scope/pkg//tool:deploy.sh"
 akm clone tool:deploy.sh --name my-deploy.sh
 akm clone tool:deploy.sh --force
 ```

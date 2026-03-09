@@ -126,19 +126,18 @@ always excluded.
 
 ## Auto-Install on Open
 
-When you open an asset ref that points to an installed package
-(`@installed:<registryId>/type:name`) but the package is not yet installed,
-akm automatically installs it before showing the asset. This means refs from
+When you open an asset ref that includes an origin pointing to a registry
+package (`origin//type:name`) but the package is not yet installed,
+akm reports the missing kit with an install command. Refs from
 search results work without a separate install step:
 
 ```bash
-# This will install the kit if needed, then show the asset
-akm show "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh"
+# If not installed, akm will suggest: akm add npm:@scope/my-kit
+akm show "npm:@scope/my-kit//tool:deploy.sh"
 ```
 
-The auto-install uses the `registryId` embedded in the ref to determine what
-to install. After installation, stash sources are re-resolved and the asset
-lookup is retried.
+The origin in the ref is used to determine what to install. After installation,
+stash sources are re-resolved and the asset lookup is retried.
 
 ## Managing Installed Kits
 
@@ -168,10 +167,10 @@ Installed kits are read-only. To edit an asset from an installed kit, clone
 it into the working stash:
 
 ```bash
-akm clone "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh"
+akm clone "npm:@scope/my-kit//tool:deploy.sh"
 
 # Clone with a new name
-akm clone "@installed:npm%3A%40scope%2Fmy-kit/tool:deploy.sh" --name my-deploy.sh
+akm clone "npm:@scope/my-kit//tool:deploy.sh" --name my-deploy.sh
 ```
 
 The cloned asset lives in the working stash and takes priority over the
