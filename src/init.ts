@@ -18,6 +18,7 @@ export interface InitResponse {
   envSet: boolean
   profileUpdated?: string
   configPath: string
+  envHint?: string
   ripgrep?: {
     rgPath: string
     installed: boolean
@@ -110,5 +111,15 @@ export async function agentikitInit(): Promise<InitResponse> {
     // Non-fatal: ripgrep is optional, search works without it
   }
 
-  return { stashDir, created, envSet, profileUpdated, configPath, ripgrep }
+  // Build a hint so callers can set the env var in the current shell
+  let envHint: string | undefined
+  if (profileUpdated) {
+    if (IS_WINDOWS) {
+      envHint = `set AKM_STASH_DIR=${stashDir}`
+    } else {
+      envHint = `export AKM_STASH_DIR="${stashDir}"`
+    }
+  }
+
+  return { stashDir, created, envSet, profileUpdated, envHint, configPath, ripgrep }
 }

@@ -33,6 +33,12 @@ const initCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const result = await agentikitInit()
       console.log(JSON.stringify(result, null, 2))
+      if (result.envHint) {
+        console.error(
+          `\nTo use akm in this shell session, run:\n\n  ${result.envHint}\n\n` +
+          `Future shells will pick it up automatically from ${result.profileUpdated}.`
+        )
+      }
     })
   },
 })
