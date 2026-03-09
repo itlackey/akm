@@ -24,7 +24,9 @@ my-kit/
 These directories are hints, not requirements. A `.sh` file is a script
 whether it lives in `scripts/`, `deploy/`, or at the kit root. A `.md` file
 with `model` in its frontmatter is an agent definition no matter where you
-put it. Organize your kit in whatever way makes sense for your project.
+put it. Nesting is fully supported — `scripts/azure/deploy/run.sh` works
+just as well as `scripts/run.sh`. Organize your kit in whatever way makes
+sense for your project.
 
 ## Step 2: Add Assets
 
