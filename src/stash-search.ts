@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { type AgentikitAssetType, resolveStashDir } from "./common"
+import { type AgentikitAssetType } from "./common"
 import { ASSET_TYPES, TYPE_DIRS, deriveCanonicalAssetName } from "./asset-spec"
 import { buildSearchText } from "./indexer"
 import { walkStash } from "./walker"

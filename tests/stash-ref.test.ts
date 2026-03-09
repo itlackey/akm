@@ -83,6 +83,47 @@ describe("parseOpenRef", () => {
     const ref = parseOpenRef("tool:dir%2Ffile.sh")
     expect(ref.name).toBe("dir/file.sh")
   })
+
+  test("parses @working/ prefix", () => {
+    const ref = parseOpenRef("@working/tool:deploy.sh")
+    expect(ref.type).toBe("tool")
+    expect(ref.name).toBe("deploy.sh")
+    expect(ref.sourceKind).toBe("working")
+    expect(ref.registryId).toBeUndefined()
+  })
+
+  test("parses @mounted/ prefix", () => {
+    const ref = parseOpenRef("@mounted/skill:code-review")
+    expect(ref.type).toBe("skill")
+    expect(ref.name).toBe("code-review")
+    expect(ref.sourceKind).toBe("mounted")
+  })
+
+  test("parses @installed:registryId/ prefix", () => {
+    const ref = parseOpenRef("@installed:npm%3A%40scope%2Fpkg/tool:deploy.sh")
+    expect(ref.type).toBe("tool")
+    expect(ref.name).toBe("deploy.sh")
+    expect(ref.sourceKind).toBe("installed")
+    expect(ref.registryId).toBe("npm:@scope/pkg")
+  })
+
+  test("plain ref has undefined sourceKind", () => {
+    const ref = parseOpenRef("tool:deploy.sh")
+    expect(ref.sourceKind).toBeUndefined()
+    expect(ref.registryId).toBeUndefined()
+  })
+
+  test("throws for invalid source kind", () => {
+    expect(() => parseOpenRef("@bogus/tool:test.sh")).toThrow("Invalid source kind")
+  })
+
+  test("throws for empty registry id", () => {
+    expect(() => parseOpenRef("@installed:/tool:test.sh")).toThrow("Empty registry id")
+  })
+
+  test("throws for @ prefix with no slash", () => {
+    expect(() => parseOpenRef("@working")).toThrow("Invalid open ref")
+  })
 })
 
 // ── makeOpenRef ─────────────────────────────────────────────────────────────
@@ -110,5 +151,39 @@ describe("makeOpenRef", () => {
     const refStr = makeOpenRef("tool", name)
     const parsed = parseOpenRef(refStr)
     expect(parsed.name).toBe("sub/dir/file name.sh")
+  })
+
+  test("creates @working/ prefixed ref", () => {
+    expect(makeOpenRef("tool", "deploy.sh", "working")).toBe("@working/tool:deploy.sh")
+  })
+
+  test("creates @mounted/ prefixed ref", () => {
+    expect(makeOpenRef("skill", "review", "mounted")).toBe("@mounted/skill:review")
+  })
+
+  test("creates @installed:id/ prefixed ref", () => {
+    const ref = makeOpenRef("tool", "deploy.sh", "installed", "npm:@scope/pkg")
+    expect(ref).toBe("@installed:npm%3A%40scope%2Fpkg/tool:deploy.sh")
+  })
+
+  test("installed without registryId omits colon segment", () => {
+    expect(makeOpenRef("tool", "test.sh", "installed")).toBe("@installed/tool:test.sh")
+  })
+
+  test("roundtrips source-qualified refs", () => {
+    const ref = makeOpenRef("tool", "deploy.sh", "installed", "npm:@scope/pkg")
+    const parsed = parseOpenRef(ref)
+    expect(parsed.type).toBe("tool")
+    expect(parsed.name).toBe("deploy.sh")
+    expect(parsed.sourceKind).toBe("installed")
+    expect(parsed.registryId).toBe("npm:@scope/pkg")
+  })
+
+  test("roundtrips @working refs", () => {
+    const ref = makeOpenRef("skill", "code-review", "working")
+    const parsed = parseOpenRef(ref)
+    expect(parsed.type).toBe("skill")
+    expect(parsed.name).toBe("code-review")
+    expect(parsed.sourceKind).toBe("working")
   })
 })

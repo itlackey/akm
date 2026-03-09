@@ -1,6 +1,5 @@
 import fs from "node:fs"
 import path from "node:path"
-import { resolveStashDir } from "./common"
 import { TYPE_DIRS } from "./asset-spec"
 import { parseOpenRef, makeOpenRef } from "./stash-ref"
 import { resolveAssetPath } from "./stash-resolve"
@@ -84,8 +83,10 @@ export function agentikitClone(options: CloneOptions): CloneResponse {
       )
     }
 
-    fs.mkdirSync(destSkillDir, { recursive: true })
-    fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true, force: true })
+    if (overwritten) {
+      fs.rmSync(destSkillDir, { recursive: true, force: true })
+    }
+    fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true })
 
     destPath = path.join(destSkillDir, "SKILL.md")
     const ref = makeOpenRef(parsed.type, destName, "working")

@@ -34,7 +34,7 @@ export function parseOpenRef(ref: string): OpenRef {
   if (body.startsWith("@")) {
     const slashIdx = body.indexOf("/")
     if (slashIdx <= 1) {
-      throw new Error("Invalid open ref. Expected format '@source/type:name'.")
+      throw new Error("Invalid open ref. Expected format 'type:name' or '@source/type:name'.")
     }
     const sourceSegment = body.slice(1, slashIdx)
     body = body.slice(slashIdx + 1)
@@ -65,7 +65,7 @@ export function parseOpenRef(ref: string): OpenRef {
 
   const separator = body.indexOf(":")
   if (separator <= 0) {
-    throw new Error("Invalid open ref. Expected format '@source/type:name'.")
+    throw new Error("Invalid open ref. Expected format 'type:name' or '@source/type:name'.")
   }
   const rawType = body.slice(0, separator)
   const rawName = body.slice(separator + 1)
