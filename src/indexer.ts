@@ -71,7 +71,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
       // Wipe all entries for full rebuild or stashDir change
       db.exec("DELETE FROM entries")
       db.exec("DELETE FROM entries_fts")
-      if (isVecAvailable()) {
+      if (isVecAvailable(db)) {
         try { db.exec("DELETE FROM entries_vec") } catch { /* ignore */ }
       }
     }
@@ -242,7 +242,7 @@ async function generateEmbeddingsForDb(
   db: import("bun:sqlite").Database,
   config: import("./config").AgentikitConfig,
 ): Promise<boolean> {
-  if (!config.semanticSearch || !isVecAvailable()) return false
+  if (!config.semanticSearch || !isVecAvailable(db)) return false
 
   try {
     const { embedBatch } = await import("./embedder.js")
@@ -254,8 +254,8 @@ async function generateEmbeddingsForDb(
       upsertEmbedding(db, allEntries[i].id, embeddings[i])
     }
     return true
-  } catch (error) {
-    console.warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error))
+  } catch {
+    // Embedding generation failed (e.g. model unavailable) — continue without embeddings
     return false
   }
 }

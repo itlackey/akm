@@ -6,6 +6,10 @@ import { fetchWithTimeout } from "./common"
 export type EmbeddingVector = number[]
 
 // ── Singleton local embedder ────────────────────────────────────────────────
+// localEmbedder is an intentional module-level singleton. The underlying
+// @xenova/transformers pipeline is expensive to initialise (model download +
+// WASM compilation) and is safe to share across calls because it is stateless
+// once created. Storing it here avoids re-initialising on every embed() call.
 
 interface TransformerPipeline {
   (text: string, options: { pooling: string; normalize: boolean }): Promise<{ data: Float32Array }>
@@ -170,11 +174,14 @@ async function embedRemoteBatch(
 export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
   const len = Math.min(a.length, b.length)
   if (len === 0) return 0
-  let dot = 0
+  let dot = 0, magA = 0, magB = 0
   for (let i = 0; i < len; i++) {
     dot += a[i] * b[i]
+    magA += a[i] * a[i]
+    magB += b[i] * b[i]
   }
-  return dot
+  const denom = Math.sqrt(magA) * Math.sqrt(magB)
+  return denom === 0 ? 0 : dot / denom
 }
 
 // ── Availability check ──────────────────────────────────────────────────────

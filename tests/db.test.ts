@@ -144,7 +144,7 @@ describe("Schema", () => {
     const dbPath = tmpDbPath()
     const db = openDatabase(dbPath)
     try {
-      expect(isVecAvailable()).toBe(true)
+      expect(isVecAvailable(db)).toBe(true)
     } finally {
       closeDatabase(db)
     }
@@ -155,7 +155,7 @@ describe("Schema", () => {
 
     let db = openDatabase(dbPath, { embeddingDim: 512 })
     try {
-      if (isVecAvailable()) {
+      if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("512")
       }
     } finally {
@@ -165,7 +165,7 @@ describe("Schema", () => {
     // Reopen with a different dimension
     db = openDatabase(dbPath, { embeddingDim: 768 })
     try {
-      if (isVecAvailable()) {
+      if (isVecAvailable(db)) {
         expect(getMeta(db, "embeddingDim")).toBe("768")
       }
     } finally {
@@ -447,7 +447,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath()
     const db = openDatabase(dbPath)
     try {
-      expect(isVecAvailable()).toBe(true)
+      expect(isVecAvailable(db)).toBe(true)
       const row = db
         .prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'")
         .get() as { name: string } | undefined
@@ -462,7 +462,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath()
     const db = openDatabase(dbPath, { embeddingDim: 4 })
     try {
-      expect(isVecAvailable()).toBe(true)
+      expect(isVecAvailable(db)).toBe(true)
 
       // Insert two entries with distinct embeddings
       const id1 = insertToolEntry(db, "vec-tool-1", { searchText: "deployment" })

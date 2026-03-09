@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["src/**/*.ts", "index.ts"]
+  "include": ["src/**/*.ts", "index.ts", "internals.ts"]
 }

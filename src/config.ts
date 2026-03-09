@@ -91,8 +91,22 @@ export function getConfigPath(): string {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
+let cachedConfig: { config: AgentikitConfig; path: string; mtime: number } | undefined
+
 export function loadConfig(): AgentikitConfig {
   const configPath = getConfigPath()
+
+  try {
+    const stat = fs.statSync(configPath)
+    if (cachedConfig && cachedConfig.path === configPath && cachedConfig.mtime === stat.mtimeMs) {
+      return cachedConfig.config
+    }
+  } catch {
+    // File doesn't exist — return defaults below
+    cachedConfig = undefined
+    return { ...DEFAULT_CONFIG }
+  }
+
   const raw = readConfigObject(configPath)
   const config = raw ? pickKnownKeys(raw) : { ...DEFAULT_CONFIG }
 
@@ -108,10 +122,19 @@ export function loadConfig(): AgentikitConfig {
     if (envKey) config.llm.apiKey = envKey
   }
 
+  // Cache the parsed config with its path and mtime for subsequent calls
+  try {
+    const stat = fs.statSync(configPath)
+    cachedConfig = { config, path: configPath, mtime: stat.mtimeMs }
+  } catch {
+    // If we can't stat (unlikely since we just read it), skip caching
+  }
+
   return config
 }
 
 export function saveConfig(config: AgentikitConfig): void {
+  cachedConfig = undefined
   const configPath = getConfigPath()
   const dir = path.dirname(configPath)
   fs.mkdirSync(dir, { recursive: true })

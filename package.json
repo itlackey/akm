@@ -24,8 +24,8 @@
   "license": "CC-BY-4.0",
   "files": [
     "dist",
-    "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "bin": {
     "akm": "dist/src/cli.js"
@@ -36,6 +36,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./internals": {
+      "types": "./dist/internals.d.ts",
+      "default": "./dist/internals.js"
     }
   },
   "scripts": {

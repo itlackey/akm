@@ -162,8 +162,8 @@ async function searchLocal(input: {
         closeDatabase(db)
       }
     }
-  } catch (error) {
-    console.warn("Search index unavailable, falling back to substring search:", error instanceof Error ? error.message : String(error))
+  } catch {
+    // Search index unavailable — fall back to substring search
   }
 
   const hits = allStashDirs
@@ -349,7 +349,7 @@ async function tryVecScores(
   k: number,
   config: import("./config").AgentikitConfig,
 ): Promise<Map<number, number> | null> {
-  if (!config.semanticSearch || !isVecAvailable()) return null
+  if (!config.semanticSearch || !isVecAvailable(db)) return null
   const hasEmbeddings = getMeta(db, "hasEmbeddings")
   if (hasEmbeddings !== "1") return null
 
@@ -365,8 +365,8 @@ async function tryVecScores(
       scores.set(id, Math.max(0, cosineSim))
     }
     return scores
-  } catch (error) {
-    console.warn("Vector search failed, skipping:", error instanceof Error ? error.message : String(error))
+  } catch {
+    // Vector search failed — skip semantic scoring
     return null
   }
 }

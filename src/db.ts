@@ -1,5 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
+import { createRequire } from "node:module"
 import { Database } from "bun:sqlite"
 import type { StashEntry } from "./metadata"
 import type { EmbeddingVector } from "./embedder"
@@ -74,21 +75,21 @@ export function closeDatabase(db: Database): void {
 
 // ── sqlite-vec extension ────────────────────────────────────────────────────
 
-let vecAvailable = false
+const vecStatus = new WeakMap<Database, boolean>()
 
 function loadVecExtension(db: Database): void {
   try {
-    const sqliteVec = require("sqlite-vec")
+    const esmRequire = createRequire(import.meta.url)
+    const sqliteVec = esmRequire("sqlite-vec")
     sqliteVec.load(db)
-    vecAvailable = true
+    vecStatus.set(db, true)
   } catch {
-    console.warn("sqlite-vec extension not available, embeddings will be skipped")
-    vecAvailable = false
+    vecStatus.set(db, false)
   }
 }
 
-export function isVecAvailable(): boolean {
-  return vecAvailable
+export function isVecAvailable(db: Database): boolean {
+  return vecStatus.get(db) ?? false
 }
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   }
 
   // sqlite-vec table
-  if (vecAvailable) {
+  if (isVecAvailable(db)) {
     // Check if stored embedding dimension differs from configured one
     const storedDim = getMeta(db, "embeddingDim")
     if (storedDim && storedDim !== String(embeddingDim)) {
@@ -214,7 +215,7 @@ export function upsertEntry(
 }
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
-  if (vecAvailable) {
+  if (isVecAvailable(db)) {
     const ids = db
       .prepare("SELECT id FROM entries WHERE dir_path = ?")
       .all(dirPath) as Array<{ id: number }>
@@ -239,7 +240,7 @@ export function upsertEmbedding(
   entryId: number,
   embedding: EmbeddingVector,
 ): void {
-  if (!vecAvailable) return
+  if (!isVecAvailable(db)) return
   const buf = float32Buffer(embedding)
   try {
     db.prepare("DELETE FROM entries_vec WHERE id = ?").run(entryId)
@@ -252,7 +253,7 @@ export function searchVec(
   queryEmbedding: EmbeddingVector,
   k: number,
 ): DbVecResult[] {
-  if (!vecAvailable) return []
+  if (!isVecAvailable(db)) return []
   const buf = float32Buffer(queryEmbedding)
   try {
     return db

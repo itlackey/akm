@@ -33,18 +33,15 @@ export function resolveStashSources(overrideStashDir?: string): StashSource[] {
   ]
 
   for (const dir of config.mountedStashDirs) {
-    if (isSuspiciousStashRoot(dir)) {
-      console.warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`)
-    }
+    // Skip suspicious system directories silently — they are almost certainly misconfigured
+    if (isSuspiciousStashRoot(dir)) continue
     if (isValidDirectory(dir)) {
       sources.push({ kind: "mounted", path: dir, writable: false })
     }
   }
 
   for (const entry of config.registry?.installed ?? []) {
-    if (isSuspiciousStashRoot(entry.stashRoot)) {
-      console.warn(`Warning: stash root "${entry.stashRoot}" appears to be a system directory. This may be unintentional.`)
-    }
+    if (isSuspiciousStashRoot(entry.stashRoot)) continue
     if (isValidDirectory(entry.stashRoot)) {
       sources.push({
         kind: "installed",
