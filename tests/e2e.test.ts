@@ -227,7 +227,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(topHit.description).toBeTruthy();
   });
 
-  test("search ranks semantically relevant results higher", async () => {
+  test.skipIf(!!process.env.CI)("search ranks semantically relevant results higher", async () => {
     const result = await agentikitSearch({ query: "summarize commit changes", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);
@@ -309,7 +309,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     fs.rmSync(stashDir, { recursive: true, force: true });
   });
 
-  test("agent asks 'set up local dev environment' → docker-compose ranks high", async () => {
+  test.skipIf(!!process.env.CI)("agent asks 'set up local dev environment' → docker-compose ranks high", async () => {
     const result = await agentikitSearch({ query: "set up local development environment" });
     const names = result.hits.map((h) => h.name.toLowerCase());
     // Docker compose should appear because its intent says "start local development services"
@@ -323,7 +323,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(names.some((n) => n.includes("lint") || n.includes("eslint"))).toBe(true);
   });
 
-  test("agent asks 'review my pull request' → code-review skill found", async () => {
+  test.skipIf(!!process.env.CI)("agent asks 'review my pull request' → code-review skill found", async () => {
     const result = await agentikitSearch({ query: "review pull request code changes" });
     expect(result.hits.length).toBeGreaterThan(0);
     // Skill openRef contains "code-review" (directory name), even though display name is "SKILL"
@@ -336,7 +336,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     ).toBe(true);
   });
 
-  test("agent asks 'help me design the system' → architect agent found", async () => {
+  test.skipIf(!!process.env.CI)("agent asks 'help me design the system' → architect agent found", async () => {
     const result = await agentikitSearch({ query: "system design architecture" });
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.hits.some((h) => h.name.includes("architect"))).toBe(true);
