@@ -70,7 +70,7 @@ function formatPlain(command: string, result: unknown): string | null {
     case "show": {
       if (r.content != null) return String(r.content)
       if (r.runCmd != null) return String(r.runCmd)
-      if (r.markdown != null) return String(r.markdown)
+      if (r.prompt != null) return String(r.prompt)
       return null // fall through to YAML
     }
     case "add": {

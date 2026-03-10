@@ -54,6 +54,15 @@ export async function agentikitSearch(input: {
   const usageMode = parseSearchUsageMode(input.usage)
   const source = parseSearchSource(input.source)
   const sources = resolveStashSources()
+  if (sources.length === 0) {
+    return {
+      stashDir: "",
+      source: source ?? "all",
+      hits: [],
+      warnings: ["No stash sources configured. Run `akm init` first."],
+      timing: { totalMs: Date.now() - t0 },
+    }
+  }
   const stashDir = sources[0].path
   const localResult = source === "registry"
     ? undefined

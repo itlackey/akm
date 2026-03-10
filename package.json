@@ -28,10 +28,10 @@
     "LICENSE"
   ],
   "bin": {
-    "akm": "dist/src/cli.js"
+    "akm": "dist/cli.js"
   },
   "scripts": {
-    "build": "bun run tsc --project ./tsconfig.json --outDir dist",
+    "build": "rm -rf dist && bun run tsc --project ./tsconfig.json --outDir dist",
     "test": "bun test",
     "prepublishOnly": "bun run build"
   },
