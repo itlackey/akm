@@ -46,13 +46,17 @@ test("agentikitIndex scans directories and builds index", async () => {
   expect(result.generatedMetadata).toBe(2);
   expect(result.stashDir).toBe(stashDir);
 
-  // Verify .stash.json files were created
+  // Verify entries are in the database (not in .stash.json files)
   const deployStash = path.join(stashDir, "tools", "deploy", ".stash.json");
-  expect(fs.existsSync(deployStash)).toBe(true);
+  expect(fs.existsSync(deployStash)).toBe(false);
 
-  const parsed = JSON.parse(fs.readFileSync(deployStash, "utf8"));
-  expect(parsed.entries[0].name).toBe("deploy");
-  expect(parsed.entries[0].generated).toBe(true);
+  const db = openDatabase();
+  const entries = getAllEntries(db);
+  expect(entries.length).toBe(2);
+  const deployEntry = entries.find((e) => e.entry.name.includes("deploy"));
+  expect(deployEntry).toBeDefined();
+  expect(deployEntry!.entry.generated).toBe(true);
+  closeDatabase(db);
 });
 
 test("agentikitIndex preserves manually-written .stash.json", async () => {
@@ -105,11 +109,8 @@ test("agentikitIndex migrates generated skill metadata name to canonical directo
   const result = await agentikitIndex({ stashDir });
   expect(result.totalEntries).toBe(1);
 
-  const stash = JSON.parse(fs.readFileSync(path.join(stashDir, "skills", "code-review", ".stash.json"), "utf8"));
-  expect(stash.entries[0].name).toBe("code-review");
-  expect(stash.entries[0].generated).toBe(true);
-
-  // Check the database
+  // Migration happens in-memory, .stash.json is not rewritten
+  // Check the database for the migrated name
   const db = openDatabase();
   const entries = getAllEntries(db);
   expect(entries.length).toBeGreaterThan(0);
@@ -156,7 +157,7 @@ test("agentikitIndex handles markdown assets", async () => {
   expect(result.totalEntries).toBe(2);
 });
 
-test("agentikitIndex generates TOC in stash.json for knowledge entries", async () => {
+test("agentikitIndex generates TOC in database for knowledge entries", async () => {
   const stashDir = tmpStash();
   writeFile(
     path.join(stashDir, "knowledge", "guide.md"),
@@ -166,16 +167,22 @@ test("agentikitIndex generates TOC in stash.json for knowledge entries", async (
   const result = await agentikitIndex({ stashDir });
   expect(result.totalEntries).toBe(1);
 
-  const stashJson = JSON.parse(fs.readFileSync(path.join(stashDir, "knowledge", ".stash.json"), "utf8"));
-  expect(stashJson.entries[0].toc).toBeDefined();
-  expect(stashJson.entries[0].toc.length).toBe(2);
-  expect(stashJson.entries[0].toc[0].text).toBe("Getting Started");
-  expect(stashJson.entries[0].toc[1].text).toBe("Installation");
+  // TOC is stored in the database, not in .stash.json
+  expect(fs.existsSync(path.join(stashDir, "knowledge", ".stash.json"))).toBe(false);
+  const db = openDatabase();
+  const entries = getAllEntries(db, "knowledge");
+  expect(entries.length).toBe(1);
+  expect(entries[0].entry.toc).toBeDefined();
+  expect(entries[0].entry.toc!.length).toBe(2);
+  expect(entries[0].entry.toc![0].text).toBe("Getting Started");
+  expect(entries[0].entry.toc![1].text).toBe("Installation");
+  closeDatabase(db);
 });
 
-test("isDirStale detects stash.json newer than index", async () => {
+test("isDirStale detects modified source file newer than index", async () => {
   const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "tools", "deploy", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+  const deployFile = path.join(stashDir, "tools", "deploy", "deploy.sh");
+  writeFile(deployFile, "#!/usr/bin/env bash\necho deploy\n");
 
   // First index
   const result1 = await agentikitIndex({ stashDir });
@@ -187,10 +194,9 @@ test("isDirStale detects stash.json newer than index", async () => {
   expect(result2.mode).toBe("incremental");
   expect(result2.directoriesSkipped).toBeGreaterThanOrEqual(1);
 
-  // Now touch the .stash.json to make it newer than the index
-  const stashJsonPath = path.join(stashDir, "tools", "deploy", ".stash.json");
+  // Now touch the source file to make it newer than the index
   const futureTime = new Date(Date.now() + 2000);
-  fs.utimesSync(stashJsonPath, futureTime, futureTime);
+  fs.utimesSync(deployFile, futureTime, futureTime);
 
   // Third index (incremental) — should detect stale dir
   const result3 = await agentikitIndex({ stashDir });
@@ -264,7 +270,10 @@ test("agentikitIndex does not generate heuristic intents (LLM-only)", async () =
 
   await agentikitIndex({ stashDir });
 
-  const stashJson = JSON.parse(fs.readFileSync(path.join(stashDir, "tools", "deploy", ".stash.json"), "utf8"));
   // Intents are only generated when LLM is configured
-  expect(stashJson.entries[0].intents).toBeUndefined();
+  const db = openDatabase();
+  const entries = getAllEntries(db, "tool");
+  expect(entries.length).toBe(1);
+  expect(entries[0].entry.intents).toBeUndefined();
+  closeDatabase(db);
 });

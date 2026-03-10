@@ -301,7 +301,7 @@ describe("Issue #36: FTS5 query sanitization", () => {
 });
 
 describe("Issue #36: Stale .stash.json prevents new files from being indexed", () => {
-  test("BUG: new files added after initial index are missed due to stale .stash.json", async () => {
+  test("new files added after initial index are discovered on re-index", async () => {
     const stashDir = tmpStash();
 
     // Step 1: Create initial scripts and index
@@ -311,11 +311,9 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
     const result1 = await buildTestIndex(stashDir);
     expect(result1.totalEntries).toBe(2);
 
-    // Verify .stash.json was created with 2 entries
+    // No .stash.json should be auto-generated
     const stashJsonPath = path.join(stashDir, "scripts", ".stash.json");
-    expect(fs.existsSync(stashJsonPath)).toBe(true);
-    const stash1 = JSON.parse(fs.readFileSync(stashJsonPath, "utf8"));
-    expect(stash1.entries.length).toBe(2);
+    expect(fs.existsSync(stashJsonPath)).toBe(false);
 
     // Step 2: Add a NEW script file after the initial index
     writeFile(
@@ -323,13 +321,8 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
       "#!/usr/bin/env bash\n# Provision AI Foundry resources\naz group create --name ai-foundry\n",
     );
 
-    // Step 3: Re-index (full rebuild)
+    // Step 3: Re-index (full rebuild) — all files discovered without .stash.json
     const result2 = await buildTestIndex(stashDir);
-
-    // BUG: The .stash.json from step 1 still has only 2 entries.
-    // When the indexer loads it, it uses those 2 entries and never discovers
-    // the new provision-ai-foundry.sh file.
-    // Expected: 3 entries. Actual (before fix): 2 entries.
     expect(result2.totalEntries).toBe(3);
 
     // Step 4: Verify the new script is searchable
@@ -341,7 +334,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
     expect(foundryHit).toBeDefined();
   });
 
-  test("BUG: incremental index misses newly added scripts in existing directory", async () => {
+  test("incremental index discovers newly added scripts in existing directory", async () => {
     const stashDir = tmpStash();
 
     // Initial index with one script
@@ -359,10 +352,6 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearch: false, searchPaths: [] });
     const result = await agentikitIndex({ stashDir });
-
-    // The .stash.json should now have 2 entries
-    const stashJson = JSON.parse(fs.readFileSync(path.join(stashDir, "scripts", ".stash.json"), "utf8"));
-    expect(stashJson.entries.length).toBe(2);
 
     // Both scripts should be in the index
     expect(result.totalEntries).toBe(2);

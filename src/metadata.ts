@@ -171,8 +171,7 @@ export function generateMetadata(
     // Skip non-relevant files
     if (!isRelevantAssetFile(assetType, fileName)) continue;
 
-    const canonicalName =
-      assetType === "skill" ? (deriveCanonicalAssetName(assetType, typeRoot, file) ?? baseName) : baseName;
+    const canonicalName = deriveCanonicalAssetName(assetType, typeRoot, file) ?? baseName;
 
     const entry: StashEntry = {
       name: canonicalName,

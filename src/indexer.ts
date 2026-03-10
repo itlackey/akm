@@ -19,7 +19,7 @@ import {
   upsertEntry,
   warnIfVecMissing,
 } from "./db";
-import { generateMetadata, loadStashFile, type StashEntry, type StashFile, writeStashFile } from "./metadata";
+import { generateMetadata, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { walkStash } from "./walker";
 import { warn } from "./warn";
@@ -153,7 +153,13 @@ function indexEntries(
   scannedDirs: number;
   skippedDirs: number;
   generatedCount: number;
-  dirsNeedingLlm: Array<{ dirPath: string; files: string[]; assetType: AgentikitAssetType; currentStashDir: string }>;
+  dirsNeedingLlm: Array<{
+    dirPath: string;
+    files: string[];
+    assetType: AgentikitAssetType;
+    currentStashDir: string;
+    stash: StashFile;
+  }>;
 } {
   let scannedDirs = 0;
   let skippedDirs = 0;
@@ -164,6 +170,7 @@ function indexEntries(
     files: string[];
     assetType: AgentikitAssetType;
     currentStashDir: string;
+    stash: StashFile;
   }> = [];
 
   const insertTransaction = db.transaction(() => {
@@ -203,18 +210,18 @@ function indexEntries(
             const migration = migrateGeneratedSkillMetadata(stash, files, typeRoot);
             if (migration.changed) {
               stash = migration.stash;
-              writeStashFile(dirPath, stash);
             }
 
             // Check for files on disk that aren't covered by existing .stash.json entries.
             // This handles the case where new files are added after the initial index.
-            const coveredFiles = new Set(stash.entries.map((e) => e.entry).filter((e): e is string => !!e));
+            const coveredFiles = new Set(
+              stash.entries.map((e) => (e.entry ? path.basename(e.entry) : "")).filter((e) => !!e),
+            );
             const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
             if (uncoveredFiles.length > 0) {
               const generated = generateMetadata(dirPath, assetType, uncoveredFiles, typeRoot);
               if (generated.entries.length > 0) {
                 stash = { entries: [...stash.entries, ...generated.entries] };
-                writeStashFile(dirPath, stash);
                 generatedCount += generated.entries.length;
               }
             }
@@ -224,7 +231,6 @@ function indexEntries(
             // Generate metadata heuristically
             stash = generateMetadata(dirPath, assetType, files, typeRoot);
             if (stash.entries.length > 0) {
-              writeStashFile(dirPath, stash);
               generatedCount += stash.entries.length;
             }
           }
@@ -240,7 +246,7 @@ function indexEntries(
 
             // Collect dirs needing LLM enhancement during the first walk
             if (stash.entries.some((e) => e.generated)) {
-              dirsNeedingLlm.push({ dirPath, files, assetType, currentStashDir });
+              dirsNeedingLlm.push({ dirPath, files, assetType, currentStashDir, stash });
             }
           }
         }
@@ -256,18 +262,25 @@ function indexEntries(
 async function enhanceDirsWithLlm(
   db: import("bun:sqlite").Database,
   config: import("./config").AgentikitConfig,
-  dirsNeedingLlm: Array<{ dirPath: string; files: string[]; assetType: AgentikitAssetType; currentStashDir: string }>,
+  dirsNeedingLlm: Array<{
+    dirPath: string;
+    files: string[];
+    assetType: AgentikitAssetType;
+    currentStashDir: string;
+    stash: StashFile;
+  }>,
 ): Promise<void> {
   if (!config.llm || dirsNeedingLlm.length === 0) return;
 
-  for (const { dirPath, files, currentStashDir } of dirsNeedingLlm) {
-    let stash = loadStashFile(dirPath);
-    if (!stash) continue;
-    stash = await enhanceStashWithLlm(config.llm, stash, dirPath, files);
-    writeStashFile(dirPath, stash);
+  for (const { dirPath, files, currentStashDir, stash: originalStash } of dirsNeedingLlm) {
+    // Only enhance generated entries; user-provided overrides should not be overwritten
+    const generatedEntries = originalStash.entries.filter((e) => e.generated);
+    if (generatedEntries.length === 0) continue;
+    const generatedStash: StashFile = { entries: generatedEntries };
+    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, dirPath, files);
 
-    // Re-upsert enhanced entries
-    for (const entry of stash.entries) {
+    // Re-upsert only the enhanced (generated) entries
+    for (const entry of enhanced.entries) {
       const entryPath = entry.entry ? path.join(dirPath, entry.entry) : files[0] || dirPath;
       const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
       const searchText = buildSearchText(entry);

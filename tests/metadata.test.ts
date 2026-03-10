@@ -227,7 +227,7 @@ test("generateMetadata creates entries from script files with filename heuristic
 
   const stash = generateMetadata(dir, "tool", [tool1]);
   expect(stash.entries).toHaveLength(1);
-  expect(stash.entries[0].name).toBe("summarize-diff");
+  expect(stash.entries[0].name).toBe("summarize-diff.ts");
   expect(stash.entries[0].type).toBe("tool");
   expect(stash.entries[0].description).toBe("summarize diff");
   expect(stash.entries[0].generated).toBe(true);
@@ -282,9 +282,9 @@ test("generateMetadata handles multi-tool directories", () => {
 
   const stash = generateMetadata(dir, "tool", [tool1, tool2]);
   expect(stash.entries).toHaveLength(2);
-  expect(stash.entries[0].name).toBe("docker-build");
+  expect(stash.entries[0].name).toBe("docker-build.ts");
   expect(stash.entries[0].description).toBe("Build docker images");
-  expect(stash.entries[1].name).toBe("docker-compose");
+  expect(stash.entries[1].name).toBe("docker-compose.ts");
   expect(stash.entries[1].description).toBe("Generate docker compose stacks");
 });
 
