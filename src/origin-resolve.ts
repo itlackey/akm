@@ -44,10 +44,10 @@ export function resolveSourcesForOrigin(
     // Not a valid registry ref — continue to path matching
   }
 
-  // Match by resolved path
+  // Match by resolved path (any source, including installed)
   const resolvedOrigin = path.resolve(origin)
   const byPath = allSources.filter(
-    (s) => !s.registryId && path.resolve(s.path) === resolvedOrigin,
+    (s) => path.resolve(s.path) === resolvedOrigin,
   )
   if (byPath.length > 0) return byPath
 

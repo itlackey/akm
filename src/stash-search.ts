@@ -169,7 +169,7 @@ async function searchLocal(input: {
   }
 
   const hits = allStashDirs
-    .flatMap((dir) => substringSearch(query, searchType, limit, dir, sources))
+    .flatMap((dir) => substringSearch(query, searchType, limit, dir, sources, config))
     .slice(0, limit)
   const usageGuide = shouldIncludeUsageGuide(usageMode) ? buildUsageGuide(hits.map((hit) => hit.type), searchType) : undefined
   return {
@@ -208,6 +208,7 @@ async function searchDatabase(
         allStashDirs,
         sources,
         includeItemUsage: shouldIncludeItemUsage(usageMode),
+        config,
       }),
     )
     return {
@@ -330,6 +331,7 @@ async function searchDatabase(
       allStashDirs,
       sources,
       includeItemUsage: shouldIncludeItemUsage(usageMode),
+      config,
     }),
   )
 
@@ -381,13 +383,14 @@ function substringSearch(
   limit: number,
   stashDir: string,
   sources: StashSource[],
+  config?: import("./config").AgentikitConfig,
 ): LocalSearchHit[] {
   const assets = indexAssets(stashDir, searchType)
   return assets
     .filter((asset) => asset.name.toLowerCase().includes(query))
     .sort(compareAssets)
     .slice(0, limit)
-    .map((asset) => assetToSearchHit(asset, stashDir, sources))
+    .map((asset) => assetToSearchHit(asset, stashDir, sources, config))
 }
 
 // ── Hit building ────────────────────────────────────────────────────────────
@@ -402,6 +405,7 @@ function buildDbHit(input: {
   allStashDirs: string[]
   sources: StashSource[]
   includeItemUsage: boolean
+  config?: import("./config").AgentikitConfig
 }): LocalSearchHit {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir
   const typeRoot = path.join(entryStashDir, TYPE_DIRS[input.entry.type])
@@ -416,7 +420,7 @@ function buildDbHit(input: {
 
   const source = findSourceForPath(input.path, input.sources)
 
-  const editable = isEditable(input.path)
+  const editable = isEditable(input.path, input.config)
   const hit: LocalSearchHit = {
     hitSource: "local",
     type: input.entry.type,
@@ -425,7 +429,7 @@ function buildDbHit(input: {
     openRef: makeAssetRef(input.entry.type, openRefName, source?.registryId),
     registryId: source?.registryId,
     editable,
-    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, openRefName) } : {}),
+    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, openRefName, input.config, source?.registryId) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     score,
@@ -471,9 +475,9 @@ function buildWhyMatched(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashSource[]): LocalSearchHit {
+function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashSource[], config?: import("./config").AgentikitConfig): LocalSearchHit {
   const source = findSourceForPath(asset.path, sources)
-  const editable = isEditable(asset.path)
+  const editable = isEditable(asset.path, config)
   const hit: LocalSearchHit = {
     hitSource: "local",
     type: asset.type,
@@ -482,7 +486,7 @@ function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashS
     openRef: makeAssetRef(asset.type, asset.name, source?.registryId),
     registryId: source?.registryId,
     editable,
-    ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name) } : {}),
+    ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name, config, source?.registryId) } : {}),
   }
   const handler = tryGetHandler(asset.type)
   if (handler?.enrichSearchHit) {

@@ -178,6 +178,17 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
     )
   }
 
+  // Backward compat: merge legacy mountedStashDirs into searchPaths
+  if (Array.isArray(raw.mountedStashDirs)) {
+    const legacy = raw.mountedStashDirs.filter(
+      (d): d is string => typeof d === "string",
+    )
+    const existing = new Set(config.searchPaths)
+    for (const d of legacy) {
+      if (!existing.has(d)) config.searchPaths.push(d)
+    }
+  }
+
   const embedding = parseEmbeddingConfig(raw.embedding)
   if (embedding) config.embedding = embedding
 

@@ -55,7 +55,7 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
           ...response,
           registryId: source?.registryId,
           editable,
-          ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name) } : {}),
+          ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, undefined, source?.registryId) } : {}),
         }
       }
     }
@@ -77,6 +77,6 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
     ...response,
     registryId: source?.registryId,
     editable,
-    ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name) } : {}),
+    ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, undefined, source?.registryId) } : {}),
   }
 }

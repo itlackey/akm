@@ -97,10 +97,16 @@ export function isEditable(filePath: string, config?: AgentikitConfig): boolean 
   const cfg = config ?? loadConfig()
   const resolved = path.resolve(filePath)
   const cacheManaged = cfg.registry?.installed ?? []
+  const isWin = process.platform === "win32"
 
   for (const entry of cacheManaged) {
     const cacheRoot = path.resolve(entry.cacheDir)
-    if (resolved.startsWith(cacheRoot + path.sep)) return false
+    if (isWin) {
+      // Windows paths are case-insensitive — normalize both sides
+      if (resolved.toLowerCase().startsWith(cacheRoot.toLowerCase() + path.sep)) return false
+    } else {
+      if (resolved.startsWith(cacheRoot + path.sep)) return false
+    }
   }
 
   return true
@@ -110,10 +116,11 @@ export function isEditable(filePath: string, config?: AgentikitConfig): boolean 
  * Build an actionable hint for the agent when a file is not editable.
  * Returns undefined when the file is editable (no hint needed).
  */
-export function buildEditHint(filePath: string, assetType: string, assetName: string, config?: AgentikitConfig): string | undefined {
+export function buildEditHint(filePath: string, assetType: string, assetName: string, config?: AgentikitConfig, origin?: string): string | undefined {
   const cfg = config ?? loadConfig()
   if (isEditable(filePath, cfg)) return undefined
-  return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${assetType}:${assetName}`
+  const ref = origin ? `${origin}//${assetType}:${assetName}` : `${assetType}:${assetName}`
+  return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${ref}`
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
