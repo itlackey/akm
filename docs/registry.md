@@ -162,11 +162,9 @@ akm update npm:@scope/my-kit
 # Update all installed kits
 akm update --all
 
-# Reinstall a kit (re-download and re-extract)
-akm reinstall npm:@scope/my-kit
-
-# Reinstall all kits
-akm reinstall --all
+# Force fresh download even if version is unchanged
+akm update npm:@scope/my-kit --force
+akm update --all --force
 
 # Remove a kit
 akm remove npm:@scope/my-kit
@@ -263,4 +261,4 @@ Installed kits are cached under `~/.cache/agentikit/registry/`:
 ```
 
 Each install creates a new timestamped directory. Previous versions are
-cleaned up automatically when a kit is updated or reinstalled.
+cleaned up automatically when a kit is updated.

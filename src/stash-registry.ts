@@ -14,7 +14,6 @@ import type {
   ListResponse,
   RegistryInstallStatus,
   RemoveResponse,
-  ReinstallResponse,
   UpdateResponse,
 } from "./stash-types"
 
@@ -73,76 +72,24 @@ export async function agentikitRemove(input: { target: string; stashDir?: string
   }
 }
 
-export async function agentikitReinstall(input?: {
-  target?: string
-  all?: boolean
-  stashDir?: string
-}): Promise<ReinstallResponse> {
-  const stashDir = input?.stashDir ?? resolveStashDir()
-  const target = input?.target?.trim()
-  const all = input?.all === true
-  const installedEntries = loadConfig().registry?.installed ?? []
-  const selectedEntries = selectTargets(installedEntries, target, all)
-
-  const processed: ReinstallResponse["processed"] = []
-  for (const entry of selectedEntries) {
-    const installed = await installRegistryRef(entry.ref)
-    upsertInstalledRegistryEntry(toInstalledEntry(installed))
-    upsertLockEntry({
-      id: installed.id,
-      source: installed.source,
-      ref: installed.ref,
-      resolvedVersion: installed.resolvedVersion,
-      resolvedRevision: installed.resolvedRevision,
-      integrity: installed.integrity ?? (installed.source === "local" ? "local" : undefined),
-    })
-    if (entry.cacheDir !== installed.cacheDir) {
-      cleanupDirectoryBestEffort(entry.cacheDir)
-    }
-
-    processed.push({
-      id: entry.id,
-      source: entry.source,
-      ref: entry.ref,
-      previousCacheDir: entry.cacheDir,
-      installed: toInstallStatus(installed),
-    })
-  }
-
-  const index = await agentikitIndex({ stashDir })
-  const config = loadConfig()
-
-  return {
-    stashDir,
-    target,
-    all,
-    processed,
-    config: {
-      mountedStashDirs: config.mountedStashDirs,
-      installedRegistryCount: config.registry?.installed.length ?? 0,
-    },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-    },
-  }
-}
-
 export async function agentikitUpdate(input?: {
   target?: string
   all?: boolean
+  force?: boolean
   stashDir?: string
 }): Promise<UpdateResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir()
   const target = input?.target?.trim()
   const all = input?.all === true
+  const force = input?.force === true
   const installedEntries = loadConfig().registry?.installed ?? []
   const selectedEntries = selectTargets(installedEntries, target, all)
 
   const processed: UpdateResponse["processed"] = []
   for (const entry of selectedEntries) {
+    if (force) {
+      cleanupDirectoryBestEffort(entry.cacheDir)
+    }
     const installed = await installRegistryRef(entry.ref)
     upsertInstalledRegistryEntry(toInstalledEntry(installed))
     upsertLockEntry({

@@ -146,31 +146,6 @@ export interface RemoveResponse {
   }
 }
 
-export interface ReinstallResultItem {
-  id: string
-  source: RegistrySource
-  ref: string
-  previousCacheDir: string
-  installed: RegistryInstallStatus
-}
-
-export interface ReinstallResponse {
-  stashDir: string
-  target?: string
-  all: boolean
-  processed: ReinstallResultItem[]
-  config: {
-    mountedStashDirs: string[]
-    installedRegistryCount: number
-  }
-  index: {
-    mode: "full" | "incremental"
-    totalEntries: number
-    directoriesScanned: number
-    directoriesSkipped: number
-  }
-}
-
 export interface UpdateResultItem {
   id: string
   source: RegistrySource
@@ -231,3 +206,20 @@ export type KnowledgeView =
   | { mode: "frontmatter" }
   | { mode: "section"; heading: string }
   | { mode: "lines"; start: number; end: number }
+
+export interface UpgradeCheckResponse {
+  currentVersion: string
+  latestVersion: string
+  updateAvailable: boolean
+  installMethod: "binary" | "npm" | "unknown"
+}
+
+export interface UpgradeResponse {
+  currentVersion: string
+  newVersion: string
+  upgraded: boolean
+  installMethod: "binary" | "npm" | "unknown"
+  binaryPath?: string
+  checksumVerified?: boolean
+  message?: string
+}

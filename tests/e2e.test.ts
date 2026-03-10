@@ -776,13 +776,13 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   })
 
-  test("cli: akm reinstall rejects target with --all", async () => {
-    const stashDir = createEmptyStashDir("agentikit-e2e-registry-reinstall-")
+  test("cli: akm update rejects target with --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-update-both-")
     process.env.AKM_STASH_DIR = stashDir
     saveConfig({ semanticSearch: false, mountedStashDirs: [] })
 
     try {
-      const result = runCli("reinstall", "npm:@scope/kit", "--all")
+      const result = runCli("update", "npm:@scope/kit", "--all")
       expect(result.exitCode).not.toBe(0)
       const output = result.stdout + result.stderr
       expect(output).toContain("Specify either <target> or --all, not both.")
@@ -801,6 +801,57 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(result.exitCode).not.toBe(0)
       const output = result.stdout + result.stderr
       expect(output).toContain("No installed registry entry matched target: npm:@scope/kit")
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scenario 3a: CLI upgrade command
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Scenario: CLI upgrade command", () => {
+  test("cli: akm upgrade --check returns version info as JSON", async () => {
+    const result = runCli("upgrade", "--check")
+    expect(result.exitCode).toBe(0)
+    const json = parseJson(result.stdout)
+    expect(json.currentVersion).toBeTruthy()
+    expect(typeof json.latestVersion).toBe("string")
+    expect(typeof json.updateAvailable).toBe("boolean")
+    expect(["binary", "npm", "unknown"]).toContain(json.installMethod)
+  })
+
+  test("cli: akm upgrade detects non-binary install and shows guidance", async () => {
+    // When run via `bun run`, akm is not a compiled binary
+    const result = runCli("upgrade")
+    expect(result.exitCode).toBe(0)
+    const json = parseJson(result.stdout)
+    expect(json.upgraded).toBe(false)
+    // Should be npm or unknown when running via bun
+    expect(["npm", "unknown"]).toContain(json.installMethod)
+  })
+
+  test("cli: akm update --help shows --force flag", async () => {
+    const result = spawnSync("bun", [CLI, "update", "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    const output = (result.stdout ?? "") + (result.stderr ?? "")
+    expect(output).toContain("--force")
+    expect(output).toContain("Force fresh download")
+  })
+
+  test("cli: akm update --force requires target or --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-update-force-")
+    process.env.AKM_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, mountedStashDirs: [] })
+
+    try {
+      const result = runCli("update", "--force")
+      expect(result.exitCode).not.toBe(0)
+      const output = result.stdout + result.stderr
+      expect(output).toContain("Either <target> or --all is required.")
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }

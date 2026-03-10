@@ -13,10 +13,11 @@ import {
   agentikitIndex,
   agentikitList,
   agentikitRemove,
-  agentikitReinstall,
   agentikitSearch,
   agentikitShow,
   agentikitUpdate,
+  checkForUpdate,
+  performUpgrade,
 
   // Stash sources
   resolveStashSources,
@@ -88,8 +89,9 @@ import {
 | `agentikitAdd({ ref })` | Install a kit from npm, GitHub, or local path |
 | `agentikitList()` | List installed kits with status flags |
 | `agentikitRemove({ target })` | Remove an installed kit and reindex |
-| `agentikitUpdate({ target?, all? })` | Update one or all kits to latest version |
-| `agentikitReinstall({ target?, all? })` | Reinstall one or all kits from stored refs |
+| `agentikitUpdate({ target?, all?, force? })` | Update one or all kits to latest version (`--force` busts cache) |
+| `checkForUpdate(currentVersion)` | Check if a newer akm release is available |
+| `performUpgrade(check, opts?)` | Upgrade akm binary to the latest release |
 | `agentikitClone({ sourceRef, newName?, force?, dest? })` | Copy an asset into the working stash or custom destination (async). Fetches remote origins automatically |
 | `resolveStashSources()` | Resolve all stash sources in priority order |
 | `resolveAllStashDirs(stashDir)` | Resolve all stash directories including mounted dirs |
@@ -161,12 +163,12 @@ import type {
   // Registry management
   ListResponse,
   RemoveResponse,
-  ReinstallResponse,
   UpdateResponse,
   RegistryListEntry,
   RegistryInstallStatus,
-  ReinstallResultItem,
   UpdateResultItem,
+  UpgradeCheckResponse,
+  UpgradeResponse,
 
   // Stash sources
   StashSource,

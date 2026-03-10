@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach, afterAll } from "bun:tes
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { agentikitList, agentikitRemove, agentikitReinstall } from "../src/stash-registry"
+import { agentikitList, agentikitRemove, agentikitUpdate } from "../src/stash-registry"
 import { saveConfig, loadConfig } from "../src/config"
 
 const createdTmpDirs: string[] = []
@@ -256,14 +256,14 @@ describe("agentikitRemove", () => {
   })
 })
 
-// ── selectTargets (tested via agentikitReinstall error paths) ────────────────
+// ── selectTargets (tested via agentikitUpdate error paths) ────────────────
 
-describe("selectTargets via agentikitReinstall", () => {
+describe("selectTargets via agentikitUpdate", () => {
   test("throws when both target and all are specified", async () => {
     saveConfig({ semanticSearch: false, mountedStashDirs: [] })
 
     await expect(
-      agentikitReinstall({ target: "some-pkg", all: true, stashDir }),
+      agentikitUpdate({ target: "some-pkg", all: true, stashDir }),
     ).rejects.toThrow("Specify either <target> or --all, not both.")
   })
 
@@ -271,7 +271,7 @@ describe("selectTargets via agentikitReinstall", () => {
     saveConfig({ semanticSearch: false, mountedStashDirs: [] })
 
     await expect(
-      agentikitReinstall({ stashDir }),
+      agentikitUpdate({ stashDir }),
     ).rejects.toThrow("Either <target> or --all is required.")
   })
 
@@ -309,7 +309,7 @@ describe("selectTargets via agentikitReinstall", () => {
     // but installRegistryRef will fail for nonexistent packages.
     // The error should NOT be about selectTargets validation.
     try {
-      await agentikitReinstall({ all: true, stashDir })
+      await agentikitUpdate({ all: true, stashDir })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       expect(message).not.toContain("Either <target> or --all is required")
