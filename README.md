@@ -234,6 +234,16 @@ See [docs/registry.md](docs/registry.md) for details.
 }
 ```
 
+When you're ready to request inclusion in `agentikit-registry`, run:
+
+```sh
+akm submit
+akm submit --dry-run
+```
+
+From a local kit directory, `akm submit` infers metadata from `package.json`,
+validates the public npm package or GitHub repo, and opens a PR with `gh`.
+
 ## Documentation
 
 | Doc | Description |

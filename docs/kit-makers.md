@@ -272,6 +272,77 @@ akm show tool:deploy.sh
    akm add @your-scope/my-kit
    ```
 
+## Submitting to the Registry
+
+Once your kit is published to npm or hosted on a public GitHub repo, you can
+request inclusion in `agentikit-registry` so it appears in `akm search --source registry`
+results. The `akm submit` command automates the entire process: forking the
+registry, adding a `manual-entries.json` entry, and opening a pull request.
+
+### Prerequisites
+
+- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
+  (`gh auth login`)
+
+### From a Local Kit Directory
+
+If you run `akm submit` from a directory with a `package.json`, akm infers
+the public npm or GitHub ref, description, tags, and other metadata
+automatically:
+
+```sh
+cd my-kit
+akm submit
+```
+
+### From an Explicit Ref
+
+You can also submit by ref without being in the kit directory:
+
+```sh
+akm submit @scope/my-kit
+akm submit owner/repo
+```
+
+### Overriding Metadata
+
+CLI flags take precedence over `package.json` values:
+
+```sh
+akm submit @scope/my-kit \
+  --name "My Kit" \
+  --description "Deployment tools for AWS" \
+  --tags deploy,aws \
+  --asset-types tool,skill
+```
+
+### Dry Run
+
+Preview the entry and planned commands without creating a PR:
+
+```sh
+akm submit --dry-run
+```
+
+### After Submission
+
+The PR is opened against `itlackey/agentikit-registry`. A reviewer will
+verify the ref is publicly accessible and contains agentikit-compatible
+assets. Once merged, the registry rebuilds automatically and the kit
+appears in search results.
+
+The fork used to create the PR remains on your GitHub account. After the
+PR is merged, you can clean it up:
+
+```sh
+gh repo delete your-username/agentikit-registry --yes
+```
+
+Or pass `--cleanup-fork` during submit to have akm show this command
+for you.
+
+See [CLI Reference](cli.md#submit) for the full flag list.
+
 ## Sharing on a Network Directory
 
 For teams that want to share assets without publishing to a registry, use
