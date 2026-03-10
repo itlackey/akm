@@ -1,68 +1,126 @@
 # Agent-i-Kit
 
-Agent-i-Kit gives AI coding agents a shared library of capabilities they can
-search and use. You organize tools, skills, commands, agents, knowledge, and
-scripts into a **stash**, and agents discover what they need through
-`akm` (Agent Kit Manager).
+A package manager for AI agent capabilities — tools, skills, commands, agents,
+knowledge, and scripts — that works with any AI coding assistant that can run
+shell commands.
 
-## Installation
+You build up useful scripts, prompts, and agent configs. Agent-i-Kit lets you
+organize them into a searchable **stash**, share them as installable **kits**,
+and give any model a way to discover and use them through `akm` (Agent Kit
+Manager). No plugins required — just CLI output any tool-calling model can read.
 
-Agent-i-Kit requires [Bun](https://bun.sh) (v1.0+) as its runtime. It uses
-Bun-specific APIs (`bun:sqlite`) that are not available in Node.js.
+## Quick Start
 
 ```sh
-# Install Bun if you don't have it
-curl -fsSL https://bun.sh/install | bash
-# Install
+# Install (requires Bun v1.0+)
 bun install -g agentikit
+
+# Initialize your stash
+akm init
+
+# Add a kit from GitHub
+akm add github:owner/repo
+
+# Search for assets
+akm search "deploy"
+
+# Show an asset
+akm show script:deploy.sh
 ```
 
-### Standalone Binary
+> **Don't want Bun?** Use the [standalone binary](#standalone-binary) instead — it
+> bundles everything and has no runtime dependencies.
 
-> **Don't want to install Bun?** Use the standalone binary
-> instead -- it has no runtime dependencies.
+## Using With Any AI Agent
 
-The standalone binary bundles everything it needs and does **not** require Bun
-or Node.js.
+Agent-i-Kit is platform agnostic. Any model that can execute shell commands can
+search your stash and use what it finds. The workflow is three commands:
 
+1. `akm search "what you need"` — find relevant assets (returns JSON)
+2. `akm show <openRef>` — get the details (run command, instructions, prompt, etc.)
+3. Use the asset — execute the `runCmd`, follow the skill instructions, fill in the template
+
+### Drop-in prompt snippet
+
+Add this to your `AGENTS.md`, `CLAUDE.md`, system prompt, or any instruction
+file to give your agent access to your stash without any additional setup:
+
+~~~markdown
+## Agent-i-Kit
+
+You have access to a searchable library of tools, skills, commands, agents,
+and knowledge documents via `akm` (Agent Kit Manager). Use it to find and
+use capabilities before writing something from scratch.
+
+**Finding assets:**
 ```sh
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+akm search "<query>"              # Search by keyword
+akm search "<query>" --type tool  # Filter by type (tool, skill, command, agent, knowledge, script)
 ```
 
+Search returns JSON with scored results. Each hit includes an `openRef` you
+use to retrieve the full asset.
+
+**Using assets:**
 ```sh
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1
+akm show <openRef>                # Get full asset details
 ```
 
-## What Is a Kit?
+What you get back depends on the asset type:
+- **script/tool** — A `runCmd` you can execute directly
+- **skill** — Instructions to follow (read the full content)
+- **command** — A prompt template with placeholders to fill in
+- **agent** — A system prompt with model and tool hints
+- **knowledge** — A reference doc (use `--view toc` or `--view section --heading "..."` to navigate)
 
-A kit is a shareable package of assets (aka files and directories). You can organize a kit however you
-like -- agentikit classifies assets by their **file extension and content**,
-not by directory structure. A `.sh` file is a script whether it lives in
-`scripts/`, `tools/`, or `my-stuff/`. A `.md` file with `tools` in its
-frontmatter is an agent definition no matter where you put it.
+Always search the stash first when you need a capability. Prefer existing
+assets over writing new code.
+~~~
 
-That said, a recommended directory layout exists as an **opt-in convention**
-that improves indexing confidence:
+That's it. No plugin, no SDK, no integration code. The model reads the JSON
+output from `akm` and acts on it.
+
+### Platform plugins (optional)
+
+For tighter integration, plugins are available for some platforms. These add
+native tool bindings so the agent doesn't need to shell out, but they're
+purely optional — the CLI works everywhere.
+
+**OpenCode** — Add the [OpenCode plugin](https://github.com/itlackey/agentikit-plugins?tab=readme-ov-file#agentikit-opencode) to your `opencode.json`:
+
+```json
+{
+  "plugin": ["agentikit-opencode"]
+}
+```
+
+**Claude Code** — Add the prompt snippet above to your `CLAUDE.md` or
+project instructions. Claude Code can run `akm` commands directly.
+
+**Everything else** — If your agent can run shell commands, it can use `akm`.
+Add the prompt snippet to whatever instruction mechanism your platform uses.
+
+## What's In a Kit?
+
+A kit is a directory of assets you can share and install. There's no required
+structure — agentikit classifies assets by **file extension and content**, not
+by directory name. A `.sh` file is a script whether it lives in `scripts/`,
+`deploy/`, or at the root. A `.md` file with `tools` in its frontmatter is an
+agent definition wherever you put it.
+
+That said, using these directory names as an opt-in convention improves
+indexing confidence:
 
 ```text
 my-kit/
   scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
   skills/         # Skill definitions (directories with SKILL.md)
-  commands/       # Slash commands (.md)
-  agents/         # Agent definitions (.md)
+  commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
+  agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
 ```
 
-Using these directory names is not required. They act as hints that increase
-classification confidence during indexing. See [Concepts](docs/concepts.md)
-for details on how classification works.
-
-## What Is an Asset?
-
-An asset is a single capability that an AI agent can discover and use. Each
-asset has a **type** that determines how it behaves:
+### Asset types
 
 | Type | What it is | What the agent gets |
 | --- | --- | --- |
@@ -72,94 +130,25 @@ asset has a **type** that determines how it behaves:
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
 
-> **Scripts and tools:** Agentikit also supports a `tool` type that behaves
-> identically to `script`. The only difference is convention: `tools/`
-> accepts a focused set of extensions (.sh, .ts, .js, .ps1, .cmd, .bat)
-> while `scripts/` accepts those plus .py, .rb, .go, and more. Use
-> whichever name fits your mental model -- they produce the same output.
+Assets are referenced by type and name (e.g. `script:deploy.sh`,
+`knowledge:api-guide.md`). See [Concepts](docs/concepts.md) for details on
+how classification works.
 
-Assets are referenced by type and name, e.g. `script:deploy.sh` or
-`knowledge:api-guide.md`. Agents discover assets through `akm search` and
-retrieve their details with `akm show`.
+## The Stash
 
-## What Is a Stash?
+Your stash is the local library where assets live. It combines three sources
+in priority order:
 
-The stash is your local library of assets. It combines three sources:
+1. **Primary stash** — Your personal assets (`AKM_STASH_DIR`), created by `akm init`
+2. **Search paths** — Additional directories (team shares, project dirs, etc.)
+3. **Installed kits** — Kits from npm, GitHub, or git via `akm add` (cache-managed)
 
-1. **Primary stash** -- Your personal assets (`AKM_STASH_DIR`).
-2. **Search paths** -- Additional directories (team shares, project dirs, etc.).
-3. **Installed kits** -- Kits from npm or GitHub via `akm add`. Cache-managed
-   (not safe to edit in place; use `akm clone` to get an editable copy).
-
-When you search or open an asset, the working stash takes priority. This
-means you can install a kit and override individual assets by cloning them
-into your working stash (or any directory with `--dest`).
-
-## Using With AI Agents
-
-Agent-i-Kit is designed to be called by AI coding agents. The agent searches
-for capabilities, reads the results, and acts on them.
-
-### OpenCode
-
-Add the [OpenCode Plugin](https://github.com/itlackey/agentikit-plugins?tab=readme-ov-file#agentikit-opencode) to your OpenCode config (opencode.json):
-
-```json
-{
-  "plugin": ["agentikit-opencode"]
-}
-```
-
-Start a new session and ask opencode to find some tools
-
-```text
-Search the stash for deployment tools, then run the best match to deploy the current project.
-```
-
-The agent calls then `akm_search` tool, picks the top result, reads its `runCmd` from `akm show`, and executes it.
-
-### Claude Code
-
-Add akm commands as tools or reference them from your CLAUDE.md:
-
-```markdown
-## Available Tools
-
-Use `akm search <query>` to find tools, skills, and commands in the stash.
-Use `akm show <ref>` to read asset details before using them.
-```
-
-### Any Agent
-
-The JSON output from `akm search` and `akm show` is designed for machine
-consumption. Any agent that can run shell commands can use akm:
-
-1. `akm search "what you need"` -- Find relevant assets
-2. `akm show <openRef>` -- Get the details
-3. Use the asset (run the `runCmd`, follow the skill instructions, etc.)
-
-## Quick Start
-
-```sh
-# Initialize your stash
-akm init
-
-# Install a kit from npm
-akm add @scope/my-kit
-
-# Search for assets
-akm search "deploy"
-
-# Show an asset
-akm show tool:deploy.sh
-
-# Search installed and registry kits
-akm search "lint" --source both
-```
+The first match wins, so local assets always override installed ones. Use
+`akm clone` to fork an installed asset into your stash for editing.
 
 ## Searching and Showing Assets
 
-Search returns scored results with metadata explaining why each hit matched:
+Search returns scored results with explainability:
 
 ```sh
 akm search "docker" --type tool
@@ -180,7 +169,7 @@ akm search "docker" --type tool
 }
 ```
 
-Use `openRef` from search results to show the full asset:
+Show returns everything the agent needs to act:
 
 ```sh
 akm show tool:docker-build.sh
@@ -195,70 +184,104 @@ akm show tool:docker-build.sh
 }
 ```
 
-For knowledge assets, views let you navigate large documents:
+For knowledge assets, navigate without loading the entire document:
 
 ```sh
 akm show knowledge:api-guide.md --view toc
 akm show knowledge:api-guide.md --view section --heading "Authentication"
 ```
 
-## Installing Kits
+## Installing and Sharing Kits
 
 Install kits from npm, GitHub, any git host, or local directories:
 
 ```sh
-akm add @scope/my-kit              # npm package
-akm add github:owner/repo          # GitHub repo
-akm add git+https://gitlab.com/org/kit  # Any git repo
-akm add ./path/to/local/kit        # Local directory
+akm add @scope/my-kit                       # npm
+akm add github:owner/repo#v1.2.3            # GitHub with tag
+akm add git+https://gitlab.com/org/kit      # Any git repo
+akm add ./path/to/local/kit                 # Local directory
 ```
 
-Search the registry to discover kits:
+Search the registry for community kits:
 
 ```sh
 akm search "code review" --source registry
 ```
 
-Only packages tagged with [Agent-i-Kit Registry](https://github.com/itlackey/agentikit-registry) appear in registry results.
-See [docs/registry.md](docs/registry.md) for details.
-
-## Publishing a Kit
-
-1. Organize your assets (preferred directory names are optional but improve indexing)
-2. Add `"akm"` to `keywords` in `package.json` (for npm) or add the `akm`
-   topic to your GitHub repo
-3. Optionally add an `agentikit.include` array in `package.json` to control
-   which paths are included when installed
-
-```json
-{
-  "name": "@scope/my-kit",
-  "keywords": ["akm"],
-  "agentikit": {
-    "include": ["tools", "skills", "commands"]
-  }
-}
-```
-
-When you're ready to request inclusion in `agentikit-registry`, run:
+Manage installed kits:
 
 ```sh
-akm submit
-akm submit --dry-run
+akm list                        # Show installed kits with status
+akm update --all                # Update all (reports version changes)
+akm remove owner/repo           # Remove and reindex
+akm clone tool:deploy.sh        # Fork an asset into your stash for editing
 ```
 
-From a local kit directory, `akm submit` infers metadata from `package.json`,
-validates the public npm package or GitHub repo, and opens a PR with `gh`.
+### Publishing your own kit
+
+1. Organize your assets (directory conventions are optional)
+2. Add `"akm"` to `keywords` in `package.json` or add the `akm` topic to your GitHub repo
+3. Optionally add `agentikit.include` to control what gets installed
+4. Publish to npm or push to GitHub
+5. Submit to the registry with `akm submit` to appear in `akm search --source registry`
+
+See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
+
+## Installation
+
+Agent-i-Kit requires [Bun](https://bun.sh) v1.0+ as its runtime. It uses
+Bun-specific APIs (`bun:sqlite`) that are not available in Node.js.
+
+```sh
+# Install Bun if you don't have it
+curl -fsSL https://bun.sh/install | bash
+
+# Install agentikit
+bun install -g agentikit
+```
+
+### Standalone binary
+
+The standalone binary bundles everything and has **no runtime dependencies** —
+no Bun, no Node.js.
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/itlackey/agentikit/main/install.ps1 -OutFile install.ps1; ./install.ps1
+```
+
+The shell installer verifies the binary against release checksums.
+
+Upgrade the binary in place:
+
+```sh
+akm upgrade           # Download and replace the running binary
+akm upgrade --check   # Check for updates without installing
+```
 
 ## Documentation
 
 | Doc | Description |
 | --- | --- |
-| [Concepts](docs/concepts.md) | Asset types, stash sources, metadata, tool execution |
-| [CLI Reference](docs/cli.md) | All akm commands and flags |
-| [Kit Maker's Guide](docs/kit-makers.md) | How to build and share a kit |
+| [Concepts](docs/concepts.md) | Asset types, classification, stash sources, metadata |
+| [CLI Reference](docs/cli.md) | All `akm` commands and flags |
+| [Kit Maker's Guide](docs/kit-makers.md) | Build and share a kit on GitHub, npm, or a network share |
 | [Registry](docs/registry.md) | Finding, installing, and publishing kits |
 | [Search](docs/search.md) | Hybrid search architecture and scoring |
 | [Indexing](docs/indexing.md) | How the search index is built |
 | [Filesystem](docs/filesystem.md) | Directory layout and `.stash.json` schema |
 | [Configuration](docs/configuration.md) | Providers, settings, and Ollama setup |
+
+## Status
+
+Agent-i-Kit is in early development (v0.0.x). The core CLI, stash model, and
+registry are functional and in daily use. Feedback, issues, and PRs welcome —
+especially around real-world usage patterns and integrations with different
+AI coding assistants.
+
+## License
+
+[CC-BY-4.0](LICENSE)
