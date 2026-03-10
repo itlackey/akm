@@ -212,6 +212,43 @@ When multiple sources provide the same asset name, the first match wins:
 
 This means local edits and clones always override installed versions.
 
+## Submitting a Kit to the Registry
+
+To get your kit listed in the registry index (so it appears in
+`akm search --source registry`), submit a manual entry with `akm submit`.
+
+```bash
+# From a local kit directory (infers metadata from package.json)
+akm submit
+
+# From an explicit ref
+akm submit @scope/my-kit
+akm submit owner/repo
+
+# Override metadata
+akm submit owner/repo --name "My Kit" --tags deploy,aws --asset-types tool
+
+# Preview without creating a PR
+akm submit --dry-run
+```
+
+`akm submit` requires GitHub CLI (`gh`) and an authenticated session. It
+forks `itlackey/agentikit-registry`, adds your entry to `manual-entries.json`,
+and opens a pull request. The submitted ref must point to a publicly accessible
+npm package or GitHub repository.
+
+After the PR is merged, the registry's automated rebuild incorporates the
+entry into `index.json`. The fork used for submission can be deleted once
+the PR is merged:
+
+```bash
+gh repo delete your-username/agentikit-registry --yes
+```
+
+See the [Kit Maker's Guide](kit-makers.md#submitting-to-the-registry)
+for a full walkthrough and the [CLI Reference](cli.md#submit) for all
+available flags.
+
 ## Cache Layout
 
 Installed kits are cached under `~/.cache/agentikit/registry/`:

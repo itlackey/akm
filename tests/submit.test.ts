@@ -229,6 +229,58 @@ describe("submit helpers", () => {
     expect(slugifySubmitValue("github:@Owner/Repo")).toBe("github-owner-repo")
     expect(buildSubmitBranchName("github:@Owner/Repo", now)).toBe("submit/github-owner-repo-20260309-1430")
   })
+
+  test("buildSubmitEntry falls back to package.json when no CLI overrides are given", async () => {
+    const parsed = parseRegistryRef("npm:@scope/pkg-kit")
+    if (parsed.source !== "npm") throw new Error("expected npm ref")
+
+    const entry = await buildSubmitEntry({
+      parsed,
+      interactive: false,
+      packageJson: {
+        name: "@scope/pkg-kit",
+        description: "From package",
+        keywords: ["agentikit", "deploy", "ci"],
+        author: "Pkg Author",
+        license: "ISC",
+        homepage: "https://example.test/pkg",
+        agentikitAssetTypes: ["tool", "command"],
+      },
+    })
+
+    expect(entry.name).toBe("@scope/pkg-kit")
+    expect(entry.description).toBe("From package")
+    expect(entry.tags).toEqual(["deploy", "ci"])
+    expect(entry.assetTypes).toEqual(["tool", "command"])
+    expect(entry.author).toBe("Pkg Author")
+    expect(entry.license).toBe("ISC")
+    expect(entry.homepage).toBe("https://example.test/pkg")
+  })
+
+  test("buildSubmitEntry infers homepage for npm and github refs", async () => {
+    const npm = parseRegistryRef("npm:@scope/my-kit")
+    if (npm.source !== "npm") throw new Error("expected npm ref")
+    const npmEntry = await buildSubmitEntry({ parsed: npm, interactive: false })
+    expect(npmEntry.homepage).toBe("https://www.npmjs.com/package/@scope/my-kit")
+
+    const gh = parseRegistryRef("github:owner/repo")
+    if (gh.source !== "github") throw new Error("expected github ref")
+    const ghEntry = await buildSubmitEntry({ parsed: gh, interactive: false })
+    expect(ghEntry.homepage).toBe("https://github.com/owner/repo")
+  })
+
+  test("normalizeAssetTypes rejects invalid types", async () => {
+    const parsed = parseRegistryRef("npm:@scope/bad-types")
+    if (parsed.source !== "npm") throw new Error("expected npm ref")
+
+    await expect(
+      buildSubmitEntry({
+        parsed,
+        interactive: false,
+        assetTypes: "tool,widget,skill",
+      }),
+    ).rejects.toThrow("Invalid asset type: widget")
+  })
 })
 
 describe("agentikitSubmit", () => {
@@ -451,6 +503,49 @@ describe("agentikitSubmit", () => {
     expect(prCommand).toContain("## New registry entry: Kit \"Alpha\"")
     expect(prCommand).toContain("\n### Entry JSON\n")
     expect(prCommand).not.toContain("\\n")
+  })
+
+  test("rejects generic git URLs with a clear error", async () => {
+    const { binDir, ghBin, gitBin } = createMockBinDir()
+
+    await expect(withEnv(
+      {
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
+      },
+      () => agentikitSubmit({
+        ref: "git+https://gitlab.com/org/my-kit",
+        dryRun: true,
+        interactive: false,
+        ghBin,
+        gitBin,
+      }),
+    )).rejects.toThrow("does not support generic git URLs")
+  })
+
+  test("rejects refs that are not publicly accessible", async () => {
+    const { binDir, ghBin, gitBin } = createMockBinDir()
+
+    await expect(withEnv(
+      {
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
+      },
+      () => withMockedFetch((url) => {
+        if (url === "https://api.github.com/repos/example/missing-kit") {
+          return new Response("not found", { status: 404 })
+        }
+        return new Response("not found", { status: 404 })
+      }, () => agentikitSubmit({
+        ref: "example/missing-kit",
+        dryRun: true,
+        interactive: false,
+        ghBin,
+        gitBin,
+      })),
+    )).rejects.toThrow("not publicly accessible")
   })
 
   test("full submit workflow uses gh and git commands in order", async () => {
