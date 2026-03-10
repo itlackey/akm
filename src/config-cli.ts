@@ -84,7 +84,6 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       }
       return { semanticSearch: value === "true" }
     case "searchPaths":
-    case "mountedStashDirs":
       try {
         const parsed = JSON.parse(value)
         if (!Array.isArray(parsed)) throw new Error("expected JSON array")
@@ -108,7 +107,6 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
     case "semanticSearch":
       return config.semanticSearch
     case "searchPaths":
-    case "mountedStashDirs":
       return [...config.searchPaths]
     case "embedding":
       return maskSecrets(getEmbeddingDisplayConfig(config))
@@ -146,7 +144,6 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
     case "stashDir":
     case "semanticSearch":
     case "searchPaths":
-    case "mountedStashDirs":
     case "embedding":
     case "llm":
       return { ...config, ...parseConfigValue(key, rawValue) }

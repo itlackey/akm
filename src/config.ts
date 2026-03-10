@@ -172,14 +172,8 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
     config.semanticSearch = raw.semanticSearch
   }
 
-  // Support both new `searchPaths` and legacy `mountedStashDirs`
-  const rawPaths = Array.isArray(raw.searchPaths)
-    ? raw.searchPaths
-    : Array.isArray(raw.mountedStashDirs)
-      ? raw.mountedStashDirs
-      : undefined
-  if (rawPaths) {
-    config.searchPaths = rawPaths.filter(
+  if (Array.isArray(raw.searchPaths)) {
+    config.searchPaths = raw.searchPaths.filter(
       (d): d is string => typeof d === "string",
     )
   }
