@@ -87,73 +87,82 @@ function createMockBinDir(): {
   ghLog: string
   gitLog: string
   snapshotPath: string
+  ghBin: string
+  gitBin: string
 } {
   const binDir = makeTempDir("agentikit-submit-bin-")
   const ghLog = path.join(binDir, "gh.log")
   const gitLog = path.join(binDir, "git.log")
   const snapshotPath = path.join(binDir, "manual-entries.snapshot.json")
 
-  writeExecutable(path.join(binDir, "gh"), `#!/usr/bin/env sh
-set -eu
-GH_LOG=${JSON.stringify(ghLog)}
-log_args() {
-  printf '%s' "$1"
-  shift
-  for arg in "$@"; do
-    printf '\\t%s' "$arg"
-  done
-  printf '\\n'
+  const ghBin = writeMockCommand(binDir, "gh", `
+const fs = require("node:fs")
+const path = require("node:path")
+const args = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(ghLog)}, \`\${args.join("\\t")}\\n\`)
+const [cmd1 = "", cmd2 = ""] = args
+if (cmd1 === "--version") {
+  process.stdout.write("gh version 2.55.0\\n")
+  process.exit(0)
 }
-log_args "$@" >> "${ghLog}"
-cmd1="\${1-}"
-cmd2="\${2-}"
-if [ "$cmd1" = "--version" ]; then
-  echo "gh version 2.55.0"
-  exit 0
-fi
-if [ "$cmd1" = "auth" ] && [ "$cmd2" = "status" ]; then
-  exit 0
-fi
-if [ "$cmd1" = "api" ] && [ "$cmd2" = "user" ]; then
-  echo "mock-user"
-  exit 0
-fi
-if [ "$cmd1" = "repo" ] && [ "$cmd2" = "fork" ]; then
-  mkdir -p "$PWD/agentikit-registry"
-  printf '[]\\n' > "$PWD/agentikit-registry/manual-entries.json"
-  exit 0
-fi
-if [ "$cmd1" = "pr" ] && [ "$cmd2" = "create" ]; then
-  echo "https://github.com/itlackey/agentikit-registry/pull/123"
-  exit 0
-fi
-if [ "$cmd1" = "repo" ] && [ "$cmd2" = "delete" ]; then
-  exit 0
-fi
-echo "unexpected gh command: $*" >&2
-exit 1
+if (cmd1 === "auth" && cmd2 === "status") {
+  process.exit(0)
+}
+if (cmd1 === "api" && cmd2 === "user") {
+  process.stdout.write("mock-user\\n")
+  process.exit(0)
+}
+if (cmd1 === "repo" && cmd2 === "fork") {
+  const cloneDir = path.join(process.cwd(), "agentikit-registry")
+  fs.mkdirSync(cloneDir, { recursive: true })
+  fs.writeFileSync(path.join(cloneDir, "manual-entries.json"), "[]\\n")
+  process.exit(0)
+}
+if (cmd1 === "pr" && cmd2 === "create") {
+  process.stdout.write("https://github.com/itlackey/agentikit-registry/pull/123\\n")
+  process.exit(0)
+}
+if (cmd1 === "repo" && cmd2 === "delete") {
+  process.exit(0)
+}
+process.stderr.write(\`unexpected gh command: \${args.join(" ")}\\n\`)
+process.exit(1)
 `)
 
-  writeExecutable(path.join(binDir, "git"), `#!/usr/bin/env sh
-set -eu
-GIT_LOG=${JSON.stringify(gitLog)}
-SNAPSHOT_PATH=${JSON.stringify(snapshotPath)}
-log_args() {
-  printf '%s' "$1"
-  shift
-  for arg in "$@"; do
-    printf '\\t%s' "$arg"
-  done
-  printf '\\n'
+  const gitBin = writeMockCommand(binDir, "git", `
+const fs = require("node:fs")
+const path = require("node:path")
+const args = process.argv.slice(2)
+fs.appendFileSync(${JSON.stringify(gitLog)}, \`\${args.join("\\t")}\\n\`)
+const manualEntries = path.join(process.cwd(), "manual-entries.json")
+if (fs.existsSync(manualEntries)) {
+  fs.copyFileSync(manualEntries, ${JSON.stringify(snapshotPath)})
 }
-log_args "$@" >> "${gitLog}"
-if [ -f "$PWD/manual-entries.json" ]; then
-  cp "$PWD/manual-entries.json" "${snapshotPath}"
-fi
-exit 0
+process.exit(0)
 `)
 
-  return { binDir, ghLog, gitLog, snapshotPath }
+  return { binDir, ghLog, gitLog, snapshotPath, ghBin, gitBin }
+}
+
+function writeMockCommand(binDir: string, name: string, scriptBody: string): string {
+  const scriptPath = path.join(binDir, `${name}.js`)
+  writeExecutable(scriptPath, `#!${process.execPath}\n${scriptBody.trim()}\n`)
+
+  if (process.platform !== "win32") {
+    return scriptPath
+  }
+
+  const launcherPath = path.join(binDir, `${name}.cmd`)
+  fs.writeFileSync(
+    launcherPath,
+    `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+    "utf8",
+  )
+  return launcherPath
+}
+
+function prependToPath(binDir: string): string {
+  return `${binDir}${path.delimiter}${process.env.PATH ?? ""}`
 }
 
 afterEach(() => {
@@ -218,13 +227,13 @@ describe("agentikitSubmit", () => {
       agentikit: { assetTypes: ["tool", "skill"] },
       repository: { type: "git", url: "git+https://github.com/example/local-kit.git" },
     })
-    const { binDir } = createMockBinDir()
+    const { binDir, ghBin, gitBin } = createMockBinDir()
 
     const result = await withEnv(
       {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AKM_SUBMIT_GH_BIN: path.join(binDir, "gh"),
-        AKM_SUBMIT_GIT_BIN: path.join(binDir, "git"),
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
       },
       () => withMockedFetch((url) => {
         if (url === "https://registry.npmjs.org/%40scope%2Flocal-kit") {
@@ -241,8 +250,8 @@ describe("agentikitSubmit", () => {
         cwd: kitDir,
         dryRun: true,
         interactive: false,
-        ghBin: path.join(binDir, "gh"),
-        gitBin: path.join(binDir, "git"),
+        ghBin,
+        gitBin,
       })),
     )
 
@@ -257,13 +266,13 @@ describe("agentikitSubmit", () => {
   })
 
   test("dry run fails when the manual entry already exists", async () => {
-    const { binDir } = createMockBinDir()
+    const { binDir, ghBin, gitBin } = createMockBinDir()
 
     await expect(withEnv(
       {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AKM_SUBMIT_GH_BIN: path.join(binDir, "gh"),
-        AKM_SUBMIT_GIT_BIN: path.join(binDir, "git"),
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
       },
       () => withMockedFetch((url) => {
         if (url === "https://api.github.com/repos/example/existing-kit") {
@@ -280,20 +289,20 @@ describe("agentikitSubmit", () => {
         ref: "example/existing-kit",
         dryRun: true,
         interactive: false,
-        ghBin: path.join(binDir, "gh"),
-        gitBin: path.join(binDir, "git"),
+        ghBin,
+        gitBin,
       })),
     )).rejects.toThrow('Registry entry "github:example/existing-kit" already exists in agentikit-registry.')
   })
 
   test("dry run rejects private GitHub repos even when the API is accessible", async () => {
-    const { binDir } = createMockBinDir()
+    const { binDir, ghBin, gitBin } = createMockBinDir()
 
     await expect(withEnv(
       {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AKM_SUBMIT_GH_BIN: path.join(binDir, "gh"),
-        AKM_SUBMIT_GIT_BIN: path.join(binDir, "git"),
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
       },
       () => withMockedFetch((url) => {
         if (url === "https://api.github.com/repos/example/private-kit") {
@@ -304,21 +313,21 @@ describe("agentikitSubmit", () => {
         ref: "example/private-kit",
         dryRun: true,
         interactive: false,
-        ghBin: path.join(binDir, "gh"),
-        gitBin: path.join(binDir, "git"),
+        ghBin,
+        gitBin,
       })),
     )).rejects.toThrow('Registry ref "example/private-kit" is not publicly accessible.')
   })
 
   test("dry run fetches manual entries from raw.githubusercontent using slash-containing default branches", async () => {
-    const { binDir } = createMockBinDir()
+    const { binDir, ghBin, gitBin } = createMockBinDir()
     const urls: string[] = []
 
     const result = await withEnv(
       {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AKM_SUBMIT_GH_BIN: path.join(binDir, "gh"),
-        AKM_SUBMIT_GIT_BIN: path.join(binDir, "git"),
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
       },
       () => withMockedFetch((url) => {
         urls.push(url)
@@ -336,8 +345,8 @@ describe("agentikitSubmit", () => {
         ref: "example/branch-kit",
         dryRun: true,
         interactive: false,
-        ghBin: path.join(binDir, "gh"),
-        gitBin: path.join(binDir, "git"),
+        ghBin,
+        gitBin,
       })),
     )
 
@@ -346,14 +355,96 @@ describe("agentikitSubmit", () => {
     expect(urls.some((url) => url.includes("release%2F2026"))).toBe(false)
   })
 
-  test("full submit workflow uses gh and git commands in order", async () => {
-    const { binDir, ghLog, gitLog, snapshotPath } = createMockBinDir()
+  test("dry run treats existing owner/repo-like directories as local paths", async () => {
+    const parentDir = makeTempDir("agentikit-submit-local-parent-")
+    const kitDir = path.join(parentDir, "kits", "my-kit")
+    fs.mkdirSync(kitDir, { recursive: true })
+    writeJson(path.join(kitDir, "package.json"), {
+      name: "local-dir-kit",
+      description: "Kit from a local owner/repo-like path",
+      keywords: ["agentikit", "tool"],
+    })
+    const { binDir, ghBin, gitBin } = createMockBinDir()
 
     const result = await withEnv(
       {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AKM_SUBMIT_GH_BIN: path.join(binDir, "gh"),
-        AKM_SUBMIT_GIT_BIN: path.join(binDir, "git"),
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
+      },
+      () => withMockedFetch((url) => {
+        if (url === "https://registry.npmjs.org/local-dir-kit") {
+          return new Response("{}", { status: 200 })
+        }
+        if (url === "https://api.github.com/repos/itlackey/agentikit-registry") {
+          return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 })
+        }
+        if (url === "https://raw.githubusercontent.com/itlackey/agentikit-registry/main/manual-entries.json") {
+          return new Response("[]", { status: 200 })
+        }
+        return new Response("not found", { status: 404 })
+      }, () => agentikitSubmit({
+        ref: "kits/my-kit",
+        cwd: parentDir,
+        dryRun: true,
+        interactive: false,
+        ghBin,
+        gitBin,
+      })),
+    )
+
+    expect(result.entry.id).toBe("npm:local-dir-kit")
+    expect(result.entry.ref).toBe("local-dir-kit")
+  })
+
+  test("dry run planned commands safely quote user-controlled values and preserve multiline bodies", async () => {
+    const { binDir, ghBin, gitBin } = createMockBinDir()
+
+    const result = await withEnv(
+      {
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
+      },
+      () => withMockedFetch((url) => {
+        if (url === "https://api.github.com/repos/example/quoted-kit") {
+          return new Response(JSON.stringify({ private: false, visibility: "public" }), { status: 200 })
+        }
+        if (url === "https://api.github.com/repos/itlackey/agentikit-registry") {
+          return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 })
+        }
+        if (url === "https://raw.githubusercontent.com/itlackey/agentikit-registry/main/manual-entries.json") {
+          return new Response("[]", { status: 200 })
+        }
+        return new Response("not found", { status: 404 })
+      }, () => agentikitSubmit({
+        ref: "example/quoted-kit",
+        name: `Kit "Alpha"`,
+        dryRun: true,
+        interactive: false,
+        ghBin,
+        gitBin,
+      })),
+    )
+
+    const commitCommand = result.commands?.find((command) => command.startsWith("git commit -m "))
+    expect(commitCommand).toContain(`git commit -m 'feat: add Kit "Alpha" to registry'`)
+
+    const prCommand = result.commands?.find((command) => command.startsWith("gh pr create "))
+    expect(prCommand).toContain("--body")
+    expect(prCommand).toContain("## New registry entry: Kit \"Alpha\"")
+    expect(prCommand).toContain("\n### Entry JSON\n")
+    expect(prCommand).not.toContain("\\n")
+  })
+
+  test("full submit workflow uses gh and git commands in order", async () => {
+    const { binDir, ghLog, gitLog, snapshotPath, ghBin, gitBin } = createMockBinDir()
+
+    const result = await withEnv(
+      {
+        PATH: prependToPath(binDir),
+        AKM_SUBMIT_GH_BIN: ghBin,
+        AKM_SUBMIT_GIT_BIN: gitBin,
       },
       () => withMockedFetch((url) => {
         if (url === "https://api.github.com/repos/example/owner-kit") {
@@ -370,8 +461,8 @@ describe("agentikitSubmit", () => {
         ref: "example/owner-kit",
         cleanupFork: true,
         interactive: false,
-        ghBin: path.join(binDir, "gh"),
-        gitBin: path.join(binDir, "git"),
+        ghBin,
+        gitBin,
       })),
     )
 
@@ -387,7 +478,7 @@ describe("agentikitSubmit", () => {
     expect(ghCommands).toContain("repo\tdelete\tmock-user/agentikit-registry\t--yes")
 
     expect(result.commands?.some((command) =>
-      command.includes("--body") && command.includes("\"## New registry entry: owner-kit"),
+      command.includes("--body") && command.includes("## New registry entry: owner-kit"),
     )).toBe(true)
 
     const gitCommands = fs.readFileSync(gitLog, "utf8")

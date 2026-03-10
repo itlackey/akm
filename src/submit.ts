@@ -248,7 +248,7 @@ async function resolveSubmitTarget(rawRef: string | undefined, cwd: string): Pro
     return await inferSubmitTargetFromDir(cwd)
   }
 
-  const parsed = parseSubmitRef(rawRef)
+  const parsed = parseSubmitRef(rawRef, cwd)
   if (parsed.source === "npm" || parsed.source === "github") {
     return { parsed }
   }
@@ -365,10 +365,13 @@ function extractGithubRepoRef(value: string | undefined): string | undefined {
   return undefined
 }
 
-function parseSubmitRef(rawRef: string): ParsedNpmRef | ParsedGithubRef | ParsedRegistryRef {
+function parseSubmitRef(rawRef: string, cwd = process.cwd()): ParsedNpmRef | ParsedGithubRef | ParsedRegistryRef {
   const trimmed = rawRef.trim()
   if (looksLikeScopedPackage(trimmed)) {
     return parseRegistryRef(`npm:${trimmed}`)
+  }
+  if (isExistingLocalDirectory(trimmed, cwd)) {
+    return parseRegistryRef(path.resolve(cwd, trimmed))
   }
   if (looksLikeGithubRepo(trimmed)) {
     return parseRegistryRef(`github:${trimmed}`)
@@ -382,6 +385,14 @@ function looksLikeScopedPackage(value: string): boolean {
 
 function looksLikeGithubRepo(value: string): boolean {
   return /^[^./][^/]*\/[^/]+(?:#.+)?$/.test(value)
+}
+
+function isExistingLocalDirectory(ref: string, cwd: string): boolean {
+  try {
+    return fs.statSync(path.resolve(cwd, ref)).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 async function promptWithDefault(label: string, value: string | undefined, interactive: boolean): Promise<string | undefined> {
@@ -532,15 +543,15 @@ function buildPlannedCommands(options: {
   pullRequestBody: string
 }): string[] {
   const commands = [
-    `gh repo fork ${REGISTRY_OWNER}/${REGISTRY_REPO} --clone --remote`,
-    `git checkout -b ${options.branchName}`,
-    `git add ${MANUAL_ENTRIES_FILE}`,
-    `git commit -m "feat: add ${options.entry.name} to registry"`,
-    `git push origin ${options.branchName}`,
-    formatCommand(buildPullRequestArgs(options.entry, options.username, options.branchName, options.pullRequestBody)),
+    formatCommand(["gh", "repo", "fork", `${REGISTRY_OWNER}/${REGISTRY_REPO}`, "--clone", "--remote"]),
+    formatCommand(["git", "checkout", "-b", options.branchName]),
+    formatCommand(["git", "add", MANUAL_ENTRIES_FILE]),
+    formatCommand(["git", "commit", "-m", `feat: add ${options.entry.name} to registry`]),
+    formatCommand(["git", "push", "origin", options.branchName]),
+    formatCommand(["gh", ...buildPullRequestArgs(options.entry, options.username, options.branchName, options.pullRequestBody)]),
   ]
   if (options.cleanupFork) {
-    commands.push(`gh repo delete ${options.username}/${REGISTRY_REPO} --yes`)
+    commands.push(formatCommand(["gh", "repo", "delete", `${options.username}/${REGISTRY_REPO}`, "--yes"]))
   }
   return commands
 }
@@ -566,12 +577,12 @@ function buildPullRequestArgs(
 }
 
 function formatCommand(args: string[]): string {
-  return ["gh", ...args].map(quoteShellArg).join(" ")
+  return args.map(quoteShellArg).join(" ")
 }
 
 function quoteShellArg(value: string): string {
   if (/^[a-zA-Z0-9_./:@#=-]+$/.test(value)) return value
-  return JSON.stringify(value)
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function ensureGhAvailable(runtime: SubmitRuntime): void {
