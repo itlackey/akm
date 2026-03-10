@@ -25,7 +25,6 @@ import { agentikitSearch } from "./stash-search";
 import { agentikitShow } from "./stash-show";
 import { resolveStashSources } from "./stash-source";
 import type { KnowledgeView, SearchSource, SearchUsageMode } from "./stash-types";
-import { agentikitSubmit } from "./submit";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -152,31 +151,6 @@ function formatPlain(command: string, result: unknown): string | null {
       const remote = r.remoteFetched ? " (fetched from remote)" : "";
       const over = r.overwritten ? " (overwritten)" : "";
       return `Cloned${remote} → ${dst}${over}`;
-    }
-    case "submit": {
-      const entry = r.entry as Record<string, unknown> | undefined;
-      const pr = r.pr as Record<string, unknown> | undefined;
-      const commands = (r.commands as string[] | undefined) ?? [];
-      if (r.dryRun) {
-        const lines = [
-          `Dry run: prepared registry entry ${entry?.name ?? entry?.id ?? "unknown"}`,
-          "",
-          yamlStringify(entry),
-        ];
-        if (commands.length > 0) {
-          lines.push("", "Would run:");
-          lines.push(...commands.map((command) => `  ${command}`));
-        }
-        return lines.join("\n");
-      }
-      const prUrl = typeof pr?.url === "string" ? pr.url : "unknown";
-      const fork = r.fork as Record<string, unknown> | undefined;
-      const cleanupCmd = typeof fork?.cleanupCommand === "string" ? fork.cleanupCommand : undefined;
-      const lines = [`Submitted ${entry?.name ?? entry?.id ?? "registry entry"}.`, `PR: ${prUrl}`];
-      if (cleanupCmd) {
-        lines.push(`\nAfter the PR is merged, clean up the fork with:\n  ${cleanupCmd}`);
-      }
-      return lines.join("\n");
     }
     default:
       return null; // fall through to YAML
@@ -519,52 +493,6 @@ const cloneCommand = defineCommand({
   },
 });
 
-const submitCommand = defineCommand({
-  meta: { name: "submit", description: "Submit a kit to agentikit-registry by opening a pull request" },
-  args: {
-    ref: {
-      type: "positional",
-      description: "Public ref to submit (npm package, owner/repo, or local kit directory)",
-      required: false,
-    },
-    name: { type: "string", description: "Display name for the registry entry" },
-    description: { type: "string", description: "Short description for the registry entry" },
-    tags: { type: "string", description: "Comma-separated tags" },
-    "asset-types": { type: "string", description: "Comma-separated asset types" },
-    author: { type: "string", description: "Author name" },
-    license: { type: "string", description: "License identifier" },
-    homepage: { type: "string", description: "Homepage URL" },
-    "dry-run": {
-      type: "boolean",
-      description: "Preview the entry and gh commands without creating a pull request",
-      default: false,
-    },
-    "cleanup-fork": {
-      type: "boolean",
-      description: "Show the fork cleanup command after the pull request is created (run it after the PR is merged)",
-      default: false,
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const result = await agentikitSubmit({
-        ref: args.ref,
-        name: args.name,
-        description: args.description,
-        tags: args.tags,
-        assetTypes: args["asset-types"],
-        author: args.author,
-        license: args.license,
-        homepage: args.homepage,
-        dryRun: args["dry-run"],
-        cleanupFork: args["cleanup-fork"],
-        progress: isJsonMode() ? undefined : (message) => console.error(`• ${message}`),
-      });
-      output("submit", result);
-    });
-  },
-});
-
 const sourcesCommand = defineCommand({
   meta: { name: "sources", description: "List all stash search paths and their status" },
   run() {
@@ -596,7 +524,6 @@ const main = defineCommand({
     search: searchCommand,
     show: showCommand,
     clone: cloneCommand,
-    submit: submitCommand,
     sources: sourcesCommand,
     config: configCommand,
   },
@@ -661,28 +588,10 @@ function buildHint(message: string): string | undefined {
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: local, registry, both.";
   if (message.includes("Invalid value for --usage")) return "Pick one of: none, both, item, guide.";
-  if (message.includes("gh CLI is required")) return buildGhInstallHint();
-  if (message.includes("gh CLI is not authenticated")) return "Run `gh auth login` and then retry `akm submit`.";
-  if (message.includes("not publicly accessible"))
-    return "Check that the npm package is published or the GitHub repository is public, then retry.";
-  if (message.includes("already exists in agentikit-registry"))
-    return "Update the existing registry entry instead of creating a duplicate, or choose a different public ref.";
-  if (
-    message.includes("Unable to infer a public npm or GitHub ref") ||
-    message.includes("Unable to infer a publicly accessible npm package or GitHub repository")
-  ) {
-    return "Run `akm submit <package-or-owner/repo>` explicitly, or add name/repository metadata to package.json.";
-  }
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
   }
   return undefined;
-}
-
-function buildGhInstallHint(): string {
-  if (process.platform === "darwin") return "Install GitHub CLI with Homebrew: `brew install gh`.";
-  if (process.platform === "win32") return "Install GitHub CLI with winget: `winget install --id GitHub.cli`.";
-  return "Install GitHub CLI from https://cli.github.com/ or your package manager (for Debian/Ubuntu: `sudo apt install gh`).";
 }
 
 function parseProviderScope(value: string): "embedding" | "llm" {
