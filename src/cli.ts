@@ -36,6 +36,16 @@ function isJsonMode(): boolean {
   return process.argv.includes("--json")
 }
 
+/** Try Bun.YAML.stringify; fall back to JSON if the API is unavailable */
+function yamlStringify(obj: unknown): string {
+  try {
+    return (Bun as any).YAML.stringify(obj)
+  } catch {
+    console.warn("YAML output not available, using JSON")
+    return JSON.stringify(obj, null, 2)
+  }
+}
+
 /** Output result: JSON if --json flag set, otherwise YAML (default) */
 function output(command: string, result: unknown): void {
   if (isJsonMode()) {
@@ -48,7 +58,7 @@ function output(command: string, result: unknown): void {
     console.log(plain)
     return
   }
-  console.log(Bun.YAML.stringify(result, null, 4))
+  console.log(yamlStringify(result))
 }
 
 /**
@@ -126,7 +136,7 @@ function formatPlain(command: string, result: unknown): string | null {
         const lines = [
           `Dry run: prepared registry entry ${entry?.name ?? entry?.id ?? "unknown"}`,
           "",
-          Bun.YAML.stringify(entry, null, 4),
+          yamlStringify(entry),
         ]
         if (commands.length > 0) {
           lines.push("", "Would run:")

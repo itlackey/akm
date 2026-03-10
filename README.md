@@ -9,6 +9,13 @@ organize them into a searchable **stash**, share them as installable **kits**,
 and give any model a way to discover and use them through `akm` (Agent Kit
 Manager). No plugins required — just CLI output any tool-calling model can read.
 
+## Requirements
+
+Agent-i-Kit requires [Bun](https://bun.sh) v1.0+ as its runtime. It uses
+Bun-specific APIs (`bun:sqlite`) that are **not available in Node.js**. If you
+prefer not to install Bun, use the [standalone binary](#standalone-binary) which
+bundles everything and has no runtime dependencies.
+
 ## Quick Start
 
 ```sh
