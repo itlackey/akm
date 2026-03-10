@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fetchWithRetry } from "./common"
 import type { RegistrySearchHit, RegistrySearchResponse } from "./registry-types"
+import { getRegistryIndexCacheDir } from "./paths"
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -139,21 +140,13 @@ function writeCachedIndex(cachePath: string, index: RegistryIndex): void {
 }
 
 function indexCachePath(url: string): string {
-  const cacheRoot = resolveCacheDir()
+  const indexDir = getRegistryIndexCacheDir()
   // Deterministic filename from URL
   const slug = url
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 120)
-  return path.join(cacheRoot, "registry-index", `${slug}.json`)
-}
-
-function resolveCacheDir(): string {
-  const xdgCache = process.env.XDG_CACHE_HOME?.trim()
-  if (xdgCache) return path.join(path.resolve(xdgCache), "agentikit")
-  const home = process.env.HOME?.trim()
-  if (!home) return path.join("/tmp", "agentikit-cache")
-  return path.join(path.resolve(home), ".cache", "agentikit")
+  return path.join(indexDir, `${slug}.json`)
 }
 
 function isCacheExpired(mtimeMs: number): boolean {

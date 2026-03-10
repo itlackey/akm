@@ -20,9 +20,10 @@ afterAll(() => {
   }
 })
 
-/** Isolated temp dirs so the CLI never touches real user config/cache. */
+/** Isolated temp dirs so the CLI never touches real user config/cache/home. */
 const xdgCache = makeTempDir()
 const xdgConfig = makeTempDir()
+const isolatedHome = makeTempDir()
 
 function runCli(...args: string[]): { stdout: string; stderr: string; status: number } {
   const result = spawnSync("bun", ["./src/cli.ts", ...args], {
@@ -32,6 +33,7 @@ function runCli(...args: string[]): { stdout: string; stderr: string; status: nu
     env: {
       ...process.env,
       AKM_STASH_DIR: undefined,
+      HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
     },
@@ -46,10 +48,10 @@ function runCli(...args: string[]): { stdout: string; stderr: string; status: nu
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe("CLI error handling", () => {
-  test("search without AKM_STASH_DIR prints JSON error with hint", () => {
+  test("search without stash dir prints JSON error with hint", () => {
     const { stderr, status } = runCli("search", "test")
     expect(status).not.toBe(0)
-    expect(stderr).toContain("AKM_STASH_DIR")
+    expect(stderr).toContain("No stash directory found")
     expect(stderr).toContain("hint")
   })
 
@@ -90,5 +92,23 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim())
     expect(parsed.ok).toBe(false)
     expect(parsed.hint).toContain("Quote JSON values")
+  })
+})
+
+describe("config path subcommand", () => {
+  test("config path prints the config file path", () => {
+    const { stdout, status } = runCli("config", "path")
+    expect(status).toBe(0)
+    expect(stdout.trim()).toContain("config.json")
+  })
+
+  test("config path --all returns all path keys", () => {
+    const { stdout, status } = runCli("config", "path", "--all", "--json")
+    expect(status).toBe(0)
+    const parsed = JSON.parse(stdout.trim())
+    expect(parsed).toHaveProperty("config")
+    expect(parsed).toHaveProperty("stash")
+    expect(parsed).toHaveProperty("cache")
+    expect(parsed).toHaveProperty("index")
   })
 })

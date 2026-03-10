@@ -59,31 +59,27 @@ test("resolveRg finds system ripgrep on PATH", () => {
   }
 })
 
-test("resolveRg prefers stash/bin over system PATH", () => {
-  const stashDir = tmpDir()
-  const binDir = path.join(stashDir, "bin")
-  fs.mkdirSync(binDir, { recursive: true })
+test("resolveRg finds rg in provided bin directory", () => {
+  const binDir = tmpDir()
 
   // Create a fake rg binary
   const fakeRg = path.join(binDir, "rg")
   fs.writeFileSync(fakeRg, "#!/bin/sh\necho fake rg\n")
   fs.chmodSync(fakeRg, 0o755)
 
-  const rg = resolveRg(stashDir)
+  const rg = resolveRg(binDir)
   expect(rg).toBe(fakeRg)
 })
 
-test("resolveRg skips non-executable files in stash/bin", () => {
-  const stashDir = tmpDir()
-  const binDir = path.join(stashDir, "bin")
-  fs.mkdirSync(binDir, { recursive: true })
+test("resolveRg skips non-executable files in bin dir", () => {
+  const binDir = tmpDir()
 
   // Create a non-executable rg file
   const fakeRg = path.join(binDir, "rg")
   fs.writeFileSync(fakeRg, "not executable")
   fs.chmodSync(fakeRg, 0o644)
 
-  const rg = resolveRg(stashDir)
+  const rg = resolveRg(binDir)
   // Should fall through to system PATH
   expect(rg).not.toBe(fakeRg)
 })

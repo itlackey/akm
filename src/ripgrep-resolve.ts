@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { IS_WINDOWS } from "./common"
+import { getBinDir } from "./paths"
 
 export const RG_BINARY = IS_WINDOWS ? "rg.exe" : "rg"
 
@@ -50,23 +51,31 @@ function resolveFromPath(): string | null {
 /**
  * Resolve the path to a usable ripgrep binary.
  * Checks in order:
- *   1. stashDir/bin/rg
- *   2. system PATH (rg)
+ *   1. Provided binDir (or default cache bin dir) for rg
+ *   2. System PATH (rg)
  * Returns null if ripgrep is not available.
  */
-export function resolveRg(stashDir?: string): string | null {
-  // Check stash bin directory first
-  if (stashDir) {
-    const stashRg = path.join(stashDir, "bin", RG_BINARY)
-    if (canExecute(stashRg)) return stashRg
+export function resolveRg(binDir?: string): string | null {
+  if (binDir) {
+    const directRg = path.join(binDir, RG_BINARY)
+    if (canExecute(directRg)) return directRg
+  }
+
+  // Check default cache bin dir
+  try {
+    const defaultBinDir = getBinDir()
+    const cachedRg = path.join(defaultBinDir, RG_BINARY)
+    if (canExecute(cachedRg)) return cachedRg
+  } catch {
+    // getBinDir may fail if HOME is not set — fall through
   }
 
   return resolveFromPath()
 }
 
 /**
- * Check if ripgrep is available (either in stash/bin or system PATH).
+ * Check if ripgrep is available (in cache/bin or system PATH).
  */
-export function isRgAvailable(stashDir?: string): boolean {
-  return resolveRg(stashDir) !== null
+export function isRgAvailable(binDir?: string): boolean {
+  return resolveRg(binDir) !== null
 }

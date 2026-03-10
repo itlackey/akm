@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import type { RegistryInstalledEntry, RegistrySource } from "./registry-types"
+import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ export interface LlmConnectionConfig {
 }
 
 export interface AgentikitConfig {
+  /** Path to the working stash directory. Resolved from env → config → default. */
+  stashDir?: string
   /** Whether semantic search is enabled. Default: true */
   semanticSearch: boolean
   /** User-mounted read-only stash directories */
@@ -61,32 +64,14 @@ export const DEFAULT_CONFIG: AgentikitConfig = {
 // ── Paths ───────────────────────────────────────────────────────────────────
 
 export function getConfigDir(
-  env: NodeJS.ProcessEnv = process.env,
-  platform = process.platform,
+  env?: NodeJS.ProcessEnv,
+  platform?: NodeJS.Platform,
 ): string {
-  if (platform === "win32") {
-    const appData = env.APPDATA?.trim()
-    if (appData) return path.join(appData, "agentikit")
-
-    const userProfile = env.USERPROFILE?.trim()
-    if (!userProfile) {
-      throw new Error("Unable to determine config directory. Set APPDATA or USERPROFILE.")
-    }
-    return path.join(userProfile, "AppData", "Roaming", "agentikit")
-  }
-
-  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
-  if (xdgConfigHome) return path.join(xdgConfigHome, "agentikit")
-
-  const home = env.HOME?.trim()
-  if (!home) {
-    throw new Error("Unable to determine config directory. Set XDG_CONFIG_HOME or HOME.")
-  }
-  return path.join(home, ".config", "agentikit")
+  return _getConfigDir(env, platform)
 }
 
 export function getConfigPath(): string {
-  return path.join(getConfigDir(), "config.json")
+  return _getConfigPath()
 }
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
@@ -178,6 +163,10 @@ export function updateConfig(partial: Partial<AgentikitConfig>): AgentikitConfig
 
 function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
   const config: AgentikitConfig = { ...DEFAULT_CONFIG }
+
+  if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
+    config.stashDir = raw.stashDir.trim()
+  }
 
   if (typeof raw.semanticSearch === "boolean") {
     config.semanticSearch = raw.semanticSearch

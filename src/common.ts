@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { TYPE_DIRS } from "./asset-spec"
+import { getConfigPath, getDefaultStashDir } from "./paths"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,22 +20,108 @@ export function isAssetType(type: string): type is AgentikitAssetType {
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 
-export function resolveStashDir(): string {
-  const raw = process.env.AKM_STASH_DIR?.trim()
-  if (!raw) {
-    throw new Error("AKM_STASH_DIR is not set. Set it to your Agentikit stash path.")
+/**
+ * Resolve the stash directory using a three-level fallback chain:
+ *   1. AKM_STASH_DIR environment variable (override for CI/scripts)
+ *   2. stashDir field in config.json
+ *   3. Platform default (~/agentikit or ~/Documents/agentikit on Windows)
+ *
+ * Throws if no valid stash directory is found.
+ */
+export function resolveStashDir(options?: { readOnly?: boolean }): string {
+  // 1. Env var override (for CI, scripts, testing)
+  const envDir = process.env.AKM_STASH_DIR?.trim()
+  if (envDir) {
+    const resolved = validateStashDir(envDir)
+    if (!options?.readOnly) persistStashDirToConfig(resolved)
+    return resolved
   }
+
+  // 2. Config file stashDir field
+  const configStashDir = readStashDirFromConfig()
+  if (configStashDir) return validateStashDir(configStashDir)
+
+  // 3. Platform default — use it if it exists
+  const defaultDir = getDefaultStashDir()
+  if (isValidDirectory(defaultDir)) {
+    return defaultDir
+  }
+
+  throw new Error(
+    `No stash directory found. Run "akm init" to create one at ${defaultDir}, ` +
+    `or set stashDir in ${getConfigPath()}.`
+  )
+}
+
+function validateStashDir(raw: string): string {
   const stashDir = path.resolve(raw)
   let stat: fs.Stats
   try {
     stat = fs.statSync(stashDir)
   } catch {
-    throw new Error(`Unable to read AKM_STASH_DIR at "${stashDir}".`)
+    throw new Error(`Unable to read stash directory at "${stashDir}".`)
   }
   if (!stat.isDirectory()) {
-    throw new Error(`AKM_STASH_DIR must point to a directory: "${stashDir}".`)
+    throw new Error(`Stash path must point to a directory: "${stashDir}".`)
   }
   return stashDir
+}
+
+function isValidDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read stashDir directly from config.json without pulling in the full config
+ * module, to avoid circular dependencies.
+ */
+function readStashDirFromConfig(): string | undefined {
+  try {
+    const configPath = getConfigPath()
+    const text = fs.readFileSync(configPath, "utf8")
+    const raw = JSON.parse(text)
+    if (typeof raw === "object" && raw !== null && typeof raw.stashDir === "string" && raw.stashDir.trim()) {
+      return raw.stashDir.trim()
+    }
+  } catch {
+    // Config doesn't exist or is invalid — fall through
+  }
+  return undefined
+}
+
+/**
+ * Persist stashDir to config.json if not already set, so users can
+ * transition away from relying on the AKM_STASH_DIR env var.
+ */
+function persistStashDirToConfig(stashDir: string): void {
+  try {
+    const configPath = getConfigPath()
+    let raw: Record<string, unknown> = {}
+    try {
+      const text = fs.readFileSync(configPath, "utf8")
+      const parsed = JSON.parse(text)
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        raw = parsed
+      }
+    } catch {
+      // No existing config or invalid — start fresh
+    }
+
+    if (!raw.stashDir) {
+      raw.stashDir = stashDir
+      const dir = path.dirname(configPath)
+      fs.mkdirSync(dir, { recursive: true })
+      const tmpPath = configPath + `.tmp.${process.pid}`
+      fs.writeFileSync(tmpPath, JSON.stringify(raw, null, 2) + "\n", "utf8")
+      fs.renameSync(tmpPath, configPath)
+    }
+  } catch {
+    // Non-fatal: best-effort persistence
+  }
 }
 
 export function toPosix(input: string): string {

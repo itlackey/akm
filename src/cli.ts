@@ -19,7 +19,7 @@ import { agentikitClone } from "./stash-clone"
 import { agentikitSubmit } from "./submit"
 
 import { resolveStashSources } from "./stash-source"
-import { loadConfig, saveConfig } from "./config"
+import { loadConfig, saveConfig, getConfigPath } from "./config"
 import {
   getConfigValue,
   listConfig,
@@ -29,6 +29,8 @@ import {
   unsetConfigValue,
   useProvider,
 } from "./config-cli"
+import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths"
+import { resolveStashDir } from "./common"
 
 // Read version from package.json
 const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json")
@@ -54,9 +56,8 @@ function formatHuman(command: string, result: unknown): string {
 
   switch (command) {
     case "init": {
-      let out = `Stash initialized at ${r.stashDir ?? r.path ?? "unknown"}`
-      if (r.envHint) out += `\n\nTo use akm in this shell session, run:\n\n  ${r.envHint}`
-      if (r.profileUpdated) out += `\n\nFuture shells will pick it up automatically from ${r.profileUpdated}.`
+      let out = `Stash initialized at ${r.stashDir ?? "unknown"}`
+      if (r.configPath) out += `\nConfig saved to ${r.configPath}`
       return out
     }
     case "index": {
@@ -157,22 +158,14 @@ function formatHuman(command: string, result: unknown): string {
 }
 
 const initCommand = defineCommand({
-  meta: { name: "init", description: "Initialize Agent-i-Kit's working stash directory and set AKM_STASH_DIR" },
-  async run() {
+  meta: { name: "init", description: "Initialize Agent-i-Kit's working stash directory and persist stashDir in config" },
+  args: {
+    dir: { type: "string", description: "Custom stash directory path (default: ~/agentikit)" },
+  },
+  async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitInit()
-      console.log(JSON.stringify(result, null, 2))
-      if (result.envHint) {
-        console.error(
-          `\nTo use akm in this shell session, run:\n\n  ${result.envHint}\n`
-        )
-        if (result.shellSetup) {
-          console.error(
-            `\nTo make this permanent, add to your shell profile (~/.bashrc or ~/.zshrc):\n` +
-            result.shellSetup.filter(l => !l.startsWith("#")).map(l => `  ${l}`).join("\n")
-          )
-        }
-      }
+      const result = await agentikitInit({ dir: args.dir })
+      output("init", result)
     })
   },
 })
@@ -327,6 +320,35 @@ const configCommand = defineCommand({
     set: { type: "string", description: "Back-compat alias for updating a key (key=value format)" },
   },
   subCommands: {
+    path: defineCommand({
+      meta: { name: "path", description: "Show paths to config, stash, cache, and index" },
+      args: {
+        all: { type: "boolean", description: "Show all paths (config, stash, cache, index)", default: false },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const configPath = getConfigPath()
+          if (args.all) {
+            let stashDir: string
+            try {
+              stashDir = resolveStashDir({ readOnly: true })
+            } catch {
+              stashDir = getDefaultStashDir() + " (not initialized)"
+            }
+            const cacheDir = getCacheDir()
+            const result = {
+              config: configPath,
+              stash: stashDir,
+              cache: cacheDir,
+              index: getDbPath(),
+            }
+            output("config", result)
+          } else {
+            console.log(configPath)
+          }
+        })
+      },
+    }),
     list: defineCommand({
       meta: { name: "list", description: "List current configuration with effective embedding/LLM settings" },
       run() {
@@ -530,7 +552,7 @@ const main = defineCommand({
 
 const SEARCH_USAGE_MODES: SearchUsageMode[] = ["none", "both", "item", "guide"]
 const SEARCH_SOURCES: SearchSource[] = ["local", "registry", "both"]
-const CONFIG_SUBCOMMAND_SET = new Set(["list", "get", "set", "unset", "providers", "use"])
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset", "providers", "use"])
 
 // citty reads process.argv directly and does not accept a custom argv array,
 // so we must replace process.argv with the normalized version before runMain.
@@ -566,7 +588,7 @@ function classifyExitCode(message: string): number {
   }
   // Configuration errors
   if (
-    message.includes("AKM_STASH_DIR") ||
+    message.includes("No stash directory found") ||
     message.includes("Unable to determine") ||
     message.includes("config")
   ) {
@@ -588,7 +610,7 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
 }
 
 function buildHint(message: string): string | undefined {
-  if (message.includes("AKM_STASH_DIR")) return "Run `akm init` or set AKM_STASH_DIR to a valid directory."
+  if (message.includes("No stash directory found")) return "Run `akm init` to create the default stash, or set stashDir in your config."
   if (message.includes("Either <target> or --all is required")) return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`."
   if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`."
   if (message.includes("No installed registry entry matched target")) return "Run `akm list` to view installed ids/refs, then retry with one of those values."

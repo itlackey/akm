@@ -401,3 +401,49 @@ describe("llm config", () => {
     expect(loadConfig().llm).toEqual(llmConfig)
   })
 })
+
+// ── stashDir config ──────────────────────────────────────────────────────────
+
+describe("stashDir config", () => {
+  test("loads stashDir from config.json", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({ stashDir: "/home/user/my-stash" }),
+    )
+    expect(loadConfig().stashDir).toBe("/home/user/my-stash")
+  })
+
+  test("stashDir is undefined by default", () => {
+    expect(loadConfig().stashDir).toBeUndefined()
+  })
+
+  test("roundtrips stashDir via updateConfig", () => {
+    updateConfig({ stashDir: "/custom/stash" })
+    expect(loadConfig().stashDir).toBe("/custom/stash")
+  })
+
+  test("saves and preserves stashDir", () => {
+    const config = { semanticSearch: true, mountedStashDirs: [], stashDir: "/my/stash" }
+    saveConfig(config)
+    const raw = fs.readFileSync(getConfigPath(), "utf8")
+    const parsed = JSON.parse(raw)
+    expect(parsed.stashDir).toBe("/my/stash")
+    expect(loadConfig().stashDir).toBe("/my/stash")
+  })
+
+  test("ignores non-string stashDir", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({ stashDir: 42 }),
+    )
+    expect(loadConfig().stashDir).toBeUndefined()
+  })
+
+  test("ignores empty stashDir", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({ stashDir: "   " }),
+    )
+    expect(loadConfig().stashDir).toBeUndefined()
+  })
+})

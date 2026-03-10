@@ -6,6 +6,7 @@ import { fetchWithRetry, isWithin, TYPE_DIRS } from "./common"
 import { loadConfig, saveConfig, type AgentikitConfig } from "./config"
 import { parseRegistryRef, resolveRegistryArtifact } from "./registry-resolve"
 import type { ParsedGitRef, ParsedLocalRef, RegistryInstallResult, RegistryInstalledEntry, RegistrySource } from "./registry-types"
+import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths"
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS))
 
@@ -216,15 +217,7 @@ export function removeInstalledRegistryEntry(id: string): AgentikitConfig {
 }
 
 export function getRegistryCacheRootDir(): string {
-  const xdgCache = process.env.XDG_CACHE_HOME?.trim()
-  if (xdgCache) {
-    return path.join(path.resolve(xdgCache), "agentikit", "registry")
-  }
-  const home = process.env.HOME?.trim()
-  if (!home) {
-    throw new Error("Unable to determine cache directory. Set XDG_CACHE_HOME or HOME.")
-  }
-  return path.join(path.resolve(home), ".cache", "agentikit", "registry")
+  return _getRegistryCacheDir()
 }
 
 export function detectStashRoot(extractedDir: string): string {

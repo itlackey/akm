@@ -76,6 +76,8 @@ const LLM_PROVIDER_PRESETS: Record<string, ProviderPreset<LlmConnectionConfig>> 
 
 export function parseConfigValue(key: string, value: string): Partial<AgentikitConfig> {
   switch (key) {
+    case "stashDir":
+      return { stashDir: requireNonEmptyString(value, key) }
     case "semanticSearch":
       if (value !== "true" && value !== "false") {
         throw new Error(`Invalid value for semanticSearch: expected "true" or "false"`)
@@ -100,6 +102,8 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
 
 export function getConfigValue(config: AgentikitConfig, key: string): unknown {
   switch (key) {
+    case "stashDir":
+      return config.stashDir ?? null
     case "semanticSearch":
       return config.semanticSearch
     case "mountedStashDirs":
@@ -137,6 +141,7 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
 
 export function setConfigValue(config: AgentikitConfig, key: string, rawValue: string): AgentikitConfig {
   switch (key) {
+    case "stashDir":
     case "semanticSearch":
     case "mountedStashDirs":
     case "embedding":
@@ -225,6 +230,8 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
 
 export function unsetConfigValue(config: AgentikitConfig, key: string): AgentikitConfig {
   switch (key) {
+    case "stashDir":
+      return { ...config, stashDir: undefined }
     case "embedding":
       return { ...config, embedding: undefined }
     case "embedding.apiKey":
@@ -259,6 +266,7 @@ export function listConfig(config: AgentikitConfig): Record<string, unknown> {
   return {
     ...DEFAULT_CONFIG,
     ...maskSecrets(config),
+    stashDir: config.stashDir ?? null,
     embedding: maskSecrets(getEmbeddingDisplayConfig(config)),
     llm: maskSecrets(getLlmDisplayConfig(config)),
   }

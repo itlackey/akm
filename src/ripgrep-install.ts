@@ -39,14 +39,15 @@ export interface EnsureRgResult {
 }
 
 /**
- * Ensure ripgrep is available. If not found on PATH or in stash/bin,
- * download and install it to stash/bin.
+ * Ensure ripgrep is available. If not found on PATH or in the given binDir,
+ * download and install it to binDir.
  *
+ * @param binDir - Directory to install ripgrep into (e.g. cache/bin from paths.ts)
  * Returns the path to the ripgrep binary and whether it was newly installed.
  */
-export function ensureRg(stashDir: string): EnsureRgResult {
+export function ensureRg(binDir: string): EnsureRgResult {
   // Already available?
-  const existing = resolveRg(stashDir)
+  const existing = resolveRg(binDir)
   if (existing) {
     return { rgPath: existing, installed: false, version: getRgVersion(existing) }
   }
@@ -60,7 +61,6 @@ export function ensureRg(stashDir: string): EnsureRgResult {
     )
   }
 
-  const binDir = path.join(stashDir, "bin")
   if (!fs.existsSync(binDir)) {
     fs.mkdirSync(binDir, { recursive: true })
   }

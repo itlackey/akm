@@ -1063,17 +1063,26 @@ describe("Scenario: Error handling and edge cases", () => {
     try {
       await expect(agentikitSearch({ query: "test" })).rejects.toThrow(/Unable to read/)
     } finally {
-      process.env.AKM_STASH_DIR = orig
+      if (orig === undefined) delete process.env.AKM_STASH_DIR
+      else process.env.AKM_STASH_DIR = orig
     }
   })
 
   test("search with unset AKM_STASH_DIR throws clear error", async () => {
     const orig = process.env.AKM_STASH_DIR
+    const origHome = process.env.HOME
     delete process.env.AKM_STASH_DIR
+    // Point HOME somewhere without an agentikit directory to force the "no stash" error
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-e2e-nohome-"))
+    process.env.HOME = tmpHome
     try {
-      await expect(agentikitSearch({ query: "test" })).rejects.toThrow(/AKM_STASH_DIR is not set/)
+      await expect(agentikitSearch({ query: "test" })).rejects.toThrow(/No stash directory found/)
     } finally {
-      process.env.AKM_STASH_DIR = orig
+      if (orig === undefined) delete process.env.AKM_STASH_DIR
+      else process.env.AKM_STASH_DIR = orig
+      if (origHome === undefined) delete process.env.HOME
+      else process.env.HOME = origHome
+      fs.rmSync(tmpHome, { recursive: true, force: true })
     }
   })
 

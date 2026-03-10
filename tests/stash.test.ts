@@ -474,16 +474,13 @@ test("agentikitShow for tool type returns runCmd and kind", async () => {
 test("agentikitInit returns created false when stash dir already exists", async () => {
   const origHome = process.env.HOME
   const origStashDir = process.env.AKM_STASH_DIR
-  const origXdgDataHome = process.env.XDG_DATA_HOME
   const tmpHome = createTmpDir("agentikit-home-")
-  // Pre-create the agentikit directory at the XDG-compliant location so init finds it existing
-  const stashPath = path.join(tmpHome, ".local", "share", "agentikit")
+  // Pre-create the agentikit directory at the new default location (~/agentikit)
+  const stashPath = path.join(tmpHome, "agentikit")
   fs.mkdirSync(stashPath, { recursive: true })
-  stubRg(stashPath)
 
   process.env.HOME = tmpHome
   delete process.env.AKM_STASH_DIR
-  delete process.env.XDG_DATA_HOME
 
   try {
     const result = await agentikitInit()
@@ -494,8 +491,6 @@ test("agentikitInit returns created false when stash dir already exists", async 
     else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AKM_STASH_DIR
     else process.env.AKM_STASH_DIR = origStashDir
-    if (origXdgDataHome === undefined) delete process.env.XDG_DATA_HOME
-    else process.env.XDG_DATA_HOME = origXdgDataHome
     fs.rmSync(tmpHome, { recursive: true, force: true })
   }
 })
@@ -520,12 +515,9 @@ test("agentikitShow throws unsupported tool extension for .txt file", async () =
 test("agentikitInit creates knowledge directory", async () => {
   const origHome = process.env.HOME
   const origStashDir = process.env.AKM_STASH_DIR
-  const origXdgDataHome = process.env.XDG_DATA_HOME
   const tmpHome = createTmpDir("agentikit-home-")
-  stubRg(path.join(tmpHome, ".local", "share", "agentikit"))
   process.env.HOME = tmpHome
   delete process.env.AKM_STASH_DIR
-  delete process.env.XDG_DATA_HOME
 
   try {
     const result = await agentikitInit()
@@ -535,8 +527,6 @@ test("agentikitInit creates knowledge directory", async () => {
     else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AKM_STASH_DIR
     else process.env.AKM_STASH_DIR = origStashDir
-    if (origXdgDataHome === undefined) delete process.env.XDG_DATA_HOME
-    else process.env.XDG_DATA_HOME = origXdgDataHome
     fs.rmSync(tmpHome, { recursive: true, force: true })
   }
 })
@@ -625,12 +615,9 @@ test("agentikitShow returns runCmd for runnable script", async () => {
 test("agentikitInit writes config outside the stash directory", async () => {
   const origHome = process.env.HOME
   const origStashDir = process.env.AKM_STASH_DIR
-  const origXdgDataHome = process.env.XDG_DATA_HOME
   const tmpHome = createTmpDir("agentikit-home-")
-  stubRg(path.join(tmpHome, ".local", "share", "agentikit"))
   process.env.HOME = tmpHome
   delete process.env.AKM_STASH_DIR
-  delete process.env.XDG_DATA_HOME
 
   try {
     const result = await agentikitInit()
@@ -643,8 +630,6 @@ test("agentikitInit writes config outside the stash directory", async () => {
     else process.env.HOME = origHome
     if (origStashDir === undefined) delete process.env.AKM_STASH_DIR
     else process.env.AKM_STASH_DIR = origStashDir
-    if (origXdgDataHome === undefined) delete process.env.XDG_DATA_HOME
-    else process.env.XDG_DATA_HOME = origXdgDataHome
     fs.rmSync(tmpHome, { recursive: true, force: true })
   }
 })
