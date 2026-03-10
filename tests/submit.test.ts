@@ -146,7 +146,7 @@ process.exit(0)
 
 function writeMockCommand(binDir: string, name: string, scriptBody: string): string {
   const scriptPath = path.join(binDir, `${name}.js`)
-  writeExecutable(scriptPath, `#!${process.execPath}\n${scriptBody.trim()}\n`)
+  writeExecutable(scriptPath, `#!/usr/bin/env node\n${scriptBody.trim()}\n`)
 
   if (process.platform !== "win32") {
     return scriptPath
@@ -155,7 +155,14 @@ function writeMockCommand(binDir: string, name: string, scriptBody: string): str
   const launcherPath = path.join(binDir, `${name}.cmd`)
   fs.writeFileSync(
     launcherPath,
-    `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+    [
+      "@echo off",
+      "setlocal",
+      `set "AKM_MOCK_EXEC=${escapeBatchValue(process.execPath)}"`,
+      `set "AKM_MOCK_SCRIPT=${escapeBatchValue(scriptPath)}"`,
+      "\"%AKM_MOCK_EXEC%\" \"%AKM_MOCK_SCRIPT%\" %*",
+      "",
+    ].join("\r\n"),
     "utf8",
   )
   return launcherPath
@@ -163,6 +170,15 @@ function writeMockCommand(binDir: string, name: string, scriptBody: string): str
 
 function prependToPath(binDir: string): string {
   return `${binDir}${path.delimiter}${process.env.PATH ?? ""}`
+}
+
+function escapeBatchValue(value: string): string {
+  // Batch files treat % as variable expansion, so it must be doubled. Other
+  // cmd metacharacters are escaped with ^ before storing them in SET values.
+  return value.replace(/[%^&|<>"]/g, (char) => {
+    if (char === "%") return "%%"
+    return `^${char}`
+  })
 }
 
 afterEach(() => {

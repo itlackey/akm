@@ -370,6 +370,8 @@ function parseSubmitRef(rawRef: string, cwd = process.cwd()): ParsedNpmRef | Par
   if (looksLikeScopedPackage(trimmed)) {
     return parseRegistryRef(`npm:${trimmed}`)
   }
+  // Existing local directories like "kits/my-kit" should win over owner/repo
+  // shorthand so users can submit relative kit paths without needing "./".
   if (isExistingLocalDirectory(trimmed, cwd)) {
     return parseRegistryRef(path.resolve(cwd, trimmed))
   }
@@ -577,11 +579,19 @@ function buildPullRequestArgs(
 }
 
 function formatCommand(args: string[]): string {
-  return args.map(quoteShellArg).join(" ")
+  const command = args.map(quoteShellArg).join(" ")
+  return process.platform === "win32" ? `& ${command}` : command
 }
 
 function quoteShellArg(value: string): string {
   if (/^[a-zA-Z0-9_./:@#=-]+$/.test(value)) return value
+  if (process.platform === "win32") {
+    // These planned commands are rendered for PowerShell on Windows, where a
+    // single-quoted string escapes embedded single quotes by doubling them.
+    return `'${value.replace(/'/g, "''")}'`
+  }
+  // POSIX shells keep single-quoted strings literal; embed a literal quote by
+  // closing the string, escaping the quote, and reopening it.
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
