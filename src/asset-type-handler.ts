@@ -1,5 +1,6 @@
 import type { StashEntry } from "./metadata"
 import type { LocalSearchHit, ShowResponse, KnowledgeView } from "./stash-types"
+import { UsageError } from "./errors"
 
 // ── Interface ────────────────────────────────────────────────────────────────
 
@@ -56,7 +57,7 @@ export function getHandler(type: string): AssetTypeHandler {
   ensureHandlersRegistered()
   const handler = handlers.get(type)
   if (!handler) {
-    throw new Error(`Unknown asset type: "${type}"`)
+    throw new UsageError(`Unknown asset type: "${type}"`)
   }
   return handler
 }

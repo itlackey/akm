@@ -1,5 +1,6 @@
 import path from "node:path"
 import { type AgentikitAssetType, isAssetType } from "./common"
+import { UsageError } from "./errors"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ export function makeAssetRef(
  */
 export function parseAssetRef(ref: string): AssetRef {
   const trimmed = ref.trim()
-  if (!trimmed) throw new Error("Empty ref.")
+  if (!trimmed) throw new UsageError("Empty ref.")
 
   let origin: string | undefined
   let body = trimmed
@@ -59,19 +60,19 @@ export function parseAssetRef(ref: string): AssetRef {
   if (boundary >= 0) {
     origin = trimmed.slice(0, boundary)
     body = trimmed.slice(boundary + 2)
-    if (!origin) throw new Error("Empty origin in ref.")
+    if (!origin) throw new UsageError("Empty origin in ref.")
   }
 
   const colon = body.indexOf(":")
   if (colon <= 0) {
-    throw new Error(`Invalid ref "${trimmed}". Expected [origin//]type:name`)
+    throw new UsageError(`Invalid ref "${trimmed}". Expected [origin//]type:name`)
   }
 
   const rawType = body.slice(0, colon)
   const rawName = body.slice(colon + 1)
 
   if (!isAssetType(rawType)) {
-    throw new Error(`Invalid asset type: "${rawType}".`)
+    throw new UsageError(`Invalid asset type: "${rawType}".`)
   }
 
   validateName(rawName)
@@ -83,14 +84,14 @@ export function parseAssetRef(ref: string): AssetRef {
 // ── Validation ──────────────────────────────────────────────────────────────
 
 function validateName(name: string): void {
-  if (!name) throw new Error("Empty asset name.")
-  if (name.includes("\0")) throw new Error("Null byte in asset name.")
-  if (/^[A-Za-z]:/.test(name)) throw new Error("Windows drive path in asset name.")
+  if (!name) throw new UsageError("Empty asset name.")
+  if (name.includes("\0")) throw new UsageError("Null byte in asset name.")
+  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.")
 
   const normalized = path.posix.normalize(name.replace(/\\/g, "/"))
-  if (path.posix.isAbsolute(normalized)) throw new Error("Absolute path in asset name.")
+  if (path.posix.isAbsolute(normalized)) throw new UsageError("Absolute path in asset name.")
   if (normalized === ".." || normalized.startsWith("../")) {
-    throw new Error("Path traversal in asset name.")
+    throw new UsageError("Path traversal in asset name.")
   }
 }
 

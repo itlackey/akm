@@ -3,6 +3,7 @@ import path from "node:path"
 import { resolveStashDir } from "./common"
 import { loadConfig } from "./config"
 import type { AgentikitConfig } from "./config"
+import { warn } from "./warn"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -23,9 +24,9 @@ export interface StashSource {
  * The first entry is always the primary stash. Additional entries come
  * from `searchPaths` config and `registry.installed` entries.
  */
-export function resolveStashSources(overrideStashDir?: string): StashSource[] {
+export function resolveStashSources(overrideStashDir?: string, existingConfig?: AgentikitConfig): StashSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir()
-  const config = loadConfig()
+  const config = existingConfig ?? loadConfig()
 
   const sources: StashSource[] = [
     { path: stashDir },
@@ -33,7 +34,7 @@ export function resolveStashSources(overrideStashDir?: string): StashSource[] {
 
   for (const dir of config.searchPaths) {
     if (isSuspiciousStashRoot(dir)) {
-      console.warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`)
+      warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`)
     }
     if (isValidDirectory(dir)) {
       sources.push({ path: dir })
@@ -42,7 +43,7 @@ export function resolveStashSources(overrideStashDir?: string): StashSource[] {
 
   for (const entry of config.registry?.installed ?? []) {
     if (isSuspiciousStashRoot(entry.stashRoot)) {
-      console.warn(`Warning: stash root "${entry.stashRoot}" appears to be a system directory. This may be unintentional.`)
+      warn(`Warning: stash root "${entry.stashRoot}" appears to be a system directory. This may be unintentional.`)
     }
     if (isValidDirectory(entry.stashRoot)) {
       sources.push({

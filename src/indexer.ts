@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { type AgentikitAssetType, resolveStashDir } from "./common"
 import { ASSET_TYPES, TYPE_DIRS, deriveCanonicalAssetName } from "./asset-spec"
+import { warn } from "./warn"
 import {
   type StashFile,
   type StashEntry,
@@ -280,7 +281,7 @@ async function generateEmbeddingsForDb(
     }
     return true
   } catch (error) {
-    console.warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error))
+    warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error))
     return false
   }
 }

@@ -7,6 +7,7 @@
  */
 
 import path from "node:path"
+import { ConfigError } from "./errors"
 
 const IS_WINDOWS = process.platform === "win32"
 
@@ -22,7 +23,7 @@ export function getConfigDir(
 
     const userProfile = env.USERPROFILE?.trim()
     if (!userProfile) {
-      throw new Error("Unable to determine config directory. Set APPDATA or USERPROFILE.")
+      throw new ConfigError("Unable to determine config directory. Set APPDATA or USERPROFILE.")
     }
     return path.join(userProfile, "AppData", "Roaming", "agentikit")
   }
@@ -32,7 +33,7 @@ export function getConfigDir(
 
   const home = env.HOME?.trim()
   if (!home) {
-    throw new Error("Unable to determine config directory. Set XDG_CONFIG_HOME or HOME.")
+    throw new ConfigError("Unable to determine config directory. Set XDG_CONFIG_HOME or HOME.")
   }
   return path.join(home, ".config", "agentikit")
 }
@@ -53,7 +54,7 @@ export function getCacheDir(): string {
 
     const appData = process.env.APPDATA?.trim()
     if (!appData) {
-      throw new Error("Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.")
+      throw new ConfigError("Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.")
     }
     return path.join(appData, "..", "Local", "agentikit")
   }
@@ -94,7 +95,7 @@ export function getDefaultStashDir(): string {
 
   const home = process.env.HOME?.trim()
   if (!home) {
-    throw new Error("Unable to determine default stash directory. Set HOME.")
+    throw new ConfigError("Unable to determine default stash directory. Set HOME.")
   }
   return path.join(home, "agentikit")
 }

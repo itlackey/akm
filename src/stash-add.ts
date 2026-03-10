@@ -5,10 +5,11 @@ import { loadConfig } from "./config"
 import { upsertLockEntry } from "./lockfile"
 import { upsertInstalledRegistryEntry, installRegistryRef } from "./registry-install"
 import type { AddResponse } from "./stash-types"
+import { UsageError } from "./errors"
 
 export async function agentikitAdd(input: { ref: string }): Promise<AddResponse> {
   const ref = input.ref.trim()
-  if (!ref) throw new Error("Install ref or local directory is required.")
+  if (!ref) throw new UsageError("Install ref or local directory is required.")
 
   const stashDir = resolveStashDir()
   const installed = await installRegistryRef(ref)

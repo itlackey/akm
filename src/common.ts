@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { TYPE_DIRS } from "./asset-spec"
 import { getConfigPath, getDefaultStashDir } from "./paths"
+import { ConfigError } from "./errors"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ export function resolveStashDir(options?: { readOnly?: boolean }): string {
     return defaultDir
   }
 
-  throw new Error(
+  throw new ConfigError(
     `No stash directory found. Run "akm init" to create one at ${defaultDir}, ` +
     `or set stashDir in ${getConfigPath()}.`
   )
@@ -59,10 +60,10 @@ function validateStashDir(raw: string): string {
   try {
     stat = fs.statSync(stashDir)
   } catch {
-    throw new Error(`Unable to read stash directory at "${stashDir}".`)
+    throw new ConfigError(`Unable to read stash directory at "${stashDir}".`)
   }
   if (!stat.isDirectory()) {
-    throw new Error(`Stash path must point to a directory: "${stashDir}".`)
+    throw new ConfigError(`Stash path must point to a directory: "${stashDir}".`)
   }
   return stashDir
 }

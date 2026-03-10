@@ -7,6 +7,7 @@ import { getHandler } from "./asset-type-handler"
 import { resolveStashSources, findSourceForPath, isEditable, buildEditHint } from "./stash-source"
 import { buildFileContext, runMatchers, getRenderer, buildRenderContext } from "./file-context"
 import { loadConfig } from "./config"
+import { NotFoundError } from "./errors"
 
 export async function agentikitShow(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
   const parsed = parseAssetRef(input.ref)
@@ -29,14 +30,14 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {
     const installCmd = `akm add ${parsed.origin}`
-    throw new Error(
+    throw new NotFoundError(
       `Stash asset not found for ref: ${parsed.type}:${parsed.name}. ` +
       `Kit "${parsed.origin}" is not installed. Run: ${installCmd}`
     )
   }
 
   if (!assetPath) {
-    throw lastError ?? new Error(`Stash asset not found for ref: ${parsed.type}:${parsed.name}`)
+    throw lastError ?? new NotFoundError(`Stash asset not found for ref: ${parsed.type}:${parsed.name}`)
   }
 
   const source = findSourceForPath(assetPath, allSources)

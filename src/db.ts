@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite"
 import type { StashEntry } from "./metadata"
 import { cosineSimilarity, type EmbeddingVector } from "./embedder"
 import { getDbPath as _getDbPath } from "./paths"
+import { warn } from "./warn"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
     const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number } | undefined
     const count = row?.cnt ?? 0
     if (count >= VEC_FALLBACK_THRESHOLD) {
-      console.warn(
+      warn(
         "Semantic search is using JS fallback for %d entries. Install sqlite-vec for faster performance.\n  See: %s",
         count,
         VEC_DOCS_URL,

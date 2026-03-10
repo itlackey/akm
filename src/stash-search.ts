@@ -14,8 +14,10 @@ import type {
   SearchSource,
   SearchUsageMode,
 } from "./stash-types"
-import { loadConfig } from "./config"
+import { loadConfig, type AgentikitConfig } from "./config"
 import { searchRegistry } from "./registry-search"
+import { UsageError } from "./errors"
+import { warn } from "./warn"
 import {
   openDatabase,
   closeDatabase,
@@ -53,7 +55,8 @@ export async function agentikitSearch(input: {
   const limit = normalizeLimit(input.limit)
   const usageMode = parseSearchUsageMode(input.usage)
   const source = parseSearchSource(input.source)
-  const sources = resolveStashSources()
+  const config = loadConfig()
+  const sources = resolveStashSources(undefined, config)
   if (sources.length === 0) {
     return {
       stashDir: "",
@@ -73,9 +76,9 @@ export async function agentikitSearch(input: {
       usageMode,
       stashDir,
       sources,
+      config,
     })
 
-  const config = loadConfig()
   const registryResult = source === "local"
     ? undefined
     : await searchRegistry(query, { limit, registryUrls: config.registryUrls })
@@ -145,9 +148,9 @@ async function searchLocal(input: {
   usageMode: SearchUsageMode
   stashDir: string
   sources: StashSource[]
+  config: AgentikitConfig
 }): Promise<{ hits: LocalSearchHit[]; usageGuide?: Partial<Record<AgentikitAssetType, string[]>>; tip?: string; warnings?: string[]; embedMs?: number; rankMs?: number }> {
-  const { query, searchType, limit, usageMode, stashDir, sources } = input
-  const config = loadConfig()
+  const { query, searchType, limit, usageMode, stashDir, sources, config } = input
   const allStashDirs = sources.map((s) => s.path)
 
   // Try to open the database
@@ -174,7 +177,7 @@ async function searchLocal(input: {
       }
     }
   } catch (error) {
-    console.warn("Search index unavailable, falling back to substring search:", error instanceof Error ? error.message : String(error))
+    warn("Search index unavailable, falling back to substring search:", error instanceof Error ? error.message : String(error))
   }
 
   const hits = allStashDirs
@@ -379,7 +382,7 @@ async function tryVecScores(
     }
     return scores
   } catch (error) {
-    console.warn("Vector search failed, skipping:", error instanceof Error ? error.message : String(error))
+    warn("Vector search failed, skipping:", error instanceof Error ? error.message : String(error))
     return null
   }
 }
@@ -516,13 +519,13 @@ function parseSearchUsageMode(mode: SearchUsageMode | undefined): SearchUsageMod
     return mode
   }
   if (typeof mode === "undefined") return "both"
-  throw new Error(`Invalid usage mode: ${String(mode)}. Expected one of: none|both|item|guide`)
+  throw new UsageError(`Invalid usage mode: ${String(mode)}. Expected one of: none|both|item|guide`)
 }
 
 function parseSearchSource(source: SearchSource | undefined): SearchSource {
   if (source === "local" || source === "registry" || source === "both") return source
   if (typeof source === "undefined") return "local"
-  throw new Error(`Invalid search source: ${String(source)}. Expected one of: local|registry|both`)
+  throw new UsageError(`Invalid search source: ${String(source)}. Expected one of: local|registry|both`)
 }
 
 function mergeSearchHits(localHits: LocalSearchHit[], registryHits: RegistrySearchResultHit[], limit: number): SearchHit[] {

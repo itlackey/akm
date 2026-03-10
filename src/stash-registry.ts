@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import { resolveStashDir } from "./common"
 import { loadConfig } from "./config"
+import { UsageError, NotFoundError } from "./errors"
 import { agentikitIndex } from "./indexer"
 import { removeLockEntry, upsertLockEntry } from "./lockfile"
 import {
@@ -37,7 +38,7 @@ export async function agentikitList(input?: { stashDir?: string }): Promise<List
 
 export async function agentikitRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim()
-  if (!target) throw new Error("Target is required.")
+  if (!target) throw new UsageError("Target is required.")
 
   const stashDir = input.stashDir ?? resolveStashDir()
   const config = loadConfig()
@@ -148,11 +149,11 @@ export async function agentikitUpdate(input?: {
 
 function selectTargets(installed: RegistryInstalledEntry[], target: string | undefined, all: boolean): RegistryInstalledEntry[] {
   if (all && target) {
-    throw new Error("Specify either <target> or --all, not both.")
+    throw new UsageError("Specify either <target> or --all, not both.")
   }
   if (all) return installed
   if (!target) {
-    throw new Error("Either <target> or --all is required.")
+    throw new UsageError("Either <target> or --all is required.")
   }
   return [resolveInstalledTarget(installed, target)]
 }
@@ -175,7 +176,7 @@ function resolveInstalledTarget(installed: RegistryInstalledEntry[], target: str
     if (byParsedId) return byParsedId
   }
 
-  throw new Error(`No installed registry entry matched target: ${target}`)
+  throw new NotFoundError(`No installed registry entry matched target: ${target}`)
 }
 
 function toInstalledEntry(status: RegistryInstallStatus): RegistryInstalledEntry {

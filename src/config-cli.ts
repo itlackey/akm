@@ -5,6 +5,7 @@ import {
   type LlmConnectionConfig,
 } from "./config"
 import { EMBEDDING_DIM } from "./db"
+import { UsageError, ConfigError } from "./errors"
 
 export type ConfigProviderScope = "embedding" | "llm"
 
@@ -80,23 +81,23 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       return { stashDir: requireNonEmptyString(value, key) }
     case "semanticSearch":
       if (value !== "true" && value !== "false") {
-        throw new Error(`Invalid value for semanticSearch: expected "true" or "false"`)
+        throw new UsageError(`Invalid value for semanticSearch: expected "true" or "false"`)
       }
       return { semanticSearch: value === "true" }
     case "searchPaths":
       try {
         const parsed = JSON.parse(value)
-        if (!Array.isArray(parsed)) throw new Error("expected JSON array")
+        if (!Array.isArray(parsed)) throw new UsageError("expected JSON array")
         return { searchPaths: parsed.filter((d: unknown): d is string => typeof d === "string") }
       } catch {
-        throw new Error(`Invalid value for searchPaths: expected JSON array (e.g. '["/path/a","/path/b"]')`)
+        throw new UsageError(`Invalid value for searchPaths: expected JSON array (e.g. '["/path/a","/path/b"]')`)
       }
     case "embedding":
       return { embedding: parseEmbeddingConnectionValue(value) }
     case "llm":
       return { llm: parseLlmConnectionValue(value) }
     default:
-      throw new Error(`Unknown config key: ${key}`)
+      throw new UsageError(`Unknown config key: ${key}`)
   }
 }
 
@@ -135,7 +136,7 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
     case "llm.apiKey":
       return maskSecret(getLlmDisplayConfig(config).apiKey) ?? null
     default:
-      throw new Error(`Unknown config key: ${key}`)
+      throw new UsageError(`Unknown config key: ${key}`)
   }
 }
 
@@ -224,7 +225,7 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
         },
       }
     default:
-      throw new Error(`Unknown config key: ${key}`)
+      throw new UsageError(`Unknown config key: ${key}`)
   }
 }
 
@@ -258,7 +259,7 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
       if (!config.llm) return config
       return { ...config, llm: omitKey(config.llm, "provider") }
     default:
-      throw new Error(`Unknown or unsupported unset key: ${key}`)
+      throw new UsageError(`Unknown or unsupported unset key: ${key}`)
   }
 }
 
@@ -287,7 +288,7 @@ export function useProvider(config: AgentikitConfig, scope: ConfigProviderScope,
   if (scope === "embedding") {
     const preset = EMBEDDING_PROVIDER_PRESETS[providerName]
     if (!preset) {
-      throw new Error(`Unknown embedding provider: ${providerName}`)
+      throw new UsageError(`Unknown embedding provider: ${providerName}`)
     }
     if (!preset.config) {
       return { ...config, embedding: undefined }
@@ -297,7 +298,7 @@ export function useProvider(config: AgentikitConfig, scope: ConfigProviderScope,
 
   const preset = LLM_PROVIDER_PRESETS[providerName]
   if (!preset) {
-    throw new Error(`Unknown llm provider: ${providerName}`)
+    throw new UsageError(`Unknown llm provider: ${providerName}`)
   }
   if (!preset.config) {
     return { ...config, llm: undefined }
@@ -396,41 +397,41 @@ function parseJsonObject(
   try {
     parsed = JSON.parse(value)
   } catch {
-    throw new Error(
+    throw new UsageError(
       `Invalid value for ${key}: expected JSON object with endpoint and model`
       + ` (e.g. '{"endpoint":"${example.endpoint}","model":"${example.model}"}')`,
     )
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Invalid value for ${key}: expected a JSON object`)
+    throw new UsageError(`Invalid value for ${key}: expected a JSON object`)
   }
   return parsed as Record<string, unknown>
 }
 
 function asRequiredString(value: unknown, key: string, field: string): string {
   if (typeof value !== "string" || !value) {
-    throw new Error(`Invalid value for ${key}: "${field}" is a required string field`)
+    throw new UsageError(`Invalid value for ${key}: "${field}" is a required string field`)
   }
   return value
 }
 
 function requireEmbeddingConfig(config: AgentikitConfig): EmbeddingConnectionConfig {
   if (!config.embedding) {
-    throw new Error("Embedding provider is using the built-in local default. Run `akm config use embedding <provider>` first.")
+    throw new ConfigError("Embedding provider is using the built-in local default. Run `akm config use embedding <provider>` first.")
   }
   return config.embedding
 }
 
 function requireLlmConfig(config: AgentikitConfig): LlmConnectionConfig {
   if (!config.llm) {
-    throw new Error("LLM provider is disabled. Run `akm config use llm <provider>` first.")
+    throw new ConfigError("LLM provider is disabled. Run `akm config use llm <provider>` first.")
   }
   return config.llm
 }
 
 function requireNonEmptyString(value: string, key: string): string {
   if (!value) {
-    throw new Error(`Invalid value for ${key}: expected a non-empty string`)
+    throw new UsageError(`Invalid value for ${key}: expected a non-empty string`)
   }
   return value
 }
@@ -438,7 +439,7 @@ function requireNonEmptyString(value: string, key: string): string {
 function parseNumber(value: string, key: string): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid value for ${key}: expected a number`)
+    throw new UsageError(`Invalid value for ${key}: expected a number`)
   }
   return parsed
 }
@@ -446,18 +447,18 @@ function parseNumber(value: string, key: string): number {
 function parsePositiveInteger(value: string, key: string): number {
   const trimmed = value.trim()
   if (!/^[1-9]\d*$/.test(trimmed)) {
-    throw new Error(`Invalid value for ${key}: expected a positive integer`)
+    throw new UsageError(`Invalid value for ${key}: expected a positive integer`)
   }
   const parsed = Number(trimmed)
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid value for ${key}: expected a positive integer`)
+    throw new UsageError(`Invalid value for ${key}: expected a positive integer`)
   }
   return parsed
 }
 
 function parseUnknownNumber(value: unknown, key: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Invalid value for ${key}: expected a number`)
+    throw new UsageError(`Invalid value for ${key}: expected a number`)
   }
   return value
 }
@@ -469,7 +470,7 @@ function parseUnknownPositiveInteger(value: unknown, key: string): number {
     !Number.isInteger(value) ||
     value <= 0
   ) {
-    throw new Error(`Invalid value for ${key}: expected a positive integer`)
+    throw new UsageError(`Invalid value for ${key}: expected a positive integer`)
   }
   return value
 }

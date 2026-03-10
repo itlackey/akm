@@ -26,6 +26,8 @@ import {
 } from "./config-cli"
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths"
 import { resolveStashDir } from "./common"
+import { ConfigError, UsageError, NotFoundError } from "./errors"
+import { setQuiet } from "./warn"
 
 // Read version from package.json
 const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json")
@@ -299,7 +301,7 @@ const showCommand = defineCommand({
             view = { mode: args.view }
             break
           default:
-            throw new Error(`Unknown view mode: ${args.view}. Expected one of: full|toc|frontmatter|section|lines`)
+            throw new UsageError(`Unknown view mode: ${args.view}. Expected one of: full|toc|frontmatter|section|lines`)
         }
       }
       const result = await agentikitShow({ ref: args.ref, view })
@@ -440,7 +442,7 @@ const configCommand = defineCommand({
       if (args.set) {
         const eqIndex = args.set.indexOf("=")
         if (eqIndex === -1) {
-          throw new Error("--set expects key=value format")
+          throw new UsageError("--set expects key=value format")
         }
         const key = args.set.slice(0, eqIndex)
         const value = args.set.slice(eqIndex + 1)
@@ -529,6 +531,7 @@ const main = defineCommand({
   },
   args: {
     json: { type: "boolean", description: "Output in JSON format", default: false },
+    quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
     init: initCommand,
@@ -553,19 +556,17 @@ const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset", "p
 
 // citty reads process.argv directly and does not accept a custom argv array,
 // so we must replace process.argv with the normalized version before runMain.
-const normalizedArgv = [...process.argv]
-normalizeConfigArgv(normalizedArgv)
-process.argv = normalizedArgv
+process.argv = normalizeConfigArgv(process.argv)
 runMain(main)
 
 function parseSearchUsageMode(value: string): SearchUsageMode {
   if ((SEARCH_USAGE_MODES as string[]).includes(value)) return value as SearchUsageMode
-  throw new Error(`Invalid value for --usage: ${value}. Expected one of: ${SEARCH_USAGE_MODES.join("|")}`)
+  throw new UsageError(`Invalid value for --usage: ${value}. Expected one of: ${SEARCH_USAGE_MODES.join("|")}`)
 }
 
 function parseSearchSource(value: string): SearchSource {
   if ((SEARCH_SOURCES as string[]).includes(value)) return value as SearchSource
-  throw new Error(`Invalid value for --source: ${value}. Expected one of: ${SEARCH_SOURCES.join("|")}`)
+  throw new UsageError(`Invalid value for --source: ${value}. Expected one of: ${SEARCH_SOURCES.join("|")}`)
 }
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -573,34 +574,24 @@ const EXIT_GENERAL = 1
 const EXIT_USAGE = 2
 const EXIT_CONFIG = 78
 
-function classifyExitCode(message: string): number {
-  // Usage / argument errors
-  if (
-    message.includes("required") ||
-    message.includes("Invalid value for") ||
-    message.includes("Expected one of") ||
-    message.includes("expected JSON object")
-  ) {
-    return EXIT_USAGE
-  }
-  // Configuration errors
-  if (
-    message.includes("No stash directory found") ||
-    message.includes("Unable to determine") ||
-    message.includes("config")
-  ) {
-    return EXIT_CONFIG
-  }
+function classifyExitCode(error: unknown): number {
+  if (error instanceof UsageError) return EXIT_USAGE
+  if (error instanceof ConfigError) return EXIT_CONFIG
+  if (error instanceof NotFoundError) return EXIT_GENERAL
   return EXIT_GENERAL
 }
 
 async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
   try {
+    // Apply --quiet flag early so warnings inside the command are suppressed
+    if (process.argv.includes("--quiet") || process.argv.includes("-q")) {
+      setQuiet(true)
+    }
     await fn()
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     const hint = buildHint(message)
-    const exitCode = classifyExitCode(message)
+    const exitCode = classifyExitCode(error)
     console.error(JSON.stringify({ ok: false, error: message, hint }, null, 2))
     process.exit(exitCode)
   }
@@ -635,7 +626,7 @@ function buildGhInstallHint(): string {
 
 function parseProviderScope(value: string): "embedding" | "llm" {
   if (value === "embedding" || value === "llm") return value
-  throw new Error(`Invalid provider scope: ${value}. Expected one of: embedding|llm`)
+  throw new UsageError(`Invalid provider scope: ${value}. Expected one of: embedding|llm`)
 }
 
 function hasConfigSubcommand(args: Record<string, unknown>): boolean {
@@ -648,44 +639,38 @@ function hasConfigSubcommand(args: Record<string, unknown>): boolean {
  * `akm config llm.maxTokens 512` and `akm config --get llm.maxTokens`
  * are normalized into the existing config subcommands.
  *
- * Operates on a copy of process.argv; the caller replaces process.argv
- * with the normalized result (safer than in-place splice).
+ * Returns a new array; the input is never modified.
  */
-function normalizeConfigArgv(argv: string[]): void {
-  // Global flags (like --json) should not be treated as config subcommand arguments.
+function normalizeConfigArgv(argv: string[]): string[] {
+  // Global flags (like --json, --quiet) should not be treated as config subcommand arguments.
   // We strip them from the analysis portion, normalize, then re-append them.
-  const GLOBAL_FLAGS = new Set(["--json"])
+  const GLOBAL_FLAGS = new Set(["--json", "--quiet", "-q"])
   const globalFlags = argv.slice(3).filter((a) => GLOBAL_FLAGS.has(a))
   const configArgs = argv.slice(3).filter((a) => !GLOBAL_FLAGS.has(a))
 
   const [command, argAfterCommand, argAfterKey, ...rest] = [argv[2], ...configArgs]
-  if (command !== "config") return
-  if (!argAfterCommand) return
+  if (command !== "config") return argv
+  if (!argAfterCommand) return argv
 
-  const replaceArgs = (...newArgs: string[]) => {
-    argv.splice(3, argv.length - 3, ...newArgs, ...globalFlags)
-  }
+  const prefix = argv.slice(0, 3)
+  const buildResult = (...newArgs: string[]) => [...prefix, ...newArgs, ...globalFlags]
 
   if (argAfterCommand === "--list") {
-    replaceArgs("list")
-    return
+    return buildResult("list")
   }
   if (argAfterCommand === "--get" && argAfterKey) {
-    replaceArgs("get", argAfterKey, ...rest)
-    return
+    return buildResult("get", argAfterKey, ...rest)
   }
   if (argAfterCommand === "--unset" && argAfterKey) {
-    replaceArgs("unset", argAfterKey, ...rest)
-    return
+    return buildResult("unset", argAfterKey, ...rest)
   }
-  if (argAfterCommand.startsWith("-")) return
-  if (CONFIG_SUBCOMMAND_SET.has(argAfterCommand)) return
+  if (argAfterCommand.startsWith("-")) return argv
+  if (CONFIG_SUBCOMMAND_SET.has(argAfterCommand)) return argv
 
   // A single arg after `config` behaves like `git config <key>` and reads the value.
   if (argAfterKey === undefined) {
-    replaceArgs("get", argAfterCommand)
-    return
+    return buildResult("get", argAfterCommand)
   }
 
-  replaceArgs("set", argAfterCommand, argAfterKey, ...rest)
+  return buildResult("set", argAfterCommand, argAfterKey, ...rest)
 }
