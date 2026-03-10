@@ -15,7 +15,8 @@ import path from "node:path"
 import { agentikitSearch } from "../src/stash-search"
 import { agentikitIndex, buildSearchText } from "../src/indexer"
 import { saveConfig } from "../src/config"
-import { searchFts, openDatabase, closeDatabase, getDbPath, getAllEntries, getEntryCount } from "../src/db"
+import { searchFts, openDatabase, closeDatabase, getAllEntries, getEntryCount } from "../src/db"
+import { getDbPath } from "../src/paths"
 import type { LocalSearchHit } from "../src/stash-types"
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
@@ -297,12 +298,12 @@ describe("Issue #36: FTS5 query sanitization", () => {
 
     await buildTestIndex(stashDir)
 
-    // Single char "x" should be filtered out by sanitizeFtsQuery
+    // Single char tokens are now allowed by sanitizeFtsQuery
     const db = openDatabase()
     try {
       const results = searchFts(db, "x", 10)
-      // "x" is only 1 character, so sanitizeFtsQuery filters it → empty query → no results
-      expect(results.length).toBe(0)
+      // "x" is a valid single-character token, so it should match
+      expect(results.length).toBeGreaterThanOrEqual(1)
     } finally {
       closeDatabase(db)
     }

@@ -14,7 +14,6 @@ import type { LlmConnectionConfig } from "./config"
 import {
   openDatabase,
   closeDatabase,
-  getDbPath,
   getMeta,
   setMeta,
   upsertEntry,
@@ -28,6 +27,7 @@ import {
   DB_VERSION,
   type DbIndexedEntry,
 } from "./db"
+import { getDbPath } from "./paths"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -326,9 +326,9 @@ function isDirStale(
   // Check .stash.json modification time
   const stashPath = path.join(dirPath, ".stash.json")
   try {
-    if (fs.existsSync(stashPath) && fs.statSync(stashPath).mtimeMs > builtAtMs) return true
+    if (fs.statSync(stashPath).mtimeMs > builtAtMs) return true
   } catch {
-    // ignore
+    // file doesn't exist, not stale
   }
 
   return false

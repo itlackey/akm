@@ -53,7 +53,14 @@ export function loadStashFile(dirPath: string): StashFile | null {
     const entries: StashEntry[] = []
     for (const e of raw.entries) {
       const validated = validateStashEntry(e)
-      if (validated) entries.push(validated)
+      if (validated) {
+        entries.push(validated)
+      } else {
+        const name = typeof e === "object" && e !== null && typeof (e as Record<string, unknown>).name === "string"
+          ? (e as Record<string, unknown>).name
+          : "(unknown)"
+        console.warn(`Warning: Skipping invalid entry "${name}" in ${filePath}`)
+      }
     }
     return entries.length > 0 ? { entries } : null
   } catch {
@@ -171,7 +178,7 @@ export function generateMetadata(
       source: "filename",
     }
 
-    // Priority 1: package.json metadata
+    // Priority 1: Package.json metadata
     if (pkgMeta) {
       if (pkgMeta.description && !entry.description) {
         entry.description = pkgMeta.description
@@ -181,7 +188,7 @@ export function generateMetadata(
       if (pkgMeta.keywords && pkgMeta.keywords.length > 0) entry.tags = normalizeTerms(pkgMeta.keywords)
     }
 
-    // Priority 2: Frontmatter (for .md files — overrides package.json description)
+    // Priority 2: Frontmatter (for .md files -- overrides package.json description)
     if (ext === ".md") {
       const fm = extractFrontmatterDescription(file)
       if (fm) {
@@ -191,7 +198,7 @@ export function generateMetadata(
       }
     }
 
-    // Type-specific metadata extraction (e.g. TOC for knowledge, comments for tools/scripts)
+    // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for tools/scripts)
     const handler = tryGetHandler(assetType)
     if (handler?.extractTypeMetadata) {
       handler.extractTypeMetadata(entry, file, ext)

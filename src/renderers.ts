@@ -7,7 +7,6 @@
  * importing this module is sufficient to make them available.
  */
 
-import fs from "node:fs"
 import path from "node:path"
 import { registerRenderer } from "./file-context"
 import type { AssetRenderer, RenderContext } from "./file-context"
@@ -227,8 +226,7 @@ const knowledgeMdRenderer: AssetRenderer = {
 
   extractMetadata(entry: StashEntry, ctx: RenderContext): void {
     try {
-      const mdContent = fs.readFileSync(ctx.absPath, "utf8")
-      const toc = parseMarkdownToc(mdContent)
+      const toc = parseMarkdownToc(ctx.content())
       if (toc.headings.length > 0) entry.toc = toc.headings
     } catch {
       // Non-fatal: skip TOC if file can't be read

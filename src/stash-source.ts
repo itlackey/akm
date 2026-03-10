@@ -124,15 +124,15 @@ export function buildEditHint(filePath: string, assetType: string, assetName: st
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
-const SUSPICIOUS_ROOTS = new Set(['/', '/etc', '/bin', '/sbin', '/usr', '/var', '/tmp', '/dev', '/proc', '/sys'])
+const SUSPICIOUS_ROOTS = new Set(["/", "/etc", "/bin", "/sbin", "/usr", "/var", "/tmp", "/dev", "/proc", "/sys"])
 
 function isSuspiciousStashRoot(dir: string): boolean {
   const resolved = path.resolve(dir)
-  const normalized = process.platform === 'win32' ? resolved.toLowerCase() : resolved
+  const normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved
   if (SUSPICIOUS_ROOTS.has(normalized)) return true
-  if (process.platform === 'win32') {
+  if (process.platform === "win32") {
     // Check for Windows system directories
-    const winDir = (process.env.SystemRoot || 'C:\\Windows').toLowerCase()
+    const winDir = (process.env.SystemRoot || "C:\\Windows").toLowerCase()
     if (normalized === winDir || normalized.startsWith(winDir + path.sep)) return true
   }
   return false

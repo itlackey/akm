@@ -19,7 +19,6 @@ import { searchRegistry } from "./registry-search"
 import {
   openDatabase,
   closeDatabase,
-  getDbPath,
   getMeta,
   searchFts,
   searchVec,
@@ -28,6 +27,7 @@ import {
   getEntryById,
   type DbSearchResult,
 } from "./db"
+import { getDbPath } from "./paths"
 import { tryGetHandler } from "./asset-type-handler"
 import { type StashSource, resolveStashSources, findSourceForPath, isEditable, buildEditHint } from "./stash-source"
 
@@ -124,6 +124,7 @@ export async function agentikitSearch(input: {
   }
 
   const mergedHits = mergeSearchHits(localResult?.hits ?? [], registryHits, limit)
+  const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])]
 
   return {
     stashDir,
@@ -131,9 +132,7 @@ export async function agentikitSearch(input: {
     hits: mergedHits,
     usageGuide: localResult?.usageGuide,
     tip: mergedHits.length === 0 ? "No matching stash assets or registry entries were found." : undefined,
-    warnings: [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])].length
-      ? [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])]
-      : undefined,
+    warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   }
 }

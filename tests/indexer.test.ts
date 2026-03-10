@@ -3,7 +3,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { agentikitIndex, buildSearchText } from "../src/indexer"
-import { openDatabase, closeDatabase, getDbPath, getMeta, getAllEntries } from "../src/db"
+import { openDatabase, closeDatabase, getMeta, getAllEntries } from "../src/db"
+import { getDbPath } from "../src/paths"
 
 // Each test gets a fresh database
 beforeEach(() => {

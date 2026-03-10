@@ -4,7 +4,7 @@ import { createRequire } from "node:module"
 import { Database } from "bun:sqlite"
 import type { StashEntry } from "./metadata"
 import { cosineSimilarity, type EmbeddingVector } from "./embedder"
-import { getDbPath as _getDbPath } from "./paths"
+import { getDbPath } from "./paths"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,12 +35,6 @@ export interface DbVecResult {
 
 export const DB_VERSION = 6
 export const EMBEDDING_DIM = 384
-
-// ── Path ────────────────────────────────────────────────────────────────────
-
-export function getDbPath(): string {
-  return _getDbPath()
-}
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
@@ -417,7 +411,7 @@ function sanitizeFtsQuery(query: string): string {
   const tokens = query
     .replace(/[^a-zA-Z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 1)
+    .filter((t) => t.length >= 1)
   if (tokens.length === 0) return ""
   // Use unquoted tokens so the porter stemmer can normalize word forms
   return tokens.join(" ")

@@ -48,7 +48,7 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
   return {
     currentVersion,
     latestVersion,
-    updateAvailable: latestVersion !== "" && latestVersion !== currentVersion,
+    updateAvailable: latestVersion !== "" && Bun.semver.order(currentVersion, latestVersion) < 0,
     installMethod,
   }
 }
