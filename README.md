@@ -235,7 +235,6 @@ akm clone tool:deploy.sh        # Fork an asset into your stash for editing
 2. Add `"akm"` to `keywords` in `package.json` or add the `akm` topic to your GitHub repo
 3. Optionally add `agentikit.include` to control what gets installed
 4. Publish to npm or push to GitHub
-5. Submit to the registry with `akm submit` to appear in `akm search --source registry`
 
 See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
 

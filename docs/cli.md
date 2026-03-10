@@ -94,35 +94,6 @@ akm add ./path/to/local/kit
 
 See [registry.md](registry.md) for the full install flow.
 
-### submit
-
-Create a registry submission PR for a public npm package or GitHub repo.
-
-```sh
-akm submit
-akm submit owner/repo
-akm submit @scope/kit --name "My Kit" --description "..." --tags skill,tool
-akm submit --dry-run
-```
-
-If you run `akm submit` from a local kit directory, akm reads `package.json`,
-infers a public npm or GitHub ref, generates a `manual-entries.json` entry,
-forks `itlackey/agentikit-registry`, and opens a pull request with `gh`.
-
-| Flag | Description |
-| --- | --- |
-| `--name` | Override the display name |
-| `--description` | Override the one-line summary |
-| `--tags` | Comma-separated tags |
-| `--asset-types` | Comma-separated asset types (`tool`, `skill`, `command`, `agent`, `knowledge`, `script`) |
-| `--author` | Override the author |
-| `--license` | Override the license |
-| `--homepage` | Override the homepage URL |
-| `--dry-run` | Validate the entry and print the git/gh commands without creating a PR |
-| `--cleanup-fork` | Show the fork cleanup command (run it after the PR is merged) |
-
-`akm submit` requires GitHub CLI (`gh`) and an authenticated GitHub session.
-
 ### list
 
 Show installed kits and their status.
