@@ -10,6 +10,8 @@ export {
   resolveStashSources,
   resolveAllStashDirs,
   findSourceForPath,
+  isEditable,
+  buildEditHint,
 } from "./src/stash"
 export { agentikitInit } from "./src/init"
 export type { InitResponse } from "./src/init"

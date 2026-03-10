@@ -4,7 +4,7 @@ import { TYPE_DIRS } from "./asset-spec"
 import { parseAssetRef, makeAssetRef } from "./stash-ref"
 import { resolveSourcesForOrigin, isRemoteOrigin } from "./origin-resolve"
 import { resolveAssetPath } from "./stash-resolve"
-import { resolveStashSources, findSourceForPath, type StashSource, type StashSourceKind } from "./stash-source"
+import { resolveStashSources, findSourceForPath, type StashSource } from "./stash-source"
 import { installRegistryRef } from "./registry-install"
 
 export interface CloneOptions {
@@ -21,7 +21,6 @@ export interface CloneOptions {
 export interface CloneResponse {
   source: {
     path: string
-    sourceKind: StashSourceKind
     registryId?: string
   }
   destination: {
@@ -64,7 +63,6 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
       kind: "installed",
       path: installResult.stashRoot,
       registryId: installResult.id,
-      writable: false,
     }
     searchSources = [syntheticSource]
     allSources = [...allSources, syntheticSource]
@@ -91,7 +89,6 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
   }
 
   const sourceSource = findSourceForPath(sourcePath, allSources)
-  const sourceKind = sourceSource?.kind ?? "working"
 
   const destName = options.newName ?? parsed.name
   const typeDir = TYPE_DIRS[parsed.type]
@@ -137,7 +134,7 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
     const ref = makeAssetRef(parsed.type, destName, "local")
 
     return {
-      source: { path: sourcePath, sourceKind, registryId: sourceSource?.registryId },
+      source: { path: sourcePath, registryId: sourceSource?.registryId },
       destination: { path: destPath, ref },
       overwritten,
       ...(remoteFetched ? { remoteFetched } : {}),
@@ -159,7 +156,7 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
   const ref = makeAssetRef(parsed.type, destName, "local")
 
   return {
-    source: { path: sourcePath, sourceKind, registryId: sourceSource?.registryId },
+    source: { path: sourcePath, registryId: sourceSource?.registryId },
     destination: { path: destPath, ref },
     overwritten,
     ...(remoteFetched ? { remoteFetched } : {}),

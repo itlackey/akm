@@ -122,9 +122,9 @@ describe("agentikitShow mounted stash", () => {
   })
 })
 
-// ── sourceKind and editable flags ────────────────────────────────────────────
+// ── editability flags ────────────────────────────────────────────────────────
 
-describe("agentikitShow sourceKind and editable", () => {
+describe("agentikitShow editability", () => {
   test("working stash asset has editable true", async () => {
     writeFile(
       path.join(stashDir, "tools", "local.sh"),
@@ -137,9 +137,10 @@ describe("agentikitShow sourceKind and editable", () => {
 
     expect(result.type).toBe("script")
     expect(result.editable).toBe(true)
+    expect(result.editHint).toBeUndefined()
   })
 
-  test("mounted stash asset has editable false", async () => {
+  test("mounted stash asset has editable true (user controls mounted dirs)", async () => {
     const mountedStashDir = createTmpDir("agentikit-show-mounted-editable-")
     writeFile(
       path.join(mountedStashDir, "tools", "remote.sh"),
@@ -148,14 +149,14 @@ describe("agentikitShow sourceKind and editable", () => {
 
     saveConfig({ semanticSearch: false, mountedStashDirs: [mountedStashDir] })
 
-    // The asset only exists in the mounted dir, not in working stash.
     const result = await agentikitShow({ ref: "tool:remote.sh" })
 
     expect(result.type).toBe("script")
-    expect(result.editable).toBe(false)
+    expect(result.editable).toBe(true)
+    expect(result.editHint).toBeUndefined()
   })
 
-  test("resolves from installed stash directories", async () => {
+  test("installed (cache-managed) asset has editable false with editHint", async () => {
     const installedStashRoot = createTmpDir("agentikit-show-installed-resolve-")
     writeFile(
       path.join(installedStashRoot, "tools", "deploy.sh"),
@@ -182,6 +183,8 @@ describe("agentikitShow sourceKind and editable", () => {
 
     expect(result.type).toBe("script")
     expect(result.editable).toBe(false)
+    expect(result.editHint).toContain("akm clone")
+    expect(result.editHint).toContain("tool:deploy.sh")
   })
 })
 

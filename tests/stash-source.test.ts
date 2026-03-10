@@ -2,7 +2,7 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { resolveStashSources, resolveAllStashDirs, findSourceForPath } from "../src/stash-source"
+import { resolveStashSources, resolveAllStashDirs, findSourceForPath, isEditable } from "../src/stash-source"
 import { saveConfig } from "../src/config"
 
 const originalStashDir = process.env.AKM_STASH_DIR
@@ -37,7 +37,6 @@ describe("resolveStashSources", () => {
     const sources = resolveStashSources()
     expect(sources.length).toBeGreaterThanOrEqual(1)
     expect(sources[0].kind).toBe("working")
-    expect(sources[0].writable).toBe(true)
     expect(sources[0].path).toBe(stashDir)
   })
 
@@ -49,7 +48,6 @@ describe("resolveStashSources", () => {
       const mounted = sources.find((s) => s.kind === "mounted")
       expect(mounted).toBeDefined()
       expect(mounted!.path).toBe(mountedDir)
-      expect(mounted!.writable).toBe(false)
     } finally {
       fs.rmSync(mountedDir, { recursive: true, force: true })
     }
@@ -85,7 +83,6 @@ describe("resolveStashSources", () => {
       expect(installed).toBeDefined()
       expect(installed!.path).toBe(installedDir)
       expect(installed!.registryId).toBe("npm:test-pkg")
-      expect(installed!.writable).toBe(false)
     } finally {
       fs.rmSync(installedDir, { recursive: true, force: true })
     }
@@ -144,8 +141,8 @@ describe("resolveAllStashDirs", () => {
 describe("findSourceForPath", () => {
   test("finds working source for file inside working stash", () => {
     const sources = [
-      { kind: "working" as const, path: stashDir, writable: true },
-      { kind: "mounted" as const, path: "/other/dir", writable: false },
+      { kind: "working" as const, path: stashDir },
+      { kind: "mounted" as const, path: "/other/dir" },
     ]
     const filePath = path.join(stashDir, "tools", "deploy.sh")
     const result = findSourceForPath(filePath, sources)
@@ -157,8 +154,8 @@ describe("findSourceForPath", () => {
     const mountedDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-mounted-"))
     try {
       const sources = [
-        { kind: "working" as const, path: stashDir, writable: true },
-        { kind: "mounted" as const, path: mountedDir, writable: false },
+        { kind: "working" as const, path: stashDir },
+        { kind: "mounted" as const, path: mountedDir },
       ]
       const filePath = path.join(mountedDir, "tools", "test.sh")
       const result = findSourceForPath(filePath, sources)
@@ -171,9 +168,58 @@ describe("findSourceForPath", () => {
 
   test("returns undefined for file not in any source", () => {
     const sources = [
-      { kind: "working" as const, path: stashDir, writable: true },
+      { kind: "working" as const, path: stashDir },
     ]
     const result = findSourceForPath("/completely/unrelated/path.sh", sources)
     expect(result).toBeUndefined()
+  })
+})
+
+describe("isEditable", () => {
+  test("files in working stash are editable", () => {
+    saveConfig({ semanticSearch: false, mountedStashDirs: [] })
+    const filePath = path.join(stashDir, "tools", "deploy.sh")
+    expect(isEditable(filePath)).toBe(true)
+  })
+
+  test("files in mounted dirs are editable", () => {
+    const mountedDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-mounted-"))
+    try {
+      saveConfig({ semanticSearch: false, mountedStashDirs: [mountedDir] })
+      const filePath = path.join(mountedDir, "tools", "deploy.sh")
+      expect(isEditable(filePath)).toBe(true)
+    } finally {
+      fs.rmSync(mountedDir, { recursive: true, force: true })
+    }
+  })
+
+  test("files in cache-managed dirs are NOT editable", () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentikit-cache-"))
+    try {
+      saveConfig({
+        semanticSearch: false,
+        mountedStashDirs: [],
+        registry: {
+          installed: [{
+            id: "npm:test-pkg",
+            source: "npm",
+            ref: "npm:test-pkg@1.0.0",
+            artifactUrl: "https://example.test/test-pkg.tgz",
+            stashRoot: cacheDir,
+            cacheDir: cacheDir,
+            installedAt: new Date().toISOString(),
+          }],
+        },
+      })
+      const filePath = path.join(cacheDir, "tools", "deploy.sh")
+      expect(isEditable(filePath)).toBe(false)
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  test("files outside any known path are editable", () => {
+    saveConfig({ semanticSearch: false, mountedStashDirs: [] })
+    expect(isEditable("/some/random/path/file.sh")).toBe(true)
   })
 })

@@ -29,7 +29,7 @@ import {
   type DbSearchResult,
 } from "./db"
 import { tryGetHandler } from "./asset-type-handler"
-import { type StashSource, resolveStashSources, findSourceForPath } from "./stash-source"
+import { type StashSource, resolveStashSources, findSourceForPath, isEditable, buildEditHint } from "./stash-source"
 
 type IndexedAsset = {
   type: AgentikitAssetType
@@ -416,6 +416,7 @@ function buildDbHit(input: {
 
   const source = findSourceForPath(input.path, input.sources)
 
+  const editable = isEditable(input.path)
   const hit: LocalSearchHit = {
     hitSource: "local",
     type: input.entry.type,
@@ -423,7 +424,8 @@ function buildDbHit(input: {
     path: input.path,
     openRef: makeAssetRef(input.entry.type, openRefName, source?.registryId),
     registryId: source?.registryId,
-    editable: source?.writable ?? false,
+    editable,
+    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, openRefName) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     score,
@@ -471,6 +473,7 @@ function buildWhyMatched(
 
 function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashSource[]): LocalSearchHit {
   const source = findSourceForPath(asset.path, sources)
+  const editable = isEditable(asset.path)
   const hit: LocalSearchHit = {
     hitSource: "local",
     type: asset.type,
@@ -478,7 +481,8 @@ function assetToSearchHit(asset: IndexedAsset, stashDir: string, sources: StashS
     path: asset.path,
     openRef: makeAssetRef(asset.type, asset.name, source?.registryId),
     registryId: source?.registryId,
-    editable: source?.writable ?? false,
+    editable,
+    ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name) } : {}),
   }
   const handler = tryGetHandler(asset.type)
   if (handler?.enrichSearchHit) {

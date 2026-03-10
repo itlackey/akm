@@ -14,8 +14,10 @@ export interface LocalSearchHit {
   openRef: string
   /** For installed sources, the registry id */
   registryId?: string
-  /** Whether this asset is editable (only true for working stash) */
+  /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean
+  /** Actionable guidance when editable is false (omitted when editable) */
+  editHint?: string
   description?: string
   tags?: string[]
   score?: number
@@ -221,8 +223,10 @@ export interface ShowResponse {
   kind?: ToolKind
   /** For installed sources, the registry id */
   registryId?: string
-  /** Whether this asset is editable (only true for working stash) */
+  /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean
+  /** Actionable guidance when editable is false (omitted when editable) */
+  editHint?: string
 }
 
 export type KnowledgeView =

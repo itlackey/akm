@@ -58,7 +58,6 @@ describe("agentikitClone", () => {
 
     const result = await agentikitClone({ sourceRef: "tool:deploy.sh" })
 
-    expect(result.source.sourceKind).toBe("mounted")
     expect(result.destination.ref).toContain("tool:deploy.sh")
     expect(result.overwritten).toBe(false)
     expect(fs.existsSync(path.join(stashDir, "tools", "deploy.sh"))).toBe(true)
@@ -71,7 +70,6 @@ describe("agentikitClone", () => {
 
     const result = await agentikitClone({ sourceRef: "skill:review" })
 
-    expect(result.source.sourceKind).toBe("mounted")
     expect(result.overwritten).toBe(false)
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true)
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "helper.md"))).toBe(true)
@@ -125,7 +123,6 @@ describe("agentikitClone", () => {
 
     const result = await agentikitClone({ sourceRef: "tool:original.sh", newName: "copy.sh" })
 
-    expect(result.source.sourceKind).toBe("working")
     expect(fs.existsSync(path.join(stashDir, "tools", "copy.sh"))).toBe(true)
   })
 
@@ -240,7 +237,6 @@ describe("agentikitClone remote", () => {
 
     expect(result.remoteFetched).toBeDefined()
     expect(result.remoteFetched!.origin).toBe(remoteFixtureDir)
-    expect(result.source.sourceKind).toBe("installed")
     expect(fs.existsSync(path.join(stashDir, "tools", "remote-tool.sh"))).toBe(true)
     expect(fs.readFileSync(path.join(stashDir, "tools", "remote-tool.sh"), "utf8")).toBe("#!/bin/bash\necho remote\n")
   })

@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { resolveStashDir } from "./common"
 import { loadConfig } from "./config"
+import type { AgentikitConfig } from "./config"
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -12,24 +13,22 @@ export interface StashSource {
   path: string
   /** For installed sources, the registry entry id */
   registryId?: string
-  /** Whether this source is writable (only working stash) */
-  writable: boolean
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
  * Build the ordered list of stash sources:
- *   1. Working stash (writable)
- *   2. Mounted stash dirs (read-only, user-configured)
- *   3. Installed stash dirs (read-only, derived from registry.installed)
+ *   1. Working stash (user's own)
+ *   2. Mounted stash dirs (user-configured, editable by default)
+ *   3. Installed stash dirs (cache-managed, not safe to edit in place)
  */
 export function resolveStashSources(overrideStashDir?: string): StashSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir()
   const config = loadConfig()
 
   const sources: StashSource[] = [
-    { kind: "working", path: stashDir, writable: true },
+    { kind: "working", path: stashDir },
   ]
 
   for (const dir of config.mountedStashDirs) {
@@ -37,7 +36,7 @@ export function resolveStashSources(overrideStashDir?: string): StashSource[] {
       console.warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`)
     }
     if (isValidDirectory(dir)) {
-      sources.push({ kind: "mounted", path: dir, writable: false })
+      sources.push({ kind: "mounted", path: dir })
     }
   }
 
@@ -50,7 +49,6 @@ export function resolveStashSources(overrideStashDir?: string): StashSource[] {
         kind: "installed",
         path: entry.stashRoot,
         registryId: entry.id,
-        writable: false,
       })
     }
   }
@@ -74,6 +72,41 @@ export function findSourceForPath(filePath: string, sources: StashSource[]): Sta
     if (resolved.startsWith(path.resolve(source.path) + path.sep)) return source
   }
   return undefined
+}
+
+// ── Editability ─────────────────────────────────────────────────────────────
+
+/**
+ * Determine whether a file is safe to edit in place.
+ *
+ * The only files that are NOT editable are those inside a cache directory
+ * managed by the package manager (`registry.installed[].cacheDir`). These
+ * will be overwritten by `akm update` without warning.
+ *
+ * Everything else — working stash, mounted dirs, local project dirs — is
+ * the user's domain to manage.
+ */
+export function isEditable(filePath: string, config?: AgentikitConfig): boolean {
+  const cfg = config ?? loadConfig()
+  const resolved = path.resolve(filePath)
+  const cacheManaged = cfg.registry?.installed ?? []
+
+  for (const entry of cacheManaged) {
+    const cacheRoot = path.resolve(entry.cacheDir)
+    if (resolved.startsWith(cacheRoot + path.sep)) return false
+  }
+
+  return true
+}
+
+/**
+ * Build an actionable hint for the agent when a file is not editable.
+ * Returns undefined when the file is editable (no hint needed).
+ */
+export function buildEditHint(filePath: string, assetType: string, assetName: string, config?: AgentikitConfig): string | undefined {
+  const cfg = config ?? loadConfig()
+  if (isEditable(filePath, cfg)) return undefined
+  return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${assetType}:${assetName}`
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
