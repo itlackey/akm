@@ -74,5 +74,5 @@ if ($UserPath -notlike "*$InstallDir*") {
 Write-Host "akm installed to $OutFile"
 
 Write-Host ""
-Write-Host "To get started, run:"
-Write-Host "  akm init"
+Write-Host "Running akm init..."
+& $OutFile init
