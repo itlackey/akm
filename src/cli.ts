@@ -37,14 +37,23 @@ function isJsonMode(): boolean {
   return process.argv.includes("--json");
 }
 
+/** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
+interface BunWithYAML {
+  YAML: { stringify(value: unknown): string };
+}
+
+function hasBunYAML(b: typeof Bun): b is typeof Bun & BunWithYAML {
+  // biome-ignore lint/suspicious/noExplicitAny: type guard for runtime feature detection
+  return typeof (b as any).YAML?.stringify === "function";
+}
+
 /** Try Bun.YAML.stringify; fall back to JSON if the API is unavailable */
 function yamlStringify(obj: unknown): string {
-  try {
-    return (Bun as any).YAML.stringify(obj);
-  } catch {
-    warn("YAML output not available, using JSON");
-    return JSON.stringify(obj, null, 2);
+  if (hasBunYAML(Bun)) {
+    return Bun.YAML.stringify(obj);
   }
+  warn("YAML output not available, using JSON");
+  return JSON.stringify(obj, null, 2);
 }
 
 /** Output result: JSON if --json flag set, otherwise YAML (default) */
