@@ -7,7 +7,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { TYPE_DIRS } from "./common"
+import { TYPE_DIRS } from "./asset-spec"
 import { ensureRg } from "./ripgrep-install"
 import { loadConfig, saveConfig, getConfigPath } from "./config"
 import { getDefaultStashDir, getBinDir } from "./paths"

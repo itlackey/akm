@@ -1,5 +1,7 @@
 import path from "node:path"
 import { toPosix } from "../common"
+import { getRenderer } from "../file-context"
+import { showInputToRenderContext } from "./handler-bridge"
 import type { AssetTypeHandler, ShowInput } from "../asset-type-handler"
 import type { ShowResponse } from "../stash-types"
 
@@ -22,12 +24,9 @@ export const skillHandler: AssetTypeHandler = {
   },
 
   buildShowResponse(input: ShowInput): ShowResponse {
-    return {
-      type: "skill",
-      name: input.name,
-      path: input.path,
-      content: input.content,
-    }
+    const renderer = getRenderer("skill-md")!
+    const ctx = showInputToRenderContext(input, "skill-md")
+    return renderer.buildShowResponse(ctx)
   },
 
   defaultUsageGuide: [

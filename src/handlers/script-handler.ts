@@ -1,14 +1,12 @@
 import path from "node:path"
-import { SCRIPT_EXTENSIONS, SCRIPT_EXTENSIONS_BROAD } from "../asset-spec"
-import { hasErrnoCode, toPosix } from "../common"
-import { buildToolInfo } from "../tool-runner"
+import { SCRIPT_EXTENSIONS_BROAD } from "../asset-spec"
+import { toPosix } from "../common"
 import { extractDescriptionFromComments } from "../metadata"
+import { getRenderer } from "../file-context"
+import { showInputToRenderContext } from "./handler-bridge"
 import type { AssetTypeHandler, ShowInput } from "../asset-type-handler"
 import type { ShowResponse, LocalSearchHit } from "../stash-types"
 import type { StashEntry } from "../metadata"
-
-/** Extensions that buildToolInfo can handle (tool-runner supported) */
-const RUNNABLE_EXTENSIONS = SCRIPT_EXTENSIONS
 
 export const scriptHandler: AssetTypeHandler = {
   typeName: "script",
@@ -27,51 +25,14 @@ export const scriptHandler: AssetTypeHandler = {
   },
 
   buildShowResponse(input: ShowInput): ShowResponse {
-    const ext = path.extname(input.path).toLowerCase()
-
-    // For extensions supported by tool-runner, show runCmd
-    if (RUNNABLE_EXTENSIONS.has(ext)) {
-      const stashDirs = input.stashDirs ?? []
-      const assetStashDir = stashDirs.find((d) =>
-        path.resolve(input.path).startsWith(path.resolve(d) + path.sep),
-      ) ?? stashDirs[0]
-
-      if (assetStashDir) {
-        try {
-          const toolInfo = buildToolInfo(assetStashDir, input.path)
-          return {
-            type: "script",
-            name: input.name,
-            path: input.path,
-            runCmd: toolInfo.runCmd,
-            kind: toolInfo.kind,
-          }
-        } catch {
-          // Fall through to content display
-        }
-      }
-    }
-
-    // For other extensions or when buildToolInfo fails, show file content
-    return {
-      type: "script",
-      name: input.name,
-      path: input.path,
-      content: input.content,
-    }
+    const renderer = getRenderer("script-source")!
+    const ctx = showInputToRenderContext(input, "script-source")
+    return renderer.buildShowResponse(ctx)
   },
 
   enrichSearchHit(hit: LocalSearchHit, stashDir: string): void {
-    const ext = path.extname(hit.path).toLowerCase()
-    if (!RUNNABLE_EXTENSIONS.has(ext)) return
-
-    try {
-      const toolInfo = buildToolInfo(stashDir, hit.path)
-      hit.runCmd = toolInfo.runCmd
-      hit.kind = toolInfo.kind
-    } catch (error: unknown) {
-      if (!hasErrnoCode(error, "ENOENT")) throw error
-    }
+    const renderer = getRenderer("script-source")!
+    renderer.enrichSearchHit!(hit, stashDir)
   },
 
   defaultUsageGuide: [

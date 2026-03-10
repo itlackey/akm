@@ -1,5 +1,6 @@
-import { parseFrontmatter, toStringOrUndefined } from "../frontmatter"
+import { getRenderer } from "../file-context"
 import { isMarkdownFile, markdownCanonicalName, markdownAssetPath } from "./markdown-helpers"
+import { showInputToRenderContext } from "./handler-bridge"
 import type { AssetTypeHandler, ShowInput } from "../asset-type-handler"
 import type { ShowResponse } from "../stash-types"
 
@@ -12,17 +13,9 @@ export const agentHandler: AssetTypeHandler = {
   toAssetPath: markdownAssetPath,
 
   buildShowResponse(input: ShowInput): ShowResponse {
-    const parsedMd = parseFrontmatter(input.content)
-    return {
-      type: "agent",
-      name: input.name,
-      path: input.path,
-      description: toStringOrUndefined(parsedMd.data.description),
-      prompt: "Dispatching prompt must include the agent's full prompt content verbatim; summaries are non-compliant. \n\n"
-        + parsedMd.content,
-      toolPolicy: parsedMd.data.tools,
-      modelHint: parsedMd.data.model,
-    }
+    const renderer = getRenderer("agent-md")!
+    const ctx = showInputToRenderContext(input, "agent-md")
+    return renderer.buildShowResponse(ctx)
   },
 
   defaultUsageGuide: [

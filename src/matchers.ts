@@ -19,7 +19,7 @@
 
 import { SCRIPT_EXTENSIONS_BROAD } from "./asset-spec"
 import { registerMatcher } from "./file-context"
-import type { FileContext, MatchResult } from "./file-context"
+import type { AssetMatcher, FileContext, MatchResult } from "./file-context"
 
 // ── extensionMatcher (specificity: 3) ────────────────────────────────────────
 
@@ -181,9 +181,21 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
 }
 
 // ── Registration ────────────────────────────────────────────────────────────
-// Order matters: later registrations win ties at the same specificity.
 
-registerMatcher(extensionMatcher)
-registerMatcher(directoryMatcher)
-registerMatcher(parentDirHintMatcher)
-registerMatcher(smartMdMatcher)
+/** All built-in matchers in registration order (later wins ties). */
+const builtinMatchers: AssetMatcher[] = [
+  extensionMatcher,
+  directoryMatcher,
+  parentDirHintMatcher,
+  smartMdMatcher,
+]
+
+/**
+ * Register all built-in matchers with the file-context registry.
+ * Called once from the CLI entry point (or ensureBuiltinsRegistered).
+ */
+export function registerBuiltinMatchers(): void {
+  for (const matcher of builtinMatchers) {
+    registerMatcher(matcher)
+  }
+}

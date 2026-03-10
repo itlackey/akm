@@ -1,5 +1,6 @@
-import { parseFrontmatter, toStringOrUndefined } from "../frontmatter"
+import { getRenderer } from "../file-context"
 import { isMarkdownFile, markdownCanonicalName, markdownAssetPath } from "./markdown-helpers"
+import { showInputToRenderContext } from "./handler-bridge"
 import type { AssetTypeHandler, ShowInput } from "../asset-type-handler"
 import type { ShowResponse } from "../stash-types"
 
@@ -12,20 +13,14 @@ export const commandHandler: AssetTypeHandler = {
   toAssetPath: markdownAssetPath,
 
   buildShowResponse(input: ShowInput): ShowResponse {
-    const parsedMd = parseFrontmatter(input.content)
-    return {
-      type: "command",
-      name: input.name,
-      path: input.path,
-      description: toStringOrUndefined(parsedMd.data.description),
-      template: parsedMd.content,
-      modelHint: parsedMd.data.model,
-      agent: toStringOrUndefined(parsedMd.data.agent),
-    }
+    const renderer = getRenderer("command-md")!
+    const ctx = showInputToRenderContext(input, "command-md")
+    return renderer.buildShowResponse(ctx)
   },
 
   defaultUsageGuide: [
-    "Read the .md file, fill placeholders, and run it in the current repo context.",
+    "Read the .md file, fill $ARGUMENTS placeholders, and run it in the current repo context.",
     "Use `akm show <openRef>` to retrieve the command template body.",
+    "When `agent` is specified, dispatch the command to that agent.",
   ],
 }

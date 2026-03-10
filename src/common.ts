@@ -11,7 +11,6 @@ export type AgentikitAssetType = "tool" | "skill" | "command" | "agent" | "knowl
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const IS_WINDOWS = process.platform === "win32"
-export { SCRIPT_EXTENSIONS, TYPE_DIRS } from "./asset-spec"
 
 // ── Validators ──────────────────────────────────────────────────────────────
 

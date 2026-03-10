@@ -313,12 +313,25 @@ const scriptSourceRenderer: AssetRenderer = {
 
 // ── Registration ─────────────────────────────────────────────────────────────
 
-registerRenderer(toolScriptRenderer)
-registerRenderer(skillMdRenderer)
-registerRenderer(commandMdRenderer)
-registerRenderer(agentMdRenderer)
-registerRenderer(knowledgeMdRenderer)
-registerRenderer(scriptSourceRenderer)
+/** All built-in renderers. */
+const builtinRenderers: AssetRenderer[] = [
+  toolScriptRenderer,
+  skillMdRenderer,
+  commandMdRenderer,
+  agentMdRenderer,
+  knowledgeMdRenderer,
+  scriptSourceRenderer,
+]
+
+/**
+ * Register all built-in renderers with the file-context registry.
+ * Called once from the CLI entry point (or ensureBuiltinsRegistered).
+ */
+export function registerBuiltinRenderers(): void {
+  for (const renderer of builtinRenderers) {
+    registerRenderer(renderer)
+  }
+}
 
 // ── Named exports for testing ────────────────────────────────────────────────
 

@@ -1,8 +1,9 @@
 import path from "node:path"
 import { SCRIPT_EXTENSIONS } from "../asset-spec"
-import { hasErrnoCode, toPosix } from "../common"
-import { buildToolInfo } from "../tool-runner"
+import { toPosix } from "../common"
 import { extractDescriptionFromComments } from "../metadata"
+import { getRenderer } from "../file-context"
+import { showInputToRenderContext } from "./handler-bridge"
 import type { AssetTypeHandler, ShowInput } from "../asset-type-handler"
 import type { ShowResponse, LocalSearchHit } from "../stash-types"
 import type { StashEntry } from "../metadata"
@@ -24,33 +25,14 @@ export const toolHandler: AssetTypeHandler = {
   },
 
   buildShowResponse(input: ShowInput): ShowResponse {
-    const stashDirs = input.stashDirs ?? []
-    const assetStashDir = stashDirs.find((d) =>
-      path.resolve(input.path).startsWith(path.resolve(d) + path.sep),
-    ) ?? stashDirs[0]
-
-    if (!assetStashDir) {
-      return { type: "tool", name: input.name, path: input.path, content: input.content }
-    }
-
-    const toolInfo = buildToolInfo(assetStashDir, input.path)
-    return {
-      type: "tool",
-      name: input.name,
-      path: input.path,
-      runCmd: toolInfo.runCmd,
-      kind: toolInfo.kind,
-    }
+    const renderer = getRenderer("tool-script")!
+    const ctx = showInputToRenderContext(input, "tool-script")
+    return renderer.buildShowResponse(ctx)
   },
 
   enrichSearchHit(hit: LocalSearchHit, stashDir: string): void {
-    try {
-      const toolInfo = buildToolInfo(stashDir, hit.path)
-      hit.runCmd = toolInfo.runCmd
-      hit.kind = toolInfo.kind
-    } catch (error: unknown) {
-      if (!hasErrnoCode(error, "ENOENT")) throw error
-    }
+    const renderer = getRenderer("tool-script")!
+    renderer.enrichSearchHit!(hit, stashDir)
   },
 
   defaultUsageGuide: [

@@ -190,7 +190,12 @@ export interface ShowResponse {
   template?: string
   prompt?: string
   description?: string
-  toolPolicy?: unknown
+  /**
+   * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
+   * Can be a single tool name, a list of tool names, or a structured policy object
+   * (e.g. `{ read: "allow", write: "deny" }`).
+   */
+  toolPolicy?: string | string[] | Record<string, unknown>
   modelHint?: unknown
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string
