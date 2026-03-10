@@ -310,7 +310,7 @@ These tests require careful isolation since they mutate config.
 - `throws for unknown target` -- Pass a target that doesn't match any entry.
 - `cleans up cache directory` -- Verify the cache dir is deleted.
 
-### 6.3 selectTargets (via update/reinstall)
+### 6.3 selectTargets (via update)
 
 - `--all returns all entries`
 - `target + all throws error`

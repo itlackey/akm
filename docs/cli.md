@@ -149,19 +149,32 @@ Update one or all installed kits to the latest available version.
 ```sh
 akm update npm:@scope/kit
 akm update --all
+akm update --all --force   # Force fresh download even if version is unchanged
 ```
+
+| Flag | Description |
+| --- | --- |
+| `--all` | Update all installed entries |
+| `--force` | Delete cached extraction before re-downloading (replaces the old `reinstall` command) |
 
 Reports per-entry change flags: `changed.version`, `changed.revision`,
 `changed.any`.
 
-### reinstall
+### upgrade
 
-Reinstall one or all kits from stored refs.
+Upgrade `akm` itself to the latest release. This is for users who installed
+`akm` as a standalone binary. For npm installs, it prints guidance instead.
 
 ```sh
-akm reinstall npm:@scope/kit
-akm reinstall --all
+akm upgrade              # Download and replace the running binary
+akm upgrade --check      # Check for updates without installing
+akm upgrade --force      # Force upgrade even if already on latest
 ```
+
+| Flag | Description |
+| --- | --- |
+| `--check` | Check for updates without installing |
+| `--force` | Force upgrade even if on latest version |
 
 ### clone
 

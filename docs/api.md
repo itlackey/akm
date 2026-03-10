@@ -16,6 +16,8 @@ import {
   agentikitSearch,
   agentikitShow,
   agentikitUpdate,
+  checkForUpdate,
+  performUpgrade,
 
   // Stash sources
   resolveStashSources,
@@ -88,6 +90,8 @@ import {
 | `agentikitList()` | List installed kits with status flags |
 | `agentikitRemove({ target })` | Remove an installed kit and reindex |
 | `agentikitUpdate({ target?, all?, force? })` | Update one or all kits to latest version (`--force` busts cache) |
+| `checkForUpdate(currentVersion)` | Check if a newer akm release is available |
+| `performUpgrade(check, opts?)` | Upgrade akm binary to the latest release |
 | `agentikitClone({ sourceRef, newName?, force?, dest? })` | Copy an asset into the primary stash or custom destination (async). Fetches remote origins automatically |
 | `resolveStashSources()` | Resolve all stash sources in priority order |
 | `resolveAllStashDirs(stashDir)` | Resolve all stash directories (primary + search paths + installed) |

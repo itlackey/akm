@@ -5,11 +5,12 @@ import { defineCommand, runMain } from "citty"
 import {
   agentikitAdd,
   agentikitList,
-  agentikitReinstall,
   agentikitRemove,
   agentikitSearch,
   agentikitShow,
   agentikitUpdate,
+  checkForUpdate,
+  performUpgrade,
   type KnowledgeView,
 } from "./stash"
 import type { SearchSource, SearchUsageMode } from "./stash-types"
@@ -83,12 +84,39 @@ function formatPlain(command: string, result: unknown): string | null {
       const indexed = installed?.indexed ?? r.indexed ?? 0
       return `Installed ${r.ref} (${indexed} assets indexed)`
     }
-    case "remove":
-    case "update":
-    case "reinstall": {
+    case "remove": {
       const target = r.target ?? r.ref ?? ""
       const ok = r.ok !== false ? "OK" : "FAILED"
-      return `${command}: ${target} ${ok}`
+      return `remove: ${target} ${ok}`
+    }
+    case "update": {
+      const processed = r.processed as Array<Record<string, unknown>> | undefined
+      if (!processed?.length) return `update: nothing to update`
+      const lines = processed.map((item) => {
+        const changed = item.changed as Record<string, unknown> | undefined
+        const installed = item.installed as Record<string, unknown> | undefined
+        const previous = item.previous as Record<string, unknown> | undefined
+        if (changed?.any) {
+          const prev = previous?.resolvedVersion ?? "unknown"
+          const next = installed?.resolvedVersion ?? "unknown"
+          return `update: ${item.id} v${prev} → v${next}`
+        }
+        return `update: ${item.id} (unchanged)`
+      })
+      return lines.join("\n")
+    }
+    case "upgrade": {
+      if (r.upgraded === true) {
+        return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`
+      }
+      if (r.updateAvailable === true) {
+        return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade' to install)`
+      }
+      if (r.updateAvailable === false && r.latestVersion) {
+        return `akm v${r.currentVersion} is already the latest version`
+      }
+      if (r.message) return String(r.message)
+      return null
     }
     case "clone": {
       const dst = (r.destination as Record<string, unknown>)?.path ?? "unknown"
@@ -218,25 +246,31 @@ const updateCommand = defineCommand({
   args: {
     target: { type: "positional", description: "Installed target (id or ref)", required: false },
     all: { type: "boolean", description: "Update all installed entries", default: false },
+    force: { type: "boolean", description: "Force fresh download even if version is unchanged", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitUpdate({ target: args.target, all: args.all })
+      const result = await agentikitUpdate({ target: args.target, all: args.all, force: args.force })
       output("update", result)
     })
   },
 })
 
-const reinstallCommand = defineCommand({
-  meta: { name: "reinstall", description: "Reinstall one or all installed registry packages" },
+const upgradeCommand = defineCommand({
+  meta: { name: "upgrade", description: "Upgrade akm to the latest release" },
   args: {
-    target: { type: "positional", description: "Installed target (id or ref)", required: false },
-    all: { type: "boolean", description: "Reinstall all installed entries", default: false },
+    check: { type: "boolean", description: "Check for updates without installing", default: false },
+    force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitReinstall({ target: args.target, all: args.all })
-      output("reinstall", result)
+      const check = await checkForUpdate(pkgVersion)
+      if (args.check) {
+        output("upgrade", check)
+        return
+      }
+      const result = await performUpgrade(check, { force: args.force })
+      output("upgrade", result)
     })
   },
 })
@@ -509,7 +543,7 @@ const main = defineCommand({
     list: listCommand,
     remove: removeCommand,
     update: updateCommand,
-    reinstall: reinstallCommand,
+    upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
     clone: cloneCommand,

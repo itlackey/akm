@@ -30,7 +30,8 @@ export { agentikitShow } from "./stash-show"
 export { agentikitAdd } from "./stash-add"
 export { agentikitClone } from "./stash-clone"
 
-export { agentikitList, agentikitRemove, agentikitReinstall, agentikitUpdate } from "./stash-registry"
+export { agentikitList, agentikitRemove, agentikitUpdate } from "./stash-registry"
+export { checkForUpdate, performUpgrade } from "./self-update"
 export { resolveStashSources, resolveAllStashDirs, findSourceForPath, getPrimarySource, isEditable } from "./stash-source"
 export type { StashSource } from "./stash-source"
 
@@ -47,12 +48,12 @@ export type {
   KnowledgeView,
   ListResponse,
   RemoveResponse,
-  ReinstallResponse,
   UpdateResponse,
   RegistryListEntry,
   RegistryInstallStatus,
-  ReinstallResultItem,
   UpdateResultItem,
+  UpgradeCheckResponse,
+  UpgradeResponse,
 } from "./stash-types"
 
 export type { CloneOptions, CloneResponse } from "./stash-clone"

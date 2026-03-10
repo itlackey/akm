@@ -776,13 +776,13 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   })
 
-  test("cli: akm reinstall rejects target with --all", async () => {
-    const stashDir = createEmptyStashDir("agentikit-e2e-registry-reinstall-")
+  test("cli: akm update rejects target with --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-registry-update-both-")
     process.env.AKM_STASH_DIR = stashDir
     saveConfig({ semanticSearch: false, searchPaths: [] })
 
     try {
-      const result = runCli("reinstall", "npm:@scope/kit", "--all")
+      const result = runCli("update", "npm:@scope/kit", "--all")
       expect(result.exitCode).not.toBe(0)
       const output = result.stdout + result.stderr
       expect(output).toContain("Specify either <target> or --all, not both.")
@@ -804,6 +804,72 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true })
     }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scenario 3a: CLI upgrade and update --force commands
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Scenario: upgrade and update --force (no network)", () => {
+  test("upgrade --check returns version info (mocked fetch)", async () => {
+    const { checkForUpdate } = await import("../src/self-update")
+    const result = await withMockedFetch(
+      () => Response.json({ tag_name: "v0.0.14" }),
+      () => checkForUpdate("0.0.13"),
+    )
+    expect(result.currentVersion).toBe("0.0.13")
+    expect(result.latestVersion).toBe("0.0.14")
+    expect(result.updateAvailable).toBe(true)
+    expect(["binary", "npm", "unknown"]).toContain(result.installMethod)
+  })
+
+  test("performUpgrade detects non-binary install and returns guidance", async () => {
+    const { performUpgrade } = await import("../src/self-update")
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "unknown",
+    })
+    expect(result.upgraded).toBe(false)
+    expect(["npm", "unknown"]).toContain(result.installMethod)
+    expect(result.message).toBeTruthy()
+  })
+
+  test("cli: akm update --help shows --force flag", async () => {
+    const result = spawnSync("bun", [CLI, "update", "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    const output = (result.stdout ?? "") + (result.stderr ?? "")
+    expect(output).toContain("--force")
+    expect(output).toContain("Force fresh download")
+  })
+
+  test("cli: akm update --force requires target or --all", async () => {
+    const stashDir = createEmptyStashDir("agentikit-e2e-update-force-")
+    process.env.AKM_STASH_DIR = stashDir
+    saveConfig({ semanticSearch: false, mountedStashDirs: [] })
+
+    try {
+      const result = runCli("update", "--force")
+      expect(result.exitCode).not.toBe(0)
+      const output = result.stdout + result.stderr
+      expect(output).toContain("Either <target> or --all is required.")
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true })
+    }
+  })
+
+  test("cli: akm upgrade --help shows --check and --force flags", async () => {
+    const result = spawnSync("bun", [CLI, "upgrade", "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    })
+    const output = (result.stdout ?? "") + (result.stderr ?? "")
+    expect(output).toContain("--check")
+    expect(output).toContain("--force")
   })
 })
 
