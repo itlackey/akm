@@ -87,5 +87,5 @@ fi
 echo "akm installed to ${INSTALL_DIR}/akm"
 
 echo ""
-echo "Running akm init..."
-"${INSTALL_DIR}/akm" init
+echo "To get started, run:"
+echo "  akm init"
