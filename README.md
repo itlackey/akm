@@ -51,7 +51,7 @@ search your stash and use what it finds. The workflow is three commands:
 
 ### Drop-in prompt snippet
 
-Add this to your `AGENTS.md`, `CLAUDE.md`, system prompt, or any instruction
+Add this to your `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, system prompt, or any instruction
 file to give your agent access to your stash without any additional setup:
 
 ~~~markdown
@@ -64,6 +64,7 @@ use capabilities before writing something from scratch.
 ```sh
 akm search "<query>"              # Search by keyword
 akm search "<query>" --type tool  # Filter by type (tool, skill, command, agent, knowledge, script)
+akm search "<query>" --source <source>  # Filter by source (e.g., "local", "registry", "both")
 ```
 
 Search returns JSON with scored results. Each hit includes an `openRef` you
@@ -75,7 +76,7 @@ akm show <openRef>                # Get full asset details
 ```
 
 What you get back depends on the asset type:
-- **script/tool** — A `runCmd` you can execute directly
+- **script** — A `runCmd` you can execute directly
 - **skill** — Instructions to follow (read the full content)
 - **command** — A prompt template with placeholders to fill in
 - **agent** — A system prompt with model and tool hints
@@ -83,6 +84,9 @@ What you get back depends on the asset type:
 
 Always search the stash first when you need a capability. Prefer existing
 assets over writing new code.
+
+Use `akm -help` for more options and details on searching and using assets.
+
 ~~~
 
 That's it. No plugin, no SDK, no integration code. The model reads the JSON
