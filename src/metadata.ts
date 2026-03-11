@@ -36,6 +36,8 @@ export interface StashEntry {
   setup?: string;
   /** Working directory for execution */
   cwd?: string;
+  /** File size in bytes for output sizing hints */
+  fileSize?: number;
 }
 
 export interface StashFile {
@@ -142,6 +144,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.run === "string" && e.run.trim()) result.run = e.run.trim();
   if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
   if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
+  if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
 
   return result;
 }

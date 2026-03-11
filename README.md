@@ -45,8 +45,8 @@ akm show script:deploy.sh
 `akm` is platform agnostic. Any model that can execute shell commands can search
 your stash and use what it finds. The workflow is three commands:
 
-1. `akm search "what you need"` — find relevant assets (returns JSON)
-2. `akm show <openRef>` — get the details (run command, instructions, prompt, etc.)
+1. `akm search "what you need"` — find relevant assets (returns JSON by default)
+2. `akm show <ref>` — get the details (run command, instructions, prompt, etc.)
 3. Use the asset — execute the `run` command, follow the skill instructions, fill in the template
 
 ### Drop-in prompt snippet
@@ -67,12 +67,12 @@ akm search "<query>" --type tool  # Filter by type (tool, skill, command, agent,
 akm search "<query>" --source <source>  # Filter by source (e.g., "local", "registry", "both")
 ```
 
-Search returns JSON with scored results. Each hit includes an `openRef` you
-use to retrieve the full asset.
+Search returns brief JSON by default. Local hits include a `ref` handle you
+pass directly to `akm show`.
 
 **Using assets:**
 ```sh
-akm show <openRef>                # Get full asset details
+akm show <ref>                    # Get full asset details
 ```
 
 What you get back depends on the asset type:
@@ -143,8 +143,9 @@ my-kit/
 | **knowledge** | A reference document | Navigable content with TOC and section views |
 
 Assets are referenced by type and name (e.g. `script:deploy.sh`,
-`knowledge:api-guide.md`). See [Concepts](docs/concepts.md) for details on
-how classification works.
+`knowledge:api-guide.md`). In practice, agents should treat the `ref` returned
+by search as an opaque handle and pass it back to `akm show`. See
+[Concepts](docs/concepts.md) and [Ref Format](docs/ref.md).
 
 ## The Stash
 
@@ -160,7 +161,8 @@ The first match wins, so local assets always override installed ones. Use
 
 ## Searching and Showing Assets
 
-Search returns scored results with explainability:
+Search returns brief JSON by default. Use `--detail normal` or `--detail full`
+when you want origin, tags, or explainability metadata:
 
 ```sh
 akm search "docker" --type tool
@@ -171,11 +173,11 @@ akm search "docker" --type tool
   "hits": [
     {
       "name": "docker-build",
-      "type": "tool",
+      "type": "script",
+      "ref": "script:docker-build.sh",
       "description": "Build and push Docker images",
-      "openRef": "tool:docker-build.sh",
-      "score": 0.92,
-      "whyMatched": "matched name tokens, fts bm25 relevance"
+      "size": "small",
+      "action": "akm show script:docker-build.sh -> execute the run command"
     }
   ]
 }
@@ -189,8 +191,10 @@ akm show tool:docker-build.sh
 
 ```json
 {
-  "type": "tool",
+  "type": "script",
   "name": "docker-build.sh",
+  "origin": null,
+  "action": "Execute the run command below",
   "run": "bash /path/to/tools/docker-build.sh",
   "setup": "bun install",
   "cwd": "/path/to/tools"
@@ -286,6 +290,7 @@ akm upgrade --check   # Check for updates without installing
 | [Indexing](docs/indexing.md) | How the search index is built |
 | [Filesystem](docs/filesystem.md) | Directory layout and `.stash.json` schema |
 | [Configuration](docs/configuration.md) | Providers, settings, and Ollama setup |
+| [Ref Format](docs/ref.md) | Opaque asset handles returned by `search` and consumed by `show` |
 
 ## Status
 

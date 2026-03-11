@@ -180,14 +180,6 @@ function deriveName(ctx: RenderContext): string {
 }
 
 /**
- * Find the stashDir that contains `filePath`, falling back to the first
- * entry in the array when no prefix match is found.
- */
-function _findContainingStashDir(stashDirs: string[], filePath: string): string | undefined {
-  return stashDirs.find((d) => path.resolve(filePath).startsWith(path.resolve(d) + path.sep)) ?? stashDirs[0];
-}
-
-/**
  * Load the matching StashEntry for a file path from the directory's .stash.json.
  */
 function findStashEntryForFile(filePath: string): StashEntry | undefined {
@@ -196,6 +188,30 @@ function findStashEntryForFile(filePath: string): StashEntry | undefined {
   if (!stashFile) return undefined;
   const fileName = path.basename(filePath);
   return stashFile.entries.find((e) => e.filename === fileName);
+}
+
+function extractParameters(template: string): string[] | undefined {
+  const parameters: string[] = [];
+
+  if (/\$ARGUMENTS\b/i.test(template)) {
+    parameters.push("ARGUMENTS");
+  }
+
+  for (const match of template.matchAll(/\$([1-9])/g)) {
+    const parameter = `$${match[1]}`;
+    if (!parameters.includes(parameter)) {
+      parameters.push(parameter);
+    }
+  }
+
+  for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
+    const parameter = match[1];
+    if (!parameters.includes(parameter)) {
+      parameters.push(parameter);
+    }
+  }
+
+  return parameters.length > 0 ? parameters : undefined;
 }
 
 // ── 1. skill-md ──────────────────────────────────────────────────────────────
@@ -209,14 +225,10 @@ const skillMdRenderer: AssetRenderer = {
       type: "skill",
       name,
       path: ctx.absPath,
+      action: "Read and follow the instructions below",
       content: ctx.content(),
     };
   },
-
-  usageGuide: [
-    "Read and apply the skill instructions as written, then adapt examples to your current repo state and task.",
-    "Use `akm show <openRef>` to read the full SKILL.md for required steps and constraints.",
-  ],
 };
 
 // ── 2. command-md ────────────────────────────────────────────────────────────
@@ -227,22 +239,19 @@ const commandMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const parsedMd = parseFrontmatter(ctx.content());
+    const template = parsedMd.content;
     return {
       type: "command",
       name,
       path: ctx.absPath,
+      action: "Fill $ARGUMENTS placeholders in the template, then dispatch",
       description: toStringOrUndefined(parsedMd.data.description),
-      template: parsedMd.content,
+      template,
       modelHint: parsedMd.data.model,
       agent: toStringOrUndefined(parsedMd.data.agent),
+      parameters: extractParameters(template),
     };
   },
-
-  usageGuide: [
-    "Read the .md file, fill $ARGUMENTS placeholders, and run it in the current repo context.",
-    "Use `akm show <openRef>` to retrieve the command template body.",
-    "When `agent` is specified, dispatch the command to that agent.",
-  ],
 };
 
 // ── 3. agent-md ──────────────────────────────────────────────────────────────
@@ -257,19 +266,13 @@ const agentMdRenderer: AssetRenderer = {
       type: "agent",
       name,
       path: ctx.absPath,
+      action: "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
       description: toStringOrUndefined(parsedMd.data.description),
-      prompt:
-        "Dispatching prompt must include the agent's full prompt content verbatim; summaries are non-compliant. \n\n" +
-        parsedMd.content,
+      prompt: parsedMd.content,
       toolPolicy: parsedMd.data.tools as ShowResponse["toolPolicy"],
       modelHint: parsedMd.data.model,
     };
   },
-
-  usageGuide: [
-    "Read the .md file and dispatch an agent using the content of the file. Use modelHint/toolPolicy when present to run the agent with compatible settings.",
-    "Use with `akm show <openRef>` to get the full prompt payload.",
-  ],
 };
 
 // ── 4. knowledge-md ──────────────────────────────────────────────────────────
@@ -285,11 +288,23 @@ const knowledgeMdRenderer: AssetRenderer = {
     switch (v.mode) {
       case "toc": {
         const toc = parseMarkdownToc(content);
-        return { type: "knowledge", name, path: ctx.absPath, content: formatToc(toc) };
+        return {
+          type: "knowledge",
+          name,
+          path: ctx.absPath,
+          action: "Reference material - read the content below. Use 'toc' view for large documents.",
+          content: formatToc(toc),
+        };
       }
       case "frontmatter": {
         const fm = extractFrontmatterOnly(content);
-        return { type: "knowledge", name, path: ctx.absPath, content: fm ?? "(no frontmatter)" };
+        return {
+          type: "knowledge",
+          name,
+          path: ctx.absPath,
+          action: "Reference material - read the content below. Use 'toc' view for large documents.",
+          content: fm ?? "(no frontmatter)",
+        };
       }
       case "section": {
         const section = extractSection(content, v.heading);
@@ -298,21 +313,35 @@ const knowledgeMdRenderer: AssetRenderer = {
             type: "knowledge",
             name,
             path: ctx.absPath,
+            action: "Reference material - read the content below. Use 'toc' view for large documents.",
             content: `Section "${v.heading}" not found in ${name}. Try \`akm show <ref> toc\` to discover available headings.`,
           };
         }
-        return { type: "knowledge", name, path: ctx.absPath, content: section.content };
+        return {
+          type: "knowledge",
+          name,
+          path: ctx.absPath,
+          action: "Reference material - read the content below. Use 'toc' view for large documents.",
+          content: section.content,
+        };
       }
       case "lines": {
         return {
           type: "knowledge",
           name,
           path: ctx.absPath,
+          action: "Reference material - read the content below. Use 'toc' view for large documents.",
           content: extractLineRange(content, v.start, v.end),
         };
       }
       default: {
-        return { type: "knowledge", name, path: ctx.absPath, content };
+        return {
+          type: "knowledge",
+          name,
+          path: ctx.absPath,
+          action: "Reference material - read the content below. Use 'toc' view for large documents.",
+          content,
+        };
       }
     }
   },
@@ -325,11 +354,6 @@ const knowledgeMdRenderer: AssetRenderer = {
       // Non-fatal: skip TOC if file can't be read
     }
   },
-
-  usageGuide: [
-    "Use `akm show <openRef>` to read the document; append `toc` for large files.",
-    'Use `akm show <openRef> section "Heading"` or `akm show <openRef> lines <start> <end>` to load only the part you need.',
-  ],
 };
 
 // ── 5. script-source ─────────────────────────────────────────────────────────
@@ -351,6 +375,7 @@ const scriptSourceRenderer: AssetRenderer = {
           type: "script",
           name,
           path: ctx.absPath,
+          action: "Execute the run command below",
           run: hints.run,
           setup: hints.setup,
           cwd: hints.cwd,
@@ -363,6 +388,7 @@ const scriptSourceRenderer: AssetRenderer = {
       type: "script",
       name,
       path: ctx.absPath,
+      action: "Review the script source below",
       content: ctx.content(),
     };
   },
@@ -390,11 +416,6 @@ const scriptSourceRenderer: AssetRenderer = {
       }
     }
   },
-
-  usageGuide: [
-    "Use the hit's run command for execution when available, or run the script directly with the appropriate interpreter.",
-    "Use `akm show <openRef>` to inspect the script before running it.",
-  ],
 };
 
 // ── Registration ─────────────────────────────────────────────────────────────

@@ -15,7 +15,9 @@ Override with `AKM_CONFIG_DIR`.
 akm config                          # Show current config
 akm config list                     # List current config
 akm config get embedding            # Read a single key
+akm config get output.format        # Read one nested key
 akm config set llm '{"endpoint":"...","model":"llama3.2"}'  # Set a key
+akm config set output.detail full   # Set one scalar key
 akm config unset llm                # Remove an optional key
 ```
 
@@ -27,6 +29,8 @@ akm config unset llm                # Remove an optional key
 | `searchPaths` | string[] | `[]` | Additional stash directories to search |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
+| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
+| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
 | `registry.installed` | array | `[]` | Installed kit metadata (managed by akm) |
 
 ## Embedding Configuration

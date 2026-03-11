@@ -70,16 +70,32 @@ describe("CLI error handling", () => {
     expect(stderr).toContain("hint");
   });
 
-  test("search --usage invalid prints hint about usage", () => {
-    const { stderr, status } = runCli("search", "test", "--usage", "invalid");
+  test("config path --detail invalid prints hint about detail", () => {
+    const stashDir = makeTempDir();
+    for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+      fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
+    }
+    const result = spawnSync("bun", ["./src/cli.ts", "search", "test", "--detail", "invalid"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      cwd: path.resolve(import.meta.dir, ".."),
+      env: {
+        ...process.env,
+        AKM_STASH_DIR: stashDir,
+        HOME: isolatedHome,
+        XDG_CACHE_HOME: xdgCache,
+        XDG_CONFIG_HOME: xdgConfig,
+      },
+    });
+    const stderr = result.stderr ?? "";
+    const status = result.status ?? 1;
     expect(status).not.toBe(0);
-    expect(stderr).toContain("Invalid value for --usage");
+    expect(stderr).toContain("Invalid value for --detail");
     expect(stderr).toContain("hint");
   });
 
   test("error output is valid JSON", () => {
-    const { stderr } = runCli("search", "test");
-    // stderr may contain multiple lines; the JSON error is the last block
+    const { stderr } = runCli("show", "invalid-ref-no-colon");
     const trimmed = stderr.trim();
     const parsed = JSON.parse(trimmed);
     expect(parsed.ok).toBe(false);
@@ -103,7 +119,7 @@ describe("config path subcommand", () => {
   });
 
   test("config path --all returns all path keys", () => {
-    const { stdout, status } = runCli("config", "path", "--all", "--json");
+    const { stdout, status } = runCli("config", "path", "--all", "--format=json");
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
     expect(parsed).toHaveProperty("config");

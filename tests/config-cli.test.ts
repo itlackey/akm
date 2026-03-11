@@ -7,6 +7,12 @@ describe("config CLI helpers", () => {
     const config = listConfig({ semanticSearch: true, searchPaths: [] });
     expect(config.embedding).toBeNull();
     expect(config.llm).toBeNull();
+    expect(config.output).toEqual({ format: "json", detail: "brief" });
+  });
+
+  test("parseConfigValue supports output config keys", () => {
+    expect(parseConfigValue("output.format", "yaml")).toEqual({ output: { format: "yaml" } });
+    expect(parseConfigValue("output.detail", "full")).toEqual({ output: { detail: "full" } });
   });
 
   test("parseConfigValue supports embedding JSON with dimensions", () => {
@@ -111,6 +117,34 @@ describe("config CLI helpers", () => {
     expect(noLlm.llm).toBeUndefined();
   });
 
+  test("setConfigValue merges output format and detail", () => {
+    const base: AgentikitConfig = { semanticSearch: true, searchPaths: [] };
+    const withFormat = setConfigValue(base, "output.format", "text");
+    const withDetail = setConfigValue(withFormat, "output.detail", "full");
+
+    expect(withDetail.output).toEqual({ format: "text", detail: "full" });
+  });
+
+  test("getConfigValue reads output keys", () => {
+    const base: AgentikitConfig = {
+      semanticSearch: true,
+      searchPaths: [],
+      output: { format: "yaml", detail: "normal" },
+    };
+    expect(getConfigValue(base, "output.format")).toBe("yaml");
+    expect(getConfigValue(base, "output.detail")).toBe("normal");
+  });
+
+  test("unsetConfigValue clears individual output keys", () => {
+    const base: AgentikitConfig = {
+      semanticSearch: true,
+      searchPaths: [],
+      output: { format: "yaml", detail: "normal" },
+    };
+    expect(unsetConfigValue(base, "output.format").output).toEqual({ detail: "normal" });
+    expect(unsetConfigValue(base, "output.detail").output).toEqual({ format: "yaml" });
+  });
+
   test("setConfigValue rejects unknown keys", () => {
     const base: AgentikitConfig = { semanticSearch: true, searchPaths: [] };
     expect(() => setConfigValue(base, "embedding.provider", "ollama")).toThrow("Unknown config key");
@@ -124,5 +158,10 @@ describe("config CLI helpers", () => {
         '{"endpoint":"https://api.openai.com/v1/embeddings","model":"text-embedding-3-small","dimension":384.5}',
       ),
     ).toThrow("expected a positive integer");
+  });
+
+  test("parseConfigValue rejects invalid output values", () => {
+    expect(() => parseConfigValue("output.format", "xml")).toThrow("expected one of json|yaml|text");
+    expect(() => parseConfigValue("output.detail", "max")).toThrow("expected one of brief|normal|full");
   });
 });

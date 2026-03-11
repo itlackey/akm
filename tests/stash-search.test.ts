@@ -129,11 +129,14 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name === "deploy");
     const resolvedDeployHit = expectDefined(deployHit);
+    expect(resolvedDeployHit.ref).toContain("script:deploy");
+    expect(resolvedDeployHit.action).toContain("akm show");
+    expect(resolvedDeployHit.size).toBeDefined();
     expect(resolvedDeployHit.score).toBeDefined();
     expect(resolvedDeployHit.score).toBeGreaterThan(0);
   });
@@ -174,7 +177,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "code", type: "tool", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     for (const hit of localHits) {
       expect(hit.type).toBe("script");
@@ -211,7 +214,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
   });
@@ -233,7 +236,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "", limit: 3, source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
   });
@@ -296,7 +299,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
     const deployHit = localHits.find((h) => h.name === "deploy");
 
     const resolvedDeployHit = expectDefined(deployHit);
@@ -325,7 +328,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "formatter", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "formatter");
 
     const resolvedHit = expectDefined(hit);
@@ -374,7 +377,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await agentikitSearch({ query: "testing utility", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     const curatedHit = localHits.find((h) => h.name === "curated");
     const generatedHit = localHits.find((h) => h.name === "generated");
@@ -403,7 +406,7 @@ describe("Substring fallback", () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
     const result = await agentikitSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name.includes("deploy"));
@@ -422,7 +425,7 @@ describe("Substring fallback", () => {
 
     // Do NOT call agentikitIndex
     const result = await agentikitSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.toLowerCase().includes("deploy"));
@@ -457,7 +460,11 @@ describe("Source filtering", () => {
 
     // All hits should be local, no registry hits
     for (const hit of result.hits) {
-      expect(hit.hitSource).toBe("local");
+      expect(hit.type).not.toBe("registry");
+      if (hit.type !== "registry") {
+        expect(hit.origin).toBeNull();
+        expect(hit.action).toContain("akm show");
+      }
     }
     // No warnings from registry search failures
     expect(result.warnings).toBeUndefined();
@@ -474,7 +481,7 @@ describe("Source filtering", () => {
     // All hits (if any) should come from registry, not local
     expect(result.source).toBe("registry");
     for (const hit of result.hits) {
-      expect(hit.hitSource).toBe("registry");
+      expect(hit.type).toBe("registry");
     }
   });
 
@@ -487,7 +494,7 @@ describe("Source filtering", () => {
     const result = await agentikitSearch({ query: "merge", source: "both" });
     expect(result.source).toBe("both");
     // Should have at least the local hit
-    const localHits = result.hits.filter((h) => h.hitSource === "local");
+    const localHits = result.hits.filter((h) => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
   });
 });

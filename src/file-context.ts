@@ -169,8 +169,6 @@ export interface AssetRenderer {
   enrichSearchHit?(hit: LocalSearchHit, stashDir: string): void;
   /** Optionally extract/augment metadata for a StashEntry */
   extractMetadata?(entry: StashEntry, ctx: RenderContext): void;
-  /** Human-readable usage instructions surfaced to the LLM */
-  usageGuide: string[];
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────

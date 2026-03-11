@@ -91,7 +91,7 @@ auto-generated metadata from filenames, comments, and `package.json`.
 | `source` | string | no | Origin of metadata: `"manual"`, `"package"`, `"frontmatter"`, `"comments"`, `"filename"`, `"llm"` |
 | `confidence` | number | no | `0.0`-`1.0` confidence score (curated entries should use `1.0`) |
 | `aliases` | string[] | no | Alternative names or phrases that match this asset |
-| `usage` | string[] | no | Per-asset usage instructions shown alongside search results |
+| `usage` | string[] | no | Per-asset usage instructions retained as metadata, not emitted in the default search output |
 | `intent` | object | no | Structured intent with `when`, `input`, `output` fields |
 | `examples` | string[] | no | Example queries or phrases a user might type |
 | `searchHints` | string[] | no | Search phrases used for intent-based matching |
@@ -105,8 +105,8 @@ auto-generated metadata from filenames, comments, and `package.json`.
 1. During indexing (`akm index`), each type directory is scanned for assets.
 2. If a `.stash.json` exists in the directory, its entries are used as-is.
 3. If no `.stash.json` is found, metadata is generated heuristically from
-   filenames, code comments, frontmatter, and `package.json`, then written
-   to a new `.stash.json` automatically.
+   filenames, code comments, frontmatter, and `package.json`, then stored in
+   the search index database for that run.
 4. To override generated metadata, edit the `.stash.json` directly. Set
    `quality` to `"curated"` and `source` to `"manual"` so the indexer
    preserves your changes on future runs.
@@ -116,8 +116,8 @@ auto-generated metadata from filenames, comments, and `package.json`.
 - You only need to include the fields you care about. `name` and `type` are
   the only required fields.
 - Good `description` and `tags` values significantly improve search quality.
-- The `usage` field is surfaced in search results to guide consumers on how
-  to use the asset correctly.
+- The `usage` field remains useful metadata for kit authors, but it is not
+  surfaced in the default search output.
 - The `filename` field tells the indexer which file in the directory this entry
   maps to. Without it, the indexer defaults to the first file found.
 

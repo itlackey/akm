@@ -240,8 +240,9 @@ function indexEntries(
             const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
             const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
             const searchText = buildSearchText(entry);
+            const entryWithSize = attachFileSize(entry, entryPath);
 
-            upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText);
+            upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
           }
 
           // Collect dirs needing LLM enhancement during the first walk
@@ -282,7 +283,7 @@ async function enhanceDirsWithLlm(
       const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
       const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
       const searchText = buildSearchText(entry);
-      upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText);
+      upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
     }
   }
 }
@@ -318,6 +319,14 @@ function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ i
       WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
     `)
     .all() as Array<{ id: number; searchText: string }>;
+}
+
+function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
+  try {
+    return { ...entry, fileSize: fs.statSync(entryPath).size };
+  } catch {
+    return entry;
+  }
 }
 
 /** Set of all known type directory names */

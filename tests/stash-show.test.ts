@@ -72,7 +72,7 @@ afterEach(() => {
 // ── Installed ref with missing asset ─────────────────────────────────────────
 
 describe("agentikitShow installed ref", () => {
-  test("throws with installCmd when registryId present and asset not found", async () => {
+  test("throws with add guidance when origin is not installed", async () => {
     const installedStashRoot = createTmpDir("akm-show-installed-root-");
     // Create the type subdirectory so it is a valid stash root, but do NOT
     // create the actual asset file.
@@ -97,7 +97,7 @@ describe("agentikitShow installed ref", () => {
     });
 
     // Use an origin that is NOT installed so resolveSourcesForOrigin returns
-    // empty, triggering the installCmd error path.
+    // empty, triggering the add-guidance error path.
     await expect(agentikitShow({ ref: "npm:@other/missing-pkg//tool:missing.sh" })).rejects.toThrow(/akm add/);
   });
 });
@@ -130,6 +130,8 @@ describe("agentikitShow editability", () => {
     const result = await agentikitShow({ ref: "tool:local.sh" });
 
     expect(result.type).toBe("script");
+    expect(result.origin).toBeNull();
+    expect(result.action).toContain("Execute the run command");
     expect(result.editable).toBe(true);
     expect(result.editHint).toBeUndefined();
   });
@@ -143,6 +145,7 @@ describe("agentikitShow editability", () => {
     const result = await agentikitShow({ ref: "tool:remote.sh" });
 
     expect(result.type).toBe("script");
+    expect(result.origin).toBeNull();
     expect(result.editable).toBe(true);
     expect(result.editHint).toBeUndefined();
   });
@@ -172,6 +175,7 @@ describe("agentikitShow editability", () => {
     const result = await agentikitShow({ ref: "tool:deploy.sh" });
 
     expect(result.type).toBe("script");
+    expect(result.origin).toBe("installed-pkg");
     expect(result.editable).toBe(false);
     expect(result.editHint).toContain("akm clone");
     expect(result.editHint).toContain("script:deploy.sh");
@@ -197,6 +201,7 @@ describe("agentikitShow content-based classification", () => {
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS.");
     expect(result.modelHint).toBe("gpt-4");
+    expect(result.parameters).toEqual(["ARGUMENTS"]);
   });
 
   test("tools frontmatter in commands/ overrides to agent (strong signal)", async () => {
@@ -212,6 +217,7 @@ describe("agentikitShow content-based classification", () => {
     const result = await agentikitShow({ ref: "command:hybrid.md" });
 
     expect(result.type).toBe("agent");
+    expect(result.action).toContain("verbatim");
     expect(result.prompt).toContain("You are a hybrid agent.");
   });
 
@@ -237,6 +243,35 @@ describe("agentikitShow content-based classification", () => {
     expect(result.description).toBe("Deploy to production");
     expect(result.modelHint).toBe("claude-sonnet-4-20250514");
     expect(result.agent).toBe("build");
+    expect(result.parameters).toEqual(["ARGUMENTS"]);
+  });
+
+  test("command parameter extraction includes positional placeholders", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "positional.md"),
+      ["---", "description: Positional args", "---", "Run release $1 with notes from $2 and flag $9."].join("\n"),
+    );
+
+    saveConfig({ semanticSearch: false, searchPaths: [] });
+
+    const result = await agentikitShow({ ref: "command:positional.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.parameters).toEqual(["$1", "$2", "$9"]);
+  });
+
+  test("command parameter extraction includes named placeholders", async () => {
+    writeFile(
+      path.join(stashDir, "commands", "named.md"),
+      ["---", "description: Named args", "---", "Deploy {{env}} with {{version}} using {{env}} again."].join("\n"),
+    );
+
+    saveConfig({ semanticSearch: false, searchPaths: [] });
+
+    const result = await agentikitShow({ ref: "command:named.md" });
+
+    expect(result.type).toBe("command");
+    expect(result.parameters).toEqual(["env", "version"]);
   });
 
   test("script in tools/ directory uses new renderer pipeline", async () => {

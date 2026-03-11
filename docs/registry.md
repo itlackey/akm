@@ -49,14 +49,14 @@ Each registry hit includes:
 
 | Field | Description |
 | --- | --- |
-| `source` | `"npm"` or `"github"` |
+| `type` | Always `"registry"` |
+| `name` | Package or repository name |
 | `id` | Unique identifier (e.g. `npm:@scope/kit`) |
-| `ref` | The value you pass to `akm add` |
-| `title` | Package or repo name |
 | `description` | Summary from the registry |
-| `score` | Relevance (npm) or star count (GitHub) |
-| `installRef` | Ready-to-use ref for `akm add` |
-| `installCmd` | Full install command string |
+| `action` | Ready-to-run next step such as `akm add ... -> then search again` |
+| `curated` | Whether the entry was manually reviewed |
+
+Use `--detail full` if you want ranking metadata like `score`.
 
 ## Installing
 
@@ -139,8 +139,8 @@ always excluded.
 
 When you open an asset ref that includes an origin pointing to a registry
 package (`origin//type:name`) but the package is not yet installed,
-akm reports the missing kit with an install command. Refs from
-search results work without a separate install step:
+akm reports the missing kit with guidance to run `akm add`. `akm show` does
+not auto-install the origin for you:
 
 ```bash
 # If not installed, akm will suggest: akm add npm:@scope/my-kit

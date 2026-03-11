@@ -8,7 +8,7 @@ The indexer (`akm index`) builds a SQLite database that powers search.
 Walk stash directories
         |
         v
-Load or generate .stash.json
+Load .stash.json or generate metadata in memory
         |
         v
 Build search text for FTS5
@@ -48,8 +48,8 @@ from available signals in priority order:
 4. **Filename heuristics** -- Converts `docker-build.ts` to `"docker build"`
    (confidence 0.55)
 
-Generated metadata is written to `.stash.json` automatically. Set `quality`
-to `"curated"` to prevent regeneration.
+Generated metadata is stored in the SQLite index. Add or edit `.stash.json`
+when you want curated metadata to override generated values on future runs.
 
 ## LLM Enhancement
 

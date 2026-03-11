@@ -144,7 +144,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -162,7 +162,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "provision", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("provision") || h.name.includes("foundry"));
@@ -180,7 +180,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "ai", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find(
@@ -228,7 +228,7 @@ describe("Issue #36: Script search and index", () => {
     expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
@@ -326,7 +326,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Step 4: Verify the new script is searchable
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -357,7 +357,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Search should find the new script
     const searchResult = await agentikitSearch({ query: "provision", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -378,7 +378,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     await agentikitIndex({ stashDir: workingStash, full: true });
 
     const result = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -413,7 +413,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
 
     // Verify search finds the script
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
+    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -434,9 +434,8 @@ describe("Renderer", () => {
     const response = renderer.buildShowResponse(renderCtx);
 
     expect(response.type).toBe("agent");
+    expect(response.action).toContain("verbatim");
     expect(response.prompt).toBeDefined();
-    expect(response.prompt).toContain("Dispatching prompt");
-    expect(response.prompt).toContain("verbatim");
     expect(response.prompt).toContain("You are a code reviewer.");
     expect(response.description).toBe("Code reviewer");
     expect(response.modelHint).toBe("gpt-4");

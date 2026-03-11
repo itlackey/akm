@@ -18,11 +18,13 @@ An asset is a single capability -- a file or small group of files -- that an
 AI agent can discover, inspect, and act on. Every asset has a **type** that
 controls how it is classified, displayed, and used.
 
-Assets are identified by a `type:name` reference (e.g. `script:deploy.sh`,
+Assets are identified by a `ref` handle (for example `script:deploy.sh` or
 `agent:reviewer.md`). An agent discovers assets through `akm search` and
-retrieves full details with `akm show`. The show response includes
-everything the agent needs to use the asset: a run command for scripts, a
-prompt payload for agents, navigable content for knowledge, and so on.
+retrieves full details with `akm show`. In normal use, the agent should treat
+the ref as opaque: get it from search, pass it to show, and rely on structured
+fields rather than parsing it. The show response includes everything the agent
+needs to use the asset: a run command for scripts, a prompt payload for agents,
+navigable content for knowledge, and so on.
 
 Assets live inside [kits](#kits) and are stored in the [stash](#the-stash).
 Their type is determined by the [classification system](#asset-classification)
@@ -127,8 +129,9 @@ edits always override installed versions.
 ## Metadata
 
 Each asset type directory can contain a `.stash.json` sidecar file with
-structured metadata. When no `.stash.json` exists, the indexer generates one
-automatically from filenames, code comments, frontmatter, and package.json.
+structured metadata. When no `.stash.json` exists, the indexer derives metadata
+in memory for the search index from filenames, code comments, frontmatter, and
+package.json.
 See [filesystem.md](filesystem.md) for the full field reference.
 
 ## Script Execution (ExecHints)
