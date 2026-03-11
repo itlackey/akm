@@ -125,8 +125,9 @@ describe("local directory installs", () => {
       );
 
       expect(result.installed.source).toBe("local");
+      // Local installs reference the original path directly (no cache copy)
+      expect(result.installed.stashRoot).toBe(kitDir);
       expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.installed.extractedDir, ".git"))).toBe(false);
 
       const config = loadConfig();
       const installedRoots = (config.registry?.installed ?? []).map((e: { stashRoot: string }) => e.stashRoot);
@@ -144,45 +145,7 @@ describe("local directory installs", () => {
     }
   });
 
-  test("agentikitAdd honors package.json akm.include during install", async () => {
-    const stashDir = createEmptyStashDir("akm-include-stash-");
-    const cacheHome = makeTempDir("akm-include-cache-");
-    const repoDir = makeTempDir("akm-include-repo-");
-    writeFile(
-      path.join(repoDir, "package.json"),
-      JSON.stringify(
-        {
-          name: "include-kit",
-          akm: {
-            include: ["tools", "README.md"],
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    writeFile(path.join(repoDir, "tools", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
-    writeFile(path.join(repoDir, "docs", "ignored.md"), "# ignored\n");
-    writeFile(path.join(repoDir, "README.md"), "# Included\n");
-    initGitRepo(repoDir);
-
-    try {
-      const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentikitAdd({ ref: repoDir }),
-      );
-
-      expect(result.installed.source).toBe("local");
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "kept.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "README.md"))).toBe(true);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "docs"))).toBe(false);
-    } finally {
-      fs.rmSync(stashDir, { recursive: true, force: true });
-      fs.rmSync(cacheHome, { recursive: true, force: true });
-      fs.rmSync(repoDir, { recursive: true, force: true });
-    }
-  });
-
-  test("agentikitAdd installs a plain directory without git", async () => {
+  test("agentikitAdd references local directory directly (no include config)", async () => {
     const stashDir = createEmptyStashDir("akm-nogit-stash-");
     const cacheHome = makeTempDir("akm-nogit-cache-");
     const kitDir = makeTempDir("akm-nogit-kit-");
@@ -194,8 +157,9 @@ describe("local directory installs", () => {
       );
 
       expect(result.installed.source).toBe("local");
+      // stashRoot points directly at the source, no cache directory
+      expect(result.installed.stashRoot).toBe(kitDir);
       expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.installed.extractedDir, ".git"))).toBe(false);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -203,7 +167,59 @@ describe("local directory installs", () => {
     }
   });
 
-  test("parseRegistryRef ignores non-path-like local directory names", () => {
+  test("agentikitAdd discovers stash dirs nested inside a subdirectory", async () => {
+    const stashDir = createEmptyStashDir("akm-nested-stash-");
+    const cacheHome = makeTempDir("akm-nested-cache-");
+    const projectDir = makeTempDir("akm-nested-project-");
+    // Assets are nested: project/my-kit/tools/hello.sh
+    writeFile(path.join(projectDir, "my-kit", "tools", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
+    writeFile(path.join(projectDir, "my-kit", "skills", "review", "SKILL.md"), "---\nname: review\n---\n# Review\n");
+    writeFile(path.join(projectDir, "README.md"), "# My project\n");
+
+    try {
+      const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
+        agentikitAdd({ ref: projectDir }),
+      );
+
+      expect(result.installed.source).toBe("local");
+      // stashRoot should point to the nested my-kit dir, not the project root
+      expect(result.installed.stashRoot).toBe(path.join(projectDir, "my-kit"));
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+      fs.rmSync(cacheHome, { recursive: true, force: true });
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("agentikitAdd indexes type-dir source directly when basename matches type", async () => {
+    const stashDir = createEmptyStashDir("akm-typedir-stash-");
+    const cacheHome = makeTempDir("akm-typedir-cache-");
+    // Create a directory named "knowledge" with nested files
+    const parentDir = makeTempDir("akm-typedir-src-");
+    const srcDir = path.join(parentDir, "knowledge");
+    writeFile(path.join(srcDir, "guide.md"), "# Guide\n");
+    writeFile(path.join(srcDir, "policies", "general.md"), "# General\n");
+    writeFile(path.join(srcDir, "policies", "security", "main.md"), "# Security\n");
+
+    try {
+      const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
+        agentikitAdd({ ref: srcDir }),
+      );
+
+      expect(result.installed.source).toBe("local");
+      // stashRoot is the source dir itself — indexer detects basename "knowledge" matches a type dir
+      expect(result.installed.stashRoot).toBe(srcDir);
+      expect(result.index.totalEntries).toBeGreaterThanOrEqual(3);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+      fs.rmSync(cacheHome, { recursive: true, force: true });
+      fs.rmSync(parentDir, { recursive: true, force: true });
+    }
+  });
+
+  test("parseRegistryRef resolves bare name to local when directory exists", () => {
     const tempDir = makeTempDir("akm-parse-registry-");
     const previousCwd = process.cwd();
     fs.mkdirSync(path.join(tempDir, "local-kit"));
@@ -211,8 +227,33 @@ describe("local directory installs", () => {
     try {
       process.chdir(tempDir);
       const parsed = parseRegistryRef("local-kit");
-      expect(parsed.source).toBe("npm");
-      expect(parsed.id).toBe("npm:local-kit");
+      expect(parsed.source).toBe("local");
+      if (parsed.source === "local") {
+        expect(parsed.sourcePath).toBe(path.resolve("local-kit"));
+      }
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("parseRegistryRef falls through to npm when bare name is not a local directory", () => {
+    const parsed = parseRegistryRef("nonexistent-kit");
+    expect(parsed.source).toBe("npm");
+    expect(parsed.id).toBe("npm:nonexistent-kit");
+  });
+
+  test("parseRegistryRef resolves '.' as the current directory", () => {
+    const tempDir = makeTempDir("akm-parse-dot-");
+    const previousCwd = process.cwd();
+
+    try {
+      process.chdir(tempDir);
+      const parsed = parseRegistryRef(".");
+      expect(parsed.source).toBe("local");
+      if (parsed.source === "local") {
+        expect(parsed.sourcePath).toBe(path.resolve("."));
+      }
     } finally {
       process.chdir(previousCwd);
       fs.rmSync(tempDir, { recursive: true, force: true });

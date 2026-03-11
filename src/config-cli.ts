@@ -3,6 +3,7 @@ import {
   DEFAULT_CONFIG,
   type EmbeddingConnectionConfig,
   type LlmConnectionConfig,
+  type OutputConfig,
 } from "./config";
 import { UsageError } from "./errors";
 
@@ -27,6 +28,10 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       return { embedding: parseEmbeddingConnectionValue(value) };
     case "llm":
       return { llm: parseLlmConnectionValue(value) };
+    case "output.format":
+      return { output: { format: parseOutputFormat(value) } };
+    case "output.detail":
+      return { output: { detail: parseOutputDetail(value) } };
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -44,6 +49,10 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
       return config.embedding ?? null;
     case "llm":
       return config.llm ?? null;
+    case "output.format":
+      return config.output?.format ?? null;
+    case "output.detail":
+      return config.output?.detail ?? null;
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -56,7 +65,9 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
     case "searchPaths":
     case "embedding":
     case "llm":
-      return { ...config, ...parseConfigValue(key, rawValue) };
+    case "output.format":
+    case "output.detail":
+      return mergeConfigValue(config, parseConfigValue(key, rawValue));
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -70,6 +81,10 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
       return { ...config, embedding: undefined };
     case "llm":
       return { ...config, llm: undefined };
+    case "output.format":
+      return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
+    case "output.detail":
+      return { ...config, output: mergeOutputConfig(config.output, { detail: undefined }) };
     default:
       throw new UsageError(`Unknown or unsupported unset key: ${key}`);
   }
@@ -79,10 +94,37 @@ export function listConfig(config: AgentikitConfig): Record<string, unknown> {
   return {
     ...DEFAULT_CONFIG,
     ...config,
+    output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
     stashDir: config.stashDir ?? null,
     embedding: config.embedding ?? null,
     llm: config.llm ?? null,
   };
+}
+
+function mergeConfigValue(config: AgentikitConfig, partial: Partial<AgentikitConfig>): AgentikitConfig {
+  return {
+    ...config,
+    ...partial,
+    output: mergeOutputConfig(config.output, partial.output),
+  };
+}
+
+function mergeOutputConfig(base?: OutputConfig, override?: OutputConfig): OutputConfig | undefined {
+  const merged = {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+  return merged.format || merged.detail ? merged : undefined;
+}
+
+function parseOutputFormat(value: string): OutputConfig["format"] {
+  if (value === "json" || value === "yaml" || value === "text") return value;
+  throw new UsageError(`Invalid value for output.format: expected one of json|yaml|text`);
+}
+
+function parseOutputDetail(value: string): OutputConfig["detail"] {
+  if (value === "brief" || value === "normal" || value === "full") return value;
+  throw new UsageError(`Invalid value for output.detail: expected one of brief|normal|full`);
 }
 
 function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig | undefined {

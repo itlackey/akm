@@ -103,23 +103,10 @@ async function installLocalRegistryRef(
 ): Promise<RegistryInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed);
   const installedAt = (options?.now ?? new Date()).toISOString();
-  const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheRootDir();
-  const cacheDir = buildInstallCacheDir(cacheRootDir, parsed.source, parsed.id);
-  const extractedDir = path.join(cacheDir, "extracted");
 
-  fs.mkdirSync(cacheDir, { recursive: true });
-  fs.rmSync(extractedDir, { recursive: true, force: true });
-  fs.mkdirSync(extractedDir, { recursive: true });
-
-  const searchRoot = parsed.repoRoot ?? parsed.sourcePath;
-  const includeConfig = findNearestAgentikitIncludeConfig(parsed.sourcePath, searchRoot);
-  if (includeConfig) {
-    copyIncludedPaths(includeConfig.baseDir, includeConfig.include, extractedDir);
-  } else {
-    copyDirectoryContents(parsed.sourcePath, extractedDir);
-  }
-
-  const stashRoot = detectStashRoot(extractedDir);
+  // For local directories, detect the stash root within the source path.
+  // If no nested stash is found, the source path itself is used.
+  const stashRoot = detectStashRoot(parsed.sourcePath);
 
   return {
     id: resolved.id,
@@ -129,8 +116,8 @@ async function installLocalRegistryRef(
     resolvedVersion: resolved.resolvedVersion,
     resolvedRevision: resolved.resolvedRevision,
     installedAt,
-    cacheDir,
-    extractedDir,
+    cacheDir: parsed.sourcePath,
+    extractedDir: parsed.sourcePath,
     stashRoot,
   };
 }
@@ -258,7 +245,7 @@ export function detectStashRoot(extractedDir: string): string {
     return opencodeDir;
   }
 
-  const shallowest = findShallowestDotStashRoot(root);
+  const shallowest = findShallowestStashRoot(root);
   if (shallowest) return shallowest;
 
   return root;
@@ -495,13 +482,37 @@ function hasStashDirs(dirPath: string): boolean {
   return entries.some((entry) => entry.isDirectory() && REGISTRY_STASH_DIR_NAMES.has(entry.name));
 }
 
-function findShallowestDotStashRoot(root: string): string | undefined {
+function countStashDirs(dirPath: string): number {
+  if (!isDirectory(dirPath)) return 0;
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  return entries.filter((entry) => entry.isDirectory() && REGISTRY_STASH_DIR_NAMES.has(entry.name)).length;
+}
+
+/**
+ * BFS to find the shallowest directory that looks like a stash root.
+ * Checks for both `.stash` directories and well-known type directories
+ * (tools/, skills/, etc.), so nested layouts like `project/my-kit/tools/`
+ * are discovered even without a `.stash` marker.
+ *
+ * Skips `root` itself since the caller already checked it via `hasStashDirs`.
+ */
+function findShallowestStashRoot(root: string): string | undefined {
   const queue: string[] = [root];
   while (queue.length > 0) {
-    const current = queue.shift()!;
-    const dotStash = path.join(current, ".stash");
-    if (isDirectory(dotStash)) {
-      return current;
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+    if (current !== root) {
+      // .stash directory is a strong stash marker
+      if (isDirectory(path.join(current, ".stash"))) {
+        return current;
+      }
+      // Require 2+ type dirs for BFS candidates to avoid false positives.
+      // A single "scripts/" is too common (skill dirs, npm packages, etc.).
+      if (countStashDirs(current) >= 2) {
+        return current;
+      }
     }
     let children: fs.Dirent[];
     try {

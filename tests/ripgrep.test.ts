@@ -6,6 +6,14 @@ import { isRgAvailable, resolveRg } from "../src/ripgrep";
 
 const createdTmpDirs: string[] = [];
 
+function expectDefined<T>(value: T | null | undefined): T {
+  expect(value).toBeDefined();
+  if (value === undefined || value === null) {
+    throw new Error("Expected value to be defined");
+  }
+  return value;
+}
+
 function tmpDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rg-"));
   createdTmpDirs.push(dir);
@@ -49,8 +57,7 @@ test("resolveRg finds system ripgrep on PATH", () => {
   process.env.PATH = binDir + path.delimiter + (originalPath ?? "");
   try {
     const rg = resolveRg();
-    expect(rg).not.toBeNull();
-    expect(rg!).toContain("rg");
+    expect(expectDefined(rg)).toContain("rg");
   } finally {
     process.env.PATH = originalPath;
   }
@@ -145,11 +152,14 @@ test("search pipeline returns ranked results when index exists", async () => {
     }),
   );
 
-  // Isolation: ensure index cache is written to a temp directory
+  // Isolation: ensure index cache and config are written to temp directories
   const oldXdgCacheHome = process.env.XDG_CACHE_HOME;
+  const oldXdgConfigHome = process.env.XDG_CONFIG_HOME;
   const oldAkmStashDir = process.env.AKM_STASH_DIR;
   const tempCacheDir = tmpDir();
+  const tempConfigDir = tmpDir();
   process.env.XDG_CACHE_HOME = tempCacheDir;
+  process.env.XDG_CONFIG_HOME = tempConfigDir;
 
   try {
     // Build index
@@ -167,6 +177,8 @@ test("search pipeline returns ranked results when index exists", async () => {
   } finally {
     if (oldXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
     else process.env.XDG_CACHE_HOME = oldXdgCacheHome;
+    if (oldXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = oldXdgConfigHome;
     if (oldAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
     else process.env.AKM_STASH_DIR = oldAkmStashDir;
   }

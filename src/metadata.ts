@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetName, isRelevantAssetFile } from "./asset-spec";
+import { deriveCanonicalAssetName, isRelevantAssetFile, TYPE_DIRS } from "./asset-spec";
 import { type AgentikitAssetType, isAssetType } from "./common";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
@@ -36,6 +36,8 @@ export interface StashEntry {
   setup?: string;
   /** Working directory for execution */
   cwd?: string;
+  /** File size in bytes for output sizing hints */
+  fileSize?: number;
 }
 
 export interface StashFile {
@@ -142,6 +144,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.run === "string" && e.run.trim()) result.run = e.run.trim();
   if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
   if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
+  if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
 
   return result;
 }
@@ -235,6 +238,98 @@ export function generateMetadata(
     // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
     // Heuristic search hints are too noisy to be useful for search quality
 
+    entry.filename = path.basename(file);
+    entries.push(entry);
+  }
+
+  return { entries };
+}
+
+/** Set of all known type directory names (e.g. "tools", "skills", "scripts") */
+const TYPE_DIR_NAMES = new Set(Object.values(TYPE_DIRS));
+
+/**
+ * Generate metadata for files using the matcher system instead of a fixed asset type.
+ *
+ * This is the flat-walk counterpart of `generateMetadata`. It classifies each
+ * file via `runMatchers()` and uses the matched type for canonical naming.
+ * Files that no matcher claims are silently skipped.
+ */
+export function generateMetadataFlat(stashRoot: string, files: string[]): StashFile {
+  const entries: StashEntry[] = [];
+  const pkgMetaCache = new Map<string, ReturnType<typeof extractPackageMetadata>>();
+
+  for (const file of files) {
+    const ctx = buildFileContext(stashRoot, file);
+    const match = runMatchers(ctx);
+    if (!match) continue;
+
+    const assetType = match.type as AgentikitAssetType;
+    if (!isAssetType(assetType)) continue;
+
+    // If the file lives under a known type directory, use that as the root
+    // for canonical naming so names don't include the type prefix.
+    // e.g. tools/deploy.sh → "deploy.sh" not "tools/deploy.sh"
+    const firstAncestor = ctx.ancestorDirs[0];
+    const effectiveRoot =
+      firstAncestor && TYPE_DIR_NAMES.has(firstAncestor) ? path.join(stashRoot, firstAncestor) : stashRoot;
+
+    const ext = path.extname(file).toLowerCase();
+    const baseName = path.basename(file, ext);
+    const canonicalName = deriveCanonicalAssetName(assetType, effectiveRoot, file) ?? baseName;
+
+    const entry: StashEntry = {
+      name: canonicalName,
+      type: assetType,
+      quality: "generated",
+      confidence: 0.55,
+      source: "filename",
+    };
+
+    // Package.json metadata
+    const dirPath = path.dirname(file);
+    if (!pkgMetaCache.has(dirPath)) {
+      pkgMetaCache.set(dirPath, extractPackageMetadata(dirPath));
+    }
+    const pkgMeta = pkgMetaCache.get(dirPath);
+    if (pkgMeta) {
+      if (pkgMeta.description && !entry.description) {
+        entry.description = pkgMeta.description;
+        entry.source = "package";
+        entry.confidence = 0.8;
+      }
+      if (pkgMeta.keywords?.length) entry.tags = normalizeTerms(pkgMeta.keywords);
+    }
+
+    // Frontmatter
+    if (ext === ".md") {
+      const fm = extractFrontmatterDescription(file);
+      if (fm) {
+        entry.description = fm;
+        entry.source = "frontmatter";
+        entry.confidence = 0.9;
+      }
+    }
+
+    // Renderer metadata extraction
+    const renderer = getRenderer(match.renderer);
+    if (renderer?.extractMetadata) {
+      const renderCtx = buildRenderContext(ctx, match, [stashRoot]);
+      renderer.extractMetadata(entry, renderCtx);
+    }
+
+    // Filename heuristics fallback
+    if (!entry.description) {
+      entry.description = fileNameToDescription(baseName);
+      entry.source = "filename";
+      entry.confidence = Math.min(entry.confidence ?? 0.55, 0.55);
+    }
+    if (!entry.tags || entry.tags.length === 0) {
+      entry.tags = extractTagsFromPath(file, dirPath);
+    }
+
+    entry.tags = normalizeTerms(entry.tags ?? []);
+    entry.aliases = buildAliases(canonicalName, entry.tags);
     entry.filename = path.basename(file);
     entries.push(entry);
   }

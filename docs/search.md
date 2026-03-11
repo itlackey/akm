@@ -5,8 +5,8 @@ the most relevant assets for a query.
 
 ## Indexed Search (primary)
 
-When an index exists (`~/.cache/akm/index.db`), two strategies run in
-parallel:
+When an index exists (`~/.cache/akm/index.db`), local search uses two ranking
+signals:
 
 1. **FTS5 (lexical)** -- SQLite full-text search with Porter stemming.
    Matches against a combined search text built from name, description, tags,
@@ -16,11 +16,12 @@ parallel:
    stored entry embeddings via sqlite-vec (384 dimensions). Requires an
    embedding provider to be configured.
 
-Scores are blended: **70% semantic + 30% FTS5** when both are available.
+FTS and vector results are merged with reciprocal rank fusion (RRF). Entries
+that appear in both lists rank higher than entries that appear in only one.
 
 ### Quality Boosts
 
-After blending, quality boosts are applied:
+After fusion, additional boosts are applied:
 
 | Boost | Value |
 | --- | --- |
@@ -39,13 +40,30 @@ before `akm index` has been run.
 ## Registry Search
 
 Search can also query npm and GitHub (`--source registry` or `--source both`).
-Registry results are merged with local results in alternating order.
+When both local and registry sources are enabled, the CLI combines the two hit
+lists and sorts the final results by score.
 
 Registry results are filtered to only include packages and repos tagged with
 `akm` or `agentikit`. See [registry.md](registry.md) for details.
 
+## External Output Shape
+
+Search keeps separate internal hit types for local assets and registry entries,
+but normalizes what the CLI emits through the existing output shapers. That
+lets ranking and source-specific metadata stay internal while the public output
+contract stays small and consistent.
+
+By default (`--format json`, `--detail brief`):
+
+- local hits emit `type`, `name`, `ref`, `description`, `size`, and `action`
+- registry hits emit `type`, `name`, `id`, `description`, `action`, and `curated`
+
+`--detail normal` adds fields like `origin` and `tags`. `--detail full` exposes
+debug-oriented fields such as scores, `whyMatched`, timings, stash paths, and
+other internal metadata.
+
 ## Explainability
 
-Each search hit includes a `whyMatched` field explaining which signals
-contributed to its ranking (e.g., "fts bm25 relevance", "matched name
-tokens", "semantic similarity").
+`whyMatched` explains which signals contributed to a hit's ranking (for
+example "fts bm25 relevance", "matched name tokens", or "semantic
+similarity"), but it is only surfaced in full-detail output.

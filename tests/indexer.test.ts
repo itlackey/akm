@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,8 +6,14 @@ import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { agentikitIndex, buildSearchText } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
-// Each test gets a fresh database
+let testConfigDir = "";
+const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+
+// Each test gets a fresh database and isolated config
 beforeEach(() => {
+  testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-config-"));
+  process.env.XDG_CONFIG_HOME = testConfigDir;
+
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
     try {
@@ -15,6 +21,18 @@ beforeEach(() => {
     } catch {
       /* ignore */
     }
+  }
+});
+
+afterEach(() => {
+  if (originalXdgConfigHome === undefined) {
+    delete process.env.XDG_CONFIG_HOME;
+  } else {
+    process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  }
+  if (testConfigDir) {
+    fs.rmSync(testConfigDir, { recursive: true, force: true });
+    testConfigDir = "";
   }
 });
 

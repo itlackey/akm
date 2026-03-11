@@ -134,22 +134,22 @@ describe("deriveCanonicalAssetName", () => {
     expect(deriveCanonicalAssetName("skill", root, file)).toBeUndefined();
   });
 
-  test("command: returns relative path", () => {
+  test("command: returns relative path without .md extension", () => {
     const root = "/stash/commands";
     const file = path.join(root, "release.md");
-    expect(deriveCanonicalAssetName("command", root, file)).toBe("release.md");
+    expect(deriveCanonicalAssetName("command", root, file)).toBe("release");
   });
 
-  test("agent: returns relative path", () => {
+  test("agent: returns relative path without .md extension", () => {
     const root = "/stash/agents";
     const file = path.join(root, "architect.md");
-    expect(deriveCanonicalAssetName("agent", root, file)).toBe("architect.md");
+    expect(deriveCanonicalAssetName("agent", root, file)).toBe("architect");
   });
 
-  test("knowledge: returns relative path", () => {
+  test("knowledge: returns relative path without .md extension", () => {
     const root = "/stash/knowledge";
     const file = path.join(root, "guide.md");
-    expect(deriveCanonicalAssetName("knowledge", root, file)).toBe("guide.md");
+    expect(deriveCanonicalAssetName("knowledge", root, file)).toBe("guide");
   });
 
   test("script: returns relative path from type root", () => {

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_TYPES, deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
+import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
 import { type AgentikitAssetType, normalizeAssetType } from "./common";
 import { type AgentikitConfig, loadConfig } from "./config";
 import {
@@ -16,6 +16,8 @@ import {
 } from "./db";
 import { UsageError } from "./errors";
 import { getRenderer } from "./file-context";
+import { buildSearchText } from "./indexer";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { searchRegistry } from "./registry-search";
 import { makeAssetRef } from "./stash-ref";
@@ -25,16 +27,15 @@ import type {
   LocalSearchHit,
   RegistrySearchResultHit,
   SearchHit,
+  SearchHitSize,
   SearchResponse,
   SearchSource,
-  SearchUsageMode,
 } from "./stash-types";
-import { walkStash } from "./walker";
+import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
 type IndexedAsset = {
-  type: AgentikitAssetType;
-  name: string;
+  entry: StashEntry;
   path: string;
 };
 
@@ -44,7 +45,6 @@ export async function agentikitSearch(input: {
   query: string;
   type?: AgentikitSearchType;
   limit?: number;
-  usage?: SearchUsageMode;
   source?: SearchSource;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
@@ -52,7 +52,6 @@ export async function agentikitSearch(input: {
   const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
-  const usageMode = parseSearchUsageMode(input.usage);
   const source = parseSearchSource(input.source);
   const config = loadConfig();
   const sources = resolveStashSources(undefined, config);
@@ -60,7 +59,7 @@ export async function agentikitSearch(input: {
     return {
       schemaVersion: 1,
       stashDir: "",
-      source: source ?? "all",
+      source,
       hits: [],
       warnings: ["No stash sources configured. Run `akm init` first."],
       timing: { totalMs: Date.now() - t0 },
@@ -74,7 +73,6 @@ export async function agentikitSearch(input: {
           query: normalizedQuery,
           searchType,
           limit,
-          usageMode,
           stashDir,
           sources,
           config,
@@ -89,7 +87,6 @@ export async function agentikitSearch(input: {
       stashDir,
       source,
       hits: localResult?.hits ?? [],
-      usageGuide: localResult?.usageGuide,
       tip: localResult?.tip,
       warnings: localResult?.warnings,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
@@ -100,19 +97,13 @@ export async function agentikitSearch(input: {
     const installRef =
       hit.source === "npm" ? `npm:${hit.ref}` : hit.source === "git" ? `git+${hit.ref}` : `github:${hit.ref}`;
     return {
-      hitSource: "registry",
       type: "registry",
       name: hit.title,
       id: hit.id,
-      registrySource: hit.source,
-      ref: hit.ref,
       description: hit.description,
-      homepage: hit.homepage,
+      action: `akm add ${installRef} -> then search again`,
       score: hit.score,
-      metadata: hit.metadata,
       curated: hit.curated,
-      installRef,
-      installCmd: `akm add ${installRef}`,
     };
   });
 
@@ -137,7 +128,6 @@ export async function agentikitSearch(input: {
     stashDir,
     source,
     hits: mergedHits,
-    usageGuide: localResult?.usageGuide,
     tip: mergedHits.length === 0 ? "No matching stash assets or registry entries were found." : undefined,
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
@@ -148,19 +138,17 @@ async function searchLocal(input: {
   query: string;
   searchType: AgentikitSearchType;
   limit: number;
-  usageMode: SearchUsageMode;
   stashDir: string;
   sources: StashSource[];
   config: AgentikitConfig;
 }): Promise<{
   hits: LocalSearchHit[];
-  usageGuide?: Partial<Record<AgentikitAssetType, string[]>>;
   tip?: string;
   warnings?: string[];
   embedMs?: number;
   rankMs?: number;
 }> {
-  const { query, searchType, limit, usageMode, stashDir, sources, config } = input;
+  const { query, searchType, limit, stashDir, sources, config } = input;
   const allStashDirs = sources.map((s) => s.path);
 
   // Try to open the database
@@ -173,7 +161,7 @@ async function searchLocal(input: {
         const entryCount = getEntryCount(db);
         const storedStashDir = getMeta(db, "stashDir");
         if (entryCount > 0 && storedStashDir === stashDir) {
-          const { hits, usageGuide, embedMs, rankMs } = await searchDatabase(
+          const { hits, embedMs, rankMs } = await searchDatabase(
             db,
             query,
             searchType,
@@ -181,12 +169,10 @@ async function searchLocal(input: {
             stashDir,
             allStashDirs,
             config,
-            usageMode,
             sources,
           );
           return {
             hits,
-            usageGuide,
             tip:
               hits.length === 0
                 ? "No matching stash assets were found. Try running 'akm index' to rebuild."
@@ -209,15 +195,8 @@ async function searchLocal(input: {
   const hits = allStashDirs
     .flatMap((dir) => substringSearch(query, searchType, limit, dir, sources, config))
     .slice(0, limit);
-  const usageGuide = shouldIncludeUsageGuide(usageMode)
-    ? buildUsageGuide(
-        hits.map((hit) => hit.type),
-        searchType,
-      )
-    : undefined;
   return {
     hits,
-    usageGuide,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
   };
 }
@@ -232,11 +211,9 @@ async function searchDatabase(
   stashDir: string,
   allStashDirs: string[],
   config: import("./config").AgentikitConfig,
-  usageMode: SearchUsageMode,
   sources: StashSource[],
 ): Promise<{
   hits: LocalSearchHit[];
-  usageGuide?: Partial<Record<AgentikitAssetType, string[]>>;
   embedMs?: number;
   rankMs?: number;
 }> {
@@ -255,18 +232,11 @@ async function searchDatabase(
         defaultStashDir: stashDir,
         allStashDirs,
         sources,
-        includeItemUsage: shouldIncludeItemUsage(usageMode),
         config,
       }),
     );
     return {
       hits,
-      usageGuide: shouldIncludeUsageGuide(usageMode)
-        ? buildUsageGuideFromEntries(
-            selected.map((e) => e.entry),
-            searchType,
-          )
-        : undefined,
     };
   }
 
@@ -324,7 +294,8 @@ async function searchDatabase(
   if (embeddingScores) {
     for (const [id] of embeddingScores) {
       if (seenIds.has(id)) continue;
-      const embedRank = embedRankMap.get(id)!;
+      const embedRank = embedRankMap.get(id);
+      if (embedRank === undefined) continue;
       const found = getEntryById(db, id);
       if (found) {
         if (typeFilter && found.entry.type !== typeFilter) continue;
@@ -387,7 +358,6 @@ async function searchDatabase(
       defaultStashDir: stashDir,
       allStashDirs,
       sources,
-      includeItemUsage: shouldIncludeItemUsage(usageMode),
       config,
     }),
   );
@@ -396,12 +366,6 @@ async function searchDatabase(
     embedMs,
     rankMs,
     hits,
-    usageGuide: shouldIncludeUsageGuide(usageMode)
-      ? buildUsageGuideFromEntries(
-          selected.map((item) => item.entry),
-          searchType,
-        )
-      : undefined,
   };
 }
 
@@ -447,7 +411,7 @@ function substringSearch(
 ): LocalSearchHit[] {
   const assets = indexAssets(stashDir, searchType);
   return assets
-    .filter((asset) => asset.name.toLowerCase().includes(query))
+    .filter((asset) => !query || buildSearchText(asset.entry).includes(query))
     .sort(compareAssets)
     .slice(0, limit)
     .map((asset) => assetToSearchHit(asset, stashDir, sources, config));
@@ -464,12 +428,15 @@ function buildDbHit(input: {
   defaultStashDir: string;
   allStashDirs: string[];
   sources: StashSource[];
-  includeItemUsage: boolean;
   config?: import("./config").AgentikitConfig;
 }): LocalSearchHit {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const typeRoot = path.join(entryStashDir, TYPE_DIRS[input.entry.type]);
-  const openRefName = deriveCanonicalAssetName(input.entry.type, typeRoot, input.path) ?? input.entry.name;
+  const canonical = deriveCanonicalAssetName(input.entry.type, typeRoot, input.path);
+  // Guard against path traversal when the file is outside the expected type root
+  // (e.g. source detection fell back to defaultStashDir for a file from another source)
+  const refName =
+    canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : input.entry.name;
 
   const qualityBoost = input.entry.quality === "generated" ? 0 : 0.05;
   const confidenceBoost =
@@ -482,23 +449,23 @@ function buildDbHit(input: {
 
   const editable = isEditable(input.path, input.config);
   const hit: LocalSearchHit = {
-    hitSource: "local",
     type: normalizeAssetType(input.entry.type),
     name: input.entry.name,
     path: input.path,
-    openRef: makeAssetRef(input.entry.type, openRefName, source?.registryId),
-    registryId: source?.registryId,
+    ref: makeAssetRef(input.entry.type, refName, source?.registryId),
+    origin: source?.registryId ?? null,
     editable,
-    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, openRefName, source?.registryId) } : {}),
+    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, refName, source?.registryId) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
+    size: deriveSize(input.entry.fileSize),
+    action: buildLocalAction(
+      normalizeAssetType(input.entry.type),
+      makeAssetRef(input.entry.type, refName, source?.registryId),
+    ),
     score,
     whyMatched,
   };
-
-  if (input.includeItemUsage && input.entry.usage && input.entry.usage.length > 0) {
-    hit.usage = input.entry.usage;
-  }
 
   const renderer = rendererForType(input.entry.type);
   if (renderer?.enrichSearchHit) {
@@ -543,17 +510,25 @@ function assetToSearchHit(
 ): LocalSearchHit {
   const source = findSourceForPath(asset.path, sources);
   const editable = isEditable(asset.path, config);
+  const ref = makeAssetRef(asset.entry.type, asset.entry.name, source?.registryId);
+  const fileSize = readFileSize(asset.path);
+  const size = deriveSize(fileSize);
   const hit: LocalSearchHit = {
-    hitSource: "local",
-    type: normalizeAssetType(asset.type),
-    name: asset.name,
+    type: normalizeAssetType(asset.entry.type),
+    name: asset.entry.name,
     path: asset.path,
-    openRef: makeAssetRef(asset.type, asset.name, source?.registryId),
-    registryId: source?.registryId,
+    ref,
+    origin: source?.registryId ?? null,
     editable,
-    ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name, source?.registryId) } : {}),
+    ...(!editable
+      ? { editHint: buildEditHint(asset.path, asset.entry.type, asset.entry.name, source?.registryId) }
+      : {}),
+    description: asset.entry.description,
+    tags: asset.entry.tags,
+    ...(size ? { size } : {}),
+    action: buildLocalAction(normalizeAssetType(asset.entry.type), ref),
   };
-  const renderer = rendererForType(asset.type);
+  const renderer = rendererForType(asset.entry.type);
   if (renderer?.enrichSearchHit) {
     renderer.enrichSearchHit(hit, stashDir);
   }
@@ -565,14 +540,6 @@ function normalizeLimit(limit?: number): number {
     return DEFAULT_LIMIT;
   }
   return Math.min(Math.floor(limit), 200);
-}
-
-function parseSearchUsageMode(mode: SearchUsageMode | undefined): SearchUsageMode {
-  if (mode === "none" || mode === "both" || mode === "item" || mode === "guide") {
-    return mode;
-  }
-  if (typeof mode === "undefined") return "both";
-  throw new UsageError(`Invalid usage mode: ${String(mode)}. Expected one of: none|both|item|guide`);
 }
 
 function parseSearchSource(source: SearchSource | undefined): SearchSource {
@@ -591,69 +558,6 @@ function mergeSearchHits(
   return all.slice(0, limit);
 }
 
-function shouldIncludeUsageGuide(mode: SearchUsageMode): boolean {
-  return mode === "both" || mode === "guide";
-}
-
-function shouldIncludeItemUsage(mode: SearchUsageMode): boolean {
-  return mode === "both" || mode === "item";
-}
-
-function buildUsageGuideFromEntries(
-  entries: import("./metadata").StashEntry[],
-  searchType: AgentikitSearchType,
-): Partial<Record<AgentikitAssetType, string[]>> | undefined {
-  const types = entries.map((entry) => entry.type);
-  const fallbackGuide = buildUsageGuide(types, searchType);
-  const metadataByType = new Map<AgentikitAssetType, string[]>();
-
-  for (const entry of entries) {
-    if (!entry.usage || entry.usage.length === 0) continue;
-    const current = metadataByType.get(entry.type) ?? [];
-    for (const item of entry.usage) {
-      const trimmed = item.trim();
-      if (trimmed && !current.includes(trimmed)) current.push(trimmed);
-    }
-    if (current.length > 0) metadataByType.set(entry.type, current);
-  }
-
-  if (!fallbackGuide && metadataByType.size === 0) return undefined;
-
-  const result: Partial<Record<AgentikitAssetType, string[]>> = {};
-  for (const assetType of resolveGuideTypes(types, searchType)) {
-    const lines: string[] = [];
-    const metadataLines = metadataByType.get(assetType);
-    if (metadataLines && metadataLines.length > 0) {
-      lines.push(...metadataLines);
-    }
-    const fallbackLines = fallbackGuide?.[assetType];
-    if (fallbackLines && fallbackLines.length > 0) {
-      for (const line of fallbackLines) {
-        if (!lines.includes(line)) lines.push(line);
-      }
-    }
-    if (lines.length > 0) result[assetType] = lines;
-  }
-
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function buildUsageGuide(
-  hitTypes: AgentikitAssetType[],
-  searchType: AgentikitSearchType,
-): Partial<Record<AgentikitAssetType, string[]>> | undefined {
-  const result: Partial<Record<AgentikitAssetType, string[]>> = {};
-  for (const assetType of resolveGuideTypes(hitTypes, searchType)) {
-    result[assetType] = usageGuideByType(assetType);
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function resolveGuideTypes(hitTypes: AgentikitAssetType[], searchType: AgentikitSearchType): AgentikitAssetType[] {
-  if (searchType !== "any") return [searchType];
-  return Array.from(new Set(hitTypes));
-}
-
 /** Map asset types to their primary renderer names. */
 const TYPE_TO_RENDERER: Record<AgentikitAssetType, string> = {
   tool: "script-source",
@@ -668,34 +572,82 @@ function rendererForType(type: AgentikitAssetType) {
   return getRenderer(TYPE_TO_RENDERER[type]);
 }
 
-function usageGuideByType(type: AgentikitAssetType): string[] {
-  const renderer = rendererForType(type);
-  return renderer?.usageGuide ?? [];
+function buildLocalAction(type: AgentikitAssetType, ref: string): string {
+  switch (type) {
+    case "script":
+      return `akm show ${ref} -> execute the run command`;
+    case "skill":
+      return `akm show ${ref} -> follow the instructions`;
+    case "command":
+      return `akm show ${ref} -> fill placeholders and dispatch`;
+    case "agent":
+      return `akm show ${ref} -> dispatch with full prompt`;
+    case "knowledge":
+      return `akm show ${ref} -> read reference material`;
+    case "tool":
+      return `akm show ${ref} -> execute the run command`;
+  }
 }
 
-function fileToAsset(assetType: AgentikitAssetType, root: string, file: string): IndexedAsset | undefined {
-  const name = deriveCanonicalAssetName(assetType, root, file);
-  if (!name) return undefined;
-  return { type: assetType, name, path: file };
+function deriveSize(bytes?: number): SearchHitSize | undefined {
+  if (bytes === undefined) return undefined;
+  if (bytes < 1024) return "small";
+  if (bytes < 10240) return "medium";
+  return "large";
+}
+
+function readFileSize(filePath: string): number | undefined {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return undefined;
+  }
 }
 
 function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
   const assets: IndexedAsset[] = [];
-  const types = type === "any" ? ASSET_TYPES : [type];
-  for (const assetType of types) {
-    const root = path.join(stashDir, TYPE_DIRS[assetType]);
-    const groups = walkStash(root, assetType);
-    for (const { files } of groups) {
-      for (const file of files) {
-        const asset = fileToAsset(assetType, root, file);
-        if (asset) assets.push(asset);
+  const filterType = type === "any" ? undefined : normalizeAssetType(type);
+  const fileContexts = walkStashFlat(stashDir);
+  const dirGroups = new Map<string, string[]>();
+
+  for (const ctx of fileContexts) {
+    const group = dirGroups.get(ctx.parentDirAbs);
+    if (group) group.push(ctx.absPath);
+    else dirGroups.set(ctx.parentDirAbs, [ctx.absPath]);
+  }
+
+  for (const [dirPath, files] of dirGroups) {
+    let stash = loadStashFile(dirPath);
+
+    if (stash) {
+      const coveredFiles = new Set(
+        stash.entries.map((entry) => entry.filename).filter((entry): entry is string => !!entry),
+      );
+      const uncoveredFiles = files.filter((file) => !coveredFiles.has(path.basename(file)));
+      if (uncoveredFiles.length > 0) {
+        const generated = generateMetadataFlat(stashDir, uncoveredFiles);
+        if (generated.entries.length > 0) {
+          stash = { entries: [...stash.entries, ...generated.entries] };
+        }
       }
+    } else {
+      const generated = generateMetadataFlat(stashDir, files);
+      if (generated.entries.length === 0) continue;
+      stash = generated;
+    }
+
+    for (const entry of stash.entries) {
+      const normalizedType = normalizeAssetType(entry.type);
+      if (filterType && normalizedType !== filterType) continue;
+      const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+      assets.push({ entry, path: entryPath });
     }
   }
+
   return assets;
 }
 
 function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
-  if (a.type !== b.type) return a.type.localeCompare(b.type);
-  return a.name.localeCompare(b.name);
+  if (a.entry.type !== b.entry.type) return a.entry.type.localeCompare(b.entry.type);
+  return a.entry.name.localeCompare(b.entry.name);
 }

@@ -1,7 +1,9 @@
 # CLI Reference
 
-The CLI is called `akm` (Agent Kit Manager). All commands return structured
-JSON to stdout. Errors include `error` and `hint` fields.
+The CLI is called `akm` (Agent Kit Manager). Commands default to structured
+JSON at `--detail brief`. Use `--format json|text|yaml` and `--detail
+brief|normal|full` when you want a different presentation. Errors include
+`error` and `hint` fields.
 
 ## Commands
 
@@ -37,7 +39,7 @@ Search local stash assets, registry kits, or both.
 akm search "deploy"
 akm search "deploy" --type script --limit 10
 akm search "lint" --source registry
-akm search "docker" --source both --usage none
+akm search "docker" --source both --detail full
 ```
 
 | Flag | Values | Default | Description |
@@ -45,30 +47,35 @@ akm search "docker" --source both --usage none
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` (`tool` accepted as alias for `script`) | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `local`, `registry`, `both` | `local` | Where to search |
-| `--usage` | `none`, `both`, `item`, `guide` | `both` | Usage metadata mode |
+| `--format` | `json`, `text`, `yaml` | `json` | Output format |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
 
-Local results include `openRef` for use with `akm show`, plus `score` and
-`whyMatched` for explainability. Registry results include `installRef` and
-`installCmd`.
+Local hits include a `ref` handle for use with `akm show`. The default brief
+shape is intentionally small: local hits expose `type`, `name`, `ref`,
+`description`, `size`, and `action`; registry hits expose `type`, `name`, `id`,
+`description`, `action`, and `curated`. `--detail normal` adds commonly useful
+fields like `origin` and `tags`. `--detail full` includes debug-oriented fields
+such as scores, match explanations, timings, and stash metadata.
 
 ### show
 
-Display an asset by ref. Knowledge assets support view modes as
-positional arguments after the ref.
+Display an asset by ref. Knowledge assets support view modes as positional
+arguments after the ref.
 
 ```sh
 akm show script:deploy.sh
 akm show skill:code-review
-akm show agent:architect.md
-akm show command:release.md
-akm show knowledge:guide.md toc
-akm show knowledge:guide.md section "Authentication"
-akm show knowledge:guide.md lines 10 30
-akm show knowledge:guide.md frontmatter
+akm show agent:architect
+akm show command:release
+akm show knowledge:guide toc
+akm show knowledge:guide section "Authentication"
+akm show knowledge:guide lines 10 30
+akm show knowledge:guide frontmatter
 ```
 
-The flag form (`--view toc`, `--view section --heading "Auth"`, etc.)
-is still accepted for backward compatibility.
+The default JSON shape includes only action-relevant fields. For `show`,
+`--detail normal` currently matches `brief`; `--detail full` adds verbose
+metadata such as `schemaVersion`, `path`, `editable`, and `editHint`.
 
 Returns type-specific payloads:
 
@@ -80,8 +87,8 @@ Returns type-specific payloads:
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 
-If the ref points to an installed package that is not yet present locally,
-akm auto-installs it before showing the asset.
+If the ref points to a package origin that is not installed, `akm show`
+returns guidance to run `akm add <origin>` first.
 
 ### add
 
@@ -205,12 +212,10 @@ Read and write configuration.
 
 ```sh
 akm config                          # Show current config
-akm config list                     # List with effective providers
-akm config get embedding.provider   # Read one key
-akm config set llm.maxTokens 512    # Set one key
-akm config unset llm.apiKey         # Remove a key
-akm config providers embedding      # List available embedding providers
-akm config use embedding ollama     # Switch embedding provider
+akm config list                     # List current config
+akm config get output.format        # Read one key
+akm config set output.detail full   # Set one key
+akm config unset llm                # Remove an optional key
 ```
 
 See [configuration.md](configuration.md) for details.

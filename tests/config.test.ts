@@ -102,7 +102,11 @@ describe("loadConfig", () => {
     delete process.env.AKM_STASH_DIR;
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
 
-    expect(loadConfig()).toEqual({ semanticSearch: false, searchPaths: [] });
+    expect(loadConfig()).toEqual({
+      semanticSearch: false,
+      searchPaths: [],
+      output: { format: "json", detail: "brief" },
+    });
   });
 
   test("merges partial config with defaults", () => {
@@ -110,6 +114,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.semanticSearch).toBe(false);
     expect(config.searchPaths).toEqual([]);
+    expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
   test("handles corrupted JSON gracefully", () => {
@@ -130,9 +135,13 @@ describe("loadConfig", () => {
   test("drops unknown keys", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false, futureKey: "hello", anotherKey: 42 }));
     const config = loadConfig();
-    expect(config).toEqual({ semanticSearch: false, searchPaths: [] });
-    expect((config as Record<string, unknown>).futureKey).toBeUndefined();
-    expect((config as Record<string, unknown>).anotherKey).toBeUndefined();
+    expect(config).toEqual({
+      semanticSearch: false,
+      searchPaths: [],
+      output: { format: "json", detail: "brief" },
+    });
+    expect((config as unknown as Record<string, unknown>).futureKey).toBeUndefined();
+    expect((config as unknown as Record<string, unknown>).anotherKey).toBeUndefined();
   });
 
   test("filters non-string entries from searchPaths", () => {
@@ -175,7 +184,17 @@ describe("saveConfig", () => {
   test("roundtrips with loadConfig", () => {
     const config = { semanticSearch: false, searchPaths: ["/a", "/b"] };
     saveConfig(config);
-    expect(loadConfig()).toEqual(config);
+    expect(loadConfig()).toEqual({ ...config, output: { format: "json", detail: "brief" } });
+  });
+
+  test("roundtrips output config", () => {
+    const config = {
+      semanticSearch: false,
+      searchPaths: ["/a"],
+      output: { format: "yaml" as const, detail: "full" as const },
+    };
+    saveConfig(config);
+    expect(loadConfig().output).toEqual(config.output);
   });
 });
 
@@ -194,7 +213,20 @@ describe("updateConfig", () => {
     const updated = updateConfig({ semanticSearch: false });
     expect(updated.semanticSearch).toBe(false);
     expect(updated.searchPaths).toEqual([]);
+    expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
+  });
+});
+
+describe("output config", () => {
+  test("loads valid output config", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "text", detail: "full" } }));
+    expect(loadConfig().output).toEqual({ format: "text", detail: "full" });
+  });
+
+  test("ignores invalid output config values", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "xml", detail: "max" } }));
+    expect(loadConfig().output).toEqual({ format: "json", detail: "brief" });
   });
 });
 

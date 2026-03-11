@@ -16,11 +16,5 @@ jobs:
 
       - run: bun install
 
-      - name: Lint & format check
-        run: bun run lint
-
-      - name: Type check
-        run: bunx tsc --noEmit
-
-      - name: Test
-        run: bun test
+      - name: Full project check
+        run: bun run check

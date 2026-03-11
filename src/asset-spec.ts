@@ -13,8 +13,16 @@ export interface AssetSpec {
 
 const markdownSpec: Omit<AssetSpec, "stashDir"> = {
   isRelevantFile: (fileName) => path.extname(fileName).toLowerCase() === ".md",
-  toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
-  toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
+  toCanonicalName: (typeRoot, filePath) => {
+    const rel = toPosix(path.relative(typeRoot, filePath));
+    // Strip .md extension from canonical names (agent:code-reviewer, not agent:code-reviewer.md)
+    return rel.endsWith(".md") ? rel.slice(0, -3) : rel;
+  },
+  toAssetPath: (typeRoot, name) => {
+    // Accept both with and without .md extension
+    const withExt = name.endsWith(".md") ? name : `${name}.md`;
+    return path.join(typeRoot, withExt);
+  },
 };
 
 /** Extended set of script extensions for the script asset type */

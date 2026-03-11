@@ -102,7 +102,7 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
         cachedFrontmatter = Object.keys(parsed.data).length > 0 ? parsed.data : null;
         frontmatterComputed = true;
       }
-      return cachedFrontmatter!;
+      return cachedFrontmatter ?? null;
     },
 
     stat(): fs.Stats {
@@ -169,8 +169,6 @@ export interface AssetRenderer {
   enrichSearchHit?(hit: LocalSearchHit, stashDir: string): void;
   /** Optionally extract/augment metadata for a StashEntry */
   extractMetadata?(entry: StashEntry, ctx: RenderContext): void;
-  /** Human-readable usage instructions surfaced to the LLM */
-  usageGuide: string[];
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────

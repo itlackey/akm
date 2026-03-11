@@ -100,6 +100,8 @@ export function isEditable(filePath: string, config?: AgentikitConfig): boolean 
   const isWin = process.platform === "win32";
 
   for (const entry of cacheManaged) {
+    // Local sources reference original paths — always editable
+    if (entry.source === "local") continue;
     const cacheRoot = path.resolve(entry.cacheDir);
     if (isWin) {
       // Windows paths are case-insensitive — normalize both sides

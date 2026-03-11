@@ -4,7 +4,7 @@ import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { resolveStashDir } from "./common";
 import { getConfigPath, loadConfig, saveConfig } from "./config";
-import { getConfigValue, listConfig, parseConfigValue, setConfigValue, unsetConfigValue } from "./config-cli";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { agentikitIndex } from "./indexer";
 import { agentikitInit } from "./init";
@@ -16,7 +16,7 @@ import { agentikitList, agentikitRemove, agentikitUpdate } from "./stash-registr
 import { agentikitSearch } from "./stash-search";
 import { agentikitShow } from "./stash-show";
 import { resolveStashSources } from "./stash-source";
-import type { KnowledgeView, SearchSource, SearchUsageMode } from "./stash-types";
+import type { KnowledgeView, SearchSource } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -38,15 +38,17 @@ const pkgVersion: string = (() => {
 // Declared by `bun build --define` at compile time; unused at dev time.
 declare const AKM_VERSION: string;
 
-/** Check whether --json flag is present in argv */
-function isJsonMode(): boolean {
-  return process.argv.includes("--json");
+type OutputFormat = "json" | "yaml" | "text";
+type DetailLevel = "brief" | "normal" | "full";
+
+interface OutputMode {
+  format: OutputFormat;
+  detail: DetailLevel;
 }
 
-/** Check whether --verbose / -v flag is present in argv */
-function isVerboseMode(): boolean {
-  return process.argv.includes("--verbose") || process.argv.includes("-v");
-}
+const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
+const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+const BRIEF_DESCRIPTION_LIMIT = 160;
 
 /** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
 interface BunWithYAML {
@@ -67,28 +69,169 @@ function yamlStringify(obj: unknown): string {
   return JSON.stringify(obj, null, 2);
 }
 
-/** Output result: JSON if --json flag set, otherwise YAML (default) */
+function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
+  if (!value) return undefined;
+  if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
+  throw new UsageError(`Invalid value for --format: ${value}. Expected one of: ${OUTPUT_FORMATS.join("|")}`);
+}
+
+function parseDetailLevel(value: string | undefined): DetailLevel | undefined {
+  if (!value) return undefined;
+  if ((DETAIL_LEVELS as string[]).includes(value)) return value as DetailLevel;
+  throw new UsageError(`Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`);
+}
+
+function parseFlagValue(flag: string): string | undefined {
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === flag) return process.argv[i + 1];
+    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+function resolveOutputMode(): OutputMode {
+  const config = loadConfig();
+  const format = parseOutputFormat(parseFlagValue("--format")) ?? config.output?.format ?? "json";
+  const detail = parseDetailLevel(parseFlagValue("--detail")) ?? config.output?.detail ?? "brief";
+  return { format, detail };
+}
+
 function output(command: string, result: unknown): void {
-  const verbose = isVerboseMode();
-  if (isJsonMode()) {
-    const cleaned = command === "search" ? stripVerboseSearchFields(result, verbose) : result;
-    console.log(JSON.stringify(cleaned, null, 2));
-    return;
+  const mode = resolveOutputMode();
+  const shaped = shapeForCommand(command, result, mode.detail);
+
+  switch (mode.format) {
+    case "json":
+      console.log(JSON.stringify(shaped, null, 2));
+      return;
+    case "yaml":
+      console.log(yamlStringify(shaped));
+      return;
+    case "text": {
+      const plain = formatPlain(command, shaped, mode.detail);
+      console.log(plain ?? JSON.stringify(shaped, null, 2));
+      return;
+    }
   }
-  // Some commands output plain text messages rather than structured data
-  const plain = formatPlain(command, result, verbose);
-  if (plain != null) {
-    console.log(plain);
-    return;
+}
+
+function shapeForCommand(command: string, result: unknown, detail: DetailLevel): unknown {
+  switch (command) {
+    case "search":
+      return shapeSearchOutput(result as Record<string, unknown>, detail);
+    case "show":
+      return shapeShowOutput(result as Record<string, unknown>, detail);
+    default:
+      return result;
   }
-  console.log(yamlStringify(result));
+}
+
+function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const shapedHits = hits.map((hit) => shapeSearchHit(hit, detail));
+
+  if (detail === "full") {
+    return {
+      schemaVersion: result.schemaVersion,
+      stashDir: result.stashDir,
+      source: result.source,
+      hits: shapedHits,
+      ...(result.tip ? { tip: result.tip } : {}),
+      ...(result.warnings ? { warnings: result.warnings } : {}),
+      ...(result.timing ? { timing: result.timing } : {}),
+    };
+  }
+
+  return {
+    hits: shapedHits,
+    ...(result.tip ? { tip: result.tip } : {}),
+    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+  };
+}
+
+function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  // Keep local and registry hit models separate internally so search and
+  // ranking logic can carry source-specific metadata. Normalize the external
+  // contract here so default CLI output stays compact and consistent.
+  if (hit.type === "registry") {
+    const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "id", "description", "action", "curated"]));
+    if (detail === "brief") return brief;
+    if (detail === "normal") return pickFields(hit, ["type", "name", "id", "description", "tags", "action", "curated"]);
+    return hit;
+  }
+
+  const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "description", "action"]));
+  if (detail === "brief") return brief;
+  if (detail === "normal") {
+    return pickFields(hit, ["type", "name", "ref", "origin", "description", "tags", "size", "action", "run"]);
+  }
+  return hit;
+}
+
+function withTruncatedDescription(hit: Record<string, unknown>): Record<string, unknown> {
+  if (typeof hit.description !== "string") return hit;
+  return {
+    ...hit,
+    description: truncateDescription(hit.description, BRIEF_DESCRIPTION_LIMIT),
+  };
+}
+
+function truncateDescription(description: string, limit: number): string {
+  const normalized = description.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+
+  const truncated = normalized.slice(0, limit - 1);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const safe = lastSpace >= Math.floor(limit * 0.6) ? truncated.slice(0, lastSpace) : truncated;
+  return `${safe.trimEnd()}...`;
+}
+
+function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const base = pickFields(result, [
+    "type",
+    "name",
+    "origin",
+    "action",
+    "description",
+    "content",
+    "template",
+    "prompt",
+    "toolPolicy",
+    "modelHint",
+    "agent",
+    "parameters",
+    "run",
+    "setup",
+    "cwd",
+  ]);
+
+  if (detail !== "full") {
+    return base;
+  }
+
+  return {
+    schemaVersion: 1,
+    ...base,
+    ...pickFields(result, ["path", "editable", "editHint"]),
+  };
+}
+
+function pickFields(source: Record<string, unknown>, fields: string[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (source[field] !== undefined) {
+      result[field] = source[field];
+    }
+  }
+  return result;
 }
 
 /**
  * Return a plain-text string for commands that are better as short messages,
  * or null to fall through to YAML output.
  */
-function formatPlain(command: string, result: unknown, verbose = false): string | null {
+function formatPlain(command: string, result: unknown, detail: DetailLevel): string | null {
   const r = result as Record<string, unknown>;
 
   switch (command) {
@@ -101,18 +244,41 @@ function formatPlain(command: string, result: unknown, verbose = false): string 
       return `Indexed ${r.totalEntries ?? 0} entries from ${r.directoriesScanned ?? 0} directories (mode: ${r.mode ?? "unknown"})`;
     }
     case "show": {
-      if (r.content != null) return String(r.content);
-      if (r.run != null) return String(r.run);
-      if (r.prompt != null) return String(r.prompt);
-      return null; // fall through to YAML
+      const lines: string[] = [];
+      if (r.type || r.name) {
+        lines.push(`# ${String(r.type ?? "asset")}: ${String(r.name ?? "unknown")}`);
+      }
+      if (r.origin !== undefined) lines.push(`# origin: ${String(r.origin)}`);
+      if (r.action) lines.push(`# ${String(r.action)}`);
+      if (r.description) lines.push(`description: ${String(r.description)}`);
+      if (r.agent) lines.push(`agent: ${String(r.agent)}`);
+      if (Array.isArray(r.parameters) && r.parameters.length > 0) lines.push(`parameters: ${r.parameters.join(", ")}`);
+      if (r.modelHint != null) lines.push(`modelHint: ${String(r.modelHint)}`);
+      if (r.toolPolicy != null) lines.push(`toolPolicy: ${JSON.stringify(r.toolPolicy)}`);
+      if (r.run) lines.push(`run: ${String(r.run)}`);
+      if (r.setup) lines.push(`setup: ${String(r.setup)}`);
+      if (r.cwd) lines.push(`cwd: ${String(r.cwd)}`);
+      if (detail === "full") {
+        if (r.path) lines.push(`path: ${String(r.path)}`);
+        if (r.editable !== undefined) lines.push(`editable: ${String(r.editable)}`);
+        if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
+        if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
+      }
+      const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
+      if (payloads.length > 0) {
+        if (lines.length > 0) lines.push("");
+        lines.push(...payloads);
+      }
+      return lines.length > 0 ? lines.join("\n") : null;
     }
     case "search": {
-      return formatSearchPlain(r, verbose);
+      return formatSearchPlain(r, detail);
     }
     case "add": {
-      const installed = r.installed as Record<string, unknown> | undefined;
-      const indexed = installed?.indexed ?? r.indexed ?? 0;
-      return `Installed ${r.ref} (${indexed} assets indexed)`;
+      const index = r.index as Record<string, unknown> | undefined;
+      const scanned = index?.directoriesScanned ?? 0;
+      const total = index?.totalEntries ?? 0;
+      return `Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`;
     }
     case "remove": {
       const target = r.target ?? r.ref ?? "";
@@ -159,28 +325,7 @@ function formatPlain(command: string, result: unknown, verbose = false): string 
   }
 }
 
-/**
- * Strip verbose-only fields from search results when not in verbose/json mode.
- * Returns a cleaned copy; the original is not modified.
- */
-function stripVerboseSearchFields(result: unknown, verbose: boolean): unknown {
-  if (verbose) return result;
-  const r = result as Record<string, unknown>;
-  const { timing, ...rest } = r;
-  const hits = (rest.hits as Record<string, unknown>[]) ?? [];
-  rest.hits = hits.map((hit) => {
-    const { whyMatched, editable, editHint, hitSource, ...cleanHit } = hit;
-    return cleanHit;
-  });
-  return rest;
-}
-
-/**
- * Format search results as plain text.
- * Default mode: type, name, description, score, run command.
- * Verbose mode: adds hitSource, whyMatched, editable, editHint, timing.
- */
-function formatSearchPlain(r: Record<string, unknown>, verbose: boolean): string {
+function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const hits = (r.hits as Record<string, unknown>[]) ?? [];
 
   if (hits.length === 0) {
@@ -198,14 +343,19 @@ function formatSearchPlain(r: Record<string, unknown>, verbose: boolean): string
     lines.push(`${type}: ${name}${score}`);
     if (desc) lines.push(desc);
 
-    if (hit.run) lines.push(`  run: ${hit.run}`);
-    if (hit.openRef) lines.push(`  ref: ${hit.openRef}`);
-    if (hit.installCmd) lines.push(`  install: ${hit.installCmd}`);
+    if (hit.id) lines.push(`  id: ${String(hit.id)}`);
+    if (hit.ref) lines.push(`  ref: ${String(hit.ref)}`);
+    if (hit.origin !== undefined) lines.push(`  origin: ${String(hit.origin)}`);
+    if (hit.size) lines.push(`  size: ${String(hit.size)}`);
+    if (hit.action) lines.push(`  action: ${String(hit.action)}`);
+    if (hit.run) lines.push(`  run: ${String(hit.run)}`);
+    if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
+    if (hit.curated !== undefined) lines.push(`  curated: ${String(hit.curated)}`);
 
-    if (verbose) {
-      if (hit.hitSource) lines.push(`  source: ${hit.hitSource}`);
-      if (hit.editable != null) lines.push(`  editable: ${hit.editable}`);
-      if (hit.editHint) lines.push(`  editHint: ${hit.editHint}`);
+    if (detail === "full") {
+      if (hit.path) lines.push(`  path: ${String(hit.path)}`);
+      if (hit.editable != null) lines.push(`  editable: ${String(hit.editable)}`);
+      if (hit.editHint) lines.push(`  editHint: ${String(hit.editHint)}`);
       const whyMatched = hit.whyMatched as string[] | undefined;
       if (whyMatched && whyMatched.length > 0) {
         lines.push(`  whyMatched: ${whyMatched.join(", ")}`);
@@ -215,7 +365,7 @@ function formatSearchPlain(r: Record<string, unknown>, verbose: boolean): string
     lines.push(""); // blank line between hits
   }
 
-  if (verbose && r.timing) {
+  if (detail === "full" && r.timing) {
     const timing = r.timing as Record<string, unknown>;
     const parts: string[] = [];
     if (timing.totalMs != null) parts.push(`total: ${timing.totalMs}ms`);
@@ -259,24 +409,23 @@ const indexCommand = defineCommand({
 const searchCommand = defineCommand({
   meta: { name: "search", description: "Search the stash" },
   args: {
-    query: { type: "positional", description: "Search query", required: false, default: "" },
+    query: { type: "positional", description: "Search query (omit to list all assets)", required: false, default: "" },
     type: {
       type: "string",
       description:
         "Asset type filter (skill|command|agent|knowledge|script|any). 'tool' is accepted as alias for 'script'.",
     },
     limit: { type: "string", description: "Maximum number of results" },
-    usage: { type: "string", description: "Usage metadata mode (none|both|item|guide)", default: "both" },
     source: { type: "string", description: "Search source (local|registry|both)", default: "local" },
-    verbose: { type: "boolean", alias: "v", description: "Show detailed match information", default: false },
+    format: { type: "string", description: "Output format (json|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const type = args.type as "tool" | "skill" | "command" | "agent" | "knowledge" | "script" | "any" | undefined;
       const limit = args.limit ? parseInt(args.limit, 10) : undefined;
-      const usage = parseSearchUsageMode(args.usage);
       const source = parseSearchSource(args.source);
-      const result = await agentikitSearch({ query: args.query, type, limit, usage, source });
+      const result = await agentikitSearch({ query: args.query, type, limit, source });
       output("search", result);
     });
   },
@@ -364,6 +513,8 @@ const showCommand = defineCommand({
   },
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
+    format: { type: "string", description: "Output format (json|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
     // These flags are kept for backward compatibility (--view toc still works)
     // but the preferred syntax is positional: akm show ref toc
     view: { type: "string", description: "Knowledge view mode (full|toc|frontmatter|section|lines)" },
@@ -512,8 +663,7 @@ const configCommand = defineCommand({
         }
         const key = args.set.slice(0, eqIndex);
         const value = args.set.slice(eqIndex + 1);
-        const partial = parseConfigValue(key, value);
-        const config = { ...loadConfig(), ...partial };
+        const config = setConfigValue(loadConfig(), key, value);
         saveConfig(config);
         output("config", listConfig(config));
       } else {
@@ -564,7 +714,8 @@ const main = defineCommand({
     description: "CLI tool to search, open, and manage assets from Agent-i-Kit stash.",
   },
   args: {
-    json: { type: "boolean", description: "Output in JSON format", default: false },
+    format: { type: "string", description: "Output format (json|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full)" },
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
@@ -583,7 +734,6 @@ const main = defineCommand({
   },
 });
 
-const SEARCH_USAGE_MODES: SearchUsageMode[] = ["none", "both", "item", "guide"];
 const SEARCH_SOURCES: SearchSource[] = ["local", "registry", "both"];
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
@@ -592,11 +742,6 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
 // so we must replace process.argv with the normalized version before runMain.
 process.argv = normalizeShowArgv(normalizeConfigArgv(process.argv));
 runMain(main);
-
-function parseSearchUsageMode(value: string): SearchUsageMode {
-  if ((SEARCH_USAGE_MODES as string[]).includes(value)) return value as SearchUsageMode;
-  throw new UsageError(`Invalid value for --usage: ${value}. Expected one of: ${SEARCH_USAGE_MODES.join("|")}`);
-}
 
 function parseSearchSource(value: string): SearchSource {
   if ((SEARCH_SOURCES as string[]).includes(value)) return value as SearchSource;
@@ -642,7 +787,8 @@ function buildHint(message: string): string | undefined {
   if (message.includes("remote package fetched but asset not found"))
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: local, registry, both.";
-  if (message.includes("Invalid value for --usage")) return "Pick one of: none, both, item, guide.";
+  if (message.includes("Invalid value for --format")) return "Pick one of: json, text, yaml.";
+  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full.";
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
   }
@@ -662,11 +808,30 @@ function hasConfigSubcommand(args: Record<string, unknown>): boolean {
  * Returns a new array; the input is never modified.
  */
 function normalizeConfigArgv(argv: string[]): string[] {
-  // Global flags (like --json, --quiet) should not be treated as config subcommand arguments.
+  // Global flags should not be treated as config subcommand arguments.
   // We strip them from the analysis portion, normalize, then re-append them.
-  const GLOBAL_FLAGS = new Set(["--json", "--quiet", "-q", "--verbose", "-v"]);
-  const globalFlags = argv.slice(3).filter((a) => GLOBAL_FLAGS.has(a));
-  const configArgs = argv.slice(3).filter((a) => !GLOBAL_FLAGS.has(a));
+  const globalFlags: string[] = [];
+  const configArgs: string[] = [];
+  for (let i = 3; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--quiet" || arg === "-q") {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg === "--format" || arg === "--detail") {
+      globalFlags.push(arg);
+      if (argv[i + 1] !== undefined) {
+        globalFlags.push(argv[i + 1]);
+        i++;
+      }
+      continue;
+    }
+    configArgs.push(arg);
+  }
 
   const [command, argAfterCommand, argAfterKey, ...rest] = [argv[2], ...configArgs];
   if (command !== "config") return argv;
@@ -714,19 +879,31 @@ function normalizeShowArgv(argv: string[]): string[] {
   if (argv.includes("--view")) return argv;
 
   // Separate global flags from positional/show-specific args
-  const GLOBAL_FLAGS = new Set(["--json", "--quiet", "-q"]);
   const prefix = argv.slice(0, 3); // [bun, script, show]
   const rest = argv.slice(3);
 
   const globalFlags: string[] = [];
   const showArgs: string[] = [];
 
-  for (const a of rest) {
-    if (GLOBAL_FLAGS.has(a)) {
-      globalFlags.push(a);
-    } else {
-      showArgs.push(a);
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--quiet" || arg === "-q") {
+      globalFlags.push(arg);
+      continue;
     }
+    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg === "--format" || arg === "--detail") {
+      globalFlags.push(arg);
+      if (rest[i + 1] !== undefined) {
+        globalFlags.push(rest[i + 1]);
+        i++;
+      }
+      continue;
+    }
+    showArgs.push(arg);
   }
 
   // showArgs[0] = ref, showArgs[1] = potential view mode, showArgs[2..] = view params

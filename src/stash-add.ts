@@ -35,7 +35,8 @@ export async function agentikitAdd(input: { ref: string }): Promise<AddResponse>
     integrity: installed.integrity ?? (installed.source === "local" ? "local" : undefined),
   });
 
-  if (replaced && replaced.cacheDir !== installed.cacheDir) {
+  // Clean up old cache directory on re-install (skip for local sources — no cache to clean)
+  if (replaced && replaced.source !== "local" && replaced.cacheDir !== installed.cacheDir) {
     try {
       fs.rmSync(replaced.cacheDir, { recursive: true, force: true });
     } catch {

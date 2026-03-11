@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { fetchWithRetry } from "./common";
@@ -145,20 +146,25 @@ function parseGitUrl(input: string, originalRef: string): ParsedGitRef {
 }
 
 function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef | undefined {
-  if (!explicitPath) {
-    return undefined;
-  }
-
   const resolvedPath = path.resolve(rawRef);
   let stat: fs.Stats;
   try {
     stat = fs.statSync(resolvedPath);
   } catch {
-    throw new Error(`Local path not found: ${resolvedPath}`);
+    // Explicit paths (./foo, ../bar, /abs) should throw on missing
+    if (explicitPath) {
+      throw new Error(`Local path not found: ${resolvedPath}`);
+    }
+    // Bare names that don't exist on disk — let caller fall through to npm/github
+    return undefined;
   }
 
   if (!stat.isDirectory()) {
-    throw new Error("Local add path must be a directory, but the provided path is not one.");
+    if (explicitPath) {
+      throw new Error("Local add path must be a directory, but the provided path is not one.");
+    }
+    // Bare name exists but isn't a directory — not a local ref
+    return undefined;
   }
 
   const repoRoot = findGitRepoRoot(resolvedPath);
@@ -166,13 +172,14 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
   return {
     source: "local",
     ref: rawRef,
-    id: `local:${encodeURIComponent(resolvedPath)}`,
+    id: `local:${toReadableLocalId(resolvedPath)}`,
     repoRoot,
     sourcePath: resolvedPath,
   };
 }
 
 function isPathLikeRef(ref: string): boolean {
+  if (ref === "." || ref === "..") return true;
   if (path.isAbsolute(ref)) return true;
   if (ref.startsWith("./") || ref.startsWith("../") || ref.startsWith(".\\") || ref.startsWith("..\\")) {
     return true;
@@ -396,6 +403,20 @@ function fileUriToPath(ref: string): string {
   }
   // file:./relative or file:../relative or file:/absolute
   return after;
+}
+
+/**
+ * Build a human-readable local ID from an absolute path.
+ *   /home/user/.hyphn/skills  → ~/.hyphn/skills
+ *   /tmp/my-kit               → /tmp/my-kit
+ */
+function toReadableLocalId(absolutePath: string): string {
+  const home = os.homedir();
+  if (absolutePath === home) return "~";
+  if (absolutePath.startsWith(home + path.sep)) {
+    return `~/${absolutePath.slice(home.length + 1)}`;
+  }
+  return absolutePath;
 }
 
 function findGitRepoRoot(startDir: string): string | undefined {

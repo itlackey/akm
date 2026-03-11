@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_TYPES, deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
-import { type AgentikitAssetType, resolveStashDir } from "./common";
+import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
+import { resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
@@ -19,9 +19,10 @@ import {
   upsertEntry,
   warnIfVecMissing,
 } from "./db";
-import { generateMetadata, loadStashFile, type StashEntry, type StashFile } from "./metadata";
+import { buildFileContext } from "./file-context";
+import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
-import { walkStash } from "./walker";
+import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
     const isIncremental = !options?.full && prevStashDir === stashDir && !!prevBuiltAt;
-    const builtAtMs = isIncremental ? new Date(prevBuiltAt!).getTime() : 0;
+    const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
     if (options?.full || !isIncremental) {
       // Wipe all entries for full rebuild or stashDir change
@@ -156,7 +157,6 @@ function indexEntries(
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
-    assetType: AgentikitAssetType;
     currentStashDir: string;
     stash: StashFile;
   }>;
@@ -168,86 +168,86 @@ function indexEntries(
   const dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
-    assetType: AgentikitAssetType;
     currentStashDir: string;
     stash: StashFile;
   }> = [];
 
   const insertTransaction = db.transaction(() => {
     for (const currentStashDir of allStashDirs) {
-      for (const assetType of ASSET_TYPES as AgentikitAssetType[]) {
-        const typeRoot = path.join(currentStashDir, TYPE_DIRS[assetType]);
-        try {
-          if (!fs.statSync(typeRoot).isDirectory()) continue;
-        } catch {
-          continue;
+      // Walk the entire stash directory — matchers classify each file
+      const fileContexts = walkStashFlat(currentStashDir);
+
+      // Group files by parent directory
+      const dirGroups = new Map<string, string[]>();
+      for (const ctx of fileContexts) {
+        const dir = ctx.parentDirAbs;
+        const group = dirGroups.get(dir);
+        if (group) group.push(ctx.absPath);
+        else dirGroups.set(dir, [ctx.absPath]);
+      }
+
+      for (const [dirPath, files] of dirGroups) {
+        if (seenPaths.has(path.resolve(dirPath))) continue;
+        seenPaths.add(path.resolve(dirPath));
+
+        // Incremental: skip directories that haven't changed
+        if (isIncremental) {
+          const prevEntries = getEntriesByDir(db, dirPath);
+          if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+            skippedDirs++;
+            continue;
+          }
         }
 
-        const dirGroups = walkStash(typeRoot, assetType);
+        scannedDirs++;
 
-        for (const { dirPath, files } of dirGroups) {
-          if (seenPaths.has(path.resolve(dirPath))) continue;
-          seenPaths.add(path.resolve(dirPath));
+        // Delete old entries for this dir (will be re-inserted)
+        deleteEntriesByDir(db, dirPath);
 
-          // Incremental: skip directories that haven't changed
-          if (isIncremental) {
-            const prevEntries = getEntriesByDir(db, dirPath);
-            if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
-              skippedDirs++;
-              continue;
+        // Try loading existing .stash.json (user metadata overrides)
+        let stash = loadStashFile(dirPath);
+
+        if (stash) {
+          // Re-derive canonical names for generated entries using the matcher system.
+          // This fixes legacy .stash.json files that may have stale names (e.g. "SKILL"
+          // instead of the directory-based canonical name "code-review").
+          fixGeneratedEntryNames(stash, files, currentStashDir);
+
+          // Check for files on disk that aren't covered by existing .stash.json entries.
+          const coveredFiles = new Set(
+            stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
+          );
+          const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
+          if (uncoveredFiles.length > 0) {
+            const generated = generateMetadataFlat(currentStashDir, uncoveredFiles);
+            if (generated.entries.length > 0) {
+              stash = { entries: [...stash.entries, ...generated.entries] };
+              generatedCount += generated.entries.length;
             }
           }
+        }
 
-          scannedDirs++;
+        if (!stash) {
+          const generated = generateMetadataFlat(currentStashDir, files);
+          if (generated.entries.length > 0) {
+            stash = { entries: generated.entries };
+            generatedCount += generated.entries.length;
+          }
+        }
 
-          // Delete old entries for this dir (will be re-inserted)
-          deleteEntriesByDir(db, dirPath);
+        if (stash) {
+          for (const entry of stash.entries) {
+            const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+            const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+            const searchText = buildSearchText(entry);
+            const entryWithSize = attachFileSize(entry, entryPath);
 
-          // Try loading existing .stash.json (user metadata overrides)
-          let stash = loadStashFile(dirPath);
-
-          if (stash) {
-            const migration = migrateGeneratedSkillMetadata(stash, files, typeRoot);
-            if (migration.changed) {
-              stash = migration.stash;
-            }
-
-            // Check for files on disk that aren't covered by existing .stash.json entries.
-            // This handles the case where new files are added after the initial index.
-            const coveredFiles = new Set(
-              stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
-            );
-            const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
-            if (uncoveredFiles.length > 0) {
-              const generated = generateMetadata(dirPath, assetType, uncoveredFiles, typeRoot);
-              if (generated.entries.length > 0) {
-                stash = { entries: [...stash.entries, ...generated.entries] };
-                generatedCount += generated.entries.length;
-              }
-            }
+            upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
           }
 
-          if (!stash) {
-            // Generate metadata heuristically
-            stash = generateMetadata(dirPath, assetType, files, typeRoot);
-            if (stash.entries.length > 0) {
-              generatedCount += stash.entries.length;
-            }
-          }
-
-          if (stash) {
-            for (const entry of stash.entries) {
-              const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-              const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-              const searchText = buildSearchText(entry);
-
-              upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText);
-            }
-
-            // Collect dirs needing LLM enhancement during the first walk
-            if (stash.entries.some((e) => e.quality === "generated")) {
-              dirsNeedingLlm.push({ dirPath, files, assetType, currentStashDir, stash });
-            }
+          // Collect dirs needing LLM enhancement during the first walk
+          if (stash.entries.some((e) => e.quality === "generated")) {
+            dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
           }
         }
       }
@@ -265,7 +265,6 @@ async function enhanceDirsWithLlm(
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
-    assetType: AgentikitAssetType;
     currentStashDir: string;
     stash: StashFile;
   }>,
@@ -284,7 +283,7 @@ async function enhanceDirsWithLlm(
       const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
       const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
       const searchText = buildSearchText(entry);
-      upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entry, searchText);
+      upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
     }
   }
 }
@@ -322,6 +321,43 @@ function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ i
     .all() as Array<{ id: number; searchText: string }>;
 }
 
+function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
+  try {
+    return { ...entry, fileSize: fs.statSync(entryPath).size };
+  } catch {
+    return entry;
+  }
+}
+
+/** Set of all known type directory names */
+const TYPE_DIR_NAMES = new Set(Object.values(TYPE_DIRS));
+
+/**
+ * Re-derive canonical names for generated skill .stash.json entries.
+ *
+ * Legacy .stash.json files for skills may have name "SKILL" (derived from the
+ * filename SKILL.md) instead of the canonical directory name (e.g. "code-review").
+ * This fixes those names using the matcher system.
+ */
+function fixGeneratedEntryNames(stash: StashFile, files: string[], stashRoot: string): void {
+  const fileByBaseName = new Map(files.map((f) => [path.basename(f), f]));
+
+  for (const entry of stash.entries) {
+    if (entry.quality !== "generated" || entry.type !== "skill") continue;
+
+    const filePath = entry.filename ? fileByBaseName.get(path.basename(entry.filename)) : undefined;
+    if (!filePath) continue;
+
+    const firstAncestor = buildFileContext(stashRoot, filePath).ancestorDirs[0];
+    const effectiveRoot =
+      firstAncestor && TYPE_DIR_NAMES.has(firstAncestor) ? path.join(stashRoot, firstAncestor) : stashRoot;
+    const canonicalName = deriveCanonicalAssetName("skill", effectiveRoot, filePath);
+    if (canonicalName && canonicalName !== entry.name) {
+      entry.name = canonicalName;
+    }
+  }
+}
+
 function isDirStale(
   dirPath: string,
   currentFiles: string[],
@@ -354,38 +390,6 @@ function isDirStale(
   }
 
   return false;
-}
-
-function migrateGeneratedSkillMetadata(
-  stash: StashFile,
-  files: string[],
-  typeRoot: string,
-): { stash: StashFile; changed: boolean } {
-  const fileByBaseName = new Map(files.map((filePath) => [path.basename(filePath), filePath]));
-  let changed = false;
-
-  const entries = stash.entries.map((entry) => {
-    if (entry.type !== "skill" || entry.quality !== "generated") return entry;
-
-    const hintedFilePath = entry.filename ? fileByBaseName.get(path.basename(entry.filename)) : undefined;
-    const skillFilePath = hintedFilePath ?? fileByBaseName.get("SKILL.md");
-    if (!skillFilePath) return entry;
-
-    const canonicalName = deriveCanonicalAssetName("skill", typeRoot, skillFilePath);
-    if (!canonicalName || canonicalName === entry.name) return entry;
-
-    changed = true;
-    return { ...entry, name: canonicalName };
-  });
-
-  if (!changed) {
-    return { stash, changed: false };
-  }
-
-  return {
-    stash: { entries },
-    changed: true,
-  };
 }
 
 async function enhanceStashWithLlm(

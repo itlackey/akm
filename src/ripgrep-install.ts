@@ -92,6 +92,7 @@ function downloadAndExtractTarGz(url: string, archiveName: string, destBinary: s
     const curlResult = spawnSync("curl", ["-fsSL", "-o", tmpTarGz, url], {
       encoding: "utf8",
       timeout: 60_000,
+      env: process.env,
     });
 
     if (curlResult.status !== 0) {
@@ -103,6 +104,7 @@ function downloadAndExtractTarGz(url: string, archiveName: string, destBinary: s
     const tarResult = spawnSync("tar", ["xzf", tmpTarGz, "--strip-components=1", "-C", destDir, `${archiveName}/rg`], {
       encoding: "utf8",
       timeout: 60_000,
+      env: process.env,
     });
 
     if (tarResult.status !== 0) {
@@ -134,6 +136,7 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
     const dlResult = spawnSync("curl", ["-fsSL", "-o", tmpZip, url], {
       encoding: "utf8",
       timeout: 60_000,
+      env: process.env,
     });
     if (dlResult.status !== 0) {
       throw new Error(dlResult.stderr?.trim() || "download failed");
@@ -147,6 +150,7 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
       {
         encoding: "utf8",
         timeout: 60_000,
+        env: process.env,
       },
     );
     if (expandResult.status !== 0) {
@@ -160,6 +164,7 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
       {
         encoding: "utf8",
         timeout: 60_000,
+        env: process.env,
       },
     );
     if (moveResult.status !== 0) {
@@ -172,7 +177,7 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
 }
 
 function getRgVersion(rgPath: string): string {
-  const result = spawnSync(rgPath, ["--version"], { encoding: "utf8", timeout: 5_000 });
+  const result = spawnSync(rgPath, ["--version"], { encoding: "utf8", timeout: 5_000, env: process.env });
   if (result.status === 0 && result.stdout) {
     const match = result.stdout.match(/ripgrep\s+([\d.]+)/);
     return match ? match[1] : "unknown";

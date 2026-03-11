@@ -5,9 +5,10 @@ import path from "node:path";
 import { getConfigPath, saveConfig } from "../src/config";
 import { agentikitIndex } from "../src/indexer";
 import { agentikitInit } from "../src/init";
+import { getBinDir } from "../src/paths";
 import { agentikitSearch } from "../src/stash-search";
 import { agentikitShow } from "../src/stash-show";
-import type { SearchHit } from "../src/stash-types";
+import type { LocalSearchHit, SearchHit } from "../src/stash-types";
 
 const createdTmpDirs: string[] = [];
 
@@ -22,6 +23,10 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
+function isLocalHit(hit: SearchHit): hit is LocalSearchHit {
+  return hit.type !== "registry";
+}
+
 afterAll(() => {
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -31,6 +36,14 @@ afterAll(() => {
 /** Place a dummy rg binary in stashDir/bin so ensureRg skips download */
 function _stubRg(stashDir: string): void {
   const binDir = path.join(stashDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const rgPath = path.join(binDir, "rg");
+  fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
+  fs.chmodSync(rgPath, 0o755);
+}
+
+function stubCachedRg(): void {
+  const binDir = getBinDir();
   fs.mkdirSync(binDir, { recursive: true });
   const rgPath = path.join(binDir, "rg");
   fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
@@ -79,11 +92,12 @@ test("agentikitSearch only includes tool files with .sh/.ts/.js and returns run"
 
   process.env.AKM_STASH_DIR = stashDir;
   const result = await agentikitSearch({ query: "", type: "tool" });
+  const localHits = result.hits.filter(isLocalHit);
 
-  expect(result.hits.length).toBe(2);
-  expect(result.hits.every((hit: SearchHit) => hit.type === "script")).toBe(true);
-  expect(result.hits.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
-  expect(result.hits.some((hit: SearchHit) => typeof hit.run === "string")).toBe(true);
+  expect(localHits.length).toBe(2);
+  expect(localHits.every((hit) => hit.type === "script")).toBe(true);
+  expect(localHits.some((hit) => hit.name === "README.md")).toBe(false);
+  expect(localHits.some((hit) => typeof hit.run === "string")).toBe(true);
 });
 
 test("agentikitSearch creates bun run from nearest package.json up to tools root", async () => {
@@ -95,10 +109,11 @@ test("agentikitSearch creates bun run from nearest package.json up to tools root
 
   process.env.AKM_STASH_DIR = stashDir;
   const result = await agentikitSearch({ query: "job", type: "tool" });
+  const hit = result.hits.filter(isLocalHit)[0];
 
   expect(result.hits.length).toBe(1);
-  expect(result.hits[0].run).toContain("bun");
-  expect(result.hits[0].run).toContain("job.js");
+  expect(hit.run).toContain("bun");
+  expect(hit.run).toContain("job.js");
 });
 
 test("agentikitSearch detects setup from package.json in nearby directory", async () => {
@@ -109,10 +124,11 @@ test("agentikitSearch detects setup from package.json in nearby directory", asyn
 
   process.env.AKM_STASH_DIR = stashDir;
   const result = await agentikitSearch({ query: "job", type: "tool" });
+  const hit = result.hits.filter(isLocalHit)[0];
   expect(result.hits.length).toBe(1);
   // Search hits only expose run, not setup/cwd
-  expect(result.hits[0].run).toContain("bun");
-  expect(result.hits[0].run).toContain("job.js");
+  expect(hit.run).toContain("bun");
+  expect(hit.run).toContain("job.js");
 });
 
 test("agentikitSearch resolves tool run correctly for search path directories", async () => {
@@ -129,7 +145,7 @@ test("agentikitSearch resolves tool run correctly for search path directories", 
   await agentikitIndex({ stashDir: primaryStashDir, full: true });
 
   const result = await agentikitSearch({ query: "job", type: "tool" });
-  const searchPathHit = result.hits.find((hit) => hit.path.includes(searchPathDir));
+  const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
   expect(searchPathHit).toBeDefined();
   expect(searchPathHit?.run ?? "").toContain("bun");
@@ -157,7 +173,7 @@ test("agentikitSearch includes explainability reasons for indexed hits", async (
   expect(result.hits[0].whyMatched).toContain("matched name tokens");
 });
 
-test("agentikitSearch usage mode both includes guide and per-hit metadata usage", async () => {
+test("agentikitSearch includes ref, action, and size for local hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const toolPath = path.join(stashDir, "tools", "deploy.sh");
   writeFile(toolPath, "#!/usr/bin/env bash\necho deploy\n");
@@ -169,7 +185,6 @@ test("agentikitSearch usage mode both includes guide and per-hit metadata usage"
           name: "deploy",
           type: "tool",
           description: "Deploy app",
-          usage: ["Confirm staging health first", "Run with release tag"],
           filename: "deploy.sh",
         },
       ],
@@ -180,103 +195,43 @@ test("agentikitSearch usage mode both includes guide and per-hit metadata usage"
   process.env.AKM_STASH_DIR = stashDir;
 
   await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "both" });
+  const result = await agentikitSearch({ query: "deploy", type: "tool" });
+  const hit = result.hits.filter(isLocalHit)[0];
 
-  expect(result.usageGuide?.tool).toBeDefined();
-  expect(result.hits[0].usage).toEqual(["Confirm staging health first", "Run with release tag"]);
+  expect(hit.ref).toContain("script:deploy.sh");
+  expect(hit.action).toContain("akm show");
+  expect(hit.size).toBe("small");
 });
 
-test("agentikitSearch usage mode guide omits per-hit usage", async () => {
+test("agentikitSearch includes origin for installed-source hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
-  writeFile(
-    path.join(stashDir, "tools", ".stash.json"),
-    JSON.stringify({
-      entries: [
+  const installedStash = createTmpDir("akm-installed-");
+  writeFile(path.join(stashDir, "tools", "placeholder.sh"), "#!/usr/bin/env bash\necho placeholder\n");
+  writeFile(path.join(installedStash, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+
+  saveConfig({
+    semanticSearch: false,
+    searchPaths: [],
+    registry: {
+      installed: [
         {
-          name: "deploy",
-          type: "tool",
-          usage: ["metadata only"],
-          filename: "deploy.sh",
+          id: "npm:@scope/deploy-kit",
+          source: "npm",
+          ref: "@scope/deploy-kit",
+          artifactUrl: "https://example.com/deploy-kit.tgz",
+          stashRoot: installedStash,
+          cacheDir: installedStash,
+          installedAt: new Date().toISOString(),
         },
       ],
-    }),
-  );
-
-  saveConfig({ semanticSearch: false, searchPaths: [] });
+    },
+  });
   process.env.AKM_STASH_DIR = stashDir;
 
   await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "guide" });
+  const result = await agentikitSearch({ query: "deploy", type: "tool" });
 
-  expect(result.usageGuide?.tool).toBeDefined();
-  expect(result.hits[0].usage).toBeUndefined();
-});
-
-test("agentikitSearch usage mode item omits usage guide", async () => {
-  const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
-  writeFile(
-    path.join(stashDir, "tools", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy",
-          type: "tool",
-          usage: ["metadata only"],
-          filename: "deploy.sh",
-        },
-      ],
-    }),
-  );
-
-  saveConfig({ semanticSearch: false, searchPaths: [] });
-  process.env.AKM_STASH_DIR = stashDir;
-
-  await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "item" });
-
-  expect(result.usageGuide).toBeUndefined();
-  expect(result.hits[0].usage).toEqual(["metadata only"]);
-});
-
-test("agentikitSearch usage mode none omits guide and per-hit usage", async () => {
-  const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
-  writeFile(
-    path.join(stashDir, "tools", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy",
-          type: "tool",
-          usage: ["metadata only"],
-          filename: "deploy.sh",
-        },
-      ],
-    }),
-  );
-
-  saveConfig({ semanticSearch: false, searchPaths: [] });
-  process.env.AKM_STASH_DIR = stashDir;
-
-  await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "none" });
-
-  expect(result.usageGuide).toBeUndefined();
-  expect(result.hits[0].usage).toBeUndefined();
-});
-
-test("agentikitSearch fallback includes usageGuide for guide mode", async () => {
-  const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
-
-  process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentikitSearch({ query: "deploy", type: "tool", usage: "guide" });
-
-  expect(result.hits.length).toBe(1);
-  expect(result.usageGuide?.tool).toBeDefined();
-  expect(result.hits[0].usage).toBeUndefined();
+  expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-kit")).toBe(true);
 });
 
 test("agentikitShow returns full payloads for skill/command/agent", async () => {
@@ -292,11 +247,14 @@ test("agentikitShow returns full payloads for skill/command/agent", async () => 
   const agent = await agentikitShow({ ref: "agent:coach.md" });
 
   expect(skill.type).toBe("skill");
+  expect(skill.action).toContain("Read and follow");
   expect(skill.content ?? "").toMatch(/Ops/);
   expect(command.type).toBe("command");
+  expect(command.action).toContain("dispatch");
   expect(command.template ?? "").toMatch(/run release/);
   expect(command.description).toBe("Release command");
   expect(agent.type).toBe("agent");
+  expect(agent.action).toContain("verbatim");
   expect(agent.prompt ?? "").toMatch(/Guide users/);
   expect(agent.modelHint).toBe("gpt-5");
 });
@@ -380,7 +338,7 @@ test("agentikitSearch finds knowledge assets", async () => {
 
   expect(result.hits.length).toBe(1);
   expect(result.hits[0].type).toBe("knowledge");
-  expect(result.hits[0].name).toBe("api-guide.md");
+  expect(result.hits[0].name).toBe("api-guide");
 });
 
 test("agentikitShow returns full content for knowledge by default", async () => {
@@ -498,6 +456,7 @@ test("agentikitInit returns created false when stash dir already exists", async 
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(result.created).toBe(false);
     expect(result.stashDir).toBe(stashPath);
@@ -535,6 +494,7 @@ test("agentikitInit creates knowledge directory", async () => {
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true);
   } finally {
@@ -580,10 +540,11 @@ test("agentikitSearch returns run for runnable script extensions", async () => {
   try {
     process.env.AKM_STASH_DIR = stashDir;
     const result = await agentikitSearch({ query: "", type: "script" });
+    const hit = result.hits.filter(isLocalHit)[0];
 
     expect(result.hits.length).toBe(1);
-    expect(result.hits[0].run).toBeTruthy();
-    expect(result.hits[0].run).toContain("bash");
+    expect(hit.run).toBeTruthy();
+    expect(hit.run).toContain("bash");
   } finally {
     if (origStashDir === undefined) {
       delete process.env.AKM_STASH_DIR;
@@ -636,6 +597,7 @@ test("agentikitInit writes config outside the stash directory", async () => {
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(result.configPath).toBe(getConfigPath());
     expect(result.configPath.startsWith(result.stashDir)).toBe(false);

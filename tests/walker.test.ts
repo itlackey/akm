@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -197,5 +198,22 @@ describe("walkStashFlat", () => {
     for (const ctx of results) {
       expect(ctx.stashRoot).toBe(root);
     }
+  });
+
+  test("git walk stays scoped to the stash root subtree", () => {
+    const repoRoot = tmpDir();
+    const stashRoot = path.join(repoRoot, "stash");
+
+    writeFile(path.join(repoRoot, "outside.txt"), "outside\n");
+    writeFile(path.join(stashRoot, "tools", "build.sh"), "echo build\n");
+
+    const gitInit = spawnSync("git", ["init"], { cwd: repoRoot, encoding: "utf8" });
+    expect(gitInit.status).toBe(0);
+
+    const results = walkStashFlat(stashRoot);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.relPath).toBe("tools/build.sh");
+    expect(results[0]?.absPath.startsWith(stashRoot)).toBe(true);
   });
 });

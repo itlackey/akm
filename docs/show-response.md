@@ -1,26 +1,30 @@
 # ShowResponse Field Reference
 
-`akm show` returns structured JSON describing an asset. Every response
-includes a set of common fields. Additional fields vary by asset type.
+`akm show` returns structured output describing an asset. By default, the CLI
+emits JSON at `--detail brief`, which keeps only the fields needed to use the
+asset. `--detail normal` currently matches `brief`. `--detail full` adds
+verbose metadata.
 
-## Common Fields
+## Default Fields
 
-These fields are present on every ShowResponse regardless of type:
+These fields may appear in the default response shape:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `type` | string | Asset type: `script`, `skill`, `command`, `agent`, or `knowledge` |
+| `name` | string | Asset display name |
+| `origin` | string \| null | Owning installed source when the asset came from one |
+| `action` | string | Next step the consumer should take |
+| `description` | string | Summary when the asset type has one |
+
+## Full-Detail Only Fields
+
+These fields are only emitted with `--detail full`:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `schemaVersion` | number | Response schema version (currently `1`) |
-| `type` | string | Asset type: `script`, `skill`, `command`, `agent`, or `knowledge` |
-| `name` | string | Asset display name (usually the filename without extension) |
 | `path` | string | Absolute path to the asset file on disk |
-
-## Optional Common Fields
-
-These fields may appear on any asset type depending on context:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `registryId` | string | Registry identifier for assets from installed kits |
 | `editable` | boolean | Whether the asset is safe to edit in place. `false` for cache-managed files from installed kits. Verbose-only. |
 | `editHint` | string | Actionable guidance when `editable` is false (e.g. "use `akm clone` to make an editable copy"). Verbose-only. |
 
@@ -36,7 +40,7 @@ hints. Scripts with unrecognized extensions fall back to raw content.
 | Field | Type | Guaranteed | Description |
 | --- | --- | --- | --- |
 | `run` | string | yes | Full run command (e.g. `"bash /path/to/deploy.sh"`) |
-| `cwd` | string | yes | Working directory for execution |
+| `cwd` | string | no | Working directory for execution when one is known |
 | `setup` | string | no | Setup command when a dependency file is detected (e.g. `"bun install"`) |
 
 **Unrecognized extensions:**
@@ -64,15 +68,16 @@ the file extension and nearby dependency files. See
 | `description` | string | no | Summary from frontmatter `description` key |
 | `modelHint` | unknown | no | Preferred model from frontmatter `model` key |
 | `agent` | string | no | Dispatch target agent from frontmatter `agent` key (OpenCode convention) |
+| `parameters` | string[] | no | Extracted placeholders such as `ARGUMENTS`, `$1`, or `{{named}}` |
 
-Template bodies may contain `$ARGUMENTS` or `$1`-`$3` placeholders that
+Template bodies may contain `$ARGUMENTS`, `$1`-`$9`, or `{{named}}` placeholders that
 should be filled before dispatch.
 
 ### agent
 
 | Field | Type | Guaranteed | Description |
 | --- | --- | --- | --- |
-| `prompt` | string | yes | Full agent prompt content, prefixed with a dispatch compliance notice |
+| `prompt` | string | yes | Full agent prompt content |
 | `description` | string | no | Summary from frontmatter `description` key |
 | `modelHint` | unknown | no | Preferred model from frontmatter `model` key |
 | `toolPolicy` | string, string[], or object | no | Tool access policy from frontmatter `tools` key |
@@ -95,25 +100,42 @@ field.
 
 | Mode | Command | Content |
 | --- | --- | --- |
-| `full` (default) | `akm show knowledge:guide.md` | Full document text |
-| `toc` | `akm show knowledge:guide.md toc` | Formatted table of contents |
-| `frontmatter` | `akm show knowledge:guide.md frontmatter` | Raw YAML frontmatter block |
-| `section` | `akm show knowledge:guide.md section "Auth"` | Content under the named heading |
-| `lines` | `akm show knowledge:guide.md lines 10 30` | Lines 10 through 30 |
+| `full` (default) | `akm show knowledge:guide` | Full document text |
+| `toc` | `akm show knowledge:guide toc` | Formatted table of contents |
+| `frontmatter` | `akm show knowledge:guide frontmatter` | Raw YAML frontmatter block |
+| `section` | `akm show knowledge:guide section "Auth"` | Content under the named heading |
+| `lines` | `akm show knowledge:guide lines 10 30` | Lines 10 through 30 |
 
 ## Example Responses
 
-A script with known extension:
+A script with known extension (default detail):
+
+```json
+{
+  "type": "script",
+  "name": "deploy.sh",
+  "origin": null,
+  "action": "Execute the run command below",
+  "run": "bash /home/user/akm/scripts/deploy.sh",
+  "cwd": "/home/user/akm/scripts",
+  "setup": "bun install"
+}
+```
+
+The same script with `--detail full`:
 
 ```json
 {
   "schemaVersion": 1,
   "type": "script",
-  "name": "deploy",
-  "path": "/home/user/akm/scripts/deploy.sh",
+  "name": "deploy.sh",
+  "origin": null,
+  "action": "Execute the run command below",
   "run": "bash /home/user/akm/scripts/deploy.sh",
   "cwd": "/home/user/akm/scripts",
-  "setup": "bun install"
+  "setup": "bun install",
+  "path": "/home/user/akm/scripts/deploy.sh",
+  "editable": true
 }
 ```
 
@@ -121,11 +143,11 @@ An agent:
 
 ```json
 {
-  "schemaVersion": 1,
   "type": "agent",
   "name": "reviewer",
-  "path": "/home/user/akm/agents/reviewer.md",
-  "prompt": "Dispatching prompt must include the agent's full prompt content verbatim; summaries are non-compliant. \n\nYou are a code reviewer...",
+  "origin": null,
+  "action": "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
+  "prompt": "You are a code reviewer...",
   "modelHint": "claude-3-opus",
   "toolPolicy": ["Bash", "Read"]
 }
@@ -135,10 +157,10 @@ A knowledge asset with `toc` view:
 
 ```json
 {
-  "schemaVersion": 1,
   "type": "knowledge",
   "name": "api-guide",
-  "path": "/home/user/akm/knowledge/api-guide.md",
+  "origin": null,
+  "action": "Reference material - read the content below. Use 'toc' view for large documents.",
   "content": "# Table of Contents\n- Authentication\n- Endpoints\n- Error Handling"
 }
 ```

@@ -2,48 +2,37 @@ import type { AgentikitAssetType } from "./common";
 import type { RegistrySource } from "./registry-types";
 
 export type AgentikitSearchType = AgentikitAssetType | "any";
-export type SearchUsageMode = "none" | "both" | "item" | "guide";
 export type SearchSource = "local" | "registry" | "both";
+export type SearchHitSize = "small" | "medium" | "large";
 
 export interface LocalSearchHit {
-  hitSource: "local";
   type: AgentikitAssetType;
   name: string;
   path: string;
-  openRef: string;
-  /** For installed sources, the registry id */
-  registryId?: string;
+  ref: string;
+  origin?: string | null;
   /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;
   description?: string;
   tags?: string[];
+  size?: SearchHitSize;
+  action?: string;
   score?: number;
   whyMatched?: string[];
   run?: string;
-  usage?: string[];
 }
 
 export interface RegistrySearchResultHit {
-  hitSource: "registry";
   type: "registry";
   name: string;
-  path?: string;
-  openRef?: string;
   id: string;
-  registrySource: RegistrySource;
-  ref: string;
   description?: string;
   tags?: string[];
-  homepage?: string;
+  action?: string;
   score?: number;
   whyMatched?: string[];
-  run?: string;
-  usage?: string[];
-  metadata?: Record<string, string>;
-  installRef: string;
-  installCmd: string;
   /** Whether this entry was manually reviewed and approved */
   curated?: boolean;
 }
@@ -55,7 +44,6 @@ export interface SearchResponse {
   stashDir: string;
   source: SearchSource;
   hits: SearchHit[];
-  usageGuide?: Partial<Record<AgentikitAssetType, string[]>>;
   tip?: string;
   warnings?: string[];
   /** Timing counters in milliseconds */
@@ -208,8 +196,9 @@ export interface ShowResponse {
   setup?: string;
   /** Working directory for execution */
   cwd?: string;
-  /** For installed sources, the registry id */
-  registryId?: string;
+  origin?: string | null;
+  action?: string;
+  parameters?: string[];
   /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */

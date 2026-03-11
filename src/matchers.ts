@@ -34,9 +34,10 @@ import { registerMatcher } from "./file-context";
  * classification for markdown via frontmatter inspection.
  */
 export function extensionMatcher(ctx: FileContext): MatchResult | null {
-  // SKILL.md is a skill regardless of location
+  // SKILL.md is a skill regardless of location — high specificity beats
+  // smartMdMatcher's knowledge fallback and all directory-based matchers.
   if (ctx.fileName === "SKILL.md") {
-    return { type: "skill", specificity: 3, renderer: "skill-md" };
+    return { type: "skill", specificity: 25, renderer: "skill-md" };
   }
 
   // Known script extensions (excluding .md, handled by smartMdMatcher)
@@ -62,7 +63,11 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
 
   const ext = ctx.ext;
 
-  if ((topDir === "tools" || topDir === "scripts") && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+  if (topDir === "tools" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+    return { type: "tool", specificity: 10, renderer: "script-source" };
+  }
+
+  if (topDir === "scripts" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
     return { type: "script", specificity: 10, renderer: "script-source" };
   }
 
@@ -98,7 +103,11 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
 export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
   const { parentDir, ext, fileName } = ctx;
 
-  if ((parentDir === "tools" || parentDir === "scripts") && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+  if (parentDir === "tools" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+    return { type: "tool", specificity: 15, renderer: "script-source" };
+  }
+
+  if (parentDir === "scripts" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
     return { type: "script", specificity: 15, renderer: "script-source" };
   }
 

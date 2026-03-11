@@ -11,6 +11,7 @@
 - [Registry](registry.md) -- Finding, installing, and managing kits
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
 - [Filesystem](filesystem.md) -- Directory layout and `.stash.json` schema
+- [Ref Format](ref.md) -- Opaque asset handles returned by `search` and consumed by `show`
 ## Internals
 
 - [Search](search.md) -- Hybrid search architecture and scoring

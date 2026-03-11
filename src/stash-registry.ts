@@ -39,7 +39,11 @@ export async function agentikitRemove(input: { target: string; stashDir?: string
 
   const updatedConfig = removeInstalledRegistryEntry(entry.id);
   removeLockEntry(entry.id);
-  cleanupDirectoryBestEffort(entry.cacheDir);
+  // Only clean up cache for non-local sources — local sources point to the
+  // user's real directory on disk and must never be deleted.
+  if (entry.source !== "local") {
+    cleanupDirectoryBestEffort(entry.cacheDir);
+  }
   const index = await agentikitIndex({ stashDir });
 
   return {
@@ -81,7 +85,7 @@ export async function agentikitUpdate(input?: {
 
   const processed: UpdateResponse["processed"] = [];
   for (const entry of selectedEntries) {
-    if (force) {
+    if (force && shouldCleanupCache(entry)) {
       cleanupDirectoryBestEffort(entry.cacheDir);
     }
     const installed = await installRegistryRef(entry.ref);
@@ -94,7 +98,7 @@ export async function agentikitUpdate(input?: {
       resolvedRevision: installed.resolvedRevision,
       integrity: installed.integrity ?? (installed.source === "local" ? "local" : undefined),
     });
-    if (entry.cacheDir !== installed.cacheDir) {
+    if (entry.cacheDir !== installed.cacheDir && shouldCleanupCache(entry)) {
       cleanupDirectoryBestEffort(entry.cacheDir);
     }
 
@@ -212,6 +216,10 @@ function cleanupDirectoryBestEffort(target: string): void {
   } catch {
     // Best-effort cleanup only.
   }
+}
+
+function shouldCleanupCache(entry: RegistryInstalledEntry): boolean {
+  return entry.source !== "local";
 }
 
 function directoryExists(target: string): boolean {

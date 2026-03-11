@@ -65,9 +65,8 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
   const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
   return {
-    schemaVersion: 1,
     ...response,
-    registryId: source?.registryId,
+    origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
   };

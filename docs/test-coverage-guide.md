@@ -361,7 +361,7 @@ Most show behavior is tested indirectly via `stash.test.ts`. Focus on gaps:
 
 ### Test cases
 
-- `throws with installCmd when origin is not installed` --
+- `throws with akm add guidance when origin is not installed` --
   Parse a ref like `npm:@other/missing-pkg//tool:missing.sh`. Verify error
   message contains `akm add`.
 - `resolves from search path directories` -- Set up a search path with an
@@ -400,7 +400,6 @@ function runCli(...args: string[]): { stdout: string; stderr: string; status: nu
 - `show with invalid ref prints JSON error`
 - `config set with invalid JSON prints hint about quoting`
 - `search --source=invalid prints hint`
-- `search --usage=invalid prints hint`
 
 ---
 
