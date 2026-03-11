@@ -48,6 +48,7 @@ interface OutputMode {
 
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+const BRIEF_DESCRIPTION_LIMIT = 160;
 
 /** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
 interface BunWithYAML {
@@ -154,18 +155,36 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
   // ranking logic can carry source-specific metadata. Normalize the external
   // contract here so default CLI output stays compact and consistent.
   if (hit.type === "registry") {
-    const brief = pickFields(hit, ["type", "name", "id", "description", "action", "curated"]);
+    const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "id", "description", "action", "curated"]));
     if (detail === "brief") return brief;
     if (detail === "normal") return pickFields(hit, ["type", "name", "id", "description", "tags", "action", "curated"]);
     return hit;
   }
 
-  const brief = pickFields(hit, ["type", "name", "ref", "description", "size", "action"]);
+  const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "description", "action"]));
   if (detail === "brief") return brief;
   if (detail === "normal") {
     return pickFields(hit, ["type", "name", "ref", "origin", "description", "tags", "size", "action", "run"]);
   }
   return hit;
+}
+
+function withTruncatedDescription(hit: Record<string, unknown>): Record<string, unknown> {
+  if (typeof hit.description !== "string") return hit;
+  return {
+    ...hit,
+    description: truncateDescription(hit.description, BRIEF_DESCRIPTION_LIMIT),
+  };
+}
+
+function truncateDescription(description: string, limit: number): string {
+  const normalized = description.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+
+  const truncated = normalized.slice(0, limit - 1);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const safe = lastSpace >= Math.floor(limit * 0.6) ? truncated.slice(0, lastSpace) : truncated;
+  return `${safe.trimEnd()}...`;
 }
 
 function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {

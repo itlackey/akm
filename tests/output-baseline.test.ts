@@ -51,13 +51,35 @@ afterEach(() => {
 describe("output baseline", () => {
   test("search default JSON brief shape stays stable", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(
+      path.join(stashDir, "agents", "architect.md"),
+      "---\ndescription: This is a deliberately long agent description that should be truncated in brief search output so the default response stays compact and easy to scan for both humans and agents.\n---\nYou are an architect.\n",
+    );
 
-    const output = runCli(stashDir, ["search", "deploy", "--format=json"]);
+    const output = runCli(stashDir, ["search", "architect", "--format=json"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(Object.keys(json)).toEqual(["hits"]);
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "name", "ref", "size", "type"]);
+    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "description", "name", "type"]);
+    expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(160);
+    expect(String(json.hits[0]?.description)).toEndWith("...");
+  });
+
+  test("search normal detail keeps the full description", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    const description =
+      "This is a deliberately long agent description that should remain intact outside brief mode so richer output levels preserve the full metadata value for routing and inspection.";
+    writeFile(
+      path.join(stashDir, "agents", "architect.md"),
+      `---\ndescription: ${description}\n---\nYou are an architect.\n`,
+    );
+
+    const output = runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
+    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+
+    expect(json.hits[0]?.description).toBe(description);
+    expect(json.hits[0]?.ref).toBe("agent:architect");
+    expect(json.hits[0]?.size).toBe("small");
   });
 
   test("search text output includes null origin for local hits", () => {

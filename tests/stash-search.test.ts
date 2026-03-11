@@ -431,6 +431,54 @@ describe("Substring fallback", () => {
     const hit = localHits.find((h) => h.name.toLowerCase().includes("deploy"));
     expect(hit).toBeDefined();
   });
+
+  test("substring fallback searches descriptions and returns them", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(
+      path.join(stashDir, "agents", "agentic-systems-architect.md"),
+      "---\ndescription: Designs agent coordination patterns and context assembly\n---\nYou are an architect.\n",
+    );
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearch: false, searchPaths: [] });
+
+    const result = await agentikitSearch({ query: "coordination", type: "agent", source: "local" });
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+
+    expect(localHits).toHaveLength(1);
+    expect(localHits[0]?.name).toBe("agentic-systems-architect");
+    expect(localHits[0]?.description).toContain("agent coordination patterns");
+  });
+
+  test("substring fallback honors curated .stash.json metadata", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(path.join(stashDir, "tools", "doctor", "doctor.sh"), "#!/bin/bash\necho doctor\n");
+    writeFile(
+      path.join(stashDir, "tools", "doctor", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "doctor",
+            type: "tool",
+            description: "Diagnose workspace health issues",
+            tags: ["health", "diagnostics"],
+            filename: "doctor.sh",
+          },
+        ],
+      }),
+    );
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearch: false, searchPaths: [] });
+
+    const result = await agentikitSearch({ query: "diagnostics", source: "local" });
+    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const doctorHit = localHits.find((h) => h.name === "doctor");
+
+    expect(doctorHit).toBeDefined();
+    expect(doctorHit?.description).toBe("Diagnose workspace health issues");
+    expect(doctorHit?.tags).toContain("diagnostics");
+  });
 });
 
 // ── 2.4 Source filtering ────────────────────────────────────────────────────

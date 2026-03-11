@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ASSET_TYPES, deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
+import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
 import { type AgentikitAssetType, normalizeAssetType } from "./common";
 import { type AgentikitConfig, loadConfig } from "./config";
 import {
@@ -16,6 +16,8 @@ import {
 } from "./db";
 import { UsageError } from "./errors";
 import { getRenderer } from "./file-context";
+import { buildSearchText } from "./indexer";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { searchRegistry } from "./registry-search";
 import { makeAssetRef } from "./stash-ref";
@@ -29,12 +31,11 @@ import type {
   SearchResponse,
   SearchSource,
 } from "./stash-types";
-import { walkStash } from "./walker";
+import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
 type IndexedAsset = {
-  type: AgentikitAssetType;
-  name: string;
+  entry: StashEntry;
   path: string;
 };
 
@@ -410,7 +411,7 @@ function substringSearch(
 ): LocalSearchHit[] {
   const assets = indexAssets(stashDir, searchType);
   return assets
-    .filter((asset) => asset.name.toLowerCase().includes(query))
+    .filter((asset) => !query || buildSearchText(asset.entry).includes(query))
     .sort(compareAssets)
     .slice(0, limit)
     .map((asset) => assetToSearchHit(asset, stashDir, sources, config));
@@ -509,21 +510,25 @@ function assetToSearchHit(
 ): LocalSearchHit {
   const source = findSourceForPath(asset.path, sources);
   const editable = isEditable(asset.path, config);
-  const ref = makeAssetRef(asset.type, asset.name, source?.registryId);
+  const ref = makeAssetRef(asset.entry.type, asset.entry.name, source?.registryId);
   const fileSize = readFileSize(asset.path);
   const size = deriveSize(fileSize);
   const hit: LocalSearchHit = {
-    type: normalizeAssetType(asset.type),
-    name: asset.name,
+    type: normalizeAssetType(asset.entry.type),
+    name: asset.entry.name,
     path: asset.path,
     ref,
     origin: source?.registryId ?? null,
     editable,
-    ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name, source?.registryId) } : {}),
+    ...(!editable
+      ? { editHint: buildEditHint(asset.path, asset.entry.type, asset.entry.name, source?.registryId) }
+      : {}),
+    description: asset.entry.description,
+    tags: asset.entry.tags,
     ...(size ? { size } : {}),
-    action: buildLocalAction(normalizeAssetType(asset.type), ref),
+    action: buildLocalAction(normalizeAssetType(asset.entry.type), ref),
   };
-  const renderer = rendererForType(asset.type);
+  const renderer = rendererForType(asset.entry.type);
   if (renderer?.enrichSearchHit) {
     renderer.enrichSearchHit(hit, stashDir);
   }
@@ -599,29 +604,50 @@ function readFileSize(filePath: string): number | undefined {
   }
 }
 
-function fileToAsset(assetType: AgentikitAssetType, root: string, file: string): IndexedAsset | undefined {
-  const name = deriveCanonicalAssetName(assetType, root, file);
-  if (!name) return undefined;
-  return { type: assetType, name, path: file };
-}
-
 function indexAssets(stashDir: string, type: AgentikitSearchType): IndexedAsset[] {
   const assets: IndexedAsset[] = [];
-  const types = type === "any" ? ASSET_TYPES : [type];
-  for (const assetType of types) {
-    const root = path.join(stashDir, TYPE_DIRS[assetType]);
-    const groups = walkStash(root, assetType);
-    for (const { files } of groups) {
-      for (const file of files) {
-        const asset = fileToAsset(assetType, root, file);
-        if (asset) assets.push(asset);
+  const filterType = type === "any" ? undefined : normalizeAssetType(type);
+  const fileContexts = walkStashFlat(stashDir);
+  const dirGroups = new Map<string, string[]>();
+
+  for (const ctx of fileContexts) {
+    const group = dirGroups.get(ctx.parentDirAbs);
+    if (group) group.push(ctx.absPath);
+    else dirGroups.set(ctx.parentDirAbs, [ctx.absPath]);
+  }
+
+  for (const [dirPath, files] of dirGroups) {
+    let stash = loadStashFile(dirPath);
+
+    if (stash) {
+      const coveredFiles = new Set(
+        stash.entries.map((entry) => entry.filename).filter((entry): entry is string => !!entry),
+      );
+      const uncoveredFiles = files.filter((file) => !coveredFiles.has(path.basename(file)));
+      if (uncoveredFiles.length > 0) {
+        const generated = generateMetadataFlat(stashDir, uncoveredFiles);
+        if (generated.entries.length > 0) {
+          stash = { entries: [...stash.entries, ...generated.entries] };
+        }
       }
+    } else {
+      const generated = generateMetadataFlat(stashDir, files);
+      if (generated.entries.length === 0) continue;
+      stash = generated;
+    }
+
+    for (const entry of stash.entries) {
+      const normalizedType = normalizeAssetType(entry.type);
+      if (filterType && normalizedType !== filterType) continue;
+      const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+      assets.push({ entry, path: entryPath });
     }
   }
+
   return assets;
 }
 
 function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
-  if (a.type !== b.type) return a.type.localeCompare(b.type);
-  return a.name.localeCompare(b.name);
+  if (a.entry.type !== b.entry.type) return a.entry.type.localeCompare(b.entry.type);
+  return a.entry.name.localeCompare(b.entry.name);
 }
