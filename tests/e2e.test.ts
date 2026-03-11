@@ -549,7 +549,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits).toBeInstanceOf(Array);
     expect(json.hits.length).toBeGreaterThan(0);
     expect(json.stashDir).toBeUndefined();
-    expect(json.hits[0].ref || json.hits[0].id).toBeTruthy();
+    expect(json.hits[0].name).toBeTruthy();
+    expect(json.hits[0].action).toBeTruthy();
   });
 
   test("cli: akm search --type tool filters by type", async () => {
@@ -584,7 +585,9 @@ describe("Scenario: CLI subprocess execution", () => {
     const json = parseJson(result.stdout);
     expect(json.source).toBeUndefined();
     expect(json.timing).toBeUndefined();
-    expect(json.hits.every((h: CliJsonHit) => h.ref !== undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.ref === undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.type !== undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.name !== undefined)).toBe(true);
     expect(json.hits.every((h: CliJsonHit) => h.action !== undefined)).toBe(true);
   });
 
