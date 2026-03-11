@@ -9,7 +9,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { SCRIPT_EXTENSIONS } from "./asset-spec";
 import { hasErrnoCode } from "./common";
 import type { AssetRenderer, RenderContext } from "./file-context";
 import { registerRenderer } from "./file-context";
@@ -199,61 +198,7 @@ function findStashEntryForFile(filePath: string): StashEntry | undefined {
   return stashFile.entries.find((e) => e.entry === fileName);
 }
 
-// ── 1. tool-script ───────────────────────────────────────────────────────────
-
-const toolScriptRenderer: AssetRenderer = {
-  name: "tool-script",
-
-  buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    const stashDirs = ctx.stashDirs;
-    const assetStashDir = findContainingStashDir(stashDirs, ctx.absPath);
-
-    if (!assetStashDir) {
-      return { type: "tool", name, path: ctx.absPath, content: ctx.content() };
-    }
-
-    const stashEntry = findStashEntryForFile(ctx.absPath);
-    const hints = resolveExecHints(stashEntry, ctx.absPath);
-
-    return {
-      type: "tool",
-      name,
-      path: ctx.absPath,
-      run: hints.run,
-      setup: hints.setup,
-      cwd: hints.cwd,
-    };
-  },
-
-  enrichSearchHit(hit: LocalSearchHit, _stashDir: string): void {
-    try {
-      const stashEntry = findStashEntryForFile(hit.path);
-      const hints = resolveExecHints(stashEntry, hit.path);
-      hit.run = hints.run;
-    } catch (error: unknown) {
-      if (!hasErrnoCode(error, "ENOENT")) throw error;
-    }
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    if (SCRIPT_EXTENSIONS.has(ctx.ext) && ctx.ext !== ".md") {
-      const commentDesc = extractDescriptionFromComments(ctx.absPath);
-      if (commentDesc && !entry.description) {
-        entry.description = commentDesc;
-        entry.source = "comments";
-        entry.confidence = 0.7;
-      }
-    }
-  },
-
-  usageGuide: [
-    "Use the hit's run command for execution so runtime and working directory stay correct.",
-    "Use `akm show <openRef>` to inspect the tool before running it.",
-  ],
-};
-
-// ── 2. skill-md ──────────────────────────────────────────────────────────────
+// ── 1. skill-md ──────────────────────────────────────────────────────────────
 
 const skillMdRenderer: AssetRenderer = {
   name: "skill-md",
@@ -274,7 +219,7 @@ const skillMdRenderer: AssetRenderer = {
   ],
 };
 
-// ── 3. command-md ────────────────────────────────────────────────────────────
+// ── 2. command-md ────────────────────────────────────────────────────────────
 
 const commandMdRenderer: AssetRenderer = {
   name: "command-md",
@@ -300,7 +245,7 @@ const commandMdRenderer: AssetRenderer = {
   ],
 };
 
-// ── 4. agent-md ──────────────────────────────────────────────────────────────
+// ── 3. agent-md ──────────────────────────────────────────────────────────────
 
 const agentMdRenderer: AssetRenderer = {
   name: "agent-md",
@@ -327,7 +272,7 @@ const agentMdRenderer: AssetRenderer = {
   ],
 };
 
-// ── 5. knowledge-md ──────────────────────────────────────────────────────────
+// ── 4. knowledge-md ──────────────────────────────────────────────────────────
 
 const knowledgeMdRenderer: AssetRenderer = {
   name: "knowledge-md",
@@ -387,7 +332,7 @@ const knowledgeMdRenderer: AssetRenderer = {
   ],
 };
 
-// ── 6. script-source ─────────────────────────────────────────────────────────
+// ── 5. script-source ─────────────────────────────────────────────────────────
 
 const scriptSourceRenderer: AssetRenderer = {
   name: "script-source",
@@ -456,7 +401,6 @@ const scriptSourceRenderer: AssetRenderer = {
 
 /** All built-in renderers. */
 const builtinRenderers: AssetRenderer[] = [
-  toolScriptRenderer,
   skillMdRenderer,
   commandMdRenderer,
   agentMdRenderer,
@@ -477,7 +421,6 @@ export function registerBuiltinRenderers(): void {
 // ── Named exports for testing ────────────────────────────────────────────────
 
 export {
-  toolScriptRenderer,
   skillMdRenderer,
   commandMdRenderer,
   agentMdRenderer,

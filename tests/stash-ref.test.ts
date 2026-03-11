@@ -4,8 +4,8 @@ import { makeAssetRef, parseAssetRef } from "../src/stash-ref";
 // ── makeAssetRef ────────────────────────────────────────────────────────────
 
 describe("makeAssetRef", () => {
-  test("simple tool ref", () => {
-    expect(makeAssetRef("tool", "deploy.sh")).toBe("tool:deploy.sh");
+  test("tool maps to script in ref", () => {
+    expect(makeAssetRef("tool", "deploy.sh")).toBe("script:deploy.sh");
   });
 
   test("skill ref", () => {
@@ -13,19 +13,19 @@ describe("makeAssetRef", () => {
   });
 
   test("nested path — slashes stay literal", () => {
-    expect(makeAssetRef("tool", "azure/container-apps/scale.sh")).toBe("tool:azure/container-apps/scale.sh");
+    expect(makeAssetRef("tool", "azure/container-apps/scale.sh")).toBe("script:azure/container-apps/scale.sh");
   });
 
   test("name with spaces — no encoding", () => {
-    expect(makeAssetRef("tool", "my tool.sh")).toBe("tool:my tool.sh");
+    expect(makeAssetRef("tool", "my tool.sh")).toBe("script:my tool.sh");
   });
 
   test("with local origin", () => {
-    expect(makeAssetRef("tool", "deploy.sh", "local")).toBe("local//tool:deploy.sh");
+    expect(makeAssetRef("tool", "deploy.sh", "local")).toBe("local//script:deploy.sh");
   });
 
   test("with npm origin — colons and @ stay literal", () => {
-    expect(makeAssetRef("tool", "deploy.sh", "npm:@itlackey/openkit")).toBe("npm:@itlackey/openkit//tool:deploy.sh");
+    expect(makeAssetRef("tool", "deploy.sh", "npm:@itlackey/openkit")).toBe("npm:@itlackey/openkit//script:deploy.sh");
   });
 
   test("with github shorthand origin", () => {
@@ -35,22 +35,26 @@ describe("makeAssetRef", () => {
   });
 
   test("with github prefixed origin", () => {
-    expect(makeAssetRef("tool", "lint.sh", "github:owner/repo#v1.2")).toBe("github:owner/repo#v1.2//tool:lint.sh");
+    expect(makeAssetRef("tool", "lint.sh", "github:owner/repo#v1.2")).toBe("github:owner/repo#v1.2//script:lint.sh");
   });
 
   test("nested name with origin", () => {
     expect(makeAssetRef("tool", "db/migrate/run.sh", "npm:@corp/db-tools")).toBe(
-      "npm:@corp/db-tools//tool:db/migrate/run.sh",
+      "npm:@corp/db-tools//script:db/migrate/run.sh",
     );
   });
 
   test("normalizes backslashes", () => {
-    expect(makeAssetRef("tool", "dir\\file.sh")).toBe("tool:dir/file.sh");
+    expect(makeAssetRef("tool", "dir\\file.sh")).toBe("script:dir/file.sh");
   });
 
   test("no origin produces plain ref", () => {
     expect(makeAssetRef("agent", "architect.md")).toBe("agent:architect.md");
     expect(makeAssetRef("agent", "architect.md", undefined)).toBe("agent:architect.md");
+  });
+
+  test("script ref stays script", () => {
+    expect(makeAssetRef("script", "deploy.sh")).toBe("script:deploy.sh");
   });
 
   test("rejects empty name", () => {
@@ -191,22 +195,23 @@ describe("parseAssetRef", () => {
 // ── Round-trips ─────────────────────────────────────────────────────────────
 
 describe("round-trip", () => {
-  test("simple ref", () => {
+  test("tool maps to script in round-trip", () => {
     const str = makeAssetRef("tool", "deploy.sh");
+    expect(str).toBe("script:deploy.sh");
     const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "tool", name: "deploy.sh", origin: undefined });
+    expect(parsed).toEqual({ type: "script", name: "deploy.sh", origin: undefined });
   });
 
-  test("with npm origin", () => {
+  test("with npm origin (tool → script)", () => {
     const str = makeAssetRef("tool", "deploy.sh", "npm:@scope/pkg");
     const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "tool", name: "deploy.sh", origin: "npm:@scope/pkg" });
+    expect(parsed).toEqual({ type: "script", name: "deploy.sh", origin: "npm:@scope/pkg" });
   });
 
-  test("nested path with origin", () => {
+  test("nested path with origin (tool → script)", () => {
     const str = makeAssetRef("tool", "db/migrate/run.sh", "npm:@corp/tools");
     const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "tool", name: "db/migrate/run.sh", origin: "npm:@corp/tools" });
+    expect(parsed).toEqual({ type: "script", name: "db/migrate/run.sh", origin: "npm:@corp/tools" });
   });
 
   test("local origin", () => {
@@ -215,10 +220,10 @@ describe("round-trip", () => {
     expect(parsed).toEqual({ type: "skill", name: "review", origin: "local" });
   });
 
-  test("github origin with tag", () => {
+  test("github origin with tag (tool → script)", () => {
     const str = makeAssetRef("tool", "lint.sh", "github:owner/repo#v2.0");
     const parsed = parseAssetRef(str);
-    expect(parsed).toEqual({ type: "tool", name: "lint.sh", origin: "github:owner/repo#v2.0" });
+    expect(parsed).toEqual({ type: "script", name: "lint.sh", origin: "github:owner/repo#v2.0" });
   });
 
   test("name with spaces", () => {
@@ -227,11 +232,13 @@ describe("round-trip", () => {
     expect(parsed).toEqual({ type: "command", name: "my command.md", origin: undefined });
   });
 
-  test("every asset type", () => {
+  test("every asset type round-trips (tool normalizes to script)", () => {
     for (const type of ["tool", "skill", "command", "agent", "knowledge", "script"] as const) {
       const str = makeAssetRef(type, "test-asset", "owner/repo");
       const parsed = parseAssetRef(str);
-      expect(parsed.type).toBe(type);
+      // tool normalizes to script in output
+      const expectedType = type === "tool" ? "script" : type;
+      expect(parsed.type).toBe(expectedType);
       expect(parsed.name).toBe("test-asset");
       expect(parsed.origin).toBe("owner/repo");
     }

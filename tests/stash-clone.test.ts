@@ -58,7 +58,7 @@ describe("agentikitClone", () => {
 
     const result = await agentikitClone({ sourceRef: "tool:deploy.sh" });
 
-    expect(result.destination.ref).toContain("tool:deploy.sh");
+    expect(result.destination.ref).toContain("script:deploy.sh");
     expect(result.overwritten).toBe(false);
     expect(fs.existsSync(path.join(stashDir, "tools", "deploy.sh"))).toBe(true);
     expect(fs.readFileSync(path.join(stashDir, "tools", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");

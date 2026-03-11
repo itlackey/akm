@@ -48,7 +48,7 @@ auto-generated metadata from filenames, comments, and `package.json`.
   "entries": [
     {
       "name": "deploy",
-      "type": "tool",
+      "type": "script",
       "description": "Deploy the application to production",
       "tags": ["deploy", "infrastructure"],
       "entry": "deploy.sh",
@@ -83,7 +83,7 @@ auto-generated metadata from filenames, comments, and `package.json`.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `name` | string | yes | Asset identifier (usually the filename without extension) |
-| `type` | string | yes | One of `tool`, `skill`, `command`, `agent`, `knowledge`, `script` |
+| `type` | string | yes | One of `script`, `skill`, `command`, `agent`, `knowledge` (`tool` accepted as alias for `script`) |
 | `description` | string | no | Human-readable summary of what the asset does |
 | `tags` | string[] | no | Keywords for search and categorization |
 | `entry` | string | no | Filename of the asset relative to this directory |

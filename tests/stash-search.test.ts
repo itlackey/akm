@@ -169,7 +169,7 @@ describe("Database search path (FTS scoring)", () => {
     const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
 
     for (const hit of localHits) {
-      expect(hit.type).toBe("tool");
+      expect(hit.type).toBe("script");
     }
   });
 

@@ -174,7 +174,7 @@ describe("agentikitShow editability", () => {
     expect(result.type).toBe("script");
     expect(result.editable).toBe(false);
     expect(result.editHint).toContain("akm clone");
-    expect(result.editHint).toContain("tool:deploy.sh");
+    expect(result.editHint).toContain("script:deploy.sh");
   });
 });
 

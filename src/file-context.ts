@@ -122,7 +122,8 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
 export interface MatchResult {
   /**
    * Classified asset type.
-   * Standard types: "tool", "skill", "agent", "knowledge", "command", "script".
+   * Standard types: "skill", "agent", "knowledge", "command", "script".
+   * "tool" is a transparent alias for "script".
    * Custom types are also allowed.
    */
   type: string;

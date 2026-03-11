@@ -167,7 +167,7 @@ For better search quality, add a `.stash.json` in any asset type directory:
   "entries": [
     {
       "name": "deploy",
-      "type": "tool",
+      "type": "script",
       "description": "Deploy the application to production",
       "tags": ["deploy", "infrastructure", "ci"],
       "intents": [
@@ -204,7 +204,7 @@ akm list
 akm search "deploy"
 
 # Show an asset to verify the output
-akm show tool:deploy.sh
+akm show script:deploy.sh
 ```
 
 ## Sharing on GitHub
@@ -313,13 +313,13 @@ search paths.
    no `akm add` needed. To fork an asset into the primary stash, use clone:
 
    ```sh
-   akm clone tool:deploy.sh
+   akm clone script:deploy.sh
    ```
 
    Or clone directly to a project directory with `--dest`:
 
    ```sh
-   akm clone tool:deploy.sh --dest ./my-project/.claude
+   akm clone script:deploy.sh --dest ./my-project/.claude
    ```
 
 You can mount multiple directories. They are searched in the order listed,

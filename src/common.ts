@@ -8,6 +8,14 @@ import { getConfigPath, getDefaultStashDir } from "./paths";
 
 export type AgentikitAssetType = "tool" | "skill" | "command" | "agent" | "knowledge" | "script";
 
+/**
+ * Normalize an asset type for output purposes.
+ * "tool" is a transparent alias for "script" -- all output should use "script".
+ */
+export function normalizeAssetType(type: AgentikitAssetType): AgentikitAssetType {
+  return type === "tool" ? "script" : type;
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 export const IS_WINDOWS = process.platform === "win32";

@@ -260,7 +260,7 @@ const searchCommand = defineCommand({
   meta: { name: "search", description: "Search the stash" },
   args: {
     query: { type: "positional", description: "Search query", required: false, default: "" },
-    type: { type: "string", description: "Asset type filter (tool|skill|command|agent|knowledge|script|any)" },
+    type: { type: "string", description: "Asset type filter (skill|command|agent|knowledge|script|any). 'tool' is accepted as alias for 'script'." },
     limit: { type: "string", description: "Maximum number of results" },
     usage: { type: "string", description: "Usage metadata mode (none|both|item|guide)", default: "both" },
     source: { type: "string", description: "Search source (local|registry|both)", default: "local" },

@@ -35,14 +35,14 @@ Search local stash assets, registry kits, or both.
 
 ```sh
 akm search "deploy"
-akm search "deploy" --type tool --limit 10
+akm search "deploy" --type script --limit 10
 akm search "lint" --source registry
 akm search "docker" --source both --usage none
 ```
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `tool`, `skill`, `command`, `agent`, `knowledge`, `script`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` (`tool` accepted as alias for `script`) | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `local`, `registry`, `both` | `local` | Where to search |
 | `--usage` | `none`, `both`, `item`, `guide` | `both` | Usage metadata mode |
@@ -57,7 +57,7 @@ Display an asset by ref. Knowledge assets support view modes as
 positional arguments after the ref.
 
 ```sh
-akm show tool:deploy.sh
+akm show script:deploy.sh
 akm show skill:code-review
 akm show agent:architect.md
 akm show command:release.md
@@ -74,7 +74,7 @@ Returns type-specific payloads:
 
 | Type | Key fields |
 | --- | --- |
-| tool / script | `run`, `setup`, `cwd` |
+| script (alias: tool) | `run`, `setup`, `cwd` |
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
@@ -157,12 +157,12 @@ Copy an asset from any source into the working stash (or a custom
 destination) for editing.
 
 ```sh
-akm clone tool:deploy.sh
-akm clone "npm:@scope/pkg//tool:deploy.sh"
-akm clone tool:deploy.sh --name my-deploy.sh
-akm clone tool:deploy.sh --force
-akm clone tool:deploy.sh --dest ./project/.claude
-akm clone "npm:@scope/pkg//tool:deploy.sh" --dest /tmp/preview
+akm clone script:deploy.sh
+akm clone "npm:@scope/pkg//script:deploy.sh"
+akm clone script:deploy.sh --name my-deploy.sh
+akm clone script:deploy.sh --force
+akm clone script:deploy.sh --dest ./project/.claude
+akm clone "npm:@scope/pkg//script:deploy.sh" --dest /tmp/preview
 ```
 
 | Flag | Description |
@@ -180,8 +180,8 @@ requested asset. The package is **not** registered as an installed kit --
 use `akm add` for that.
 
 ```sh
-# Clone a single tool from a remote package without installing the full kit
-akm clone "npm:@scope/pkg//tool:deploy.sh"
+# Clone a single script from a remote package without installing the full kit
+akm clone "npm:@scope/pkg//script:deploy.sh"
 
 # Clone from a local directory that isn't configured as a search path
 akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude

@@ -35,7 +35,9 @@ export interface AssetRef {
 export function makeAssetRef(type: AgentikitAssetType, name: string, origin?: string): string {
   validateName(name);
   const normalized = normalizeName(name);
-  const asset = `${type}:${normalized}`;
+  // "tool" is a transparent alias for "script" -- normalize to "script" in refs
+  const resolvedType = type === "tool" ? "script" : type;
+  const asset = `${resolvedType}:${normalized}`;
   if (!origin) return asset;
   return `${origin}//${asset}`;
 }

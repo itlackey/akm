@@ -403,10 +403,12 @@ describe("runMatchers", () => {
 // ── 3. Renderer tests ───────────────────────────────────────────────────────
 
 describe("Renderer", () => {
-  test("getRenderer('tool-script') returns the tool renderer", () => {
-    const renderer = getRenderer("tool-script");
+  test("getRenderer('script-source') returns the script renderer (tool-script removed)", () => {
+    const renderer = getRenderer("script-source");
     expect(renderer).toBeDefined();
-    expect(renderer?.name).toBe("tool-script");
+    expect(renderer!.name).toBe("script-source");
+    // tool-script renderer has been removed; tool is an alias for script
+    expect(getRenderer("tool-script")).toBeUndefined();
   });
 
   test("getRenderer('agent-md') builds show response with prompt prefix", () => {
@@ -531,12 +533,12 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 6 renderers", () => {
+  test("getAllRenderers() returns all 5 renderers (tool-script removed)", () => {
     const all = getAllRenderers();
-    expect(all).toHaveLength(6);
+    expect(all).toHaveLength(5);
 
     const names = all.map((r) => r.name).sort();
-    expect(names).toEqual(["agent-md", "command-md", "knowledge-md", "script-source", "skill-md", "tool-script"]);
+    expect(names).toEqual(["agent-md", "command-md", "knowledge-md", "script-source", "skill-md"]);
   });
 
   test("getRenderer returns undefined for unknown renderer name", () => {

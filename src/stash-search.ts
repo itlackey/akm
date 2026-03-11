@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ASSET_TYPES, deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
-import type { AgentikitAssetType } from "./common";
+import { type AgentikitAssetType, normalizeAssetType } from "./common";
 import { type AgentikitConfig, loadConfig } from "./config";
 import {
   closeDatabase,
@@ -479,7 +479,7 @@ function buildDbHit(input: {
   const editable = isEditable(input.path, input.config);
   const hit: LocalSearchHit = {
     hitSource: "local",
-    type: input.entry.type,
+    type: normalizeAssetType(input.entry.type),
     name: input.entry.name,
     path: input.path,
     openRef: makeAssetRef(input.entry.type, openRefName, source?.registryId),
@@ -541,7 +541,7 @@ function assetToSearchHit(
   const editable = isEditable(asset.path, config);
   const hit: LocalSearchHit = {
     hitSource: "local",
-    type: asset.type,
+    type: normalizeAssetType(asset.type),
     name: asset.name,
     path: asset.path,
     openRef: makeAssetRef(asset.type, asset.name, source?.registryId),
@@ -652,7 +652,7 @@ function resolveGuideTypes(hitTypes: AgentikitAssetType[], searchType: Agentikit
 
 /** Map asset types to their primary renderer names. */
 const TYPE_TO_RENDERER: Record<AgentikitAssetType, string> = {
-  tool: "tool-script",
+  tool: "script-source",
   script: "script-source",
   skill: "skill-md",
   command: "command-md",

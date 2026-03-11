@@ -347,7 +347,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     const searchResult = await agentikitSearch({ query: "run tests" });
     expect(searchResult.hits.length).toBeGreaterThan(0);
     const testTool = searchResult.hits.find(
-      (h) => h.hitSource === "local" && h.type === "tool" && h.name.includes("test"),
+      (h) => h.hitSource === "local" && h.type === "script" && h.name.includes("test"),
     );
     expect(testTool).toBeDefined();
 
@@ -501,7 +501,7 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
-    expect(json.hits.every((h: any) => h.type === "tool")).toBe(true);
+    expect(json.hits.every((h: any) => h.type === "script")).toBe(true);
   });
 
   test("cli: akm search --type knowledge filters by type", async () => {
@@ -1299,8 +1299,8 @@ describe("Scenario: Cross-type discovery", () => {
   test("search 'any' type returns mixed results across tools, skills, commands, agents", async () => {
     const result = await agentikitSearch({ query: "", type: "any" });
     const types = new Set(result.hits.map((h) => h.type));
-    // Should have at least tools and one other type
-    expect(types.has("tool")).toBe(true);
+    // Should have at least scripts (including assets from tools/) and one other type
+    expect(types.has("script")).toBe(true);
     expect(types.size).toBeGreaterThan(1);
   });
 

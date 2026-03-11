@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStashDir } from "./common";
+import type { AgentikitAssetType } from "./common";
+import { normalizeAssetType, resolveStashDir } from "./common";
 import type { AgentikitConfig } from "./config";
 import { loadConfig } from "./config";
 import { warn } from "./warn";
@@ -117,7 +118,8 @@ export function isEditable(filePath: string, config?: AgentikitConfig): boolean 
  * unconditionally returns the hint string.
  */
 export function buildEditHint(_filePath: string, assetType: string, assetName: string, origin?: string): string {
-  const ref = origin ? `${origin}//${assetType}:${assetName}` : `${assetType}:${assetName}`;
+  const normalizedType = normalizeAssetType(assetType as AgentikitAssetType);
+  const ref = origin ? `${origin}//${normalizedType}:${assetName}` : `${normalizedType}:${assetName}`;
   return `This asset is managed by akm and may be overwritten on update. To edit, run: akm clone ${ref}`;
 }
 

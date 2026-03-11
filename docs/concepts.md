@@ -49,9 +49,11 @@ The "Preferred Directory" column lists opt-in conventions that increase
 classification confidence during indexing, but they are never required.
 Organize your kit however makes sense for your project.
 
-> **Scripts and tools:** A `tool` type also exists and behaves identically
-> to `script`. Both `tools/` and `scripts/` directories are recognized.
-> Use whichever name fits your mental model.
+> **Scripts and tools:** `tool` is a transparent alias for `script`. The
+> `tool:` prefix is accepted in refs and transparently maps to `script:`.
+> Both `tools/` and `scripts/` directories are recognized and their
+> contents are treated identically. Use whichever name fits your mental
+> model.
 
 ## Asset Classification
 
@@ -92,7 +94,6 @@ Each asset type has a dedicated renderer:
 | Renderer | Asset Type | Output |
 | --- | --- | --- |
 | `script-source` | script | `run` command for supported extensions, source for others |
-| `tool-script` | tool | `run` command with runtime and working directory |
 | `skill-md` | skill | Full SKILL.md content |
 | `command-md` | command | Extracted template and description |
 | `agent-md` | agent | Prompt with dispatch prefix, model hint, tool policy |
@@ -132,7 +133,7 @@ See [filesystem.md](filesystem.md) for the full field reference.
 
 ## Script Execution (ExecHints)
 
-For script (and tool) assets, agentikit resolves execution hints with three
+For script assets, agentikit resolves execution hints with three
 levels of precedence:
 
 1. **`.stash.json`** fields (`run`/`setup`/`cwd`) take highest priority

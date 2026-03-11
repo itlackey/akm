@@ -144,7 +144,7 @@ search results work without a separate install step:
 
 ```bash
 # If not installed, akm will suggest: akm add npm:@scope/my-kit
-akm show "npm:@scope/my-kit//tool:deploy.sh"
+akm show "npm:@scope/my-kit//script:deploy.sh"
 ```
 
 The origin in the ref is used to determine what to install. After installation,
@@ -176,10 +176,10 @@ Installed kits are cache-managed and may be overwritten by `akm update`.
 To edit an asset from an installed kit, clone it into the working stash:
 
 ```bash
-akm clone "npm:@scope/my-kit//tool:deploy.sh"
+akm clone "npm:@scope/my-kit//script:deploy.sh"
 
 # Clone with a new name
-akm clone "npm:@scope/my-kit//tool:deploy.sh" --name my-deploy.sh
+akm clone "npm:@scope/my-kit//script:deploy.sh" --name my-deploy.sh
 ```
 
 The cloned asset lives in the working stash and takes priority over the
@@ -188,8 +188,8 @@ installed version in search and show.
 Use `--dest` to clone to a custom directory instead of the working stash:
 
 ```bash
-# Deploy a tool directly into a project's .claude directory
-akm clone "npm:@scope/my-kit//tool:deploy.sh" --dest ./project/.claude
+# Deploy a script directly into a project's .claude directory
+akm clone "npm:@scope/my-kit//script:deploy.sh" --dest ./project/.claude
 ```
 
 The type subdirectory (`tools/`, `skills/`, etc.) is appended automatically,

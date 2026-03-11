@@ -81,7 +81,7 @@ test("agentikitSearch only includes tool files with .sh/.ts/.js and returns run"
   const result = await agentikitSearch({ query: "", type: "tool" });
 
   expect(result.hits.length).toBe(2);
-  expect(result.hits.every((hit: SearchHit) => hit.type === "tool")).toBe(true);
+  expect(result.hits.every((hit: SearchHit) => hit.type === "script")).toBe(true);
   expect(result.hits.some((hit: SearchHit) => hit.name === "README.md")).toBe(false);
   expect(result.hits.some((hit: SearchHit) => typeof hit.run === "string")).toBe(true);
 });
@@ -517,7 +517,7 @@ test("agentikitShow throws unsupported tool extension for .txt file", async () =
 
   process.env.AKM_STASH_DIR = stashDir;
   try {
-    await expect(agentikitShow({ ref: "tool:readme.txt" })).rejects.toThrow(/Tool ref must resolve to a \.sh/);
+    await expect(agentikitShow({ ref: "tool:readme.txt" })).rejects.toThrow(/Script ref must resolve to a file with a supported script extension/);
   } finally {
     if (origStashDir === undefined) delete process.env.AKM_STASH_DIR;
     else process.env.AKM_STASH_DIR = origStashDir;

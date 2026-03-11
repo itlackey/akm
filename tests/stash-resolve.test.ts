@@ -40,16 +40,17 @@ describe("resolveAssetPath", () => {
     // No tools/ directory created
 
     expect(() => resolveAssetPath(stashDir, "tool", "deploy.sh")).toThrow(
-      "Stash type root not found for ref: tool:deploy.sh",
+      "Stash type root not found for ref: script:deploy.sh",
     );
   });
 
   test("throws for missing file", () => {
     const stashDir = createTmpDir();
     fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
 
     expect(() => resolveAssetPath(stashDir, "tool", "nonexistent.sh")).toThrow(
-      "Stash asset not found for ref: tool:nonexistent.sh",
+      "Stash asset not found for ref: script:nonexistent.sh",
     );
   });
 
@@ -83,13 +84,13 @@ describe("resolveAssetPath", () => {
     expect(() => resolveAssetPath(stashDir, "tool", "link.sh")).toThrow("Ref resolves outside the stash root.");
   });
 
-  test("validates tool extension", () => {
+  test("validates tool extension (tool is alias for script)", () => {
     const stashDir = createTmpDir();
     const badFile = path.join(stashDir, "tools", "readme.txt");
     writeFile(badFile, "not a script");
 
     expect(() => resolveAssetPath(stashDir, "tool", "readme.txt")).toThrow(
-      "Tool ref must resolve to a .sh, .ts, .js, .ps1, .cmd, or .bat file.",
+      "Script ref must resolve to a file with a supported script extension",
     );
   });
 
@@ -101,6 +102,26 @@ describe("resolveAssetPath", () => {
     expect(() => resolveAssetPath(stashDir, "script", "data.xyz")).toThrow(
       "Script ref must resolve to a file with a supported script extension",
     );
+  });
+
+  test("script: resolves files from tools/ directory as fallback", () => {
+    const stashDir = createTmpDir();
+    const toolPath = path.join(stashDir, "tools", "deploy.sh");
+    writeFile(toolPath, "#!/bin/sh\necho hello");
+
+    // script: should find files in tools/ when scripts/ doesn't have them
+    const result = resolveAssetPath(stashDir, "script", "deploy.sh");
+    expect(result).toBe(fs.realpathSync(toolPath));
+  });
+
+  test("tool: resolves files from scripts/ directory as fallback", () => {
+    const stashDir = createTmpDir();
+    const scriptPath = path.join(stashDir, "scripts", "analyze.py");
+    writeFile(scriptPath, "print('hello')");
+
+    // tool: should find files in scripts/ when tools/ doesn't have them
+    const result = resolveAssetPath(stashDir, "tool", "analyze.py");
+    expect(result).toBe(fs.realpathSync(scriptPath));
   });
 
   test("resolves skill by directory", () => {

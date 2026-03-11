@@ -32,13 +32,17 @@ export const SCRIPT_EXTENSIONS_BROAD = new Set([
   ".kts",
 ]);
 
+const scriptSpec: Omit<AssetSpec, "stashDir"> = {
+  isRelevantFile: (fileName) => SCRIPT_EXTENSIONS_BROAD.has(path.extname(fileName).toLowerCase()),
+  toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
+  toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
+};
+
 export const ASSET_SPECS: Record<AgentikitAssetType, AssetSpec> = {
-  tool: {
-    stashDir: "tools",
-    isRelevantFile: (fileName) => SCRIPT_EXTENSIONS.has(path.extname(fileName).toLowerCase()),
-    toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
-    toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
-  },
+  // "tool" is a transparent alias for "script". It uses the same spec
+  // (broad script extensions) but retains its own stashDir ("tools") so
+  // files in tools/ are still discovered.
+  tool: { stashDir: "tools", ...scriptSpec },
   skill: {
     stashDir: "skills",
     isRelevantFile: (fileName) => fileName === "SKILL.md",
@@ -52,12 +56,7 @@ export const ASSET_SPECS: Record<AgentikitAssetType, AssetSpec> = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
-  script: {
-    stashDir: "scripts",
-    isRelevantFile: (fileName) => SCRIPT_EXTENSIONS_BROAD.has(path.extname(fileName).toLowerCase()),
-    toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
-    toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
-  },
+  script: { stashDir: "scripts", ...scriptSpec },
 };
 
 export const ASSET_TYPES = Object.keys(ASSET_SPECS) as AgentikitAssetType[];

@@ -60,9 +60,9 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["tool", "skill", "command", "agent", "knowledge", "script"]
+            "enum": ["skill", "command", "agent", "knowledge", "script"]
           },
-          "description": "What kind of stash assets this kit provides"
+          "description": "What kind of stash assets this kit provides. Note: 'tool' is a transparent alias for 'script' and should not be used in new entries."
         },
         "author": {
           "type": "string"
