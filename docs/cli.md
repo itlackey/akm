@@ -65,12 +65,12 @@ arguments after the ref.
 ```sh
 akm show script:deploy.sh
 akm show skill:code-review
-akm show agent:architect.md
-akm show command:release.md
-akm show knowledge:guide.md toc
-akm show knowledge:guide.md section "Authentication"
-akm show knowledge:guide.md lines 10 30
-akm show knowledge:guide.md frontmatter
+akm show agent:architect
+akm show command:release
+akm show knowledge:guide toc
+akm show knowledge:guide section "Authentication"
+akm show knowledge:guide lines 10 30
+akm show knowledge:guide frontmatter
 ```
 
 The default JSON shape includes only action-relevant fields. For `show`,

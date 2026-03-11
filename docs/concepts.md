@@ -19,7 +19,7 @@ AI agent can discover, inspect, and act on. Every asset has a **type** that
 controls how it is classified, displayed, and used.
 
 Assets are identified by a `ref` handle (for example `script:deploy.sh` or
-`agent:reviewer.md`). An agent discovers assets through `akm search` and
+`agent:reviewer`). An agent discovers assets through `akm search` and
 retrieves full details with `akm show`. In normal use, the agent should treat
 the ref as opaque: get it from search, pass it to show, and rely on structured
 fields rather than parsing it. The show response includes everything the agent

@@ -144,8 +144,8 @@ Agents can request just the table of contents (`toc`) or a specific
 section (`section "Rate Limits"`) to avoid loading the entire document:
 
 ```sh
-akm show knowledge:api-guide.md toc
-akm show knowledge:api-guide.md section "Rate Limits"
+akm show knowledge:api-guide toc
+akm show knowledge:api-guide section "Rate Limits"
 ```
 
 ## Step 3: Add Metadata

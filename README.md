@@ -143,7 +143,7 @@ my-kit/
 | **knowledge** | A reference document | Navigable content with TOC and section views |
 
 Assets are referenced by type and name (e.g. `script:deploy.sh`,
-`knowledge:api-guide.md`). In practice, agents should treat the `ref` returned
+`knowledge:api-guide`). In practice, agents should treat the `ref` returned
 by search as an opaque handle and pass it back to `akm show`. See
 [Concepts](docs/concepts.md) and [Ref Format](docs/ref.md).
 
@@ -174,9 +174,7 @@ akm search "docker" --type tool
     {
       "name": "docker-build",
       "type": "script",
-      "ref": "script:docker-build.sh",
       "description": "Build and push Docker images",
-      "size": "small",
       "action": "akm show script:docker-build.sh -> execute the run command"
     }
   ]
@@ -204,8 +202,8 @@ akm show tool:docker-build.sh
 For knowledge assets, navigate without loading the entire document:
 
 ```sh
-akm show knowledge:api-guide.md toc
-akm show knowledge:api-guide.md section "Authentication"
+akm show knowledge:api-guide toc
+akm show knowledge:api-guide section "Authentication"
 ```
 
 ## Installing and Sharing Kits
