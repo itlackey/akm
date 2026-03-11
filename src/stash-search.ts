@@ -378,7 +378,7 @@ async function searchDatabase(
     buildDbHit({
       entry,
       path: filePath,
-      score: Math.round(score * 1000) / 1000,
+      score: Math.round(score * 100) / 100,
       query,
       rankingMode,
       defaultStashDir: stashDir,
@@ -471,7 +471,7 @@ function buildDbHit(input: {
   const qualityBoost = input.entry.generated === true ? 0 : 0.05;
   const confidenceBoost =
     typeof input.entry.confidence === "number" ? Math.min(0.05, Math.max(0, input.entry.confidence) * 0.05) : 0;
-  const score = Math.round(input.score * (1 + qualityBoost + confidenceBoost) * 1000) / 1000;
+  const score = Math.round(input.score * (1 + qualityBoost + confidenceBoost) * 100) / 100;
 
   const whyMatched = buildWhyMatched(input.entry, input.query, input.rankingMode, qualityBoost, confidenceBoost);
 

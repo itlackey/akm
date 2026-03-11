@@ -49,6 +49,11 @@ function isJsonMode(): boolean {
   return process.argv.includes("--json");
 }
 
+/** Check whether --verbose / -v flag is present in argv */
+function isVerboseMode(): boolean {
+  return process.argv.includes("--verbose") || process.argv.includes("-v");
+}
+
 /** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
 interface BunWithYAML {
   YAML: { stringify(value: unknown): string };
@@ -70,12 +75,14 @@ function yamlStringify(obj: unknown): string {
 
 /** Output result: JSON if --json flag set, otherwise YAML (default) */
 function output(command: string, result: unknown): void {
+  const verbose = isVerboseMode();
   if (isJsonMode()) {
-    console.log(JSON.stringify(result, null, 2));
+    const cleaned = command === "search" ? stripVerboseSearchFields(result, verbose) : result;
+    console.log(JSON.stringify(cleaned, null, 2));
     return;
   }
   // Some commands output plain text messages rather than structured data
-  const plain = formatPlain(command, result);
+  const plain = formatPlain(command, result, verbose);
   if (plain != null) {
     console.log(plain);
     return;
@@ -87,7 +94,7 @@ function output(command: string, result: unknown): void {
  * Return a plain-text string for commands that are better as short messages,
  * or null to fall through to YAML output.
  */
-function formatPlain(command: string, result: unknown): string | null {
+function formatPlain(command: string, result: unknown, verbose = false): string | null {
   const r = result as Record<string, unknown>;
 
   switch (command) {
@@ -104,6 +111,9 @@ function formatPlain(command: string, result: unknown): string | null {
       if (r.run != null) return String(r.run);
       if (r.prompt != null) return String(r.prompt);
       return null; // fall through to YAML
+    }
+    case "search": {
+      return formatSearchPlain(r, verbose);
     }
     case "add": {
       const installed = r.installed as Record<string, unknown> | undefined;
@@ -155,6 +165,74 @@ function formatPlain(command: string, result: unknown): string | null {
   }
 }
 
+/**
+ * Strip verbose-only fields from search results when not in verbose/json mode.
+ * Returns a cleaned copy; the original is not modified.
+ */
+function stripVerboseSearchFields(result: unknown, verbose: boolean): unknown {
+  if (verbose) return result;
+  const r = result as Record<string, unknown>;
+  const { timing, ...rest } = r;
+  const hits = (rest.hits as Record<string, unknown>[]) ?? [];
+  rest.hits = hits.map((hit) => {
+    const { whyMatched, editable, editHint, hitSource, ...cleanHit } = hit;
+    return cleanHit;
+  });
+  return rest;
+}
+
+/**
+ * Format search results as plain text.
+ * Default mode: type, name, description, score, run command.
+ * Verbose mode: adds hitSource, whyMatched, editable, editHint, timing.
+ */
+function formatSearchPlain(r: Record<string, unknown>, verbose: boolean): string {
+  const hits = (r.hits as Record<string, unknown>[]) ?? [];
+
+  if (hits.length === 0) {
+    return r.tip ? String(r.tip) : "No results found.";
+  }
+
+  const lines: string[] = [];
+
+  for (const hit of hits) {
+    const type = hit.type ?? "unknown";
+    const name = hit.name ?? "unnamed";
+    const score = hit.score != null ? ` (score: ${hit.score})` : "";
+    const desc = hit.description ? `  ${hit.description}` : "";
+
+    lines.push(`${type}: ${name}${score}`);
+    if (desc) lines.push(desc);
+
+    if (hit.run) lines.push(`  run: ${hit.run}`);
+    if (hit.openRef) lines.push(`  ref: ${hit.openRef}`);
+    if (hit.installCmd) lines.push(`  install: ${hit.installCmd}`);
+
+    if (verbose) {
+      if (hit.hitSource) lines.push(`  source: ${hit.hitSource}`);
+      if (hit.editable != null) lines.push(`  editable: ${hit.editable}`);
+      if (hit.editHint) lines.push(`  editHint: ${hit.editHint}`);
+      const whyMatched = hit.whyMatched as string[] | undefined;
+      if (whyMatched && whyMatched.length > 0) {
+        lines.push(`  whyMatched: ${whyMatched.join(", ")}`);
+      }
+    }
+
+    lines.push(""); // blank line between hits
+  }
+
+  if (verbose && r.timing) {
+    const timing = r.timing as Record<string, unknown>;
+    const parts: string[] = [];
+    if (timing.totalMs != null) parts.push(`total: ${timing.totalMs}ms`);
+    if (timing.rankMs != null) parts.push(`rank: ${timing.rankMs}ms`);
+    if (timing.embedMs != null) parts.push(`embed: ${timing.embedMs}ms`);
+    if (parts.length > 0) lines.push(`timing: ${parts.join(", ")}`);
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
 const initCommand = defineCommand({
   meta: {
     name: "init",
@@ -192,6 +270,7 @@ const searchCommand = defineCommand({
     limit: { type: "string", description: "Maximum number of results" },
     usage: { type: "string", description: "Usage metadata mode (none|both|item|guide)", default: "both" },
     source: { type: "string", description: "Search source (local|registry|both)", default: "local" },
+    verbose: { type: "boolean", alias: "v", description: "Show detailed match information", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -580,7 +659,7 @@ function hasConfigSubcommand(args: Record<string, unknown>): boolean {
 function normalizeConfigArgv(argv: string[]): string[] {
   // Global flags (like --json, --quiet) should not be treated as config subcommand arguments.
   // We strip them from the analysis portion, normalize, then re-append them.
-  const GLOBAL_FLAGS = new Set(["--json", "--quiet", "-q"]);
+  const GLOBAL_FLAGS = new Set(["--json", "--quiet", "-q", "--verbose", "-v"]);
   const globalFlags = argv.slice(3).filter((a) => GLOBAL_FLAGS.has(a));
   const configArgs = argv.slice(3).filter((a) => !GLOBAL_FLAGS.has(a));
 
