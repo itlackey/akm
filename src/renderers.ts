@@ -1,10 +1,10 @@
 /**
  * Built-in asset renderers.
  *
- * Each renderer mirrors the show/search/metadata behavior of its corresponding
- * legacy AssetTypeHandler, re-expressed against the AssetRenderer interface
- * from ./file-context. Renderers are registered at module-load time so that
- * importing this module is sufficient to make them available.
+ * Each renderer implements the show/search/metadata behavior for its asset
+ * type via the AssetRenderer interface from ./file-context. Renderers are
+ * registered at module-load time so that importing this module is sufficient
+ * to make them available.
  */
 
 import fs from "node:fs";

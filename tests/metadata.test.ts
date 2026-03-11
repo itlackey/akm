@@ -13,7 +13,7 @@ import {
   validateStashEntry,
   writeStashFile,
 } from "../src/metadata";
-import "../src/handlers/index"; // register asset-type handlers so extractTypeMetadata runs
+// Renderers auto-register via ensureBuiltinsRegistered in file-context.ts
 
 const createdTmpDirs: string[] = [];
 

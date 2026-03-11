@@ -216,8 +216,7 @@ function ensureBuiltinsRegistered(): void {
     builtinRegistrar();
     return;
   }
-  // Lazy inline require avoids a top-level static import cycle:
-  //   file-context -> renderers -> asset-spec -> asset-type-handler -> handlers -> file-context
+  // Lazy inline require avoids a top-level static import cycle.
   // These are only evaluated once and only when no explicit registrar was set.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { registerBuiltinMatchers } = require("./matchers") as typeof import("./matchers");

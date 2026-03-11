@@ -1,7 +1,5 @@
-import fs from "node:fs";
-import { getHandler } from "./asset-type-handler";
 import { loadConfig } from "./config";
-import { NotFoundError } from "./errors";
+import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { resolveSourcesForOrigin } from "./origin-resolve";
 import { parseAssetRef } from "./stash-ref";
@@ -43,38 +41,26 @@ export async function agentikitShow(input: { ref: string; view?: KnowledgeView }
   const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allStashDirs[0];
 
-  // Try new renderer pipeline first
-  if (sourceStashDir) {
-    const fileCtx = buildFileContext(sourceStashDir, assetPath);
-    const match = runMatchers(fileCtx);
-    if (match) {
-      match.meta = { ...match.meta, name: parsed.name, view: input.view };
-      const renderer = getRenderer(match.renderer);
-      if (renderer) {
-        const renderCtx = buildRenderContext(fileCtx, match, allStashDirs);
-        const response = renderer.buildShowResponse(renderCtx);
-        const editable = isEditable(assetPath, config);
-        return {
-          ...response,
-          registryId: source?.registryId,
-          editable,
-          ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
-        };
-      }
-    }
+  if (!sourceStashDir) {
+    throw new UsageError(`Could not determine stash root for asset: ${parsed.type}:${parsed.name}`);
   }
 
-  // Fallback to legacy handler
-  const content = fs.readFileSync(assetPath, "utf8");
-  const handler = getHandler(parsed.type);
-  const response = handler.buildShowResponse({
-    name: parsed.name,
-    path: assetPath,
-    content,
-    view: input.view,
-    stashDirs: allStashDirs,
-  });
+  const fileCtx = buildFileContext(sourceStashDir, assetPath);
+  const match = runMatchers(fileCtx);
+  if (!match) {
+    throw new UsageError(
+      `Could not display asset "${parsed.type}:${parsed.name}" — unsupported file type or unrecognized layout`,
+    );
+  }
 
+  match.meta = { ...match.meta, name: parsed.name, view: input.view };
+  const renderer = getRenderer(match.renderer);
+  if (!renderer) {
+    throw new UsageError(`Renderer "${match.renderer}" not found for asset: ${parsed.type}:${parsed.name}`);
+  }
+
+  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs);
+  const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
   return {
     ...response,

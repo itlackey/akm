@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetName, isRelevantAssetFile, SCRIPT_EXTENSIONS } from "./asset-spec";
-import { tryGetHandler } from "./asset-type-handler";
+import { deriveCanonicalAssetName, isRelevantAssetFile } from "./asset-spec";
 import { type AgentikitAssetType, isAssetType } from "./common";
+import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import { parseMarkdownToc, type TocHeading } from "./markdown";
 import { warn } from "./warn";
@@ -212,9 +212,14 @@ export function generateMetadata(
     }
 
     // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for tools/scripts)
-    const handler = tryGetHandler(assetType);
-    if (handler?.extractTypeMetadata) {
-      handler.extractTypeMetadata(entry, file, ext);
+    const fileCtx = buildFileContext(typeRoot, file);
+    const match = runMatchers(fileCtx);
+    if (match) {
+      const renderer = getRenderer(match.renderer);
+      if (renderer?.extractMetadata) {
+        const renderCtx = buildRenderContext(fileCtx, match, [typeRoot]);
+        renderer.extractMetadata(entry, renderCtx);
+      }
     }
 
     // Priority 4: Filename heuristics (fallback)

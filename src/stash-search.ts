@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ASSET_TYPES, deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
-import { tryGetHandler } from "./asset-type-handler";
 import type { AgentikitAssetType } from "./common";
+import { getRenderer } from "./file-context";
 import { type AgentikitConfig, loadConfig } from "./config";
 import {
   closeDatabase,
@@ -497,9 +497,9 @@ function buildDbHit(input: {
     hit.usage = input.entry.usage;
   }
 
-  const handler = tryGetHandler(input.entry.type);
-  if (handler?.enrichSearchHit) {
-    handler.enrichSearchHit(hit, entryStashDir);
+  const renderer = rendererForType(input.entry.type);
+  if (renderer?.enrichSearchHit) {
+    renderer.enrichSearchHit(hit, entryStashDir);
   }
 
   return hit;
@@ -550,9 +550,9 @@ function assetToSearchHit(
     editable,
     ...(!editable ? { editHint: buildEditHint(asset.path, asset.type, asset.name, source?.registryId) } : {}),
   };
-  const handler = tryGetHandler(asset.type);
-  if (handler?.enrichSearchHit) {
-    handler.enrichSearchHit(hit, stashDir);
+  const renderer = rendererForType(asset.type);
+  if (renderer?.enrichSearchHit) {
+    renderer.enrichSearchHit(hit, stashDir);
   }
   return hit;
 }
@@ -651,9 +651,23 @@ function resolveGuideTypes(hitTypes: AgentikitAssetType[], searchType: Agentikit
   return Array.from(new Set(hitTypes));
 }
 
+/** Map asset types to their primary renderer names. */
+const TYPE_TO_RENDERER: Record<AgentikitAssetType, string> = {
+  tool: "tool-script",
+  script: "script-source",
+  skill: "skill-md",
+  command: "command-md",
+  agent: "agent-md",
+  knowledge: "knowledge-md",
+};
+
+function rendererForType(type: AgentikitAssetType) {
+  return getRenderer(TYPE_TO_RENDERER[type]);
+}
+
 function usageGuideByType(type: AgentikitAssetType): string[] {
-  const handler = tryGetHandler(type);
-  return handler?.defaultUsageGuide ?? [];
+  const renderer = rendererForType(type);
+  return renderer?.usageGuide ?? [];
 }
 
 function fileToAsset(assetType: AgentikitAssetType, root: string, file: string): IndexedAsset | undefined {
