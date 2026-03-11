@@ -96,6 +96,9 @@ auto-generated metadata from filenames, comments, and `package.json`.
 | `examples` | string[] | no | Example queries or phrases a user might type |
 | `intents` | string[] | no | Search phrases used for intent-based matching |
 | `toc` | object[] | no | Table of contents (knowledge type only, usually auto-generated) |
+| `run` | string | no | Explicit run command (e.g. `"bash deploy.sh"`), overrides auto-detection |
+| `setup` | string | no | Setup command to run before execution (e.g. `"bun install"`) |
+| `cwd` | string | no | Working directory for execution |
 
 ### How It Works
 
