@@ -254,6 +254,31 @@ describe("agentikitRemove", () => {
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
+
+  test("does not delete local source directories", async () => {
+    const localDir = createTmpDir("akm-registry-remove-local-");
+    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+
+    const entry = {
+      id: `local:${path.basename(localDir)}`,
+      source: "local" as const,
+      ref: localDir,
+      artifactUrl: `file://${localDir}`,
+      stashRoot: localDir,
+      cacheDir: localDir,
+      installedAt: new Date().toISOString(),
+    };
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [localDir],
+      registry: { installed: [entry] },
+    });
+
+    await agentikitRemove({ target: entry.id, stashDir });
+
+    expect(fs.existsSync(localDir)).toBe(true);
+  });
 });
 
 // ── selectTargets (tested via agentikitUpdate error paths) ────────────────
@@ -316,5 +341,61 @@ describe("selectTargets via agentikitUpdate", () => {
       expect(message).not.toContain("Either <target> or --all is required");
       expect(message).not.toContain("Specify either <target> or --all");
     }
+  });
+
+  test("--force does not delete local source directories", async () => {
+    const localDir = createTmpDir("akm-registry-update-local-force-");
+    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [localDir],
+      registry: {
+        installed: [
+          {
+            id: `local:${path.basename(localDir)}`,
+            source: "local" as const,
+            ref: localDir,
+            artifactUrl: `file://${localDir}`,
+            stashRoot: localDir,
+            cacheDir: localDir,
+            installedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    const result = await agentikitUpdate({ target: localDir, force: true, stashDir });
+
+    expect(result.processed).toHaveLength(1);
+    expect(fs.existsSync(localDir)).toBe(true);
+  });
+
+  test("does not delete local directories when cache path string changes", async () => {
+    const localDir = createTmpDir("akm-registry-update-local-cache-change-");
+    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [localDir],
+      registry: {
+        installed: [
+          {
+            id: `local:${path.basename(localDir)}`,
+            source: "local" as const,
+            ref: localDir,
+            artifactUrl: `file://${localDir}`,
+            stashRoot: localDir,
+            cacheDir: path.join(localDir, "."),
+            installedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    const result = await agentikitUpdate({ target: localDir, stashDir });
+
+    expect(result.processed).toHaveLength(1);
+    expect(fs.existsSync(localDir)).toBe(true);
   });
 });

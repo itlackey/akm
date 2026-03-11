@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Prevented `akm remove` and `akm update --force` from deleting user-owned local source directories installed via path refs.
+
 ## [0.1.0] - 2026-03-10
 
 Major internal overhaul and rebrand. This release simplifies the asset model,
