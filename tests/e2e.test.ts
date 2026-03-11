@@ -218,6 +218,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   test("search with index returns scored results with descriptions", async () => {
     const result = await agentikitSearch({ query: "docker build image", type: "any" });
 
+    expect(result.schemaVersion).toBe(1);
     expect(result.hits.length).toBeGreaterThan(0);
     // Docker-build should be ranked first
     const topHit = result.hits[0];
@@ -263,6 +264,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(deployHit).toBeDefined();
 
     const openResult = await agentikitShow({ ref: deployHit!.openRef });
+    expect(openResult.schemaVersion).toBe(1);
     expect(openResult.type).toBe("script");
     expect(openResult.run).toBeTruthy();
     expect(openResult.run).toContain("bash");

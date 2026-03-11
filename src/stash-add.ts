@@ -46,6 +46,7 @@ export async function agentikitAdd(input: { ref: string }): Promise<AddResponse>
   const index = await agentikitIndex({ stashDir });
 
   return {
+    schemaVersion: 1,
     stashDir,
     ref,
     installed: {

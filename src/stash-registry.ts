@@ -15,6 +15,7 @@ export async function agentikitList(input?: { stashDir?: string }): Promise<List
   const installed = config.registry?.installed ?? [];
 
   return {
+    schemaVersion: 1,
     stashDir,
     installed: installed.map((entry) => ({
       ...entry,
@@ -42,6 +43,7 @@ export async function agentikitRemove(input: { target: string; stashDir?: string
   const index = await agentikitIndex({ stashDir });
 
   return {
+    schemaVersion: 1,
     stashDir,
     target,
     removed: {
@@ -121,6 +123,7 @@ export async function agentikitUpdate(input?: {
   const config = loadConfig();
 
   return {
+    schemaVersion: 1,
     stashDir,
     target,
     all,

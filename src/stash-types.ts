@@ -51,6 +51,7 @@ export interface RegistrySearchResultHit {
 export type SearchHit = LocalSearchHit | RegistrySearchResultHit;
 
 export interface SearchResponse {
+  schemaVersion: number;
   stashDir: string;
   source: SearchSource;
   hits: SearchHit[];
@@ -62,6 +63,7 @@ export interface SearchResponse {
 }
 
 export interface AddResponse {
+  schemaVersion: number;
   stashDir: string;
   ref: string;
   installed: {
@@ -118,12 +120,14 @@ export interface RegistryListEntry {
 }
 
 export interface ListResponse {
+  schemaVersion: number;
   stashDir: string;
   installed: RegistryListEntry[];
   totalInstalled: number;
 }
 
 export interface RemoveResponse {
+  schemaVersion: number;
   stashDir: string;
   target: string;
   removed: {
@@ -163,6 +167,7 @@ export interface UpdateResultItem {
 }
 
 export interface UpdateResponse {
+  schemaVersion: number;
   stashDir: string;
   target?: string;
   all: boolean;
@@ -180,6 +185,7 @@ export interface UpdateResponse {
 }
 
 export interface ShowResponse {
+  schemaVersion?: number;
   type: AgentikitAssetType | string;
   name: string;
   path: string;

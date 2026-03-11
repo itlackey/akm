@@ -58,6 +58,7 @@ export async function agentikitSearch(input: {
   const sources = resolveStashSources(undefined, config);
   if (sources.length === 0) {
     return {
+      schemaVersion: 1,
       stashDir: "",
       source: source ?? "all",
       hits: [],
@@ -84,6 +85,7 @@ export async function agentikitSearch(input: {
 
   if (source === "local") {
     return {
+      schemaVersion: 1,
       stashDir,
       source,
       hits: localResult?.hits ?? [],
@@ -117,6 +119,7 @@ export async function agentikitSearch(input: {
   if (source === "registry") {
     const hits = registryHits.slice(0, limit);
     return {
+      schemaVersion: 1,
       stashDir,
       source,
       hits,
@@ -130,6 +133,7 @@ export async function agentikitSearch(input: {
   const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
 
   return {
+    schemaVersion: 1,
     stashDir,
     source,
     hits: mergedHits,
