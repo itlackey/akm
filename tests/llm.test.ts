@@ -133,7 +133,7 @@ describe("enhanceMetadata", () => {
       const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
       const entry: StashEntry = { name: "test", type: "tool" };
       const result = await enhanceMetadata(config, entry);
-      expect(result.searchHints!.length).toBeLessThanOrEqual(8);
+      expect(result.searchHints?.length).toBeLessThanOrEqual(8);
     } finally {
       server.stop();
     }

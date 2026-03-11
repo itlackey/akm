@@ -13,6 +13,7 @@ import {
   validateStashEntry,
   writeStashFile,
 } from "../src/metadata";
+
 // Renderers auto-register via ensureBuiltinsRegistered in file-context.ts
 
 const createdTmpDirs: string[] = [];
@@ -53,10 +54,10 @@ test("loadStashFile reads valid .stash.json", () => {
 
   const result = loadStashFile(dir);
   expect(result).not.toBeNull();
-  expect(result!.entries).toHaveLength(1);
-  expect(result!.entries[0].name).toBe("docker-build");
-  expect(result!.entries[0].description).toBe("build docker images");
-  expect(result!.entries[0].tags).toEqual(["docker", "build"]);
+  expect(result?.entries).toHaveLength(1);
+  expect(result?.entries[0].name).toBe("docker-build");
+  expect(result?.entries[0].description).toBe("build docker images");
+  expect(result?.entries[0].tags).toEqual(["docker", "build"]);
 });
 
 test("loadStashFile returns null for missing file", () => {
@@ -91,7 +92,7 @@ test("loadStashFile parses intent field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result!.entries[0].intent).toEqual({
+  expect(result?.entries[0].intent).toEqual({
     when: "user needs to deploy",
     input: "service name",
     output: "deployment status",
@@ -126,8 +127,8 @@ test("validateStashEntry rejects entries without valid type", () => {
 test("validateStashEntry accepts minimal valid entry", () => {
   const result = validateStashEntry({ name: "x", type: "tool" });
   expect(result).not.toBeNull();
-  expect(result!.name).toBe("x");
-  expect(result!.type).toBe("tool");
+  expect(result?.name).toBe("x");
+  expect(result?.type).toBe("tool");
 });
 
 test("validateStashEntry parses quality, confidence, source, and aliases", () => {
@@ -186,9 +187,9 @@ test("extractPackageMetadata reads package.json fields", () => {
 
   const meta = extractPackageMetadata(dir);
   expect(meta).not.toBeNull();
-  expect(meta!.name).toBe("my-tool");
-  expect(meta!.description).toBe("A useful tool");
-  expect(meta!.keywords).toEqual(["deploy", "ci"]);
+  expect(meta?.name).toBe("my-tool");
+  expect(meta?.description).toBe("A useful tool");
+  expect(meta?.keywords).toEqual(["deploy", "ci"]);
 });
 
 test("extractPackageMetadata returns null when no package.json", () => {
@@ -296,7 +297,7 @@ test("validateStashEntry accepts entries with searchHints array", () => {
     searchHints: ["summarize commits", "explain changes"],
   });
   expect(result).not.toBeNull();
-  expect(result!.searchHints).toEqual(["summarize commits", "explain changes"]);
+  expect(result?.searchHints).toEqual(["summarize commits", "explain changes"]);
 });
 
 test("validateStashEntry filters non-string elements from searchHints", () => {
@@ -306,7 +307,7 @@ test("validateStashEntry filters non-string elements from searchHints", () => {
     searchHints: ["valid", 42, "", "also valid", null],
   });
   expect(result).not.toBeNull();
-  expect(result!.searchHints).toEqual(["valid", "also valid"]);
+  expect(result?.searchHints).toEqual(["valid", "also valid"]);
 });
 
 test("validateStashEntry omits searchHints if all filtered out", () => {
@@ -316,7 +317,7 @@ test("validateStashEntry omits searchHints if all filtered out", () => {
     searchHints: ["", "  "],
   });
   expect(result).not.toBeNull();
-  expect(result!.searchHints).toBeUndefined();
+  expect(result?.searchHints).toBeUndefined();
 });
 
 test("validateStashEntry accepts usage as string", () => {
@@ -326,7 +327,7 @@ test("validateStashEntry accepts usage as string", () => {
     usage: "Run after checking branch state",
   });
   expect(result).not.toBeNull();
-  expect(result!.usage).toEqual(["Run after checking branch state"]);
+  expect(result?.usage).toEqual(["Run after checking branch state"]);
 });
 
 test("validateStashEntry normalizes usage array", () => {
@@ -336,7 +337,7 @@ test("validateStashEntry normalizes usage array", () => {
     usage: ["  First step  ", "", "Second step", 2, null],
   });
   expect(result).not.toBeNull();
-  expect(result!.usage).toEqual(["First step", "Second step"]);
+  expect(result?.usage).toEqual(["First step", "Second step"]);
 });
 
 test("loadStashFile parses usage field", () => {
@@ -354,7 +355,7 @@ test("loadStashFile parses usage field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result!.entries[0].usage).toEqual(["Run after fetching main", "Use --stat for quick output"]);
+  expect(result?.entries[0].usage).toEqual(["Run after fetching main", "Use --stat for quick output"]);
 });
 
 test("loadStashFile parses searchHints field", () => {
@@ -372,7 +373,7 @@ test("loadStashFile parses searchHints field", () => {
   writeFile(path.join(dir, ".stash.json"), JSON.stringify(stash));
 
   const result = loadStashFile(dir);
-  expect(result!.entries[0].searchHints).toEqual(["summarize git commits", "explain what changed"]);
+  expect(result?.entries[0].searchHints).toEqual(["summarize git commits", "explain what changed"]);
 });
 
 // ── generateMetadata populates searchHints ──────────────────────────────────────

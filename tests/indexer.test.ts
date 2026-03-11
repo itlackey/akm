@@ -9,7 +9,7 @@ import { getDbPath } from "../src/paths";
 // Each test gets a fresh database
 beforeEach(() => {
   const dbPath = getDbPath();
-  for (const f of [dbPath, dbPath + "-wal", dbPath + "-shm"]) {
+  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
     try {
       fs.unlinkSync(f);
     } catch {
@@ -55,7 +55,7 @@ test("agentikitIndex scans directories and builds index", async () => {
   expect(entries.length).toBe(2);
   const deployEntry = entries.find((e) => e.entry.name.includes("deploy"));
   expect(deployEntry).toBeDefined();
-  expect(deployEntry!.entry.quality).toBe("generated");
+  expect(deployEntry?.entry.quality).toBe("generated");
   closeDatabase(db);
 });
 
@@ -173,9 +173,9 @@ test("agentikitIndex generates TOC in database for knowledge entries", async () 
   const entries = getAllEntries(db, "knowledge");
   expect(entries.length).toBe(1);
   expect(entries[0].entry.toc).toBeDefined();
-  expect(entries[0].entry.toc!.length).toBe(2);
-  expect(entries[0].entry.toc![0].text).toBe("Getting Started");
-  expect(entries[0].entry.toc![1].text).toBe("Installation");
+  expect(entries[0].entry.toc?.length).toBe(2);
+  expect(entries[0].entry.toc?.[0].text).toBe("Getting Started");
+  expect(entries[0].entry.toc?.[1].text).toBe("Installation");
   closeDatabase(db);
 });
 

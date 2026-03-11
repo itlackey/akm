@@ -399,7 +399,9 @@ async function enhanceStashWithLlm(
   const enhanced: StashEntry[] = [];
   for (const entry of stash.entries) {
     try {
-      const entryFile = entry.filename ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0]) : files[0];
+      const entryFile = entry.filename
+        ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
+        : files[0];
       let fileContent: string | undefined;
       if (entryFile) {
         try {

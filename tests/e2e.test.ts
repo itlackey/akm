@@ -188,9 +188,9 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(dockerStash?.entries.length).toBe(2);
 
     // These were hand-written, should NOT have generated flag
-    expect(dockerStash!.entries[0].quality).not.toBe("generated");
-    expect(dockerStash!.entries[0].intent).toBeDefined();
-    expect(dockerStash!.entries[0].intent!.when).toBeTruthy();
+    expect(dockerStash?.entries[0].quality).not.toBe("generated");
+    expect(dockerStash?.entries[0].intent).toBeDefined();
+    expect(dockerStash?.entries[0].intent?.when).toBeTruthy();
   });
 
   test("index extracts description from code comments", async () => {
@@ -1016,8 +1016,8 @@ describe("Scenario: Zero-config progressive improvement", () => {
     const entries = getAllEntries(db, "tool");
     const formatEntry = entries.find((e) => e.entry.name.includes("prettier"));
     expect(formatEntry).toBeDefined();
-    expect(formatEntry!.entry.quality).toBe("generated");
-    expect(formatEntry!.entry.description).toContain("Format code");
+    expect(formatEntry?.entry.quality).toBe("generated");
+    expect(formatEntry?.entry.description).toContain("Format code");
     closeDatabase(db);
   });
 
