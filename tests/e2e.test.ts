@@ -532,6 +532,7 @@ describe("Scenario: CLI subprocess execution", () => {
   });
 
   test("cli: akm search default source is local", async () => {
+    // hitSource is only present in verbose mode
     const result = runCli("search", "docker", "--verbose");
     expect(result.exitCode).toBe(0);
 
@@ -614,10 +615,10 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.hits.length).toBeGreaterThan(0);
-    // Verbose JSON output should include verbose fields
+    // Verbose JSON output should include verbose fields on every hit
     expect(json.timing).toBeDefined();
-    expect(json.hits.some((h: any) => h.hitSource !== undefined)).toBe(true);
-    expect(json.hits.some((h: any) => h.whyMatched !== undefined)).toBe(true);
+    expect(json.hits.every((h: any) => h.hitSource !== undefined)).toBe(true);
+    expect(json.hits.every((h: any) => h.whyMatched !== undefined)).toBe(true);
   });
 
   test("cli: akm show returns asset content", async () => {
