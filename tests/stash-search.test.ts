@@ -11,6 +11,14 @@ import type { LocalSearchHit } from "../src/stash-types";
 
 const createdTmpDirs: string[] = [];
 
+function expectDefined<T>(value: T | null | undefined): T {
+  expect(value).toBeDefined();
+  if (value === undefined || value === null) {
+    throw new Error("Expected value to be defined");
+  }
+  return value;
+}
+
 function createTmpDir(prefix = "akm-search-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
@@ -125,9 +133,9 @@ describe("Database search path (FTS scoring)", () => {
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name === "deploy");
-    expect(deployHit).toBeDefined();
-    expect(deployHit?.score).toBeDefined();
-    expect(deployHit!.score).toBeGreaterThan(0);
+    const resolvedDeployHit = expectDefined(deployHit);
+    expect(resolvedDeployHit.score).toBeDefined();
+    expect(resolvedDeployHit.score).toBeGreaterThan(0);
   });
 
   test("FTS search filters by asset type", async () => {
@@ -257,9 +265,9 @@ describe("Database search path (FTS scoring)", () => {
 
     expect(result.hits.length).toBeGreaterThan(0);
     const deployHit = result.hits.find((h) => h.name === "clamp-deploy");
-    expect(deployHit).toBeDefined();
-    expect(deployHit?.score).toBeDefined();
-    expect(deployHit!.score).toBeGreaterThan(0);
+    const resolvedDeployHit = expectDefined(deployHit);
+    expect(resolvedDeployHit.score).toBeDefined();
+    expect(resolvedDeployHit.score).toBeGreaterThan(0);
   });
 });
 
@@ -291,9 +299,9 @@ describe("Score boosts", () => {
     const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
     const deployHit = localHits.find((h) => h.name === "deploy");
 
-    expect(deployHit).toBeDefined();
-    expect(deployHit?.whyMatched).toBeDefined();
-    expect(deployHit!.whyMatched).toContain("matched tags");
+    const resolvedDeployHit = expectDefined(deployHit);
+    expect(resolvedDeployHit.whyMatched).toBeDefined();
+    expect(resolvedDeployHit.whyMatched).toContain("matched tags");
   });
 
   test("name match boosts score", async () => {
@@ -320,9 +328,9 @@ describe("Score boosts", () => {
     const localHits = result.hits.filter((h): h is LocalSearchHit => h.hitSource === "local");
     const hit = localHits.find((h) => h.name === "formatter");
 
-    expect(hit).toBeDefined();
-    expect(hit?.whyMatched).toBeDefined();
-    expect(hit!.whyMatched).toContain("matched name tokens");
+    const resolvedHit = expectDefined(hit);
+    expect(resolvedHit.whyMatched).toBeDefined();
+    expect(resolvedHit.whyMatched).toContain("matched name tokens");
   });
 
   test("curated metadata gets quality boost", async () => {
@@ -371,15 +379,15 @@ describe("Score boosts", () => {
     const curatedHit = localHits.find((h) => h.name === "curated");
     const generatedHit = localHits.find((h) => h.name === "generated");
 
-    expect(curatedHit).toBeDefined();
-    expect(generatedHit).toBeDefined();
-    expect(curatedHit?.score).toBeDefined();
-    expect(generatedHit?.score).toBeDefined();
+    const resolvedCuratedHit = expectDefined(curatedHit);
+    const resolvedGeneratedHit = expectDefined(generatedHit);
+    expect(resolvedCuratedHit.score).toBeDefined();
+    expect(resolvedGeneratedHit.score).toBeDefined();
     // Scores are rounded to 2 decimal places, so small boosts may tie.
     // Verify curated ranks at least as high (sort order preserves pre-rounding order).
-    expect(curatedHit!.score).toBeGreaterThanOrEqual(generatedHit!.score);
-    expect(curatedHit?.whyMatched).toBeDefined();
-    expect(curatedHit!.whyMatched).toContain("curated metadata boost");
+    expect(resolvedCuratedHit.score).toBeGreaterThanOrEqual(resolvedGeneratedHit.score);
+    expect(resolvedCuratedHit.whyMatched).toBeDefined();
+    expect(resolvedCuratedHit.whyMatched).toContain("curated metadata boost");
   });
 });
 

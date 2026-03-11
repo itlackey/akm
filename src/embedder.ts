@@ -32,7 +32,10 @@ async function getLocalEmbedder(): Promise<TransformerPipeline> {
     const pipelineFn = pipeline as (task: string, model: string) => Promise<TransformerPipeline>;
     localEmbedder = await pipelineFn("feature-extraction", "Xenova/all-MiniLM-L6-v2");
   }
-  return localEmbedder!;
+  if (!localEmbedder) {
+    throw new Error("Failed to initialize local embedder.");
+  }
+  return localEmbedder;
 }
 
 async function embedLocal(text: string): Promise<EmbeddingVector> {

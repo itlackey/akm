@@ -288,7 +288,7 @@ export function generateMetadataFlat(stashRoot: string, files: string[]): StashF
     if (!pkgMetaCache.has(dirPath)) {
       pkgMetaCache.set(dirPath, extractPackageMetadata(dirPath));
     }
-    const pkgMeta = pkgMetaCache.get(dirPath)!;
+    const pkgMeta = pkgMetaCache.get(dirPath);
     if (pkgMeta) {
       if (pkgMeta.description && !entry.description) {
         entry.description = pkgMeta.description;

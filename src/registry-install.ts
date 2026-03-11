@@ -499,7 +499,10 @@ function countStashDirs(dirPath: string): number {
 function findShallowestStashRoot(root: string): string | undefined {
   const queue: string[] = [root];
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
     if (current !== root) {
       // .stash directory is a strong stash marker
       if (isDirectory(path.join(current, ".stash"))) {

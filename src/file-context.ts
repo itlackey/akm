@@ -102,7 +102,7 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
         cachedFrontmatter = Object.keys(parsed.data).length > 0 ? parsed.data : null;
         frontmatterComputed = true;
       }
-      return cachedFrontmatter!;
+      return cachedFrontmatter ?? null;
     },
 
     stat(): fs.Stats {

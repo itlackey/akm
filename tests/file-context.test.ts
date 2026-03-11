@@ -11,6 +11,14 @@ import { walkStashFlat } from "../src/walker";
 
 const createdTmpDirs: string[] = [];
 
+function expectDefined<T>(value: T | null | undefined): T {
+  expect(value).toBeDefined();
+  if (value === undefined || value === null) {
+    throw new Error("Expected value to be defined");
+  }
+  return value;
+}
+
 function tmpDir(prefix = "akm-fc-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTmpDirs.push(dir);
@@ -419,7 +427,7 @@ describe("Renderer", () => {
       ["---", "description: Code reviewer", "model: gpt-4", "---", "You are a code reviewer."].join("\n"),
     );
 
-    const renderer = getRenderer("agent-md")!;
+    const renderer = expectDefined(getRenderer("agent-md"));
     const ctx = buildFileContext(root, filePath);
     const match = { type: "agent", specificity: 20, renderer: "agent-md", meta: { name: "reviewer.md" } };
     const renderCtx = buildRenderContext(ctx, match, [root]);
@@ -442,7 +450,7 @@ describe("Renderer", () => {
       ["---", "description: Deploy to production", "---", "Run the deploy script with {{env}}."].join("\n"),
     );
 
-    const renderer = getRenderer("command-md")!;
+    const renderer = expectDefined(getRenderer("command-md"));
     const ctx = buildFileContext(root, filePath);
     const match = { type: "command", specificity: 10, renderer: "command-md", meta: { name: "deploy.md" } };
     const renderCtx = buildRenderContext(ctx, match, [root]);
@@ -473,7 +481,7 @@ describe("Renderer", () => {
       ].join("\n"),
     );
 
-    const renderer = getRenderer("knowledge-md")!;
+    const renderer = expectDefined(getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",
@@ -497,7 +505,7 @@ describe("Renderer", () => {
       ["# Intro", "Welcome.", "", "## Setup", "Install things.", "", "## Usage", "Use things."].join("\n"),
     );
 
-    const renderer = getRenderer("knowledge-md")!;
+    const renderer = expectDefined(getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",
@@ -517,7 +525,7 @@ describe("Renderer", () => {
     const filePath = path.join(root, "knowledge", "guide.md");
     writeFile(filePath, ["# Intro", "Welcome.", "", "## Setup", "Install things."].join("\n"));
 
-    const renderer = getRenderer("knowledge-md")!;
+    const renderer = expectDefined(getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",

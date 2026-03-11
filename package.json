@@ -33,10 +33,11 @@
   },
   "scripts": {
     "build": "rm -rf dist && bun run tsc --project ./tsconfig.json --outDir dist",
+    "check": "bun run lint && bunx tsc --noEmit && bun test ./tests",
     "test": "bun test ./tests",
-    "lint": "biome check src/ tests/",
-    "lint:fix": "biome check --write src/ tests/",
-    "format": "biome format --write src/ tests/",
+    "lint": "bunx biome check src/ tests/",
+    "lint:fix": "bunx biome check --write src/ tests/",
+    "format": "bunx biome format --write src/ tests/",
     "prepublishOnly": "bun run build"
   },
   "publishConfig": {

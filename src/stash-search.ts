@@ -324,7 +324,8 @@ async function searchDatabase(
   if (embeddingScores) {
     for (const [id] of embeddingScores) {
       if (seenIds.has(id)) continue;
-      const embedRank = embedRankMap.get(id)!;
+      const embedRank = embedRankMap.get(id);
+      if (embedRank === undefined) continue;
       const found = getEntryById(db, id);
       if (found) {
         if (typeFilter && found.entry.type !== typeFilter) continue;

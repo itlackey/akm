@@ -414,7 +414,7 @@ function toReadableLocalId(absolutePath: string): string {
   const home = os.homedir();
   if (absolutePath === home) return "~";
   if (absolutePath.startsWith(home + path.sep)) {
-    return "~/" + absolutePath.slice(home.length + 1);
+    return `~/${absolutePath.slice(home.length + 1)}`;
   }
   return absolutePath;
 }

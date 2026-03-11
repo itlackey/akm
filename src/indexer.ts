@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
-import { type AgentikitAssetType, resolveStashDir } from "./common";
+import { resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
-import { buildFileContext, runMatchers } from "./file-context";
 import {
   closeDatabase,
   DB_VERSION,
@@ -20,6 +19,7 @@ import {
   upsertEntry,
   warnIfVecMissing,
 } from "./db";
+import { buildFileContext } from "./file-context";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { walkStashFlat } from "./walker";
@@ -62,7 +62,7 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     const prevStashDir = getMeta(db, "stashDir");
     const prevBuiltAt = getMeta(db, "builtAt");
     const isIncremental = !options?.full && prevStashDir === stashDir && !!prevBuiltAt;
-    const builtAtMs = isIncremental ? new Date(prevBuiltAt!).getTime() : 0;
+    const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
     if (options?.full || !isIncremental) {
       // Wipe all entries for full rebuild or stashDir change

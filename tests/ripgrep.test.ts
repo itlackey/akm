@@ -6,6 +6,14 @@ import { isRgAvailable, resolveRg } from "../src/ripgrep";
 
 const createdTmpDirs: string[] = [];
 
+function expectDefined<T>(value: T | null | undefined): T {
+  expect(value).toBeDefined();
+  if (value === undefined || value === null) {
+    throw new Error("Expected value to be defined");
+  }
+  return value;
+}
+
 function tmpDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rg-"));
   createdTmpDirs.push(dir);
@@ -49,8 +57,7 @@ test("resolveRg finds system ripgrep on PATH", () => {
   process.env.PATH = binDir + path.delimiter + (originalPath ?? "");
   try {
     const rg = resolveRg();
-    expect(rg).not.toBeNull();
-    expect(rg!).toContain("rg");
+    expect(expectDefined(rg)).toContain("rg");
   } finally {
     process.env.PATH = originalPath;
   }

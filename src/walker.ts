@@ -159,5 +159,3 @@ function walkStashManual(stashRoot: string): FileContext[] {
 
   return results;
 }
-
-

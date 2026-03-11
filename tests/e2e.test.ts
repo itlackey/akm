@@ -31,6 +31,43 @@ import { agentikitShow } from "../src/stash-show";
 const FIXTURES = path.join(__dirname, "fixtures");
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 
+function expectDefined<T>(value: T | null | undefined): T {
+  expect(value).toBeDefined();
+  if (value === undefined || value === null) {
+    throw new Error("Expected value to be defined");
+  }
+  return value;
+}
+
+type CliJsonHit = {
+  type?: string;
+  usage?: unknown;
+  hitSource?: string;
+  whyMatched?: string;
+  editable?: boolean;
+  editHint?: string;
+  openRef?: string;
+};
+
+type CliJsonResponse = {
+  hits: CliJsonHit[];
+  usageGuide?: Record<string, unknown>;
+  source?: string;
+  stashDir?: string;
+  timing?: unknown;
+  type?: string;
+  content?: string;
+  description?: string;
+  template?: string;
+  totalEntries?: number;
+  indexPath?: string;
+  mode?: string;
+  totalInstalled?: number;
+  installed?: unknown[];
+  removed?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 function copyFixturesToTmp(): string {
   const tmpStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-"));
   copyDirRecursive(FIXTURES, tmpStash);
@@ -65,8 +102,8 @@ function runCli(...args: string[]): { stdout: string; stderr: string; exitCode: 
   };
 }
 
-function parseJson(text: string): any {
-  return JSON.parse(text);
+function parseJson(text: string): CliJsonResponse {
+  return JSON.parse(text) as CliJsonResponse;
 }
 
 function createEmptyStashDir(prefix: string): string {
@@ -238,7 +275,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     const topHit = result.hits[0];
     expect(topHit.name).toContain("docker");
     expect(topHit.score).toBeDefined();
-    expect(topHit.score!).toBeGreaterThan(0);
+    expect(topHit.score).toBeGreaterThan(0);
     expect(topHit.description).toBeTruthy();
   });
 
@@ -275,9 +312,9 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   test("show a tool returns run", async () => {
     const searchResult = await agentikitSearch({ query: "deploy", type: "tool" });
     const deployHit = searchResult.hits.find((h) => h.hitSource === "local" && h.name.includes("deploy"));
-    expect(deployHit).toBeDefined();
+    const resolvedDeployHit = expectDefined(deployHit);
 
-    const openResult = await agentikitShow({ ref: deployHit!.openRef });
+    const openResult = await agentikitShow({ ref: expectDefined(resolvedDeployHit.openRef) });
     expect(openResult.schemaVersion).toBe(1);
     expect(openResult.type).toBe("script");
     expect(openResult.run).toBeTruthy();
@@ -365,10 +402,10 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     const testTool = searchResult.hits.find(
       (h) => h.hitSource === "local" && h.type === "script" && h.name.includes("test"),
     );
-    expect(testTool).toBeDefined();
+    const resolvedTestTool = expectDefined(testTool);
 
     // Step 2: Agent reads the tool to get run command for host execution
-    const showResult = await agentikitShow({ ref: testTool!.openRef });
+    const showResult = await agentikitShow({ ref: expectDefined(resolvedTestTool.openRef) });
     expect(showResult.run).toBeTruthy();
   });
 });
@@ -517,7 +554,7 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
-    expect(json.hits.every((h: any) => h.type === "script")).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.type === "script")).toBe(true);
   });
 
   test("cli: akm search --type knowledge filters by type", async () => {
@@ -526,7 +563,7 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.hits.length).toBeGreaterThan(0);
-    expect(json.hits.every((h: any) => h.type === "knowledge")).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.type === "knowledge")).toBe(true);
   });
 
   test("cli: akm search --limit 2 respects limit", async () => {
@@ -543,8 +580,8 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.usageGuide).toBeDefined();
-    expect(json.usageGuide.tool).toBeInstanceOf(Array);
-    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
+    expect(expectDefined(json.usageGuide).tool).toBeInstanceOf(Array);
+    expect(json.hits.some((h: CliJsonHit) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
   });
 
   test("cli: akm search default source is local", async () => {
@@ -554,7 +591,7 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.source).toBe("local");
-    expect(json.hits.every((h: any) => h.hitSource === "local")).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.hitSource === "local")).toBe(true);
   });
 
   test("cli: akm search --usage none excludes usageGuide and per-hit usage", async () => {
@@ -563,7 +600,7 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.usageGuide).toBeUndefined();
-    expect(json.hits.some((h: any) => h.usage !== undefined)).toBe(false);
+    expect(json.hits.some((h: CliJsonHit) => h.usage !== undefined)).toBe(false);
   });
 
   test("cli: akm search --usage item includes per-hit usage only", async () => {
@@ -572,7 +609,7 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.usageGuide).toBeUndefined();
-    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
+    expect(json.hits.some((h: CliJsonHit) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
   });
 
   test("cli: akm search --usage guide includes usageGuide only", async () => {
@@ -581,8 +618,8 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.usageGuide).toBeDefined();
-    expect(json.usageGuide.tool).toBeInstanceOf(Array);
-    expect(json.hits.some((h: any) => h.usage !== undefined)).toBe(false);
+    expect(expectDefined(json.usageGuide).tool).toBeInstanceOf(Array);
+    expect(json.hits.some((h: CliJsonHit) => h.usage !== undefined)).toBe(false);
   });
 
   test("cli: akm search --usage both includes usageGuide and per-hit usage", async () => {
@@ -591,8 +628,8 @@ describe("Scenario: CLI subprocess execution", () => {
 
     const json = parseJson(result.stdout);
     expect(json.usageGuide).toBeDefined();
-    expect(json.usageGuide.tool).toBeInstanceOf(Array);
-    expect(json.hits.some((h: any) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
+    expect(expectDefined(json.usageGuide).tool).toBeInstanceOf(Array);
+    expect(json.hits.some((h: CliJsonHit) => Array.isArray(h.usage) && h.usage.length > 0)).toBe(true);
   });
 
   test("cli: akm search --usage invalid value fails with clear error", async () => {
@@ -633,8 +670,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.length).toBeGreaterThan(0);
     // Verbose JSON output should include verbose fields on every hit
     expect(json.timing).toBeDefined();
-    expect(json.hits.every((h: any) => h.hitSource !== undefined)).toBe(true);
-    expect(json.hits.every((h: any) => h.whyMatched !== undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.hitSource !== undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.whyMatched !== undefined)).toBe(true);
   });
 
   test("cli: akm show returns asset content", async () => {
@@ -795,7 +832,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(result.exitCode).toBe(0);
 
       const json = parseJson(result.stdout);
-      expect(json.removed.id).toBe("npm:@scope/kit");
+      expect(expectDefined(json.removed).id).toBe("npm:@scope/kit");
 
       const config = loadConfig();
       expect(config.registry).toBeUndefined();
@@ -895,7 +932,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   test("cli: akm update --force requires target or --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-update-force-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, mountedStashDirs: [] });
+    saveConfig({ semanticSearch: false, searchPaths: [] });
 
     try {
       const result = runCli("update", "--force");
@@ -1080,7 +1117,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     // Re-index — should use user override
     await agentikitIndex({ stashDir });
 
-    const reloaded = loadStashFile(path.join(stashDir, "tools", "format"))!;
+    const reloaded = expectDefined(loadStashFile(path.join(stashDir, "tools", "format")));
     expect(reloaded.entries[0].description).toBe("Check code formatting with Prettier");
     expect(reloaded.entries[0].tags).toContain("prettier");
     expect(reloaded.entries[0].quality).not.toBe("generated");
@@ -1114,7 +1151,7 @@ describe("Scenario: Multi-tool directory with hand-written .stash.json", () => {
   });
 
   test("docker/ directory exposes two tools from single .stash.json", async () => {
-    const stash = loadStashFile(path.join(stashDir, "tools", "docker"))!;
+    const stash = expectDefined(loadStashFile(path.join(stashDir, "tools", "docker")));
     expect(stash.entries).toHaveLength(2);
 
     const names = stash.entries.map((e) => e.name);
@@ -1182,7 +1219,7 @@ describe("Scenario: Index persistence across sessions", () => {
     await agentikitIndex({ stashDir });
     const db1 = openDatabase();
     const entries1 = getAllEntries(db1);
-    const builtAt1 = getMeta(db1, "builtAt")!;
+    const builtAt1 = expectDefined(getMeta(db1, "builtAt"));
     closeDatabase(db1);
 
     // Add a new tool
@@ -1192,7 +1229,7 @@ describe("Scenario: Index persistence across sessions", () => {
     await agentikitIndex({ stashDir });
     const db2 = openDatabase();
     const entries2 = getAllEntries(db2);
-    const builtAt2 = getMeta(db2, "builtAt")!;
+    const builtAt2 = expectDefined(getMeta(db2, "builtAt"));
     closeDatabase(db2);
 
     expect(entries2.length).toBeGreaterThan(entries1.length);
@@ -1327,7 +1364,7 @@ describe("Scenario: Cross-type discovery", () => {
       expect(hit.openRef).toContain(":");
 
       // Should not throw when opening
-      const openResult = await agentikitShow({ ref: hit.openRef! });
+      const openResult = await agentikitShow({ ref: expectDefined(hit.openRef) });
       // tool and script types are now unified — the matcher pipeline returns
       // "script" for files in tools/ directories, while the search index still
       // stores "tool" from metadata. Both are acceptable.
