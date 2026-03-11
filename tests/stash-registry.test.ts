@@ -299,48 +299,41 @@ describe("selectTargets via agentikitUpdate", () => {
   });
 
   test("--all selects all installed entries", async () => {
-    const stashRoot = createTmpDir("akm-registry-all-root-");
-    for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
-      fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
-    }
+    const firstLocalDir = createTmpDir("akm-registry-all-local-1-");
+    const secondLocalDir = createTmpDir("akm-registry-all-local-2-");
+    fs.mkdirSync(path.join(firstLocalDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(secondLocalDir, "tools"), { recursive: true });
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      searchPaths: [firstLocalDir, secondLocalDir],
       registry: {
         installed: [
           {
-            id: "all-pkg-1",
-            source: "npm" as const,
-            ref: "npm:nonexistent-pkg-1",
-            artifactUrl: "https://example.com/1.tgz",
-            stashRoot,
-            cacheDir: stashRoot,
+            id: `local:${path.basename(firstLocalDir)}`,
+            source: "local" as const,
+            ref: firstLocalDir,
+            artifactUrl: `file://${firstLocalDir}`,
+            stashRoot: firstLocalDir,
+            cacheDir: firstLocalDir,
             installedAt: new Date().toISOString(),
           },
           {
-            id: "all-pkg-2",
-            source: "npm" as const,
-            ref: "npm:nonexistent-pkg-2",
-            artifactUrl: "https://example.com/2.tgz",
-            stashRoot,
-            cacheDir: stashRoot,
+            id: `local:${path.basename(secondLocalDir)}`,
+            source: "local" as const,
+            ref: secondLocalDir,
+            artifactUrl: `file://${secondLocalDir}`,
+            stashRoot: secondLocalDir,
+            cacheDir: secondLocalDir,
             installedAt: new Date().toISOString(),
           },
         ],
       },
     });
 
-    // selectTargets with all:true succeeds (returns both entries),
-    // but installRegistryRef will fail for nonexistent packages.
-    // The error should NOT be about selectTargets validation.
-    try {
-      await agentikitUpdate({ all: true, stashDir });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      expect(message).not.toContain("Either <target> or --all is required");
-      expect(message).not.toContain("Specify either <target> or --all");
-    }
+    const result = await agentikitUpdate({ all: true, stashDir });
+
+    expect(result.processed).toHaveLength(2);
   });
 
   test("--force does not delete local source directories", async () => {

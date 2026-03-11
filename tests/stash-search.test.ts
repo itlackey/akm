@@ -460,6 +460,7 @@ describe("Source filtering", () => {
     // Create a local tool so we know local hits would exist if local were searched
     writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearch: false, searchPaths: [], registryUrls: [] });
 
     const result = await agentikitSearch({ query: "deploy", source: "registry" });
     // All hits (if any) should come from registry, not local
@@ -473,6 +474,7 @@ describe("Source filtering", () => {
     const stashDir = createTmpDir();
     writeFile(path.join(stashDir, "tools", "merge-test.sh"), "#!/bin/bash\necho merge\n");
     await buildTestIndex(stashDir, {});
+    saveConfig({ semanticSearch: false, searchPaths: [], registryUrls: [] });
 
     const result = await agentikitSearch({ query: "merge", source: "both" });
     expect(result.source).toBe("both");

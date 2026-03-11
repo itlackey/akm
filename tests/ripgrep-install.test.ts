@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,39 @@ function makeTmpDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-rg-install-test-"));
   tmpDirs.push(dir);
   return dir;
+}
+
+function makeToolchainDir(): string {
+  const dir = makeTmpDir();
+  fs.writeFileSync(
+    path.join(dir, "curl"),
+    '#!/bin/sh\nout=\'\'\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "-o" ]; then\n    out=$2\n    shift 2\n    continue\n  fi\n  shift\ndone\n/bin/cp "$FAKE_CURL_SOURCE" "$out"\n',
+  );
+  fs.chmodSync(path.join(dir, "curl"), 0o755);
+  fs.symlinkSync("/usr/bin/tar", path.join(dir, "tar"));
+  fs.symlinkSync("/usr/bin/gzip", path.join(dir, "gzip"));
+  return dir;
+}
+
+function makeFailingCurlDir(): string {
+  const dir = makeTmpDir();
+  fs.writeFileSync(path.join(dir, "curl"), "#!/bin/sh\necho 'fake curl failure' >&2\nexit 1\n");
+  fs.chmodSync(path.join(dir, "curl"), 0o755);
+  return dir;
+}
+
+function makeRipgrepTarball(): string {
+  const root = makeTmpDir();
+  const packageDir = path.join(root, "ripgrep-14.1.1-x86_64-unknown-linux-musl");
+  fs.mkdirSync(packageDir, { recursive: true });
+  fs.writeFileSync(path.join(packageDir, "rg"), "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
+  fs.chmodSync(path.join(packageDir, "rg"), 0o755);
+  const tarballPath = path.join(root, "ripgrep.tar.gz");
+  const result = spawnSync("tar", ["czf", tarballPath, "-C", root, path.basename(packageDir)], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.error?.message || "Failed to create ripgrep tarball");
+  }
+  return tarballPath;
 }
 
 afterEach(() => {
@@ -64,7 +98,7 @@ describe("platform detection", () => {
     const binDir = makeTmpDir();
     const origPath = process.env.PATH;
     const origXdgCache = process.env.XDG_CACHE_HOME;
-    process.env.PATH = "";
+    process.env.PATH = makeFailingCurlDir();
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
@@ -200,34 +234,29 @@ describe("download error handling", () => {
   });
 
   test("ensureRg returns installed=true when it installs a new binary", async () => {
-    // Verify that when ensureRg does find and install rg, installed is true.
-    // If the environment has curl and network, ensureRg will actually download.
-    // Otherwise, it throws. Either path is valid for testing.
     const binDir = makeTmpDir();
     const origPath = process.env.PATH;
     const origXdgCache = process.env.XDG_CACHE_HOME;
+    const origFakeCurlSource = process.env.FAKE_CURL_SOURCE;
     process.env.XDG_CACHE_HOME = makeTmpDir();
+    process.env.FAKE_CURL_SOURCE = makeRipgrepTarball();
+    process.env.PATH = makeToolchainDir();
 
     try {
       const { ensureRg } = await import("../src/ripgrep-install");
-      try {
-        // Remove any rg from binDir to force a download attempt
-        const rgInBin = path.join(binDir, "rg");
-        if (fs.existsSync(rgInBin)) fs.unlinkSync(rgInBin);
+      const rgInBin = path.join(binDir, "rg");
+      if (fs.existsSync(rgInBin)) fs.unlinkSync(rgInBin);
 
-        const result = ensureRg(binDir);
-        // If it succeeds, it should have installed a new binary
-        expect(result.installed).toBe(true);
-        expect(result.version).toBeTruthy();
-        expect(fs.existsSync(result.rgPath)).toBe(true);
-      } catch (err: unknown) {
-        // If download fails (no network, etc.), that's acceptable
-        expect((err as Error).message).toBeTruthy();
-      }
+      const result = ensureRg(binDir);
+      expect(result.installed).toBe(true);
+      expect(result.version).toBe("14.1.1");
+      expect(fs.existsSync(result.rgPath)).toBe(true);
     } finally {
       process.env.PATH = origPath;
       if (origXdgCache === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = origXdgCache;
+      if (origFakeCurlSource === undefined) delete process.env.FAKE_CURL_SOURCE;
+      else process.env.FAKE_CURL_SOURCE = origFakeCurlSource;
     }
   });
 });

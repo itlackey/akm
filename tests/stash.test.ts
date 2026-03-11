@@ -5,6 +5,7 @@ import path from "node:path";
 import { getConfigPath, saveConfig } from "../src/config";
 import { agentikitIndex } from "../src/indexer";
 import { agentikitInit } from "../src/init";
+import { getBinDir } from "../src/paths";
 import { agentikitSearch } from "../src/stash-search";
 import { agentikitShow } from "../src/stash-show";
 import type { SearchHit } from "../src/stash-types";
@@ -31,6 +32,14 @@ afterAll(() => {
 /** Place a dummy rg binary in stashDir/bin so ensureRg skips download */
 function _stubRg(stashDir: string): void {
   const binDir = path.join(stashDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const rgPath = path.join(binDir, "rg");
+  fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
+  fs.chmodSync(rgPath, 0o755);
+}
+
+function stubCachedRg(): void {
+  const binDir = getBinDir();
   fs.mkdirSync(binDir, { recursive: true });
   const rgPath = path.join(binDir, "rg");
   fs.writeFileSync(rgPath, "#!/bin/sh\necho 'ripgrep 14.1.1'\n");
@@ -498,6 +507,7 @@ test("agentikitInit returns created false when stash dir already exists", async 
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(result.created).toBe(false);
     expect(result.stashDir).toBe(stashPath);
@@ -535,6 +545,7 @@ test("agentikitInit creates knowledge directory", async () => {
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true);
   } finally {
@@ -636,6 +647,7 @@ test("agentikitInit writes config outside the stash directory", async () => {
   delete process.env.AKM_STASH_DIR;
 
   try {
+    stubCachedRg();
     const result = await agentikitInit();
     expect(result.configPath).toBe(getConfigPath());
     expect(result.configPath.startsWith(result.stashDir)).toBe(false);
