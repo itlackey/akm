@@ -32,6 +32,5 @@ Initial public release of Agent-i-Kit (`akm` CLI).
 - Multiple output formats: plain text, YAML, and JSON (`--json`)
 - Knowledge asset navigation with TOC, section, and line-range views
 - `akm clone` to fork installed assets into your working stash
-- `akm submit` to publish kits to the agentikit registry via pull request
 - Configuration system with embedding and LLM provider management
 - Standalone binary distribution (no runtime dependencies)
