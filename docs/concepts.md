@@ -1,7 +1,27 @@
 # Concepts
 
-`akm` is built around a small stash of reusable assets that agents can search,
+`akm` is built around a small stash of kits that contain reusable assets that agents can search,
 inspect, and execute.
+
+## What's In a Kit?
+
+A kit is a directory of assets you can share and install. There's no required
+structure — `akm` classifies assets by **file extension and content**, not by
+directory name. A `.sh` file is a script whether it lives in `scripts/`,
+`deploy/`, or at the root. A `.md` file with `tools` in its frontmatter is an
+agent definition wherever you put it.
+
+That said, using these directory names as an opt-in convention improves
+indexing confidence:
+
+```text
+my-kit/
+  scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
+  skills/         # Skill definitions (directories with SKILL.md)
+  commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
+  agents/         # Agent definitions (.md with model/tools frontmatter)
+  knowledge/      # Reference documents (.md)
+```
 
 ## Asset Types
 
@@ -17,9 +37,7 @@ There are five primary asset types:
 
 Assets are identified by a `ref` handle (for example `script:deploy.sh` or
 `agent:reviewer`). An agent discovers assets through `akm search` and
-retrieves full details with `akm show`. In normal use, the agent should treat
-the ref as opaque: get it from search, pass it to show, and rely on structured
-fields rather than parsing it.
+retrieves full details with `akm show`.
 
 ## Stash Sources
 

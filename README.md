@@ -18,6 +18,9 @@ plugins required — just CLI output any tool-calling model can read.
 `akm` requires [Bun](https://bun.sh) v1.0+ as its runtime. It uses Bun-specific
 APIs (`bun:sqlite`) that are **not available in Node.js**.
 
+> **Don't want Bun?** Use the [standalone binary](#standalone-binary) instead — it
+> bundles everything and has no runtime dependencies.
+
 ## Quick Start
 
 ```sh
@@ -36,9 +39,6 @@ akm search "deploy"
 # Show an asset
 akm show script:deploy.sh
 ```
-
-> **Don't want Bun?** Use the [standalone binary](#standalone-binary) instead — it
-> bundles everything and has no runtime dependencies.
 
 ## Using With Any AI Agent
 
@@ -83,37 +83,7 @@ purely optional — the CLI works everywhere.
 project instructions. Claude Code can run `akm` commands directly.
 
 **Everything else** — If your agent can run shell commands, it can use `akm`.
-Add the prompt snippet to whatever instruction mechanism your platform uses.
-
-## What's In a Kit?
-
-A kit is a directory of assets you can share and install. There's no required
-structure — `akm` classifies assets by **file extension and content**, not by
-directory name. A `.sh` file is a script whether it lives in `scripts/`,
-`deploy/`, or at the root. A `.md` file with `tools` in its frontmatter is an
-agent definition wherever you put it.
-
-That said, using these directory names as an opt-in convention improves
-indexing confidence:
-
-```text
-my-kit/
-  scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
-  skills/         # Skill definitions (directories with SKILL.md)
-  commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
-  agents/         # Agent definitions (.md with model/tools frontmatter)
-  knowledge/      # Reference documents (.md)
-```
-
-### Asset types
-
-| Type | What it is | What the agent gets |
-| --- | --- | --- |
-| **script** | An executable script | A `run` command with auto-detected interpreter, plus optional `setup` and `cwd` |
-| **skill** | A set of instructions | Step-by-step guidance the agent follows |
-| **command** | A prompt template | A template with placeholders to fill in |
-| **agent** | An agent definition | A system prompt, model hint, and tool policy |
-| **knowledge** | A reference document | Navigable content with TOC and section views |
+Add the prompt snippet above or in [AGENTS.md](docs/AGENTS.md) to whatever instruction/rules mechanism your platform uses.
 
 ## The Stash
 
