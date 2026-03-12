@@ -279,6 +279,7 @@ function toSearchHit(kit: RegistryKitEntry, score: number, registryName?: string
     title: kit.name,
     description: kit.description,
     ref: kit.ref,
+    installRef: buildInstallRef(kit.source, kit.ref),
     homepage: kit.homepage,
     score: Math.round(score * 1000) / 1000,
     metadata,
@@ -329,14 +330,7 @@ function scoreAssets(
   for (const { kit, registryName } of kits) {
     if (!kit.assets || kit.assets.length === 0) continue;
 
-    const installRef =
-      kit.source === "npm"
-        ? `npm:${kit.ref}`
-        : kit.source === "git"
-          ? `git+${kit.ref}`
-          : kit.source === "local"
-            ? kit.ref
-            : `github:${kit.ref}`;
+    const installRef = buildInstallRef(kit.source, kit.ref);
 
     for (const asset of kit.assets) {
       const score = scoreAsset(asset, tokens);
@@ -411,6 +405,19 @@ function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const filtered = value.filter((v): v is string => typeof v === "string");
   return filtered.length > 0 ? filtered : undefined;
+}
+
+function buildInstallRef(source: string, ref: string): string {
+  switch (source) {
+    case "npm":
+      return `npm:${ref}`;
+    case "git":
+      return `git+${ref}`;
+    case "local":
+      return ref;
+    default:
+      return `github:${ref}`;
+  }
 }
 
 function toErrorMessage(error: unknown): string {

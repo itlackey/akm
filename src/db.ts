@@ -244,6 +244,17 @@ export function upsertEntry(
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
   const ids = db.prepare("SELECT id FROM entries WHERE dir_path = ?").all(dirPath) as Array<{ id: number }>;
+  deleteRelatedRows(db, ids);
+  db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath);
+}
+
+export function deleteEntriesByStashDir(db: Database, stashDir: string): void {
+  const ids = db.prepare("SELECT id FROM entries WHERE stash_dir = ?").all(stashDir) as Array<{ id: number }>;
+  deleteRelatedRows(db, ids);
+  db.prepare("DELETE FROM entries WHERE stash_dir = ?").run(stashDir);
+}
+
+function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
   for (const { id } of ids) {
     try {
       db.prepare("DELETE FROM embeddings WHERE id = ?").run(id);
@@ -258,7 +269,6 @@ export function deleteEntriesByDir(db: Database, dirPath: string): void {
       }
     }
   }
-  db.prepare("DELETE FROM entries WHERE dir_path = ?").run(dirPath);
 }
 
 export function rebuildFts(db: Database): void {

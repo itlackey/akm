@@ -426,11 +426,24 @@ describe("hit shape", () => {
       expect(hit?.source).toBe("npm");
       expect(hit?.title).toBe("@itlackey/openkit");
       expect(hit?.ref).toBe("@itlackey/openkit");
+      expect(hit?.installRef).toBe("npm:@itlackey/openkit");
       expect(hit?.metadata?.version).toBe("1.2.0");
       expect(hit?.metadata?.author).toBe("itlackey");
       expect(hit?.metadata?.license).toBe("MIT");
       expect(hit?.metadata?.assetTypes).toBe("skill, script, command");
       expect(typeof hit?.score).toBe("number");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("installRef is prefixed with source type for github kits", async () => {
+    const srv = serveIndex(FIXTURE_INDEX);
+    try {
+      const result = await searchRegistry("azure", { registries: [{ url: srv.url }] });
+      const hit = result.hits.find((h) => h.id === "github:someone/azure-ops-kit");
+      expect(hit).toBeDefined();
+      expect(hit?.installRef).toBe("github:someone/azure-ops-kit");
     } finally {
       srv.close();
     }
@@ -576,6 +589,13 @@ describe("provider routing", () => {
       const ids = result.hits.map((h) => h.id);
       expect(ids).toContain("npm:deploy-kit");
       expect(ids).toContain("skills-sh:org/skills/deploy-vercel");
+
+      // installRef should be directly usable with `akm add`
+      const npmHit = result.hits.find((h) => h.id === "npm:deploy-kit");
+      expect(npmHit?.installRef).toBe("npm:deploy-kit");
+      const skillsHit = result.hits.find((h) => h.id === "skills-sh:org/skills/deploy-vercel");
+      expect(skillsHit?.installRef).toBe("github:org/skills");
+
       expect(result.warnings).toEqual([]);
     } finally {
       staticSrv.close();

@@ -18,6 +18,13 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   const ref = rawRef.trim();
   if (!ref) throw new Error("Registry ref is required.");
 
+  // Detect registry search result IDs (e.g. "skills-sh:org/skills/name")
+  // that are not installable refs. Known installable prefixes are handled below.
+  const registryIdHint = detectRegistrySearchId(ref);
+  if (registryIdHint) {
+    throw new Error(registryIdHint);
+  }
+
   if (ref.startsWith("npm:")) {
     return parseNpmRef(ref.slice(4), ref);
   }
@@ -43,6 +50,39 @@ export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   }
 
   return parseGithubShorthand(ref, ref);
+}
+
+/**
+ * Known prefixes that `parseRegistryRef` handles as installable sources.
+ * Anything with a colon that doesn't start with one of these is likely a
+ * registry search result ID (e.g. `skills-sh:org/skills/name`).
+ */
+const KNOWN_PREFIXES = ["npm:", "github:", "git+", "file:", "http://", "https://"];
+
+function detectRegistrySearchId(ref: string): string | undefined {
+  const colonIdx = ref.indexOf(":");
+  if (colonIdx < 1) return undefined;
+
+  // Skip known installable prefixes
+  for (const prefix of KNOWN_PREFIXES) {
+    if (ref.startsWith(prefix)) return undefined;
+  }
+
+  const prefix = ref.slice(0, colonIdx);
+  // Registry IDs use lowercase-with-hyphens prefixes (e.g. skills-sh, static-index)
+  if (!/^[a-z][a-z0-9-]*$/.test(prefix)) return undefined;
+
+  const rest = ref.slice(colonIdx + 1);
+  return [
+    `"${ref}" looks like a registry search result ID, not an installable ref.`,
+    `The "${prefix}:" prefix is a registry identifier and cannot be passed to \`akm add\`.`,
+    "",
+    "Use the installRef or ref field from the search result instead. For example:",
+    `  akm registry search "${rest}" --format json`,
+    "Then install using the installRef value from the result:",
+    "  akm add github:owner/repo",
+    "  akm add npm:package-name",
+  ].join("\n");
 }
 
 export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {

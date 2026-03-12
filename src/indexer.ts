@@ -7,6 +7,7 @@ import {
   DB_VERSION,
   type DbIndexedEntry,
   deleteEntriesByDir,
+  deleteEntriesByStashDir,
   getEntriesByDir,
   getEntryCount,
   getMeta,
@@ -79,6 +80,19 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
       }
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM entries");
+    } else {
+      // Incremental: purge entries from stash dirs that have been removed
+      // (e.g. after `akm remove`) so orphaned entries don't linger.
+      const prevStashDirsJson = getMeta(db, "stashDirs");
+      if (prevStashDirsJson) {
+        const prevStashDirs: string[] = JSON.parse(prevStashDirsJson);
+        const currentSet = new Set(allStashDirs);
+        for (const dir of prevStashDirs) {
+          if (!currentSet.has(dir)) {
+            deleteEntriesByStashDir(db, dir);
+          }
+        }
+      }
     }
 
     const tWalkStart = Date.now();

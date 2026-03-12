@@ -72,6 +72,8 @@ export interface RegistrySearchHit {
   title: string;
   description?: string;
   ref: string;
+  /** Ready-to-use ref for `akm add`. Always prefixed with the source type. */
+  installRef: string;
   homepage?: string;
   score?: number;
   metadata?: Record<string, string>;

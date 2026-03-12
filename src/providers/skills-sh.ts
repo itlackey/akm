@@ -100,6 +100,7 @@ class SkillsShProvider implements RegistryProvider {
         id: `skills-sh:${entry.id}`,
         title: entry.name,
         ref: entry.source,
+        installRef: `github:${entry.source}`,
         homepage: `${baseUrl}/${entry.id}`,
         score,
         metadata: {

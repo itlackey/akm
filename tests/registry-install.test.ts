@@ -336,6 +336,26 @@ describe("local directory installs", () => {
     }
   });
 
+  test("parseRegistryRef rejects registry search IDs like skills-sh:...", () => {
+    expect(() => parseRegistryRef("skills-sh:anthropics/skills/frontend-design")).toThrow(
+      "looks like a registry search result ID",
+    );
+  });
+
+  test("parseRegistryRef rejects static-index registry IDs", () => {
+    expect(() => parseRegistryRef("static-index:npm:some-kit")).toThrow("looks like a registry search result ID");
+  });
+
+  test("parseRegistryRef still allows npm: prefix", () => {
+    const parsed = parseRegistryRef("npm:some-kit");
+    expect(parsed.source).toBe("npm");
+  });
+
+  test("parseRegistryRef still allows github: prefix", () => {
+    const parsed = parseRegistryRef("github:owner/repo");
+    expect(parsed.source).toBe("github");
+  });
+
   test("applies include from nearest package.json for nested kit roots", async () => {
     const cacheHome = makeTempDir("akm-nested-include-cache-");
     const packageDir = makeTempDir("akm-nested-include-package-");
