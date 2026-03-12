@@ -98,7 +98,7 @@ For tighter integration, plugins are available for some platforms. These add
 native tool bindings so the agent doesn't need to shell out, but they're
 purely optional — the CLI works everywhere.
 
-**OpenCode** — Add the [OpenCode plugin](https://github.com/itlackey/akm-plugins?tab=readme-ov-file#akm-opencode) to your `opencode.json`:
+**OpenCode** — Add the [OpenCode plugin](https://github.com/itlackey/akm-plugins?tab=readme-ov-file#opencode) to your `opencode.json`:
 
 ```json
 {
