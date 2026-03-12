@@ -24,10 +24,6 @@ interface SkillsShEntry {
   source: string;
 }
 
-interface SkillsShResponse {
-  skills: SkillsShEntry[];
-}
-
 // ── Provider class ──────────────────────────────────────────────────────────
 
 class SkillsShProvider implements RegistryProvider {

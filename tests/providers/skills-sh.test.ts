@@ -12,7 +12,12 @@ import "../../src/providers/skills-sh";
 
 const FIXTURE_RESPONSE = {
   skills: [
-    { id: "vercel-labs/agent-skills/react-best-practices", name: "react-best-practices", installs: 22475, source: "vercel-labs/agent-skills" },
+    {
+      id: "vercel-labs/agent-skills/react-best-practices",
+      name: "react-best-practices",
+      installs: 22475,
+      source: "vercel-labs/agent-skills",
+    },
     { id: "some-org/web-skills/css-layout", name: "css-layout", installs: 5000, source: "some-org/web-skills" },
     { id: "solo-dev/my-skills/deploy-helper", name: "deploy-helper", installs: 100, source: "solo-dev/my-skills" },
   ],
@@ -89,7 +94,11 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const s of servers) {
-    try { s.stop(true); } catch { /* already stopped */ }
+    try {
+      s.stop(true);
+    } catch {
+      /* already stopped */
+    }
   }
   servers.length = 0;
 
@@ -175,10 +184,11 @@ describe("SkillsShProvider", () => {
 
     test("registryName defaults to skills.sh when config has no name", async () => {
       const srv = serveJson(FIXTURE_RESPONSE);
-      const factory = resolveProviderFactory("skills-sh")!;
-      const provider = factory({ url: srv.url });
-      const result = await provider.search({ query: "react", limit: 10 });
-      for (const hit of result.hits) {
+      const factory = resolveProviderFactory("skills-sh");
+      expect(factory).not.toBeNull();
+      const provider = factory?.({ url: srv.url });
+      const result = await provider?.search({ query: "react", limit: 10 });
+      for (const hit of result?.hits ?? []) {
         expect(hit.registryName).toBe("skills.sh");
       }
     });
@@ -214,9 +224,8 @@ describe("SkillsShProvider", () => {
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
-      expect(result.warnings).toBeDefined();
-      expect(result.warnings!.length).toBe(1);
-      expect(result.warnings![0]).toContain("skills.sh");
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings?.[0]).toContain("skills.sh");
     });
 
     test("500 returns empty hits with warning", async () => {
@@ -224,16 +233,14 @@ describe("SkillsShProvider", () => {
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
-      expect(result.warnings).toBeDefined();
-      expect(result.warnings![0]).toContain("HTTP 500");
+      expect(result.warnings?.[0]).toContain("HTTP 500");
     });
 
     test("unreachable server returns warning", async () => {
       const provider = makeProvider("http://127.0.0.1:1");
       const result = await provider.search({ query: "test", limit: 10 });
       expect(result.hits).toEqual([]);
-      expect(result.warnings).toBeDefined();
-      expect(result.warnings!.length).toBe(1);
+      expect(result.warnings).toHaveLength(1);
     });
   });
 
@@ -296,15 +303,14 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits).toBeDefined();
-      expect(result.assetHits!.length).toBe(3);
+      expect(result.assetHits).toHaveLength(3);
     });
 
     test("asset hits have assetType skill", async () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      for (const hit of result.assetHits!) {
+      for (const hit of result.assetHits ?? []) {
         expect(hit.assetType).toBe("skill");
       }
     });
@@ -313,7 +319,7 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits![0].action).toBe("akm add vercel-labs/agent-skills");
+      expect(result.assetHits?.[0].action).toBe("akm add vercel-labs/agent-skills");
     });
 
     test("no asset hits when includeAssets is false", async () => {

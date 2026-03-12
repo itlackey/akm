@@ -558,9 +558,7 @@ describe("provider routing", () => {
       fetch() {
         return new Response(
           JSON.stringify({
-            skills: [
-              { id: "org/skills/deploy-vercel", name: "deploy-vercel", installs: 500, source: "org/skills" },
-            ],
+            skills: [{ id: "org/skills/deploy-vercel", name: "deploy-vercel", installs: 500, source: "org/skills" }],
           }),
           { headers: { "Content-Type": "application/json" } },
         );
