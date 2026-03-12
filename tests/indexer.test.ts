@@ -38,7 +38,7 @@ afterEach(() => {
 
 function tmpStash(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-"));
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;
@@ -52,10 +52,10 @@ function writeFile(filePath: string, content = "") {
 test("agentikitIndex scans directories and builds index", async () => {
   const stashDir = tmpStash();
   writeFile(
-    path.join(stashDir, "tools", "deploy", "deploy.sh"),
+    path.join(stashDir, "scripts", "deploy", "deploy.sh"),
     "#!/usr/bin/env bash\n# Deploy to staging\necho deploy\n",
   );
-  writeFile(path.join(stashDir, "tools", "lint", "lint.ts"), "/**\n * Lint source code\n */\nconsole.log('lint')\n");
+  writeFile(path.join(stashDir, "scripts", "lint", "lint.ts"), "/**\n * Lint source code\n */\nconsole.log('lint')\n");
 
   process.env.AKM_STASH_DIR = stashDir;
   const result = await agentikitIndex({ stashDir });
@@ -65,7 +65,7 @@ test("agentikitIndex scans directories and builds index", async () => {
   expect(result.stashDir).toBe(stashDir);
 
   // Verify entries are in the database (not in .stash.json files)
-  const deployStash = path.join(stashDir, "tools", "deploy", ".stash.json");
+  const deployStash = path.join(stashDir, "scripts", "deploy", ".stash.json");
   expect(fs.existsSync(deployStash)).toBe(false);
 
   const db = openDatabase();
@@ -79,14 +79,14 @@ test("agentikitIndex scans directories and builds index", async () => {
 
 test("agentikitIndex preserves manually-written .stash.json", async () => {
   const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "tools", "git", "summarize.ts"), "console.log('x')\n");
+  writeFile(path.join(stashDir, "scripts", "git", "summarize.ts"), "console.log('x')\n");
   writeFile(
-    path.join(stashDir, "tools", "git", ".stash.json"),
+    path.join(stashDir, "scripts", "git", ".stash.json"),
     JSON.stringify({
       entries: [
         {
           name: "git-summarize",
-          type: "tool",
+          type: "script",
           description: "Summarize git changes",
           tags: ["git", "summary"],
           filename: "summarize.ts",
@@ -101,14 +101,14 @@ test("agentikitIndex preserves manually-written .stash.json", async () => {
   expect(result.generatedMetadata).toBe(0); // no generation needed
 
   // Verify the manual .stash.json was not overwritten
-  const stash = JSON.parse(fs.readFileSync(path.join(stashDir, "tools", "git", ".stash.json"), "utf8"));
+  const stash = JSON.parse(fs.readFileSync(path.join(stashDir, "scripts", "git", ".stash.json"), "utf8"));
   expect(stash.entries[0].name).toBe("git-summarize");
   expect(stash.entries[0].quality).toBeUndefined();
 });
 
 test("agentikitIndex writes index to SQLite database", async () => {
   const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "tools", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+  writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
   const result = await agentikitIndex({ stashDir });
   expect(fs.existsSync(result.indexPath)).toBe(true);
@@ -169,7 +169,7 @@ test("agentikitIndex generates TOC in database for knowledge entries", async () 
 
 test("isDirStale detects modified source file newer than index", async () => {
   const stashDir = tmpStash();
-  const deployFile = path.join(stashDir, "tools", "deploy", "deploy.sh");
+  const deployFile = path.join(stashDir, "scripts", "deploy", "deploy.sh");
   writeFile(deployFile, "#!/usr/bin/env bash\necho deploy\n");
 
   // First index
@@ -194,7 +194,7 @@ test("isDirStale detects modified source file newer than index", async () => {
 
 test("agentikitIndex --full mode returns mode full", async () => {
   const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "tools", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+  writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
   // First index to create a previous index
   await agentikitIndex({ stashDir });
@@ -223,7 +223,7 @@ test("buildSearchText includes TOC heading text for knowledge entries", async ()
 test("buildSearchText includes searchHints array content", () => {
   const entry = {
     name: "git-diff",
-    type: "tool" as const,
+    type: "script" as const,
     description: "summarize git changes",
     searchHints: ["explain what changed in a repository", "show commit summary"],
   };
@@ -236,7 +236,7 @@ test("buildSearchText includes searchHints array content", () => {
 test("buildSearchText handles entries with both searchHints and intent fields", () => {
   const entry = {
     name: "deploy",
-    type: "tool" as const,
+    type: "script" as const,
     description: "deploy services",
     searchHints: ["deploy to production", "push services live"],
     intent: { when: "user needs to deploy", input: "service name", output: "status" },
@@ -252,7 +252,7 @@ test("buildSearchText handles entries with both searchHints and intent fields", 
 test("agentikitIndex does not generate heuristic searchHints (LLM-only)", async () => {
   const stashDir = tmpStash();
   writeFile(
-    path.join(stashDir, "tools", "deploy", "deploy.sh"),
+    path.join(stashDir, "scripts", "deploy", "deploy.sh"),
     "#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n",
   );
 
@@ -260,7 +260,7 @@ test("agentikitIndex does not generate heuristic searchHints (LLM-only)", async 
 
   // Search hints are only generated when LLM is configured
   const db = openDatabase();
-  const entries = getAllEntries(db, "tool");
+  const entries = getAllEntries(db, "script");
   expect(entries.length).toBe(1);
   expect(entries[0].entry.searchHints).toBeUndefined();
   closeDatabase(db);

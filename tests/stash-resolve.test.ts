@@ -26,54 +26,53 @@ afterAll(() => {
 // ── resolveAssetPath ──────────────────────────────────────────────────────────
 
 describe("resolveAssetPath", () => {
-  test("returns real path for valid tool", () => {
+  test("returns real path for valid script", () => {
     const stashDir = createTmpDir();
-    const toolPath = path.join(stashDir, "tools", "deploy.sh");
-    writeFile(toolPath, "#!/bin/sh\necho hello");
+    const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
+    writeFile(scriptPath, "#!/bin/sh\necho hello");
 
-    const result = resolveAssetPath(stashDir, "tool", "deploy.sh");
-    expect(result).toBe(fs.realpathSync(toolPath));
+    const result = resolveAssetPath(stashDir, "script", "deploy.sh");
+    expect(result).toBe(fs.realpathSync(scriptPath));
   });
 
   test("throws for missing type root", () => {
     const stashDir = createTmpDir();
-    // No tools/ directory created
+    // No scripts/ directory created
 
-    expect(() => resolveAssetPath(stashDir, "tool", "deploy.sh")).toThrow(
+    expect(() => resolveAssetPath(stashDir, "script", "deploy.sh")).toThrow(
       "Stash type root not found for ref: script:deploy.sh",
     );
   });
 
   test("throws for missing file", () => {
     const stashDir = createTmpDir();
-    fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true });
     fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
 
-    expect(() => resolveAssetPath(stashDir, "tool", "nonexistent.sh")).toThrow(
+    expect(() => resolveAssetPath(stashDir, "script", "nonexistent.sh")).toThrow(
       "Stash asset not found for ref: script:nonexistent.sh",
     );
   });
 
   test("throws for path traversal", () => {
     const stashDir = createTmpDir();
-    fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true });
-    // Create a file outside the tools root
+    fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
+    // Create a file outside the scripts root
     writeFile(path.join(stashDir, "outside.sh"), "#!/bin/sh\necho escape");
 
-    expect(() => resolveAssetPath(stashDir, "tool", "../outside.sh")).toThrow("Ref resolves outside the stash root.");
+    expect(() => resolveAssetPath(stashDir, "script", "../outside.sh")).toThrow("Ref resolves outside the stash root.");
   });
 
   test("throws for symlink escape", () => {
     const stashDir = createTmpDir();
-    const toolsDir = path.join(stashDir, "tools");
-    fs.mkdirSync(toolsDir, { recursive: true });
+    const scriptsDir = path.join(stashDir, "scripts");
+    fs.mkdirSync(scriptsDir, { recursive: true });
 
     // Create a file outside the stash entirely
     const outsideDir = createTmpDir("akm-outside-");
     const outsideFile = path.join(outsideDir, "escaped.sh");
     writeFile(outsideFile, "#!/bin/sh\necho escaped");
 
-    const symlinkPath = path.join(toolsDir, "link.sh");
+    const symlinkPath = path.join(scriptsDir, "link.sh");
     try {
       fs.symlinkSync(outsideFile, symlinkPath);
     } catch {
@@ -81,46 +80,25 @@ describe("resolveAssetPath", () => {
       return;
     }
 
-    expect(() => resolveAssetPath(stashDir, "tool", "link.sh")).toThrow("Ref resolves outside the stash root.");
-  });
-
-  test("validates tool extension (tool is alias for script)", () => {
-    const stashDir = createTmpDir();
-    const badFile = path.join(stashDir, "tools", "readme.txt");
-    writeFile(badFile, "not a script");
-
-    expect(() => resolveAssetPath(stashDir, "tool", "readme.txt")).toThrow(
-      "Script ref must resolve to a file with a supported script extension",
-    );
+    expect(() => resolveAssetPath(stashDir, "script", "link.sh")).toThrow("Ref resolves outside the stash root.");
   });
 
   test("validates script extension", () => {
     const stashDir = createTmpDir();
-    const badFile = path.join(stashDir, "scripts", "data.xyz");
+    const badFile = path.join(stashDir, "scripts", "readme.txt");
     writeFile(badFile, "not a script");
 
-    expect(() => resolveAssetPath(stashDir, "script", "data.xyz")).toThrow(
+    expect(() => resolveAssetPath(stashDir, "script", "readme.txt")).toThrow(
       "Script ref must resolve to a file with a supported script extension",
     );
   });
 
-  test("script: resolves files from tools/ directory as fallback", () => {
-    const stashDir = createTmpDir();
-    const toolPath = path.join(stashDir, "tools", "deploy.sh");
-    writeFile(toolPath, "#!/bin/sh\necho hello");
-
-    // script: should find files in tools/ when scripts/ doesn't have them
-    const result = resolveAssetPath(stashDir, "script", "deploy.sh");
-    expect(result).toBe(fs.realpathSync(toolPath));
-  });
-
-  test("tool: resolves files from scripts/ directory as fallback", () => {
+  test("resolves broader script extensions (e.g. .py)", () => {
     const stashDir = createTmpDir();
     const scriptPath = path.join(stashDir, "scripts", "analyze.py");
     writeFile(scriptPath, "print('hello')");
 
-    // tool: should find files in scripts/ when tools/ doesn't have them
-    const result = resolveAssetPath(stashDir, "tool", "analyze.py");
+    const result = resolveAssetPath(stashDir, "script", "analyze.py");
     expect(result).toBe(fs.realpathSync(scriptPath));
   });
 

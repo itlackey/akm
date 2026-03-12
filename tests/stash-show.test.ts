@@ -35,7 +35,7 @@ beforeEach(() => {
   testCacheDir = createTmpDir("akm-show-cache-");
   testConfigDir = createTmpDir("akm-show-config-");
   stashDir = createTmpDir("akm-show-stash-");
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
@@ -76,7 +76,7 @@ describe("agentikitShow installed ref", () => {
     const installedStashRoot = createTmpDir("akm-show-installed-root-");
     // Create the type subdirectory so it is a valid stash root, but do NOT
     // create the actual asset file.
-    fs.mkdirSync(path.join(installedStashRoot, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(installedStashRoot, "scripts"), { recursive: true });
 
     saveConfig({
       semanticSearch: false,
@@ -98,7 +98,7 @@ describe("agentikitShow installed ref", () => {
 
     // Use an origin that is NOT installed so resolveSourcesForOrigin returns
     // empty, triggering the add-guidance error path.
-    await expect(agentikitShow({ ref: "npm:@other/missing-pkg//tool:missing.sh" })).rejects.toThrow(/akm add/);
+    await expect(agentikitShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
   });
 });
 
@@ -107,11 +107,11 @@ describe("agentikitShow installed ref", () => {
 describe("agentikitShow search path", () => {
   test("resolves from search path directories", async () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
-    const result = await agentikitShow({ ref: "tool:deploy.sh" });
+    const result = await agentikitShow({ ref: "script:deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.name).toBe("deploy.sh");
@@ -123,11 +123,11 @@ describe("agentikitShow search path", () => {
 
 describe("agentikitShow editability", () => {
   test("working stash asset has editable true", async () => {
-    writeFile(path.join(stashDir, "tools", "local.sh"), "#!/usr/bin/env bash\necho local\n");
+    writeFile(path.join(stashDir, "scripts", "local.sh"), "#!/usr/bin/env bash\necho local\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentikitShow({ ref: "tool:local.sh" });
+    const result = await agentikitShow({ ref: "script:local.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -138,11 +138,11 @@ describe("agentikitShow editability", () => {
 
   test("search path asset has editable true", async () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
-    writeFile(path.join(searchPathDir, "tools", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
+    writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
-    const result = await agentikitShow({ ref: "tool:remote.sh" });
+    const result = await agentikitShow({ ref: "script:remote.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -152,7 +152,7 @@ describe("agentikitShow editability", () => {
 
   test("installed (cache-managed) asset has editable false with editHint", async () => {
     const installedStashRoot = createTmpDir("akm-show-installed-resolve-");
-    writeFile(path.join(installedStashRoot, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(installedStashRoot, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     saveConfig({
       semanticSearch: false,
@@ -172,7 +172,7 @@ describe("agentikitShow editability", () => {
       },
     });
 
-    const result = await agentikitShow({ ref: "tool:deploy.sh" });
+    const result = await agentikitShow({ ref: "script:deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBe("installed-pkg");
@@ -274,12 +274,12 @@ describe("agentikitShow content-based classification", () => {
     expect(result.parameters).toEqual(["env", "version"]);
   });
 
-  test("script in tools/ directory uses new renderer pipeline", async () => {
-    writeFile(path.join(stashDir, "tools", "build.sh"), "#!/usr/bin/env bash\necho build\n");
+  test("script in scripts/ directory uses new renderer pipeline", async () => {
+    writeFile(path.join(stashDir, "scripts", "build.sh"), "#!/usr/bin/env bash\necho build\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentikitShow({ ref: "tool:build.sh" });
+    const result = await agentikitShow({ ref: "script:build.sh" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeDefined();

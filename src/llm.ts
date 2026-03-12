@@ -41,7 +41,7 @@ async function chatCompletion(config: LlmConnectionConfig, messages: ChatMessage
 
 // ── Metadata Enhancement ────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a metadata generator for a developer tool registry. Given a tool/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
+const SYSTEM_PROMPT = `You are a metadata generator for a developer asset registry. Given a script/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
 
 /**
  * Use an LLM to enhance a stash entry's metadata: improve description,

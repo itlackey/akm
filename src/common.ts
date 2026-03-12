@@ -6,15 +6,7 @@ import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type AgentikitAssetType = "tool" | "skill" | "command" | "agent" | "knowledge" | "script";
-
-/**
- * Normalize an asset type for output purposes.
- * "tool" is a transparent alias for "script" -- all output should use "script".
- */
-export function normalizeAssetType(type: AgentikitAssetType): AgentikitAssetType {
-  return type === "tool" ? "script" : type;
-}
+export type AgentikitAssetType = "skill" | "command" | "agent" | "knowledge" | "script";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

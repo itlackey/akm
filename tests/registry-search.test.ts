@@ -19,7 +19,7 @@ const FIXTURE_INDEX: RegistryIndex = {
       source: "npm",
       homepage: "https://github.com/itlackey/openkit-starter",
       tags: ["opencode", "bun", "typescript", "starter"],
-      assetTypes: ["skill", "tool", "command"],
+      assetTypes: ["skill", "script", "command"],
       author: "itlackey",
       license: "MIT",
       latestVersion: "1.2.0",
@@ -43,7 +43,7 @@ const FIXTURE_INDEX: RegistryIndex = {
       ref: "someone/azure-ops-kit",
       source: "github",
       tags: ["azure", "devops", "container-apps", "infrastructure"],
-      assetTypes: ["skill", "tool"],
+      assetTypes: ["skill", "script"],
       author: "someone",
       license: "MIT",
       latestVersion: "v0.3.1",
@@ -429,7 +429,7 @@ describe("hit shape", () => {
       expect(hit?.metadata?.version).toBe("1.2.0");
       expect(hit?.metadata?.author).toBe("itlackey");
       expect(hit?.metadata?.license).toBe("MIT");
-      expect(hit?.metadata?.assetTypes).toBe("skill, tool, command");
+      expect(hit?.metadata?.assetTypes).toBe("skill, script, command");
       expect(typeof hit?.score).toBe("number");
     } finally {
       srv.close();

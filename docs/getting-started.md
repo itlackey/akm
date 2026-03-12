@@ -23,7 +23,7 @@ akm init
 ```
 
 This creates `~/akm` with subdirectories for each asset type: `scripts/`,
-`skills/`, `commands/`, `agents/`, `knowledge/`, and `tools/`. See
+`skills/`, `commands/`, `agents/`, and `knowledge/`. See
 [technical/filesystem.md](technical/filesystem.md) for platform-specific paths and environment
 variable overrides.
 

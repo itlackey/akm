@@ -116,19 +116,19 @@ test("isRgAvailable returns true when rg is on PATH", () => {
 
 test("search pipeline returns ranked results when index exists", async () => {
   const stashDir = tmpDir();
-  for (const sub of ["tools", "skills", "commands", "agents"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
 
-  // Create tools with .stash.json metadata
-  writeFile(path.join(stashDir, "tools", "docker", "build.sh"), "#!/bin/bash\necho build\n");
+  // Create scripts with .stash.json metadata
+  writeFile(path.join(stashDir, "scripts", "docker", "build.sh"), "#!/bin/bash\necho build\n");
   writeFile(
-    path.join(stashDir, "tools", "docker", ".stash.json"),
+    path.join(stashDir, "scripts", "docker", ".stash.json"),
     JSON.stringify({
       entries: [
         {
           name: "docker-build",
-          type: "tool",
+          type: "script",
           description: "build docker images",
           tags: ["docker", "container"],
           filename: "build.sh",
@@ -136,14 +136,14 @@ test("search pipeline returns ranked results when index exists", async () => {
       ],
     }),
   );
-  writeFile(path.join(stashDir, "tools", "git", "diff.sh"), "#!/bin/bash\necho diff\n");
+  writeFile(path.join(stashDir, "scripts", "git", "diff.sh"), "#!/bin/bash\necho diff\n");
   writeFile(
-    path.join(stashDir, "tools", "git", ".stash.json"),
+    path.join(stashDir, "scripts", "git", ".stash.json"),
     JSON.stringify({
       entries: [
         {
           name: "git-diff",
-          type: "tool",
+          type: "script",
           description: "summarize git changes",
           tags: ["git", "diff"],
           filename: "diff.sh",

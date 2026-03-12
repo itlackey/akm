@@ -43,7 +43,7 @@ test("loadStashFile reads valid .stash.json", () => {
     entries: [
       {
         name: "docker-build",
-        type: "tool",
+        type: "script",
         description: "build docker images",
         tags: ["docker", "build"],
         filename: "docker-build.ts",
@@ -83,7 +83,7 @@ test("loadStashFile parses intent field", () => {
     entries: [
       {
         name: "deploy",
-        type: "tool",
+        type: "script",
         intent: { when: "user needs to deploy", input: "service name", output: "deployment status" },
         filename: "deploy.sh",
       },
@@ -104,7 +104,7 @@ test("loadStashFile parses intent field", () => {
 test("writeStashFile persists .stash.json to disk", () => {
   const dir = tmpDir();
   const stash: StashFile = {
-    entries: [{ name: "test", type: "tool", quality: "generated" }],
+    entries: [{ name: "test", type: "script", quality: "generated" }],
   };
   writeStashFile(dir, stash);
 
@@ -117,7 +117,7 @@ test("writeStashFile persists .stash.json to disk", () => {
 // ── validateStashEntry ──────────────────────────────────────────────────────
 
 test("validateStashEntry rejects entries without name", () => {
-  expect(validateStashEntry({ type: "tool" })).toBeNull();
+  expect(validateStashEntry({ type: "script" })).toBeNull();
 });
 
 test("validateStashEntry rejects entries without valid type", () => {
@@ -125,16 +125,16 @@ test("validateStashEntry rejects entries without valid type", () => {
 });
 
 test("validateStashEntry accepts minimal valid entry", () => {
-  const result = validateStashEntry({ name: "x", type: "tool" });
+  const result = validateStashEntry({ name: "x", type: "script" });
   expect(result).not.toBeNull();
   expect(result?.name).toBe("x");
-  expect(result?.type).toBe("tool");
+  expect(result?.type).toBe("script");
 });
 
 test("validateStashEntry parses quality, confidence, source, and aliases", () => {
   const result = validateStashEntry({
     name: "lint",
-    type: "tool",
+    type: "script",
     quality: "curated",
     confidence: 2,
     source: "manual",
@@ -226,10 +226,10 @@ test("generateMetadata creates entries from script files with filename heuristic
   const tool1 = path.join(dir, "summarize-diff.ts");
   writeFile(tool1, `console.log("summarize")\n`);
 
-  const stash = generateMetadata(dir, "tool", [tool1]);
+  const stash = generateMetadata(dir, "script", [tool1]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0].name).toBe("summarize-diff.ts");
-  expect(stash.entries[0].type).toBe("tool");
+  expect(stash.entries[0].type).toBe("script");
   expect(stash.entries[0].description).toBe("summarize diff");
   expect(stash.entries[0].quality).toBe("generated");
   expect(stash.entries[0].source).toBe("filename");
@@ -243,7 +243,7 @@ test("generateMetadata extracts description from code comments", () => {
   const tool1 = path.join(dir, "deploy.sh");
   writeFile(tool1, `#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n`);
 
-  const stash = generateMetadata(dir, "tool", [tool1]);
+  const stash = generateMetadata(dir, "script", [tool1]);
   expect(stash.entries[0].description).toBe("Deploy services to production");
   expect(stash.entries[0].source).toBe("comments");
 });
@@ -257,30 +257,30 @@ test("generateMetadata extracts metadata from package.json", () => {
     JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
   );
 
-  const stash = generateMetadata(dir, "tool", [tool1]);
+  const stash = generateMetadata(dir, "script", [tool1]);
   expect(stash.entries[0].description).toBe("Git diff summarizer");
   expect(stash.entries[0].source).toBe("package");
   expect(stash.entries[0].confidence).toBe(0.8);
   expect(stash.entries[0].tags).toEqual(["git", "diff"]);
 });
 
-test("generateMetadata skips non-tool extensions for tool type", () => {
+test("generateMetadata skips non-script extensions for script type", () => {
   const dir = tmpDir();
   const mdFile = path.join(dir, "README.md");
   writeFile(mdFile, "# Readme\n");
 
-  const stash = generateMetadata(dir, "tool", [mdFile]);
+  const stash = generateMetadata(dir, "script", [mdFile]);
   expect(stash.entries).toHaveLength(0);
 });
 
-test("generateMetadata handles multi-tool directories", () => {
+test("generateMetadata handles multi-script directories", () => {
   const dir = tmpDir();
   const tool1 = path.join(dir, "docker-build.ts");
   const tool2 = path.join(dir, "docker-compose.ts");
   writeFile(tool1, `/**\n * Build docker images\n */\n`);
   writeFile(tool2, `/**\n * Generate docker compose stacks\n */\n`);
 
-  const stash = generateMetadata(dir, "tool", [tool1, tool2]);
+  const stash = generateMetadata(dir, "script", [tool1, tool2]);
   expect(stash.entries).toHaveLength(2);
   expect(stash.entries[0].name).toBe("docker-build.ts");
   expect(stash.entries[0].description).toBe("Build docker images");
@@ -293,7 +293,7 @@ test("generateMetadata handles multi-tool directories", () => {
 test("validateStashEntry accepts entries with searchHints array", () => {
   const result = validateStashEntry({
     name: "test",
-    type: "tool",
+    type: "script",
     searchHints: ["summarize commits", "explain changes"],
   });
   expect(result).not.toBeNull();
@@ -303,7 +303,7 @@ test("validateStashEntry accepts entries with searchHints array", () => {
 test("validateStashEntry filters non-string elements from searchHints", () => {
   const result = validateStashEntry({
     name: "test",
-    type: "tool",
+    type: "script",
     searchHints: ["valid", 42, "", "also valid", null],
   });
   expect(result).not.toBeNull();
@@ -313,7 +313,7 @@ test("validateStashEntry filters non-string elements from searchHints", () => {
 test("validateStashEntry omits searchHints if all filtered out", () => {
   const result = validateStashEntry({
     name: "test",
-    type: "tool",
+    type: "script",
     searchHints: ["", "  "],
   });
   expect(result).not.toBeNull();
@@ -323,7 +323,7 @@ test("validateStashEntry omits searchHints if all filtered out", () => {
 test("validateStashEntry accepts usage as string", () => {
   const result = validateStashEntry({
     name: "test",
-    type: "tool",
+    type: "script",
     usage: "Run after checking branch state",
   });
   expect(result).not.toBeNull();
@@ -333,7 +333,7 @@ test("validateStashEntry accepts usage as string", () => {
 test("validateStashEntry normalizes usage array", () => {
   const result = validateStashEntry({
     name: "test",
-    type: "tool",
+    type: "script",
     usage: ["  First step  ", "", "Second step", 2, null],
   });
   expect(result).not.toBeNull();
@@ -346,7 +346,7 @@ test("loadStashFile parses usage field", () => {
     entries: [
       {
         name: "git-diff",
-        type: "tool",
+        type: "script",
         usage: ["Run after fetching main", "Use --stat for quick output"],
         filename: "run.ts",
       },
@@ -364,7 +364,7 @@ test("loadStashFile parses searchHints field", () => {
     entries: [
       {
         name: "git-diff",
-        type: "tool",
+        type: "script",
         searchHints: ["summarize git commits", "explain what changed"],
         filename: "run.ts",
       },
@@ -383,7 +383,7 @@ test("generateMetadata does not generate heuristic searchHints (LLM-only)", () =
   const tool = path.join(dir, "summarize-diff.ts");
   writeFile(tool, `/**\n * Summarize git diff changes\n */\n`);
 
-  const stash = generateMetadata(dir, "tool", [tool]);
+  const stash = generateMetadata(dir, "script", [tool]);
   // Search hints are only generated when LLM is configured, not heuristically
   expect(stash.entries[0].searchHints).toBeUndefined();
 });

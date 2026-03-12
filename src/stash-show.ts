@@ -1,4 +1,3 @@
-import { normalizeAssetType } from "./common";
 import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
@@ -10,7 +9,7 @@ import type { KnowledgeView, ShowResponse } from "./stash-types";
 
 export async function agentikitShow(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
   const parsed = parseAssetRef(input.ref);
-  const displayType = normalizeAssetType(parsed.type);
+  const displayType = parsed.type;
   const config = loadConfig();
   const allSources = resolveStashSources();
   const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);

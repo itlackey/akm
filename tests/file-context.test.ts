@@ -41,16 +41,16 @@ afterAll(() => {
 describe("buildFileContext", () => {
   test("computes path fields correctly for nested file", () => {
     const root = tmpDir();
-    const realPath = path.join(root, "tools", "azure", "deploy.sh");
+    const realPath = path.join(root, "scripts", "azure", "deploy.sh");
     writeFile(realPath, "#!/bin/bash\necho deploy\n");
 
     const ctx = buildFileContext(root, realPath);
 
-    expect(ctx.relPath).toBe("tools/azure/deploy.sh");
+    expect(ctx.relPath).toBe("scripts/azure/deploy.sh");
     expect(ctx.ext).toBe(".sh");
     expect(ctx.fileName).toBe("deploy.sh");
     expect(ctx.parentDir).toBe("azure");
-    expect(ctx.ancestorDirs).toEqual(["tools", "azure"]);
+    expect(ctx.ancestorDirs).toEqual(["scripts", "azure"]);
     expect(ctx.stashRoot).toBe(root);
   });
 
@@ -100,7 +100,7 @@ describe("buildFileContext", () => {
 
   test("lazy frontmatter() returns null for non-.md files", () => {
     const root = tmpDir();
-    const shPath = path.join(root, "tools", "deploy.sh");
+    const shPath = path.join(root, "scripts", "deploy.sh");
     writeFile(shPath, "#!/bin/bash\necho deploy\n");
 
     const ctx = buildFileContext(root, shPath);
@@ -150,16 +150,16 @@ describe("buildFileContext", () => {
 // ── 2. runMatchers tests ────────────────────────────────────────────────────
 
 describe("runMatchers", () => {
-  test("directoryMatcher matches .sh file under tools/ as 'tool'", () => {
+  test("directoryMatcher matches .sh file under scripts/ as 'script'", () => {
     const root = tmpDir();
-    const filePath = path.join(root, "tools", "deploy.sh");
+    const filePath = path.join(root, "scripts", "deploy.sh");
     writeFile(filePath, "#!/bin/bash\necho deploy\n");
 
     const ctx = buildFileContext(root, filePath);
     const result = directoryMatcher(ctx);
 
     expect(result).not.toBeNull();
-    expect(result?.type).toBe("tool");
+    expect(result?.type).toBe("script");
     expect(result?.specificity).toBe(10);
   });
 
@@ -349,7 +349,7 @@ describe("runMatchers", () => {
 
   test("smartMdMatcher returns null for non-.md files", () => {
     const root = tmpDir();
-    const filePath = path.join(root, "tools", "deploy.sh");
+    const filePath = path.join(root, "scripts", "deploy.sh");
     writeFile(filePath, "#!/bin/bash\necho deploy\n");
 
     const ctx = buildFileContext(root, filePath);
@@ -411,12 +411,10 @@ describe("runMatchers", () => {
 // ── 3. Renderer tests ───────────────────────────────────────────────────────
 
 describe("Renderer", () => {
-  test("getRenderer('script-source') returns the script renderer (tool-script removed)", () => {
+  test("getRenderer('script-source') returns the script renderer", () => {
     const renderer = getRenderer("script-source");
     expect(renderer).toBeDefined();
     expect(renderer?.name).toBe("script-source");
-    // tool-script renderer has been removed; tool is an alias for script
-    expect(getRenderer("tool-script")).toBeUndefined();
   });
 
   test("getRenderer('agent-md') builds show response with prompt prefix", () => {
@@ -540,7 +538,7 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 5 renderers (tool-script removed)", () => {
+  test("getAllRenderers() returns all 5 renderers", () => {
     const all = getAllRenderers();
     expect(all).toHaveLength(5);
 
@@ -567,7 +565,7 @@ describe("walkStashFlat", () => {
 
   test("finds files across nested directories", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(root, "scripts", "deploy.sh"), "echo deploy\n");
     writeFile(path.join(root, "agents", "reviewer.md"), "You are a reviewer.");
     writeFile(path.join(root, "knowledge", "guide.md"), "# Guide");
     writeFile(path.join(root, "scripts", "deep", "nested", "analyze.py"), "print('hi')");
@@ -576,7 +574,7 @@ describe("walkStashFlat", () => {
     expect(results.length).toBe(4);
 
     const relPaths = results.map((ctx) => ctx.relPath).sort();
-    expect(relPaths).toContain("tools/deploy.sh");
+    expect(relPaths).toContain("scripts/deploy.sh");
     expect(relPaths).toContain("agents/reviewer.md");
     expect(relPaths).toContain("knowledge/guide.md");
     expect(relPaths).toContain("scripts/deep/nested/analyze.py");
@@ -584,38 +582,38 @@ describe("walkStashFlat", () => {
 
   test("skips .git directories", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(root, "scripts", "deploy.sh"), "echo deploy\n");
     writeFile(path.join(root, ".git", "config"), "[core]\n");
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("tools/deploy.sh");
+    expect(results[0].relPath).toBe("scripts/deploy.sh");
   });
 
   test("skips node_modules directories", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(root, "scripts", "deploy.sh"), "echo deploy\n");
     writeFile(path.join(root, "node_modules", "pkg", "index.js"), "module.exports = {}");
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("tools/deploy.sh");
+    expect(results[0].relPath).toBe("scripts/deploy.sh");
   });
 
   test("skips .stash.json files", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "deploy.sh"), "echo deploy\n");
-    writeFile(path.join(root, "tools", ".stash.json"), '{"entries":[]}');
+    writeFile(path.join(root, "scripts", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(root, "scripts", ".stash.json"), '{"entries":[]}');
     writeFile(path.join(root, ".stash.json"), '{"meta":true}');
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(1);
-    expect(results[0].relPath).toBe("tools/deploy.sh");
+    expect(results[0].relPath).toBe("scripts/deploy.sh");
   });
 
   test("each returned item is a valid FileContext with correct fields", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "azure", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(root, "scripts", "azure", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     writeFile(path.join(root, "agents", "reviewer.md"), "You are a reviewer.");
 
     const results = walkStashFlat(root);
@@ -636,18 +634,18 @@ describe("walkStashFlat", () => {
 
     const deployCtx = results.find((ctx) => ctx.fileName === "deploy.sh");
     expect(deployCtx).toBeDefined();
-    expect(deployCtx?.relPath).toBe("tools/azure/deploy.sh");
+    expect(deployCtx?.relPath).toBe("scripts/azure/deploy.sh");
     expect(deployCtx?.ext).toBe(".sh");
     expect(deployCtx?.parentDir).toBe("azure");
-    expect(deployCtx?.ancestorDirs).toEqual(["tools", "azure"]);
+    expect(deployCtx?.ancestorDirs).toEqual(["scripts", "azure"]);
     expect(deployCtx?.content()).toBe("#!/bin/bash\necho deploy\n");
   });
 
   test("handles multiple files in the same directory", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "build.sh"), "echo build\n");
-    writeFile(path.join(root, "tools", "test.sh"), "echo test\n");
-    writeFile(path.join(root, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(root, "scripts", "build.sh"), "echo build\n");
+    writeFile(path.join(root, "scripts", "test.sh"), "echo test\n");
+    writeFile(path.join(root, "scripts", "deploy.sh"), "echo deploy\n");
 
     const results = walkStashFlat(root);
     expect(results.length).toBe(3);

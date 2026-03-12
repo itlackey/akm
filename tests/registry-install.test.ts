@@ -15,7 +15,7 @@ function makeTempDir(prefix: string): string {
 
 function createEmptyStashDir(prefix: string): string {
   const stashDir = makeTempDir(prefix);
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   saveConfig({ semanticSearch: false, searchPaths: [] });
@@ -115,7 +115,7 @@ describe("local directory installs", () => {
     const cacheHome = makeTempDir("akm-git-cache-");
     const repoDir = makeTempDir("akm-git-repo-");
     const kitDir = path.join(repoDir, "kits", "sample");
-    writeFile(path.join(kitDir, "tools", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
+    writeFile(path.join(kitDir, "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
     writeFile(path.join(repoDir, "README.md"), "# Example repo\n");
     initGitRepo(repoDir);
 
@@ -127,14 +127,14 @@ describe("local directory installs", () => {
       expect(result.installed.source).toBe("local");
       // Local installs reference the original path directly (no cache copy)
       expect(result.installed.stashRoot).toBe(kitDir);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
 
       const config = loadConfig();
       const installedRoots = (config.registry?.installed ?? []).map((e: { stashRoot: string }) => e.stashRoot);
       expect(installedRoots).toContain(result.installed.stashRoot);
 
       const shown = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentikitShow({ ref: "tool:hello.sh" }),
+        agentikitShow({ ref: "script:hello.sh" }),
       );
       expect(shown.type).toBe("script");
       expect(shown.path).toContain(result.installed.stashRoot);
@@ -149,7 +149,7 @@ describe("local directory installs", () => {
     const stashDir = createEmptyStashDir("akm-nogit-stash-");
     const cacheHome = makeTempDir("akm-nogit-cache-");
     const kitDir = makeTempDir("akm-nogit-kit-");
-    writeFile(path.join(kitDir, "tools", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
+    writeFile(path.join(kitDir, "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
 
     try {
       const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
@@ -159,7 +159,7 @@ describe("local directory installs", () => {
       expect(result.installed.source).toBe("local");
       // stashRoot points directly at the source, no cache directory
       expect(result.installed.stashRoot).toBe(kitDir);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -171,8 +171,8 @@ describe("local directory installs", () => {
     const stashDir = createEmptyStashDir("akm-nested-stash-");
     const cacheHome = makeTempDir("akm-nested-cache-");
     const projectDir = makeTempDir("akm-nested-project-");
-    // Assets are nested: project/my-kit/tools/hello.sh
-    writeFile(path.join(projectDir, "my-kit", "tools", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
+    // Assets are nested: project/my-kit/scripts/hello.sh
+    writeFile(path.join(projectDir, "my-kit", "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
     writeFile(path.join(projectDir, "my-kit", "skills", "review", "SKILL.md"), "---\nname: review\n---\n# Review\n");
     writeFile(path.join(projectDir, "README.md"), "# My project\n");
 
@@ -184,7 +184,7 @@ describe("local directory installs", () => {
       expect(result.installed.source).toBe("local");
       // stashRoot should point to the nested my-kit dir, not the project root
       expect(result.installed.stashRoot).toBe(path.join(projectDir, "my-kit"));
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "tools", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
       expect(fs.existsSync(path.join(result.installed.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -341,7 +341,7 @@ describe("local directory installs", () => {
     const packageDir = makeTempDir("akm-nested-include-package-");
     const archivePath = path.join(makeTempDir("akm-nested-archive-"), "kit.tgz");
     const tarRoot = path.join(packageDir, "kit");
-    fs.mkdirSync(path.join(tarRoot, "opencode", "tools"), { recursive: true });
+    fs.mkdirSync(path.join(tarRoot, "opencode", "scripts"), { recursive: true });
     fs.mkdirSync(path.join(tarRoot, "opencode", "docs"), { recursive: true });
     writeFile(
       path.join(tarRoot, "opencode", "package.json"),
@@ -349,14 +349,14 @@ describe("local directory installs", () => {
         {
           name: "nested-kit",
           akm: {
-            include: ["tools"],
+            include: ["scripts"],
           },
         },
         null,
         2,
       ),
     );
-    writeFile(path.join(tarRoot, "opencode", "tools", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
+    writeFile(path.join(tarRoot, "opencode", "scripts", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
     writeFile(path.join(tarRoot, "opencode", "docs", "ignored.md"), "# ignored\n");
     createTarGz(tarRoot, archivePath);
 
@@ -385,7 +385,7 @@ describe("local directory installs", () => {
 
     try {
       const result = await withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("nested-kit"));
-      expect(fs.existsSync(path.join(result.stashRoot, "tools", "kept.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.stashRoot, "scripts", "kept.sh"))).toBe(true);
       expect(fs.existsSync(path.join(result.stashRoot, "docs"))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;

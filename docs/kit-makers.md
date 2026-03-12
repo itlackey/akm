@@ -52,11 +52,6 @@ If your script has dependencies, add a `package.json` in the script's
 directory or a parent. When akm detects a `package.json`, it sets the
 working directory to that package root.
 
-> **`tools/` directory:** You can also use a `tools/` directory instead of
-> `scripts/`. Both are functionally identical -- the only difference is that
-> `tools/` accepts a narrower set of extensions (.sh, .ts, .js, .ps1, .cmd,
-> .bat). Use whichever name fits your project's organization.
-
 ### Skills
 
 A skill is a directory containing a `SKILL.md` file. The directory name
@@ -241,7 +236,7 @@ akm show script:deploy.sh
    {
      "name": "@your-scope/my-kit",
      "version": "1.0.0",
-     "description": "Tools and skills for deployment workflows",
+     "description": "Scripts and skills for deployment workflows",
      "keywords": ["akm"]
    }
    ```
@@ -256,7 +251,7 @@ akm show script:deploy.sh
      "version": "1.0.0",
      "keywords": ["akm"],
      "akm": {
-       "include": ["tools", "skills", "knowledge"]
+       "include": ["scripts", "skills", "knowledge"]
      }
    }
    ```
@@ -290,7 +285,7 @@ search paths.
 
    ```text
    /mnt/shared/team-kit/
-     tools/
+     scripts/
      skills/
      commands/
    ```
@@ -327,7 +322,7 @@ after the working stash.
 
 ## Kit Structure Tips
 
-- **Keep it focused.** A kit with 5 great tools is more useful than one with
+- **Keep it focused.** A kit with 5 great scripts is more useful than one with
   50 mediocre ones.
 
 - **Write good descriptions.** The `description` field (in frontmatter,

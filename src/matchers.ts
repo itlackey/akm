@@ -17,7 +17,7 @@
  *   frontmatter, `$ARGUMENTS`/`$1`-`$3` placeholders) return 18.
  */
 
-import { SCRIPT_EXTENSIONS_BROAD } from "./asset-spec";
+import { SCRIPT_EXTENSIONS } from "./asset-spec";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";
 
@@ -41,7 +41,7 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
   }
 
   // Known script extensions (excluding .md, handled by smartMdMatcher)
-  if (SCRIPT_EXTENSIONS_BROAD.has(ctx.ext)) {
+  if (SCRIPT_EXTENSIONS.has(ctx.ext)) {
     return { type: "script", specificity: 3, renderer: "script-source" };
   }
 
@@ -53,9 +53,6 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
 /**
  * Directory-based matcher that boosts specificity when the first ancestor
  * directory segment from the stash root matches a known type name.
- *
- * Accepts ALL known script extensions in both `tools/` and `scripts/`
- * directories -- the distinction is purely organizational.
  */
 export function directoryMatcher(ctx: FileContext): MatchResult | null {
   const topDir = ctx.ancestorDirs[0];
@@ -63,11 +60,7 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
 
   const ext = ctx.ext;
 
-  if (topDir === "tools" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
-    return { type: "tool", specificity: 10, renderer: "script-source" };
-  }
-
-  if (topDir === "scripts" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+  if (topDir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
     return { type: "script", specificity: 10, renderer: "script-source" };
   }
 
@@ -97,17 +90,11 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
  * the ancestor-based directory matcher because the file might be nested
  * several levels deep, yet its immediate parent can still carry strong
  * naming conventions (e.g. `my-project/agents/planning.md`).
- *
- * Accepts ALL known script extensions in both `tools/` and `scripts/`.
  */
 export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
   const { parentDir, ext, fileName } = ctx;
 
-  if (parentDir === "tools" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
-    return { type: "tool", specificity: 15, renderer: "script-source" };
-  }
-
-  if (parentDir === "scripts" && SCRIPT_EXTENSIONS_BROAD.has(ext)) {
+  if (parentDir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
     return { type: "script", specificity: 15, renderer: "script-source" };
   }
 

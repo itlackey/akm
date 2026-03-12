@@ -25,7 +25,6 @@ are classified by file extension and content regardless of directory.
   commands/       # Slash commands (.md with template/parameters)
   agents/         # Agent definitions (.md with model/tools)
   knowledge/      # Reference documents (.md)
-  tools/          # Same as scripts/ (alias kept for convenience)
   bin/            # Auto-installed binaries (e.g. ripgrep)
 ```
 
@@ -83,7 +82,7 @@ auto-generated metadata from filenames, comments, and `package.json`.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `name` | string | yes | Asset identifier (usually the filename without extension) |
-| `type` | string | yes | One of `script`, `skill`, `command`, `agent`, `knowledge` (`tool` accepted as alias for `script`) |
+| `type` | string | yes | One of `script`, `skill`, `command`, `agent`, `knowledge` |
 | `description` | string | no | Human-readable summary of what the asset does |
 | `tags` | string[] | no | Keywords for search and categorization |
 | `filename` | string | no | Filename of the asset relative to this directory |

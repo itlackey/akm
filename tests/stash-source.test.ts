@@ -19,7 +19,7 @@ let stashDir = "";
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-config-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-stash-"));
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CONFIG_HOME = testConfigDir;
@@ -164,7 +164,7 @@ describe("getPrimarySource", () => {
 describe("findSourceForPath", () => {
   test("finds correct source for file inside primary stash", () => {
     const sources = [{ path: stashDir }, { path: "/other/dir" }];
-    const filePath = path.join(stashDir, "tools", "deploy.sh");
+    const filePath = path.join(stashDir, "scripts", "deploy.sh");
     const result = findSourceForPath(filePath, sources);
     expect(result).toBeDefined();
     expect(result?.path).toBe(stashDir);
@@ -174,7 +174,7 @@ describe("findSourceForPath", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
       const sources = [{ path: stashDir }, { path: extraDir }];
-      const filePath = path.join(extraDir, "tools", "test.sh");
+      const filePath = path.join(extraDir, "scripts", "test.sh");
       const result = findSourceForPath(filePath, sources);
       expect(result).toBeDefined();
       expect(result?.path).toBe(extraDir);
@@ -193,7 +193,7 @@ describe("findSourceForPath", () => {
 describe("isEditable", () => {
   test("files in primary stash are editable", () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
-    const filePath = path.join(stashDir, "tools", "deploy.sh");
+    const filePath = path.join(stashDir, "scripts", "deploy.sh");
     expect(isEditable(filePath)).toBe(true);
   });
 
@@ -201,7 +201,7 @@ describe("isEditable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
       saveConfig({ semanticSearch: false, searchPaths: [extraDir] });
-      const filePath = path.join(extraDir, "tools", "deploy.sh");
+      const filePath = path.join(extraDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(true);
     } finally {
       fs.rmSync(extraDir, { recursive: true, force: true });
@@ -228,7 +228,7 @@ describe("isEditable", () => {
           ],
         },
       });
-      const filePath = path.join(cacheDir, "tools", "deploy.sh");
+      const filePath = path.join(cacheDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(false);
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });

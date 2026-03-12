@@ -86,7 +86,7 @@ function insertToolEntry(
     type?: StashEntry["type"];
   },
 ): number {
-  const type = opts?.type ?? "tool";
+  const type = opts?.type ?? "script";
   const entry = makeEntry({ name: key, type, description: opts?.description ?? `Description for ${key}` });
   return upsertEntry(
     db,
@@ -269,14 +269,14 @@ describe("Entry CRUD", () => {
   test("getAllEntries with type filter", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "tool-1", { type: "tool" });
-      insertToolEntry(db, "tool-2", { type: "tool" });
+      insertToolEntry(db, "script-1", { type: "script" });
+      insertToolEntry(db, "script-2", { type: "script" });
       insertToolEntry(db, "skill-1", { type: "skill" });
 
-      const tools = getAllEntries(db, "tool");
-      expect(tools).toHaveLength(2);
-      for (const t of tools) {
-        expect(t.entry.type).toBe("tool");
+      const scripts = getAllEntries(db, "script");
+      expect(scripts).toHaveLength(2);
+      for (const t of scripts) {
+        expect(t.entry.type).toBe("script");
       }
 
       const skills = getAllEntries(db, "skill");
@@ -334,8 +334,8 @@ describe("FTS search", () => {
   test("searchFts with type filter", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "build-tool", {
-        type: "tool",
+      insertToolEntry(db, "build-script", {
+        type: "script",
         description: "Build the project",
         searchText: "build project compilation",
       });
@@ -346,9 +346,9 @@ describe("FTS search", () => {
       });
       rebuildFts(db);
 
-      const toolResults = searchFts(db, "build", 10, "tool");
-      expect(toolResults).toHaveLength(1);
-      expect(toolResults[0].entry.type).toBe("tool");
+      const scriptResults = searchFts(db, "build", 10, "script");
+      expect(scriptResults).toHaveLength(1);
+      expect(scriptResults[0].entry.type).toBe("script");
 
       const allResults = searchFts(db, "build", 10);
       expect(allResults).toHaveLength(2);

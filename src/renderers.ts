@@ -138,7 +138,7 @@ export function detectExecHints(filePath: string): ExecHints {
 // ── Resolution ───────────────────────────────────────────────────────────────
 
 /**
- * Resolve execution hints for a script/tool asset.
+ * Resolve execution hints for a script asset.
  *
  * Resolution order (first non-empty value wins for each field):
  * 1. `.stash.json` fields (`run`/`setup`/`cwd`) take priority

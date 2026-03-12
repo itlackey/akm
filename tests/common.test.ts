@@ -178,18 +178,17 @@ describe("hasErrnoCode", () => {
 
 describe("isAssetType", () => {
   test("returns true for all valid types", () => {
-    expect(isAssetType("tool")).toBe(true);
     expect(isAssetType("skill")).toBe(true);
     expect(isAssetType("command")).toBe(true);
     expect(isAssetType("agent")).toBe(true);
     expect(isAssetType("knowledge")).toBe(true);
+    expect(isAssetType("script")).toBe(true);
   });
 
   test("returns false for invalid strings", () => {
     expect(isAssetType("widget")).toBe(false);
     expect(isAssetType("")).toBe(false);
-    expect(isAssetType("Tool")).toBe(false);
-    expect(isAssetType("TOOL")).toBe(false);
+    expect(isAssetType("tool")).toBe(false);
     expect(isAssetType("plugin")).toBe(false);
   });
 });

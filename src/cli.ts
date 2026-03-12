@@ -412,8 +412,7 @@ const searchCommand = defineCommand({
     query: { type: "positional", description: "Search query (omit to list all assets)", required: false, default: "" },
     type: {
       type: "string",
-      description:
-        "Asset type filter (skill|command|agent|knowledge|script|any). 'tool' is accepted as alias for 'script'.",
+      description: "Asset type filter (skill|command|agent|knowledge|script|any).",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (local|registry|both)", default: "local" },
@@ -422,7 +421,7 @@ const searchCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const type = args.type as "tool" | "skill" | "command" | "agent" | "knowledge" | "script" | "any" | undefined;
+      const type = args.type as "skill" | "command" | "agent" | "knowledge" | "script" | "any" | undefined;
       const limit = args.limit ? parseInt(args.limit, 10) : undefined;
       const source = parseSearchSource(args.source);
       const result = await agentikitSearch({ query: args.query, type, limit, source });
@@ -652,7 +651,7 @@ const cloneCommand = defineCommand({
     description: "Clone an asset from any stash source into the working stash or a custom destination",
   },
   args: {
-    ref: { type: "positional", description: "Asset ref (e.g. @installed:pkg/tool:script.sh)", required: true },
+    ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//script:deploy.sh)", required: true },
     name: { type: "string", description: "New name for the cloned asset" },
     force: { type: "boolean", description: "Overwrite if asset already exists in working stash", default: false },
     dest: { type: "string", description: "Destination directory (default: working stash)" },

@@ -2,7 +2,7 @@
   "entries": [
     {
       "name": "docker-build",
-      "type": "tool",
+      "type": "script",
       "description": "Build Docker images from Dockerfiles with multi-stage support",
       "tags": ["docker", "build", "container", "image"],
       "examples": ["build a docker image", "create container image from Dockerfile"],
@@ -19,7 +19,7 @@
     },
     {
       "name": "docker-compose",
-      "type": "tool",
+      "type": "script",
       "description": "Start Docker Compose services for local development environments",
       "tags": ["docker", "compose", "development", "services"],
       "examples": ["start dev environment", "bring up docker compose"],

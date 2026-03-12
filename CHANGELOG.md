@@ -29,7 +29,7 @@ cleans up the CLI surface, and renames the package from `agentikit` to `akm-cli`
 - **Rebrand**: registry `agentikit-registry` renamed to `akm-registry`
 - **Rebrand**: default paths changed (`~/agentikit` to `~/akm`, `~/.config/agentikit` to `~/.config/akm`)
 - **Rebrand**: environment variables `AGENTIKIT_*` renamed to `AKM_*`
-- Merged `tool` type into `script` (tool is now a transparent alias)
+- Removed `tool` asset type entirely; `script` is the only script-like type
 - `.stash.json` field renames: `intents` to `searchHints`, `entry` to `filename`; removed `generated` boolean
 - `show` command: `--view` flag replaced with positional syntax (`akm show <ref> toc`)
 - Collapsed `AssetTypeHandler` handlers into a unified renderer pipeline

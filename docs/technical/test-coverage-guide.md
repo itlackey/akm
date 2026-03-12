@@ -83,8 +83,8 @@ import {
   directories. Query one dir, verify only its entries are returned.
 - `getAllEntries returns all entries` -- Insert 3 entries across types. Call
   `getAllEntries()`, verify length is 3.
-- `getAllEntries with type filter` -- Insert tool and skill entries. Call
-  `getAllEntries(db, "tool")`, verify only tools returned.
+- `getAllEntries with type filter` -- Insert script and skill entries. Call
+  `getAllEntries(db, "script")`, verify only scripts returned.
 - `deleteEntriesByDir removes entries and vec rows` -- Insert entries, delete
   by dir, verify count drops to 0.
 
@@ -93,8 +93,8 @@ import {
 - `searchFts returns results ranked by BM25` -- Insert two entries with
   different search text. Search for a term present in one. Verify it ranks
   first.
-- `searchFts with type filter` -- Insert tool and skill entries. Search with
-  `entryType: "tool"`, verify only tools returned.
+- `searchFts with type filter` -- Insert script and skill entries. Search with
+  `entryType: "script"`, verify only scripts returned.
 - `searchFts sanitizes query tokens` -- Search with special characters
   (`"hello! world@123"`), verify no SQL error and reasonable results.
 - `searchFts returns empty for garbage query` -- Search with `"!@#$%"`,
@@ -133,10 +133,10 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 
 **Test cases:**
 
-- `FTS search returns scored results for matching query` -- Index tools with
+- `FTS search returns scored results for matching query` -- Index scripts with
   distinctive names. Search by name, verify score > 0.
-- `FTS search filters by asset type` -- Index tools and skills. Search with
-  `type: "tool"`, verify only tools returned.
+- `FTS search filters by asset type` -- Index scripts and skills. Search with
+  `type: "script"`, verify only scripts returned.
 - `empty query returns all entries` -- Index 3 items, search with `query: ""`,
   verify all 3 returned.
 - `limit parameter caps results` -- Index 10 items, search with `limit: 3`,
@@ -185,31 +185,12 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
 Each handler's `buildShowResponse` and `enrichSearchHit` methods should be
 directly tested.
 
-### 3.1 Tool handler
-
-```ts
-import { toolHandler } from "../src/handlers/tool-handler"
-```
-
-- `buildShowResponse returns run for .sh file` -- Create a real .sh file in
-  a stash dir, call `buildShowResponse({ name, path, content, stashDirs })`.
-  Verify `run` contains `bash`.
-- `buildShowResponse returns run for .ts file` -- Same but .ts. Verify
-  `run` contains `bun`.
-- `buildShowResponse without stashDirs returns content` -- Call without
-  `stashDirs`. Verify `content` is present and `run` is absent.
-- `enrichSearchHit sets run on hit` -- Create a hit object, call
-  `enrichSearchHit`. Verify `hit.run` is populated.
-- `enrichSearchHit ignores ENOENT` -- Pass a hit with a non-existent path.
-  Verify no error thrown.
-- `isRelevantFile accepts .sh .ts .js .ps1 .cmd .bat` -- Test each extension.
-- `isRelevantFile rejects .md .py .txt` -- Test each.
-
-### 3.2 Script handler
+### 3.1 Script handler
 
 - `buildShowResponse returns run for runnable extensions` -- .sh, .ts, .js.
-- `buildShowResponse returns run for non-runnable extensions (now detected)` -- .py, .rb now auto-detected.
-- `isRelevantFile accepts broad script extensions` -- .py, .rb, .go, .lua, etc.
+- `buildShowResponse returns run for auto-detected extensions` -- .py, .rb now auto-detected.
+- `isRelevantFile accepts script extensions` -- .sh, .ts, .js, .py, .rb, .go, .lua, etc.
+- `isRelevantFile rejects .md .txt` -- Test each.
 
 ### 3.3 Skill handler
 
@@ -239,7 +220,7 @@ import { toolHandler } from "../src/handlers/tool-handler"
 
 - `buildShowResponse extracts prompt with prefix`
 - `buildShowResponse extracts modelHint from frontmatter`
-- `buildShowResponse extracts toolPolicy from frontmatter`
+- `buildShowResponse extracts tool policy from frontmatter`
 - `buildShowResponse handles missing frontmatter fields`
 
 ### 3.7 Markdown helpers
@@ -255,17 +236,17 @@ import { toolHandler } from "../src/handlers/tool-handler"
 
 ### Test cases
 
-- `resolveAssetPath returns real path for valid tool` -- Create a .sh file,
+- `resolveAssetPath returns real path for valid script` -- Create a .sh file,
   resolve it.
 - `resolveAssetPath throws for missing type root` -- Resolve against a stash
-  with no `tools/` directory.
+  with no `scripts/` directory.
 - `resolveAssetPath throws for missing file` -- Resolve a name that doesn't
   exist.
 - `resolveAssetPath throws for path traversal` -- Try `../outside.sh`.
 - `resolveAssetPath throws for symlink escape` -- Create a symlink to a file
   outside the stash root. Verify the escape is caught.
-- `resolveAssetPath validates tool extension` -- Create a .txt file in
-  tools/. Verify it throws about supported extensions.
+- `resolveAssetPath validates script extension` -- Create a .txt file in
+  scripts/. Verify it throws about supported extensions.
 - `resolveAssetPath validates script extension` -- Same for scripts.
 - `resolveAssetPath resolves skill by directory` -- Create
   `skills/ops/SKILL.md`, resolve `skill:ops`.
@@ -276,8 +257,8 @@ import { toolHandler } from "../src/handlers/tool-handler"
 
 ### Test cases
 
-- `getHandler returns registered handler` -- Call `getHandler("tool")`, verify
-  it returns the tool handler.
+- `getHandler returns registered handler` -- Call `getHandler("script")`, verify
+  it returns the script handler.
 - `getHandler throws for unknown type` -- Call `getHandler("nonexistent")`,
   verify error.
 - `tryGetHandler returns undefined for unknown type`
@@ -337,7 +318,7 @@ const server = Bun.serve({
     if (url.pathname.includes("search")) {
       return Response.json({
         objects: [
-          { package: { name: "akm-tools", keywords: ["akm"], description: "Tools" } }
+          { package: { name: "akm-scripts", keywords: ["akm"], description: "Scripts" } }
         ]
       })
     }
@@ -362,7 +343,7 @@ Most show behavior is tested indirectly via `stash.test.ts`. Focus on gaps:
 ### Test cases
 
 - `throws with akm add guidance when origin is not installed` --
-  Parse a ref like `npm:@other/missing-pkg//tool:missing.sh`. Verify error
+  Parse a ref like `npm:@other/missing-pkg//script:missing.sh`. Verify error
   message contains `akm add`.
 - `resolves from search path directories` -- Set up a search path with an
   asset, call show, verify it resolves.

@@ -43,7 +43,7 @@ function writeFile(filePath: string, content = "") {
 
 function tmpStash(): string {
   const dir = createTmpDir("akm-issue36-stash-");
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;
@@ -398,7 +398,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
       path.join(searchPathStash, "scripts", "deploy-app.sh"),
       "#!/bin/bash\n# Deploy application\necho deploy\n",
     );
-    writeFile(path.join(searchPathStash, "tools", "lint", "lint.sh"), "#!/bin/bash\n# Lint code\necho lint\n");
+    writeFile(path.join(searchPathStash, "scripts", "lint", "lint.sh"), "#!/bin/bash\n# Lint code\necho lint\n");
     writeFile(
       path.join(searchPathStash, "commands", "release.md"),
       "---\ndescription: Release the project\n---\n# Release\n",

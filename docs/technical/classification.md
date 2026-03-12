@@ -57,7 +57,7 @@ with a known extension gets a type, regardless of directory.
 Boosts specificity when the first ancestor directory segment from the stash
 root matches a known type name:
 
-- `scripts/` or `tools/` -- script (for files with known script extensions)
+- `scripts/` -- script (for files with known script extensions)
 - `skills/` -- skill (for `SKILL.md` files)
 - `commands/` -- command (for `.md` files)
 - `agents/` -- agent (for `.md` files)

@@ -4,9 +4,9 @@
 [![CI](https://github.com/itlackey/agentikit/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/agentikit/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
-A package manager for AI agent capabilities — tools, skills, commands, agents,
-knowledge, and scripts — that works with any AI coding assistant that can run
-shell commands.
+A package manager for AI agent capabilities — scripts, skills, commands, agents,
+and knowledge — that works with any AI coding assistant that can run shell
+commands.
 
 You build up useful scripts, prompts, and agent configs. `akm` (the Agent-i-Kit
 Manager) lets you organize them into a searchable **stash**, share them as
@@ -103,7 +103,7 @@ Search returns brief JSON by default. Use `--detail normal` or `--detail full`
 when you want origin, tags, or explainability metadata:
 
 ```sh
-akm search "docker" --type tool
+akm search "docker" --type script
 ```
 
 ```json
@@ -122,7 +122,7 @@ akm search "docker" --type tool
 Show returns everything the agent needs to act:
 
 ```sh
-akm show tool:docker-build.sh
+akm show script:docker-build.sh
 ```
 
 ```json
@@ -131,9 +131,9 @@ akm show tool:docker-build.sh
   "name": "docker-build.sh",
   "origin": null,
   "action": "Execute the run command below",
-  "run": "bash /path/to/tools/docker-build.sh",
+  "run": "bash /path/to/scripts/docker-build.sh",
   "setup": "bun install",
-  "cwd": "/path/to/tools"
+  "cwd": "/path/to/scripts"
 }
 ```
 
@@ -167,7 +167,7 @@ Manage installed kits:
 akm list                        # Show installed kits with status
 akm update --all                # Update all (reports version changes)
 akm remove owner/repo           # Remove and reindex
-akm clone tool:deploy.sh        # Fork an asset into your stash for editing
+akm clone script:deploy.sh      # Fork an asset into your stash for editing
 ```
 
 ### Publishing your own kit

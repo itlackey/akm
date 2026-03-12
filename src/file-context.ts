@@ -123,7 +123,6 @@ export interface MatchResult {
   /**
    * Classified asset type.
    * Standard types: "skill", "agent", "knowledge", "command", "script".
-   * "tool" is a transparent alias for "script".
    * Custom types are also allowed.
    */
   type: string;

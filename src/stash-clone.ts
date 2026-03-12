@@ -8,7 +8,7 @@ import { resolveAssetPath } from "./stash-resolve";
 import { findSourceForPath, getPrimarySource, resolveStashSources, type StashSource } from "./stash-source";
 
 export interface CloneOptions {
-  /** Source ref (e.g., npm:@scope/pkg//tool:deploy.sh) */
+  /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
   sourceRef: string;
   /** Optional new name for the cloned asset */
   newName?: string;

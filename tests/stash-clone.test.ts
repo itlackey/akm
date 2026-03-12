@@ -20,7 +20,7 @@ function writeFile(filePath: string, content: string) {
 
 function createStashDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;
@@ -53,15 +53,15 @@ afterEach(() => {
 });
 
 describe("agentikitClone", () => {
-  test("clones a tool from search path to primary stash", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+  test("clones a script from search path to primary stash", async () => {
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
 
-    const result = await agentikitClone({ sourceRef: "tool:deploy.sh" });
+    const result = await agentikitClone({ sourceRef: "script:deploy.sh" });
 
     expect(result.destination.ref).toContain("script:deploy.sh");
     expect(result.overwritten).toBe(false);
-    expect(fs.existsSync(path.join(stashDir, "tools", "deploy.sh"))).toBe(true);
-    expect(fs.readFileSync(path.join(stashDir, "tools", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");
+    expect(fs.existsSync(path.join(stashDir, "scripts", "deploy.sh"))).toBe(true);
+    expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");
   });
 
   test("clones a skill directory", async () => {
@@ -76,29 +76,29 @@ describe("agentikitClone", () => {
   });
 
   test("clones with a new name", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
 
-    const result = await agentikitClone({ sourceRef: "tool:deploy.sh", newName: "my-deploy.sh" });
+    const result = await agentikitClone({ sourceRef: "script:deploy.sh", newName: "my-deploy.sh" });
 
-    expect(fs.existsSync(path.join(stashDir, "tools", "my-deploy.sh"))).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "scripts", "my-deploy.sh"))).toBe(true);
     expect(result.destination.ref).toContain("my-deploy.sh");
   });
 
   test("throws when asset already exists without --force", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo original\n");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "echo existing\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo original\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo existing\n");
 
-    await expect(agentikitClone({ sourceRef: `${searchPathDir}//tool:deploy.sh` })).rejects.toThrow("already exists");
+    await expect(agentikitClone({ sourceRef: `${searchPathDir}//script:deploy.sh` })).rejects.toThrow("already exists");
   });
 
   test("overwrites with --force", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo updated\n");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "echo old\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo old\n");
 
-    const result = await agentikitClone({ sourceRef: `${searchPathDir}//tool:deploy.sh`, force: true });
+    const result = await agentikitClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, force: true });
 
     expect(result.overwritten).toBe(true);
-    expect(fs.readFileSync(path.join(stashDir, "tools", "deploy.sh"), "utf8")).toBe("echo updated\n");
+    expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo updated\n");
   });
 
   test("force overwrite removes stale files from skill directory", async () => {
@@ -115,23 +115,23 @@ describe("agentikitClone", () => {
   });
 
   test("throws when source asset not found", async () => {
-    await expect(agentikitClone({ sourceRef: "tool:nonexistent.sh" })).rejects.toThrow();
+    await expect(agentikitClone({ sourceRef: "script:nonexistent.sh" })).rejects.toThrow();
   });
 
   test("clones from working stash to itself with new name", async () => {
-    writeFile(path.join(stashDir, "tools", "original.sh"), "echo original\n");
+    writeFile(path.join(stashDir, "scripts", "original.sh"), "echo original\n");
 
-    const _result = await agentikitClone({ sourceRef: "tool:original.sh", newName: "copy.sh" });
+    const _result = await agentikitClone({ sourceRef: "script:original.sh", newName: "copy.sh" });
 
-    expect(fs.existsSync(path.join(stashDir, "tools", "copy.sh"))).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "scripts", "copy.sh"))).toBe(true);
   });
 
-  test("throws when self-cloning a tool without rename", async () => {
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "echo deploy\n");
+  test("throws when self-cloning a script without rename", async () => {
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo deploy\n");
 
-    await expect(agentikitClone({ sourceRef: "tool:deploy.sh" })).rejects.toThrow("same path");
+    await expect(agentikitClone({ sourceRef: "script:deploy.sh" })).rejects.toThrow("same path");
     // Verify the file was not destroyed
-    expect(fs.readFileSync(path.join(stashDir, "tools", "deploy.sh"), "utf8")).toBe("echo deploy\n");
+    expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo deploy\n");
   });
 
   test("throws when self-cloning a skill without rename", async () => {
@@ -154,16 +154,16 @@ describe("agentikitClone --dest", () => {
     if (customDest) fs.rmSync(customDest, { recursive: true, force: true });
   });
 
-  test("clones tool to custom destination preserving type dir structure", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+  test("clones script to custom destination preserving type dir structure", async () => {
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
 
-    const result = await agentikitClone({ sourceRef: "tool:deploy.sh", dest: customDest });
+    const result = await agentikitClone({ sourceRef: "script:deploy.sh", dest: customDest });
 
-    expect(result.destination.path).toBe(path.join(customDest, "tools", "deploy.sh"));
-    expect(fs.existsSync(path.join(customDest, "tools", "deploy.sh"))).toBe(true);
-    expect(fs.readFileSync(path.join(customDest, "tools", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");
+    expect(result.destination.path).toBe(path.join(customDest, "scripts", "deploy.sh"));
+    expect(fs.existsSync(path.join(customDest, "scripts", "deploy.sh"))).toBe(true);
+    expect(fs.readFileSync(path.join(customDest, "scripts", "deploy.sh"), "utf8")).toBe("#!/bin/bash\necho deploy\n");
     // Working stash should NOT have the file
-    expect(fs.existsSync(path.join(stashDir, "tools", "deploy.sh"))).toBe(false);
+    expect(fs.existsSync(path.join(stashDir, "scripts", "deploy.sh"))).toBe(false);
   });
 
   test("clones skill directory to custom destination", async () => {
@@ -178,38 +178,38 @@ describe("agentikitClone --dest", () => {
   });
 
   test("--dest does not require a working stash", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo deploy\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
     // Point AKM_STASH_DIR to a non-existent directory to simulate no working stash
     process.env.AKM_STASH_DIR = path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`);
 
     const result = await agentikitClone({
-      sourceRef: `${searchPathDir}//tool:deploy.sh`,
+      sourceRef: `${searchPathDir}//script:deploy.sh`,
       dest: customDest,
     });
 
-    expect(fs.existsSync(path.join(customDest, "tools", "deploy.sh"))).toBe(true);
-    expect(result.destination.path).toBe(path.join(customDest, "tools", "deploy.sh"));
+    expect(fs.existsSync(path.join(customDest, "scripts", "deploy.sh"))).toBe(true);
+    expect(result.destination.path).toBe(path.join(customDest, "scripts", "deploy.sh"));
   });
 
   test("--dest with --force overwrites at custom destination", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo updated\n");
-    writeFile(path.join(customDest, "tools", "deploy.sh"), "echo old\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
+    writeFile(path.join(customDest, "scripts", "deploy.sh"), "echo old\n");
 
     const result = await agentikitClone({
-      sourceRef: `${searchPathDir}//tool:deploy.sh`,
+      sourceRef: `${searchPathDir}//script:deploy.sh`,
       force: true,
       dest: customDest,
     });
 
     expect(result.overwritten).toBe(true);
-    expect(fs.readFileSync(path.join(customDest, "tools", "deploy.sh"), "utf8")).toBe("echo updated\n");
+    expect(fs.readFileSync(path.join(customDest, "scripts", "deploy.sh"), "utf8")).toBe("echo updated\n");
   });
 
   test("throws when asset exists at --dest without --force", async () => {
-    writeFile(path.join(searchPathDir, "tools", "deploy.sh"), "echo new\n");
-    writeFile(path.join(customDest, "tools", "deploy.sh"), "echo existing\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo new\n");
+    writeFile(path.join(customDest, "scripts", "deploy.sh"), "echo existing\n");
 
-    await expect(agentikitClone({ sourceRef: `${searchPathDir}//tool:deploy.sh`, dest: customDest })).rejects.toThrow(
+    await expect(agentikitClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, dest: customDest })).rejects.toThrow(
       "already exists at destination",
     );
   });
@@ -221,7 +221,7 @@ describe("agentikitClone remote", () => {
   beforeEach(() => {
     // Create a fixture directory that simulates a remote package
     remoteFixtureDir = createStashDir("akm-clone-remote-fixture-");
-    writeFile(path.join(remoteFixtureDir, "tools", "remote-tool.sh"), "#!/bin/bash\necho remote\n");
+    writeFile(path.join(remoteFixtureDir, "scripts", "remote-tool.sh"), "#!/bin/bash\necho remote\n");
     writeFile(path.join(remoteFixtureDir, "skills", "remote-skill", "SKILL.md"), "# Remote Skill\n");
   });
 
@@ -229,21 +229,23 @@ describe("agentikitClone remote", () => {
     if (remoteFixtureDir) fs.rmSync(remoteFixtureDir, { recursive: true, force: true });
   });
 
-  test("clones a tool from a remote origin via installRegistryRef", async () => {
+  test("clones a script from a remote origin via installRegistryRef", async () => {
     // Use bare path as origin — not in searchPaths, so isRemoteOrigin returns true
     const result = await agentikitClone({
-      sourceRef: `${remoteFixtureDir}//tool:remote-tool.sh`,
+      sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
     });
 
     expect(result.remoteFetched).toBeDefined();
     expect(result.remoteFetched?.origin).toBe(remoteFixtureDir);
-    expect(fs.existsSync(path.join(stashDir, "tools", "remote-tool.sh"))).toBe(true);
-    expect(fs.readFileSync(path.join(stashDir, "tools", "remote-tool.sh"), "utf8")).toBe("#!/bin/bash\necho remote\n");
+    expect(fs.existsSync(path.join(stashDir, "scripts", "remote-tool.sh"))).toBe(true);
+    expect(fs.readFileSync(path.join(stashDir, "scripts", "remote-tool.sh"), "utf8")).toBe(
+      "#!/bin/bash\necho remote\n",
+    );
   });
 
   test("returns remoteFetched metadata", async () => {
     const result = await agentikitClone({
-      sourceRef: `${remoteFixtureDir}//tool:remote-tool.sh`,
+      sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
     });
 
     expect(result.remoteFetched).toBeDefined();
@@ -252,7 +254,7 @@ describe("agentikitClone remote", () => {
   });
 
   test("throws when remote fetch succeeds but asset not found in package", async () => {
-    await expect(agentikitClone({ sourceRef: `${remoteFixtureDir}//tool:nonexistent.sh` })).rejects.toThrow(
+    await expect(agentikitClone({ sourceRef: `${remoteFixtureDir}//script:nonexistent.sh` })).rejects.toThrow(
       "not found",
     );
   });
@@ -261,13 +263,13 @@ describe("agentikitClone remote", () => {
     const customDest = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-remote-dest-"));
     try {
       const result = await agentikitClone({
-        sourceRef: `${remoteFixtureDir}//tool:remote-tool.sh`,
+        sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
         dest: customDest,
       });
 
       expect(result.remoteFetched).toBeDefined();
-      expect(fs.existsSync(path.join(customDest, "tools", "remote-tool.sh"))).toBe(true);
-      expect(result.destination.path).toBe(path.join(customDest, "tools", "remote-tool.sh"));
+      expect(fs.existsSync(path.join(customDest, "scripts", "remote-tool.sh"))).toBe(true);
+      expect(result.destination.path).toBe(path.join(customDest, "scripts", "remote-tool.sh"));
     } finally {
       fs.rmSync(customDest, { recursive: true, force: true });
     }

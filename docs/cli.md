@@ -15,8 +15,8 @@ Create the stash directory structure and config file.
 akm init
 ```
 
-Creates `tools/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and
-`scripts/` subdirectories under the stash path. See
+Creates `scripts/`, `skills/`, `commands/`, `agents/`, and `knowledge/`
+subdirectories under the stash path. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ### index
@@ -44,7 +44,7 @@ akm search "docker" --source both --detail full
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` (`tool` accepted as alias for `script`) | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `local`, `registry`, `both` | `local` | Where to search |
 | `--format` | `json`, `text`, `yaml` | `json` | Output format |
@@ -81,7 +81,7 @@ Returns type-specific payloads:
 
 | Type | Key fields |
 | --- | --- |
-| script (alias: tool) | `run`, `setup`, `cwd` |
+| script | `run`, `setup`, `cwd` |
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
@@ -176,7 +176,7 @@ akm clone "npm:@scope/pkg//script:deploy.sh" --dest /tmp/preview
 | --- | --- |
 | `--name` | New name for the cloned asset |
 | `--force` | Overwrite if the asset already exists at the destination |
-| `--dest` | Destination directory (default: working stash). The type subdirectory (`tools/`, `skills/`, etc.) is appended automatically |
+| `--dest` | Destination directory (default: working stash). The type subdirectory (`scripts/`, `skills/`, etc.) is appended automatically |
 
 Skills (directories) are copied recursively. Other types copy a single file.
 

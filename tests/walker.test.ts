@@ -26,21 +26,21 @@ function writeFile(filePath: string, content = "") {
 
 describe("walkStash", () => {
   test("returns empty array for non-existent directory", () => {
-    expect(walkStash("/nonexistent/path", "tool")).toEqual([]);
+    expect(walkStash("/nonexistent/path", "script")).toEqual([]);
   });
 
   test("returns empty array for empty directory", () => {
     const dir = tmpDir();
-    expect(walkStash(dir, "tool")).toEqual([]);
+    expect(walkStash(dir, "script")).toEqual([]);
   });
 
-  test("groups tool files by parent directory", () => {
+  test("groups script files by parent directory", () => {
     const root = tmpDir();
     writeFile(path.join(root, "docker", "build.sh"), "echo build\n");
     writeFile(path.join(root, "docker", "compose.sh"), "echo compose\n");
     writeFile(path.join(root, "git", "diff.ts"), "console.log('diff')\n");
 
-    const groups = walkStash(root, "tool");
+    const groups = walkStash(root, "script");
     expect(groups).toHaveLength(2);
 
     const dockerGroup = groups.find((g) => g.dirPath.endsWith("docker"));
@@ -54,23 +54,23 @@ describe("walkStash", () => {
 
   test("skips .stash.json files", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "group", "tool.sh"), "echo hi\n");
+    writeFile(path.join(root, "group", "run.sh"), "echo hi\n");
     writeFile(path.join(root, "group", ".stash.json"), '{"entries":[]}');
 
-    const groups = walkStash(root, "tool");
+    const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
     const files = groups[0].files;
     expect(files).toHaveLength(1);
-    expect(files[0]).toContain("tool.sh");
+    expect(files[0]).toContain("run.sh");
   });
 
-  test("only includes relevant files for tool type", () => {
+  test("only includes relevant files for script type", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "group", "tool.sh"), "echo hi\n");
+    writeFile(path.join(root, "group", "run.sh"), "echo hi\n");
     writeFile(path.join(root, "group", "README.md"), "ignore\n");
     writeFile(path.join(root, "group", "data.json"), "{}");
 
-    const groups = walkStash(root, "tool");
+    const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
     expect(groups[0].files).toHaveLength(1);
   });
@@ -104,7 +104,7 @@ describe("walkStash", () => {
     const root = tmpDir();
     writeFile(path.join(root, "a", "b", "c", "deep.sh"), "echo deep\n");
 
-    const groups = walkStash(root, "tool");
+    const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
     expect(groups[0].files[0]).toContain("deep.sh");
   });
@@ -113,7 +113,7 @@ describe("walkStash", () => {
     const root = tmpDir();
     writeFile(path.join(root, "deploy.sh"), "echo deploy\n");
 
-    const groups = walkStash(root, "tool");
+    const groups = walkStash(root, "script");
     expect(groups).toHaveLength(1);
     expect(groups[0].dirPath).toBe(root);
   });
@@ -133,7 +133,7 @@ describe("walkStash", () => {
 describe("walkStashFlat", () => {
   test("returns FileContext objects (not plain paths)", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "build.sh"), "echo build\n");
+    writeFile(path.join(root, "scripts", "build.sh"), "echo build\n");
 
     const results = walkStashFlat(root);
     expect(results).toHaveLength(1);
@@ -151,7 +151,7 @@ describe("walkStashFlat", () => {
 
   test("walks across all asset type directories", () => {
     const root = tmpDir();
-    writeFile(path.join(root, "tools", "build.sh"), "echo build\n");
+    writeFile(path.join(root, "scripts", "build.sh"), "echo build\n");
     writeFile(path.join(root, "agents", "helper.md"), "# Helper\n");
     writeFile(path.join(root, "knowledge", "guide.md"), "# Guide\n");
     writeFile(path.join(root, "scripts", "deploy.py"), "print('deploy')\n");
@@ -205,7 +205,7 @@ describe("walkStashFlat", () => {
     const stashRoot = path.join(repoRoot, "stash");
 
     writeFile(path.join(repoRoot, "outside.txt"), "outside\n");
-    writeFile(path.join(stashRoot, "tools", "build.sh"), "echo build\n");
+    writeFile(path.join(stashRoot, "scripts", "build.sh"), "echo build\n");
 
     const gitInit = spawnSync("git", ["init"], { cwd: repoRoot, encoding: "utf8" });
     expect(gitInit.status).toBe(0);
@@ -213,7 +213,7 @@ describe("walkStashFlat", () => {
     const results = walkStashFlat(stashRoot);
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.relPath).toBe("tools/build.sh");
+    expect(results[0]?.relPath).toBe("scripts/build.sh");
     expect(results[0]?.absPath.startsWith(stashRoot)).toBe(true);
   });
 });

@@ -30,7 +30,7 @@ beforeEach(() => {
   testCacheDir = createTmpDir("akm-registry-cache-");
   testConfigDir = createTmpDir("akm-registry-config-");
   stashDir = createTmpDir("akm-registry-stash-");
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
@@ -166,7 +166,7 @@ describe("agentikitRemove", () => {
   test("removes entry by id", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-");
     const stashRoot = createTmpDir("akm-registry-remove-root-");
-    for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 
@@ -198,7 +198,7 @@ describe("agentikitRemove", () => {
   test("removes entry by ref", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-ref-");
     const stashRoot = createTmpDir("akm-registry-remove-root-ref-");
-    for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 
@@ -230,7 +230,7 @@ describe("agentikitRemove", () => {
   test("cleans up cache directory", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-cleanup-");
     const stashRoot = createTmpDir("akm-registry-remove-root-cleanup-");
-    for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 
@@ -257,7 +257,7 @@ describe("agentikitRemove", () => {
 
   test("does not delete local source directories", async () => {
     const localDir = createTmpDir("akm-registry-remove-local-");
-    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
 
     const entry = {
       id: `local:${path.basename(localDir)}`,
@@ -301,8 +301,8 @@ describe("selectTargets via agentikitUpdate", () => {
   test("--all selects all installed entries", async () => {
     const firstLocalDir = createTmpDir("akm-registry-all-local-1-");
     const secondLocalDir = createTmpDir("akm-registry-all-local-2-");
-    fs.mkdirSync(path.join(firstLocalDir, "tools"), { recursive: true });
-    fs.mkdirSync(path.join(secondLocalDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(firstLocalDir, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(secondLocalDir, "scripts"), { recursive: true });
 
     saveConfig({
       semanticSearch: false,
@@ -338,7 +338,7 @@ describe("selectTargets via agentikitUpdate", () => {
 
   test("--force does not delete local source directories", async () => {
     const localDir = createTmpDir("akm-registry-update-local-force-");
-    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
 
     saveConfig({
       semanticSearch: false,
@@ -366,7 +366,7 @@ describe("selectTargets via agentikitUpdate", () => {
 
   test("does not delete local directories when cache path string changes", async () => {
     const localDir = createTmpDir("akm-registry-update-local-cache-change-");
-    fs.mkdirSync(path.join(localDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
 
     saveConfig({
       semanticSearch: false,

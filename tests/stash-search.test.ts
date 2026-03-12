@@ -43,7 +43,7 @@ function writeFile(filePath: string, content = "") {
  */
 function tmpStash(): string {
   const dir = createTmpDir("akm-search-stash-");
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;
@@ -111,14 +111,14 @@ describe("Database search path (FTS scoring)", () => {
   test("FTS search returns scored results for matching query", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     writeFile(
-      path.join(stashDir, "tools", "deploy", ".stash.json"),
+      path.join(stashDir, "scripts", "deploy", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "deploy",
-            type: "tool",
+            type: "script",
             description: "Deploy application to production servers",
             filename: "deploy.sh",
           },
@@ -144,14 +144,14 @@ describe("Database search path (FTS scoring)", () => {
   test("FTS search filters by asset type", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "lint", "lint.sh"), "#!/bin/bash\necho lint\n");
+    writeFile(path.join(stashDir, "scripts", "lint", "lint.sh"), "#!/bin/bash\necho lint\n");
     writeFile(
-      path.join(stashDir, "tools", "lint", ".stash.json"),
+      path.join(stashDir, "scripts", "lint", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "lint",
-            type: "tool",
+            type: "script",
             description: "Lint source code for errors",
             filename: "lint.sh",
           },
@@ -176,7 +176,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentikitSearch({ query: "code", type: "tool", source: "local" });
+    const result = await agentikitSearch({ query: "code", type: "script", source: "local" });
     const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
 
     for (const hit of localHits) {
@@ -187,27 +187,27 @@ describe("Database search path (FTS scoring)", () => {
   test("empty query returns all entries", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "alpha", "alpha.sh"), "#!/bin/bash\necho alpha\n");
+    writeFile(path.join(stashDir, "scripts", "alpha", "alpha.sh"), "#!/bin/bash\necho alpha\n");
     writeFile(
-      path.join(stashDir, "tools", "alpha", ".stash.json"),
+      path.join(stashDir, "scripts", "alpha", ".stash.json"),
       JSON.stringify({
-        entries: [{ name: "alpha", type: "tool", description: "Alpha tool", filename: "alpha.sh" }],
+        entries: [{ name: "alpha", type: "script", description: "Alpha tool", filename: "alpha.sh" }],
       }),
     );
 
-    writeFile(path.join(stashDir, "tools", "beta", "beta.sh"), "#!/bin/bash\necho beta\n");
+    writeFile(path.join(stashDir, "scripts", "beta", "beta.sh"), "#!/bin/bash\necho beta\n");
     writeFile(
-      path.join(stashDir, "tools", "beta", ".stash.json"),
+      path.join(stashDir, "scripts", "beta", ".stash.json"),
       JSON.stringify({
-        entries: [{ name: "beta", type: "tool", description: "Beta tool", filename: "beta.sh" }],
+        entries: [{ name: "beta", type: "script", description: "Beta tool", filename: "beta.sh" }],
       }),
     );
 
-    writeFile(path.join(stashDir, "tools", "gamma", "gamma.sh"), "#!/bin/bash\necho gamma\n");
+    writeFile(path.join(stashDir, "scripts", "gamma", "gamma.sh"), "#!/bin/bash\necho gamma\n");
     writeFile(
-      path.join(stashDir, "tools", "gamma", ".stash.json"),
+      path.join(stashDir, "scripts", "gamma", ".stash.json"),
       JSON.stringify({
-        entries: [{ name: "gamma", type: "tool", description: "Gamma tool", filename: "gamma.sh" }],
+        entries: [{ name: "gamma", type: "script", description: "Gamma tool", filename: "gamma.sh" }],
       }),
     );
 
@@ -224,11 +224,11 @@ describe("Database search path (FTS scoring)", () => {
 
     const names = ["aaa", "bbb", "ccc", "ddd", "eee"];
     for (const name of names) {
-      writeFile(path.join(stashDir, "tools", name, `${name}.sh`), `#!/bin/bash\necho ${name}\n`);
+      writeFile(path.join(stashDir, "scripts", name, `${name}.sh`), `#!/bin/bash\necho ${name}\n`);
       writeFile(
-        path.join(stashDir, "tools", name, ".stash.json"),
+        path.join(stashDir, "scripts", name, ".stash.json"),
         JSON.stringify({
-          entries: [{ name, type: "tool", description: `${name} tool for testing`, filename: `${name}.sh` }],
+          entries: [{ name, type: "script", description: `${name} tool for testing`, filename: `${name}.sh` }],
         }),
       );
     }
@@ -245,14 +245,14 @@ describe("Database search path (FTS scoring)", () => {
     const stashDir = tmpStash();
 
     // Create an entry with tags, searchHints, and name all matching the query
-    writeFile(path.join(stashDir, "tools", "clamp-deploy", "clamp-deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "clamp-deploy", "clamp-deploy.sh"), "#!/bin/bash\necho deploy\n");
     writeFile(
-      path.join(stashDir, "tools", "clamp-deploy", ".stash.json"),
+      path.join(stashDir, "scripts", "clamp-deploy", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "clamp-deploy",
-            type: "tool",
+            type: "script",
             description: "Deploy deploy deploy application",
             tags: ["deploy", "deployment"],
             searchHints: ["deploy services", "deploy to production"],
@@ -280,14 +280,14 @@ describe("Score boosts", () => {
   test("tag match boosts score", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     writeFile(
-      path.join(stashDir, "tools", "deploy", ".stash.json"),
+      path.join(stashDir, "scripts", "deploy", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "deploy",
-            type: "tool",
+            type: "script",
             description: "Deploy application",
             tags: ["deploy", "production"],
             filename: "deploy.sh",
@@ -310,14 +310,14 @@ describe("Score boosts", () => {
   test("name match boosts score", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "formatter", "formatter.sh"), "#!/bin/bash\necho format\n");
+    writeFile(path.join(stashDir, "scripts", "formatter", "formatter.sh"), "#!/bin/bash\necho format\n");
     writeFile(
-      path.join(stashDir, "tools", "formatter", ".stash.json"),
+      path.join(stashDir, "scripts", "formatter", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "formatter",
-            type: "tool",
+            type: "script",
             description: "Format source files",
             filename: "formatter.sh",
           },
@@ -340,14 +340,14 @@ describe("Score boosts", () => {
     const stashDir = tmpStash();
 
     // Curated entry (quality absent or "curated")
-    writeFile(path.join(stashDir, "tools", "curated", "curated.sh"), "#!/bin/bash\necho curated\n");
+    writeFile(path.join(stashDir, "scripts", "curated", "curated.sh"), "#!/bin/bash\necho curated\n");
     writeFile(
-      path.join(stashDir, "tools", "curated", ".stash.json"),
+      path.join(stashDir, "scripts", "curated", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "curated",
-            type: "tool",
+            type: "script",
             description: "A testing utility",
             quality: "curated",
             filename: "curated.sh",
@@ -358,14 +358,14 @@ describe("Score boosts", () => {
 
     // Generated entry — identical description so FTS score is the same;
     // only the `quality` field differs, isolating the curated boost.
-    writeFile(path.join(stashDir, "tools", "generated", "generated.sh"), "#!/bin/bash\necho generated\n");
+    writeFile(path.join(stashDir, "scripts", "generated", "generated.sh"), "#!/bin/bash\necho generated\n");
     writeFile(
-      path.join(stashDir, "tools", "generated", ".stash.json"),
+      path.join(stashDir, "scripts", "generated", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "generated",
-            type: "tool",
+            type: "script",
             description: "A testing utility",
             quality: "generated",
             filename: "generated.sh",
@@ -401,7 +401,7 @@ describe("Substring fallback", () => {
     const stashDir = tmpStash();
 
     // Do NOT call agentikitIndex — just create files on disk
-    writeFile(path.join(stashDir, "tools", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
@@ -419,7 +419,7 @@ describe("Substring fallback", () => {
   test("substring search is case-insensitive", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
@@ -453,14 +453,14 @@ describe("Substring fallback", () => {
   test("substring fallback honors curated .stash.json metadata", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "doctor", "doctor.sh"), "#!/bin/bash\necho doctor\n");
+    writeFile(path.join(stashDir, "scripts", "doctor", "doctor.sh"), "#!/bin/bash\necho doctor\n");
     writeFile(
-      path.join(stashDir, "tools", "doctor", ".stash.json"),
+      path.join(stashDir, "scripts", "doctor", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "doctor",
-            type: "tool",
+            type: "script",
             description: "Diagnose workspace health issues",
             tags: ["health", "diagnostics"],
             filename: "doctor.sh",
@@ -487,14 +487,14 @@ describe("Source filtering", () => {
   test("source: local skips registry search", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "local-tool", "local-tool.sh"), "#!/bin/bash\necho local\n");
+    writeFile(path.join(stashDir, "scripts", "local-tool", "local-tool.sh"), "#!/bin/bash\necho local\n");
     writeFile(
-      path.join(stashDir, "tools", "local-tool", ".stash.json"),
+      path.join(stashDir, "scripts", "local-tool", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "local-tool",
-            type: "tool",
+            type: "script",
             description: "A local tool",
             filename: "local-tool.sh",
           },
@@ -521,7 +521,7 @@ describe("Source filtering", () => {
   test("source: registry skips local search", async () => {
     const stashDir = createTmpDir();
     // Create a local tool so we know local hits would exist if local were searched
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearch: false, searchPaths: [], registryUrls: [] });
 
@@ -535,7 +535,7 @@ describe("Source filtering", () => {
 
   test("source: both includes local hits without crashing", async () => {
     const stashDir = createTmpDir();
-    writeFile(path.join(stashDir, "tools", "merge-test.sh"), "#!/bin/bash\necho merge\n");
+    writeFile(path.join(stashDir, "scripts", "merge-test.sh"), "#!/bin/bash\necho merge\n");
     await buildTestIndex(stashDir, {});
     saveConfig({ semanticSearch: false, searchPaths: [], registryUrls: [] });
 
@@ -553,14 +553,14 @@ describe("Edge cases", () => {
   test("search with special characters does not crash", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "safe", "safe.sh"), "#!/bin/bash\necho safe\n");
+    writeFile(path.join(stashDir, "scripts", "safe", "safe.sh"), "#!/bin/bash\necho safe\n");
     writeFile(
-      path.join(stashDir, "tools", "safe", ".stash.json"),
+      path.join(stashDir, "scripts", "safe", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "safe",
-            type: "tool",
+            type: "script",
             description: "A safe tool",
             filename: "safe.sh",
           },
@@ -579,14 +579,14 @@ describe("Edge cases", () => {
   test("search with very long query", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "tools", "simple", "simple.sh"), "#!/bin/bash\necho simple\n");
+    writeFile(path.join(stashDir, "scripts", "simple", "simple.sh"), "#!/bin/bash\necho simple\n");
     writeFile(
-      path.join(stashDir, "tools", "simple", ".stash.json"),
+      path.join(stashDir, "scripts", "simple", ".stash.json"),
       JSON.stringify({
         entries: [
           {
             name: "simple",
-            type: "tool",
+            type: "script",
             description: "A simple tool",
             filename: "simple.sh",
           },

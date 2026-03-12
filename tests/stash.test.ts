@@ -84,14 +84,14 @@ afterEach(() => {
   }
 });
 
-test("agentikitSearch only includes tool files with .sh/.ts/.js and returns run", async () => {
+test("agentikitSearch only includes script files with supported extensions and returns run", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
-  writeFile(path.join(stashDir, "tools", "script.ts"), "console.log('x')\n");
-  writeFile(path.join(stashDir, "tools", "README.md"), "ignore\n");
+  writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+  writeFile(path.join(stashDir, "scripts", "script.ts"), "console.log('x')\n");
+  writeFile(path.join(stashDir, "scripts", "README.md"), "ignore\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentikitSearch({ query: "", type: "tool" });
+  const result = await agentikitSearch({ query: "", type: "script" });
   const localHits = result.hits.filter(isLocalHit);
 
   expect(localHits.length).toBe(2);
@@ -100,15 +100,15 @@ test("agentikitSearch only includes tool files with .sh/.ts/.js and returns run"
   expect(localHits.some((hit) => typeof hit.run === "string")).toBe(true);
 });
 
-test("agentikitSearch creates bun run from nearest package.json up to tools root", async () => {
+test("agentikitSearch creates bun run from nearest package.json up to scripts root", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  const nestedTool = path.join(stashDir, "tools", "group", "nested", "job.js");
-  writeFile(nestedTool, "console.log('job')\n");
-  writeFile(path.join(stashDir, "tools", "group", "package.json"), '{"name":"group"}');
-  writeFile(path.join(stashDir, "tools", "package.json"), '{"name":"root"}');
+  const nestedScript = path.join(stashDir, "scripts", "group", "nested", "job.js");
+  writeFile(nestedScript, "console.log('job')\n");
+  writeFile(path.join(stashDir, "scripts", "group", "package.json"), '{"name":"group"}');
+  writeFile(path.join(stashDir, "scripts", "package.json"), '{"name":"root"}');
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentikitSearch({ query: "job", type: "tool" });
+  const result = await agentikitSearch({ query: "job", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
 
   expect(result.hits.length).toBe(1);
@@ -118,12 +118,12 @@ test("agentikitSearch creates bun run from nearest package.json up to tools root
 
 test("agentikitSearch detects setup from package.json in nearby directory", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  const nestedTool = path.join(stashDir, "tools", "group", "nested", "job.js");
-  writeFile(nestedTool, "console.log('job')\n");
-  writeFile(path.join(stashDir, "tools", "group", "nested", "package.json"), '{"name":"group"}');
+  const nestedScript = path.join(stashDir, "scripts", "group", "nested", "job.js");
+  writeFile(nestedScript, "console.log('job')\n");
+  writeFile(path.join(stashDir, "scripts", "group", "nested", "package.json"), '{"name":"group"}');
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentikitSearch({ query: "job", type: "tool" });
+  const result = await agentikitSearch({ query: "job", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
   expect(result.hits.length).toBe(1);
   // Search hits only expose run, not setup/cwd
@@ -131,20 +131,20 @@ test("agentikitSearch detects setup from package.json in nearby directory", asyn
   expect(hit.run).toContain("job.js");
 });
 
-test("agentikitSearch resolves tool run correctly for search path directories", async () => {
+test("agentikitSearch resolves script run correctly for search path directories", async () => {
   const primaryStashDir = createTmpDir("akm-stash-primary-");
   const searchPathDir = createTmpDir("akm-stash-searchpath-");
 
-  writeFile(path.join(primaryStashDir, "tools", "placeholder.sh"), "#!/usr/bin/env bash\necho primary\n");
-  writeFile(path.join(searchPathDir, "tools", "group", "nested", "job.js"), "console.log('job')\n");
-  writeFile(path.join(searchPathDir, "tools", "group", "package.json"), '{"name":"group"}');
+  writeFile(path.join(primaryStashDir, "scripts", "placeholder.sh"), "#!/usr/bin/env bash\necho primary\n");
+  writeFile(path.join(searchPathDir, "scripts", "group", "nested", "job.js"), "console.log('job')\n");
+  writeFile(path.join(searchPathDir, "scripts", "group", "package.json"), '{"name":"group"}');
 
   saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
   process.env.AKM_STASH_DIR = primaryStashDir;
   await agentikitIndex({ stashDir: primaryStashDir, full: true });
 
-  const result = await agentikitSearch({ query: "job", type: "tool" });
+  const result = await agentikitSearch({ query: "job", type: "script" });
   const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
   expect(searchPathHit).toBeDefined();
@@ -154,13 +154,13 @@ test("agentikitSearch resolves tool run correctly for search path directories", 
 
 test("agentikitSearch includes explainability reasons for indexed hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "summarize-diff.ts"), "console.log('summarize')\n");
+  writeFile(path.join(stashDir, "scripts", "summarize-diff.ts"), "console.log('summarize')\n");
 
   saveConfig({ semanticSearch: true, searchPaths: [] });
   process.env.AKM_STASH_DIR = stashDir;
 
   await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "summarize diff", type: "tool" });
+  const result = await agentikitSearch({ query: "summarize diff", type: "script" });
 
   expect(result.hits.length).toBeGreaterThan(0);
   expect(result.hits[0].whyMatched).toBeDefined();
@@ -175,15 +175,15 @@ test("agentikitSearch includes explainability reasons for indexed hits", async (
 
 test("agentikitSearch includes ref, action, and size for local hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  const toolPath = path.join(stashDir, "tools", "deploy.sh");
-  writeFile(toolPath, "#!/usr/bin/env bash\necho deploy\n");
+  const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
+  writeFile(scriptPath, "#!/usr/bin/env bash\necho deploy\n");
   writeFile(
-    path.join(stashDir, "tools", ".stash.json"),
+    path.join(stashDir, "scripts", ".stash.json"),
     JSON.stringify({
       entries: [
         {
           name: "deploy",
-          type: "tool",
+          type: "script",
           description: "Deploy app",
           filename: "deploy.sh",
         },
@@ -195,7 +195,7 @@ test("agentikitSearch includes ref, action, and size for local hits", async () =
   process.env.AKM_STASH_DIR = stashDir;
 
   await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool" });
+  const result = await agentikitSearch({ query: "deploy", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
 
   expect(hit.ref).toContain("script:deploy.sh");
@@ -206,8 +206,8 @@ test("agentikitSearch includes ref, action, and size for local hits", async () =
 test("agentikitSearch includes origin for installed-source hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const installedStash = createTmpDir("akm-installed-");
-  writeFile(path.join(stashDir, "tools", "placeholder.sh"), "#!/usr/bin/env bash\necho placeholder\n");
-  writeFile(path.join(installedStash, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+  writeFile(path.join(stashDir, "scripts", "placeholder.sh"), "#!/usr/bin/env bash\necho placeholder\n");
+  writeFile(path.join(installedStash, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
   saveConfig({
     semanticSearch: false,
@@ -229,7 +229,7 @@ test("agentikitSearch includes origin for installed-source hits", async () => {
   process.env.AKM_STASH_DIR = stashDir;
 
   await agentikitIndex({ stashDir, full: true });
-  const result = await agentikitSearch({ query: "deploy", type: "tool" });
+  const result = await agentikitSearch({ query: "deploy", type: "script" });
 
   expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-kit")).toBe(true);
 });
@@ -281,17 +281,17 @@ test("agentikitShow rejects traversal and absolute path refs", async () => {
   const stashDir = createTmpDir("akm-stash-");
   process.env.AKM_STASH_DIR = stashDir;
 
-  await expect(agentikitShow({ ref: "tool:../outside.sh" })).rejects.toThrow(/Path traversal/);
-  await expect(agentikitShow({ ref: "tool:/etc/passwd" })).rejects.toThrow(/Absolute path/);
+  await expect(agentikitShow({ ref: "script:../outside.sh" })).rejects.toThrow(/Path traversal/);
+  await expect(agentikitShow({ ref: "script:/etc/passwd" })).rejects.toThrow(/Absolute path/);
 });
 
 test("agentikitShow blocks symlink escapes outside stash type root", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const outsideDir = createTmpDir("akm-outside-");
   const outsideFile = path.join(outsideDir, "outside.sh");
-  const symlinkFile = path.join(stashDir, "tools", "link.sh");
+  const symlinkFile = path.join(stashDir, "scripts", "link.sh");
   writeFile(outsideFile, "echo outside\n");
-  fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true });
+  fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
 
   try {
     fs.symlinkSync(outsideFile, symlinkFile);
@@ -301,7 +301,7 @@ test("agentikitShow blocks symlink escapes outside stash type root", async () =>
   }
 
   process.env.AKM_STASH_DIR = stashDir;
-  await expect(agentikitShow({ ref: "tool:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/);
+  await expect(agentikitShow({ ref: "script:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/);
 });
 
 // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -431,12 +431,12 @@ test("agentikitShow returns helpful message for missing section in knowledge", a
   expect(result.content).toContain("discover available headings");
 });
 
-test("agentikitShow for tool type returns run", async () => {
+test("agentikitShow for script type returns run", async () => {
   const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+  writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentikitShow({ ref: "tool:deploy.sh" });
+  const result = await agentikitShow({ ref: "script:deploy.sh" });
 
   expect(result.type).toBe("script");
   expect(result.run).toBeTruthy();
@@ -469,14 +469,14 @@ test("agentikitInit returns created false when stash dir already exists", async 
   }
 });
 
-test("agentikitShow throws unsupported tool extension for .txt file", async () => {
+test("agentikitShow throws unsupported script extension for .txt file", async () => {
   const origStashDir = process.env.AKM_STASH_DIR;
   const stashDir = createTmpDir("akm-stash-");
-  writeFile(path.join(stashDir, "tools", "readme.txt"), "not a tool\n");
+  writeFile(path.join(stashDir, "scripts", "readme.txt"), "not a script\n");
 
   process.env.AKM_STASH_DIR = stashDir;
   try {
-    await expect(agentikitShow({ ref: "tool:readme.txt" })).rejects.toThrow(
+    await expect(agentikitShow({ ref: "script:readme.txt" })).rejects.toThrow(
       /Script ref must resolve to a file with a supported script extension/,
     );
   } finally {

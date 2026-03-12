@@ -190,7 +190,7 @@ export interface ShowResponse {
   modelHint?: unknown;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;
-  /** How to run this script/tool (e.g. "bash deploy.sh", "bun run.ts") */
+  /** How to run this script (e.g. "bash deploy.sh", "bun run.ts") */
   run?: string;
   /** Setup command to run before execution (e.g. "bun install") */
   setup?: string;

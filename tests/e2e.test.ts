@@ -2,7 +2,7 @@
  * End-to-end tests that replicate real-world usage of akm.
  *
  * Uses realistic fixtures in tests/fixtures/ representing a typical user's
- * stash directory with tools, skills, commands, and agents.
+ * stash directory with scripts, skills, commands, and agents.
  *
  * Tests cover:
  * - Full lifecycle: index → search → show
@@ -10,7 +10,7 @@
  * - Metadata generation and persistence
  * - Semantic search ranking quality
  * - Ripgrep pre-filtering
- * - Multi-tool directories with .stash.json
+ * - Multi-script directories with .stash.json
  * - Graceful degradation (no index, no ripgrep)
  * - Edge cases and error handling
  */
@@ -113,7 +113,7 @@ function parseJson(text: string): CliJsonResponse {
 
 function createEmptyStashDir(prefix: string): string {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  for (const sub of ["tools", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   return stashDir;
@@ -203,7 +203,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("search works without index (substring fallback)", async () => {
-    const result = await agentikitSearch({ query: "deploy", type: "tool" });
+    const result = await agentikitSearch({ query: "deploy", type: "script" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.hits.some((h) => h.name.includes("deploy"))).toBe(true);
@@ -222,24 +222,24 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("index generates metadata in database for directories that lack .stash.json", async () => {
     // git/ directory had no .stash.json — metadata generated in DB only
-    expect(fs.existsSync(path.join(stashDir, "tools", "git", ".stash.json"))).toBe(false);
+    expect(fs.existsSync(path.join(stashDir, "scripts", "git", ".stash.json"))).toBe(false);
 
     const db = openDatabase();
-    const entries = getAllEntries(db, "tool");
-    const gitEntries = entries.filter((e) => e.dirPath.includes(path.join("tools", "git")));
+    const entries = getAllEntries(db, "script");
+    const gitEntries = entries.filter((e) => e.dirPath.includes(path.join("scripts", "git")));
     expect(gitEntries.length).toBeGreaterThanOrEqual(2);
 
     // Each generated entry should be marked
     for (const e of gitEntries) {
       expect(e.entry.quality).toBe("generated");
-      expect(e.entry.type).toBe("tool");
+      expect(e.entry.type).toBe("script");
       expect(e.entry.filename).toBeTruthy();
     }
     closeDatabase(db);
   });
 
   test("index preserves hand-written .stash.json (docker/ has intent fields)", async () => {
-    const dockerStash = loadStashFile(path.join(stashDir, "tools", "docker"));
+    const dockerStash = loadStashFile(path.join(stashDir, "scripts", "docker"));
     expect(dockerStash).not.toBeNull();
     expect(dockerStash?.entries.length).toBe(2);
 
@@ -251,7 +251,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("index extracts description from code comments", async () => {
     const db = openDatabase();
-    const entries = getAllEntries(db, "tool");
+    const entries = getAllEntries(db, "script");
     const diffEntry = entries.find((e) => e.entry.name.includes("summarize-diff"));
     expect(diffEntry).toBeDefined();
     // Should have extracted the JSDoc comment as description
@@ -262,7 +262,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("index extracts metadata from package.json", async () => {
     const db = openDatabase();
-    const entries = getAllEntries(db, "tool");
+    const entries = getAllEntries(db, "script");
     const lintEntry = entries.find((e) => e.entry.name.includes("eslint-check"));
     expect(lintEntry).toBeDefined();
     // package.json had description and keywords
@@ -288,7 +288,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     const result = await agentikitSearch({ query: "summarize commit changes", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);
-    // Git tools should rank higher than docker tools for this query
+    // Git scripts should rank higher than docker scripts for this query
     const topNames = result.hits.slice(0, 5).map((h) => h.name.toLowerCase());
     const hasGitRelated = topNames.some(
       (n) => n.includes("git") || n.includes("diff") || n.includes("commit") || n.includes("summarize"),
@@ -297,8 +297,8 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("search type filter restricts results to that type", async () => {
-    const toolResult = await agentikitSearch({ query: "review", type: "skill" });
-    expect(toolResult.hits.every((h) => h.type === "skill")).toBe(true);
+    const skillResult = await agentikitSearch({ query: "review", type: "skill" });
+    expect(skillResult.hits.every((h) => h.type === "skill")).toBe(true);
 
     const cmdResult = await agentikitSearch({ query: "", type: "command" });
     expect(cmdResult.hits.every((h) => h.type === "command")).toBe(true);
@@ -314,8 +314,8 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(result.hits.length).toBeLessThanOrEqual(3);
   });
 
-  test("show a tool returns run", async () => {
-    const searchResult = await agentikitSearch({ query: "deploy", type: "tool" });
+  test("show a script returns run", async () => {
+    const searchResult = await agentikitSearch({ query: "deploy", type: "script" });
     const deployHit = searchResult.hits.find((h): h is LocalSearchHit => isLocalHit(h) && h.name.includes("deploy"));
     const resolvedDeployHit = expectDefined(deployHit);
 
@@ -373,7 +373,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     expect(names.some((n) => n.includes("compose") || n.includes("docker"))).toBe(true);
   });
 
-  test("agent asks 'check code quality' → lint tool ranks high", async () => {
+  test("agent asks 'check code quality' → lint script ranks high", async () => {
     const result = await agentikitSearch({ query: "check code quality style" });
     expect(result.hits.length).toBeGreaterThan(0);
     const names = result.hits.map((h) => h.name.toLowerCase());
@@ -398,16 +398,16 @@ describe("Scenario: Agent discovers capabilities for task", () => {
   });
 
   test("agent workflow: search → show (end-to-end)", async () => {
-    // Step 1: Agent searches for a tool to run tests
+    // Step 1: Agent searches for a script to run tests
     const searchResult = await agentikitSearch({ query: "run tests" });
     expect(searchResult.hits.length).toBeGreaterThan(0);
-    const testTool = searchResult.hits.find(
+    const testScript = searchResult.hits.find(
       (h): h is LocalSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
     );
-    const resolvedTestTool = expectDefined(testTool);
+    const resolvedTestScript = expectDefined(testScript);
 
-    // Step 2: Agent reads the tool to get run command for host execution
-    const showResult = await agentikitShow({ ref: expectDefined(resolvedTestTool.ref) });
+    // Step 2: Agent reads the script to get run command for host execution
+    const showResult = await agentikitShow({ ref: expectDefined(resolvedTestScript.ref) });
     expect(showResult.run).toBeTruthy();
   });
 });
@@ -553,8 +553,8 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits[0].action).toBeTruthy();
   });
 
-  test("cli: akm search --type tool filters by type", async () => {
-    const result = runCli("search", "deploy", "--type", "tool");
+  test("cli: akm search --type script filters by type", async () => {
+    const result = runCli("search", "deploy", "--type", "script");
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
@@ -579,7 +579,7 @@ describe("Scenario: CLI subprocess execution", () => {
   });
 
   test("cli: akm search defaults to brief JSON output", async () => {
-    const result = runCli("search", "docker", "--type", "tool");
+    const result = runCli("search", "docker", "--type", "script");
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
@@ -601,7 +601,7 @@ describe("Scenario: CLI subprocess execution", () => {
   });
 
   test("cli: akm search --detail normal includes origin and run", async () => {
-    const result = runCli("search", "docker", "--type", "tool", "--detail", "normal");
+    const result = runCli("search", "docker", "--type", "script", "--detail", "normal");
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
@@ -781,7 +781,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-remove-");
     const stashRoot = path.join(stashDir, "registry-kit");
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-remove-"));
-    fs.mkdirSync(path.join(stashRoot, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(stashRoot, "scripts"), { recursive: true });
     process.env.AKM_STASH_DIR = stashDir;
 
     saveConfig({
@@ -1011,7 +1011,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
 
   beforeAll(async () => {
     stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-prog-"));
-    for (const sub of ["tools", "skills", "commands", "agents"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents"]) {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     process.env.AKM_STASH_DIR = stashDir;
@@ -1021,14 +1021,14 @@ describe("Scenario: Zero-config progressive improvement", () => {
     fs.rmSync(stashDir, { recursive: true, force: true });
   });
 
-  test("user drops a script in tools/ — search finds it by name (no index)", async () => {
-    fs.mkdirSync(path.join(stashDir, "tools", "format"), { recursive: true });
+  test("user drops a script in scripts/ — search finds it by name (no index)", async () => {
+    fs.mkdirSync(path.join(stashDir, "scripts", "format"), { recursive: true });
     fs.writeFileSync(
-      path.join(stashDir, "tools", "format", "prettier-check.sh"),
+      path.join(stashDir, "scripts", "format", "prettier-check.sh"),
       "#!/usr/bin/env bash\n# Format code with Prettier\nprettier --check .\n",
     );
 
-    const result = await agentikitSearch({ query: "prettier", type: "tool" });
+    const result = await agentikitSearch({ query: "prettier", type: "script" });
     expect(result.hits.length).toBe(1);
     expect(result.hits[0].name).toContain("prettier");
   });
@@ -1037,10 +1037,10 @@ describe("Scenario: Zero-config progressive improvement", () => {
     await agentikitIndex({ stashDir });
 
     // No .stash.json should be auto-generated
-    expect(fs.existsSync(path.join(stashDir, "tools", "format", ".stash.json"))).toBe(false);
+    expect(fs.existsSync(path.join(stashDir, "scripts", "format", ".stash.json"))).toBe(false);
 
     const db = openDatabase();
-    const entries = getAllEntries(db, "tool");
+    const entries = getAllEntries(db, "script");
     const formatEntry = entries.find((e) => e.entry.name.includes("prettier"));
     expect(formatEntry).toBeDefined();
     expect(formatEntry?.entry.quality).toBe("generated");
@@ -1049,9 +1049,9 @@ describe("Scenario: Zero-config progressive improvement", () => {
   });
 
   test("user adds more scripts — re-index picks them up", async () => {
-    fs.mkdirSync(path.join(stashDir, "tools", "db"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "scripts", "db"), { recursive: true });
     fs.writeFileSync(
-      path.join(stashDir, "tools", "db", "migrate.sh"),
+      path.join(stashDir, "scripts", "db", "migrate.sh"),
       "#!/usr/bin/env bash\n# Run database migrations\necho 'migrating...'\n",
     );
 
@@ -1059,7 +1059,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     expect(result.totalEntries).toBeGreaterThanOrEqual(2);
 
     const db = openDatabase();
-    const entries = getAllEntries(db, "tool");
+    const entries = getAllEntries(db, "script");
     const migrateEntry = entries.find((e) => e.entry.name.includes("migrate"));
     expect(migrateEntry).toBeDefined();
     expect(migrateEntry?.entry.description).toContain("database migrations");
@@ -1067,8 +1067,8 @@ describe("Scenario: Zero-config progressive improvement", () => {
   });
 
   test("user creates .stash.json manually — overrides used on next index", async () => {
-    // User creates a .stash.json override for the format tool
-    const stashPath = path.join(stashDir, "tools", "format", ".stash.json");
+    // User creates a .stash.json override for the format script
+    const stashPath = path.join(stashDir, "scripts", "format", ".stash.json");
     fs.writeFileSync(
       stashPath,
       JSON.stringify(
@@ -1076,7 +1076,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
           entries: [
             {
               name: "prettier-check",
-              type: "tool",
+              type: "script",
               description: "Check code formatting with Prettier",
               tags: ["prettier", "format", "style"],
               filename: "prettier-check.sh",
@@ -1091,7 +1091,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     // Re-index — should use user override
     await agentikitIndex({ stashDir });
 
-    const reloaded = expectDefined(loadStashFile(path.join(stashDir, "tools", "format")));
+    const reloaded = expectDefined(loadStashFile(path.join(stashDir, "scripts", "format")));
     expect(reloaded.entries[0].description).toBe("Check code formatting with Prettier");
     expect(reloaded.entries[0].tags).toContain("prettier");
     expect(reloaded.entries[0].quality).not.toBe("generated");
@@ -1108,10 +1108,10 @@ describe("Scenario: Zero-config progressive improvement", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Scenario 5: Multi-tool directory with .stash.json
+// Scenario 5: Multi-script directory with .stash.json
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("Scenario: Multi-tool directory with hand-written .stash.json", () => {
+describe("Scenario: Multi-script directory with hand-written .stash.json", () => {
   let stashDir: string;
 
   beforeAll(async () => {
@@ -1124,8 +1124,8 @@ describe("Scenario: Multi-tool directory with hand-written .stash.json", () => {
     fs.rmSync(stashDir, { recursive: true, force: true });
   });
 
-  test("docker/ directory exposes two tools from single .stash.json", async () => {
-    const stash = expectDefined(loadStashFile(path.join(stashDir, "tools", "docker")));
+  test("docker/ directory exposes two scripts from single .stash.json", async () => {
+    const stash = expectDefined(loadStashFile(path.join(stashDir, "scripts", "docker")));
     expect(stash.entries).toHaveLength(2);
 
     const names = stash.entries.map((e) => e.name);
@@ -1196,9 +1196,9 @@ describe("Scenario: Index persistence across sessions", () => {
     const builtAt1 = expectDefined(getMeta(db1, "builtAt"));
     closeDatabase(db1);
 
-    // Add a new tool
-    fs.mkdirSync(path.join(stashDir, "tools", "new-tool"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "tools", "new-tool", "hello.sh"), "#!/bin/bash\necho hello\n");
+    // Add a new script
+    fs.mkdirSync(path.join(stashDir, "scripts", "new-script"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "scripts", "new-script", "hello.sh"), "#!/bin/bash\necho hello\n");
 
     await agentikitIndex({ stashDir });
     const db2 = openDatabase();
@@ -1267,10 +1267,10 @@ describe("Scenario: Error handling and edge cases", () => {
 
   test("show with path traversal attempt throws", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-err-"));
-    fs.mkdirSync(path.join(stashDir, "tools"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      await expect(agentikitShow({ ref: "tool:../../etc/passwd" })).rejects.toThrow(/Path traversal/);
+      await expect(agentikitShow({ ref: "script:../../etc/passwd" })).rejects.toThrow(/Path traversal/);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1278,7 +1278,7 @@ describe("Scenario: Error handling and edge cases", () => {
 
   test("search on empty stash returns no hits with tip", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-empty-"));
-    for (const sub of ["tools", "skills", "commands", "agents"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents"]) {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     process.env.AKM_STASH_DIR = stashDir;
@@ -1293,7 +1293,7 @@ describe("Scenario: Error handling and edge cases", () => {
 
   test("index on empty stash succeeds with zero entries", async () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-empty-"));
-    for (const sub of ["tools", "skills", "commands", "agents"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents"]) {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     try {
@@ -1323,10 +1323,10 @@ describe("Scenario: Cross-type discovery", () => {
     fs.rmSync(stashDir, { recursive: true, force: true });
   });
 
-  test("search 'any' type returns mixed results across tools, skills, commands, agents", async () => {
+  test("search 'any' type returns mixed results across scripts, skills, commands, agents", async () => {
     const result = await agentikitSearch({ query: "", type: "any" });
     const types = new Set(result.hits.map((h) => h.type));
-    // Should have at least scripts (including assets from tools/) and one other type
+    // Should have at least scripts and one other type
     expect(types.has("script")).toBe(true);
     expect(types.size).toBeGreaterThan(1);
   });
@@ -1339,20 +1339,14 @@ describe("Scenario: Cross-type discovery", () => {
 
       // Should not throw when opening
       const openResult = await agentikitShow({ ref: expectDefined(hit.ref) });
-      // tool and script types are now unified — the matcher pipeline returns
-      // "script" for files in tools/ directories, while the search index still
-      // stores "tool" from metadata. Both are acceptable.
-      const expected = hit.type === "tool" ? "script" : hit.type;
-      expect(openResult.type).toBe(expected);
+      expect(openResult.type).toBe(hit.type);
     }
   });
 
-  test("tool hits have run, non-tool hits do not", async () => {
-    const result = await agentikitSearch({ query: "", type: "any" });
+  test("script hits have run", async () => {
+    const result = await agentikitSearch({ query: "", type: "script" });
     for (const hit of result.hits) {
-      if (hit.type === "tool") {
-        expect(hit.run).toBeTruthy();
-      }
+      expect(hit.type).toBe("script");
     }
   });
 });

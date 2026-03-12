@@ -491,7 +491,7 @@ function countStashDirs(dirPath: string): number {
 /**
  * BFS to find the shallowest directory that looks like a stash root.
  * Checks for both `.stash` directories and well-known type directories
- * (tools/, skills/, etc.), so nested layouts like `project/my-kit/tools/`
+ * (scripts/, skills/, etc.), so nested layouts like `project/my-kit/scripts/`
  * are discovered even without a `.stash` marker.
  *
  * Skips `root` itself since the caller already checked it via `hasStashDirs`.

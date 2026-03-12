@@ -121,7 +121,7 @@ describe("output baseline", () => {
 
   test("search text output includes null origin for local hits", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     const output = runCli(stashDir, ["search", "deploy", "--format=text", "--detail=normal"]);
 
@@ -153,9 +153,9 @@ describe("output baseline", () => {
 
   test("show text output includes null origin for local assets", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const output = runCli(stashDir, ["show", "tool:deploy.sh", "--format=text"]);
+    const output = runCli(stashDir, ["show", "script:deploy.sh", "--format=text"]);
 
     expect(output).toContain("# origin: null");
     expect(output).toContain("run:");
@@ -163,7 +163,7 @@ describe("output baseline", () => {
 
   test("show shaped output includes action across all asset types", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
     writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\nFollow this.\n");
     writeFile(
       path.join(stashDir, "commands", "release.md"),
@@ -172,7 +172,7 @@ describe("output baseline", () => {
     writeFile(path.join(stashDir, "agents", "coach.md"), "---\ndescription: Coach\n---\nYou are a coach.\n");
     writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
 
-    const refs = ["tool:deploy.sh", "skill:ops", "command:release.md", "agent:coach.md", "knowledge:guide.md"];
+    const refs = ["script:deploy.sh", "skill:ops", "command:release.md", "agent:coach.md", "knowledge:guide.md"];
     for (const ref of refs) {
       const output = runCli(stashDir, ["show", ref, "--format=json"]);
       const json = JSON.parse(output) as Record<string, unknown>;
@@ -184,9 +184,9 @@ describe("output baseline", () => {
 
   test("show full JSON shape keeps schemaVersion gated to full detail", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const output = runCli(stashDir, ["show", "tool:deploy.sh", "--format=json", "--detail=full"]);
+    const output = runCli(stashDir, ["show", "script:deploy.sh", "--format=json", "--detail=full"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     expect(json.schemaVersion).toBe(1);
@@ -196,7 +196,7 @@ describe("output baseline", () => {
 
   test("config defaults drive output mode and CLI flags override them", () => {
     const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     const config = { output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
@@ -211,7 +211,7 @@ describe("output baseline", () => {
   test("search shaped output includes action for local and registry hits", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const registryDir = makeTempDir("akm-output-registry-");
-    writeFile(path.join(stashDir, "tools", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
     writeFile(
       path.join(registryDir, "index.json"),
       JSON.stringify({

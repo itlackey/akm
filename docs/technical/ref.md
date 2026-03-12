@@ -32,9 +32,6 @@ Refs currently use this wire format:
 - `agent:reviewer`
 - `npm:@scope/pkg//script:deploy.sh`
 
-`tool` is accepted as an alias for `script` when reading refs, but emitted refs
-normalize to `script`.
-
 ## Origin
 
 When present, `origin` narrows lookup to a specific installed source:

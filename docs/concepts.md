@@ -8,8 +8,8 @@ inspect, and execute.
 A kit is a directory of assets you can share and install. There's no required
 structure — `akm` classifies assets by **file extension and content**, not by
 directory name. A `.sh` file is a script whether it lives in `scripts/`,
-`deploy/`, or at the root. A `.md` file with `tools` in its frontmatter is an
-agent definition wherever you put it.
+`deploy/`, or at the root. A `.md` file with `tools` in its frontmatter is
+an agent definition wherever you put it.
 
 That said, using these directory names as an opt-in convention improves
 indexing confidence:

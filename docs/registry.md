@@ -1,7 +1,7 @@
 # Registry
 
 The registry is how akm finds and installs kits from external sources. Kits
-are collections of assets (tools, skills, commands, agents, knowledge, scripts)
+are collections of assets (scripts, skills, commands, agents, and knowledge)
 published to npm or hosted on GitHub.
 
 ## Discovery
@@ -103,7 +103,7 @@ akm add file:///absolute/path/to/kit
    cache directory under `~/.cache/akm/registry/` and extracted securely
    (path traversal is rejected).
 4. **Stash root detection** -- The extracted contents are scanned for asset
-   type directories (`tools/`, `skills/`, etc.) or a `.stash/` marker. If the
+   type directories (`scripts/`, `skills/`, etc.) or a `.stash/` marker. If the
    kit nests its stash under an `opencode/` subdirectory, that is detected
    automatically.
 5. **Selective include** -- If the package's `package.json` contains an
@@ -123,7 +123,7 @@ A kit can declare which paths to include via `package.json`:
 {
   "akm": {
     "include": [
-      "tools",
+      "scripts",
       "skills",
       "commands"
     ]
@@ -192,8 +192,8 @@ Use `--dest` to clone to a custom directory instead of the working stash:
 akm clone "npm:@scope/my-kit//script:deploy.sh" --dest ./project/.claude
 ```
 
-The type subdirectory (`tools/`, `skills/`, etc.) is appended automatically,
-so the example above produces `./project/.claude/tools/deploy.sh`.
+The type subdirectory (`scripts/`, `skills/`, etc.) is appended automatically,
+so the example above produces `./project/.claude/scripts/deploy.sh`.
 
 **Remote clone without install:** If the origin in the ref points to a
 package that is not yet installed, `akm clone` fetches it to the cache

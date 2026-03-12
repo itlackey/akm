@@ -6,7 +6,7 @@ You have access to a searchable library of tools, skills, commands, agents, and 
 **Finding assets:**
 ```sh
 akm search "<query>"              # Search by keyword
-akm search "<query>" --type tool  # Filter by type (tool, skill, command, agent, knowledge, script)
+akm search "<query>" --type script  # Filter by type (script, skill, command, agent, knowledge)
 akm search "<query>" --source <source>  # Filter by source (e.g., "local", "registry", "both")
 ```
 

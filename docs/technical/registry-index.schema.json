@@ -62,7 +62,7 @@
             "type": "string",
             "enum": ["skill", "command", "agent", "knowledge", "script"]
           },
-          "description": "What kind of stash assets this kit provides. Note: 'tool' is a transparent alias for 'script' and should not be used in new entries."
+          "description": "What kind of stash assets this kit provides."
         },
         "author": {
           "type": "string"

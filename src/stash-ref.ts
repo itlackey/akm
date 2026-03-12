@@ -23,21 +23,19 @@ export interface AssetRef {
  * Build a ref string from components.
  *
  * Examples:
- *   makeAssetRef("tool", "deploy.sh")
- *     → "tool:deploy.sh"
- *   makeAssetRef("tool", "deploy.sh", "npm:@scope/pkg")
- *     → "npm:@scope/pkg//tool:deploy.sh"
+ *   makeAssetRef("script", "deploy.sh")
+ *     → "script:deploy.sh"
+ *   makeAssetRef("script", "deploy.sh", "npm:@scope/pkg")
+ *     → "npm:@scope/pkg//script:deploy.sh"
  *   makeAssetRef("skill", "code-review", "local")
  *     → "local//skill:code-review"
- *   makeAssetRef("tool", "db/migrate/run.sh", "owner/repo")
- *     → "owner/repo//tool:db/migrate/run.sh"
+ *   makeAssetRef("script", "db/migrate/run.sh", "owner/repo")
+ *     → "owner/repo//script:db/migrate/run.sh"
  */
 export function makeAssetRef(type: AgentikitAssetType, name: string, origin?: string): string {
   validateName(name);
   const normalized = normalizeName(name);
-  // "tool" is a transparent alias for "script" -- normalize to "script" in refs
-  const resolvedType = type === "tool" ? "script" : type;
-  const asset = `${resolvedType}:${normalized}`;
+  const asset = `${type}:${normalized}`;
   if (!origin) return asset;
   return `${origin}//${asset}`;
 }

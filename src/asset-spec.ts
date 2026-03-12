@@ -2,8 +2,6 @@ import path from "node:path";
 import type { AgentikitAssetType } from "./common";
 import { toPosix } from "./common";
 
-export const SCRIPT_EXTENSIONS = new Set([".sh", ".ts", ".js", ".ps1", ".cmd", ".bat"]);
-
 export interface AssetSpec {
   stashDir: string;
   isRelevantFile: (fileName: string) => boolean;
@@ -25,9 +23,14 @@ const markdownSpec: Omit<AssetSpec, "stashDir"> = {
   },
 };
 
-/** Extended set of script extensions for the script asset type */
-export const SCRIPT_EXTENSIONS_BROAD = new Set([
-  ...SCRIPT_EXTENSIONS,
+/** All recognized script extensions for the script asset type */
+export const SCRIPT_EXTENSIONS = new Set([
+  ".sh",
+  ".ts",
+  ".js",
+  ".ps1",
+  ".cmd",
+  ".bat",
   ".py",
   ".rb",
   ".go",
@@ -41,16 +44,12 @@ export const SCRIPT_EXTENSIONS_BROAD = new Set([
 ]);
 
 const scriptSpec: Omit<AssetSpec, "stashDir"> = {
-  isRelevantFile: (fileName) => SCRIPT_EXTENSIONS_BROAD.has(path.extname(fileName).toLowerCase()),
+  isRelevantFile: (fileName) => SCRIPT_EXTENSIONS.has(path.extname(fileName).toLowerCase()),
   toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
   toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
 };
 
 export const ASSET_SPECS: Record<AgentikitAssetType, AssetSpec> = {
-  // "tool" is a transparent alias for "script". It uses the same spec
-  // (broad script extensions) but retains its own stashDir ("tools") so
-  // files in tools/ are still discovered.
-  tool: { stashDir: "tools", ...scriptSpec },
   skill: {
     stashDir: "skills",
     isRelevantFile: (fileName) => fileName === "SKILL.md",
