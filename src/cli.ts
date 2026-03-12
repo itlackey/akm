@@ -122,6 +122,8 @@ function shapeForCommand(command: string, result: unknown, detail: DetailLevel):
   switch (command) {
     case "search":
       return shapeSearchOutput(result as Record<string, unknown>, detail);
+    case "registry-search":
+      return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
       return shapeShowOutput(result as Record<string, unknown>, detail);
     default:
@@ -152,6 +154,27 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
   };
 }
 
+function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
+
+  // Shape kit hits as registry type
+  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
+  const shapedAssetHits = assetHits.map((hit) => shapeSearchHit(hit, detail));
+
+  const shaped: Record<string, unknown> = {
+    hits: shapedKitHits,
+    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
+    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+  };
+
+  if (detail === "full") {
+    shaped.query = result.query;
+  }
+
+  return shaped;
+}
+
 function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   // Keep local and registry hit models separate internally so search and
   // ranking logic can carry source-specific metadata. Normalize the external
@@ -160,6 +183,17 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
     const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "id", "description", "action", "curated"]));
     if (detail === "brief") return brief;
     if (detail === "normal") return pickFields(hit, ["type", "name", "id", "description", "tags", "action", "curated"]);
+    return hit;
+  }
+
+  if (hit.type === "registry-asset") {
+    const brief = withTruncatedDescription(
+      pickFields(hit, ["type", "assetType", "assetName", "description", "kit", "action"]),
+    );
+    if (detail === "brief") return brief;
+    if (detail === "normal") {
+      return pickFields(hit, ["type", "assetType", "assetName", "description", "kit", "registryName", "action"]);
+    }
     return hit;
   }
 
@@ -735,11 +769,12 @@ const registryCommand = defineCommand({
       args: {
         query: { type: "positional", description: "Search query", required: true },
         limit: { type: "string", description: "Maximum number of results" },
+        assets: { type: "boolean", description: "Include asset-level search results", default: false },
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
           const limit = args.limit ? parseInt(args.limit, 10) : undefined;
-          const result = await searchRegistry(args.query, { limit });
+          const result = await searchRegistry(args.query, { limit, includeAssets: args.assets });
           output("registry-search", result);
         });
       },

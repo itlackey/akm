@@ -3,7 +3,12 @@ import path from "node:path";
 import { fetchWithRetry } from "./common";
 import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "./config";
 import { getRegistryIndexCacheDir } from "./paths";
-import type { RegistrySearchHit, RegistrySearchResponse } from "./registry-types";
+import type {
+  RegistryAssetEntry,
+  RegistryAssetSearchHit,
+  RegistrySearchHit,
+  RegistrySearchResponse,
+} from "./registry-types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -30,6 +35,7 @@ export interface RegistryKitEntry {
   homepage?: string;
   tags?: string[];
   assetTypes?: string[];
+  assets?: RegistryAssetEntry[];
   author?: string;
   license?: string;
   latestVersion?: string;
@@ -41,7 +47,11 @@ export interface RegistrySearchOptions {
   limit?: number;
   /** Override registries. Accepts RegistryConfigEntry[] or legacy string/string[] URLs. */
   registries?: RegistryConfigEntry[];
+  /** When true, also search asset-level metadata within kits. */
+  includeAssets?: boolean;
 }
+
+export type { RegistryAssetSearchHit } from "./registry-types";
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -75,7 +85,13 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   // Score and rank
   const hits = scoreKits(allKits, trimmed, limit);
 
-  return { query: trimmed, hits, warnings };
+  // When includeAssets is enabled, also search asset-level metadata
+  let assetHits: RegistryAssetSearchHit[] = [];
+  if (options?.includeAssets) {
+    assetHits = scoreAssets(allKits, trimmed, limit);
+  }
+
+  return { query: trimmed, hits, warnings, assetHits: assetHits.length > 0 ? assetHits : undefined };
 }
 
 // ── Registry resolution ─────────────────────────────────────────────────────
@@ -184,7 +200,7 @@ function parseRegistryIndex(data: unknown): RegistryIndex | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   const obj = data as Record<string, unknown>;
 
-  if (typeof obj.version !== "number" || obj.version !== 1) return null;
+  if (typeof obj.version !== "number" || (obj.version !== 1 && obj.version !== 2)) return null;
   if (typeof obj.updatedAt !== "string") return null;
   if (!Array.isArray(obj.kits)) return null;
 
@@ -193,7 +209,7 @@ function parseRegistryIndex(data: unknown): RegistryIndex | null {
     return kit ? [kit] : [];
   });
 
-  return { version: 1, updatedAt: obj.updatedAt, kits };
+  return { version: obj.version, updatedAt: obj.updatedAt, kits };
 }
 
 function parseKitEntry(raw: unknown): RegistryKitEntry | null {
@@ -215,6 +231,7 @@ function parseKitEntry(raw: unknown): RegistryKitEntry | null {
     homepage: asString(obj.homepage),
     tags: asStringArray(obj.tags),
     assetTypes: asStringArray(obj.assetTypes),
+    assets: parseAssets(obj.assets),
     author: asString(obj.author),
     license: asString(obj.license),
     latestVersion: asString(obj.latestVersion),
@@ -300,6 +317,109 @@ function toSearchHit(kit: RegistryKitEntry, score: number, registryName?: string
     curated: kit.curated,
     registryName,
   };
+}
+
+// ── Asset parsing ────────────────────────────────────────────────────────────
+
+function parseAssets(raw: unknown): RegistryAssetEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const parsed = raw.flatMap((item): RegistryAssetEntry[] => {
+    const entry = parseAssetEntry(item);
+    return entry ? [entry] : [];
+  });
+  return parsed.length > 0 ? parsed : undefined;
+}
+
+function parseAssetEntry(raw: unknown): RegistryAssetEntry | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+
+  const type = asString(obj.type);
+  const name = asString(obj.name);
+  if (!type || !name) return null;
+
+  return {
+    type,
+    name,
+    description: asString(obj.description),
+    tags: asStringArray(obj.tags),
+  };
+}
+
+// ── Asset-level scoring ──────────────────────────────────────────────────────
+
+function scoreAssets(
+  kits: Array<{ kit: RegistryKitEntry; registryName?: string }>,
+  query: string,
+  limit: number,
+): RegistryAssetSearchHit[] {
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+
+  const scored: Array<{ hit: RegistryAssetSearchHit; score: number }> = [];
+
+  for (const { kit, registryName } of kits) {
+    if (!kit.assets || kit.assets.length === 0) continue;
+
+    const installRef =
+      kit.source === "npm" ? `npm:${kit.ref}` : kit.source === "git" ? `git+${kit.ref}` : `github:${kit.ref}`;
+
+    for (const asset of kit.assets) {
+      const score = scoreAsset(asset, tokens);
+      if (score > 0) {
+        scored.push({
+          hit: {
+            type: "registry-asset",
+            assetType: asset.type,
+            assetName: asset.name,
+            description: asset.description,
+            kit: { id: kit.id, name: kit.name },
+            registryName,
+            action: `akm add ${installRef}`,
+            score: Math.round(score * 1000) / 1000,
+          },
+          score,
+        });
+      }
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(({ hit }) => hit);
+}
+
+function scoreAsset(asset: RegistryAssetEntry, tokens: string[]): number {
+  let score = 0;
+  const nameLower = asset.name.toLowerCase();
+  const descLower = (asset.description ?? "").toLowerCase();
+  const tagsLower = (asset.tags ?? []).map((t) => t.toLowerCase());
+  const typeLower = asset.type.toLowerCase();
+
+  for (const token of tokens) {
+    if (nameLower === token) {
+      score += 1.0;
+    } else if (nameLower.includes(token)) {
+      score += 0.6;
+    }
+
+    if (typeLower === token) {
+      score += 0.4;
+    } else if (typeLower.includes(token)) {
+      score += 0.2;
+    }
+
+    if (tagsLower.some((tag) => tag === token)) {
+      score += 0.5;
+    } else if (tagsLower.some((tag) => tag.includes(token))) {
+      score += 0.25;
+    }
+
+    if (descLower.includes(token)) {
+      score += 0.2;
+    }
+  }
+
+  return tokens.length > 0 ? score / tokens.length : 0;
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

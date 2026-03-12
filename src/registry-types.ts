@@ -59,6 +59,13 @@ export interface KitInstallResult extends InstalledKitEntry {
   integrity?: string;
 }
 
+export interface RegistryAssetEntry {
+  type: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+}
+
 export interface RegistrySearchHit {
   source: KitSource;
   id: string;
@@ -74,8 +81,20 @@ export interface RegistrySearchHit {
   registryName?: string;
 }
 
+export interface RegistryAssetSearchHit {
+  type: "registry-asset";
+  assetType: string;
+  assetName: string;
+  description?: string;
+  kit: { id: string; name: string };
+  registryName?: string;
+  action: string;
+  score?: number;
+}
+
 export interface RegistrySearchResponse {
   query: string;
   hits: RegistrySearchHit[];
   warnings: string[];
+  assetHits?: RegistryAssetSearchHit[];
 }

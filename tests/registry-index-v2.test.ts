@@ -1,0 +1,402 @@
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { RegistryIndex } from "../src/registry-search";
+import { searchRegistry } from "../src/registry-search";
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
+
+const V1_INDEX: RegistryIndex = {
+  version: 1,
+  updatedAt: "2026-03-01T00:00:00Z",
+  kits: [
+    {
+      id: "npm:legacy-kit",
+      name: "Legacy Kit",
+      description: "A v1 kit without assets",
+      ref: "legacy-kit",
+      source: "npm",
+      tags: ["legacy", "deploy"],
+    },
+  ],
+};
+
+const V2_INDEX: RegistryIndex = {
+  version: 2,
+  updatedAt: "2026-03-12T00:00:00Z",
+  kits: [
+    {
+      id: "github:owner/my-kit",
+      name: "My Kit",
+      description: "A kit with assets",
+      ref: "owner/my-kit",
+      source: "github",
+      tags: ["automation", "deploy"],
+      assets: [
+        {
+          type: "script",
+          name: "deploy.sh",
+          description: "Deploy the application",
+          tags: ["deploy", "ci"],
+        },
+        {
+          type: "skill",
+          name: "code-review",
+          description: "Automated code review skill",
+          tags: ["review", "quality"],
+        },
+      ],
+    },
+    {
+      id: "npm:no-assets-kit",
+      name: "No Assets Kit",
+      description: "A v2 kit without asset-level metadata",
+      ref: "no-assets-kit",
+      source: "npm",
+      tags: ["utility"],
+    },
+    {
+      id: "github:owner/empty-assets-kit",
+      name: "Empty Assets Kit",
+      description: "A kit with an empty assets array",
+      ref: "owner/empty-assets-kit",
+      source: "github",
+      tags: ["test"],
+      assets: [],
+    },
+  ],
+};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const createdTmpDirs: string[] = [];
+
+function createTmpDir(prefix = "akm-v2-"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTmpDirs.push(dir);
+  return dir;
+}
+
+function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
+  const body = JSON.stringify(index);
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(body, {
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  return {
+    url: `http://localhost:${server.port}/index.json`,
+    close: () => server.stop(true),
+  };
+}
+
+afterAll(() => {
+  for (const dir of createdTmpDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
+
+beforeEach(() => {
+  process.env.XDG_CACHE_HOME = createTmpDir("akm-v2-cache-");
+  delete process.env.AKM_REGISTRY_URL;
+});
+
+afterEach(() => {
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME;
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+  if (originalRegistryUrl === undefined) {
+    delete process.env.AKM_REGISTRY_URL;
+  } else {
+    process.env.AKM_REGISTRY_URL = originalRegistryUrl;
+  }
+});
+
+// ── Parser: v1 index compatibility ──────────────────────────────────────────
+
+describe("parser: v1 index compatibility", () => {
+  test("v1 index without assets parses and searches correctly", async () => {
+    const srv = serveIndex(V1_INDEX);
+    try {
+      const result = await searchRegistry("legacy", { registries: [{ url: srv.url }] });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].id).toBe("npm:legacy-kit");
+      expect(result.hits[0].title).toBe("Legacy Kit");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("v1 index returns no assetHits even when includeAssets is true", async () => {
+    const srv = serveIndex(V1_INDEX);
+    try {
+      const result = await searchRegistry("legacy", { registries: [{ url: srv.url }], includeAssets: true });
+      expect(result.hits.length).toBe(1);
+      expect(result.assetHits).toBeUndefined();
+    } finally {
+      srv.close();
+    }
+  });
+});
+
+// ── Parser: v2 index with assets ────────────────────────────────────────────
+
+describe("parser: v2 index with assets", () => {
+  test("v2 index parses kits with assets", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("automation", { registries: [{ url: srv.url }] });
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits[0].id).toBe("github:owner/my-kit");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("v2 index returns assetHits when includeAssets is true", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }], includeAssets: true });
+      expect(result.assetHits).toBeDefined();
+      expect(result.assetHits?.length).toBeGreaterThan(0);
+
+      const deployHit = result.assetHits?.find((h) => h.assetName === "deploy.sh");
+      expect(deployHit).toBeDefined();
+      expect(deployHit?.type).toBe("registry-asset");
+      expect(deployHit?.assetType).toBe("script");
+      expect(deployHit?.description).toBe("Deploy the application");
+      expect(deployHit?.kit.id).toBe("github:owner/my-kit");
+      expect(deployHit?.kit.name).toBe("My Kit");
+      expect(deployHit?.action).toBe("akm add github:owner/my-kit");
+    } finally {
+      srv.close();
+    }
+  });
+});
+
+// ── Asset-level search ──────────────────────────────────────────────────────
+
+describe("asset-level search", () => {
+  test("asset search returns hits with kit provenance", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("code-review", {
+        registries: [{ url: srv.url, name: "test-reg" }],
+        includeAssets: true,
+      });
+      expect(result.assetHits).toBeDefined();
+      const reviewHit = result.assetHits?.find((h) => h.assetName === "code-review");
+      expect(reviewHit).toBeDefined();
+      expect(reviewHit?.kit.id).toBe("github:owner/my-kit");
+      expect(reviewHit?.registryName).toBe("test-reg");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("kits without assets are silently skipped in asset search", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("utility", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      // "utility" matches the no-assets-kit but not any asset
+      // Asset hits should not include anything from kits without assets
+      if (result.assetHits) {
+        for (const assetHit of result.assetHits) {
+          expect(assetHit.kit.id).not.toBe("npm:no-assets-kit");
+        }
+      }
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("kits with empty assets array are silently skipped in asset search", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("test", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      if (result.assetHits) {
+        for (const assetHit of result.assetHits) {
+          expect(assetHit.kit.id).not.toBe("github:owner/empty-assets-kit");
+        }
+      }
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("no asset hits when includeAssets is false (default)", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("deploy", { registries: [{ url: srv.url }] });
+      expect(result.assetHits).toBeUndefined();
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("asset search scores by name match", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("deploy.sh", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      expect(result.assetHits).toBeDefined();
+      expect(result.assetHits?.length).toBeGreaterThan(0);
+      // The deploy.sh asset should score higher than code-review for this query
+      expect(result.assetHits?.[0].assetName).toBe("deploy.sh");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("asset search scores by tag match", async () => {
+    const srv = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("quality", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      expect(result.assetHits).toBeDefined();
+      const qualityHit = result.assetHits?.find((h) => h.assetName === "code-review");
+      expect(qualityHit).toBeDefined();
+    } finally {
+      srv.close();
+    }
+  });
+});
+
+// ── Edge cases ──────────────────────────────────────────────────────────────
+
+describe("edge cases", () => {
+  test("missing assets field parsed as undefined", async () => {
+    const index: RegistryIndex = {
+      version: 2,
+      updatedAt: "2026-03-12T00:00:00Z",
+      kits: [
+        {
+          id: "npm:plain-kit",
+          name: "Plain Kit",
+          ref: "plain-kit",
+          source: "npm",
+        },
+      ],
+    };
+    const srv = serveIndex(index);
+    try {
+      const result = await searchRegistry("plain", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      expect(result.hits.length).toBe(1);
+      // No asset hits because the kit has no assets
+      expect(result.assetHits).toBeUndefined();
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("empty assets array parsed correctly", async () => {
+    const index: RegistryIndex = {
+      version: 2,
+      updatedAt: "2026-03-12T00:00:00Z",
+      kits: [
+        {
+          id: "npm:empty-assets",
+          name: "Empty Assets",
+          ref: "empty-assets",
+          source: "npm",
+          assets: [],
+        },
+      ],
+    };
+    const srv = serveIndex(index);
+    try {
+      const result = await searchRegistry("empty", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.assetHits).toBeUndefined();
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("asset with invalid structure is skipped", async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: testing invalid input
+    const index: any = {
+      version: 2,
+      updatedAt: "2026-03-12T00:00:00Z",
+      kits: [
+        {
+          id: "npm:bad-assets",
+          name: "Bad Assets Kit",
+          ref: "bad-assets",
+          source: "npm",
+          assets: [
+            { type: "script", name: "good.sh", description: "Valid asset" },
+            { type: "script" }, // missing name
+            { name: "orphan" }, // missing type
+            42, // not an object
+            null, // null
+          ],
+        },
+      ],
+    };
+    const srv = serveIndex(index);
+    try {
+      const result = await searchRegistry("good", {
+        registries: [{ url: srv.url }],
+        includeAssets: true,
+      });
+      expect(result.assetHits).toBeDefined();
+      expect(result.assetHits?.length).toBe(1);
+      expect(result.assetHits?.[0].assetName).toBe("good.sh");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("v1 and v2 indexes from different registries merge correctly", async () => {
+    const srv1 = serveIndex(V1_INDEX);
+    const srv2 = serveIndex(V2_INDEX);
+    try {
+      const result = await searchRegistry("deploy", {
+        registries: [
+          { url: srv1.url, name: "v1-reg" },
+          { url: srv2.url, name: "v2-reg" },
+        ],
+        includeAssets: true,
+      });
+      // Both v1 kit hits and v2 kit hits should be present
+      const ids = result.hits.map((h) => h.id);
+      expect(ids).toContain("npm:legacy-kit");
+      expect(ids).toContain("github:owner/my-kit");
+
+      // Asset hits should come only from v2
+      expect(result.assetHits).toBeDefined();
+      const assetKitIds = result.assetHits?.map((h) => h.kit.id);
+      expect(assetKitIds).toContain("github:owner/my-kit");
+      expect(assetKitIds).not.toContain("npm:legacy-kit");
+    } finally {
+      srv1.close();
+      srv2.close();
+    }
+  });
+});
