@@ -692,6 +692,9 @@ const registryCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
+          if (!args.url.startsWith("http")) {
+            throw new UsageError("Registry URL must start with http:// or https://");
+          }
           const config = loadConfig();
           const registries = [...(config.registries ?? [])];
           // Deduplicate by URL
@@ -731,7 +734,6 @@ const registryCommand = defineCommand({
       meta: { name: "search", description: "Search enabled registries for kits" },
       args: {
         query: { type: "positional", description: "Search query", required: true },
-        type: { type: "string", description: "Asset type filter" },
         limit: { type: "string", description: "Maximum number of results" },
       },
       async run({ args }) {

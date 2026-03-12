@@ -104,6 +104,7 @@ export async function agentikitSearch(input: {
       action: `akm add ${installRef} -> then search again`,
       score: hit.score,
       curated: hit.curated,
+      registryName: hit.registryName,
     };
   });
 

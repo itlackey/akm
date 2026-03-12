@@ -97,17 +97,28 @@ describe("registry add/remove/list via config", () => {
   });
 
   test("add deduplicates by URL", () => {
+    // Start with a known registry entry
+    const url = "https://example.com/dedup-test.json";
     const config = loadConfig();
     const registries = [...(config.registries ?? [])];
-    const url = registries[0].url;
-    // Try to add a duplicate
-    if (!registries.some((r) => r.url === url)) {
-      registries.push({ url });
-    }
+    registries.push({ url, name: "dedup-target" });
     saveConfig({ ...config, registries });
 
-    const updated = loadConfig();
-    expect(updated.registries?.length).toBe(1);
+    // Verify it was added
+    const afterFirst = loadConfig();
+    const countAfterFirst = afterFirst.registries?.length ?? 0;
+
+    // Try to add the same URL again using the CLI's dedup logic
+    const current = loadConfig();
+    const currentRegistries = [...(current.registries ?? [])];
+    if (!currentRegistries.some((r) => r.url === url)) {
+      currentRegistries.push({ url, name: "dedup-target" });
+    }
+    saveConfig({ ...current, registries: currentRegistries });
+
+    // Verify length is unchanged — the duplicate was rejected
+    const afterSecond = loadConfig();
+    expect(afterSecond.registries?.length).toBe(countAfterFirst);
   });
 
   test("remove by URL", () => {
@@ -166,9 +177,9 @@ describe("resolveRegistries", () => {
     expect(resolved[0].url).toBe("https://override.com/index.json");
   });
 
-  test("returns default registries when config has none", () => {
+  test("returns empty array when passed empty array", () => {
     const resolved = resolveRegistries([]);
-    // Empty array passed, no env var — falls back to default
+    // Empty array passed explicitly — returns empty, no fallback
     expect(resolved).toEqual([]);
   });
 

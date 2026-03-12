@@ -52,7 +52,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   }
 
   const limit = clampLimit(options?.limit);
-  const entries = options?.registries ?? resolveRegistries();
+  const entries = (options?.registries ?? resolveRegistries()).filter((r) => r.enabled !== false);
   const warnings: string[] = [];
 
   // Load index from all configured registries, merge kits

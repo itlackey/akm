@@ -35,6 +35,8 @@ export interface RegistrySearchResultHit {
   whyMatched?: string[];
   /** Whether this entry was manually reviewed and approved */
   curated?: boolean;
+  /** Name of the registry that provided this hit (provenance tracking) */
+  registryName?: string;
 }
 
 export type SearchHit = LocalSearchHit | RegistrySearchResultHit;
