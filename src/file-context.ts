@@ -181,42 +181,15 @@ const renderers = new Map<string, AssetRenderer>();
 
 let builtinsInitialized = false;
 
-/** Pluggable initializer set via `setBuiltinRegistrar`. */
-let builtinRegistrar: (() => void) | null = null;
-
-/**
- * Set the function that registers built-in matchers and renderers.
- *
- * This breaks the static import cycle: `file-context.ts` does not need to
- * import `matchers.ts` or `renderers.ts` at the top level. Instead, a
- * one-time call from outside (e.g. the test file or CLI entry) provides the
- * registration callback.
- *
- * If no registrar is set by the time `ensureBuiltinsRegistered` runs, it
- * falls back to a dynamic `require()` for backward compatibility.
- */
-export function setBuiltinRegistrar(fn: () => void): void {
-  builtinRegistrar = fn;
-}
-
 /**
  * Ensure that built-in matchers and renderers are registered.
  * Called lazily on first use of runMatchers/getRenderer.
- *
- * Uses the registrar set via `setBuiltinRegistrar`, or falls back to
- * a direct import of the registration modules. The dynamic import
- * avoids a static circular dependency between file-context, renderers,
- * and asset-spec.
  */
 function ensureBuiltinsRegistered(): void {
   if (builtinsInitialized) return;
   builtinsInitialized = true;
-  if (builtinRegistrar) {
-    builtinRegistrar();
-    return;
-  }
   // Lazy inline require avoids a top-level static import cycle.
-  // These are only evaluated once and only when no explicit registrar was set.
+  // These are only evaluated once.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { registerBuiltinMatchers } = require("./matchers") as typeof import("./matchers");
   // eslint-disable-next-line @typescript-eslint/no-require-imports

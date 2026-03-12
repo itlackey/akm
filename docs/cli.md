@@ -137,7 +137,7 @@ akm update --all --force   # Force fresh download even if version is unchanged
 | Flag | Description |
 | --- | --- |
 | `--all` | Update all installed entries |
-| `--force` | Delete cached extraction before re-downloading (replaces the old `reinstall` command) |
+| `--force` | Delete cached extraction before re-downloading |
 
 Reports per-entry change flags: `changed.version`, `changed.revision`,
 `changed.any`.

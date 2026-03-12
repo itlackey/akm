@@ -744,43 +744,6 @@ describe("Scenario: CLI subprocess execution", () => {
     });
   });
 
-  test("cli: akm config <key> [value] supports git-style get/set via JSON", async () => {
-    const setResult = runCli(
-      "config",
-      "embedding",
-      '{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text","dimension":384}',
-    );
-    expect(setResult.exitCode).toBe(0);
-
-    const getResult = runCli("config", "embedding");
-    expect(getResult.exitCode).toBe(0);
-
-    const json = parseJson(getResult.stdout);
-    expect(json).toMatchObject({
-      endpoint: "http://localhost:11434/v1/embeddings",
-      model: "nomic-embed-text",
-      dimension: 384,
-    });
-  });
-
-  test("cli: akm config --get/--unset support familiar git-style flags", async () => {
-    // Set up llm config via JSON first
-    expect(
-      runCli("config", "set", "llm", '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2"}')
-        .exitCode,
-    ).toBe(0);
-
-    // Verify --get works for llm
-    const getResult = runCli("config", "--get", "llm");
-    expect(getResult.exitCode).toBe(0);
-    const json = parseJson(getResult.stdout);
-    expect(json).toMatchObject({ model: "llama3.2" });
-
-    // Verify --unset completes successfully
-    const unsetResult = runCli("config", "--unset", "llm");
-    expect(unsetResult.exitCode).toBe(0);
-  });
-
   test("cli: akm with no command prints usage", async () => {
     const result = runCli();
     expect(result.exitCode).not.toBe(0);
@@ -1019,13 +982,10 @@ describe("Scenario: CLI knowledge view modes (positional)", () => {
     expect(json.content).toContain("---");
   });
 
-  test("cli: show knowledge with --view flag still works (backward compat)", async () => {
+  test("cli: show knowledge rejects legacy --view flag", async () => {
     const result = runCli("show", "knowledge:guide.md", "--view", "toc");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.type).toBe("knowledge");
-    expect(json.content).toContain("# API Reference Guide");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Legacy show flags are no longer supported");
   });
 
   test("cli: show knowledge default (no view mode) returns full content", async () => {

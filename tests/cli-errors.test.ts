@@ -103,7 +103,7 @@ describe("CLI error handling", () => {
   });
 
   test("config set with invalid JSON prints hint about quoting", () => {
-    const { stderr, status } = runCli("config", "embedding", "not-valid-json");
+    const { stderr, status } = runCli("config", "set", "embedding", "not-valid-json");
     expect(status).not.toBe(0);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);

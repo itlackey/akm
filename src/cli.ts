@@ -515,36 +515,34 @@ const showCommand = defineCommand({
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full)" },
-    // These flags are kept for backward compatibility (--view toc still works)
-    // but the preferred syntax is positional: akm show ref toc
-    view: { type: "string", description: "Knowledge view mode (full|toc|frontmatter|section|lines)" },
-    heading: { type: "string", description: "Section heading (for section view)" },
-    start: { type: "string", description: "Start line (for lines view)" },
-    end: { type: "string", description: "End line (for lines view)" },
+    akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
+    akmHeading: { type: "string", description: "Internal positional section heading parser" },
+    akmStart: { type: "string", description: "Internal positional start-line parser" },
+    akmEnd: { type: "string", description: "Internal positional end-line parser" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       let view: KnowledgeView | undefined;
-      if (args.view) {
-        switch (args.view) {
+      if (args.akmView) {
+        switch (args.akmView) {
           case "section":
-            view = { mode: "section", heading: args.heading ?? "" };
+            view = { mode: "section", heading: args.akmHeading ?? "" };
             break;
           case "lines":
             view = {
               mode: "lines",
-              start: Number(args.start ?? "1"),
-              end: args.end ? parseInt(args.end, 10) : Number.MAX_SAFE_INTEGER,
+              start: Number(args.akmStart ?? "1"),
+              end: args.akmEnd ? parseInt(args.akmEnd, 10) : Number.MAX_SAFE_INTEGER,
             };
             break;
           case "toc":
           case "frontmatter":
           case "full":
-            view = { mode: args.view };
+            view = { mode: args.akmView };
             break;
           default:
             throw new UsageError(
-              `Unknown view mode: ${args.view}. Expected one of: full|toc|frontmatter|section|lines`,
+              `Unknown view mode: ${args.akmView}. Expected one of: full|toc|frontmatter|section|lines`,
             );
         }
       }
@@ -558,9 +556,6 @@ const configCommand = defineCommand({
   meta: { name: "config", description: "Show and manage configuration" },
   args: {
     list: { type: "boolean", description: "List current configuration", default: false },
-    get: { type: "string", description: "Get a configuration value by key" },
-    unset: { type: "string", description: "Unset an optional configuration key or whole embedding/llm section" },
-    set: { type: "string", description: "Back-compat alias for updating a key (key=value format)" },
   },
   subCommands: {
     path: defineCommand({
@@ -646,29 +641,7 @@ const configCommand = defineCommand({
         output("config", listConfig(loadConfig()));
         return;
       }
-      if (args.get) {
-        output("config", getConfigValue(loadConfig(), args.get));
-        return;
-      }
-      if (args.unset) {
-        const updated = unsetConfigValue(loadConfig(), args.unset);
-        saveConfig(updated);
-        output("config", listConfig(updated));
-        return;
-      }
-      if (args.set) {
-        const eqIndex = args.set.indexOf("=");
-        if (eqIndex === -1) {
-          throw new UsageError("--set expects key=value format");
-        }
-        const key = args.set.slice(0, eqIndex);
-        const value = args.set.slice(eqIndex + 1);
-        const config = setConfigValue(loadConfig(), key, value);
-        saveConfig(config);
-        output("config", listConfig(config));
-      } else {
-        output("config", listConfig(loadConfig()));
-      }
+      output("config", listConfig(loadConfig()));
     });
   },
 });
@@ -740,7 +713,7 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
 
 // citty reads process.argv directly and does not accept a custom argv array,
 // so we must replace process.argv with the normalized version before runMain.
-process.argv = normalizeShowArgv(normalizeConfigArgv(process.argv));
+process.argv = normalizeShowArgv(process.argv);
 runMain(main);
 
 function parseSearchSource(value: string): SearchSource {
@@ -801,82 +774,25 @@ function hasConfigSubcommand(args: Record<string, unknown>): boolean {
 }
 
 /**
- * Normalize argv before citty parses it so git-style config forms like
- * `akm config llm.maxTokens 512` and `akm config --get llm.maxTokens`
- * are normalized into the existing config subcommands.
- *
- * Returns a new array; the input is never modified.
- */
-function normalizeConfigArgv(argv: string[]): string[] {
-  // Global flags should not be treated as config subcommand arguments.
-  // We strip them from the analysis portion, normalize, then re-append them.
-  const globalFlags: string[] = [];
-  const configArgs: string[] = [];
-  for (let i = 3; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--quiet" || arg === "-q") {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg === "--format" || arg === "--detail") {
-      globalFlags.push(arg);
-      if (argv[i + 1] !== undefined) {
-        globalFlags.push(argv[i + 1]);
-        i++;
-      }
-      continue;
-    }
-    configArgs.push(arg);
-  }
-
-  const [command, argAfterCommand, argAfterKey, ...rest] = [argv[2], ...configArgs];
-  if (command !== "config") return argv;
-  if (!argAfterCommand) return argv;
-
-  const prefix = argv.slice(0, 3);
-  const buildResult = (...newArgs: string[]) => [...prefix, ...newArgs, ...globalFlags];
-
-  if (argAfterCommand === "--list") {
-    return buildResult("list");
-  }
-  if (argAfterCommand === "--get" && argAfterKey) {
-    return buildResult("get", argAfterKey, ...rest);
-  }
-  if (argAfterCommand === "--unset" && argAfterKey) {
-    return buildResult("unset", argAfterKey, ...rest);
-  }
-  if (argAfterCommand.startsWith("-")) return argv;
-  if (CONFIG_SUBCOMMAND_SET.has(argAfterCommand)) return argv;
-
-  // A single arg after `config` behaves like `git config <key>` and reads the value.
-  if (argAfterKey === undefined) {
-    return buildResult("get", argAfterCommand);
-  }
-
-  return buildResult("set", argAfterCommand, argAfterKey, ...rest);
-}
-
-/**
  * Normalize argv so positional view-mode arguments after the asset ref
- * are rewritten into the flag form that citty can parse.
+ * are rewritten into internal flags that citty can parse.
  *
  * Converts:
- *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --view toc
- *   akm show knowledge:guide.md section Auth  → akm show knowledge:guide.md --view section --heading Auth
- *   akm show knowledge:guide.md lines 1 50    → akm show knowledge:guide.md --view lines --start 1 --end 50
+ *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --akmView toc
+ *   akm show knowledge:guide.md section Auth → akm show knowledge:guide.md --akmView section --akmHeading Auth
+ *   akm show knowledge:guide.md lines 1 50   → akm show knowledge:guide.md --akmView lines --akmStart 1 --akmEnd 50
  *
- * If --view is already present the argv is returned unchanged (backward compat).
+ * Legacy `--view` is intentionally unsupported.
  * Returns a new array; the input is never modified.
  */
 function normalizeShowArgv(argv: string[]): string[] {
   // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
   if (argv[2] !== "show") return argv;
-  // If --view is already present, pass through unchanged
-  if (argv.includes("--view")) return argv;
+  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
+    throw new UsageError(
+      'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
+    );
+  }
 
   // Separate global flags from positional/show-specific args
   const prefix = argv.slice(0, 3); // [bun, script, show]
@@ -914,19 +830,19 @@ function normalizeShowArgv(argv: string[]): string[] {
     return argv;
   }
 
-  const result = [...prefix, ref, "--view", viewMode];
+  const result = [...prefix, ref, "--akmView", viewMode];
 
   if (viewMode === "section") {
     // Next arg is the heading name; pass empty string when missing so the
     // show handler can produce a clear "section not found" error.
     const heading = showArgs[2] ?? "";
-    result.push("--heading", heading);
+    result.push("--akmHeading", heading);
   } else if (viewMode === "lines") {
     // Next two args are start and end
     const start = showArgs[2];
     const end = showArgs[3];
-    if (start) result.push("--start", start);
-    if (end) result.push("--end", end);
+    if (start) result.push("--akmStart", start);
+    if (end) result.push("--akmEnd", end);
   }
 
   result.push(...globalFlags);

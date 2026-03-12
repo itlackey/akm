@@ -98,7 +98,7 @@ Each asset type has a dedicated renderer:
 | `script-source` | script | `run` command for supported extensions, source for others |
 | `skill-md` | skill | Full SKILL.md content |
 | `command-md` | command | Extracted template and description |
-| `agent-md` | agent | Prompt with dispatch prefix, model hint, tool policy |
+| `agent-md` | agent | Prompt content plus `action`, model hint, and tool policy |
 | `knowledge-md` | knowledge | Content with view modes (full, toc, section, lines) |
 
 ### Extensibility

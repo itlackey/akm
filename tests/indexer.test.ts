@@ -106,36 +106,6 @@ test("agentikitIndex preserves manually-written .stash.json", async () => {
   expect(stash.entries[0].quality).toBeUndefined();
 });
 
-test("agentikitIndex migrates generated skill metadata name to canonical directory name", async () => {
-  const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "skills", "code-review", "SKILL.md"), "# Code Review\n");
-  writeFile(
-    path.join(stashDir, "skills", "code-review", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "SKILL",
-          type: "skill",
-          quality: "generated",
-          filename: "SKILL.md",
-          description: "legacy generated skill metadata",
-        },
-      ],
-    }),
-  );
-
-  const result = await agentikitIndex({ stashDir });
-  expect(result.totalEntries).toBe(1);
-
-  // Migration happens in-memory, .stash.json is not rewritten
-  // Check the database for the migrated name
-  const db = openDatabase();
-  const entries = getAllEntries(db);
-  expect(entries.length).toBeGreaterThan(0);
-  expect(entries[0].entry.name).toBe("code-review");
-  closeDatabase(db);
-});
-
 test("agentikitIndex writes index to SQLite database", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "tools", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");

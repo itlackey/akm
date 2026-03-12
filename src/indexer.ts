@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
 import { resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import {
@@ -19,7 +18,6 @@ import {
   upsertEntry,
   warnIfVecMissing,
 } from "./db";
-import { buildFileContext } from "./file-context";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { walkStashFlat } from "./walker";
@@ -208,11 +206,6 @@ function indexEntries(
         let stash = loadStashFile(dirPath);
 
         if (stash) {
-          // Re-derive canonical names for generated entries using the matcher system.
-          // This fixes legacy .stash.json files that may have stale names (e.g. "SKILL"
-          // instead of the directory-based canonical name "code-review").
-          fixGeneratedEntryNames(stash, files, currentStashDir);
-
           // Check for files on disk that aren't covered by existing .stash.json entries.
           const coveredFiles = new Set(
             stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
@@ -330,34 +323,6 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
 }
 
 /** Set of all known type directory names */
-const TYPE_DIR_NAMES = new Set(Object.values(TYPE_DIRS));
-
-/**
- * Re-derive canonical names for generated skill .stash.json entries.
- *
- * Legacy .stash.json files for skills may have name "SKILL" (derived from the
- * filename SKILL.md) instead of the canonical directory name (e.g. "code-review").
- * This fixes those names using the matcher system.
- */
-function fixGeneratedEntryNames(stash: StashFile, files: string[], stashRoot: string): void {
-  const fileByBaseName = new Map(files.map((f) => [path.basename(f), f]));
-
-  for (const entry of stash.entries) {
-    if (entry.quality !== "generated" || entry.type !== "skill") continue;
-
-    const filePath = entry.filename ? fileByBaseName.get(path.basename(entry.filename)) : undefined;
-    if (!filePath) continue;
-
-    const firstAncestor = buildFileContext(stashRoot, filePath).ancestorDirs[0];
-    const effectiveRoot =
-      firstAncestor && TYPE_DIR_NAMES.has(firstAncestor) ? path.join(stashRoot, firstAncestor) : stashRoot;
-    const canonicalName = deriveCanonicalAssetName("skill", effectiveRoot, filePath);
-    if (canonicalName && canonicalName !== entry.name) {
-      entry.name = canonicalName;
-    }
-  }
-}
-
 function isDirStale(
   dirPath: string,
   currentFiles: string[],

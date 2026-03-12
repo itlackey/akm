@@ -140,7 +140,7 @@ presented in `akm show` and how search hits are enriched:
 | `script-source` | script | `run` command for known extensions; raw source for others |
 | `skill-md` | skill | Full SKILL.md content |
 | `command-md` | command | Extracted template, description, model hint, dispatch target |
-| `agent-md` | agent | Prompt with dispatch prefix, model hint, tool policy |
+| `agent-md` | agent | Prompt content plus `action`, model hint, and tool policy |
 | `knowledge-md` | knowledge | Content with view modes (full, toc, section, lines, frontmatter) |
 
 ## Extensibility
