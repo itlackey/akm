@@ -74,7 +74,7 @@ function makeEntry(overrides: Partial<StashEntry> & { name: string; type: StashE
   };
 }
 
-function insertToolEntry(
+function insertTestEntry(
   db: Database,
   key: string,
   opts?: {
@@ -117,7 +117,7 @@ describe("Schema", () => {
 
     // Open and insert some data, then tamper with the version
     let db = openDatabase(dbPath);
-    insertToolEntry(db, "old-entry");
+    insertTestEntry(db, "old-entry");
     expect(getEntryCount(db)).toBe(1);
     setMeta(db, "version", "0");
     closeDatabase(db);
@@ -186,7 +186,7 @@ describe("Entry CRUD", () => {
   test("upsertEntry inserts a new entry and returns its id", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      const id = insertToolEntry(db, "my-tool");
+      const id = insertTestEntry(db, "my-tool");
       expect(id).toBeGreaterThan(0);
       expect(getEntryCount(db)).toBe(1);
     } finally {
@@ -197,11 +197,11 @@ describe("Entry CRUD", () => {
   test("upsertEntry updates on conflict (same entry_key)", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "my-tool", { description: "original description" });
+      insertTestEntry(db, "my-tool", { description: "original description" });
       expect(getEntryCount(db)).toBe(1);
 
       // Upsert with updated description
-      insertToolEntry(db, "my-tool", { description: "updated description" });
+      insertTestEntry(db, "my-tool", { description: "updated description" });
       expect(getEntryCount(db)).toBe(1);
 
       // Verify the entry reflects the update
@@ -216,7 +216,7 @@ describe("Entry CRUD", () => {
   test("getEntryById returns the entry or undefined", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      const id = insertToolEntry(db, "fetch-tool", { description: "Fetches data" });
+      const id = insertTestEntry(db, "fetch-tool", { description: "Fetches data" });
 
       const result = getEntryById(db, id);
       expect(result).toBeDefined();
@@ -235,9 +235,9 @@ describe("Entry CRUD", () => {
   test("getEntriesByDir returns entries for a directory", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "tool-a", { dirPath: "/project/alpha" });
-      insertToolEntry(db, "tool-b", { dirPath: "/project/alpha" });
-      insertToolEntry(db, "tool-c", { dirPath: "/project/beta" });
+      insertTestEntry(db, "tool-a", { dirPath: "/project/alpha" });
+      insertTestEntry(db, "tool-b", { dirPath: "/project/alpha" });
+      insertTestEntry(db, "tool-c", { dirPath: "/project/beta" });
 
       const alphaEntries = getEntriesByDir(db, "/project/alpha");
       expect(alphaEntries).toHaveLength(2);
@@ -255,9 +255,9 @@ describe("Entry CRUD", () => {
   test("getAllEntries returns all entries", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "entry-1");
-      insertToolEntry(db, "entry-2");
-      insertToolEntry(db, "entry-3");
+      insertTestEntry(db, "entry-1");
+      insertTestEntry(db, "entry-2");
+      insertTestEntry(db, "entry-3");
 
       const all = getAllEntries(db);
       expect(all).toHaveLength(3);
@@ -269,9 +269,9 @@ describe("Entry CRUD", () => {
   test("getAllEntries with type filter", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "script-1", { type: "script" });
-      insertToolEntry(db, "script-2", { type: "script" });
-      insertToolEntry(db, "skill-1", { type: "skill" });
+      insertTestEntry(db, "script-1", { type: "script" });
+      insertTestEntry(db, "script-2", { type: "script" });
+      insertTestEntry(db, "skill-1", { type: "skill" });
 
       const scripts = getAllEntries(db, "script");
       expect(scripts).toHaveLength(2);
@@ -290,9 +290,9 @@ describe("Entry CRUD", () => {
   test("deleteEntriesByDir removes entries", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "del-1", { dirPath: "/to-delete" });
-      insertToolEntry(db, "del-2", { dirPath: "/to-delete" });
-      insertToolEntry(db, "keep-1", { dirPath: "/to-keep" });
+      insertTestEntry(db, "del-1", { dirPath: "/to-delete" });
+      insertTestEntry(db, "del-2", { dirPath: "/to-delete" });
+      insertTestEntry(db, "keep-1", { dirPath: "/to-keep" });
       expect(getEntryCount(db)).toBe(3);
 
       deleteEntriesByDir(db, "/to-delete");
@@ -312,11 +312,11 @@ describe("FTS search", () => {
   test("searchFts returns results ranked by BM25", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "deploy-tool", {
+      insertTestEntry(db, "deploy-tool", {
         description: "Deploy applications to production servers",
         searchText: "deploy deploy deploy applications production servers deployment",
       });
-      insertToolEntry(db, "infra-tool", {
+      insertTestEntry(db, "infra-tool", {
         description: "Cloud infrastructure for deploy pipelines",
         searchText: "cloud infrastructure management scaling networking deploy pipelines automation",
       });
@@ -334,12 +334,12 @@ describe("FTS search", () => {
   test("searchFts with type filter", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "build-script", {
+      insertTestEntry(db, "build-script", {
         type: "script",
         description: "Build the project",
         searchText: "build project compilation",
       });
-      insertToolEntry(db, "build-skill", {
+      insertTestEntry(db, "build-skill", {
         type: "skill",
         description: "Build pipeline skill",
         searchText: "build pipeline skill compilation",
@@ -360,7 +360,7 @@ describe("FTS search", () => {
   test("searchFts sanitizes query tokens", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "hello-tool", {
+      insertTestEntry(db, "hello-tool", {
         searchText: "hello world 123 greeting",
       });
       rebuildFts(db);
@@ -378,7 +378,7 @@ describe("FTS search", () => {
   test("searchFts returns empty for garbage query", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "some-tool", { searchText: "some useful tool" });
+      insertTestEntry(db, "some-tool", { searchText: "some useful tool" });
       rebuildFts(db);
 
       const results = searchFts(db, "!@#$%", 10);
@@ -391,9 +391,9 @@ describe("FTS search", () => {
   test("rebuildFts synchronizes FTS with entries table", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertToolEntry(db, "alpha", { searchText: "alpha functionality" });
-      insertToolEntry(db, "beta", { searchText: "beta functionality" });
-      insertToolEntry(db, "gamma", { searchText: "gamma functionality" });
+      insertTestEntry(db, "alpha", { searchText: "alpha functionality" });
+      insertTestEntry(db, "beta", { searchText: "beta functionality" });
+      insertTestEntry(db, "gamma", { searchText: "gamma functionality" });
 
       rebuildFts(db);
 
@@ -471,8 +471,8 @@ describe("Vector / Embedding integration", () => {
       expect(isVecAvailable(db)).toBe(true);
 
       // Insert two entries with distinct embeddings
-      const id1 = insertToolEntry(db, "vec-tool-1", { searchText: "deployment" });
-      const id2 = insertToolEntry(db, "vec-tool-2", { searchText: "testing" });
+      const id1 = insertTestEntry(db, "vec-tool-1", { searchText: "deployment" });
+      const id2 = insertTestEntry(db, "vec-tool-2", { searchText: "testing" });
 
       // Embedding vectors: tool-1 points "north", tool-2 points "east"
       upsertEmbedding(db, id1, [1, 0, 0, 0]);
@@ -493,7 +493,7 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath();
     const db = openDatabase(dbPath, { embeddingDim: 4 });
     try {
-      const id = insertToolEntry(db, "vec-update", { searchText: "update test" });
+      const id = insertTestEntry(db, "vec-update", { searchText: "update test" });
 
       upsertEmbedding(db, id, [1, 0, 0, 0]);
       let results = searchVec(db, [1, 0, 0, 0], 10);
@@ -520,7 +520,7 @@ describe("Vector / Embedding integration", () => {
     try {
       // Insert 5 entries with embeddings
       for (let i = 0; i < 5; i++) {
-        const id = insertToolEntry(db, `vec-k-${i}`, { searchText: `entry ${i}` });
+        const id = insertTestEntry(db, `vec-k-${i}`, { searchText: `entry ${i}` });
         const vec = [0, 0, 0, 0];
         vec[i % 4] = 1;
         upsertEmbedding(db, id, vec);
@@ -537,8 +537,8 @@ describe("Vector / Embedding integration", () => {
     const dbPath = tmpDbPath();
     const db = openDatabase(dbPath, { embeddingDim: 4 });
     try {
-      const id1 = insertToolEntry(db, "vec-del-1", { dirPath: "/del-dir", searchText: "delete me" });
-      const id2 = insertToolEntry(db, "vec-del-2", { dirPath: "/keep-dir", searchText: "keep me" });
+      const id1 = insertTestEntry(db, "vec-del-1", { dirPath: "/del-dir", searchText: "delete me" });
+      const id2 = insertTestEntry(db, "vec-del-2", { dirPath: "/keep-dir", searchText: "keep me" });
       upsertEmbedding(db, id1, [1, 0, 0, 0]);
       upsertEmbedding(db, id2, [0, 1, 0, 0]);
 
@@ -562,7 +562,7 @@ describe("Vector / Embedding integration", () => {
 
     // Open with dim=4 and insert an embedding
     let db = openDatabase(dbPath, { embeddingDim: 4 });
-    const id = insertToolEntry(db, "dim-change", { searchText: "dimension test" });
+    const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     let results = searchVec(db, [1, 0, 0, 0], 10);
     expect(results.length).toBe(1);

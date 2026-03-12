@@ -37,8 +37,8 @@ export interface FileContext {
   parentDirAbs: string;
   /**
    * Directory segments from stash root to the file's parent directory.
-   * For a relPath of "tools/azure/deploy/run.sh", this would be
-   * ["tools", "azure", "deploy"].
+   * For a relPath of "scripts/azure/deploy/run.sh", this would be
+   * ["scripts", "azure", "deploy"].
    */
   ancestorDirs: string[];
   /** Absolute path to the stash root this file belongs to */
@@ -67,8 +67,8 @@ export function buildFileContext(stashRoot: string, absPath: string): FileContex
   const parentDir = path.basename(parentDirAbs);
 
   // Compute ancestor directory segments from the POSIX relPath's directory portion.
-  // For "tools/azure/deploy/run.sh" the dir portion is "tools/azure/deploy"
-  // which splits into ["tools", "azure", "deploy"].
+  // For "scripts/azure/deploy/run.sh" the dir portion is "scripts/azure/deploy"
+  // which splits into ["scripts", "azure", "deploy"].
   const relDir = toPosix(path.dirname(relPath));
   const ancestorDirs: string[] = relDir === "." ? [] : relDir.split("/").filter((seg) => seg.length > 0);
 

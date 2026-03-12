@@ -22,7 +22,7 @@ export interface DirectoryGroup {
  * Walk a type root directory and return files grouped by their parent directory.
  *
  * Only files relevant to the given `assetType` are included (e.g. `.md` for
- * commands, script extensions for tools, `SKILL.md` for skills).
+ * commands, script extensions for scripts, `SKILL.md` for skills).
  */
 export function walkStash(typeRoot: string, assetType: AgentikitAssetType): DirectoryGroup[] {
   if (!fs.existsSync(typeRoot)) return [];

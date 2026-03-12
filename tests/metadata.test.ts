@@ -211,7 +211,7 @@ test("fileNameToDescription handles camelCase", () => {
 // ── extractTagsFromPath ─────────────────────────────────────────────────────
 
 test("extractTagsFromPath extracts tokens from path segments", () => {
-  const root = "/stash/tools";
+  const root = "/stash/scripts";
   const file = path.join(root, "docker", "compose-generator.ts");
   const tags = extractTagsFromPath(file, root);
   expect(tags).toContain("docker");

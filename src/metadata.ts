@@ -211,7 +211,7 @@ export function generateMetadata(
       }
     }
 
-    // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for tools/scripts)
+    // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for scripts)
     const fileCtx = buildFileContext(typeRoot, file);
     const match = runMatchers(fileCtx);
     if (match) {
@@ -245,7 +245,7 @@ export function generateMetadata(
   return { entries };
 }
 
-/** Set of all known type directory names (e.g. "tools", "skills", "scripts") */
+/** Set of all known type directory names (e.g. "scripts", "skills", "agents") */
 const TYPE_DIR_NAMES = new Set(Object.values(TYPE_DIRS));
 
 /**
@@ -269,7 +269,7 @@ export function generateMetadataFlat(stashRoot: string, files: string[]): StashF
 
     // If the file lives under a known type directory, use that as the root
     // for canonical naming so names don't include the type prefix.
-    // e.g. tools/deploy.sh → "deploy.sh" not "tools/deploy.sh"
+    // e.g. scripts/deploy.sh → "deploy.sh" not "scripts/deploy.sh"
     const firstAncestor = ctx.ancestorDirs[0];
     const effectiveRoot =
       firstAncestor && TYPE_DIR_NAMES.has(firstAncestor) ? path.join(stashRoot, firstAncestor) : stashRoot;
