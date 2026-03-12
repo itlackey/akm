@@ -45,7 +45,7 @@ akm search "deploy"
 akm show script:deploy.sh
 ```
 
-## Using With Any AI Agent
+## Works Any AI Agent
 
 `akm` is platform agnostic. Any model that can execute shell commands can search
 your stash and use what it finds. The workflow is three commands:
