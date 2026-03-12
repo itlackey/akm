@@ -43,7 +43,7 @@ function writeFile(filePath: string, content = "") {
 
 function tmpStash(): string {
   const dir = createTmpDir("akm-issue36-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
   return dir;

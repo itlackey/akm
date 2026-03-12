@@ -19,7 +19,7 @@ let stashDir = "";
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-config-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-source-stash-"));
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CONFIG_HOME = testConfigDir;

@@ -30,7 +30,7 @@ beforeEach(() => {
   testCacheDir = createTmpDir("akm-registry-cache-");
   testConfigDir = createTmpDir("akm-registry-config-");
   stashDir = createTmpDir("akm-registry-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
@@ -162,7 +162,7 @@ describe("agentikitRemove", () => {
   test("removes entry by id", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-");
     const stashRoot = createTmpDir("akm-registry-remove-root-");
-    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 
@@ -194,7 +194,7 @@ describe("agentikitRemove", () => {
   test("removes entry by ref", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-ref-");
     const stashRoot = createTmpDir("akm-registry-remove-root-ref-");
-    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 
@@ -226,7 +226,7 @@ describe("agentikitRemove", () => {
   test("cleans up cache directory", async () => {
     const cacheDir = createTmpDir("akm-registry-remove-cache-cleanup-");
     const stashRoot = createTmpDir("akm-registry-remove-root-cleanup-");
-    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
       fs.mkdirSync(path.join(stashRoot, sub), { recursive: true });
     }
 

@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface ManualAsset {
   type: string;
@@ -25,7 +26,7 @@ interface ManualEntry {
   name: string;
   description?: string;
   ref: string;
-  source: "npm" | "github" | "git";
+  source: "npm" | "github" | "git" | "local";
   homepage?: string;
   tags?: string[];
   assetTypes?: string[];
@@ -42,7 +43,7 @@ interface RegistryIndex {
   kits: ManualEntry[];
 }
 
-const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const manualEntriesPath = path.resolve(scriptDir, "..", "manual-entries.json");
 
 function loadManualEntries(): ManualEntry[] {

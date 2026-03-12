@@ -72,7 +72,7 @@ describe("CLI error handling", () => {
 
   test("search --detail invalid prints hint about detail", () => {
     const stashDir = makeTempDir();
-    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+    for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     const result = spawnSync("bun", ["./src/cli.ts", "search", "test", "--detail", "invalid"], {

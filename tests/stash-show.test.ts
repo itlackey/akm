@@ -35,7 +35,7 @@ beforeEach(() => {
   testCacheDir = createTmpDir("akm-show-cache-");
   testConfigDir = createTmpDir("akm-show-config-");
   stashDir = createTmpDir("akm-show-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "scripts"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
