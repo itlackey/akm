@@ -143,7 +143,7 @@ function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined 
     parsed = JSON.parse(value);
   } catch {
     throw new UsageError(
-      `Invalid value for registries: expected JSON array of {url, name?, enabled?} objects` +
+      `Invalid value for registries: expected JSON array of {url, name?, enabled?, provider?, options?} objects` +
         ` (e.g. '[{"url":"https://example.com/index.json","name":"my-registry"}]')`,
     );
   }
@@ -161,6 +161,10 @@ function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined 
     const result: RegistryConfigEntry = { url: obj.url };
     if (typeof obj.name === "string" && obj.name) result.name = obj.name;
     if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
+    if (typeof obj.provider === "string" && obj.provider) result.provider = obj.provider;
+    if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
+      result.options = obj.options as Record<string, unknown>;
+    }
     return result;
   });
 }

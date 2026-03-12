@@ -40,6 +40,10 @@ export interface RegistryConfigEntry {
   name?: string;
   /** Whether this registry is active. Default: true */
   enabled?: boolean;
+  /** Provider type. Default: "static-index" (current behavior). */
+  provider?: string;
+  /** Arbitrary provider-specific options passed through to the provider. */
+  options?: Record<string, unknown>;
 }
 
 export interface AgentikitConfig {
@@ -418,5 +422,10 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
   const name = asNonEmptyString(obj.name);
   if (name) entry.name = name;
   if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
+  const provider = asNonEmptyString(obj.provider);
+  if (provider) entry.provider = provider;
+  if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
+    entry.options = obj.options as Record<string, unknown>;
+  }
   return entry;
 }

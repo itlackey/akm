@@ -1,31 +1,27 @@
+# akm CLI
 
-## Resources & Capabilities
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via `akm`. Search the stash first before writing something from scratch.
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via `akm`. Use it to find and use capabilities before writing something from scratch. Always search the stash first when you need a capability.
+## Quick Reference
 
-**Finding assets:**
 ```sh
-akm search "<query>"              # Search by keyword
-akm search "<query>" --type script  # Filter by type (script, skill, command, agent, knowledge)
-akm search "<query>" --source <source>  # Filter by source (e.g., "local", "registry", "both")
+akm search "<query>"                          # Search for assets
+akm search "<query>" --type skill             # Filter by type
+akm search "<query>" --source both            # Search registries and local stashes for assets
+akm show <ref>                                # View asset details
+akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
+akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
+akm registry search "<query>"                 # Search all registries
 ```
 
-Search returns brief JSON by default. Local hits include a `ref` handle you
-pass directly to `akm show`.
+## Primary Asset Types
 
-**Using assets:**
-```sh
-akm show <ref>                    # Get full asset details
-```
+| Type | What `akm show` returns |
+| --- | --- |
+| script | A `run` command you can execute directly |
+| skill | Instructions to follow (read the full content) |
+| command | A prompt template with placeholders to fill in |
+| agent | A system prompt with model and tool hints |
+| knowledge | A reference doc (use `toc` or `section "..."` to navigate) |
 
-What you get back depends on the asset type:
-- **script** — A `run` command you can execute directly
-- **skill** — Instructions to follow (read the full content)
-- **command** — A prompt template with placeholders to fill in
-- **agent** — A system prompt with model and tool hints
-- **knowledge** — A reference doc (use `toc` or `section "..."` to navigate)
-
-Always search the stash first when you need a capability. Prefer existing
-assets over writing new code.
-
-Use `akm -h` for more options and details on searching and using assets.
+Run `akm -h` for the full command reference.

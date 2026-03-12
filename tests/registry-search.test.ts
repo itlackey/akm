@@ -524,3 +524,107 @@ describe("provenance tagging", () => {
     }
   });
 });
+
+// ── Provider-based routing ──────────────────────────────────────────────────
+
+describe("provider routing", () => {
+  test("unknown provider type produces warning, not crash", async () => {
+    const result = await searchRegistry("test", {
+      registries: [{ url: "http://example.com", provider: "nonexistent-type" }],
+    });
+    expect(result.hits).toEqual([]);
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0]).toContain("nonexistent-type");
+  });
+
+  test("mixed static-index and skills-sh registries return merged results", async () => {
+    const staticSrv = serveIndex({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00Z",
+      kits: [
+        {
+          id: "npm:deploy-kit",
+          name: "deploy-kit",
+          description: "Deployment tools",
+          ref: "deploy-kit",
+          source: "npm",
+          tags: ["deploy"],
+        },
+      ],
+    });
+
+    const skillsSrv = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          JSON.stringify({
+            skills: [{ id: "org/skills/deploy-vercel", name: "deploy-vercel", installs: 500, source: "org/skills" }],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+
+    try {
+      const result = await searchRegistry("deploy", {
+        registries: [
+          { url: staticSrv.url, name: "static" },
+          { url: `http://localhost:${skillsSrv.port}`, name: "skills.sh", provider: "skills-sh" },
+        ],
+      });
+
+      const ids = result.hits.map((h) => h.id);
+      expect(ids).toContain("npm:deploy-kit");
+      expect(ids).toContain("skills-sh:org/skills/deploy-vercel");
+      expect(result.warnings).toEqual([]);
+    } finally {
+      staticSrv.close();
+      skillsSrv.stop(true);
+    }
+  });
+
+  test("one provider fails, other succeeds — partial results + warning", async () => {
+    const goodSrv = serveIndex({
+      version: 1,
+      updatedAt: "2026-01-01T00:00:00Z",
+      kits: [
+        {
+          id: "npm:good-kit",
+          name: "good-kit",
+          ref: "good-kit",
+          source: "npm",
+          tags: ["test"],
+        },
+      ],
+    });
+
+    try {
+      const result = await searchRegistry("test", {
+        registries: [
+          { url: goodSrv.url, name: "good" },
+          { url: "http://127.0.0.1:1", name: "bad", provider: "skills-sh" },
+        ],
+      });
+
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].id).toBe("npm:good-kit");
+      expect(result.warnings.length).toBe(1);
+    } finally {
+      goodSrv.close();
+    }
+  });
+
+  test("default provider is static-index when omitted", async () => {
+    const srv = serveIndex(FIXTURE_INDEX);
+    try {
+      // No provider field — should use static-index
+      const result = await searchRegistry("openkit", {
+        registries: [{ url: srv.url }],
+      });
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
+    } finally {
+      srv.close();
+    }
+  });
+});

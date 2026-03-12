@@ -1,8 +1,9 @@
 # Registry
 
-A registry is a static JSON index of kits that `akm` can search and install
-from. Registries let you discover kits without browsing npm or GitHub
-directly.
+A registry is a searchable source of kits that `akm` can discover and
+install from. The default registry type is a static JSON index, but akm
+supports pluggable **registry providers** that can connect to different
+ecosystems (e.g. skills.sh).
 
 ## Official Registry
 
@@ -24,8 +25,11 @@ Use the `akm registry` subcommand group to manage configured registries:
 # List configured registries
 akm registry list
 
-# Add a third-party registry
+# Add a third-party registry (static index)
 akm registry add https://example.com/registry/index.json --name my-team
+
+# Add a skills.sh registry
+akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
 # Remove a registry by URL or name
 akm registry remove my-team
@@ -33,11 +37,14 @@ akm registry remove my-team
 
 Registries are stored in the `registries` array in your config file:
 
-```json
+```jsonc
 {
   "registries": [
+    // Static index (default provider)
     { "url": "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", "name": "official" },
-    { "url": "https://example.com/registry/index.json", "name": "my-team", "enabled": true }
+    { "url": "https://example.com/registry/index.json", "name": "my-team", "enabled": true },
+    // skills.sh provider
+    { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
   ]
 }
 ```
@@ -46,9 +53,11 @@ Each entry supports:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `url` | string | (required) | URL of the registry index JSON |
+| `url` | string | (required) | URL of the registry index or API base |
 | `name` | string | -- | Human-friendly label |
 | `enabled` | boolean | `true` | Whether this registry is active |
+| `provider` | string | `"static-index"` | Provider type (see [Registry Providers](#registry-providers)) |
+| `options` | object | -- | Provider-specific options (passed through to the provider) |
 
 Set `enabled: false` to temporarily disable a registry without removing it.
 
@@ -257,6 +266,105 @@ When multiple sources provide the same asset name, the first match wins:
 3. **Installed packages** -- Registry kits from `akm add` (cache-managed)
 
 This means local edits and clones always override installed versions.
+
+## Registry Providers
+
+akm uses a pluggable provider system for registries. Each registry entry can
+specify a `provider` type that determines how it is searched. When omitted,
+the provider defaults to `"static-index"` (the original behavior).
+
+### Built-in Providers
+
+#### `static-index` (default)
+
+Fetches a static JSON index from the configured URL and performs client-side
+scoring. This is the original registry behavior. The index is cached locally
+with a 1-hour TTL and a 7-day stale fallback.
+
+```bash
+akm registry add https://example.com/registry/index.json --name my-team
+```
+
+#### `skills-sh`
+
+Searches the [skills.sh](https://skills.sh) registry using its server-side
+search API. Results are skills from GitHub repositories indexed by skills.sh.
+
+```bash
+akm registry add https://skills.sh --name skills.sh --provider skills-sh
+```
+
+Key behaviors:
+- Server-side search via `GET {url}/api/search?q={query}&limit={limit}`
+- Results are mapped to `RegistrySearchHit` with source `"github"`
+- Hit IDs are namespaced with `"skills-sh:"` prefix to avoid collisions
+- Scores are normalized from install counts (0-1 range)
+- Per-query response caching with 15-minute TTL
+- Stale cache fallback (up to 24 hours) on network failure
+- No authentication required
+
+To install a skill found via skills.sh, use the `ref` field (GitHub
+`owner/repo`) with `akm add`:
+
+```bash
+akm add vercel-labs/agent-skills
+```
+
+### Implementing a Custom Provider
+
+Each provider is a TypeScript class implementing the `RegistryProvider`
+interface:
+
+```ts
+interface RegistryProvider {
+  readonly type: string;
+  search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult>;
+}
+
+interface RegistryProviderSearchOptions {
+  query: string;
+  limit: number;
+  includeAssets?: boolean;
+}
+
+interface RegistryProviderResult {
+  hits: RegistrySearchHit[];
+  assetHits?: RegistryAssetSearchHit[];
+  warnings?: string[];
+}
+```
+
+Contract:
+- `search()` must never throw. Catch errors internally and return them as
+  `warnings[]`.
+- `limit` is always in the range `[1, 100]`.
+- Return `hits` sorted by relevance. The orchestrator performs a final
+  merge-sort across providers.
+
+To register a provider, create a file in `src/providers/` and call
+`registerProvider()` at module scope:
+
+```ts
+import { registerProvider } from "../provider-registry";
+
+class MyProvider implements RegistryProvider {
+  readonly type = "my-provider";
+  // ...
+}
+
+registerProvider("my-provider", (config) => new MyProvider(config));
+```
+
+Then import the file in `src/registry-search.ts` to trigger self-registration.
+
+### Future Provider Candidates
+
+| Provider | API | Notes |
+| --- | --- | --- |
+| ClawdHub | `https://clawhub.com` | OpenClaw/Clawdbot skill registry with vector search |
+| LobeHub | `https://lobehub.com/skills/` | Skills marketplace with reviews |
+| npm keyword | `https://registry.npmjs.org/-/v1/search` | Real-time npm search by keyword |
+| GitHub topic | GitHub API `search/repositories` | Live search by topic |
 
 ## Hosting Your Own Registry
 

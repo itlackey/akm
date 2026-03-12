@@ -218,11 +218,13 @@ Add a third-party registry by URL.
 ```sh
 akm registry add https://example.com/registry/index.json
 akm registry add https://example.com/registry/index.json --name my-team
+akm registry add https://skills.sh --name skills.sh --provider skills-sh
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
+| `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
 
 Duplicate URLs are rejected.
 
