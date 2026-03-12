@@ -98,7 +98,7 @@ For tighter integration, plugins are available for some platforms. These add
 native tool bindings so the agent doesn't need to shell out, but they're
 purely optional — the CLI works everywhere.
 
-**OpenCode** — Add the [OpenCode plugin](https://github.com/itlackey/agentikit-plugins?tab=readme-ov-file#akm-opencode) to your `opencode.json`:
+**OpenCode** — Add the [OpenCode plugin](https://github.com/itlackey/akm-plugins?tab=readme-ov-file#akm-opencode) to your `opencode.json`:
 
 ```json
 {
@@ -275,15 +275,12 @@ akm upgrade --check   # Check for updates without installing
 
 | Doc | Description |
 | --- | --- |
+| [Getting Started](docs/getting-started.md) | Quick setup guide |
 | [Concepts](docs/concepts.md) | Asset types, classification, stash sources, metadata |
 | [CLI Reference](docs/cli.md) | All `akm` commands and flags |
 | [Kit Maker's Guide](docs/kit-makers.md) | Build and share a kit on GitHub, npm, or a network share |
 | [Registry](docs/registry.md) | Finding, installing, and publishing kits |
-| [Search](docs/technical/search.md) | Hybrid search architecture and scoring |
-| [Indexing](docs/technical/indexing.md) | How the search index is built |
-| [Filesystem](docs/technical/filesystem.md) | Directory layout and `.stash.json` schema |
 | [Configuration](docs/configuration.md) | Providers, settings, and Ollama setup |
-| [Ref Format](docs/technical/ref.md) | Opaque asset handles returned by `search` and consumed by `show` |
 
 ## Status
 
