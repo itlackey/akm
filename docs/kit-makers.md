@@ -17,7 +17,7 @@ my-kit/
   scripts/        # .sh, .ts, .js, .py, .rb, .go, etc.
   skills/         # Directories containing SKILL.md
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
-  agents/         # .md files with model/tools/toolPolicy frontmatter
+  agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
 ```
 

@@ -31,6 +31,8 @@ akm config unset llm                # Remove an optional key
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
 | `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
+| `stashDir` | string | platform default | Path to the stash directory |
+| `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
 | `installed` | array | `[]` | Installed kit metadata (managed by akm) |
 
 ## Embedding Configuration

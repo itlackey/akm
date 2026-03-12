@@ -289,8 +289,8 @@ Host the file at a stable URL and have team members add it:
 akm registry add https://your-server.com/akm-registry/index.json --name team
 ```
 
-To generate the index automatically, consider the
-[akm-builder](https://github.com/itlackey/akm-registry) tooling used by the
+To generate the index automatically, consider the tooling in the
+[akm-registry](https://github.com/itlackey/akm-registry) repository used by the
 official registry.
 
 ## Registry Index v2

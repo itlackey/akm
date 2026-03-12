@@ -1,6 +1,6 @@
 # Ref Format
 
-A `ref` is the opaque handle `akm search` returns for local assets and `akm show`
+A `ref` is the identifier that `akm search` returns for local assets and `akm show`
 consumes.
 
 Agents should not parse refs or construct them by hand. The intended flow is:
@@ -44,12 +44,10 @@ github:owner/repo//knowledge:guide
 When absent, `akm show` resolves the asset across stash sources in priority
 order.
 
-## Why This Is Opaque
+## Usage Notes
 
-The ref format is implementation plumbing, not user-facing structure. `search`
-returns a handle that already encodes whatever `show` needs. Consumers should
-use structured fields like `type`, `name`, and `origin` for display, and use the
-full `ref` only as the lookup token passed back to `show`.
+Consumers should use structured fields like `type`, `name`, and `origin` for
+display, and pass the full `ref` string back to `show` as the lookup token.
 
 ## Deferred Simplification
 

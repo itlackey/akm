@@ -51,11 +51,12 @@ akm search "docker" --source both --detail full
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
 
 Local hits include a `ref` handle for use with `akm show`. The default brief
-shape is intentionally small: local hits expose `type`, `name`, `ref`,
-`description`, `size`, and `action`; registry hits expose `type`, `name`, `id`,
+shape is intentionally small: local hits expose `type`, `name`,
+`description`, and `action`; registry hits expose `type`, `name`, `id`,
 `description`, `action`, and `curated`. `--detail normal` adds commonly useful
-fields like `origin` and `tags`. `--detail full` includes debug-oriented fields
-such as scores, match explanations, timings, and stash metadata.
+fields like `ref`, `origin`, `size`, and `tags`. `--detail full` includes
+debug-oriented fields such as scores, match explanations, timings, and stash
+metadata.
 
 ### show
 
@@ -267,6 +268,8 @@ akm config list                     # List current config
 akm config get output.format        # Read one key
 akm config set output.detail full   # Set one key
 akm config unset llm                # Remove an optional key
+akm config path                     # Print path to config file
+akm config path --all               # Print all config-related paths
 ```
 
 See [configuration.md](configuration.md) for details.
