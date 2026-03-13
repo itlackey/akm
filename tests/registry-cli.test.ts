@@ -78,9 +78,11 @@ describe("registry add/remove/list via config", () => {
   test("list returns default registries when none configured", () => {
     const config = loadConfig();
     const registries = config.registries ?? [];
-    expect(registries.length).toBe(1);
+    expect(registries.length).toBe(2);
     expect(registries[0].name).toBe("official");
     expect(registries[0].url).toContain("akm-registry");
+    expect(registries[1].name).toBe("skills.sh");
+    expect(registries[1].provider).toBe("skills-sh");
   });
 
   test("add appends a registry entry", () => {
@@ -91,9 +93,9 @@ describe("registry add/remove/list via config", () => {
     saveConfig({ ...config, registries });
 
     const updated = loadConfig();
-    expect(updated.registries?.length).toBe(2);
-    expect(updated.registries?.[1].url).toBe("https://example.com/index.json");
-    expect(updated.registries?.[1].name).toBe("custom");
+    expect(updated.registries?.length).toBe(3);
+    expect(updated.registries?.[2].url).toBe("https://example.com/index.json");
+    expect(updated.registries?.[2].name).toBe("custom");
   });
 
   test("add deduplicates by URL", () => {
