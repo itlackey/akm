@@ -75,7 +75,10 @@ export interface OutputConfig {
 export const DEFAULT_CONFIG: AgentikitConfig = {
   semanticSearch: true,
   searchPaths: [],
-  registries: [{ url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" }],
+  registries: [
+    { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" },
+    { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh" },
+  ],
   output: {
     format: "json",
     detail: "brief",

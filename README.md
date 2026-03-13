@@ -69,12 +69,13 @@ Key behaviors:
 
 ### skills.sh Integration
 
-`akm` integrates with [skills.sh](https://skills.sh), a public skills
-marketplace. Add it as a registry to search and install community skills:
+`akm` includes [skills.sh](https://skills.sh) as a built-in registry. Community
+skills from skills.sh are searchable out of the box alongside the official
+registry -- no setup required:
 
 ```sh
-akm registry add https://skills.sh --name skills.sh --provider skills-sh
-akm registry search "code review"    # Searches skills.sh alongside other registries
+akm search "code review"             # Searches skills.sh and official registry
+akm registry search "code review"    # Search registries directly
 ```
 
 Results include install counts and link back to skills.sh for details. The
