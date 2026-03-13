@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -100,7 +100,7 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
     },
   });
   servers.push(server);
-  return `http://localhost:${server.port}`;
+  return `http://127.0.0.1:${server.port}`;
 }
 
 afterEach(() => {
@@ -220,14 +220,36 @@ describe("buildRegistryIndex", () => {
     expect(manualOnlyKit?.curated).toBe(true);
     expect(manualOnlyKit?.assetTypes).toEqual(["skill"]);
   });
-});
 
-describe("akm registry build-index", () => {
-  test("writes the generated index to disk", () => {
-    const fixtureRoot = makeTempDir("akm-registry-build-cli-");
+  test("respects .stash.json metadata and akm.include when enriching assets", async () => {
+    const fixtureRoot = makeTempDir("akm-registry-build-include-");
     const npmPackageDir = path.join(fixtureRoot, "package");
-    writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-kit", version: "1.2.3" }));
-    writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n");
+
+    writeFile(
+      path.join(npmPackageDir, "package.json"),
+      JSON.stringify({
+        name: "agent-kit",
+        version: "1.2.3",
+        akm: { include: ["skills", "docs"] },
+      }),
+    );
+    writeFile(path.join(npmPackageDir, "scripts", "ignored.sh"), "#!/usr/bin/env bash\n");
+    writeFile(path.join(npmPackageDir, "skills", "review", "SKILL.md"), "# Review\n");
+    writeFile(
+      path.join(npmPackageDir, "skills", "review", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "review",
+            type: "skill",
+            filename: "SKILL.md",
+            description: "Curated review workflow",
+            tags: ["quality", "code-review"],
+          },
+        ],
+      }),
+    );
+    writeFile(path.join(npmPackageDir, "docs", "guide.md"), "# Guide\n");
     const npmArchivePath = path.join(fixtureRoot, "npm-agent-kit.tgz");
     createTarball(npmPackageDir, npmArchivePath);
 
@@ -239,47 +261,142 @@ describe("akm registry build-index", () => {
     const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
     const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
     fs.writeFileSync(manualEntriesPath, "[]\n", "utf8");
-    const outPath = path.join(fixtureRoot, "out", "index.json");
-    const xdgCache = makeTempDir("akm-registry-build-cache-");
-    const xdgConfig = makeTempDir("akm-registry-build-config-");
-    const homeDir = makeTempDir("akm-registry-build-home-");
 
-    const result = spawnSync(
-      "bun",
-      [
-        CLI,
-        "registry",
-        "build-index",
-        "--format=json",
-        "--out",
-        outPath,
-        "--manual",
-        manualEntriesPath,
-        "--npmRegistry",
-        serverBase,
-        "--githubApi",
-        serverBase,
-      ],
-      {
-        cwd: path.join(import.meta.dir, ".."),
-        encoding: "utf8",
-        timeout: 120_000,
-        env: {
-          ...process.env,
-          HOME: homeDir,
-          XDG_CACHE_HOME: xdgCache,
-          XDG_CONFIG_HOME: xdgConfig,
-        },
-      },
-    );
+    const result = await buildRegistryIndex({
+      manualEntriesPath,
+      npmRegistryBase: serverBase,
+      githubApiBase: serverBase,
+    });
 
-    expect(result.status).toBe(0);
-    const stdout = JSON.parse(result.stdout.trim()) as { outPath: string; totalKits: number };
-    expect(stdout.outPath).toBe(outPath);
-    expect(stdout.totalKits).toBe(2);
+    const npmKit = result.index.kits.find((kit) => kit.id === "npm:agent-kit");
+    expect(npmKit?.assetTypes).toEqual(["knowledge", "skill"]);
+    expect(npmKit?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
+      "knowledge:docs/guide",
+      "skill:review",
+    ]);
 
-    const written = JSON.parse(fs.readFileSync(outPath, "utf8")) as { version: number; kits: Array<{ id: string }> };
-    expect(written.version).toBe(2);
-    expect(written.kits.map((kit) => kit.id)).toEqual(["npm:agent-kit", "github:acme/release-kit"]);
+    const reviewAsset = npmKit?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
+    expect(reviewAsset?.description).toBe("Curated review workflow");
+    expect(reviewAsset?.tags).toEqual(["quality", "code-review"]);
+    expect(npmKit?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });
+});
+
+function waitForChild(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += String(chunk);
+    });
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        child.kill("SIGKILL");
+        reject(new Error(`Child process timed out after ${timeoutMs}ms\nstdout: ${stdout}\nstderr: ${stderr}`));
+      }
+    }, timeoutMs);
+
+    child.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+
+    child.on("close", (code) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code: code ?? 1, stdout, stderr });
+      }
+    });
+  });
+}
+
+describe("akm registry build-index", () => {
+  test(
+    "writes the generated index to disk",
+    async () => {
+      const fixtureRoot = makeTempDir("akm-registry-build-cli-");
+      const npmPackageDir = path.join(fixtureRoot, "package");
+      writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-kit", version: "1.2.3" }));
+      writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n");
+      const npmArchivePath = path.join(fixtureRoot, "npm-agent-kit.tgz");
+      createTarball(npmPackageDir, npmArchivePath);
+
+      const githubRepoDir = path.join(fixtureRoot, "release-kit-main");
+      writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
+      const githubArchivePath = path.join(fixtureRoot, "github-release-kit.tgz");
+      createTarball(githubRepoDir, githubArchivePath);
+
+      const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+      const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
+      fs.writeFileSync(manualEntriesPath, "[]\n", "utf8");
+      const outPath = path.join(fixtureRoot, "out", "index.json");
+      const xdgCache = makeTempDir("akm-registry-build-cache-");
+      const xdgConfig = makeTempDir("akm-registry-build-config-");
+      const homeDir = makeTempDir("akm-registry-build-home-");
+
+      const child = spawn(
+        "bun",
+        [
+          CLI,
+          "registry",
+          "build-index",
+          "--format=json",
+          "--out",
+          outPath,
+          "--manual",
+          manualEntriesPath,
+          "--npmRegistry",
+          serverBase,
+          "--githubApi",
+          serverBase,
+        ],
+        {
+          cwd: path.join(import.meta.dir, ".."),
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            HOME: homeDir,
+            NO_PROXY: "127.0.0.1,localhost",
+            GITHUB_TOKEN: "",
+            XDG_CACHE_HOME: xdgCache,
+            XDG_CONFIG_HOME: xdgConfig,
+          },
+        },
+      );
+
+      const result = await waitForChild(child, 30_000);
+
+      if (result.code !== 0) {
+        console.error("stderr:", result.stderr);
+        console.error("stdout:", result.stdout);
+      }
+      expect(result.code).toBe(0);
+      expect(result.stderr.trim()).toBe("");
+      const stdout = JSON.parse(result.stdout.trim()) as { outPath: string; totalKits: number };
+      expect(stdout.outPath).toBe(outPath);
+      expect(stdout.totalKits).toBe(2);
+
+      const written = JSON.parse(fs.readFileSync(outPath, "utf8")) as {
+        version: number;
+        kits: Array<{ id: string }>;
+      };
+      expect(written.version).toBe(2);
+      expect(written.kits.map((kit) => kit.id)).toEqual(["npm:agent-kit", "github:acme/release-kit"]);
+    },
+    { timeout: 60_000 },
+  );
 });

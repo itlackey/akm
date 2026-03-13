@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fetchWithRetry } from "./common";
 import { GITHUB_API_BASE, githubHeaders } from "./github";
-import { generateMetadataFlat } from "./metadata";
+import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { parseRegistryIndex, type RegistryIndex, type RegistryKitEntry } from "./providers/static-index";
 import { detectStashRoot } from "./registry-install";
 import { walkStashFlat } from "./walker";
@@ -82,6 +82,7 @@ interface PackageInspection {
 }
 
 const EMPTY_INSPECTION: PackageInspection = {};
+const INCLUDE_CONFIG_KEYS = ["akm", "agentikit"] as const;
 
 export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): Promise<BuildRegistryIndexResult> {
   const manualEntriesPath = path.resolve(options?.manualEntriesPath ?? DEFAULT_MANUAL_ENTRIES_PATH);
@@ -191,7 +192,7 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryKitEntry[]> {
 }
 
 async function inspectNpmPackage(
-  npmRegistryBase: string,
+  _npmRegistryBase: string,
   latestMetadata: Record<string, unknown>,
 ): Promise<PackageInspection> {
   const dist = asRecord(latestMetadata.dist);
@@ -281,9 +282,9 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
     }
 
     const stashRoot = detectStashRoot(extractDir);
-    const files = walkStashFlat(stashRoot).map((ctx) => ctx.absPath);
-    const metadata = generateMetadataFlat(stashRoot, files).entries;
-    const packageMetadata = readNearestPackageJson(extractDir, stashRoot);
+    const inspectionRoot = applyIncludeConfigForInspection(stashRoot, tempDir, extractDir) ?? stashRoot;
+    const metadata = enumerateAssets(inspectionRoot);
+    const packageMetadata = readNearestPackageJson(extractDir, inspectionRoot);
     const assets = metadata.map((entry) => ({
       type: entry.type,
       name: entry.name,
@@ -318,6 +319,118 @@ function readNearestPackageJson(extractDir: string, stashRoot: string): Record<s
   }
 
   return {};
+}
+
+function enumerateAssets(stashRoot: string): StashEntry[] {
+  const fileContexts = walkStashFlat(stashRoot);
+  const dirGroups = new Map<string, string[]>();
+
+  for (const ctx of fileContexts) {
+    const group = dirGroups.get(ctx.parentDirAbs);
+    if (group) group.push(ctx.absPath);
+    else dirGroups.set(ctx.parentDirAbs, [ctx.absPath]);
+  }
+
+  const entries: StashEntry[] = [];
+  for (const [dirPath, files] of dirGroups) {
+    let stash = loadStashFile(dirPath);
+
+    if (stash) {
+      const covered = new Set(stash.entries.map((entry) => entry.filename).filter((value): value is string => !!value));
+      const uncoveredFiles = files.filter((file) => !covered.has(path.basename(file)));
+      if (uncoveredFiles.length > 0) {
+        const generated = generateMetadataFlat(stashRoot, uncoveredFiles);
+        if (generated.entries.length > 0) {
+          stash = { entries: [...stash.entries, ...generated.entries] };
+        }
+      }
+    } else {
+      const generated = generateMetadataFlat(stashRoot, files);
+      if (generated.entries.length === 0) continue;
+      stash = generated;
+    }
+
+    entries.push(...stash.entries);
+  }
+
+  return entries.sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
+}
+
+function applyIncludeConfigForInspection(stashRoot: string, tempDir: string, searchRoot: string): string | undefined {
+  const includeConfig = findNearestIncludeConfig(stashRoot, searchRoot);
+  if (!includeConfig) return undefined;
+
+  const selectedDir = path.join(tempDir, "selected");
+  fs.rmSync(selectedDir, { recursive: true, force: true });
+  fs.mkdirSync(selectedDir, { recursive: true });
+  copyIncludedPaths(includeConfig.baseDir, includeConfig.include, selectedDir);
+  return selectedDir;
+}
+
+function findNearestIncludeConfig(
+  sourceRoot: string,
+  searchRoot: string,
+): { baseDir: string; include: string[] } | undefined {
+  const normalizedSource = path.resolve(sourceRoot);
+  const normalizedSearch = path.resolve(searchRoot);
+  let current = normalizedSource;
+
+  while (current.startsWith(normalizedSearch)) {
+    const pkg = readPackageJson(current);
+    const include = extractIncludeList(pkg);
+    if (include && include.length > 0) {
+      return { baseDir: current, include };
+    }
+    if (current === normalizedSearch) break;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return undefined;
+}
+
+function readPackageJson(dirPath: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(JSON.parse(fs.readFileSync(path.join(dirPath, "package.json"), "utf8")));
+  } catch {
+    return undefined;
+  }
+}
+
+function extractIncludeList(pkg: Record<string, unknown> | undefined): string[] | undefined {
+  if (!pkg) return undefined;
+
+  for (const key of INCLUDE_CONFIG_KEYS) {
+    const config = asRecord(pkg[key]);
+    if (!Array.isArray(config.include)) continue;
+    const include = config.include
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (include.length > 0) return include;
+  }
+
+  return undefined;
+}
+
+function copyIncludedPaths(baseDir: string, include: string[], destinationDir: string): void {
+  const seen = new Set<string>();
+  for (const relPath of include) {
+    const normalized = path.normalize(relPath).replace(/^([.][/])+/, "");
+    if (!normalized || normalized === ".") continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+
+    const sourcePath = path.resolve(baseDir, normalized);
+    const relative = path.relative(baseDir, sourcePath);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    if (!fs.existsSync(sourcePath)) continue;
+
+    const destinationPath = path.join(destinationDir, relative);
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
+  }
 }
 
 async function loadManualEntries(manualEntriesPath: string): Promise<RegistryKitEntry[]> {
