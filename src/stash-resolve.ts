@@ -1,14 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isRelevantAssetFile, resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
+import {
+  deriveCanonicalAssetNameFromStashRoot,
+  isRelevantAssetFile,
+  resolveAssetPathFromName,
+  TYPE_DIRS,
+} from "./asset-spec";
 import { type AgentikitAssetType, hasErrnoCode, isWithin } from "./common";
 import { NotFoundError, UsageError } from "./errors";
+import { runMatchers } from "./file-context";
+import { walkStashFlat } from "./walker";
 
 /**
  * Resolve an asset path from a stash directory, type, and name.
  */
 export function resolveAssetPath(stashDir: string, type: AgentikitAssetType, name: string): string {
-  return resolveInTypeDir(stashDir, TYPE_DIRS[type], type, name);
+  try {
+    return resolveInTypeDir(stashDir, TYPE_DIRS[type], type, name);
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
+
+    const fallback = resolveByCanonicalName(stashDir, type, name);
+    if (fallback) return fallback;
+
+    throw error;
+  }
 }
 
 /**
@@ -57,4 +73,25 @@ function readTypeRootStat(root: string, type: AgentikitAssetType, name: string):
     }
     throw error;
   }
+}
+
+function resolveByCanonicalName(stashDir: string, type: AgentikitAssetType, name: string): string | undefined {
+  const normalizedName = name.replace(/\\/g, "/");
+
+  for (const ctx of walkStashFlat(stashDir)) {
+    const match = runMatchers(ctx);
+    if (!match || match.type !== type) continue;
+
+    const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, stashDir, ctx.absPath);
+    if (canonicalName !== normalizedName) continue;
+
+    const realTarget = fs.realpathSync(ctx.absPath);
+    const resolvedRoot = fs.realpathSync(stashDir);
+    if (!isWithin(realTarget, resolvedRoot)) {
+      throw new UsageError("Ref resolves outside the stash root.");
+    }
+    return realTarget;
+  }
+
+  return undefined;
 }

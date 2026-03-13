@@ -98,6 +98,68 @@ describe("agentikitShow installed ref", () => {
     // empty, triggering the add-guidance error path.
     await expect(agentikitShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
   });
+
+  test("resolves installed-kit style nested agent refs", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-agent-");
+    writeFile(
+      path.join(installedStashRoot, "tools", "agents", "svelte-file-editor.md"),
+      ["---", "name: svelte-file-editor", "description: Svelte editor", "---", "Use Svelte tools."].join("\n"),
+    );
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [],
+      installed: [
+        {
+          id: "github:sveltejs/ai-tools",
+          source: "github",
+          ref: "github:sveltejs/ai-tools",
+          artifactUrl: "https://example.com/svelte-tools.tgz",
+          stashRoot: installedStashRoot,
+          cacheDir: installedStashRoot,
+          installedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const result = await agentikitShow({ ref: "github:sveltejs/ai-tools//agent:tools/agents/svelte-file-editor" });
+
+    expect(result.type).toBe("agent");
+    expect(result.origin).toBe("github:sveltejs/ai-tools");
+    expect(result.path).toContain(path.join("tools", "agents", "svelte-file-editor.md"));
+    expect(result.prompt).toContain("Use Svelte tools.");
+  });
+
+  test("resolves installed-kit style nested skill refs", async () => {
+    const installedStashRoot = createTmpDir("akm-show-installed-skill-");
+    writeFile(
+      path.join(installedStashRoot, "tools", "skills", "svelte-code-writer", "SKILL.md"),
+      ["---", "name: svelte-code-writer", "description: Svelte writer", "---", "# Svelte writer"].join("\n"),
+    );
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [],
+      installed: [
+        {
+          id: "github:sveltejs/ai-tools",
+          source: "github",
+          ref: "github:sveltejs/ai-tools",
+          artifactUrl: "https://example.com/svelte-tools.tgz",
+          stashRoot: installedStashRoot,
+          cacheDir: installedStashRoot,
+          installedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const result = await agentikitShow({ ref: "github:sveltejs/ai-tools//skill:tools/skills/svelte-code-writer" });
+
+    expect(result.type).toBe("skill");
+    expect(result.origin).toBe("github:sveltejs/ai-tools");
+    expect(result.path).toContain(path.join("tools", "skills", "svelte-code-writer", "SKILL.md"));
+    expect(result.content).toContain("# Svelte writer");
+  });
 });
 
 // ── Search path resolution ───────────────────────────────────────────────────

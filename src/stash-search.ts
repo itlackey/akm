@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetName, TYPE_DIRS } from "./asset-spec";
+import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import type { AgentikitAssetType } from "./common";
 import { type AgentikitConfig, loadConfig } from "./config";
 import {
@@ -432,8 +432,7 @@ function buildDbHit(input: {
   config?: import("./config").AgentikitConfig;
 }): LocalSearchHit {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
-  const typeRoot = path.join(entryStashDir, TYPE_DIRS[input.entry.type]);
-  const canonical = deriveCanonicalAssetName(input.entry.type, typeRoot, input.path);
+  const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
   // Guard against path traversal when the file is outside the expected type root
   // (e.g. source detection fell back to defaultStashDir for a file from another source)
   const refName =

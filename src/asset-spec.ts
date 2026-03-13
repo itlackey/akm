@@ -88,6 +88,17 @@ export function deriveCanonicalAssetName(
   return ASSET_SPECS[assetType].toCanonicalName(typeRoot, filePath);
 }
 
+export function deriveCanonicalAssetNameFromStashRoot(
+  assetType: AgentikitAssetType,
+  stashRoot: string,
+  filePath: string,
+): string | undefined {
+  const relPath = toPosix(path.relative(stashRoot, filePath));
+  const firstSegment = relPath.split("/").filter(Boolean)[0];
+  const typeRoot = firstSegment === TYPE_DIRS[assetType] ? path.join(stashRoot, firstSegment) : stashRoot;
+  return deriveCanonicalAssetName(assetType, typeRoot, filePath);
+}
+
 export function resolveAssetPathFromName(assetType: AgentikitAssetType, typeRoot: string, name: string): string {
   return ASSET_SPECS[assetType].toAssetPath(typeRoot, name);
 }

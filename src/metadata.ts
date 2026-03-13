@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { deriveCanonicalAssetName, isRelevantAssetFile, TYPE_DIRS } from "./asset-spec";
+import { deriveCanonicalAssetName, deriveCanonicalAssetNameFromStashRoot, isRelevantAssetFile } from "./asset-spec";
 import { type AgentikitAssetType, isAssetType } from "./common";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
@@ -245,9 +245,6 @@ export function generateMetadata(
   return { entries };
 }
 
-/** Set of all known type directory names (e.g. "scripts", "skills", "agents") */
-const TYPE_DIR_NAMES = new Set(Object.values(TYPE_DIRS));
-
 /**
  * Generate metadata for files using the matcher system instead of a fixed asset type.
  *
@@ -270,13 +267,9 @@ export function generateMetadataFlat(stashRoot: string, files: string[]): StashF
     // If the file lives under a known type directory, use that as the root
     // for canonical naming so names don't include the type prefix.
     // e.g. scripts/deploy.sh → "deploy.sh" not "scripts/deploy.sh"
-    const firstAncestor = ctx.ancestorDirs[0];
-    const effectiveRoot =
-      firstAncestor && TYPE_DIR_NAMES.has(firstAncestor) ? path.join(stashRoot, firstAncestor) : stashRoot;
-
     const ext = path.extname(file).toLowerCase();
     const baseName = path.basename(file, ext);
-    const canonicalName = deriveCanonicalAssetName(assetType, effectiveRoot, file) ?? baseName;
+    const canonicalName = deriveCanonicalAssetNameFromStashRoot(assetType, stashRoot, file) ?? baseName;
 
     const entry: StashEntry = {
       name: canonicalName,
