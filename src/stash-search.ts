@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
-import { type AgentikitConfig, loadConfig } from "./config";
+import { type AgentikitConfig, loadConfig, type RegistryConfigEntry } from "./config";
 import {
   closeDatabase,
   type DbSearchResult,
@@ -65,6 +65,11 @@ export async function agentikitSearch(input: {
     };
   }
   const stashDir = sources[0].path;
+
+  // Remote stash sources (e.g. OpenViking) are searched alongside local stash.
+  // Registries are for kit discovery only (static-index, skills-sh, etc.).
+  const remoteStashEntries = resolveRemoteStashSources(config);
+
   const localResult =
     source === "registry"
       ? undefined
@@ -77,17 +82,33 @@ export async function agentikitSearch(input: {
           config,
         });
 
+  // Query remote stash sources (e.g. OpenViking) as part of local search
+  const remoteStashResult =
+    source === "registry" || remoteStashEntries.length === 0 || !query
+      ? undefined
+      : await searchRegistry(query, { limit, registries: remoteStashEntries, includeAssets: true });
+
   const registryResult =
-    source === "local" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
+    source === "local"
+      ? undefined
+      : await searchRegistry(query, { limit, registries: config.registries, includeAssets: true });
+
+  // Merge asset hits from remote stash sources and registries
+  const remoteStashAssetHits = remoteStashResult?.assetHits ?? [];
+  const registryAssetHits = registryResult?.assetHits ?? [];
+  const allAssetHits = [...remoteStashAssetHits, ...registryAssetHits];
 
   if (source === "local") {
+    const localWarnings = [...(localResult?.warnings ?? []), ...(remoteStashResult?.warnings ?? [])];
+    const hasResults = (localResult?.hits ?? []).length > 0 || remoteStashAssetHits.length > 0;
     return {
       schemaVersion: 1,
       stashDir,
       source,
       hits: localResult?.hits ?? [],
-      tip: localResult?.tip,
-      warnings: localResult?.warnings,
+      ...(remoteStashAssetHits.length > 0 ? { assetHits: remoteStashAssetHits } : {}),
+      tip: hasResults ? undefined : localResult?.tip,
+      warnings: localWarnings.length > 0 ? localWarnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
   }
@@ -109,26 +130,35 @@ export async function agentikitSearch(input: {
 
   if (source === "registry") {
     const hits = registryHits.slice(0, limit);
+    const hasResults = hits.length > 0 || registryAssetHits.length > 0;
     return {
       schemaVersion: 1,
       stashDir,
       source,
       hits,
-      tip: hits.length === 0 ? "No matching registry entries were found." : undefined,
+      ...(registryAssetHits.length > 0 ? { assetHits: registryAssetHits } : {}),
+      tip: hasResults ? undefined : "No matching registry entries were found.",
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
   }
 
+  // source === "both"
   const mergedHits = mergeSearchHits(localResult?.hits ?? [], registryHits, limit);
-  const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
+  const warnings = [
+    ...(localResult?.warnings ?? []),
+    ...(remoteStashResult?.warnings ?? []),
+    ...(registryResult?.warnings ?? []),
+  ];
+  const hasResults = mergedHits.length > 0 || allAssetHits.length > 0;
 
   return {
     schemaVersion: 1,
     stashDir,
     source,
     hits: mergedHits,
-    tip: mergedHits.length === 0 ? "No matching stash assets or registry entries were found." : undefined,
+    ...(allAssetHits.length > 0 ? { assetHits: allAssetHits } : {}),
+    tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
@@ -529,6 +559,10 @@ function assetToSearchHit(
     renderer.enrichSearchHit(hit, stashDir);
   }
   return hit;
+}
+
+function resolveRemoteStashSources(config: AgentikitConfig): RegistryConfigEntry[] {
+  return (config.remoteStashSources ?? []).filter((r) => r.enabled !== false);
 }
 
 function normalizeLimit(limit?: number): number {

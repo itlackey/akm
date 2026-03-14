@@ -1,4 +1,4 @@
-import type { KitSource } from "./registry-types";
+import type { KitSource, RegistryAssetSearchHit } from "./registry-types";
 
 export type AgentikitSearchType = string;
 export type SearchSource = "local" | "registry" | "both";
@@ -45,6 +45,8 @@ export interface SearchResponse {
   stashDir: string;
   source: SearchSource;
   hits: SearchHit[];
+  /** Asset-level hits from registry providers (e.g. OpenViking). */
+  assetHits?: RegistryAssetSearchHit[];
   tip?: string;
   warnings?: string[];
   /** Timing counters in milliseconds */

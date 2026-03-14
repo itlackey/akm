@@ -61,6 +61,8 @@ export interface AgentikitConfig {
   installed?: InstalledKitEntry[];
   /** Configured registries for kit discovery */
   registries?: RegistryConfigEntry[];
+  /** Remote stash sources searched alongside local stash (e.g. OpenViking) */
+  remoteStashSources?: RegistryConfigEntry[];
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
 }
@@ -212,6 +214,9 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
 
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
+
+  const remoteStash = parseRegistriesConfig(raw.remoteStashSources);
+  if (remoteStash) config.remoteStashSources = remoteStash;
 
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;

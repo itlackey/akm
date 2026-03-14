@@ -15,16 +15,16 @@ export function isVikingRef(ref: string): boolean {
 export async function agentikitShowRemote(input: { ref: string }): Promise<ShowResponse> {
   const uri = input.ref.trim();
   const config = loadConfig();
-  const ovRegistry = resolveOVRegistry(config.registries);
-  if (!ovRegistry) {
+  const ovSource = resolveOVSource(config);
+  if (!ovSource) {
     throw new UsageError(
-      "No OpenViking registry configured. Run: akm registry add http://localhost:1933 --name openviking --provider openviking",
+      "No OpenViking source configured. Run: akm sources add http://localhost:1933 --provider openviking",
     );
   }
 
-  const baseUrl = ovRegistry.url?.replace(/\/+$/, "") ?? "";
+  const baseUrl = ovSource.url?.replace(/\/+$/, "") ?? "";
   const headers: Record<string, string> = {};
-  const apiKey = (ovRegistry.options?.apiKey as string) ?? undefined;
+  const apiKey = (ovSource.options?.apiKey as string) ?? undefined;
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   // Fetch metadata and content in parallel
@@ -64,8 +64,8 @@ export async function agentikitShowRemote(input: { ref: string }): Promise<ShowR
   };
 }
 
-function resolveOVRegistry(registries?: RegistryConfigEntry[]): RegistryConfigEntry | undefined {
-  return registries?.find((r) => r.provider === "openviking" && r.enabled !== false);
+function resolveOVSource(config: { remoteStashSources?: RegistryConfigEntry[] }): RegistryConfigEntry | undefined {
+  return config.remoteStashSources?.find((r) => r.provider === "openviking" && r.enabled !== false);
 }
 
 async function fetchOVJson(url: string, headers: Record<string, string>): Promise<unknown> {

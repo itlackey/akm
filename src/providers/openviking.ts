@@ -195,14 +195,103 @@ function uriToVikingRef(uri: string): string {
 }
 
 function parseOVSearchResponse(result: unknown): OVSearchEntry[] {
-  if (!Array.isArray(result)) return [];
-  return result.filter(isValidOVEntry);
+  // OV search/find returns grouped results: { memories: [...], resources: [...], skills: [...] }
+  // OV search/grep returns: { matches: [{ line, uri, content }], count }
+  if (Array.isArray(result)) return result.filter(isValidOVEntry);
+  if (typeof result !== "object" || result === null) return [];
+
+  const grouped = result as Record<string, unknown>;
+
+  // Handle grep response: { matches: [...], count: N }
+  if (Array.isArray(grouped.matches)) {
+    return deduplicateGrepMatches(grouped.matches);
+  }
+
+  const entries: OVSearchEntry[] = [];
+  for (const [category, items] of Object.entries(grouped)) {
+    if (category === "total") continue;
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!isValidOVSearchItem(item)) continue;
+      entries.push({
+        uri: item.uri,
+        name: extractNameFromUri(item.uri),
+        score: item.score,
+        type: item.context_type ?? category,
+        abstract: item.abstract ?? undefined,
+      });
+    }
+  }
+  return entries;
+}
+
+interface OVGrepMatch {
+  line: number;
+  uri: string;
+  content: string;
+}
+
+function isValidGrepMatch(item: unknown): item is OVGrepMatch {
+  if (typeof item !== "object" || item === null) return false;
+  const obj = item as Record<string, unknown>;
+  return typeof obj.uri === "string" && typeof obj.content === "string";
+}
+
+/** Deduplicate grep matches by URI, keeping the first match content and counting occurrences for score. */
+function deduplicateGrepMatches(matches: unknown[]): OVSearchEntry[] {
+  const byUri = new Map<string, { content: string; count: number; type: string }>();
+  for (const m of matches) {
+    if (!isValidGrepMatch(m)) continue;
+    const existing = byUri.get(m.uri);
+    if (existing) {
+      existing.count++;
+    } else {
+      // Infer type from URI path (e.g. viking://resources/... → resource)
+      const pathSegment = m.uri.replace(/^viking:\/\//, "").split("/")[0] ?? "";
+      byUri.set(m.uri, { content: m.content, count: 1, type: pathSegment });
+    }
+  }
+  const maxCount = Math.max(...[...byUri.values()].map((v) => v.count), 1);
+  const entries: OVSearchEntry[] = [];
+  for (const [uri, { content, count, type }] of byUri) {
+    entries.push({
+      uri,
+      name: extractNameFromUri(uri),
+      score: count / maxCount,
+      type,
+      abstract: content.slice(0, 200),
+    });
+  }
+  // Sort by score descending (most matches first)
+  entries.sort((a, b) => b.score - a.score);
+  return entries;
 }
 
 function isValidOVEntry(entry: unknown): entry is OVSearchEntry {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
   const obj = entry as Record<string, unknown>;
   return typeof obj.uri === "string" && typeof obj.name === "string" && typeof obj.score === "number";
+}
+
+interface OVSearchItem {
+  uri: string;
+  score: number;
+  context_type?: string;
+  abstract?: string;
+}
+
+function isValidOVSearchItem(item: unknown): item is OVSearchItem {
+  if (typeof item !== "object" || item === null || Array.isArray(item)) return false;
+  const obj = item as Record<string, unknown>;
+  return typeof obj.uri === "string" && typeof obj.score === "number";
+}
+
+function extractNameFromUri(uri: string): string {
+  const path = uri.replace(/^viking:\/\//, "");
+  const segments = path.split("/").filter(Boolean);
+  // Use last non-empty segment, strip extension
+  const last = segments[segments.length - 1] ?? "unknown";
+  return last.replace(/\.[^.]+$/, "");
 }
 
 function isExpired(mtimeMs: number, ttlMs: number): boolean {

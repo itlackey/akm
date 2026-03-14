@@ -134,7 +134,9 @@ function shapeForCommand(command: string, result: unknown, detail: DetailLevel):
 
 function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
   const shapedHits = hits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedAssetHits = assetHits.map((hit) => shapeSearchHit(hit, detail));
 
   if (detail === "full") {
     return {
@@ -142,6 +144,7 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
       stashDir: result.stashDir,
       source: result.source,
       hits: shapedHits,
+      ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(result.warnings ? { warnings: result.warnings } : {}),
       ...(result.timing ? { timing: result.timing } : {}),
@@ -150,6 +153,7 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
 
   return {
     hits: shapedHits,
+    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
@@ -823,14 +827,73 @@ const registryCommand = defineCommand({
 });
 
 const sourcesCommand = defineCommand({
-  meta: { name: "sources", description: "List all stash search paths and their status" },
-  run() {
-    return runWithJsonErrors(() => {
-      const config = loadConfig();
-      const sources = resolveStashSources();
-      const registries = config.registries ?? [];
-      output("sources", { sources, registries });
-    });
+  meta: { name: "sources", description: "Manage stash sources (local paths and remote providers)" },
+  subCommands: {
+    list: defineCommand({
+      meta: { name: "list", description: "List all stash sources" },
+      run() {
+        return runWithJsonErrors(() => {
+          const config = loadConfig();
+          const localSources = resolveStashSources();
+          const remoteSources = config.remoteStashSources ?? [];
+          output("sources", { localSources, remoteSources });
+        });
+      },
+    }),
+    add: defineCommand({
+      meta: { name: "add", description: "Add a remote stash source" },
+      args: {
+        url: { type: "positional", description: "Source URL (e.g. http://localhost:1933)", required: true },
+        name: { type: "string", description: "Human-friendly name for the source" },
+        provider: { type: "string", description: "Provider type (e.g. openviking)", required: true },
+        options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          if (!args.url.startsWith("http")) {
+            throw new UsageError("Source URL must start with http:// or https://");
+          }
+          const config = loadConfig();
+          const remoteSources = [...(config.remoteStashSources ?? [])];
+          if (remoteSources.some((r) => r.url === args.url)) {
+            output("sources-add", { remoteSources, added: false, message: "Source URL already configured" });
+            return;
+          }
+          const entry: RegistryConfigEntry = { url: args.url, provider: args.provider };
+          if (args.name) entry.name = args.name;
+          if (args.options) {
+            try {
+              entry.options = JSON.parse(args.options);
+            } catch {
+              throw new UsageError("--options must be valid JSON");
+            }
+          }
+          remoteSources.push(entry);
+          saveConfig({ ...config, remoteStashSources: remoteSources });
+          output("sources-add", { remoteSources, added: true });
+        });
+      },
+    }),
+    remove: defineCommand({
+      meta: { name: "remove", description: "Remove a remote stash source by URL or name" },
+      args: {
+        target: { type: "positional", description: "Source URL or name to remove", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const config = loadConfig();
+          const remoteSources = [...(config.remoteStashSources ?? [])];
+          const idx = remoteSources.findIndex((r) => r.url === args.target || r.name === args.target);
+          if (idx === -1) {
+            output("sources-remove", { remoteSources, removed: false, message: "No matching source found" });
+            return;
+          }
+          const removed = remoteSources.splice(idx, 1)[0];
+          saveConfig({ ...config, remoteStashSources: remoteSources });
+          output("sources-remove", { remoteSources, removed: true, entry: removed });
+        });
+      },
+    }),
   },
 });
 

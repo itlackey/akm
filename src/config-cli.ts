@@ -31,6 +31,8 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       return { llm: parseLlmConnectionValue(value) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
+    case "remoteStashSources":
+      return { remoteStashSources: parseRegistriesValue(value) };
     case "output.format":
       return { output: { format: parseOutputFormat(value) } };
     case "output.detail":
@@ -54,6 +56,8 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
       return config.llm ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
+    case "remoteStashSources":
+      return config.remoteStashSources ?? [];
     case "output.format":
       return config.output?.format ?? null;
     case "output.detail":
@@ -71,6 +75,7 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
     case "embedding":
     case "llm":
     case "registries":
+    case "remoteStashSources":
     case "output.format":
     case "output.detail":
       return mergeConfigValue(config, parseConfigValue(key, rawValue));
@@ -89,6 +94,8 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
       return { ...config, llm: undefined };
     case "registries":
       return { ...config, registries: undefined };
+    case "remoteStashSources":
+      return { ...config, remoteStashSources: undefined };
     case "output.format":
       return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
     case "output.detail":
@@ -107,6 +114,7 @@ export function listConfig(config: AgentikitConfig): Record<string, unknown> {
     embedding: config.embedding ?? null,
     llm: config.llm ?? null,
     registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
+    remoteStashSources: config.remoteStashSources ?? [],
   };
 }
 
