@@ -157,12 +157,14 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
 
 function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
 
   // Shape kit hits as registry type
   const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
 
   const shaped: Record<string, unknown> = {
     hits: shapedKitHits,
+    ...(assetHits.length > 0 ? { assetHits } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
 
