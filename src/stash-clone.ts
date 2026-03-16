@@ -91,16 +91,35 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const sourceSource = findSourceForPath(sourcePath, allSources);
 
   const destName = options.newName ?? parsed.name;
+  const typeDir = TYPE_DIRS[parsed.type];
 
   // Validate destName to prevent path traversal (parsed.name is already
-  // validated by parseAssetRef, but newName comes directly from user input)
-  if (options.newName) {
+  // validated by parseAssetRef, but newName comes directly from user input).
+  // Run whenever newName is provided, including empty string.
+  if (options.newName !== undefined) {
+    if (destName === "") {
+      throw new UsageError("Clone name must not be empty.");
+    }
     const normalized = path.posix.normalize(destName.replace(/\\/g, "/"));
-    if (path.isAbsolute(destName) || normalized.startsWith("../") || normalized === ".." || destName.includes("\0")) {
+    if (
+      path.isAbsolute(destName) ||
+      normalized === "." ||
+      normalized.startsWith("../") ||
+      normalized === ".." ||
+      destName.includes("\0")
+    ) {
       throw new UsageError(`Unsafe clone name "${destName}": must not contain path traversal or absolute paths.`);
     }
+    // Ensure the resolved destination is strictly inside the type directory,
+    // not equal to it (which can happen with crafted multi-segment names).
+    // path.relative() is used instead of startsWith() for cross-platform safety.
+    const destTypeDir = path.resolve(path.join(destRoot, typeDir));
+    const resolvedDest = path.resolve(path.join(destRoot, typeDir, destName));
+    const rel = path.relative(destTypeDir, resolvedDest);
+    if (rel === "" || rel.startsWith("..")) {
+      throw new UsageError(`Unsafe clone name "${destName}": resolves outside the target type directory.`);
+    }
   }
-  const typeDir = TYPE_DIRS[parsed.type];
   const destLabel = options.dest ? "at destination" : "in working stash";
 
   // Guard against self-clone
