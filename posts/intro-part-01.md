@@ -1,5 +1,7 @@
 ---
 title: Your AI Agent's Skill List Is Getting Out of Hand
+id: 3327252
+cover_image: https://dev-to-uploads.s3.amazonaws.com/uploads/articles/uvkrow29g2kpssek8b3f.png
 series: akm
 description: A quick introduction to the Agent-i-Kit CLI for managing AI agent extensions
 tags: [ai, agents, cli, skills]

@@ -1,5 +1,7 @@
 ---
 title: You Already Have Dozens of Agent Skills. You Just Can't Find Them.
+cover_image: https://dev-to-uploads.s3.amazonaws.com/uploads/articles/uvkrow29g2kpssek8b3f.png
+id: 2161830
 series: akm
 description: A quick introduction to managing stashes
 tags: [ai, agents, cli, skills]
