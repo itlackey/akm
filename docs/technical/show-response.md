@@ -11,7 +11,7 @@ These fields may appear in the default response shape:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `type` | string | Asset type: `script`, `skill`, `command`, `agent`, or `knowledge` |
+| `type` | string | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, or `memory` |
 | `name` | string | Asset display name |
 | `origin` | string \| null | Owning installed source when the asset came from one |
 | `action` | string | Next step the consumer should take |
@@ -106,6 +106,18 @@ field.
 | `section` | `akm show knowledge:guide section "Auth"` | Content under the named heading |
 | `lines` | `akm show knowledge:guide lines 10 30` | Lines 10 through 30 |
 
+### memory
+
+| Field | Type | Guaranteed | Description |
+| --- | --- | --- | --- |
+| `content` | string | yes | Full text of the memory document |
+
+## Remote Show
+
+When showing `viking://` URIs, the response includes `editable: false` and
+content is fetched from the remote OpenViking server. These URIs are not
+standard refs but remote resource identifiers.
+
 ## Example Responses
 
 A script with known extension (default detail):
@@ -162,5 +174,17 @@ A knowledge asset with `toc` view:
   "origin": null,
   "action": "Reference material - read the content below. Use 'toc' view for large documents.",
   "content": "# Table of Contents\n- Authentication\n- Endpoints\n- Error Handling"
+}
+```
+
+A memory asset:
+
+```json
+{
+  "type": "memory",
+  "name": "project-context",
+  "origin": null,
+  "action": "Recalled context - read the content below.",
+  "content": "# Project Context\nThis project uses Bun as its runtime..."
 }
 ```

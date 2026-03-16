@@ -76,7 +76,7 @@ export async function agentikitClone(options: CloneOptions): Promise<CloneRespon
   let lastError: Error | undefined;
   for (const source of searchSources) {
     try {
-      sourcePath = resolveAssetPath(source.path, parsed.type, parsed.name);
+      sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
       break;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

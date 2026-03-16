@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -215,5 +215,102 @@ describe("walkStashFlat", () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.relPath).toBe("scripts/build.sh");
     expect(results[0]?.absPath.startsWith(stashRoot)).toBe(true);
+  });
+});
+
+// ── T6: isInsideGitRepo in nested repo ───────────────────────────────────────
+//
+// Gap: isInsideGitRepo() walks up the directory tree looking for .git. In a
+// nested git repo (e.g. a stash directory inside a monorepo worktree), it
+// should find the nearest .git — but creating nested repos in CI is fragile
+// and platform-dependent, so this gap is intentionally left untested here.
+// If regression is suspected, test manually by creating a nested git init
+// inside an existing repo and verifying walkStashFlat still uses the git walker.
+
+// ── R4.3: symlink escape ─────────────────────────────────────────────────────
+//
+// walkStashFlat (manual fallback) must skip symlinks that point outside the
+// stash root so that malicious or accidental symlinks cannot leak files from
+// the host filesystem into search results.
+
+describe("walkStashFlat — symlink escape", () => {
+  // Track extra files created outside tmpDir() so we can clean them up.
+  const extraFiles: string[] = [];
+
+  afterEach(() => {
+    for (const f of extraFiles.splice(0)) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {
+        // best-effort
+      }
+    }
+  });
+
+  test("symlink pointing outside stash root is NOT included in results", () => {
+    // Create a stash root that is NOT inside a git repo so the manual walker
+    // is used (the git walker relies on git ls-files which won't list a
+    // symlink that targets an untracked file outside the repo).
+    const stashRoot = tmpDir();
+    const skillsDir = path.join(stashRoot, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Create a real file OUTSIDE the stash root
+    const outsideFile = path.join(os.tmpdir(), `akm-symlink-target-${process.pid}-${Date.now()}.md`);
+    fs.writeFileSync(outsideFile, "# Secret content outside stash\n");
+    extraFiles.push(outsideFile);
+
+    // Create a symlink inside the stash that points to the outside file
+    const symlinkPath = path.join(skillsDir, "escaped.md");
+    fs.symlinkSync(outsideFile, symlinkPath);
+
+    // Also create a legitimate file so we can confirm the walker still works
+    writeFile(path.join(skillsDir, "legitimate.md"), "# Legit\n");
+
+    const results = walkStashFlat(stashRoot);
+
+    const resultPaths = results.map((r) => r.absPath);
+
+    // The symlink must NOT appear in results
+    expect(resultPaths).not.toContain(symlinkPath);
+
+    // Confirm the outside target is also not reached through the symlink
+    expect(resultPaths).not.toContain(outsideFile);
+
+    // The legitimate file should still be found
+    expect(resultPaths.some((p) => p.endsWith("legitimate.md"))).toBe(true);
+
+    // Cleanup the symlink (tmpDir cleanup handles the rest)
+    fs.rmSync(symlinkPath, { force: true });
+  });
+
+  test("symlink pointing to a directory outside stash root is also skipped", () => {
+    const stashRoot = tmpDir();
+    const knowledgeDir = path.join(stashRoot, "knowledge");
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+
+    // Create a directory OUTSIDE the stash with a file inside
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-symlink-dir-target-"));
+    extraFiles.push(outsideDir);
+    fs.writeFileSync(path.join(outsideDir, "secret.md"), "# Outside dir secret\n");
+
+    // Symlink the outside directory into the stash
+    const symlinkDir = path.join(knowledgeDir, "escaped-dir");
+    fs.symlinkSync(outsideDir, symlinkDir);
+
+    // Create a legitimate file to confirm walker still functions
+    writeFile(path.join(knowledgeDir, "real.md"), "# Real\n");
+
+    const results = walkStashFlat(stashRoot);
+    const resultPaths = results.map((r) => r.absPath);
+
+    // No file from inside the outside dir must appear
+    expect(resultPaths.some((p) => p.startsWith(outsideDir))).toBe(false);
+
+    // The legitimate file should still be found
+    expect(resultPaths.some((p) => p.endsWith("real.md"))).toBe(true);
+
+    // Cleanup the symlink
+    fs.rmSync(symlinkDir, { force: true });
   });
 });

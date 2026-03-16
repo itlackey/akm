@@ -16,7 +16,7 @@ import { saveConfig } from "../src/config";
 import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/db";
 import { agentikitIndex } from "../src/indexer";
 import { agentikitSearch } from "../src/stash-search";
-import type { LocalSearchHit } from "../src/stash-types";
+import type { StashSearchHit } from "../src/stash-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -144,7 +144,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -162,7 +162,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "provision", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("provision") || h.name.includes("foundry"));
@@ -180,7 +180,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await agentikitSearch({ query: "ai", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find(
@@ -228,7 +228,7 @@ describe("Issue #36: Script search and index", () => {
     expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
@@ -287,12 +287,13 @@ describe("Issue #36: FTS5 query sanitization", () => {
 
     await buildTestIndex(stashDir);
 
-    // Single char tokens are now allowed by sanitizeFtsQuery
+    // Single-char tokens are filtered out (minimum token length is 2) to reduce noise.
+    // Multi-char queries against this asset should still work.
     const db = openDatabase();
     try {
       const results = searchFts(db, "x", 10);
-      // "x" is a valid single-character token, so it should match
-      expect(results.length).toBeGreaterThanOrEqual(1);
+      // Single-char "x" is filtered, so no FTS results expected
+      expect(results.length).toBe(0);
     } finally {
       closeDatabase(db);
     }
@@ -326,7 +327,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Step 4: Verify the new script is searchable
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -357,7 +358,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Search should find the new script
     const searchResult = await agentikitSearch({ query: "provision", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -378,7 +379,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     await agentikitIndex({ stashDir: workingStash, full: true });
 
     const result = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -413,7 +414,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
 
     // Verify search finds the script
     const searchResult = await agentikitSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is LocalSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });

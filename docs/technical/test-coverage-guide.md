@@ -262,7 +262,7 @@ directly tested.
 - `getHandler throws for unknown type` -- Call `getHandler("nonexistent")`,
   verify error.
 - `tryGetHandler returns undefined for unknown type`
-- `getAllHandlers returns all 5 handlers`
+- `getAllHandlers returns all 6 handlers`
 - `getRegisteredTypeNames returns all type names`
 - `lazy initialization loads handlers on first access` -- This is implicitly
   tested by calling `getHandler` without any prior import of handlers/index.

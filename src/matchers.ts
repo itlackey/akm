@@ -80,6 +80,10 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
     return { type: "knowledge", specificity: 10, renderer: "knowledge-md" };
   }
 
+  if (topDir === "memories" && ext === ".md") {
+    return { type: "memory", specificity: 10, renderer: "memory-md" };
+  }
+
   return null;
 }
 
@@ -112,6 +116,10 @@ export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
 
   if (parentDir === "knowledge" && ext === ".md") {
     return { type: "knowledge", specificity: 15, renderer: "knowledge-md" };
+  }
+
+  if (parentDir === "memories" && ext === ".md") {
+    return { type: "memory", specificity: 15, renderer: "memory-md" };
   }
 
   return null;

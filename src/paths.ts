@@ -59,6 +59,10 @@ export function getCacheDir(): string {
     if (!appData) {
       throw new ConfigError("Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.");
     }
+    // Heuristic fallback: APPDATA points to %APPDATA% (Roaming), so navigate
+    // to the sibling "Local" directory. This is typically
+    // C:\Users\<name>\AppData\Roaming → C:\Users\<name>\AppData\Local\akm.
+    // Preferred: set LOCALAPPDATA to avoid this navigation.
     return path.join(appData, "..", "Local", "akm");
   }
 

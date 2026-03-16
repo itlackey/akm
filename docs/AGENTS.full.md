@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via `akm`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search the stash first before writing something from scratch.
 
 ## Search
 
@@ -15,8 +15,8 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` | `any` |
-| `--source` | `local`, `registry`, `both` | `local` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `any` | `any` |
+| `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `text`, `yaml` | `json` |
 | `--detail` | `brief`, `normal`, `full` | `brief` |
@@ -33,6 +33,7 @@ akm show agent:architect                      # Show agent (returns system promp
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
+akm show viking://resources/my-doc           # Show remote OpenViking content
 ```
 
 | Type | Key fields returned |
@@ -42,6 +43,7 @@ akm show knowledge:guide lines 10 30          # Line range
 | command | `template`, `description`, `parameters` |
 | agent | `prompt`, `description`, `modelHint`, `toolPolicy` |
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
+| memory | `content` (recalled context) |
 
 ## Install & Manage Kits
 

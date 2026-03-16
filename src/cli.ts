@@ -3,22 +3,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { resolveStashDir } from "./common";
-import type { RegistryConfigEntry } from "./config";
-import { getConfigPath, loadConfig, saveConfig } from "./config";
+import type { RegistryConfigEntry, StashConfigEntry } from "./config";
+import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { agentikitIndex } from "./indexer";
 import { agentikitInit } from "./init";
+import { agentikitList, agentikitRemove, agentikitUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
+import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { agentikitAdd } from "./stash-add";
 import { agentikitClone } from "./stash-clone";
-import { agentikitList, agentikitRemove, agentikitUpdate } from "./stash-registry";
-import { agentikitSearch } from "./stash-search";
-import { agentikitShow } from "./stash-show";
+import { agentikitSearch, parseSearchSource } from "./stash-search";
+import { agentikitShowUnified } from "./stash-show";
 import { resolveStashSources } from "./stash-source";
-import type { KnowledgeView, SearchSource } from "./stash-types";
+import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -50,7 +51,7 @@ interface OutputMode {
 
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
-const BRIEF_DESCRIPTION_LIMIT = 160;
+const NORMAL_DESCRIPTION_LIMIT = 250;
 
 /** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
 interface BunWithYAML {
@@ -160,7 +161,9 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
 
   // Shape kit hits as registry type
   const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-  const shapedAssetHits = assetHits.map((hit) => shapeSearchHit(hit, detail));
+
+  // Shape asset hits by detail level
+  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
 
   const shaped: Record<string, unknown> = {
     hits: shapedKitHits,
@@ -175,42 +178,40 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
   return shaped;
 }
 
-function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  // Keep local and registry hit models separate internally so search and
-  // ranking logic can carry source-specific metadata. Normalize the external
-  // contract here so default CLI output stays compact and consistent.
-  if (hit.type === "registry") {
-    const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "id", "description", "action", "curated"]));
-    if (detail === "brief") return brief;
-    if (detail === "normal") return pickFields(hit, ["type", "name", "id", "description", "tags", "action", "curated"]);
-    return hit;
-  }
-
-  if (hit.type === "registry-asset") {
-    const brief = withTruncatedDescription(
-      pickFields(hit, ["type", "assetType", "assetName", "description", "kit", "action"]),
-    );
-    if (detail === "brief") return brief;
-    if (detail === "normal") {
-      return pickFields(hit, ["type", "assetType", "assetName", "description", "kit", "registryName", "action"]);
-    }
-    return hit;
-  }
-
-  const brief = withTruncatedDescription(pickFields(hit, ["type", "name", "description", "action"]));
-  if (detail === "brief") return brief;
+function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action"]);
   if (detail === "normal") {
-    return pickFields(hit, ["type", "name", "ref", "origin", "description", "tags", "size", "action", "run"]);
+    return capDescription(
+      pickFields(hit, ["assetName", "assetType", "description", "kit", "action"]),
+      NORMAL_DESCRIPTION_LIMIT,
+    );
   }
   return hit;
 }
 
-function withTruncatedDescription(hit: Record<string, unknown>): Record<string, unknown> {
+function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (hit.type === "registry") {
+    if (detail === "brief") return pickFields(hit, ["name", "action"]);
+    if (detail === "normal") {
+      return capDescription(pickFields(hit, ["name", "description", "action", "curated"]), NORMAL_DESCRIPTION_LIMIT);
+    }
+    return hit;
+  }
+
+  // Stash hit (local or remote)
+  if (detail === "brief") return pickFields(hit, ["type", "name", "action"]);
+  if (detail === "normal") {
+    return capDescription(
+      pickFields(hit, ["type", "name", "description", "action", "score"]),
+      NORMAL_DESCRIPTION_LIMIT,
+    );
+  }
+  return hit;
+}
+
+function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
   if (typeof hit.description !== "string") return hit;
-  return {
-    ...hit,
-    description: truncateDescription(hit.description, BRIEF_DESCRIPTION_LIMIT),
-  };
+  return { ...hit, description: truncateDescription(hit.description, limit) };
 }
 
 function truncateDescription(description: string, limit: number): string {
@@ -413,6 +414,14 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
   return lines.join("\n").trimEnd();
 }
 
+/**
+ * Naming Conventions:
+ * - stash-*     : Operations on the user's local asset store (stash-show, stash-add, stash-clone)
+ * - stash-provider-* : Runtime data source providers (filesystem, openviking)
+ * - registry-*  : Kit discovery from remote registries (npm, GitHub)
+ * - installed-kits : Management of kits already installed locally
+ */
+
 const initCommand = defineCommand({
   meta: {
     name: "init",
@@ -448,17 +457,21 @@ const searchCommand = defineCommand({
     query: { type: "positional", description: "Search query (omit to list all assets)", required: false, default: "" },
     type: {
       type: "string",
-      description: "Asset type filter (skill|command|agent|knowledge|script|any).",
+      description: "Asset type filter (e.g. skill, command, agent, knowledge, script, memory, or any).",
     },
     limit: { type: "string", description: "Maximum number of results" },
-    source: { type: "string", description: "Search source (local|registry|both)", default: "local" },
+    source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
     format: { type: "string", description: "Output format (json|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const type = args.type as "skill" | "command" | "agent" | "knowledge" | "script" | "any" | undefined;
-      const limit = args.limit ? parseInt(args.limit, 10) : undefined;
+      const type = args.type as string | undefined;
+      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
+      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
+        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
+      }
+      const limit = limitRaw;
       const source = parseSearchSource(args.source);
       const result = await agentikitSearch({ query: args.query, type, limit, source });
       output("search", result);
@@ -526,6 +539,11 @@ const upgradeCommand = defineCommand({
   args: {
     check: { type: "boolean", description: "Check for updates without installing", default: false },
     force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
+    skipChecksum: {
+      type: "boolean",
+      description: "Skip checksum verification (not recommended)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -534,7 +552,7 @@ const upgradeCommand = defineCommand({
         output("upgrade", check);
         return;
       }
-      const result = await performUpgrade(check, { force: args.force });
+      const result = await performUpgrade(check, { force: args.force, skipChecksum: args.skipChecksum });
       output("upgrade", result);
     });
   },
@@ -581,7 +599,7 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await agentikitShow({ ref: args.ref, view });
+      const result = await agentikitShowUnified({ ref: args.ref, view });
       output("show", result);
     });
   },
@@ -713,7 +731,7 @@ const registryCommand = defineCommand({
       run() {
         return runWithJsonErrors(() => {
           const config = loadConfig();
-          const registries = config.registries ?? [];
+          const registries = config.registries ?? DEFAULT_CONFIG.registries;
           output("registry-list", { registries });
         });
       },
@@ -724,11 +742,17 @@ const registryCommand = defineCommand({
         url: { type: "positional", description: "Registry index URL", required: true },
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
+        options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
           if (!args.url.startsWith("http")) {
             throw new UsageError("Registry URL must start with http:// or https://");
+          }
+          if (args.url.startsWith("http://")) {
+            warn(
+              "Warning: registry URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+            );
           }
           const config = loadConfig();
           const registries = [...(config.registries ?? [])];
@@ -740,6 +764,13 @@ const registryCommand = defineCommand({
           const entry: RegistryConfigEntry = { url: args.url };
           if (args.name) entry.name = args.name;
           if (args.provider) entry.provider = args.provider;
+          if (args.options) {
+            try {
+              entry.options = JSON.parse(args.options);
+            } catch {
+              throw new UsageError("--options must be valid JSON");
+            }
+          }
           registries.push(entry);
           saveConfig({ ...config, registries });
           output("registry-add", { registries, added: true });
@@ -775,9 +806,39 @@ const registryCommand = defineCommand({
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
-          const limit = args.limit ? parseInt(args.limit, 10) : undefined;
-          const result = await searchRegistry(args.query, { limit, includeAssets: args.assets });
+          const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
+          if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
+            throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
+          }
+          const result = await searchRegistry(args.query, { limit: limitRaw, includeAssets: args.assets });
           output("registry-search", result);
+        });
+      },
+    }),
+    "build-index": defineCommand({
+      meta: { name: "build-index", description: "Build a v2 registry index from discovery and manual entries" },
+      args: {
+        out: { type: "string", description: "Output path for the generated index", default: "index.json" },
+        manual: { type: "string", description: "Manual entries JSON file", default: "manual-entries.json" },
+        npmRegistry: { type: "string", description: "Override npm registry base URL" },
+        githubApi: { type: "string", description: "Override GitHub API base URL" },
+      },
+      async run({ args }) {
+        await runWithJsonErrors(async () => {
+          const result = await buildRegistryIndex({
+            manualEntriesPath: args.manual,
+            npmRegistryBase: args.npmRegistry,
+            githubApiBase: args.githubApi,
+          });
+          const outPath = writeRegistryIndex(result.index, args.out);
+          output("registry-build-index", {
+            outPath,
+            version: result.index.version,
+            updatedAt: result.index.updatedAt,
+            totalKits: result.counts.total,
+            counts: result.counts,
+            manualEntriesPath: result.paths.manualEntriesPath,
+          });
         });
       },
     }),
@@ -785,14 +846,105 @@ const registryCommand = defineCommand({
 });
 
 const sourcesCommand = defineCommand({
-  meta: { name: "sources", description: "List all stash search paths and their status" },
-  run() {
-    return runWithJsonErrors(() => {
-      const config = loadConfig();
-      const sources = resolveStashSources();
-      const registries = config.registries ?? [];
-      output("sources", { sources, registries });
-    });
+  meta: { name: "sources", description: "Manage stash sources (local paths and remote providers)" },
+  subCommands: {
+    list: defineCommand({
+      meta: { name: "list", description: "List all stash sources" },
+      run() {
+        return runWithJsonErrors(() => {
+          const config = loadConfig();
+          const localSources = resolveStashSources();
+          const stashes = config.stashes ?? [];
+          // Legacy fallback: show remoteStashSources if no stashes config
+          const legacyRemote = !config.stashes ? (config.remoteStashSources ?? []) : [];
+          output("sources", {
+            localSources,
+            stashes,
+            ...(legacyRemote.length > 0 ? { remoteSources: legacyRemote } : {}),
+          });
+        });
+      },
+    }),
+    add: defineCommand({
+      meta: { name: "add", description: "Add a stash source (filesystem path or remote URL)" },
+      args: {
+        target: { type: "positional", description: "Path or URL to add", required: true },
+        name: { type: "string", description: "Human-friendly name for the source" },
+        provider: { type: "string", description: "Provider type (e.g. openviking). Required for URLs." },
+        options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const config = loadConfig();
+          const stashes = [...(config.stashes ?? [])];
+          const isUrl = args.target.startsWith("http://") || args.target.startsWith("https://");
+
+          if (isUrl) {
+            if (args.target.startsWith("http://")) {
+              warn(
+                "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+              );
+            }
+            const providerType = args.provider;
+            if (!providerType) {
+              throw new UsageError("--provider is required for URL sources (e.g. --provider openviking)");
+            }
+            if (stashes.some((s) => s.url === args.target)) {
+              output("sources-add", { stashes, added: false, message: "Source URL already configured" });
+              return;
+            }
+            const entry: StashConfigEntry = { type: providerType, url: args.target };
+            if (args.name) entry.name = args.name;
+            if (args.options) {
+              try {
+                entry.options = JSON.parse(args.options);
+              } catch {
+                throw new UsageError("--options must be valid JSON");
+              }
+            }
+            stashes.push(entry);
+          } else {
+            // Filesystem path
+            const resolvedPath = path.resolve(args.target);
+            if (stashes.some((s) => s.path === resolvedPath)) {
+              output("sources-add", { stashes, added: false, message: "Source path already configured" });
+              return;
+            }
+            const entry: StashConfigEntry = { type: "filesystem", path: resolvedPath };
+            if (args.name) entry.name = args.name;
+            stashes.push(entry);
+          }
+
+          // Migrate: remove remoteStashSources when moving to stashes
+          const { remoteStashSources, ...rest } = config;
+          saveConfig({ ...rest, stashes });
+          output("sources-add", { stashes, added: true });
+        });
+      },
+    }),
+    remove: defineCommand({
+      meta: { name: "remove", description: "Remove a stash source by URL, path, or name" },
+      args: {
+        target: { type: "positional", description: "Source URL, path, or name to remove", required: true },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          const config = loadConfig();
+          const stashes = [...(config.stashes ?? [])];
+          const resolvedTarget = args.target.startsWith("http") ? args.target : path.resolve(args.target);
+          const idx = stashes.findIndex(
+            (s) => s.url === resolvedTarget || s.path === resolvedTarget || s.name === resolvedTarget,
+          );
+          if (idx === -1) {
+            output("sources-remove", { stashes, removed: false, message: "No matching source found" });
+            return;
+          }
+          const removed = stashes.splice(idx, 1)[0];
+          saveConfig({ ...config, stashes });
+          output("sources-remove", { stashes, removed: true, entry: removed });
+        });
+      },
+    }),
   },
 });
 
@@ -839,7 +991,6 @@ const main = defineCommand({
   },
 });
 
-const SEARCH_SOURCES: SearchSource[] = ["local", "registry", "both"];
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
@@ -847,11 +998,6 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
 // so we must replace process.argv with the normalized version before runMain.
 process.argv = normalizeShowArgv(process.argv);
 runMain(main);
-
-function parseSearchSource(value: string): SearchSource {
-  if ((SEARCH_SOURCES as string[]).includes(value)) return value as SearchSource;
-  throw new UsageError(`Invalid value for --source: ${value}. Expected one of: ${SEARCH_SOURCES.join("|")}`);
-}
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;
@@ -891,7 +1037,7 @@ function buildHint(message: string): string | undefined {
     return "Run `akm list` to view installed ids/refs, then retry with one of those values.";
   if (message.includes("remote package fetched but asset not found"))
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
-  if (message.includes("Invalid value for --source")) return "Pick one of: local, registry, both.";
+  if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
   if (message.includes("Invalid value for --format")) return "Pick one of: json, text, yaml.";
   if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full.";
   if (message.includes("expected JSON object with endpoint and model")) {
@@ -1009,7 +1155,7 @@ You have access to a searchable library of scripts, skills, commands, agents, an
 \`\`\`sh
 akm search "<query>"                          # Search for assets
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Search registries and local stashes for assets
+akm search "<query>" --source both            # Search stash providers and registries for assets
 akm show <ref>                                # View asset details
 akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
@@ -1038,7 +1184,7 @@ You have access to a searchable library of scripts, skills, commands, agents, an
 \`\`\`sh
 akm search "<query>"                          # Search local stash
 akm search "<query>" --type skill             # Filter by asset type
-akm search "<query>" --source both            # Search local stash and registries
+akm search "<query>" --source both            # Search all stash providers and registries
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -1046,8 +1192,8 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`script\`, \`any\` | \`any\` |
-| \`--source\` | \`local\`, \`registry\`, \`both\` | \`local\` |
+| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`script\`, \`memory\`, \`any\` | \`any\` |
+| \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
 | \`--format\` | \`json\`, \`text\`, \`yaml\` | \`json\` |
 | \`--detail\` | \`brief\`, \`normal\`, \`full\` | \`brief\` |
@@ -1064,6 +1210,7 @@ akm show agent:architect                      # Show agent (returns system promp
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
+akm show viking://resources/my-doc           # Show remote OpenViking content
 \`\`\`
 
 | Type | Key fields returned |
@@ -1073,6 +1220,7 @@ akm show knowledge:guide lines 10 30          # Line range
 | command | \`template\`, \`description\`, \`parameters\` |
 | agent | \`prompt\`, \`description\`, \`modelHint\`, \`toolPolicy\` |
 | knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
+| memory | \`content\` (recalled context) |
 
 ## Install & Manage Kits
 
@@ -1111,6 +1259,8 @@ akm registry add <url> --provider skills-sh   # Specify provider type
 akm registry remove <url-or-name>             # Remove a registry
 akm registry search "<query>"                 # Search all registries
 akm registry search "<query>" --assets        # Include asset-level results
+akm registry build-index                      # Build ./index.json
+akm registry build-index --out dist/index.json # Build to a custom path
 \`\`\`
 
 ## Configuration

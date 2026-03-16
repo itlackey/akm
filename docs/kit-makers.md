@@ -19,6 +19,7 @@ my-kit/
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
   agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
+  memories/       # .md recalled context fragments
 ```
 
 These directories are hints, not requirements. A `.sh` file is a script
@@ -142,6 +143,23 @@ section (`section "Rate Limits"`) to avoid loading the entire document:
 akm show knowledge:api-guide toc
 akm show knowledge:api-guide section "Rate Limits"
 ```
+
+### Memories
+
+Markdown files in `memories/`. These are recalled context fragments that
+provide situational information the agent should consider:
+
+```markdown
+---
+description: "Team coding standards for TypeScript projects"
+---
+- Always use strict mode
+- Prefer `const` over `let`
+- Use named exports, not default exports
+```
+
+Memories are surfaced alongside other assets in search results, giving the
+agent relevant context without requiring explicit prompts.
 
 ## Step 3: Add Metadata
 

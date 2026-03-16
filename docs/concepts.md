@@ -1,8 +1,8 @@
 # Concepts
 
 `akm` is a package manager for AI agent capabilities. It organizes scripts,
-skills, commands, agents, and knowledge documents into a searchable library
-that any AI coding assistant can use.
+skills, commands, agents, knowledge documents, and memories into a searchable
+library that any AI coding assistant can use.
 
 ## Mental Model
 
@@ -20,7 +20,7 @@ registries --> kits --> stash --> assets
    personal assets, search-path directories, and installed kits into a
    single searchable collection.
 4. **Assets** are the individual capabilities an agent discovers and uses:
-   scripts, skills, commands, agents, and knowledge documents.
+   scripts, skills, commands, agents, knowledge documents, and memories.
 
 ## What's In a Kit?
 
@@ -39,11 +39,12 @@ my-kit/
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
+  memories/       # Recalled context fragments (.md)
 ```
 
 ## Asset Types
 
-There are five asset types:
+There are six asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -52,6 +53,7 @@ There are five asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
+| **memory** | A recalled context fragment | Contextual information the agent should consider |
 
 ### Classification Taxonomy
 
@@ -89,6 +91,9 @@ For example: `npm:@scope/pkg//script:deploy.sh`,
 Agents should treat refs as opaque tokens -- get them from search, pass them
 to show. The structured fields `type`, `name`, and `origin` in search results
 provide the same information in a parseable form.
+
+`akm show` also accepts `viking://` URIs for remote OpenViking content, in
+addition to the standard `type:name` format.
 
 ## Stash Sources
 

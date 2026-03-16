@@ -179,29 +179,29 @@ describe("writeLockfile", () => {
 // ── upsertLockEntry ─────────────────────────────────────────────────────────
 
 describe("upsertLockEntry", () => {
-  test("adds entry when lockfile is empty", () => {
-    upsertLockEntry(validEntry({ id: "new-entry" }));
+  test("adds entry when lockfile is empty", async () => {
+    await upsertLockEntry(validEntry({ id: "new-entry" }));
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("new-entry");
   });
 
-  test("adds entry when lockfile does not exist", () => {
-    upsertLockEntry(validEntry({ id: "first" }));
+  test("adds entry when lockfile does not exist", async () => {
+    await upsertLockEntry(validEntry({ id: "first" }));
     expect(readLockfile()).toHaveLength(1);
   });
 
-  test("replaces entry with same id", () => {
+  test("replaces entry with same id", async () => {
     writeLockfile([validEntry({ id: "pkg", ref: "old-ref" })]);
-    upsertLockEntry(validEntry({ id: "pkg", ref: "new-ref" }));
+    await upsertLockEntry(validEntry({ id: "pkg", ref: "new-ref" }));
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0].ref).toBe("new-ref");
   });
 
-  test("preserves other entries when upserting", () => {
+  test("preserves other entries when upserting", async () => {
     writeLockfile([validEntry({ id: "keep-me", ref: "keep" }), validEntry({ id: "update-me", ref: "old" })]);
-    upsertLockEntry(validEntry({ id: "update-me", ref: "new" }));
+    await upsertLockEntry(validEntry({ id: "update-me", ref: "new" }));
     const result = readLockfile();
     expect(result).toHaveLength(2);
     const kept = result.find((e) => e.id === "keep-me");
@@ -210,9 +210,9 @@ describe("upsertLockEntry", () => {
     expect(updated?.ref).toBe("new");
   });
 
-  test("appends new entry when id does not exist", () => {
+  test("appends new entry when id does not exist", async () => {
     writeLockfile([validEntry({ id: "existing" })]);
-    upsertLockEntry(validEntry({ id: "brand-new" }));
+    await upsertLockEntry(validEntry({ id: "brand-new" }));
     const result = readLockfile();
     expect(result).toHaveLength(2);
   });

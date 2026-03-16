@@ -22,7 +22,7 @@ The winning match determines two things:
 
 ## Asset Type Taxonomy
 
-The five asset types fall into three classification strategies:
+The six asset types fall into four classification strategies:
 
 - **By what they are:** `script` (executable code with a known extension) and
   `knowledge` (plain markdown reference documents).
@@ -30,6 +30,8 @@ The five asset types fall into three classification strategies:
   placeholders) and `agent` (system prompt with model/tool configuration).
 - **By packaging convention:** `skill` (a directory containing a `SKILL.md`
   file).
+- **By directory convention:** `memory` (a `.md` file in a `memories/`
+  directory).
 
 ## Specificity Ranges
 
@@ -73,6 +75,7 @@ root matches a known type name:
 - `commands/` -- command (for `.md` files)
 - `agents/` -- agent (for `.md` files)
 - `knowledge/` -- knowledge (for `.md` files)
+- `memories/` -- memory (for `.md` files)
 
 ### Parent-Dir Hint Matcher (specificity: 15)
 
@@ -81,7 +84,8 @@ name rather than the first ancestor. This provides higher confidence for
 nested structures where the immediate parent carries a strong naming
 convention (e.g. `my-project/agents/planning.md`).
 
-Same directory-to-type mappings as the directory matcher.
+Same directory-to-type mappings as the directory matcher, including
+`memories/` -- memory.
 
 ### Smart Markdown Matcher (specificity: 20 / 18 / 8 / 5)
 
@@ -153,6 +157,7 @@ presented in `akm show` and how search hits are enriched:
 | `command-md` | command | Extracted template, description, model hint, dispatch target |
 | `agent-md` | agent | Prompt content plus `action`, model hint, and tool policy |
 | `knowledge-md` | knowledge | Content with view modes (full, toc, section, lines, frontmatter) |
+| `memory-md` | memory | Recalled context content |
 
 ## Extensibility
 
@@ -179,3 +184,4 @@ A few examples showing how specificity resolution works:
 | `commands/release.md` | .md | commands/ | `agent: coder` | smartMd (18) | command |
 | `commands/hint.md` | .md | commands/ | `model: gpt-4` | parentDirHint (15) | command |
 | `docs/guide.md` | .md | docs/ | -- | smartMd (5) | knowledge |
+| `memories/project-context.md` | .md | memories/ | -- | parentDirHint (15) | memory |

@@ -6,7 +6,7 @@ import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type AgentikitAssetType = "skill" | "command" | "agent" | "knowledge" | "script";
+export type AgentikitAssetType = string;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ export const IS_WINDOWS = process.platform === "win32";
 // ── Validators ──────────────────────────────────────────────────────────────
 
 export function isAssetType(type: string): type is AgentikitAssetType {
-  return type in TYPE_DIRS;
+  return Object.hasOwn(TYPE_DIRS, type);
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
@@ -25,6 +25,11 @@ export function isAssetType(type: string): type is AgentikitAssetType {
  *   1. AKM_STASH_DIR environment variable (override for CI/scripts)
  *   2. stashDir field in config.json
  *   3. Platform default (~/akm or ~/Documents/akm on Windows)
+ *
+ * WARNING: May write to config file as a side effect when AKM_STASH_DIR is set.
+ * Specifically, when AKM_STASH_DIR is set and `options.readOnly` is not true,
+ * this function calls `persistStashDirToConfig()` which writes the resolved
+ * path into config.json on disk.
  *
  * Throws if no valid stash directory is found.
  */
@@ -96,6 +101,11 @@ function readStashDirFromConfig(): string | undefined {
 /**
  * Persist stashDir to config.json if not already set, so users can
  * transition away from relying on the AKM_STASH_DIR env var.
+ *
+ * WARNING: This function writes to disk (config.json). It is called as a side
+ * effect of `resolveStashDir()` when AKM_STASH_DIR is set and `readOnly` is
+ * not true. Callers that must not touch the filesystem should pass
+ * `{ readOnly: true }` to `resolveStashDir()`.
  */
 function persistStashDirToConfig(stashDir: string): void {
   try {
@@ -115,7 +125,7 @@ function persistStashDirToConfig(stashDir: string): void {
       raw.stashDir = stashDir;
       const dir = path.dirname(configPath);
       fs.mkdirSync(dir, { recursive: true });
-      const tmpPath = `${configPath}.tmp.${process.pid}`;
+      const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
       fs.writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
       fs.renameSync(tmpPath, configPath);
     }
@@ -215,4 +225,8 @@ function parseRetryAfter(response: Response): number | undefined {
   if (!header) return undefined;
   const seconds = parseInt(header, 10);
   return Number.isNaN(seconds) ? undefined : seconds * 1000;
+}
+
+export function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

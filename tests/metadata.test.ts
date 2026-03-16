@@ -145,7 +145,9 @@ test("validateStashEntry parses quality, confidence, source, and aliases", () =>
   expect(result?.quality).toBe("curated");
   expect(result?.confidence).toBe(1);
   expect(result?.source).toBe("manual");
-  expect(result?.aliases).toEqual(["lint", "linters", "linter"]);
+  // R4.6: de-pluralization heuristic removed; FTS5 porter stemmer handles stemming.
+  // "linters" is preserved as-is; "linter" is no longer generated.
+  expect(result?.aliases).toEqual(["lint", "linters"]);
 });
 
 // ── extractDescriptionFromComments ──────────────────────────────────────────
@@ -221,12 +223,12 @@ test("extractTagsFromPath extracts tokens from path segments", () => {
 
 // ── generateMetadata ────────────────────────────────────────────────────────
 
-test("generateMetadata creates entries from script files with filename heuristics", () => {
+test("generateMetadata creates entries from script files with filename heuristics", async () => {
   const dir = tmpDir();
   const tool1 = path.join(dir, "summarize-diff.ts");
   writeFile(tool1, `console.log("summarize")\n`);
 
-  const stash = generateMetadata(dir, "script", [tool1]);
+  const stash = await generateMetadata(dir, "script", [tool1]);
   expect(stash.entries).toHaveLength(1);
   expect(stash.entries[0].name).toBe("summarize-diff.ts");
   expect(stash.entries[0].type).toBe("script");
@@ -238,17 +240,17 @@ test("generateMetadata creates entries from script files with filename heuristic
   expect(stash.entries[0].filename).toBe("summarize-diff.ts");
 });
 
-test("generateMetadata extracts description from code comments", () => {
+test("generateMetadata extracts description from code comments", async () => {
   const dir = tmpDir();
   const tool1 = path.join(dir, "deploy.sh");
   writeFile(tool1, `#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n`);
 
-  const stash = generateMetadata(dir, "script", [tool1]);
+  const stash = await generateMetadata(dir, "script", [tool1]);
   expect(stash.entries[0].description).toBe("Deploy services to production");
   expect(stash.entries[0].source).toBe("comments");
 });
 
-test("generateMetadata extracts metadata from package.json", () => {
+test("generateMetadata extracts metadata from package.json", async () => {
   const dir = tmpDir();
   const tool1 = path.join(dir, "run.ts");
   writeFile(tool1, `console.log("run")\n`);
@@ -257,30 +259,30 @@ test("generateMetadata extracts metadata from package.json", () => {
     JSON.stringify({ description: "Git diff summarizer", keywords: ["git", "diff"] }),
   );
 
-  const stash = generateMetadata(dir, "script", [tool1]);
+  const stash = await generateMetadata(dir, "script", [tool1]);
   expect(stash.entries[0].description).toBe("Git diff summarizer");
   expect(stash.entries[0].source).toBe("package");
   expect(stash.entries[0].confidence).toBe(0.8);
   expect(stash.entries[0].tags).toEqual(["git", "diff"]);
 });
 
-test("generateMetadata skips non-script extensions for script type", () => {
+test("generateMetadata skips non-script extensions for script type", async () => {
   const dir = tmpDir();
   const mdFile = path.join(dir, "README.md");
   writeFile(mdFile, "# Readme\n");
 
-  const stash = generateMetadata(dir, "script", [mdFile]);
+  const stash = await generateMetadata(dir, "script", [mdFile]);
   expect(stash.entries).toHaveLength(0);
 });
 
-test("generateMetadata handles multi-script directories", () => {
+test("generateMetadata handles multi-script directories", async () => {
   const dir = tmpDir();
   const tool1 = path.join(dir, "docker-build.ts");
   const tool2 = path.join(dir, "docker-compose.ts");
   writeFile(tool1, `/**\n * Build docker images\n */\n`);
   writeFile(tool2, `/**\n * Generate docker compose stacks\n */\n`);
 
-  const stash = generateMetadata(dir, "script", [tool1, tool2]);
+  const stash = await generateMetadata(dir, "script", [tool1, tool2]);
   expect(stash.entries).toHaveLength(2);
   expect(stash.entries[0].name).toBe("docker-build.ts");
   expect(stash.entries[0].description).toBe("Build docker images");
@@ -378,12 +380,12 @@ test("loadStashFile parses searchHints field", () => {
 
 // ── generateMetadata populates searchHints ──────────────────────────────────────
 
-test("generateMetadata does not generate heuristic searchHints (LLM-only)", () => {
+test("generateMetadata does not generate heuristic searchHints (LLM-only)", async () => {
   const dir = tmpDir();
   const tool = path.join(dir, "summarize-diff.ts");
   writeFile(tool, `/**\n * Summarize git diff changes\n */\n`);
 
-  const stash = generateMetadata(dir, "script", [tool]);
+  const stash = await generateMetadata(dir, "script", [tool]);
   // Search hints are only generated when LLM is configured, not heuristically
   expect(stash.entries[0].searchHints).toBeUndefined();
 });

@@ -20,6 +20,43 @@ function getLockfilePath(): string {
   return path.join(getConfigDir(), "stash.lock");
 }
 
+// ── Lock sentinel ────────────────────────────────────────────────────────────
+
+const LOCK_MAX_RETRIES = 3;
+const LOCK_RETRY_DELAY_MS = 100;
+
+function getLockSentinelPath(): string {
+  return `${getLockfilePath()}.lck`;
+}
+
+async function acquireLockSentinel(): Promise<boolean> {
+  const sentinelPath = getLockSentinelPath();
+  // Ensure the directory exists before attempting to create the sentinel
+  fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
+  for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
+    try {
+      fs.writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
+      return true; // Sentinel created — we own the lock
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      // Another process holds the lock — wait briefly before retrying
+      if (attempt < LOCK_MAX_RETRIES - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
+      }
+    }
+  }
+  // Best-effort: proceed without the lock rather than failing the install
+  return false;
+}
+
+function releaseLockSentinel(): void {
+  try {
+    fs.unlinkSync(getLockSentinelPath());
+  } catch {
+    /* ignore — sentinel may already be gone */
+  }
+}
+
 // ── Read / Write ────────────────────────────────────────────────────────────
 
 export function readLockfile(): LockfileEntry[] {
@@ -37,7 +74,7 @@ export function writeLockfile(entries: LockfileEntry[]): void {
   const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${lockfilePath}.tmp.${process.pid}`;
+  const tmpPath = `${lockfilePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
   try {
     fs.writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
     fs.renameSync(tmpPath, lockfilePath);
@@ -51,10 +88,15 @@ export function writeLockfile(entries: LockfileEntry[]): void {
   }
 }
 
-export function upsertLockEntry(entry: LockfileEntry): void {
-  const entries = readLockfile();
-  const withoutExisting = entries.filter((e) => e.id !== entry.id);
-  writeLockfile([...withoutExisting, entry]);
+export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
+  const acquired = await acquireLockSentinel();
+  try {
+    const entries = readLockfile();
+    const withoutExisting = entries.filter((e) => e.id !== entry.id);
+    writeLockfile([...withoutExisting, entry]);
+  } finally {
+    if (acquired) releaseLockSentinel();
+  }
 }
 
 export function removeLockEntry(id: string): void {

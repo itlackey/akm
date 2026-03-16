@@ -5,6 +5,7 @@ import {
   type LlmConnectionConfig,
   type OutputConfig,
   type RegistryConfigEntry,
+  type StashConfigEntry,
 } from "./config";
 import { UsageError } from "./errors";
 
@@ -31,6 +32,10 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       return { llm: parseLlmConnectionValue(value) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
+    case "remoteStashSources":
+      return { remoteStashSources: parseStashesValue(value) };
+    case "stashes":
+      return { stashes: parseStashesValue(value) };
     case "output.format":
       return { output: { format: parseOutputFormat(value) } };
     case "output.detail":
@@ -54,6 +59,10 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
       return config.llm ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
+    case "remoteStashSources":
+      return config.remoteStashSources ?? [];
+    case "stashes":
+      return config.stashes ?? [];
     case "output.format":
       return config.output?.format ?? null;
     case "output.detail":
@@ -71,6 +80,8 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
     case "embedding":
     case "llm":
     case "registries":
+    case "remoteStashSources":
+    case "stashes":
     case "output.format":
     case "output.detail":
       return mergeConfigValue(config, parseConfigValue(key, rawValue));
@@ -89,6 +100,10 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
       return { ...config, llm: undefined };
     case "registries":
       return { ...config, registries: undefined };
+    case "remoteStashSources":
+      return { ...config, remoteStashSources: undefined };
+    case "stashes":
+      return { ...config, stashes: undefined };
     case "output.format":
       return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
     case "output.detail":
@@ -99,15 +114,20 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
 }
 
 export function listConfig(config: AgentikitConfig): Record<string, unknown> {
-  return {
-    ...DEFAULT_CONFIG,
-    ...config,
+  const result: Record<string, unknown> = {
+    semanticSearch: config.semanticSearch,
+    registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
     output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
     stashDir: config.stashDir ?? null,
-    embedding: config.embedding ?? null,
-    llm: config.llm ?? null,
-    registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
+    installed: config.installed ?? [],
+    stashes: config.stashes ?? [],
   };
+  if (config.embedding) result.embedding = config.embedding;
+  if (config.llm) result.llm = config.llm;
+  // Show legacy keys only if they still have content
+  if (config.searchPaths?.length) result.searchPaths = config.searchPaths;
+  if (config.remoteStashSources?.length) result.remoteStashSources = config.remoteStashSources;
+  return result;
 }
 
 function mergeConfigValue(config: AgentikitConfig, partial: Partial<AgentikitConfig>): AgentikitConfig {
@@ -249,4 +269,37 @@ function parseUnknownPositiveInteger(value: unknown, key: string): number {
     throw new UsageError(`Invalid value for ${key}: expected a positive integer`);
   }
   return value;
+}
+
+function parseStashesValue(value: string): StashConfigEntry[] | undefined {
+  if (value === "null" || value === "") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new UsageError(
+      `Invalid value for stashes: expected JSON array of {type, path?, url?, name?, enabled?, options?} objects`,
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new UsageError(`Invalid value for stashes: expected a JSON array`);
+  }
+  return parsed.map((entry: unknown, i: number) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new UsageError(`Invalid value for stashes[${i}]: expected an object with a "type" field`);
+    }
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.type !== "string" || !obj.type) {
+      throw new UsageError(`Invalid value for stashes[${i}]: "type" is required`);
+    }
+    const result: StashConfigEntry = { type: obj.type };
+    if (typeof obj.path === "string" && obj.path) result.path = obj.path;
+    if (typeof obj.url === "string" && obj.url) result.url = obj.url;
+    if (typeof obj.name === "string" && obj.name) result.name = obj.name;
+    if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
+    if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
+      result.options = obj.options as Record<string, unknown>;
+    }
+    return result;
+  });
 }

@@ -26,43 +26,45 @@ afterAll(() => {
 // ── resolveAssetPath ──────────────────────────────────────────────────────────
 
 describe("resolveAssetPath", () => {
-  test("returns real path for valid script", () => {
+  test("returns real path for valid script", async () => {
     const stashDir = createTmpDir();
     const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
     writeFile(scriptPath, "#!/bin/sh\necho hello");
 
-    const result = resolveAssetPath(stashDir, "script", "deploy.sh");
+    const result = await resolveAssetPath(stashDir, "script", "deploy.sh");
     expect(result).toBe(fs.realpathSync(scriptPath));
   });
 
-  test("throws for missing type root", () => {
+  test("throws for missing type root", async () => {
     const stashDir = createTmpDir();
     // No scripts/ directory created
 
-    expect(() => resolveAssetPath(stashDir, "script", "deploy.sh")).toThrow(
+    await expect(resolveAssetPath(stashDir, "script", "deploy.sh")).rejects.toThrow(
       "Stash type root not found for ref: script:deploy.sh",
     );
   });
 
-  test("throws for missing file", () => {
+  test("throws for missing file", async () => {
     const stashDir = createTmpDir();
     fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
 
-    expect(() => resolveAssetPath(stashDir, "script", "nonexistent.sh")).toThrow(
+    await expect(resolveAssetPath(stashDir, "script", "nonexistent.sh")).rejects.toThrow(
       "Stash asset not found for ref: script:nonexistent.sh",
     );
   });
 
-  test("throws for path traversal", () => {
+  test("throws for path traversal", async () => {
     const stashDir = createTmpDir();
     fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
     // Create a file outside the scripts root
     writeFile(path.join(stashDir, "outside.sh"), "#!/bin/sh\necho escape");
 
-    expect(() => resolveAssetPath(stashDir, "script", "../outside.sh")).toThrow("Ref resolves outside the stash root.");
+    await expect(resolveAssetPath(stashDir, "script", "../outside.sh")).rejects.toThrow(
+      "Ref resolves outside the stash root.",
+    );
   });
 
-  test("throws for symlink escape", () => {
+  test("throws for symlink escape", async () => {
     const stashDir = createTmpDir();
     const scriptsDir = path.join(stashDir, "scripts");
     fs.mkdirSync(scriptsDir, { recursive: true });
@@ -80,52 +82,54 @@ describe("resolveAssetPath", () => {
       return;
     }
 
-    expect(() => resolveAssetPath(stashDir, "script", "link.sh")).toThrow("Ref resolves outside the stash root.");
+    await expect(resolveAssetPath(stashDir, "script", "link.sh")).rejects.toThrow(
+      "Ref resolves outside the stash root.",
+    );
   });
 
-  test("validates script extension", () => {
+  test("validates script extension", async () => {
     const stashDir = createTmpDir();
     const badFile = path.join(stashDir, "scripts", "readme.txt");
     writeFile(badFile, "not a script");
 
-    expect(() => resolveAssetPath(stashDir, "script", "readme.txt")).toThrow(
+    await expect(resolveAssetPath(stashDir, "script", "readme.txt")).rejects.toThrow(
       "Script ref must resolve to a file with a supported script extension",
     );
   });
 
-  test("resolves broader script extensions (e.g. .py)", () => {
+  test("resolves broader script extensions (e.g. .py)", async () => {
     const stashDir = createTmpDir();
     const scriptPath = path.join(stashDir, "scripts", "analyze.py");
     writeFile(scriptPath, "print('hello')");
 
-    const result = resolveAssetPath(stashDir, "script", "analyze.py");
+    const result = await resolveAssetPath(stashDir, "script", "analyze.py");
     expect(result).toBe(fs.realpathSync(scriptPath));
   });
 
-  test("resolves skill by directory", () => {
+  test("resolves skill by directory", async () => {
     const stashDir = createTmpDir();
     const skillFile = path.join(stashDir, "skills", "ops", "SKILL.md");
     writeFile(skillFile, "# Ops Skill");
 
-    const result = resolveAssetPath(stashDir, "skill", "ops");
+    const result = await resolveAssetPath(stashDir, "skill", "ops");
     expect(result).toBe(fs.realpathSync(skillFile));
   });
 
-  test("resolves installed-kit style nested agent refs outside top-level agents root", () => {
+  test("resolves installed-kit style nested agent refs outside top-level agents root", async () => {
     const stashDir = createTmpDir();
     const agentFile = path.join(stashDir, "tools", "agents", "svelte-file-editor.md");
     writeFile(agentFile, "---\nname: svelte-file-editor\n---\nUse Svelte tools.\n");
 
-    const result = resolveAssetPath(stashDir, "agent", "tools/agents/svelte-file-editor");
+    const result = await resolveAssetPath(stashDir, "agent", "tools/agents/svelte-file-editor");
     expect(result).toBe(fs.realpathSync(agentFile));
   });
 
-  test("resolves installed-kit style nested skill refs outside top-level skills root", () => {
+  test("resolves installed-kit style nested skill refs outside top-level skills root", async () => {
     const stashDir = createTmpDir();
     const skillFile = path.join(stashDir, "tools", "skills", "svelte-code-writer", "SKILL.md");
     writeFile(skillFile, "# Svelte code writer\n");
 
-    const result = resolveAssetPath(stashDir, "skill", "tools/skills/svelte-code-writer");
+    const result = await resolveAssetPath(stashDir, "skill", "tools/skills/svelte-code-writer");
     expect(result).toBe(fs.realpathSync(skillFile));
   });
 });

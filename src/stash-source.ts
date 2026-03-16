@@ -29,26 +29,35 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   const config = existingConfig ?? loadConfig();
 
   const sources: StashSource[] = [{ path: stashDir }];
+  const seen = new Set<string>([path.resolve(stashDir)]);
 
-  for (const dir of config.searchPaths) {
+  const addSource = (dir: string, registryId?: string) => {
+    const resolved = path.resolve(dir);
+    if (seen.has(resolved)) return;
+    seen.add(resolved);
     if (isSuspiciousStashRoot(dir)) {
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);
     }
     if (isValidDirectory(dir)) {
-      sources.push({ path: dir });
+      sources.push({ path: resolved, ...(registryId ? { registryId } : {}) });
+    }
+  };
+
+  // Legacy: searchPaths[]
+  for (const dir of config.searchPaths) {
+    addSource(dir);
+  }
+
+  // Filesystem entries from stashes[]
+  for (const entry of config.stashes ?? []) {
+    if (entry.type === "filesystem" && entry.path && entry.enabled !== false) {
+      addSource(entry.path, entry.name);
     }
   }
 
+  // Installed kits (registry and local)
   for (const entry of config.installed ?? []) {
-    if (isSuspiciousStashRoot(entry.stashRoot)) {
-      warn(`Warning: stash root "${entry.stashRoot}" appears to be a system directory. This may be unintentional.`);
-    }
-    if (isValidDirectory(entry.stashRoot)) {
-      sources.push({
-        path: entry.stashRoot,
-        registryId: entry.id,
-      });
-    }
+    addSource(entry.stashRoot, entry.id);
   }
 
   return sources;

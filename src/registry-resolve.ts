@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { fetchWithRetry } from "./common";
+import { UsageError } from "./errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import type {
   ParsedGithubRef,
@@ -13,6 +14,37 @@ import type {
   ParsedRegistryRef,
   ResolvedRegistryArtifact,
 } from "./registry-types";
+
+/**
+ * Validate that a URL is safe to pass to git.
+ * Allowlists https:, http:, ssh:, git: schemes and git@ SSH shorthand.
+ * Rejects git protocol helpers (ext::, fd::) that can execute arbitrary commands.
+ */
+export function validateGitUrl(url: string): void {
+  // git@ SSH shorthand: git@host:path
+  if (/^git@[^:]+:.+$/.test(url)) return;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UsageError(`Invalid git URL: ${url}`);
+  }
+
+  const allowed = ["https:", "http:", "ssh:", "git:"];
+  if (!allowed.includes(parsed.protocol)) {
+    throw new UsageError(
+      `Unsafe git URL scheme "${parsed.protocol}" in "${url}". Allowed: https, http, ssh, git, git@host:path`,
+    );
+  }
+}
+
+/** Validate that a git ref (branch/tag/commit) contains only safe characters. */
+export function validateGitRef(ref: string): void {
+  if (!/^[a-zA-Z0-9._\-/]+$/.test(ref)) {
+    throw new UsageError(`Unsafe git ref "${ref}": only alphanumerics, '.', '_', '-', '/' are allowed`);
+  }
+}
 
 export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   const ref = rawRef.trim();
@@ -336,7 +368,9 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
 }
 
 async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
+  validateGitUrl(parsed.url);
   const ref = parsed.requestedRef ?? "HEAD";
+  if (parsed.requestedRef) validateGitRef(parsed.requestedRef);
   const result = spawnSync("git", ["ls-remote", parsed.url, ref], { encoding: "utf8", timeout: 30_000 });
   let resolvedRevision: string | undefined;
   if (result.status === 0) {
@@ -429,19 +463,22 @@ function stripGitTransport(ref: string): string {
 
 /**
  * Convert a `file:` URI to a local filesystem path.
- * Supports `file:./relative`, `file:../relative`, and `file:///absolute`.
+ *
+ * Standard `file:///absolute` forms are handled by Node's `fileURLToPath`.
+ * Non-standard `file:./relative` and `file:../relative` shorthand forms
+ * (not a valid RFC 8089 URL) are handled with a custom fallback.
  */
 function fileUriToPath(ref: string): string {
   const after = ref.slice(5); // strip "file:"
-  // file:///absolute/path or file:///C:/path
-  if (after.startsWith("///")) {
-    return after.slice(2); // keep one leading /
-  }
-  // file://hostname/path (rare, treat hostname/path as absolute)
+  // Standard file:///absolute/path — delegate to Node's implementation
   if (after.startsWith("//")) {
-    return after.slice(1);
+    try {
+      return fileURLToPath(ref);
+    } catch {
+      // Fall through to custom handling
+    }
   }
-  // file:./relative or file:../relative or file:/absolute
+  // Non-standard file:./relative or file:../relative or file:/absolute
   return after;
 }
 

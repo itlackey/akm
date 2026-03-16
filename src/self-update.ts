@@ -55,7 +55,7 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
 
 export async function performUpgrade(
   check: UpgradeCheckResponse,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; skipChecksum?: boolean },
 ): Promise<UpgradeResponse> {
   const { currentVersion, latestVersion, installMethod } = check;
   const force = opts?.force === true;
@@ -109,11 +109,23 @@ export async function performUpgrade(
   }
   const binaryData = new Uint8Array(await binaryResponse.arrayBuffer());
 
-  // Download and verify checksum
+  // Download and verify checksum (mandatory — upgrade is blocked if checksums cannot be fetched)
   let checksumVerified = false;
+  const skipChecksum = opts?.skipChecksum === true;
   try {
     const checksumsResponse = await fetchWithRetry(checksumsUrl);
-    if (checksumsResponse.ok) {
+    if (!checksumsResponse.ok) {
+      if (skipChecksum) {
+        console.warn(
+          `WARNING: checksums.txt fetch failed (HTTP ${checksumsResponse.status}). Proceeding without verification because --skip-checksum was provided.`,
+        );
+      } else {
+        throw new Error(
+          `Checksum verification failed: could not fetch ${checksumsUrl} (HTTP ${checksumsResponse.status}). ` +
+            `Use --skip-checksum to bypass (not recommended).`,
+        );
+      }
+    } else {
       const checksumsText = await checksumsResponse.text();
       const expectedHash = parseChecksumForFile(checksumsText, binaryName);
       if (expectedHash) {
@@ -124,13 +136,37 @@ export async function performUpgrade(
           );
         }
         checksumVerified = true;
+      } else {
+        if (skipChecksum) {
+          console.warn(
+            `WARNING: ${binaryName} not found in checksums.txt. Proceeding without verification because --skip-checksum was provided.`,
+          );
+        } else {
+          throw new Error(
+            `Checksum verification failed: ${binaryName} not listed in checksums.txt. ` +
+              `Use --skip-checksum to bypass (not recommended).`,
+          );
+        }
       }
     }
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Checksum mismatch")) {
+    if (
+      err instanceof Error &&
+      (err.message.includes("Checksum mismatch") || err.message.includes("Checksum verification failed"))
+    ) {
       throw err;
     }
-    // Non-fatal: checksum file missing or unparseable
+    // Network or parse failure
+    if (skipChecksum) {
+      console.warn(
+        `WARNING: Could not fetch or parse checksums: ${err instanceof Error ? err.message : String(err)}. Proceeding because --skip-checksum was provided.`,
+      );
+    } else {
+      throw new Error(
+        `Checksum verification failed: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Use --skip-checksum to bypass (not recommended).`,
+      );
+    }
   }
 
   const execPath = process.execPath;

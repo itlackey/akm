@@ -1,11 +1,11 @@
 import path from "node:path";
-import { type AgentikitAssetType, isAssetType } from "./common";
+import { isAssetType } from "./common";
 import { UsageError } from "./errors";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface AssetRef {
-  type: AgentikitAssetType;
+  type: string;
   name: string;
   /**
    * Where to find this asset.
@@ -32,7 +32,7 @@ export interface AssetRef {
  *   makeAssetRef("script", "db/migrate/run.sh", "owner/repo")
  *     → "owner/repo//script:db/migrate/run.sh"
  */
-export function makeAssetRef(type: AgentikitAssetType, name: string, origin?: string): string {
+export function makeAssetRef(type: string, name: string, origin?: string): string {
   validateName(name);
   const normalized = normalizeName(name);
   const asset = `${type}:${normalized}`;

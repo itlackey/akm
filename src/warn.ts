@@ -9,6 +9,14 @@ export function setQuiet(value: boolean): void {
   quiet = value;
 }
 
+/**
+ * Reset the quiet flag to false.
+ * Intended for test teardown to prevent quiet state from leaking between tests.
+ */
+export function resetQuiet(): void {
+  quiet = false;
+}
+
 export function isQuiet(): boolean {
   return quiet;
 }

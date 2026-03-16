@@ -6,11 +6,9 @@
  * directories and group files by parent directory.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "./asset-spec";
-import type { AgentikitAssetType } from "./common";
 import { buildFileContext, type FileContext } from "./file-context";
 
 export interface DirectoryGroup {
@@ -24,7 +22,7 @@ export interface DirectoryGroup {
  * Only files relevant to the given `assetType` are included (e.g. `.md` for
  * commands, script extensions for scripts, `SKILL.md` for skills).
  */
-export function walkStash(typeRoot: string, assetType: AgentikitAssetType): DirectoryGroup[] {
+export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[] {
   if (!fs.existsSync(typeRoot)) return [];
 
   const groups = new Map<string, string[]>();
@@ -85,18 +83,17 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   if (!isInsideGitRepo(stashRoot)) return null;
 
   // Get tracked + untracked (non-ignored) files
-  const result = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
+  const result = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."], {
     cwd: stashRoot,
-    encoding: "utf8",
-    timeout: 30_000,
-    maxBuffer: 10 * 1024 * 1024, // 10MB
   });
-  if (result.status !== 0) return null;
+  // result.success is false if the process exited non-zero OR git was not found
+  if (!result.success) return null;
 
   const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
-  const files = result.stdout
+  const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
+  const files = stdout
     .split("\0")
     .filter((f) => f.length > 0)
     .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))
@@ -107,8 +104,7 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
         .filter(Boolean);
       return !dirParts.some((part) => SKIP_DIRS.has(part) || part.startsWith("."));
     })
-    .filter((f) => !SKIP_FILES.has(path.basename(f)))
-    .filter((f) => !f.includes("/.") && !f.startsWith(".")); // skip dot-dirs/files
+    .filter((f) => !SKIP_FILES.has(path.basename(f)));
 
   const results: FileContext[] = [];
   for (const relFile of files) {
@@ -125,7 +121,11 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   return results;
 }
 
-/** Check if a directory is inside a git repository by walking up to find .git. */
+/**
+ * Check if a directory is inside a git repository by walking up to find .git.
+ * Intentionally walks above stashRoot so that parent repo .gitignore rules
+ * apply when the stash is nested inside a larger git repository.
+ */
 function isInsideGitRepo(dir: string): boolean {
   let current = path.resolve(dir);
   const root = path.parse(current).root;
@@ -157,6 +157,10 @@ function walkStashManual(stashRoot: string): FileContext[] {
     for (const entry of entries) {
       if (entry.name === ".stash.json") continue;
       const fullPath = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        // Skip symlinks entirely to prevent potential path traversal outside stashRoot
+        continue;
+      }
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
         stack.push(fullPath);

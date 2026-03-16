@@ -9,6 +9,16 @@
  * Parse YAML-subset frontmatter from a Markdown (or similar) string.
  *
  * Returns the parsed key-value data and the remaining body content.
+ *
+ * **Limitations**: This is a hand-rolled YAML-subset parser with intentional
+ * constraints for simplicity and safety:
+ * - **No list support**: YAML block sequences (`- item`) and flow arrays
+ *   (`[a, b, c]`) are silently ignored. List-valued frontmatter keys will
+ *   produce an empty string or be skipped. Callers must NOT rely on list-
+ *   valued frontmatter.
+ * - **No nested objects beyond one level**: Only a single level of indented
+ *   key-value pairs is supported.
+ * - **Scalar values only**: string, boolean, and number scalars are supported.
  */
 export function parseFrontmatter(raw: string): {
   data: Record<string, unknown>;
@@ -58,11 +68,17 @@ export function parseFrontmatter(raw: string): {
 export function parseFrontmatterBlock(
   raw: string,
 ): { frontmatter: string; content: string; bodyStartLine: number } | null {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  // Handle both LF and CRLF line endings throughout.
+  // The closing --- may be preceded by \r\n; capture and strip trailing \r
+  // from the frontmatter block so key parsing sees clean LF-terminated lines.
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r\n|\r|\n|$)([\s\S]*)$/);
   if (!match) return null;
+  // Strip any \r characters from the frontmatter block to normalise CRLF → LF
+  const frontmatter = match[1].replace(/\r/g, "");
+  const content = match[2];
   return {
-    frontmatter: match[1],
-    content: match[2],
+    frontmatter,
+    content,
     bodyStartLine: countLines(raw.slice(0, match[0].length - match[2].length)) + 1,
   };
 }

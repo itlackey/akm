@@ -15,7 +15,7 @@ Create the stash directory structure and config file.
 akm init
 ```
 
-Creates `scripts/`, `skills/`, `commands/`, `agents/`, and `knowledge/`
+Creates `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`
 subdirectories under the stash path. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
@@ -33,7 +33,7 @@ Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
 
 ### search
 
-Search local stash assets, registry kits, or both.
+Search stash assets, registry kits, or both.
 
 ```sh
 akm search "deploy"
@@ -44,9 +44,9 @@ akm search "docker" --source both --detail full
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
-| `--source` | `local`, `registry`, `both` | `local` | Where to search |
+| `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--format` | `json`, `text`, `yaml` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
 
@@ -72,6 +72,7 @@ akm show knowledge:guide toc
 akm show knowledge:guide section "Authentication"
 akm show knowledge:guide lines 10 30
 akm show knowledge:guide frontmatter
+akm show viking://resources/my-doc
 ```
 
 The default JSON shape includes only action-relevant fields. For `show`,
@@ -87,6 +88,10 @@ Returns type-specific payloads:
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
+| memory | `content` |
+
+`viking://` refs fetch content from a remote OpenViking server and always
+return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
@@ -225,6 +230,11 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
+| `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
+
+```sh
+akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
+```
 
 Duplicate URLs are rejected.
 
@@ -236,6 +246,23 @@ Remove a registry by URL or name.
 akm registry remove https://example.com/registry/index.json
 akm registry remove my-team
 ```
+
+#### registry build-index
+
+Generate a v2 registry index from npm/GitHub discovery and manual entries.
+
+```sh
+akm registry build-index
+akm registry build-index --out dist/index.json
+```
+
+| Flag | Description |
+| --- | --- |
+| `--out` | Output path for the generated index (default: `./index.json`) |
+| `--manual` | Path to a JSON file with manual kit entries |
+| `--npmRegistry` | npm registry base URL (default: `https://registry.npmjs.org`) |
+| `--githubApi` | GitHub API base URL (default: `https://api.github.com`) |
+| `--format` | Output format: `json` or `text` (default: `json`) |
 
 #### registry search
 

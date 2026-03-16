@@ -35,7 +35,7 @@ export interface IndexResponse {
   directoriesScanned: number;
   directoriesSkipped: number;
   /** Timing counters in milliseconds */
-  timing?: { totalMs: number; walkMs: number; embedMs: number; ftsMs: number };
+  timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
 }
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
@@ -64,28 +64,25 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
     if (options?.full || !isIncremental) {
-      // Wipe all entries for full rebuild or stashDir change
-      // Delete from child tables first to respect foreign key constraints
-      try {
-        db.exec("DELETE FROM embeddings");
-      } catch {
-        /* ignore */
-      }
-      if (isVecAvailable(db)) {
-        try {
-          db.exec("DELETE FROM entries_vec");
-        } catch {
-          /* ignore */
-        }
-      }
-      db.exec("DELETE FROM entries_fts");
-      db.exec("DELETE FROM entries");
+      // HI-5: the delete is now merged into the insert transaction inside
+      // indexEntries() so that a reader never sees an empty database between
+      // the wipe and the re-inserts.  The doFullDelete flag signals this path.
     } else {
       // Incremental: purge entries from stash dirs that have been removed
       // (e.g. after `akm remove`) so orphaned entries don't linger.
       const prevStashDirsJson = getMeta(db, "stashDirs");
       if (prevStashDirsJson) {
-        const prevStashDirs: string[] = JSON.parse(prevStashDirsJson);
+        let prevStashDirs: string[] = [];
+        try {
+          const parsed: unknown = JSON.parse(prevStashDirsJson);
+          if (Array.isArray(parsed)) {
+            prevStashDirs = parsed.filter((d): d is string => typeof d === "string");
+          } else {
+            warn("index_meta stashDirs value is not an array — treating as empty");
+          }
+        } catch {
+          warn("index_meta stashDirs value is corrupt JSON — treating as empty");
+        }
         const currentSet = new Set(allStashDirs);
         for (const dir of prevStashDirs) {
           if (!currentSet.has(dir)) {
@@ -97,19 +94,25 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
 
     const tWalkStart = Date.now();
 
-    // Walk stash dirs and index entries
-    const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = indexEntries(
+    // Walk stash dirs and index entries.
+    // doFullDelete=true merges the wipe into the same transaction as the
+    // inserts (HI-5) so readers never see an empty database mid-rebuild.
+    const doFullDelete = options?.full || !isIncremental;
+    const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = await indexEntries(
       db,
       allStashDirs,
       stashDir,
       isIncremental,
       builtAtMs,
+      doFullDelete,
     );
+
+    const tWalkEnd = Date.now();
 
     // Enhance entries with LLM if configured
     await enhanceDirsWithLlm(db, config, dirsNeedingLlm);
 
-    const tWalkEnd = Date.now();
+    const tLlmEnd = Date.now();
 
     // Rebuild FTS after all inserts
     rebuildFts(db);
@@ -145,8 +148,9 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
       timing: {
         totalMs: tEnd - t0,
         walkMs: tWalkEnd - tWalkStart,
+        llmMs: tLlmEnd - tWalkEnd,
         embedMs: tEmbedEnd - tFtsEnd,
-        ftsMs: tFtsEnd - tWalkEnd,
+        ftsMs: tFtsEnd - tLlmEnd,
       },
     };
   } finally {
@@ -156,13 +160,14 @@ export async function agentikitIndex(options?: { stashDir?: string; full?: boole
 
 // ── Extracted helpers for indexing ────────────────────────────────────────────
 
-function indexEntries(
+async function indexEntries(
   db: import("bun:sqlite").Database,
   allStashDirs: string[],
   _stashDir: string,
   isIncremental: boolean,
   builtAtMs: number,
-): {
+  doFullDelete = false,
+): Promise<{
   scannedDirs: number;
   skippedDirs: number;
   generatedCount: number;
@@ -172,7 +177,18 @@ function indexEntries(
     currentStashDir: string;
     stash: StashFile;
   }>;
-} {
+}> {
+  // Phase 1 (async): walk directories and pre-generate all metadata outside the transaction.
+  // generateMetadataFlat is async (uses dynamic import for matcher/renderer registry),
+  // so it cannot be called inside a db.transaction() callback.
+  type DirRecord = {
+    dirPath: string;
+    currentStashDir: string;
+    files: string[];
+    stash: StashFile | null;
+    skip: boolean;
+  };
+
   let scannedDirs = 0;
   let skippedDirs = 0;
   let generatedCount = 0;
@@ -184,78 +200,108 @@ function indexEntries(
     stash: StashFile;
   }> = [];
 
-  const insertTransaction = db.transaction(() => {
-    for (const currentStashDir of allStashDirs) {
-      // Walk the entire stash directory — matchers classify each file
-      const fileContexts = walkStashFlat(currentStashDir);
+  const dirRecords: DirRecord[] = [];
 
-      // Group files by parent directory
-      const dirGroups = new Map<string, string[]>();
-      for (const ctx of fileContexts) {
-        const dir = ctx.parentDirAbs;
-        const group = dirGroups.get(dir);
-        if (group) group.push(ctx.absPath);
-        else dirGroups.set(dir, [ctx.absPath]);
+  for (const currentStashDir of allStashDirs) {
+    const fileContexts = walkStashFlat(currentStashDir);
+
+    const dirGroups = new Map<string, string[]>();
+    for (const ctx of fileContexts) {
+      const dir = ctx.parentDirAbs;
+      const group = dirGroups.get(dir);
+      if (group) group.push(ctx.absPath);
+      else dirGroups.set(dir, [ctx.absPath]);
+    }
+
+    for (const [dirPath, files] of dirGroups) {
+      if (seenPaths.has(path.resolve(dirPath))) {
+        dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+        continue;
+      }
+      seenPaths.add(path.resolve(dirPath));
+
+      // Incremental: skip directories that haven't changed
+      if (isIncremental) {
+        const prevEntries = getEntriesByDir(db, dirPath);
+        if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+          skippedDirs++;
+          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+          continue;
+        }
       }
 
-      for (const [dirPath, files] of dirGroups) {
-        if (seenPaths.has(path.resolve(dirPath))) continue;
-        seenPaths.add(path.resolve(dirPath));
+      scannedDirs++;
 
-        // Incremental: skip directories that haven't changed
-        if (isIncremental) {
-          const prevEntries = getEntriesByDir(db, dirPath);
-          if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
-            skippedDirs++;
-            continue;
-          }
-        }
+      // Try loading existing .stash.json (user metadata overrides)
+      let stash = loadStashFile(dirPath);
 
-        scannedDirs++;
-
-        // Delete old entries for this dir (will be re-inserted)
-        deleteEntriesByDir(db, dirPath);
-
-        // Try loading existing .stash.json (user metadata overrides)
-        let stash = loadStashFile(dirPath);
-
-        if (stash) {
-          // Check for files on disk that aren't covered by existing .stash.json entries.
-          const coveredFiles = new Set(
-            stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
-          );
-          const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
-          if (uncoveredFiles.length > 0) {
-            const generated = generateMetadataFlat(currentStashDir, uncoveredFiles);
-            if (generated.entries.length > 0) {
-              stash = { entries: [...stash.entries, ...generated.entries] };
-              generatedCount += generated.entries.length;
-            }
-          }
-        }
-
-        if (!stash) {
-          const generated = generateMetadataFlat(currentStashDir, files);
+      if (stash) {
+        const coveredFiles = new Set(
+          stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
+        );
+        const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
+        if (uncoveredFiles.length > 0) {
+          const generated = await generateMetadataFlat(currentStashDir, uncoveredFiles);
           if (generated.entries.length > 0) {
-            stash = { entries: generated.entries };
+            stash = { entries: [...stash.entries, ...generated.entries] };
             generatedCount += generated.entries.length;
           }
         }
+      }
 
-        if (stash) {
-          for (const entry of stash.entries) {
-            const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-            const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-            const searchText = buildSearchText(entry);
-            const entryWithSize = attachFileSize(entry, entryPath);
+      if (!stash) {
+        const generated = await generateMetadataFlat(currentStashDir, files);
+        if (generated.entries.length > 0) {
+          stash = { entries: generated.entries };
+          generatedCount += generated.entries.length;
+        }
+      }
 
-            upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
-          }
+      dirRecords.push({ dirPath, currentStashDir, files, stash, skip: false });
+    }
+  }
 
-          // Collect dirs needing LLM enhancement during the first walk
-          if (stash.entries.some((e) => e.quality === "generated")) {
-            dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
-          }
+  // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
+  const insertTransaction = db.transaction(() => {
+    // HI-5: Perform the full-rebuild wipe as the FIRST step of the insert
+    // transaction so delete and re-insert are atomic — a concurrent reader
+    // never observes an empty database between the two operations.
+    if (doFullDelete) {
+      try {
+        db.exec("DELETE FROM embeddings");
+      } catch {
+        /* ignore */
+      }
+      if (isVecAvailable(db)) {
+        try {
+          db.exec("DELETE FROM entries_vec");
+        } catch {
+          /* ignore */
+        }
+      }
+      db.exec("DELETE FROM entries_fts");
+      db.exec("DELETE FROM entries");
+    }
+
+    for (const { dirPath, currentStashDir, files, stash, skip } of dirRecords) {
+      if (skip) continue;
+
+      // Delete old entries for this dir (will be re-inserted)
+      deleteEntriesByDir(db, dirPath);
+
+      if (stash) {
+        for (const entry of stash.entries) {
+          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+          const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+          const searchText = buildSearchText(entry);
+          const entryWithSize = attachFileSize(entry, entryPath);
+
+          upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
+        }
+
+        // Collect dirs needing LLM enhancement during the first walk
+        if (stash.entries.some((e) => e.quality === "generated")) {
+          dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
         }
       }
     }
@@ -285,13 +331,16 @@ async function enhanceDirsWithLlm(
     const generatedStash: StashFile = { entries: generatedEntries };
     const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, dirPath, files);
 
-    // Re-upsert only the enhanced (generated) entries
-    for (const entry of enhanced.entries) {
-      const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-      const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-      const searchText = buildSearchText(entry);
-      upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
-    }
+    // HI-2: Re-upsert the enhanced entries in a single transaction so a crash
+    // cannot leave half the entries updated and the rest stale.
+    db.transaction(() => {
+      for (const entry of enhanced.entries) {
+        const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+        const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+        const searchText = buildSearchText(entry);
+        upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
+      }
+    })();
   }
 }
 
@@ -307,9 +356,13 @@ async function generateEmbeddingsForDb(
     if (allEntries.length === 0) return true;
     const texts = allEntries.map((e) => e.searchText);
     const embeddings = await embedBatch(texts, config.embedding);
-    for (let i = 0; i < allEntries.length; i++) {
-      upsertEmbedding(db, allEntries[i].id, embeddings[i]);
-    }
+    // HI-3: Wrap all embedding upserts in a single transaction so partial
+    // state is rolled back on failure rather than leaving the table half-filled.
+    db.transaction(() => {
+      for (let i = 0; i < allEntries.length; i++) {
+        upsertEmbedding(db, allEntries[i].id, embeddings[i]);
+      }
+    })();
     return true;
   } catch (error) {
     warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error));

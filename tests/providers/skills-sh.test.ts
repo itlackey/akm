@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveProviderFactory } from "../../src/provider-registry";
+import { resolveProviderFactory } from "../../src/registry-factory";
 import type { RegistryProvider } from "../../src/registry-provider";
 
 // Trigger self-registration

@@ -7,8 +7,8 @@
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
 A package manager for AI agent capabilities -- scripts, skills, commands,
-agents, and knowledge -- that works with any AI coding assistant that can run
-shell commands.
+agents, knowledge, and memories -- that works with any AI coding assistant that
+can run shell commands.
 
 ## Install
 
@@ -42,7 +42,7 @@ Any model that can run shell commands can use `akm`. Add this to your
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-and knowledge documents via the `akm` CLI. Use `akm -h` for details.
+knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
 ~~~
 
 No plugins, SDKs, or integration code required. Platform-specific plugins
@@ -89,13 +89,16 @@ Registries are indexes of available kits. The official
 ```sh
 akm registry search "code review"                                        # Search registries
 akm registry add https://example.com/registry/index.json --name team     # Add a registry
+akm sources add http://host:1933 --provider openviking \
+  --options '{"apiKey":"key"}'                                            # Add an OpenViking stash source
 akm registry list                                                        # List configured registries
+akm show viking://resources/my-doc                                       # Fetch remote content from OpenViking
 ```
 
 Private access is supported through:
 - **GitHub tokens** -- Set `GITHUB_TOKEN` to access private GitHub repos when installing kits
-- **Provider options** -- Each registry entry supports an `options` field for provider-specific configuration (tokens, custom headers)
-- **Pluggable providers** -- Custom registry providers can implement their own authentication
+- **Provider options** -- `--options` flag accepts JSON for provider-specific configuration (API keys, custom headers)
+- **Pluggable providers** -- Built-in registry providers include `static-index` and `skills-sh`; stash providers include `filesystem` and `openviking`; custom providers can implement their own authentication
 
 See the [Registry docs](docs/registry.md) for hosting your own registry and
 the v2 index format.

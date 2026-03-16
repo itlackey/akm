@@ -20,7 +20,7 @@ Refs currently use this wire format:
 | Part | Required | Description |
 | --- | --- | --- |
 | `origin` | no | Identifies which installed kit or source owns the asset. Separated from the rest of the ref by `//`. |
-| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, or `knowledge`. |
+| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, or `memory`. |
 | `name` | yes | Asset filename or path relative to the type directory. |
 
 ## Examples
@@ -48,6 +48,11 @@ order.
 
 Consumers should use structured fields like `type`, `name`, and `origin` for
 display, and pass the full `ref` string back to `show` as the lookup token.
+
+## Viking URIs
+
+`akm show` also accepts `viking://` URIs for remote OpenViking content. These
+are not standard refs but remote resource identifiers.
 
 ## Deferred Simplification
 

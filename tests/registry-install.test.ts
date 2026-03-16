@@ -4,10 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { installRegistryRef } from "../src/registry-install";
+import { installRegistryRef, validateTarEntries } from "../src/registry-install";
 import { parseRegistryRef } from "../src/registry-resolve";
 import { agentikitAdd } from "../src/stash-add";
-import { agentikitShow } from "../src/stash-show";
+import { agentikitShowUnified as agentikitShow } from "../src/stash-show";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -110,7 +110,7 @@ function createTarGz(sourceDir: string, archivePath: string): void {
 }
 
 describe("local directory installs", () => {
-  test("agentikitAdd installs a subdirectory inside a git repository", async () => {
+  test("agentikitAdd adds a local directory as a stash source", async () => {
     const stashDir = createEmptyStashDir("akm-git-stash-");
     const cacheHome = makeTempDir("akm-git-cache-");
     const repoDir = makeTempDir("akm-git-repo-");
@@ -124,20 +124,22 @@ describe("local directory installs", () => {
         agentikitAdd({ ref: kitDir }),
       );
 
-      expect(result.installed.source).toBe("local");
-      // Local installs reference the original path directly (no cache copy)
-      expect(result.installed.stashRoot).toBe(kitDir);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      // Local adds now create stash sources, not installed entries
+      expect(result.stashSource).toBeDefined();
+      expect(result.stashSource?.type).toBe("filesystem");
+      expect(result.stashSource?.stashRoot).toBe(kitDir);
+      expect(result.installed).toBeUndefined();
+      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
 
       const config = loadConfig();
-      const installedRoots = (config.installed ?? []).map((e: { stashRoot: string }) => e.stashRoot);
-      expect(installedRoots).toContain(result.installed.stashRoot);
+      const stashPaths = (config.stashes ?? []).map((s) => s.path);
+      expect(stashPaths).toContain(result.stashSource?.stashRoot);
 
       const shown = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
         agentikitShow({ ref: "script:hello.sh" }),
       );
       expect(shown.type).toBe("script");
-      expect(shown.path).toContain(result.installed.stashRoot);
+      expect(shown.path).toContain(result.stashSource?.stashRoot);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -156,10 +158,11 @@ describe("local directory installs", () => {
         agentikitAdd({ ref: kitDir }),
       );
 
-      expect(result.installed.source).toBe("local");
+      expect(result.stashSource).toBeDefined();
+      expect(result.stashSource?.type).toBe("filesystem");
       // stashRoot points directly at the source, no cache directory
-      expect(result.installed.stashRoot).toBe(kitDir);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(result.stashSource?.stashRoot).toBe(kitDir);
+      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -181,11 +184,11 @@ describe("local directory installs", () => {
         agentikitAdd({ ref: projectDir }),
       );
 
-      expect(result.installed.source).toBe("local");
+      expect(result.stashSource).toBeDefined();
       // stashRoot should point to the nested my-kit dir, not the project root
-      expect(result.installed.stashRoot).toBe(path.join(projectDir, "my-kit"));
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "scripts", "hello.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.installed.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
+      expect(result.stashSource?.stashRoot).toBe(path.join(projectDir, "my-kit"));
+      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -208,9 +211,9 @@ describe("local directory installs", () => {
         agentikitAdd({ ref: srcDir }),
       );
 
-      expect(result.installed.source).toBe("local");
+      expect(result.stashSource).toBeDefined();
       // stashRoot is the source dir itself — indexer detects basename "knowledge" matches a type dir
-      expect(result.installed.stashRoot).toBe(srcDir);
+      expect(result.stashSource?.stashRoot).toBe(srcDir);
       expect(result.index.totalEntries).toBeGreaterThanOrEqual(3);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -413,5 +416,53 @@ describe("local directory installs", () => {
       fs.rmSync(packageDir, { recursive: true, force: true });
       fs.rmSync(path.dirname(archivePath), { recursive: true, force: true });
     }
+  });
+});
+
+// ── Security: validateTarEntries adversarial cases ───────────────────────────
+
+describe("validateTarEntries", () => {
+  test("accepts normal relative entries", () => {
+    const output = ["kit-v1.0.0/README.md", "kit-v1.0.0/agents/deploy.md", "kit-v1.0.0/scripts/run.sh"].join("\n");
+    expect(() => validateTarEntries(output)).not.toThrow();
+  });
+
+  test("rejects entry with absolute path", () => {
+    const output = "kit-v1.0.0/README.md\n/etc/passwd";
+    expect(() => validateTarEntries(output)).toThrow(/absolute path/);
+  });
+
+  test("rejects entry with ../ traversal at root level", () => {
+    const output = "kit-v1.0.0/README.md\n../../evil";
+    expect(() => validateTarEntries(output)).toThrow(/path traversal/);
+  });
+
+  test("rejects entry that escapes after strip-components (a/../../../evil)", () => {
+    // After normalization, kit-v1.0.0/../../../evil becomes ../../evil which
+    // starts with ".." — caught by the path traversal check before strip.
+    const output = "kit-v1.0.0/../../../evil";
+    expect(() => validateTarEntries(output)).toThrow(/path traversal|unsafe entry/);
+  });
+
+  test("rejects entry that escapes after strip-components (clean first part)", () => {
+    // "a/b/../../../../evil" normalizes to "../../evil" which starts with ".."
+    // and is caught by the path traversal check (same as other traversal cases).
+    const output = "a/b/../../../../evil";
+    expect(() => validateTarEntries(output)).toThrow(/path traversal|unsafe entry/);
+  });
+
+  test("rejects entry with null byte in name", () => {
+    const output = "kit-v1.0.0/README\0.md";
+    expect(() => validateTarEntries(output)).toThrow(/invalid entry/);
+  });
+
+  test("accepts entries with dots in filenames", () => {
+    const output = ["kit-v1.0.0/.env.example", "kit-v1.0.0/v2.1.0/notes.md"].join("\n");
+    expect(() => validateTarEntries(output)).not.toThrow();
+  });
+
+  test("accepts empty output without throwing", () => {
+    expect(() => validateTarEntries("")).not.toThrow();
+    expect(() => validateTarEntries("\n\n")).not.toThrow();
   });
 });

@@ -3,4 +3,7 @@ dist/
 .DS_Store
 package-lock.json
 .plans/
+tests/fixtures/openviking/workspace/vectordb/
+tests/fixtures/openviking/workspace/vectordb/context/
+tests/fixtures/openviking/workspace/viking/_system/accounts.json
 .dev/

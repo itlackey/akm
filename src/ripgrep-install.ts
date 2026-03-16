@@ -142,31 +142,28 @@ function downloadAndExtractZip(url: string, archiveName: string, destBinary: str
       throw new Error(dlResult.stderr?.trim() || "download failed");
     }
 
-    // Extract the zip archive using separate spawnSync calls with argument arrays
-    // to avoid shell injection via path interpolation in PowerShell -Command strings
-    const expandResult = spawnSync(
-      "powershell",
-      ["-Command", "Expand-Archive", "-Path", tmpZip, "-DestinationPath", destDir, "-Force"],
-      {
-        encoding: "utf8",
-        timeout: 60_000,
-        env: process.env,
-      },
-    );
+    // Extract the zip archive. Use a single-string -Command with quoted paths to
+    // prevent PowerShell from treating subsequent array elements as separate
+    // arguments to the interpreter itself (PowerShell -Command arg1 arg2 ... would
+    // concatenate them with spaces, causing unexpected evaluation on paths with
+    // backticks or semicolons).
+    const expandCmd = `Expand-Archive -Path '${tmpZip.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`;
+    const expandResult = spawnSync("powershell", ["-NonInteractive", "-NoProfile", "-Command", expandCmd], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: process.env,
+    });
     if (expandResult.status !== 0) {
       throw new Error(expandResult.stderr?.trim() || "extraction failed");
     }
 
     const srcRgExe = path.join(destDir, archiveName, "rg.exe");
-    const moveResult = spawnSync(
-      "powershell",
-      ["-Command", "Move-Item", "-Force", "-Path", srcRgExe, "-Destination", destBinary],
-      {
-        encoding: "utf8",
-        timeout: 60_000,
-        env: process.env,
-      },
-    );
+    const moveCmd = `Move-Item -Force -Path '${srcRgExe.replace(/'/g, "''")}' -Destination '${destBinary.replace(/'/g, "''")}'`;
+    const moveResult = spawnSync("powershell", ["-NonInteractive", "-NoProfile", "-Command", moveCmd], {
+      encoding: "utf8",
+      timeout: 60_000,
+      env: process.env,
+    });
     if (moveResult.status !== 0) {
       throw new Error(moveResult.stderr?.trim() || "move failed");
     }

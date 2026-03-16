@@ -97,15 +97,13 @@ describe("output baseline", () => {
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(Object.keys(json)).toEqual(["hits"]);
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "description", "name", "type"]);
-    expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(160);
-    expect(String(json.hits[0]?.description)).toEndWith("...");
+    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "name", "type"]);
   });
 
-  test("search normal detail keeps the full description", () => {
+  test("search normal detail includes description capped at 250 characters", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const description =
-      "This is a deliberately long agent description that should remain intact outside brief mode so richer output levels preserve the full metadata value for routing and inspection.";
+      "This is a deliberately long agent description that should be truncated at the normal detail level. It contains enough words to exceed two hundred and fifty characters so we can verify the cap is applied correctly by the CLI output shaping logic and does not let full descriptions through.";
     writeFile(
       path.join(stashDir, "agents", "architect.md"),
       `---\ndescription: ${description}\n---\nYou are an architect.\n`,
@@ -114,18 +112,19 @@ describe("output baseline", () => {
     const output = runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
-    expect(json.hits[0]?.description).toBe(description);
-    expect(json.hits[0]?.ref).toBe("agent:architect");
-    expect(json.hits[0]?.size).toBe("small");
+    expect(json.hits[0]?.score).toBeDefined();
+    expect(typeof json.hits[0]?.description).toBe("string");
+    expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
+    expect(Object.keys(json.hits[0] ?? {})).not.toContain("ref");
   });
 
-  test("search text output includes null origin for local hits", () => {
+  test("search text output includes score for local hits at normal detail", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     const output = runCli(stashDir, ["search", "deploy", "--format=text", "--detail=normal"]);
 
-    expect(output).toContain("origin: null");
+    expect(output).toContain("score:");
     expect(output).toContain("action: akm show");
   });
 
@@ -200,7 +199,7 @@ describe("output baseline", () => {
 
     const config = { output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
-    expect(configDriven).toContain("origin: null");
+    expect(configDriven).toContain("score:");
 
     const overridden = runCli(stashDir, ["search", "deploy", "--format=json", "--detail=brief"], config);
     const json = JSON.parse(overridden) as { hits: Array<Record<string, unknown>> };
@@ -253,8 +252,9 @@ describe("output baseline", () => {
         },
       );
       const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+      // Brief local hits have type; registry hits in brief only have name + action
       const localHit = json.hits.find((hit) => hit.type === "script");
-      const registryHit = json.hits.find((hit) => hit.type === "registry");
+      const registryHit = json.hits.find((hit) => hit.name === "deploy-kit");
 
       expect(localHit?.action).toBeTruthy();
       expect(registryHit?.action).toBeTruthy();

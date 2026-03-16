@@ -10,7 +10,7 @@ import path from "node:path";
 import { toPosix } from "./common";
 import { parseFrontmatter } from "./frontmatter";
 import type { StashEntry } from "./metadata";
-import type { LocalSearchHit, ShowResponse } from "./stash-types";
+import type { ShowResponse, StashSearchHit } from "./stash-types";
 
 // ── FileContext ──────────────────────────────────────────────────────────────
 
@@ -164,8 +164,8 @@ export interface AssetRenderer {
   name: string;
   /** Build the full ShowResponse for the `akm show` command */
   buildShowResponse(ctx: RenderContext): ShowResponse;
-  /** Optionally enrich a LocalSearchHit with renderer-specific fields */
-  enrichSearchHit?(hit: LocalSearchHit, stashDir: string): void;
+  /** Optionally enrich a StashSearchHit with renderer-specific fields */
+  enrichSearchHit?(hit: StashSearchHit, stashDir: string): void;
   /** Optionally extract/augment metadata for a StashEntry */
   extractMetadata?(entry: StashEntry, ctx: RenderContext): void;
 }
@@ -178,23 +178,23 @@ const matchers: AssetMatcher[] = [];
 /** Renderer lookup by name. */
 const renderers = new Map<string, AssetRenderer>();
 
-let builtinsInitialized = false;
+let builtinsPromise: Promise<void> | undefined;
 
 /**
  * Ensure that built-in matchers and renderers are registered.
  * Called lazily on first use of runMatchers/getRenderer.
+ * Stores the in-progress promise so parallel callers don't double-register.
  */
-function ensureBuiltinsRegistered(): void {
-  if (builtinsInitialized) return;
-  builtinsInitialized = true;
-  // Lazy inline require avoids a top-level static import cycle.
-  // These are only evaluated once.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { registerBuiltinMatchers } = require("./matchers") as typeof import("./matchers");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { registerBuiltinRenderers } = require("./renderers") as typeof import("./renderers");
-  registerBuiltinMatchers();
-  registerBuiltinRenderers();
+async function ensureBuiltinsRegistered(): Promise<void> {
+  if (!builtinsPromise) {
+    builtinsPromise = (async () => {
+      const { registerBuiltinMatchers } = await import("./matchers.js");
+      const { registerBuiltinRenderers } = await import("./renderers.js");
+      registerBuiltinMatchers();
+      registerBuiltinRenderers();
+    })();
+  }
+  return builtinsPromise;
 }
 
 /**
@@ -219,16 +219,16 @@ export function registerRenderer(renderer: AssetRenderer): void {
 /**
  * Look up a renderer by name.
  */
-export function getRenderer(name: string): AssetRenderer | undefined {
-  ensureBuiltinsRegistered();
+export async function getRenderer(name: string): Promise<AssetRenderer | undefined> {
+  await ensureBuiltinsRegistered();
   return renderers.get(name);
 }
 
 /**
  * Return all registered renderers (snapshot, safe to iterate).
  */
-export function getAllRenderers(): AssetRenderer[] {
-  ensureBuiltinsRegistered();
+export async function getAllRenderers(): Promise<AssetRenderer[]> {
+  await ensureBuiltinsRegistered();
   return Array.from(renderers.values());
 }
 
@@ -243,8 +243,8 @@ export function getAllRenderers(): AssetRenderer[] {
  *    (this lets user-registered matchers override built-in ones).
  * 4. Returns null when no matcher claims the file.
  */
-export function runMatchers(ctx: FileContext): MatchResult | null {
-  ensureBuiltinsRegistered();
+export async function runMatchers(ctx: FileContext): Promise<MatchResult | null> {
+  await ensureBuiltinsRegistered();
 
   // Collect (result, registrationIndex) pairs from all matchers.
   const hits: Array<{ result: MatchResult; index: number }> = [];

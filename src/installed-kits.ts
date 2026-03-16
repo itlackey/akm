@@ -1,3 +1,15 @@
+/**
+ * Installed-kit operations: list, remove, update.
+ *
+ * Manages the set of kits that have been added to the local stash via
+ * `akm add`. Each installed kit has a cache directory and a stash root that
+ * is added to the search path.
+ *
+ * Not to be confused with:
+ *   - registry-factory.ts   — factory map for kit-discovery registry providers
+ *   - stash-provider-factory.ts — factory map for runtime stash data sources
+ */
+
 import fs from "node:fs";
 import { resolveStashDir } from "./common";
 import { loadConfig } from "./config";
@@ -90,7 +102,7 @@ export async function agentikitUpdate(input?: {
     }
     const installed = await installRegistryRef(entry.ref);
     upsertInstalledRegistryEntry(toInstalledEntry(installed));
-    upsertLockEntry({
+    await upsertLockEntry({
       id: installed.id,
       source: installed.source,
       ref: installed.ref,
@@ -178,32 +190,13 @@ function resolveInstalledTarget(installed: InstalledKitEntry[], target: string):
 }
 
 function toInstalledEntry(status: KitInstallStatus): InstalledKitEntry {
-  return {
-    id: status.id,
-    source: status.source,
-    ref: status.ref,
-    artifactUrl: status.artifactUrl,
-    resolvedVersion: status.resolvedVersion,
-    resolvedRevision: status.resolvedRevision,
-    stashRoot: status.stashRoot,
-    cacheDir: status.cacheDir,
-    installedAt: status.installedAt,
-  };
+  // KitInstallStatus extends InstalledKitEntry; omit the extra extractedDir field.
+  const { extractedDir: _extractedDir, ...base } = status;
+  return base;
 }
 
 function toInstallStatus(status: KitInstallStatus): KitInstallStatus {
-  return {
-    id: status.id,
-    source: status.source,
-    ref: status.ref,
-    artifactUrl: status.artifactUrl,
-    resolvedVersion: status.resolvedVersion,
-    resolvedRevision: status.resolvedRevision,
-    stashRoot: status.stashRoot,
-    cacheDir: status.cacheDir,
-    extractedDir: status.extractedDir,
-    installedAt: status.installedAt,
-  };
+  return { ...status };
 }
 
 function cleanupDirectoryBestEffort(target: string): void {

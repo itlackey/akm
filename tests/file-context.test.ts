@@ -356,7 +356,7 @@ describe("runMatchers", () => {
     expect(smartMdMatcher(ctx)).toBeNull();
   });
 
-  test("specificity ordering: strong agent signal (tools) beats directoryMatcher", () => {
+  test("specificity ordering: strong agent signal (tools) beats directoryMatcher", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "commands", "hybrid.md");
     writeFile(filePath, ["---", "tools:", "  read: allow", "---", "Agent in commands dir."].join("\n"));
@@ -374,13 +374,13 @@ describe("runMatchers", () => {
     expect(smartResult?.specificity).toBe(20);
 
     // runMatchers should pick the higher specificity
-    const best = runMatchers(ctx);
+    const best = await runMatchers(ctx);
     expect(best).not.toBeNull();
     expect(best?.type).toBe("agent");
     expect(best?.specificity).toBe(20);
   });
 
-  test("specificity ordering: directoryMatcher(10) beats smartMdMatcher(5) for plain .md", () => {
+  test("specificity ordering: directoryMatcher(10) beats smartMdMatcher(5) for plain .md", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "reference.md");
     writeFile(filePath, "# Reference\nPlain knowledge document.");
@@ -393,17 +393,17 @@ describe("runMatchers", () => {
     expect(smartMdMatcher(ctx)?.specificity).toBe(5);
 
     // runMatchers should pick specificity 10
-    const best = runMatchers(ctx);
+    const best = await runMatchers(ctx);
     expect(best?.specificity).toBeGreaterThanOrEqual(10);
   });
 
-  test("runMatchers returns null for unmatched file types", () => {
+  test("runMatchers returns null for unmatched file types", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "data", "config.json");
     writeFile(filePath, '{"key": "value"}');
 
     const ctx = buildFileContext(root, filePath);
-    const result = runMatchers(ctx);
+    const result = await runMatchers(ctx);
     expect(result).toBeNull();
   });
 });
@@ -411,13 +411,13 @@ describe("runMatchers", () => {
 // ── 3. Renderer tests ───────────────────────────────────────────────────────
 
 describe("Renderer", () => {
-  test("getRenderer('script-source') returns the script renderer", () => {
-    const renderer = getRenderer("script-source");
+  test("getRenderer('script-source') returns the script renderer", async () => {
+    const renderer = await getRenderer("script-source");
     expect(renderer).toBeDefined();
     expect(renderer?.name).toBe("script-source");
   });
 
-  test("getRenderer('agent-md') builds show response with prompt prefix", () => {
+  test("getRenderer('agent-md') builds show response with prompt prefix", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "agents", "reviewer.md");
     writeFile(
@@ -425,7 +425,7 @@ describe("Renderer", () => {
       ["---", "description: Code reviewer", "model: gpt-4", "---", "You are a code reviewer."].join("\n"),
     );
 
-    const renderer = expectDefined(getRenderer("agent-md"));
+    const renderer = expectDefined(await getRenderer("agent-md"));
     const ctx = buildFileContext(root, filePath);
     const match = { type: "agent", specificity: 20, renderer: "agent-md", meta: { name: "reviewer.md" } };
     const renderCtx = buildRenderContext(ctx, match, [root]);
@@ -439,7 +439,7 @@ describe("Renderer", () => {
     expect(response.modelHint).toBe("gpt-4");
   });
 
-  test("getRenderer('command-md') extracts template from body", () => {
+  test("getRenderer('command-md') extracts template from body", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "commands", "deploy.md");
     writeFile(
@@ -447,7 +447,7 @@ describe("Renderer", () => {
       ["---", "description: Deploy to production", "---", "Run the deploy script with {{env}}."].join("\n"),
     );
 
-    const renderer = expectDefined(getRenderer("command-md"));
+    const renderer = expectDefined(await getRenderer("command-md"));
     const ctx = buildFileContext(root, filePath);
     const match = { type: "command", specificity: 10, renderer: "command-md", meta: { name: "deploy.md" } };
     const renderCtx = buildRenderContext(ctx, match, [root]);
@@ -458,7 +458,7 @@ describe("Renderer", () => {
     expect(response.description).toBe("Deploy to production");
   });
 
-  test("getRenderer('knowledge-md') handles toc view", () => {
+  test("getRenderer('knowledge-md') handles toc view", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "guide.md");
     writeFile(
@@ -478,7 +478,7 @@ describe("Renderer", () => {
       ].join("\n"),
     );
 
-    const renderer = expectDefined(getRenderer("knowledge-md"));
+    const renderer = expectDefined(await getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",
@@ -494,7 +494,7 @@ describe("Renderer", () => {
     expect(response.content).toContain("Usage");
   });
 
-  test("getRenderer('knowledge-md') handles section view", () => {
+  test("getRenderer('knowledge-md') handles section view", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "guide.md");
     writeFile(
@@ -502,7 +502,7 @@ describe("Renderer", () => {
       ["# Intro", "Welcome.", "", "## Setup", "Install things.", "", "## Usage", "Use things."].join("\n"),
     );
 
-    const renderer = expectDefined(getRenderer("knowledge-md"));
+    const renderer = expectDefined(await getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",
@@ -517,12 +517,12 @@ describe("Renderer", () => {
     expect(response.content).toContain("Install things.");
   });
 
-  test("getRenderer('knowledge-md') handles lines view", () => {
+  test("getRenderer('knowledge-md') handles lines view", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "guide.md");
     writeFile(filePath, ["# Intro", "Welcome.", "", "## Setup", "Install things."].join("\n"));
 
-    const renderer = expectDefined(getRenderer("knowledge-md"));
+    const renderer = expectDefined(await getRenderer("knowledge-md"));
     const ctx = buildFileContext(root, filePath);
     const match = {
       type: "knowledge",
@@ -538,16 +538,16 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 5 renderers", () => {
-    const all = getAllRenderers();
-    expect(all).toHaveLength(5);
+  test("getAllRenderers() returns all 6 renderers", async () => {
+    const all = await getAllRenderers();
+    expect(all).toHaveLength(6);
 
     const names = all.map((r) => r.name).sort();
-    expect(names).toEqual(["agent-md", "command-md", "knowledge-md", "script-source", "skill-md"]);
+    expect(names).toEqual(["agent-md", "command-md", "knowledge-md", "memory-md", "script-source", "skill-md"]);
   });
 
-  test("getRenderer returns undefined for unknown renderer name", () => {
-    expect(getRenderer("nonexistent")).toBeUndefined();
+  test("getRenderer returns undefined for unknown renderer name", async () => {
+    expect(await getRenderer("nonexistent")).toBeUndefined();
   });
 });
 

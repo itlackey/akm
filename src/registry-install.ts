@@ -5,9 +5,11 @@ import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { fetchWithRetry, isWithin } from "./common";
 import { type AgentikitConfig, loadConfig, saveConfig } from "./config";
+import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
-import { parseRegistryRef, resolveRegistryArtifact } from "./registry-resolve";
+import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
 import type { InstalledKitEntry, KitInstallResult, KitSource, ParsedGitRef, ParsedLocalRef } from "./registry-types";
+import { warn } from "./warn";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
 
@@ -64,14 +66,29 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
 
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  await downloadArchive(resolved.artifactUrl, archivePath);
-  verifyArchiveIntegrity(archivePath, resolved.resolvedRevision, resolved.source);
-  const integrity = await computeFileHash(archivePath);
-  extractTarGzSecure(archivePath, extractedDir);
+  let integrity: string;
+  let provisionalKitRoot: string;
+  let installRoot: string;
+  let stashRoot: string;
+  try {
+    await downloadArchive(resolved.artifactUrl, archivePath);
+    verifyArchiveIntegrity(archivePath, resolved.resolvedRevision, resolved.source);
+    integrity = await computeFileHash(archivePath);
+    extractTarGzSecure(archivePath, extractedDir);
 
-  const provisionalKitRoot = detectStashRoot(extractedDir);
-  const installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
-  const stashRoot = detectStashRoot(installRoot);
+    provisionalKitRoot = detectStashRoot(extractedDir);
+    installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    stashRoot = detectStashRoot(installRoot);
+  } catch (err) {
+    // Clean up the cache directory so stale or partially-extracted artifacts
+    // don't cause false cache hits on the next install attempt.
+    try {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; ignore errors
+    }
+    throw err;
+  }
 
   return {
     id: resolved.id,
@@ -151,28 +168,46 @@ async function installGitRegistryRef(
 
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  const cloneArgs = ["clone", "--depth", "1"];
-  if (parsed.requestedRef) {
-    cloneArgs.push("--branch", parsed.requestedRef);
+  // Validate URL and ref before passing to git to prevent command injection
+  validateGitUrl(parsed.url);
+  if (parsed.requestedRef) validateGitRef(parsed.requestedRef);
+
+  let provisionalKitRoot: string;
+  let installRoot: string;
+  let stashRoot: string;
+  try {
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (parsed.requestedRef) {
+      cloneArgs.push("--branch", parsed.requestedRef);
+    }
+    cloneArgs.push(parsed.url, cloneDir);
+
+    const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
+    if (cloneResult.status !== 0) {
+      const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error";
+      throw new Error(`Failed to clone ${parsed.url}: ${err}`);
+    }
+
+    // Copy contents to extracted dir without .git
+    fs.mkdirSync(extractedDir, { recursive: true });
+    copyDirectoryContents(cloneDir, extractedDir);
+
+    // Clean up the clone dir
+    fs.rmSync(cloneDir, { recursive: true, force: true });
+
+    provisionalKitRoot = detectStashRoot(extractedDir);
+    installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    stashRoot = detectStashRoot(installRoot);
+  } catch (err) {
+    // Clean up the cache directory so stale or partially-cloned artifacts
+    // don't cause false cache hits on the next install attempt.
+    try {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; ignore errors
+    }
+    throw err;
   }
-  cloneArgs.push(parsed.url, cloneDir);
-
-  const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
-  if (cloneResult.status !== 0) {
-    const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error";
-    throw new Error(`Failed to clone ${parsed.url}: ${err}`);
-  }
-
-  // Copy contents to extracted dir without .git
-  fs.mkdirSync(extractedDir, { recursive: true });
-  copyDirectoryContents(cloneDir, extractedDir);
-
-  // Clean up the clone dir
-  fs.rmSync(cloneDir, { recursive: true, force: true });
-
-  const provisionalKitRoot = detectStashRoot(extractedDir);
-  const installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
-  const stashRoot = detectStashRoot(installRoot);
 
   return {
     id: resolved.id,
@@ -256,13 +291,13 @@ function applyAgentikitIncludeConfig(
   cacheDir: string,
   searchRoot: string = sourceRoot,
 ): string | undefined {
-  const includeConfig = findNearestAgentikitIncludeConfig(sourceRoot, searchRoot);
+  const includeConfig = findNearestIncludeConfig(sourceRoot, searchRoot);
   if (!includeConfig) return undefined;
 
   const selectedDir = path.join(cacheDir, "selected");
   fs.rmSync(selectedDir, { recursive: true, force: true });
   fs.mkdirSync(selectedDir, { recursive: true });
-  copyIncludedPaths(includeConfig.baseDir, includeConfig.include, selectedDir);
+  copyIncludedPaths(includeConfig.include, includeConfig.baseDir, selectedDir);
   return selectedDir;
 }
 
@@ -318,10 +353,11 @@ export function verifyArchiveIntegrity(archivePath: string, expected: string | u
     return;
   }
 
-  // Unrecognized format — skip verification
+  // Unrecognized format — warn and skip verification
+  warn("Unrecognized integrity format: %s — verification skipped", expected);
 }
 
-function extractTarGzSecure(archivePath: string, destinationDir: string): void {
+export function extractTarGzSecure(archivePath: string, destinationDir: string): void {
   const listResult = spawnSync("tar", ["tzf", archivePath], { encoding: "utf8" });
   if (listResult.status !== 0) {
     const err = listResult.stderr?.trim() || listResult.error?.message || "unknown error";
@@ -333,16 +369,48 @@ function extractTarGzSecure(archivePath: string, destinationDir: string): void {
   fs.rmSync(destinationDir, { recursive: true, force: true });
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  const extractResult = spawnSync("tar", ["xzf", archivePath, "--strip-components=1", "-C", destinationDir], {
-    encoding: "utf8",
-  });
+  const extractResult = spawnSync(
+    "tar",
+    ["xzf", archivePath, "--no-same-owner", "--strip-components=1", "-C", destinationDir],
+    { encoding: "utf8" },
+  );
   if (extractResult.status !== 0) {
     const err = extractResult.stderr?.trim() || extractResult.error?.message || "unknown error";
     throw new Error(`Failed to extract archive ${archivePath}: ${err}`);
   }
+
+  // Post-extraction scan: verify all extracted files are within destinationDir
+  // This mitigates TOCTOU between validateTarEntries (list) and tar extract.
+  scanExtractedFiles(destinationDir, destinationDir);
 }
 
-function validateTarEntries(listOutput: string): void {
+function scanExtractedFiles(dir: string, root: string): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    // Check for ".." segments in names (e.g. symlink tricks or crafted filenames)
+    if (entry.name.includes("..")) {
+      throw new Error(`Post-extraction scan: suspicious entry name: ${fullPath}`);
+    }
+    // Resolve symlinks to detect escapes outside the destination directory
+    if (entry.isSymbolicLink()) {
+      const target = fs.realpathSync(fullPath);
+      if (!isWithin(target, root)) {
+        throw new Error(`Post-extraction scan: symlink escapes destination directory: ${fullPath} -> ${target}`);
+      }
+    }
+    if (entry.isDirectory()) {
+      scanExtractedFiles(fullPath, root);
+    }
+  }
+}
+
+export function validateTarEntries(listOutput: string): void {
   const lines = listOutput.split(/\r?\n/).filter(Boolean);
   for (const rawLine of lines) {
     const entry = rawLine.trim();
@@ -378,89 +446,6 @@ function isDirectory(target: string): boolean {
   } catch {
     return false;
   }
-}
-
-function readAgentikitIncludeConfigAtDir(dirPath: string): { baseDir: string; include: string[] } | undefined {
-  const packageJsonPath = path.join(dirPath, "package.json");
-  if (!fs.existsSync(packageJsonPath)) return undefined;
-
-  let pkg: unknown;
-  try {
-    pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-  } catch {
-    return undefined;
-  }
-  if (typeof pkg !== "object" || pkg === null || Array.isArray(pkg)) return undefined;
-
-  const akmConfig = (pkg as Record<string, unknown>).akm;
-  if (typeof akmConfig !== "object" || akmConfig === null || Array.isArray(akmConfig)) return undefined;
-
-  const include = (akmConfig as Record<string, unknown>).include;
-  if (!Array.isArray(include)) return undefined;
-
-  const parsedInclude = include
-    .filter((value): value is string => typeof value === "string")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  return parsedInclude.length > 0 ? { baseDir: dirPath, include: parsedInclude } : undefined;
-}
-
-function findNearestAgentikitIncludeConfig(
-  startDir: string,
-  stopDir: string,
-): { baseDir: string; include: string[] } | undefined {
-  let current = path.resolve(startDir);
-  const boundary = path.resolve(stopDir);
-
-  while (isWithin(current, boundary)) {
-    const config = readAgentikitIncludeConfigAtDir(current);
-    if (config) return config;
-    if (current === boundary) break;
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-
-  return undefined;
-}
-
-function copyIncludedPaths(baseDir: string, include: string[], destinationDir: string): void {
-  for (const entry of include) {
-    const resolvedSource = path.resolve(baseDir, entry);
-    if (!isWithin(resolvedSource, baseDir)) {
-      throw new Error(`Path in akm.include escapes the package root: ${entry}`);
-    }
-    if (!fs.existsSync(resolvedSource)) {
-      throw new Error(`Path in akm.include does not exist: ${entry}`);
-    }
-    if (path.basename(resolvedSource) === ".git") {
-      continue;
-    }
-    const relativePath = path.relative(baseDir, resolvedSource);
-    if (!relativePath || relativePath === ".") {
-      copyDirectoryContents(baseDir, destinationDir);
-      continue;
-    }
-    copyPath(resolvedSource, path.join(destinationDir, relativePath));
-  }
-}
-
-function copyDirectoryContents(sourceDir: string, destinationDir: string): void {
-  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-    if (entry.name === ".git") continue;
-    copyPath(path.join(sourceDir, entry.name), path.join(destinationDir, entry.name));
-  }
-}
-
-function copyPath(sourcePath: string, destinationPath: string): void {
-  const stat = fs.statSync(sourcePath);
-  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-  if (stat.isDirectory()) {
-    fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
-    return;
-  }
-  fs.copyFileSync(sourcePath, destinationPath);
 }
 
 function hasStashDirs(dirPath: string): boolean {
@@ -522,6 +507,20 @@ function normalizeInstalledEntry(entry: InstalledKitEntry): InstalledKitEntry {
     stashRoot: path.resolve(entry.stashRoot),
     cacheDir: path.resolve(entry.cacheDir),
   };
+}
+
+function copyDirectoryContents(sourceDir: string, destinationDir: string): void {
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    if (entry.name === ".git") continue;
+    const src = path.join(sourceDir, entry.name);
+    const dest = path.join(destinationDir, entry.name);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    if (entry.isDirectory()) {
+      fs.cpSync(src, dest, { recursive: true, force: true });
+    } else {
+      fs.copyFileSync(src, dest);
+    }
+  }
 }
 
 async function computeFileHash(filePath: string): Promise<string> {

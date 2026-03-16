@@ -11,6 +11,8 @@ export class ConfigError extends Error {
   constructor(msg: string) {
     super(msg);
     this.name = "ConfigError";
+    // Fixes `instanceof` checks under ES5 transpilation targets.
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -19,6 +21,8 @@ export class UsageError extends Error {
   constructor(msg: string) {
     super(msg);
     this.name = "UsageError";
+    // Fixes `instanceof` checks under ES5 transpilation targets.
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
@@ -27,5 +31,7 @@ export class NotFoundError extends Error {
   constructor(msg: string) {
     super(msg);
     this.name = "NotFoundError";
+    // Fixes `instanceof` checks under ES5 transpilation targets.
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }

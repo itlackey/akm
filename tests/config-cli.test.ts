@@ -3,10 +3,10 @@ import type { AgentikitConfig } from "../src/config";
 import { getConfigValue, listConfig, parseConfigValue, setConfigValue, unsetConfigValue } from "../src/config-cli";
 
 describe("config CLI helpers", () => {
-  test("listConfig shows null for unconfigured embedding and llm", () => {
+  test("listConfig omits unconfigured embedding and llm", () => {
     const config = listConfig({ semanticSearch: true, searchPaths: [] });
-    expect(config.embedding).toBeNull();
-    expect(config.llm).toBeNull();
+    expect(config.embedding).toBeUndefined();
+    expect(config.llm).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 

@@ -1,12 +1,11 @@
-import type { AgentikitAssetType } from "./common";
-import type { KitSource } from "./registry-types";
+import type { InstalledKitEntry, KitSource } from "./registry-types";
 
-export type AgentikitSearchType = AgentikitAssetType | "any";
-export type SearchSource = "local" | "registry" | "both";
+export type AgentikitSearchType = string;
+export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
 
-export interface LocalSearchHit {
-  type: AgentikitAssetType;
+export interface StashSearchHit {
+  type: string;
   name: string;
   path: string;
   ref: string;
@@ -39,7 +38,7 @@ export interface RegistrySearchResultHit {
   registryName?: string;
 }
 
-export type SearchHit = LocalSearchHit | RegistrySearchResultHit;
+export type SearchHit = StashSearchHit | RegistrySearchResultHit;
 
 export interface SearchResponse {
   schemaVersion: number;
@@ -56,7 +55,8 @@ export interface AddResponse {
   schemaVersion: number;
   stashDir: string;
   ref: string;
-  installed: {
+  /** Present for registry kit installs (npm, github, git) */
+  installed?: {
     id: string;
     source: KitSource;
     ref: string;
@@ -67,6 +67,13 @@ export interface AddResponse {
     cacheDir: string;
     extractedDir: string;
     installedAt: string;
+  };
+  /** Present for local directory adds (routed to stashes config) */
+  stashSource?: {
+    type: "filesystem";
+    path: string;
+    name?: string;
+    stashRoot: string;
   };
   config: {
     searchPaths: string[];
@@ -80,17 +87,8 @@ export interface AddResponse {
   };
 }
 
-export interface KitInstallStatus {
-  id: string;
-  source: KitSource;
-  ref: string;
-  artifactUrl: string;
-  resolvedVersion?: string;
-  resolvedRevision?: string;
-  stashRoot: string;
-  cacheDir: string;
+export interface KitInstallStatus extends InstalledKitEntry {
   extractedDir: string;
-  installedAt: string;
 }
 
 export interface InstalledKitListEntry {
@@ -176,7 +174,7 @@ export interface UpdateResponse {
 
 export interface ShowResponse {
   schemaVersion?: number;
-  type: AgentikitAssetType | string;
+  type: string;
   name: string;
   path: string;
   content?: string;
@@ -189,7 +187,7 @@ export interface ShowResponse {
    * (e.g. `{ read: "allow", write: "deny" }`).
    */
   toolPolicy?: string | string[] | Record<string, unknown>;
-  modelHint?: unknown;
+  modelHint?: string;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;
   /** How to run this script (e.g. "bash deploy.sh", "bun run.ts") */

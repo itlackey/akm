@@ -31,6 +31,9 @@ akm registry add https://example.com/registry/index.json --name my-team
 # Add a skills.sh registry
 akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
+# Add an OpenViking stash source
+akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+
 # Remove a registry by URL or name
 akm registry remove my-team
 ```
@@ -45,6 +48,10 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://example.com/registry/index.json", "name": "my-team", "enabled": true },
     // skills.sh provider
     { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
+  ],
+  "stashes": [
+    // OpenViking stash provider (configured via `akm sources add`)
+    { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
 ```
@@ -310,6 +317,28 @@ To install a skill found via skills.sh, use the `ref` field (GitHub
 akm add vercel-labs/agent-skills
 ```
 
+#### `openviking` (stash provider)
+
+Connects to an [OpenViking](https://github.com/volcengine/openviking) server
+for context management. OpenViking is ByteDance's open-source context file
+system for AI agents, using `viking://` URIs.
+
+> **Note:** OpenViking is a *stash provider*, not a registry provider. Configure
+> it via `akm sources add`, not `akm registry add`.
+
+```bash
+akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+```
+
+Key behaviors:
+- Semantic search via `POST /api/v1/search/find` (or text search via `POST /api/v1/search/grep`)
+- Results returned as stash hits in the unified `hits[]` array (not installable via `akm add`)
+- `viking://` URIs viewable with `akm show viking://path`
+- Per-query response caching with 5-minute TTL
+- Stale cache fallback (up to 1 hour) on network failure
+- Optional API key authentication via `options.apiKey`
+- Optional `options.searchType`: `"semantic"` (default) or `"text"`
+
 ### Implementing a Custom Provider
 
 Each provider is a TypeScript class implementing the `RegistryProvider`
@@ -385,7 +414,7 @@ Minimal example:
       "ref": "your-org/deploy-kit",
       "source": "github",
       "tags": ["deploy", "infrastructure"],
-      "assetTypes": ["script", "skill"]
+      "assetTypes": ["script", "skill", "memory"]
     }
   ]
 }
@@ -397,7 +426,14 @@ Host the file at a stable URL and have team members add it:
 akm registry add https://your-server.com/akm-registry/index.json --name team
 ```
 
-To generate the index automatically, consider the tooling in the
+To generate the index automatically, use the built-in `build-index` subcommand:
+
+```bash
+akm registry build-index --out dist/index.json
+```
+
+This scans the current directory for asset type directories and produces a v2
+index with kit and asset entries. You can also use the tooling in the
 [akm-registry](https://github.com/itlackey/akm-registry) repository used by the
 official registry.
 
@@ -419,7 +455,7 @@ first.
       "ref": "@scope/my-kit",
       "source": "npm",
       "tags": ["deploy"],
-      "assetTypes": ["script", "skill"],
+      "assetTypes": ["script", "skill", "memory"],
       "assets": [
         { "type": "script", "name": "deploy.sh", "description": "Deploy to production" },
         { "type": "skill", "name": "code-review", "description": "Structured code review process" }
@@ -433,7 +469,7 @@ Each asset entry supports:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `type` | yes | Asset type (`script`, `skill`, `command`, `agent`, `knowledge`) |
+| `type` | yes | Asset type (`script`, `skill`, `command`, `agent`, `knowledge`, `memory`) |
 | `name` | yes | Asset name |
 | `description` | no | One-line summary |
 | `tags` | no | Searchable keywords |
