@@ -16,10 +16,10 @@ import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { agentikitAdd } from "./stash-add";
 import { agentikitClone } from "./stash-clone";
-import { agentikitSearch } from "./stash-search";
+import { agentikitSearch, parseSearchSource } from "./stash-search";
 import { agentikitShowUnified } from "./stash-show";
 import { resolveStashSources } from "./stash-source";
-import type { KnowledgeView, SearchSource } from "./stash-types";
+import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -977,7 +977,6 @@ const main = defineCommand({
   },
 });
 
-const _SEARCH_SOURCES: string[] = ["stash", "local", "registry", "both"];
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
@@ -985,12 +984,6 @@ const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines
 // so we must replace process.argv with the normalized version before runMain.
 process.argv = normalizeShowArgv(process.argv);
 runMain(main);
-
-function parseSearchSource(value: string): SearchSource {
-  if (value === "local") return "stash"; // legacy alias
-  if (value === "stash" || value === "registry" || value === "both") return value;
-  throw new UsageError(`Invalid value for --source: ${value}. Expected one of: stash|registry|both`);
-}
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;

@@ -160,6 +160,7 @@ export function getAssetTypes(): string[] {
   return Object.keys(ASSET_SPECS_INTERNAL);
 }
 
+/** Warning: mutable `let` — stale if captured before `registerAssetType()` calls. Prefer `getAssetTypes()`. */
 export let ASSET_TYPES: string[] = getAssetTypes();
 
 export const TYPE_DIRS: Record<string, string> = Object.fromEntries(
@@ -180,7 +181,13 @@ export function deriveCanonicalAssetNameFromStashRoot(
   filePath: string,
 ): string | undefined {
   const relPath = toPosix(path.relative(stashRoot, filePath));
-  const firstSegment = relPath.split("/").filter(Boolean)[0];
+  const segments = relPath.split("/").filter(Boolean);
+  const firstSegment = segments[0];
+  // When the first segment matches the canonical type dir (e.g. "agents"),
+  // use it as the type root so canonical names are relative to it.
+  // Otherwise fall back to stashRoot — this preserves the full relative path
+  // as the canonical name, which is correct for installed kits that live
+  // under custom directories (e.g. "tools/agents/svelte-file-editor").
   const typeRoot = firstSegment === TYPE_DIRS[assetType] ? path.join(stashRoot, firstSegment) : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);
 }

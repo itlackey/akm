@@ -218,6 +218,15 @@ describe("walkStashFlat", () => {
   });
 });
 
+// ── T6: isInsideGitRepo in nested repo ───────────────────────────────────────
+//
+// Gap: isInsideGitRepo() walks up the directory tree looking for .git. In a
+// nested git repo (e.g. a stash directory inside a monorepo worktree), it
+// should find the nearest .git — but creating nested repos in CI is fragile
+// and platform-dependent, so this gap is intentionally left untested here.
+// If regression is suspected, test manually by creating a nested git init
+// inside an existing repo and verifying walkStashFlat still uses the git walker.
+
 // ── R4.3: symlink escape ─────────────────────────────────────────────────────
 //
 // walkStashFlat (manual fallback) must skip symlinks that point outside the

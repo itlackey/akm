@@ -7,12 +7,16 @@ import { agentikitIndex, buildSearchText } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
 let testConfigDir = "";
+let testCacheDir = "";
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 
-// Each test gets a fresh database and isolated config
+// Each test gets a fresh database and isolated config/cache
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-config-"));
+  testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-cache-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_CACHE_HOME = testCacheDir;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -30,9 +34,18 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME;
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testCacheDir) {
+    fs.rmSync(testCacheDir, { recursive: true, force: true });
+    testCacheDir = "";
   }
 });
 
@@ -264,4 +277,66 @@ test("agentikitIndex does not generate heuristic searchHints (LLM-only)", async 
   expect(entries.length).toBe(1);
   expect(entries[0].entry.searchHints).toBeUndefined();
   closeDatabase(db);
+});
+
+// ── T2: Incremental indexing with multi-stash-dir deduplication ─────────────
+//
+// When multiple stash directories contain overlapping paths (e.g. a shared
+// directory or symlinked directory appears in two stash sources), the indexer
+// should deduplicate using the `seenPaths` set so each directory is only
+// indexed once and entries are not duplicated.
+
+test("agentikitIndex deduplicates overlapping directories across multiple stash dirs", async () => {
+  // Create a primary stash dir with a script
+  const primaryStash = tmpStash();
+  writeFile(path.join(primaryStash, "scripts", "shared", "shared.sh"), "#!/bin/bash\necho shared\n");
+
+  // Create a second stash dir that is actually the SAME directory
+  // (simulates overlapping searchPaths pointing to the same location)
+  const secondStash = primaryStash;
+
+  // Write a config that includes the same directory twice via searchPaths
+  const { saveConfig } = await import("../src/config");
+  process.env.AKM_STASH_DIR = primaryStash;
+  saveConfig({ semanticSearch: false, searchPaths: [secondStash] });
+
+  const result = await agentikitIndex({ stashDir: primaryStash });
+
+  // The shared script should appear exactly once, not duplicated
+  const db = openDatabase();
+  const entries = getAllEntries(db, "script");
+  const sharedEntries = entries.filter((e) => e.entry.name.includes("shared"));
+  expect(sharedEntries).toHaveLength(1);
+  closeDatabase(db);
+
+  expect(result.totalEntries).toBeGreaterThanOrEqual(1);
+});
+
+test("agentikitIndex deduplicates when two stash dirs share a common subdirectory", async () => {
+  // Create a shared directory with content
+  const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-shared-"));
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+    fs.mkdirSync(path.join(sharedDir, sub), { recursive: true });
+  }
+  writeFile(path.join(sharedDir, "scripts", "utility", "util.sh"), "#!/bin/bash\necho utility\n");
+
+  // Create two stash dirs, both pointing to the same shared dir
+  const stash1 = sharedDir;
+  const stash2 = sharedDir;
+
+  const { saveConfig } = await import("../src/config");
+  process.env.AKM_STASH_DIR = stash1;
+  saveConfig({ semanticSearch: false, searchPaths: [stash2] });
+
+  await agentikitIndex({ stashDir: stash1, full: true });
+
+  const db = openDatabase();
+  const entries = getAllEntries(db);
+  // Count entries with the utility name — should be exactly 1
+  const utilEntries = entries.filter((e) => e.entry.name.includes("util"));
+  expect(utilEntries).toHaveLength(1);
+  closeDatabase(db);
+
+  // Clean up
+  fs.rmSync(sharedDir, { recursive: true, force: true });
 });

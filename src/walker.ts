@@ -104,8 +104,7 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
         .filter(Boolean);
       return !dirParts.some((part) => SKIP_DIRS.has(part) || part.startsWith("."));
     })
-    .filter((f) => !SKIP_FILES.has(path.basename(f)))
-    .filter((f) => !f.includes("/.") && !f.startsWith(".")); // skip dot-dirs/files
+    .filter((f) => !SKIP_FILES.has(path.basename(f)));
 
   const results: FileContext[] = [];
   for (const relFile of files) {
@@ -122,7 +121,11 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   return results;
 }
 
-/** Check if a directory is inside a git repository by walking up to find .git. */
+/**
+ * Check if a directory is inside a git repository by walking up to find .git.
+ * Intentionally walks above stashRoot so that parent repo .gitignore rules
+ * apply when the stash is nested inside a larger git repository.
+ */
 function isInsideGitRepo(dir: string): boolean {
   let current = path.resolve(dir);
   const root = path.parse(current).root;

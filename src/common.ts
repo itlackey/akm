@@ -226,3 +226,7 @@ function parseRetryAfter(response: Response): number | undefined {
   const seconds = parseInt(header, 10);
   return Number.isNaN(seconds) ? undefined : seconds * 1000;
 }
+
+export function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

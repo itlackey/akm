@@ -1,3 +1,4 @@
+import { toErrorMessage } from "./common";
 import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "./config";
 import { resolveProviderFactory } from "./registry-factory";
 import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "./registry-types";
@@ -126,8 +127,4 @@ function createProvider(entry: RegistryConfigEntry, warnings: string[]) {
 function clampLimit(limit: number | undefined): number {
   if (!limit || !Number.isFinite(limit)) return 20;
   return Math.min(100, Math.max(1, Math.trunc(limit)));
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

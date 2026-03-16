@@ -187,7 +187,7 @@ export interface ShowResponse {
    * (e.g. `{ read: "allow", write: "deny" }`).
    */
   toolPolicy?: string | string[] | Record<string, unknown>;
-  modelHint?: unknown;
+  modelHint?: string;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;
   /** How to run this script (e.g. "bash deploy.sh", "bun run.ts") */

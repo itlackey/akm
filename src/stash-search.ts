@@ -22,17 +22,19 @@ export async function agentikitSearch(input: {
   query: string;
   type?: AgentikitSearchType;
   limit?: number;
-  source?: SearchSource;
+  source?: SearchSource | string;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
   const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
-  const source = parseSearchSource(input.source);
+  const source = parseSearchSource(input.source ?? "stash");
   const config = loadConfig();
   const sources = resolveStashSources(undefined, config);
   if (sources.length === 0) {
+    // stashDir: "" is a safe sentinel here — the response carries zero hits
+    // and a warning, so no downstream code will try to use the empty path.
     return {
       schemaVersion: 1,
       stashDir: "",
@@ -42,6 +44,8 @@ export async function agentikitSearch(input: {
       timing: { totalMs: Date.now() - t0 },
     };
   }
+  // Primary stash directory — used for DB path lookups and as the default
+  // stash root. Safe because the empty-sources case is handled above.
   const stashDir = sources[0].path;
 
   // Resolve additional stash providers (e.g. OpenViking) from config
@@ -180,12 +184,12 @@ function normalizeLimit(limit?: number): number {
   return Math.min(Math.floor(limit), 200);
 }
 
-function parseSearchSource(source: SearchSource | string | undefined): SearchSource {
+export function parseSearchSource(source: SearchSource | string | undefined): SearchSource {
   if (source === "stash" || source === "registry" || source === "both") return source;
   // Accept "local" as alias for "stash"
   if (source === "local") return "stash";
   if (typeof source === "undefined") return "stash";
-  throw new UsageError(`Invalid search source: ${String(source)}. Expected one of: stash|registry|both`);
+  throw new UsageError(`Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`);
 }
 
 function mergeSearchHits(

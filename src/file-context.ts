@@ -178,21 +178,23 @@ const matchers: AssetMatcher[] = [];
 /** Renderer lookup by name. */
 const renderers = new Map<string, AssetRenderer>();
 
-let builtinsInitialized = false;
+let builtinsPromise: Promise<void> | undefined;
 
 /**
  * Ensure that built-in matchers and renderers are registered.
  * Called lazily on first use of runMatchers/getRenderer.
+ * Stores the in-progress promise so parallel callers don't double-register.
  */
 async function ensureBuiltinsRegistered(): Promise<void> {
-  if (builtinsInitialized) return;
-  builtinsInitialized = true;
-  // Lazy dynamic import avoids a top-level static import cycle.
-  // These are only evaluated once.
-  const { registerBuiltinMatchers } = await import("./matchers.js");
-  const { registerBuiltinRenderers } = await import("./renderers.js");
-  registerBuiltinMatchers();
-  registerBuiltinRenderers();
+  if (!builtinsPromise) {
+    builtinsPromise = (async () => {
+      const { registerBuiltinMatchers } = await import("./matchers.js");
+      const { registerBuiltinRenderers } = await import("./renderers.js");
+      registerBuiltinMatchers();
+      registerBuiltinRenderers();
+    })();
+  }
+  return builtinsPromise;
 }
 
 /**

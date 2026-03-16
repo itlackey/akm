@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry } from "../common";
+import { fetchWithRetry, toErrorMessage } from "../common";
 import type { RegistryConfigEntry } from "../config";
 import { asString } from "../github";
 import { getRegistryIndexCacheDir } from "../paths";
@@ -145,7 +145,7 @@ export function writeCachedIndex(cachePath: string, index: RegistryIndex): void 
   try {
     const dir = path.dirname(cachePath);
     fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${cachePath}.tmp.${process.pid}`;
+    const tmpPath = `${cachePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
     fs.writeFileSync(tmpPath, JSON.stringify(index), "utf8");
     fs.renameSync(tmpPath, cachePath);
   } catch {
@@ -415,8 +415,4 @@ function buildInstallRef(source: string, ref: string): string {
     default:
       return `github:${ref}`;
   }
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -79,7 +79,7 @@ export function loadStashFile(dirPath: string): StashFile | null {
 
 export function writeStashFile(dirPath: string, stash: StashFile): void {
   const filePath = stashFilePath(dirPath);
-  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
   try {
     fs.writeFileSync(tmpPath, `${JSON.stringify(stash, null, 2)}\n`, "utf8");
     fs.renameSync(tmpPath, filePath);
@@ -93,6 +93,14 @@ export function writeStashFile(dirPath: string, stash: StashFile): void {
   }
 }
 
+/**
+ * Validate and normalize a raw object into a `StashEntry`.
+ *
+ * **Ordering dependency:** Uses `isAssetType()` to check `entry.type`, which
+ * only recognizes custom types registered via `registerAssetType()`. If this
+ * function is called before custom types are registered, those entries will be
+ * rejected as invalid.
+ */
 export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof entry !== "object" || entry === null) return null;
   const e = entry as Record<string, unknown>;

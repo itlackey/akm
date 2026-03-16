@@ -516,3 +516,240 @@ describe("mapOVType", () => {
     expect(uriToVikingRef("/skills/foo")).toBe("viking://skills/foo");
   });
 });
+
+// ── T4: show() ignores `view` parameter ─────────────────────────────────────
+//
+// The OpenViking provider's show() method accepts an optional `view` parameter
+// (KnowledgeView) but always returns full content regardless. This is by
+// design — view filtering is the caller's responsibility for remote assets.
+
+describe("show() ignores view parameter", () => {
+  test("show returns full content when view is { mode: 'toc' }", async () => {
+    const fullContent = "# Full Document\n\n## Section A\n\nContent A.\n\n## Section B\n\nContent B.";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(
+            JSON.stringify({ status: "ok", result: { name: "doc", type: "knowledge", abstract: "A doc" } }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: fullContent }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      // Call with a toc view — should still return full content
+      const result = await provider.show("viking://knowledge/doc", { mode: "toc" });
+
+      expect(result.content).toBe(fullContent);
+      expect(result.name).toBe("doc");
+      expect(result.type).toBe("knowledge");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("show returns full content when view is { mode: 'frontmatter' }", async () => {
+    const fullContent = "---\ntitle: Test\n---\n# Main Content\n\nBody text.";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(JSON.stringify({ status: "ok", result: { name: "fm-doc", type: "resources" } }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: fullContent }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      const result = await provider.show("viking://resources/fm-doc", { mode: "frontmatter" });
+
+      // Full content returned, not just frontmatter
+      expect(result.content).toBe(fullContent);
+      expect(result.type).toBe("knowledge");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("show returns same content with and without view parameter", async () => {
+    const fullContent = "# Identical Content\n\nShould be the same regardless of view.";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(JSON.stringify({ status: "ok", result: { name: "same", type: "memories" } }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: fullContent }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      const withoutView = await provider.show("viking://memories/same");
+      const withFullView = await provider.show("viking://memories/same", { mode: "full" });
+      const withTocView = await provider.show("viking://memories/same", { mode: "toc" });
+
+      expect(withoutView.content).toBe(fullContent);
+      expect(withFullView.content).toBe(fullContent);
+      expect(withTocView.content).toBe(fullContent);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+// ── T7: Degraded show — stat returns null, content succeeds ─────────────────
+//
+// When the stat API returns null (e.g. asset has no metadata) but the content
+// API succeeds, the provider should use URI-inferred type and name rather than
+// throwing an error.
+
+describe("show() degraded — stat null, content present", () => {
+  test("uses URI-inferred type and name when stat returns null", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          // Stat returns null — no metadata available
+          return new Response(JSON.stringify({ status: "ok", result: null }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: "# Skill content here" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      const result = await provider.show("viking://skills/my-skill");
+
+      // Name should be inferred from the URI path's last segment
+      expect(result.name).toBe("my-skill");
+      // Type should be inferred from the URI's first path segment ("skills" -> "skill")
+      expect(result.type).toBe("skill");
+      // Content should still be returned
+      expect(result.content).toBe("# Skill content here");
+      expect(result.editable).toBe(false);
+      // No description when stat is null
+      expect(result.description).toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("infers 'knowledge' type for unknown URI segment when stat is null", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(JSON.stringify({ status: "ok", result: null }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: "Some content" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      const result = await provider.show("viking://documents/my-doc");
+
+      // "documents" is not in OV_TYPE_MAP, so it defaults to "knowledge"
+      expect(result.type).toBe("knowledge");
+      expect(result.name).toBe("my-doc");
+      expect(result.content).toBe("Some content");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("infers name from last URI segment when stat is null", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(JSON.stringify({ status: "ok", result: null }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: "# Deep content" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    try {
+      const factory = getFactory();
+      const provider = factory({ type: "openviking", url: `http://localhost:${server.port}` });
+
+      const result = await provider.show("viking://memories/project/deep-context");
+
+      // Name comes from the last URI segment
+      expect(result.name).toBe("deep-context");
+      // Type inferred from first segment "memories" -> "memory"
+      expect(result.type).toBe("memory");
+      expect(result.content).toBe("# Deep content");
+    } finally {
+      server.stop(true);
+    }
+  });
+});

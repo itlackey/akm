@@ -388,6 +388,80 @@ describe("FTS search", () => {
     }
   });
 
+  // ── T5: sanitizeFtsQuery edge cases ──────────────────────────────────────
+  // sanitizeFtsQuery is private, so we test it indirectly through searchFts.
+
+  test("query that becomes empty after sanitization returns no results", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "target", { searchText: "some useful content" });
+      rebuildFts(db);
+
+      // "! @" contains only non-alphanumeric chars; after sanitization all
+      // tokens are stripped, leaving an empty FTS query.
+      const results = searchFts(db, "! @", 10);
+      expect(results).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("query with only 1-character tokens returns no results", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
+      rebuildFts(db);
+
+      // "a b c" — after sanitization each token is 1 char, below the
+      // min-length threshold of 2, so all are filtered out.
+      const results = searchFts(db, "a b c", 10);
+      expect(results).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("FTS5 syntax injection is neutralized", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "foo-tool", { searchText: "foo bar baz" });
+      insertTestEntry(db, "bar-tool", { searchText: "bar qux quux" });
+      rebuildFts(db);
+
+      // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
+      // After sanitization, non-alpha chars are stripped, leaving tokens
+      // "NEAR", "foo", "bar" joined with OR — should not throw and should
+      // return matches for foo and/or bar.
+      const results = searchFts(db, "NEAR(foo, bar)", 10);
+      expect(results.length).toBeGreaterThanOrEqual(1);
+
+      // Verify both tools can appear (OR semantics)
+      const names = results.map((r) => r.entry.name);
+      expect(names).toContain("foo-tool");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("normal multi-word query returns correct results", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "deploy-prod", {
+        searchText: "deploy application production servers",
+      });
+      insertTestEntry(db, "test-runner", {
+        searchText: "test runner unit integration",
+      });
+      rebuildFts(db);
+
+      const results = searchFts(db, "deploy production", 10);
+      expect(results).toHaveLength(1);
+      expect(results[0].entry.name).toBe("deploy-prod");
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   test("rebuildFts synchronizes FTS with entries table", () => {
     const db = openDatabase(tmpDbPath());
     try {

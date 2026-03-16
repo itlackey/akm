@@ -229,6 +229,13 @@ export function setMeta(db: Database, key: string, value: string): void {
 
 // ── Entry operations ────────────────────────────────────────────────────────
 
+/**
+ * Insert or update an entry in the `entries` table. Returns the row id.
+ *
+ * **Important:** This does not update the FTS index. Callers must call
+ * `rebuildFts()` after all upserts are complete for full-text search to
+ * reflect the changes.
+ */
 export function upsertEntry(
   db: Database,
   entryKey: string,

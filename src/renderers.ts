@@ -72,7 +72,7 @@ export function extractCommentTags(filePath: string): ExecHints {
     return {};
   }
 
-  const lines = content.split(/\r?\n/).slice(0, 50);
+  const lines = content.split(/\r?\n/, 50);
   const hints: ExecHints = {};
 
   for (const line of lines) {
@@ -248,7 +248,7 @@ const commandMdRenderer: AssetRenderer = {
       action: "Fill $ARGUMENTS placeholders in the template, then dispatch",
       description: toStringOrUndefined(parsedMd.data.description),
       template,
-      modelHint: parsedMd.data.model,
+      modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
       agent: toStringOrUndefined(parsedMd.data.agent),
       parameters: extractParameters(template),
     };
@@ -271,7 +271,7 @@ const agentMdRenderer: AssetRenderer = {
       description: toStringOrUndefined(parsedMd.data.description),
       prompt: parsedMd.content,
       toolPolicy: parsedMd.data.tools as ShowResponse["toolPolicy"],
-      modelHint: parsedMd.data.model,
+      modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
     };
   },
 };
