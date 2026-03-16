@@ -23,7 +23,6 @@ export interface SourceRemoveResult {
 export interface SourceListResult {
   localSources: Array<{ path: string; registryId?: string }>;
   stashes: StashConfigEntry[];
-  remoteSources?: StashConfigEntry[];
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────
@@ -70,10 +69,7 @@ export function addStashSource(opts: {
   }
 
   stashes.push(entry);
-
-  // Drop legacy remoteStashSources when writing stashes
-  const { remoteStashSources, ...rest } = config;
-  saveConfig({ ...rest, stashes });
+  saveConfig({ ...config, stashes });
 
   return { stashes, added: true, entry };
 }
@@ -105,27 +101,18 @@ export function removeStashSource(target: string): SourceRemoveResult {
   }
 
   const removed = stashes.splice(idx, 1)[0];
-
-  // Drop legacy remoteStashSources when writing stashes (same as addStashSource)
-  const { remoteStashSources, ...rest } = config;
-  saveConfig({ ...rest, stashes });
+  saveConfig({ ...config, stashes });
 
   return { stashes, removed: true, entry: removed };
 }
 
 /**
- * List all stash sources (local filesystem + configured stashes + legacy remote).
+ * List all stash sources (local filesystem + configured stashes).
  */
 export function listStashSources(): SourceListResult {
   const config = loadConfig();
   const localSources = resolveStashSources();
   const stashes = config.stashes ?? [];
-  // Legacy fallback: show remoteStashSources if no stashes config
-  const legacyRemote = !config.stashes ? (config.remoteStashSources ?? []) : [];
 
-  return {
-    localSources,
-    stashes,
-    ...(legacyRemote.length > 0 ? { remoteSources: legacyRemote } : {}),
-  };
+  return { localSources, stashes };
 }

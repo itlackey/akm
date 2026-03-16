@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getConfigPath, loadConfig, saveConfig } from "../src/config";
+import { loadConfig, saveConfig } from "../src/config";
 import { addStashSource, listStashSources, removeStashSource } from "../src/stash-source-manage";
 
 const createdTmpDirs: string[] = [];
@@ -195,27 +195,6 @@ describe("addStashSource", () => {
     expect(config.stashes![2].type).toBe("custom-provider");
   });
 
-  test("drops legacy remoteStashSources on add", () => {
-    // Write raw config with remoteStashSources directly to disk (bypass saveConfig sanitization)
-    const configPath = getConfigPath();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        semanticSearch: true,
-        searchPaths: [],
-        remoteStashSources: [{ type: "openviking", url: "https://legacy.example.com" }],
-      }),
-    );
-
-    const fsPath = createTmpDir("akm-legacy-drop-");
-    addStashSource({ target: fsPath });
-
-    const updated = loadConfig();
-    expect(updated.remoteStashSources).toBeUndefined();
-    // The migration will have moved the legacy source to stashes, plus our new add
-    expect(updated.stashes!.some((s) => s.type === "filesystem")).toBe(true);
-  });
-
   test("preserves existing stashes when adding", () => {
     const config = loadConfig();
     saveConfig({
@@ -381,25 +360,6 @@ describe("listStashSources", () => {
 
     const result = listStashSources();
     expect(result.stashes).toHaveLength(3);
-  });
-
-  test("migrates legacy remoteStashSources to stashes on list", () => {
-    // Write raw config with remoteStashSources directly to disk
-    const configPath = getConfigPath();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        semanticSearch: true,
-        searchPaths: [],
-        remoteStashSources: [{ type: "openviking", url: "https://legacy.example.com" }],
-      }),
-    );
-
-    // loadConfig triggers migration; after that the legacy sources appear in stashes
-    const result = listStashSources();
-    const hasLegacyMigrated = result.stashes.some((s) => s.url === "https://legacy.example.com");
-    // Either the migration moved them to stashes or they appear as remoteSources
-    expect(hasLegacyMigrated || (result.remoteSources?.length ?? 0) > 0).toBe(true);
   });
 
   test("includes primary stash dir in localSources", () => {
