@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { fetchWithRetry, isWithin } from "./common";
-import { type AgentikitConfig, loadConfig, saveConfig } from "./config";
+import { type AgentIKitConfig, loadConfig, saveConfig } from "./config";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
@@ -77,7 +77,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
     extractTarGzSecure(archivePath, extractedDir);
 
     provisionalKitRoot = detectStashRoot(extractedDir);
-    installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
     stashRoot = detectStashRoot(installRoot);
   } catch (err) {
     // Clean up the cache directory so stale or partially-extracted artifacts
@@ -145,7 +145,7 @@ async function installGitRegistryRef(
   if (isDirectory(extractedDir)) {
     try {
       const provisionalKitRoot = detectStashRoot(extractedDir);
-      const installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+      const installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
       const stashRoot = detectStashRoot(installRoot);
       if (stashRoot) {
         return {
@@ -196,7 +196,7 @@ async function installGitRegistryRef(
     fs.rmSync(cloneDir, { recursive: true, force: true });
 
     provisionalKitRoot = detectStashRoot(extractedDir);
-    installRoot = applyAgentikitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
     stashRoot = detectStashRoot(installRoot);
   } catch (err) {
     // Clean up the cache directory so stale or partially-cloned artifacts
@@ -223,13 +223,13 @@ async function installGitRegistryRef(
   };
 }
 
-export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AgentikitConfig {
+export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AgentIKitConfig {
   const current = loadConfig();
   const currentInstalled = current.installed ?? [];
   const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
   const nextInstalled = [...withoutExisting, normalizeInstalledEntry(entry)];
 
-  const nextConfig: AgentikitConfig = {
+  const nextConfig: AgentIKitConfig = {
     ...current,
     installed: nextInstalled,
   };
@@ -237,12 +237,12 @@ export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): Agentiki
   return nextConfig;
 }
 
-export function removeInstalledRegistryEntry(id: string): AgentikitConfig {
+export function removeInstalledRegistryEntry(id: string): AgentIKitConfig {
   const current = loadConfig();
   const currentInstalled = current.installed ?? [];
   const nextInstalled = currentInstalled.filter((item) => item.id !== id);
 
-  const nextConfig: AgentikitConfig = {
+  const nextConfig: AgentIKitConfig = {
     ...current,
     installed: nextInstalled.length > 0 ? nextInstalled : undefined,
   };
@@ -286,7 +286,7 @@ function buildInstallCacheDir(cacheRootDir: string, source: KitSource, id: strin
   return path.join(cacheRootDir, slug || source, versionSlug);
 }
 
-function applyAgentikitIncludeConfig(
+function applyAgentIKitIncludeConfig(
   sourceRoot: string,
   cacheDir: string,
   searchRoot: string = sourceRoot,

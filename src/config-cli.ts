@@ -1,5 +1,5 @@
 import {
-  type AgentikitConfig,
+  type AgentIKitConfig,
   DEFAULT_CONFIG,
   type EmbeddingConnectionConfig,
   type LlmConnectionConfig,
@@ -9,7 +9,7 @@ import {
 } from "./config";
 import { UsageError } from "./errors";
 
-export function parseConfigValue(key: string, value: string): Partial<AgentikitConfig> {
+export function parseConfigValue(key: string, value: string): Partial<AgentIKitConfig> {
   switch (key) {
     case "stashDir":
       return { stashDir: requireNonEmptyString(value, key) };
@@ -43,7 +43,7 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
   }
 }
 
-export function getConfigValue(config: AgentikitConfig, key: string): unknown {
+export function getConfigValue(config: AgentIKitConfig, key: string): unknown {
   switch (key) {
     case "stashDir":
       return config.stashDir ?? null;
@@ -68,7 +68,7 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
   }
 }
 
-export function setConfigValue(config: AgentikitConfig, key: string, rawValue: string): AgentikitConfig {
+export function setConfigValue(config: AgentIKitConfig, key: string, rawValue: string): AgentIKitConfig {
   switch (key) {
     case "stashDir":
     case "semanticSearch":
@@ -85,7 +85,7 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
   }
 }
 
-export function unsetConfigValue(config: AgentikitConfig, key: string): AgentikitConfig {
+export function unsetConfigValue(config: AgentIKitConfig, key: string): AgentIKitConfig {
   switch (key) {
     case "stashDir":
       return { ...config, stashDir: undefined };
@@ -106,7 +106,7 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
   }
 }
 
-export function listConfig(config: AgentikitConfig): Record<string, unknown> {
+export function listConfig(config: AgentIKitConfig): Record<string, unknown> {
   const result: Record<string, unknown> = {
     semanticSearch: config.semanticSearch,
     registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
@@ -121,7 +121,7 @@ export function listConfig(config: AgentikitConfig): Record<string, unknown> {
   return result;
 }
 
-function mergeConfigValue(config: AgentikitConfig, partial: Partial<AgentikitConfig>): AgentikitConfig {
+function mergeConfigValue(config: AgentIKitConfig, partial: Partial<AgentIKitConfig>): AgentIKitConfig {
   return {
     ...config,
     ...partial,

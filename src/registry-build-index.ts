@@ -12,10 +12,14 @@ import { walkStashFlat } from "./walker";
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
 const DEFAULT_MANUAL_ENTRIES_PATH = path.resolve("manual-entries.json");
 const DEFAULT_OUTPUT_PATH = path.resolve("index.json");
-const REQUIRED_KEYWORDS = ["agentikit", "akm-kit"];
-const GITHUB_TOPICS = ["agentikit", "akm-kit"];
+const REQUIRED_KEYWORDS = ["agent-i-kit", "akm-kit", "agentikit"];
+const GITHUB_TOPICS = ["agent-i-kit", "akm-kit", "agentikit"];
 const EXCLUDED_REPOS = new Set(["itlackey/agentikit-plugins", "itlackey/agentikit"]);
 const EXCLUDED_NPM_PACKAGES = new Set([
+  "agent-i-kit",
+  "agent-i-kit-claude",
+  "agent-i-kit-opencode",
+  "agent-i-kit-plugins",
   "agentikit",
   "agentikit-claude",
   "agentikit-opencode",

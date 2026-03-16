@@ -7,17 +7,17 @@ import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { agentikitIndex } from "./indexer";
-import { agentikitInit } from "./init";
-import { agentikitList, agentikitRemove, agentikitUpdate } from "./installed-kits";
+import { agentIKitIndex } from "./indexer";
+import { agentIKitInit } from "./init";
+import { agentIKitList, agentIKitRemove, agentIKitUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { agentikitAdd } from "./stash-add";
-import { agentikitClone } from "./stash-clone";
-import { agentikitSearch, parseSearchSource } from "./stash-search";
-import { agentikitShowUnified } from "./stash-show";
+import { agentIKitAdd } from "./stash-add";
+import { agentIKitClone } from "./stash-clone";
+import { agentIKitSearch, parseSearchSource } from "./stash-search";
+import { agentIKitShowUnified } from "./stash-show";
 import { addStashSource, listStashSources, removeStashSource } from "./stash-source-manage";
 import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
@@ -432,7 +432,7 @@ const initCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitInit({ dir: args.dir });
+      const result = await agentIKitInit({ dir: args.dir });
       output("init", result);
     });
   },
@@ -445,7 +445,7 @@ const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitIndex({ full: args.full });
+      const result = await agentIKitIndex({ full: args.full });
       output("index", result);
     });
   },
@@ -473,7 +473,7 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await agentikitSearch({ query: args.query, type, limit, source });
+      const result = await agentIKitSearch({ query: args.query, type, limit, source });
       output("search", result);
     });
   },
@@ -490,7 +490,7 @@ const addCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitAdd({ ref: args.ref });
+      const result = await agentIKitAdd({ ref: args.ref });
       output("add", result);
     });
   },
@@ -500,7 +500,7 @@ const listCommand = defineCommand({
   meta: { name: "list", description: "List installed kits" },
   async run() {
     await runWithJsonErrors(async () => {
-      const result = await agentikitList();
+      const result = await agentIKitList();
       output("list", result);
     });
   },
@@ -513,7 +513,7 @@ const removeCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitRemove({ target: args.target });
+      const result = await agentIKitRemove({ target: args.target });
       output("remove", result);
     });
   },
@@ -528,7 +528,7 @@ const updateCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitUpdate({ target: args.target, all: args.all, force: args.force });
+      const result = await agentIKitUpdate({ target: args.target, all: args.all, force: args.force });
       output("update", result);
     });
   },
@@ -599,7 +599,7 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await agentikitShowUnified({ ref: args.ref, view });
+      const result = await agentIKitShowUnified({ ref: args.ref, view });
       output("show", result);
     });
   },
@@ -712,7 +712,7 @@ const cloneCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentikitClone({
+      const result = await agentIKitClone({
         sourceRef: args.ref,
         newName: args.name,
         force: args.force,

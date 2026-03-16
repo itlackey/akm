@@ -121,8 +121,8 @@ Not every npm package or GitHub repo is an akm kit. To keep results
 relevant, the registry enforces tag-based filtering:
 
 - **npm** -- Only packages whose `keywords` array includes `"akm"` or
-  `"agentikit"` appear in search results.
-- **GitHub** -- Only repositories with the topic `akm` or `agentikit`
+  `"agent-i-kit"` appear in search results.
+- **GitHub** -- Only repositories with the topic `akm` or `agent-i-kit`
   appear in search results.
 
 If you are publishing a kit, add these tags so it can be discovered:

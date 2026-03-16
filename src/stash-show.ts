@@ -15,7 +15,7 @@ import "./stash-providers/index";
  * Unified show: routes to the first stash provider that can handle the ref.
  * viking:// refs are handled by OpenViking provider; everything else by filesystem show.
  */
-export async function agentikitShowUnified(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
+export async function agentIKitShowUnified(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
   // Try stash providers first (e.g. OpenViking for viking:// URIs)
@@ -29,7 +29,7 @@ export async function agentikitShowUnified(input: { ref: string; view?: Knowledg
   return showLocal(input);
 }
 
-/** @internal Use agentikitShowUnified() for all external callers. */
+/** @internal Use agentIKitShowUnified() for all external callers. */
 export async function showLocal(input: {
   ref: string;
   view?: KnowledgeView;

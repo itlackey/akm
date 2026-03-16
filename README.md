@@ -89,7 +89,7 @@ Registries are indexes of available kits. The official
 ```sh
 akm registry search "code review"                                        # Search registries
 akm registry add https://example.com/registry/index.json --name team     # Add a registry
-akm sources add http://host:1933 --provider openviking \
+akm stash add http://host:1933 --provider openviking \
   --options '{"apiKey":"key"}'                                            # Add an OpenViking stash source
 akm registry list                                                        # List configured registries
 akm show viking://resources/my-doc                                       # Fetch remote content from OpenViking

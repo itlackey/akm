@@ -35,4 +35,4 @@ Content fetched from remote stash sources (e.g., OpenViking servers) should be t
 - Remote content returned by `akm show` is tagged with `origin: "remote"` in the response so that consumers can distinguish it from locally-authored assets.
 - Only configure remote stash sources that you trust. Connections should use HTTPS to prevent man-in-the-middle interception.
 - The OpenViking provider validates that the configured base URL uses an `http://` or `https://` scheme; other schemes (e.g., `file://`) are rejected to prevent SSRF.
-- API keys for remote sources should be stored via environment variable references (e.g., `${OPENVIKING_API_KEY}`) in the agentikit config file, not as plaintext values. The CLI performs environment variable substitution at runtime so that secrets are never persisted in the configuration.
+- API keys for remote sources should be stored via environment variable references (e.g., `${OPENVIKING_API_KEY}`) in the Agent-i-Kit config file, not as plaintext values. The CLI performs environment variable substitution at runtime so that secrets are never persisted in the configuration.

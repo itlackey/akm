@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
-import type { AgentikitConfig } from "./config";
+import type { AgentIKitConfig } from "./config";
 import { loadConfig } from "./config";
 import { warn } from "./warn";
 
@@ -24,7 +24,7 @@ export interface StashSource {
  * The first entry is always the primary stash. Additional entries come
  * from `searchPaths` config and `installed` kit entries.
  */
-export function resolveStashSources(overrideStashDir?: string, existingConfig?: AgentikitConfig): StashSource[] {
+export function resolveStashSources(overrideStashDir?: string, existingConfig?: AgentIKitConfig): StashSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir();
   const config = existingConfig ?? loadConfig();
 
@@ -101,7 +101,7 @@ export function getPrimarySource(sources: StashSource[]): StashSource | undefine
  * Everything else — working stash, search paths, local project dirs — is
  * the user's domain to manage.
  */
-export function isEditable(filePath: string, config?: AgentikitConfig): boolean {
+export function isEditable(filePath: string, config?: AgentIKitConfig): boolean {
   const cfg = config ?? loadConfig();
   const resolved = path.resolve(filePath);
   const cacheManaged = cfg.installed ?? [];

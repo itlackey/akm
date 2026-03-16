@@ -279,12 +279,43 @@ akm registry search "docker" --limit 5
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v2 registry indexes |
 
-### sources
+### stash (alias: sources)
+
+Manage stash sources. The `stash` command has three subcommands. `sources`
+is a legacy alias that works identically.
+
+#### stash list
 
 List all resolved stash sources in priority order.
 
 ```sh
-akm sources
+akm stash list
+akm stash              # Same as stash list
+```
+
+#### stash add
+
+Add a directory or remote provider as a stash source.
+
+```sh
+akm stash add ~/.claude/skills
+akm stash add ~/.claude/skills --name claude-skills
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
+```
+
+| Flag | Description |
+| --- | --- |
+| `--name` | Human-friendly label for the source |
+| `--provider` | Provider type (e.g. `openviking`). Default: `filesystem` |
+| `--options` | Provider-specific options as JSON |
+
+#### stash remove
+
+Remove a stash source by path or name.
+
+```sh
+akm stash remove ~/.claude/skills
+akm stash remove claude-skills
 ```
 
 ### config
@@ -302,3 +333,13 @@ akm config path --all               # Print all config-related paths
 ```
 
 See [configuration.md](configuration.md) for details.
+
+### hints
+
+Print agent-facing instructions for using `akm`. Add this output to your
+`AGENTS.md`, `CLAUDE.md`, or system prompt so your agent knows how to use
+the CLI.
+
+```sh
+akm hints
+```

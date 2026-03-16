@@ -1,5 +1,5 @@
 import { resolveStashDir } from "../common";
-import type { AgentikitConfig, StashConfigEntry } from "../config";
+import type { AgentIKitConfig, StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { searchLocal } from "../local-search";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
@@ -12,7 +12,7 @@ class FilesystemStashProvider implements StashProvider {
   readonly type = "filesystem";
   readonly name: string;
   private readonly stashDir: string;
-  private readonly config: AgentikitConfig;
+  private readonly config: AgentIKitConfig;
 
   constructor(entry: StashConfigEntry) {
     this.config = loadConfig();
