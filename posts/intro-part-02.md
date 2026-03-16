@@ -1,6 +1,6 @@
 ---
 title: You Already Have Dozens of Agent Skills. You Just Can't Find Them.
-cover_image: 'https://dev-to-uploads.s3.amazonaws.com/uploads/articles/uvkrow29g2kpssek8b3f.png'
+cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo.webp'
 id: 3359719
 series: akm
 description: A quick introduction to managing stashes
