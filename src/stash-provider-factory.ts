@@ -29,7 +29,7 @@ export function resolveStashProviderFactory(type: string): StashProviderFactory 
  * Filesystem entries are excluded — they are handled by resolveStashSources().
  */
 export function resolveStashProviders(
-  config: import("./config").AgentIKitConfig,
+  config: import("./config").AkmConfig,
 ): import("./stash-provider").StashProvider[] {
   const providers: import("./stash-provider").StashProvider[] = [];
 

@@ -61,7 +61,7 @@ export interface StashConfigEntry {
   options?: Record<string, unknown>;
 }
 
-export interface AgentIKitConfig {
+export interface AkmConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** Whether semantic search is enabled. Default: true */
@@ -94,7 +94,7 @@ export interface OutputConfig {
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-export const DEFAULT_CONFIG: AgentIKitConfig = {
+export const DEFAULT_CONFIG: AkmConfig = {
   semanticSearch: true,
   searchPaths: [],
   registries: [
@@ -119,9 +119,9 @@ export function getConfigPath(): string {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
-let cachedConfig: { config: AgentIKitConfig; path: string; mtime: number } | undefined;
+let cachedConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
 
-export function loadConfig(): AgentIKitConfig {
+export function loadConfig(): AkmConfig {
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
@@ -157,7 +157,7 @@ export function loadConfig(): AgentIKitConfig {
   return config;
 }
 
-export function saveConfig(config: AgentIKitConfig): void {
+export function saveConfig(config: AkmConfig): void {
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -182,7 +182,7 @@ export function saveConfig(config: AgentIKitConfig): void {
  * API keys should be provided via environment variables
  * AKM_EMBED_API_KEY and AKM_LLM_API_KEY.
  */
-function sanitizeConfigForWrite(config: AgentIKitConfig): Record<string, unknown> {
+function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
   if (config.embedding) {
     const { apiKey, ...rest } = config.embedding;
@@ -197,10 +197,10 @@ function sanitizeConfigForWrite(config: AgentIKitConfig): Record<string, unknown
   return sanitized;
 }
 
-export function updateConfig(partial: Partial<AgentIKitConfig>): AgentIKitConfig {
+export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   const current = loadConfig();
   // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
-  const merged: AgentIKitConfig = { ...current, ...partial };
+  const merged: AkmConfig = { ...current, ...partial };
   // Deep-merge output — partial update should not wipe sibling keys
   if (current.output && partial.output && partial.output !== current.output) {
     merged.output = { ...current.output, ...partial.output };
@@ -219,8 +219,8 @@ export function updateConfig(partial: Partial<AgentIKitConfig>): AgentIKitConfig
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function pickKnownKeys(raw: Record<string, unknown>): AgentIKitConfig {
-  const config: AgentIKitConfig = { ...DEFAULT_CONFIG };
+function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
+  const config: AkmConfig = { ...DEFAULT_CONFIG };
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();

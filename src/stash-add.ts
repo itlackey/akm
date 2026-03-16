@@ -4,13 +4,13 @@ import { resolveStashDir } from "./common";
 import type { StashConfigEntry } from "./config";
 import { loadConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
-import { agentIKitIndex } from "./indexer";
+import { akmIndex } from "./indexer";
 import { upsertLockEntry } from "./lockfile";
 import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { AddResponse } from "./stash-types";
 
-export async function agentIKitAdd(input: { ref: string }): Promise<AddResponse> {
+export async function akmAdd(input: { ref: string }): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref) throw new UsageError("Install ref or local directory is required.");
 
@@ -51,7 +51,7 @@ async function addLocalStashSource(ref: string, sourcePath: string, stashDir: st
     saveConfig({ ...config, stashes });
   }
 
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
   const updatedConfig = loadConfig();
 
   return {
@@ -113,7 +113,7 @@ async function addRegistryKit(ref: string, stashDir: string): Promise<AddRespons
     }
   }
 
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
 
   return {
     schemaVersion: 1,

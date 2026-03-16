@@ -164,12 +164,12 @@ test("search pipeline returns ranked results when index exists", async () => {
   try {
     // Build index
     process.env.AKM_STASH_DIR = stashDir;
-    const { agentIKitIndex } = await import("../src/indexer");
-    await agentIKitIndex({ stashDir });
+    const { akmIndex } = await import("../src/indexer");
+    await akmIndex({ stashDir });
 
     // Search — TF-IDF should rank docker-related results first
-    const { agentIKitSearch } = await import("../src/stash-search");
-    const result = await agentIKitSearch({ query: "docker", type: "any" });
+    const { akmSearch } = await import("../src/stash-search");
+    const result = await akmSearch({ query: "docker", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     // Docker-related result should be ranked first

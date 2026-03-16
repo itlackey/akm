@@ -233,7 +233,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
 
 ```sh
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
 ```
 
 Duplicate URLs are rejected.

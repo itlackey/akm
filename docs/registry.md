@@ -32,7 +32,7 @@ akm registry add https://example.com/registry/index.json --name my-team
 akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
 # Add an OpenViking stash source
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 
 # Remove a registry by URL or name
 akm registry remove my-team
@@ -50,7 +50,7 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
   ],
   "stashes": [
-    // OpenViking stash provider (configured via `akm sources add`)
+    // OpenViking stash provider (configured via `akm stash add`)
     { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
@@ -120,10 +120,10 @@ which asset to use.
 Not every npm package or GitHub repo is an akm kit. To keep results
 relevant, the registry enforces tag-based filtering:
 
-- **npm** -- Only packages whose `keywords` array includes `"akm"` or
-  `"agent-i-kit"` appear in search results.
-- **GitHub** -- Only repositories with the topic `akm` or `agent-i-kit`
-  appear in search results.
+- **npm** -- Only packages whose `keywords` array includes `"akm"` (or the
+  legacy `"agent-i-kit"` for backward compatibility) appear in search results.
+- **GitHub** -- Only repositories with the topic `akm` (or the legacy
+  `agent-i-kit`) appear in search results.
 
 If you are publishing a kit, add these tags so it can be discovered:
 
@@ -324,10 +324,10 @@ for context management. OpenViking is ByteDance's open-source context file
 system for AI agents, using `viking://` URIs.
 
 > **Note:** OpenViking is a *stash provider*, not a registry provider. Configure
-> it via `akm sources add`, not `akm registry add`.
+> it via `akm stash add`, not `akm registry add`.
 
 ```bash
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 ```
 
 Key behaviors:

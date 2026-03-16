@@ -100,7 +100,7 @@ akm config path --all                         # Show all config paths
 akm init                                      # Initialize stash directory
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm sources                                   # List stash search paths
+akm stash                                     # List stash search paths
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

@@ -484,7 +484,7 @@ function fileUriToPath(ref: string): string {
 
 /**
  * Build a human-readable local ID from an absolute path.
- *   /home/user/.hyphn/skills  → ~/.hyphn/skills
+ *   /home/user/akm/skills     → ~/akm/skills
  *   /tmp/my-kit               → /tmp/my-kit
  */
 function toReadableLocalId(absolutePath: string): string {

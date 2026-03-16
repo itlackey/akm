@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import { agentIKitShowUnified as agentIKitShow } from "../src/stash-show";
+import { akmShowUnified as akmShow } from "../src/stash-show";
 
 // Trigger stash-provider self-registration (needed for openviking provider)
 import "../src/stash-providers/index";
@@ -74,7 +74,7 @@ afterEach(() => {
 
 // ── Installed ref with missing asset ─────────────────────────────────────────
 
-describe("agentIKitShow installed ref", () => {
+describe("akmShow installed ref", () => {
   test("throws with add guidance when origin is not installed", async () => {
     const installedStashRoot = createTmpDir("akm-show-installed-root-");
     // Create the type subdirectory so it is a valid stash root, but do NOT
@@ -99,7 +99,7 @@ describe("agentIKitShow installed ref", () => {
 
     // Use an origin that is NOT installed so resolveSourcesForOrigin returns
     // empty, triggering the add-guidance error path.
-    await expect(agentIKitShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
+    await expect(akmShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
   });
 
   test("resolves installed-kit style nested agent refs", async () => {
@@ -125,7 +125,7 @@ describe("agentIKitShow installed ref", () => {
       ],
     });
 
-    const result = await agentIKitShow({ ref: "github:sveltejs/ai-tools//agent:tools/agents/svelte-file-editor" });
+    const result = await akmShow({ ref: "github:sveltejs/ai-tools//agent:tools/agents/svelte-file-editor" });
 
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("github:sveltejs/ai-tools");
@@ -156,7 +156,7 @@ describe("agentIKitShow installed ref", () => {
       ],
     });
 
-    const result = await agentIKitShow({ ref: "github:sveltejs/ai-tools//skill:tools/skills/svelte-code-writer" });
+    const result = await akmShow({ ref: "github:sveltejs/ai-tools//skill:tools/skills/svelte-code-writer" });
 
     expect(result.type).toBe("skill");
     expect(result.origin).toBe("github:sveltejs/ai-tools");
@@ -167,14 +167,14 @@ describe("agentIKitShow installed ref", () => {
 
 // ── Search path resolution ───────────────────────────────────────────────────
 
-describe("agentIKitShow search path", () => {
+describe("akmShow search path", () => {
   test("resolves from search path directories", async () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
-    const result = await agentIKitShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "script:deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.name).toBe("deploy.sh");
@@ -184,13 +184,13 @@ describe("agentIKitShow search path", () => {
 
 // ── editability flags ────────────────────────────────────────────────────────
 
-describe("agentIKitShow editability", () => {
+describe("akmShow editability", () => {
   test("working stash asset has editable true", async () => {
     writeFile(path.join(stashDir, "scripts", "local.sh"), "#!/usr/bin/env bash\necho local\n");
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "script:local.sh" });
+    const result = await akmShow({ ref: "script:local.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -205,7 +205,7 @@ describe("agentIKitShow editability", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
-    const result = await agentIKitShow({ ref: "script:remote.sh" });
+    const result = await akmShow({ ref: "script:remote.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBeNull();
@@ -233,7 +233,7 @@ describe("agentIKitShow editability", () => {
       ],
     });
 
-    const result = await agentIKitShow({ ref: "script:deploy.sh" });
+    const result = await akmShow({ ref: "script:deploy.sh" });
 
     expect(result.type).toBe("script");
     expect(result.origin).toBe("installed-pkg");
@@ -245,7 +245,7 @@ describe("agentIKitShow editability", () => {
 
 // ── Content-based classification via new renderer pipeline ─────────────────
 
-describe("agentIKitShow content-based classification", () => {
+describe("akmShow content-based classification", () => {
   test("model alone in commands/ stays a command (directory wins over weak agent signal)", async () => {
     // model is shared frontmatter (OpenCode convention). In commands/,
     // the directory matcher (specificity 10) beats the model-only agent
@@ -257,7 +257,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "command:deploy.md" });
+    const result = await akmShow({ ref: "command:deploy.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS.");
@@ -275,7 +275,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "command:hybrid.md" });
+    const result = await akmShow({ ref: "command:hybrid.md" });
 
     expect(result.type).toBe("agent");
     expect(result.action).toContain("verbatim");
@@ -297,7 +297,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "command:deploy.md" });
+    const result = await akmShow({ ref: "command:deploy.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to production.");
@@ -315,7 +315,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "command:positional.md" });
+    const result = await akmShow({ ref: "command:positional.md" });
 
     expect(result.type).toBe("command");
     expect(result.parameters).toEqual(["$1", "$2", "$9"]);
@@ -329,7 +329,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "command:named.md" });
+    const result = await akmShow({ ref: "command:named.md" });
 
     expect(result.type).toBe("command");
     expect(result.parameters).toEqual(["env", "version"]);
@@ -340,7 +340,7 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentIKitShow({ ref: "script:build.sh" });
+    const result = await akmShow({ ref: "script:build.sh" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeDefined();
@@ -356,7 +356,7 @@ describe("agentIKitShow content-based classification", () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
     // $ARGUMENTS placeholder (specificity 18) beats knowledge/ directory hint (10)
-    const result = await agentIKitShow({ ref: "knowledge:deploy-cmd.md" });
+    const result = await akmShow({ ref: "knowledge:deploy-cmd.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
@@ -372,7 +372,7 @@ describe("agentIKitShow content-based classification", () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
     // agent frontmatter (specificity 18) beats agents/ directory hint (15)
-    const result = await agentIKitShow({ ref: "agent:build-cmd.md" });
+    const result = await akmShow({ ref: "agent:build-cmd.md" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Build the project.");
@@ -387,11 +387,11 @@ describe("agentIKitShow content-based classification", () => {
 
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const tocResult = await agentIKitShow({ ref: "knowledge:guide.md", view: { mode: "toc" } });
+    const tocResult = await akmShow({ ref: "knowledge:guide.md", view: { mode: "toc" } });
     expect(tocResult.content).toContain("Intro");
     expect(tocResult.content).toContain("Setup");
 
-    const sectionResult = await agentIKitShow({
+    const sectionResult = await akmShow({
       ref: "knowledge:guide.md",
       view: { mode: "section", heading: "Setup" },
     });
@@ -401,7 +401,7 @@ describe("agentIKitShow content-based classification", () => {
 
 // ── Remote show via OpenViking provider ──────────────────────────────────────
 
-describe("agentIKitShow remote (viking://)", () => {
+describe("akmShow remote (viking://)", () => {
   const remoteServers: Array<{ stop: (force: boolean) => void }> = [];
 
   afterEach(() => {
@@ -451,7 +451,7 @@ describe("agentIKitShow remote (viking://)", () => {
       ],
     });
 
-    const result = await agentIKitShow({ ref: "viking://skills/test-skill" });
+    const result = await akmShow({ ref: "viking://skills/test-skill" });
 
     expect(result.type).toBe("skill");
     expect(result.name).toBe("test-skill");

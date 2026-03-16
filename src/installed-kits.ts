@@ -14,14 +14,14 @@ import fs from "node:fs";
 import { resolveStashDir } from "./common";
 import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
-import { agentIKitIndex } from "./indexer";
+import { akmIndex } from "./indexer";
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledKitEntry } from "./registry-types";
 import type { KitInstallStatus, ListResponse, RemoveResponse, UpdateResponse } from "./stash-types";
 
-export async function agentIKitList(input?: { stashDir?: string }): Promise<ListResponse> {
+export async function akmList(input?: { stashDir?: string }): Promise<ListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const config = loadConfig();
   const installed = config.installed ?? [];
@@ -40,7 +40,7 @@ export async function agentIKitList(input?: { stashDir?: string }): Promise<List
   };
 }
 
-export async function agentIKitRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
+export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim();
   if (!target) throw new UsageError("Target is required.");
 
@@ -56,7 +56,7 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
   if (entry.source !== "local") {
     cleanupDirectoryBestEffort(entry.cacheDir);
   }
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
 
   return {
     schemaVersion: 1,
@@ -82,7 +82,7 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
   };
 }
 
-export async function agentIKitUpdate(input?: {
+export async function akmUpdate(input?: {
   target?: string;
   all?: boolean;
   force?: boolean;
@@ -135,7 +135,7 @@ export async function agentIKitUpdate(input?: {
     });
   }
 
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
   const config = loadConfig();
 
   return {

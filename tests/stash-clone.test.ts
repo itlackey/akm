@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import { agentIKitClone } from "../src/stash-clone";
+import { akmClone } from "../src/stash-clone";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
@@ -52,11 +52,11 @@ afterEach(() => {
   }
 });
 
-describe("agentIKitClone", () => {
+describe("akmClone", () => {
   test("clones a script from search path to primary stash", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
 
-    const result = await agentIKitClone({ sourceRef: "script:deploy.sh" });
+    const result = await akmClone({ sourceRef: "script:deploy.sh" });
 
     expect(result.destination.ref).toContain("script:deploy.sh");
     expect(result.overwritten).toBe(false);
@@ -68,7 +68,7 @@ describe("agentIKitClone", () => {
     writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "# Review Skill\n");
     writeFile(path.join(searchPathDir, "skills", "review", "helper.md"), "# Helper\n");
 
-    const result = await agentIKitClone({ sourceRef: "skill:review" });
+    const result = await akmClone({ sourceRef: "skill:review" });
 
     expect(result.overwritten).toBe(false);
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true);
@@ -78,7 +78,7 @@ describe("agentIKitClone", () => {
   test("clones with a new name", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
 
-    const result = await agentIKitClone({ sourceRef: "script:deploy.sh", newName: "my-deploy.sh" });
+    const result = await akmClone({ sourceRef: "script:deploy.sh", newName: "my-deploy.sh" });
 
     expect(fs.existsSync(path.join(stashDir, "scripts", "my-deploy.sh"))).toBe(true);
     expect(result.destination.ref).toContain("my-deploy.sh");
@@ -88,14 +88,14 @@ describe("agentIKitClone", () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo original\n");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo existing\n");
 
-    await expect(agentIKitClone({ sourceRef: `${searchPathDir}//script:deploy.sh` })).rejects.toThrow("already exists");
+    await expect(akmClone({ sourceRef: `${searchPathDir}//script:deploy.sh` })).rejects.toThrow("already exists");
   });
 
   test("overwrites with --force", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo old\n");
 
-    const result = await agentIKitClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, force: true });
+    const result = await akmClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, force: true });
 
     expect(result.overwritten).toBe(true);
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo updated\n");
@@ -108,20 +108,20 @@ describe("agentIKitClone", () => {
     writeFile(path.join(stashDir, "skills", "review", "SKILL.md"), "# Old\n");
     writeFile(path.join(stashDir, "skills", "review", "stale.md"), "# Stale\n");
 
-    await agentIKitClone({ sourceRef: `${searchPathDir}//skill:review`, force: true });
+    await akmClone({ sourceRef: `${searchPathDir}//skill:review`, force: true });
 
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "stale.md"))).toBe(false);
   });
 
   test("throws when source asset not found", async () => {
-    await expect(agentIKitClone({ sourceRef: "script:nonexistent.sh" })).rejects.toThrow();
+    await expect(akmClone({ sourceRef: "script:nonexistent.sh" })).rejects.toThrow();
   });
 
   test("clones from working stash to itself with new name", async () => {
     writeFile(path.join(stashDir, "scripts", "original.sh"), "echo original\n");
 
-    const _result = await agentIKitClone({ sourceRef: "script:original.sh", newName: "copy.sh" });
+    const _result = await akmClone({ sourceRef: "script:original.sh", newName: "copy.sh" });
 
     expect(fs.existsSync(path.join(stashDir, "scripts", "copy.sh"))).toBe(true);
   });
@@ -129,7 +129,7 @@ describe("agentIKitClone", () => {
   test("throws when self-cloning a script without rename", async () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo deploy\n");
 
-    await expect(agentIKitClone({ sourceRef: "script:deploy.sh" })).rejects.toThrow("same path");
+    await expect(akmClone({ sourceRef: "script:deploy.sh" })).rejects.toThrow("same path");
     // Verify the file was not destroyed
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo deploy\n");
   });
@@ -137,13 +137,13 @@ describe("agentIKitClone", () => {
   test("throws when self-cloning a skill without rename", async () => {
     writeFile(path.join(stashDir, "skills", "review", "SKILL.md"), "# Review\n");
 
-    await expect(agentIKitClone({ sourceRef: "skill:review" })).rejects.toThrow("same path");
+    await expect(akmClone({ sourceRef: "skill:review" })).rejects.toThrow("same path");
     // Verify the skill was not destroyed
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true);
   });
 });
 
-describe("agentIKitClone --dest", () => {
+describe("akmClone --dest", () => {
   let customDest: string;
 
   beforeEach(() => {
@@ -157,7 +157,7 @@ describe("agentIKitClone --dest", () => {
   test("clones script to custom destination preserving type dir structure", async () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
 
-    const result = await agentIKitClone({ sourceRef: "script:deploy.sh", dest: customDest });
+    const result = await akmClone({ sourceRef: "script:deploy.sh", dest: customDest });
 
     expect(result.destination.path).toBe(path.join(customDest, "scripts", "deploy.sh"));
     expect(fs.existsSync(path.join(customDest, "scripts", "deploy.sh"))).toBe(true);
@@ -170,7 +170,7 @@ describe("agentIKitClone --dest", () => {
     writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "# Review Skill\n");
     writeFile(path.join(searchPathDir, "skills", "review", "helper.md"), "# Helper\n");
 
-    const result = await agentIKitClone({ sourceRef: "skill:review", dest: customDest });
+    const result = await akmClone({ sourceRef: "skill:review", dest: customDest });
 
     expect(fs.existsSync(path.join(customDest, "skills", "review", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(customDest, "skills", "review", "helper.md"))).toBe(true);
@@ -182,7 +182,7 @@ describe("agentIKitClone --dest", () => {
     // Point AKM_STASH_DIR to a non-existent directory to simulate no working stash
     process.env.AKM_STASH_DIR = path.join(os.tmpdir(), `nonexistent-stash-${Date.now()}`);
 
-    const result = await agentIKitClone({
+    const result = await akmClone({
       sourceRef: `${searchPathDir}//script:deploy.sh`,
       dest: customDest,
     });
@@ -195,7 +195,7 @@ describe("agentIKitClone --dest", () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo updated\n");
     writeFile(path.join(customDest, "scripts", "deploy.sh"), "echo old\n");
 
-    const result = await agentIKitClone({
+    const result = await akmClone({
       sourceRef: `${searchPathDir}//script:deploy.sh`,
       force: true,
       dest: customDest,
@@ -209,13 +209,13 @@ describe("agentIKitClone --dest", () => {
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo new\n");
     writeFile(path.join(customDest, "scripts", "deploy.sh"), "echo existing\n");
 
-    await expect(agentIKitClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, dest: customDest })).rejects.toThrow(
+    await expect(akmClone({ sourceRef: `${searchPathDir}//script:deploy.sh`, dest: customDest })).rejects.toThrow(
       "already exists at destination",
     );
   });
 });
 
-describe("agentIKitClone remote", () => {
+describe("akmClone remote", () => {
   let remoteFixtureDir: string;
 
   beforeEach(() => {
@@ -231,7 +231,7 @@ describe("agentIKitClone remote", () => {
 
   test("clones a script from a remote origin via installRegistryRef", async () => {
     // Use bare path as origin — not in searchPaths, so isRemoteOrigin returns true
-    const result = await agentIKitClone({
+    const result = await akmClone({
       sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
     });
 
@@ -244,7 +244,7 @@ describe("agentIKitClone remote", () => {
   });
 
   test("returns remoteFetched metadata", async () => {
-    const result = await agentIKitClone({
+    const result = await akmClone({
       sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
     });
 
@@ -254,15 +254,13 @@ describe("agentIKitClone remote", () => {
   });
 
   test("throws when remote fetch succeeds but asset not found in package", async () => {
-    await expect(agentIKitClone({ sourceRef: `${remoteFixtureDir}//script:nonexistent.sh` })).rejects.toThrow(
-      "not found",
-    );
+    await expect(akmClone({ sourceRef: `${remoteFixtureDir}//script:nonexistent.sh` })).rejects.toThrow("not found");
   });
 
   test("clones from remote origin to custom destination", async () => {
     const customDest = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-remote-dest-"));
     try {
-      const result = await agentIKitClone({
+      const result = await akmClone({
         sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
         dest: customDest,
       });

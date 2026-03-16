@@ -32,7 +32,7 @@ export interface CloneResponse {
   remoteFetched?: { origin: string; stashRoot: string; cacheDir: string };
 }
 
-export async function agentIKitClone(options: CloneOptions): Promise<CloneResponse> {
+export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const parsed = parseAssetRef(options.sourceRef);
 
   // When --dest is provided, the working stash is optional

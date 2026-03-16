@@ -3,11 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getConfigPath, saveConfig } from "../src/config";
-import { agentIKitIndex } from "../src/indexer";
-import { agentIKitInit } from "../src/init";
+import { akmIndex } from "../src/indexer";
+import { akmInit } from "../src/init";
 import { getBinDir } from "../src/paths";
-import { agentIKitSearch } from "../src/stash-search";
-import { agentIKitShowUnified as agentIKitShow } from "../src/stash-show";
+import { akmSearch } from "../src/stash-search";
+import { akmShowUnified as akmShow } from "../src/stash-show";
 import type { SearchHit, StashSearchHit } from "../src/stash-types";
 
 const createdTmpDirs: string[] = [];
@@ -84,14 +84,14 @@ afterEach(() => {
   }
 });
 
-test("agentIKitSearch only includes script files with supported extensions and returns run", async () => {
+test("akmSearch only includes script files with supported extensions and returns run", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
   writeFile(path.join(stashDir, "scripts", "script.ts"), "console.log('x')\n");
   writeFile(path.join(stashDir, "scripts", "README.md"), "ignore\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitSearch({ query: "", type: "script" });
+  const result = await akmSearch({ query: "", type: "script" });
   const localHits = result.hits.filter(isLocalHit);
 
   expect(localHits.length).toBe(2);
@@ -100,7 +100,7 @@ test("agentIKitSearch only includes script files with supported extensions and r
   expect(localHits.some((hit) => typeof hit.run === "string")).toBe(true);
 });
 
-test("agentIKitSearch creates bun run from nearest package.json up to scripts root", async () => {
+test("akmSearch creates bun run from nearest package.json up to scripts root", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const nestedScript = path.join(stashDir, "scripts", "group", "nested", "job.js");
   writeFile(nestedScript, "console.log('job')\n");
@@ -108,7 +108,7 @@ test("agentIKitSearch creates bun run from nearest package.json up to scripts ro
   writeFile(path.join(stashDir, "scripts", "package.json"), '{"name":"root"}');
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitSearch({ query: "job", type: "script" });
+  const result = await akmSearch({ query: "job", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
 
   expect(result.hits.length).toBe(1);
@@ -116,14 +116,14 @@ test("agentIKitSearch creates bun run from nearest package.json up to scripts ro
   expect(hit.run).toContain("job.js");
 });
 
-test("agentIKitSearch detects setup from package.json in nearby directory", async () => {
+test("akmSearch detects setup from package.json in nearby directory", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const nestedScript = path.join(stashDir, "scripts", "group", "nested", "job.js");
   writeFile(nestedScript, "console.log('job')\n");
   writeFile(path.join(stashDir, "scripts", "group", "nested", "package.json"), '{"name":"group"}');
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitSearch({ query: "job", type: "script" });
+  const result = await akmSearch({ query: "job", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
   expect(result.hits.length).toBe(1);
   // Search hits only expose run, not setup/cwd
@@ -131,7 +131,7 @@ test("agentIKitSearch detects setup from package.json in nearby directory", asyn
   expect(hit.run).toContain("job.js");
 });
 
-test("agentIKitSearch resolves script run correctly for search path directories", async () => {
+test("akmSearch resolves script run correctly for search path directories", async () => {
   const primaryStashDir = createTmpDir("akm-stash-primary-");
   const searchPathDir = createTmpDir("akm-stash-searchpath-");
 
@@ -142,9 +142,9 @@ test("agentIKitSearch resolves script run correctly for search path directories"
   saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
 
   process.env.AKM_STASH_DIR = primaryStashDir;
-  await agentIKitIndex({ stashDir: primaryStashDir, full: true });
+  await akmIndex({ stashDir: primaryStashDir, full: true });
 
-  const result = await agentIKitSearch({ query: "job", type: "script" });
+  const result = await akmSearch({ query: "job", type: "script" });
   const searchPathHit = result.hits.filter(isLocalHit).find((hit) => hit.path.includes(searchPathDir));
 
   expect(searchPathHit).toBeDefined();
@@ -152,15 +152,15 @@ test("agentIKitSearch resolves script run correctly for search path directories"
   expect(searchPathHit?.run ?? "").toContain("job.js");
 });
 
-test("agentIKitSearch includes explainability reasons for indexed hits", async () => {
+test("akmSearch includes explainability reasons for indexed hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "summarize-diff.ts"), "console.log('summarize')\n");
 
   saveConfig({ semanticSearch: true, searchPaths: [] });
   process.env.AKM_STASH_DIR = stashDir;
 
-  await agentIKitIndex({ stashDir, full: true });
-  const result = await agentIKitSearch({ query: "summarize diff", type: "script" });
+  await akmIndex({ stashDir, full: true });
+  const result = await akmSearch({ query: "summarize diff", type: "script" });
 
   expect(result.hits.length).toBeGreaterThan(0);
   expect(result.hits[0].whyMatched).toBeDefined();
@@ -173,7 +173,7 @@ test("agentIKitSearch includes explainability reasons for indexed hits", async (
   expect(result.hits[0].whyMatched).toContain("matched name tokens");
 });
 
-test("agentIKitSearch includes ref, action, and size for local hits", async () => {
+test("akmSearch includes ref, action, and size for local hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
   writeFile(scriptPath, "#!/usr/bin/env bash\necho deploy\n");
@@ -194,8 +194,8 @@ test("agentIKitSearch includes ref, action, and size for local hits", async () =
   saveConfig({ semanticSearch: false, searchPaths: [] });
   process.env.AKM_STASH_DIR = stashDir;
 
-  await agentIKitIndex({ stashDir, full: true });
-  const result = await agentIKitSearch({ query: "deploy", type: "script" });
+  await akmIndex({ stashDir, full: true });
+  const result = await akmSearch({ query: "deploy", type: "script" });
   const hit = result.hits.filter(isLocalHit)[0];
 
   expect(hit.ref).toContain("script:deploy.sh");
@@ -203,7 +203,7 @@ test("agentIKitSearch includes ref, action, and size for local hits", async () =
   expect(hit.size).toBe("small");
 });
 
-test("agentIKitSearch includes origin for installed-source hits", async () => {
+test("akmSearch includes origin for installed-source hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const installedStash = createTmpDir("akm-installed-");
   writeFile(path.join(stashDir, "scripts", "placeholder.sh"), "#!/usr/bin/env bash\necho placeholder\n");
@@ -226,13 +226,13 @@ test("agentIKitSearch includes origin for installed-source hits", async () => {
   });
   process.env.AKM_STASH_DIR = stashDir;
 
-  await agentIKitIndex({ stashDir, full: true });
-  const result = await agentIKitSearch({ query: "deploy", type: "script" });
+  await akmIndex({ stashDir, full: true });
+  const result = await akmSearch({ query: "deploy", type: "script" });
 
   expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-kit")).toBe(true);
 });
 
-test("agentIKitShow returns full payloads for skill/command/agent", async () => {
+test("akmShow returns full payloads for skill/command/agent", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\n");
   writeFile(path.join(stashDir, "commands", "release.md"), '---\ndescription: "Release command"\n---\nrun release\n');
@@ -240,9 +240,9 @@ test("agentIKitShow returns full payloads for skill/command/agent", async () => 
 
   process.env.AKM_STASH_DIR = stashDir;
 
-  const skill = await agentIKitShow({ ref: "skill:ops" });
-  const command = await agentIKitShow({ ref: "command:release.md" });
-  const agent = await agentIKitShow({ ref: "agent:coach.md" });
+  const skill = await akmShow({ ref: "skill:ops" });
+  const command = await akmShow({ ref: "command:release.md" });
+  const agent = await akmShow({ ref: "agent:coach.md" });
 
   expect(skill.type).toBe("skill");
   expect(skill.action).toContain("Read and follow");
@@ -257,11 +257,11 @@ test("agentIKitShow returns full payloads for skill/command/agent", async () => 
   expect(agent.modelHint).toBe("gpt-5");
 });
 
-test("agentIKitShow returns clear error when stash type root is missing", async () => {
+test("akmShow returns clear error when stash type root is missing", async () => {
   const stashDir = createTmpDir("akm-stash-");
   try {
     process.env.AKM_STASH_DIR = stashDir;
-    await expect(agentIKitShow({ ref: "agent:missing.md" })).rejects.toThrow(
+    await expect(akmShow({ ref: "agent:missing.md" })).rejects.toThrow(
       /Stash type root not found for ref: agent:missing\.md/,
     );
   } finally {
@@ -269,21 +269,21 @@ test("agentIKitShow returns clear error when stash type root is missing", async 
   }
 });
 
-test("agentIKitShow rejects invalid asset type in ref", async () => {
+test("akmShow rejects invalid asset type in ref", async () => {
   const stashDir = createTmpDir("akm-stash-");
   process.env.AKM_STASH_DIR = stashDir;
-  await expect(agentIKitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/);
+  await expect(akmShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/);
 });
 
-test("agentIKitShow rejects traversal and absolute path refs", async () => {
+test("akmShow rejects traversal and absolute path refs", async () => {
   const stashDir = createTmpDir("akm-stash-");
   process.env.AKM_STASH_DIR = stashDir;
 
-  await expect(agentIKitShow({ ref: "script:../outside.sh" })).rejects.toThrow(/Path traversal/);
-  await expect(agentIKitShow({ ref: "script:/etc/passwd" })).rejects.toThrow(/Absolute path/);
+  await expect(akmShow({ ref: "script:../outside.sh" })).rejects.toThrow(/Path traversal/);
+  await expect(akmShow({ ref: "script:/etc/passwd" })).rejects.toThrow(/Absolute path/);
 });
 
-test("agentIKitShow blocks symlink escapes outside stash type root", async () => {
+test("akmShow blocks symlink escapes outside stash type root", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const outsideDir = createTmpDir("akm-outside-");
   const outsideFile = path.join(outsideDir, "outside.sh");
@@ -299,7 +299,7 @@ test("agentIKitShow blocks symlink escapes outside stash type root", async () =>
   }
 
   process.env.AKM_STASH_DIR = stashDir;
-  await expect(agentIKitShow({ ref: "script:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/);
+  await expect(akmShow({ ref: "script:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/);
 });
 
 // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -327,36 +327,36 @@ Returns all users.
 Creates a user.
 `;
 
-test("agentIKitSearch finds knowledge assets", async () => {
+test("akmSearch finds knowledge assets", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitSearch({ query: "", type: "knowledge" });
+  const result = await akmSearch({ query: "", type: "knowledge" });
 
   expect(result.hits.length).toBe(1);
   expect(result.hits[0].type).toBe("knowledge");
   expect(result.hits[0].name).toBe("api-guide");
 });
 
-test("agentIKitShow returns full content for knowledge by default", async () => {
+test("akmShow returns full content for knowledge by default", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "knowledge:api-guide.md" });
+  const result = await akmShow({ ref: "knowledge:api-guide.md" });
 
   expect(result.type).toBe("knowledge");
   expect(result.content).toContain("# Overview");
   expect(result.content).toContain("## Authentication");
 });
 
-test("agentIKitShow returns TOC for knowledge with view toc", async () => {
+test("akmShow returns TOC for knowledge with view toc", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } });
+  const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "toc" } });
 
   expect(result.type).toBe("knowledge");
   expect(result.content).toContain("# Overview");
@@ -365,12 +365,12 @@ test("agentIKitShow returns TOC for knowledge with view toc", async () => {
   expect(result.content).toContain("lines total");
 });
 
-test("agentIKitShow extracts section for knowledge", async () => {
+test("akmShow extracts section for knowledge", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({
+  const result = await akmShow({
     ref: "knowledge:api-guide.md",
     view: { mode: "section", heading: "Authentication" },
   });
@@ -380,45 +380,45 @@ test("agentIKitShow extracts section for knowledge", async () => {
   expect(result.content).not.toContain("Endpoints");
 });
 
-test("agentIKitShow extracts line range for knowledge", async () => {
+test("akmShow extracts line range for knowledge", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } });
+  const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "lines", start: 5, end: 7 } });
 
   expect(result.type).toBe("knowledge");
   expect(result.content).toContain("# Overview");
 });
 
-test("agentIKitShow extracts frontmatter for knowledge", async () => {
+test("akmShow extracts frontmatter for knowledge", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } });
+  const result = await akmShow({ ref: "knowledge:api-guide.md", view: { mode: "frontmatter" } });
 
   expect(result.type).toBe("knowledge");
   expect(result.content).toContain("title: API Guide");
   expect(result.content).not.toContain("# Overview");
 });
 
-test("agentIKitShow returns no-frontmatter message when missing", async () => {
+test("akmShow returns no-frontmatter message when missing", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "plain.md"), "# Just a heading\nSome text.\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } });
+  const result = await akmShow({ ref: "knowledge:plain.md", view: { mode: "frontmatter" } });
 
   expect(result.content).toBe("(no frontmatter)");
 });
 
-test("agentIKitShow returns helpful message for missing section in knowledge", async () => {
+test("akmShow returns helpful message for missing section in knowledge", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "knowledge", "api-guide.md"), KNOWLEDGE_DOC);
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({
+  const result = await akmShow({
     ref: "knowledge:api-guide.md",
     view: { mode: "section", heading: "Nonexistent" },
   });
@@ -429,12 +429,12 @@ test("agentIKitShow returns helpful message for missing section in knowledge", a
   expect(result.content).toContain("discover available headings");
 });
 
-test("agentIKitShow for script type returns run", async () => {
+test("akmShow for script type returns run", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "script:deploy.sh" });
+  const result = await akmShow({ ref: "script:deploy.sh" });
 
   expect(result.type).toBe("script");
   expect(result.run).toBeTruthy();
@@ -442,7 +442,7 @@ test("agentIKitShow for script type returns run", async () => {
   expect(result.run).toContain("bash");
 });
 
-test("agentIKitInit returns created false when stash dir already exists", async () => {
+test("akmInit returns created false when stash dir already exists", async () => {
   const origHome = process.env.HOME;
   const origStashDir = process.env.AKM_STASH_DIR;
   const tmpHome = createTmpDir("akm-home-");
@@ -455,7 +455,7 @@ test("agentIKitInit returns created false when stash dir already exists", async 
 
   try {
     stubCachedRg();
-    const result = await agentIKitInit();
+    const result = await akmInit();
     expect(result.created).toBe(false);
     expect(result.stashDir).toBe(stashPath);
   } finally {
@@ -467,14 +467,14 @@ test("agentIKitInit returns created false when stash dir already exists", async 
   }
 });
 
-test("agentIKitShow throws unsupported script extension for .txt file", async () => {
+test("akmShow throws unsupported script extension for .txt file", async () => {
   const origStashDir = process.env.AKM_STASH_DIR;
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "readme.txt"), "not a script\n");
 
   process.env.AKM_STASH_DIR = stashDir;
   try {
-    await expect(agentIKitShow({ ref: "script:readme.txt" })).rejects.toThrow(
+    await expect(akmShow({ ref: "script:readme.txt" })).rejects.toThrow(
       /Script ref must resolve to a file with a supported script extension/,
     );
   } finally {
@@ -484,7 +484,7 @@ test("agentIKitShow throws unsupported script extension for .txt file", async ()
   }
 });
 
-test("agentIKitInit creates knowledge directory", async () => {
+test("akmInit creates knowledge directory", async () => {
   const origHome = process.env.HOME;
   const origStashDir = process.env.AKM_STASH_DIR;
   const tmpHome = createTmpDir("akm-home-");
@@ -493,7 +493,7 @@ test("agentIKitInit creates knowledge directory", async () => {
 
   try {
     stubCachedRg();
-    const result = await agentIKitInit();
+    const result = await akmInit();
     expect(fs.existsSync(path.join(result.stashDir, "knowledge"))).toBe(true);
   } finally {
     if (origHome === undefined) delete process.env.HOME;
@@ -506,7 +506,7 @@ test("agentIKitInit creates knowledge directory", async () => {
 
 // ── Script tests ────────────────────────────────────────────────────────────
 
-test("agentIKitSearch finds script assets with broad extensions", async () => {
+test("akmSearch finds script assets with broad extensions", async () => {
   const origStashDir = process.env.AKM_STASH_DIR;
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "cleanup.sh"), "#!/usr/bin/env bash\necho cleanup\n");
@@ -515,7 +515,7 @@ test("agentIKitSearch finds script assets with broad extensions", async () => {
 
   try {
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await agentIKitSearch({ query: "", type: "script" });
+    const result = await akmSearch({ query: "", type: "script" });
 
     expect(result.hits.length).toBe(2);
     expect(result.hits.every((hit: SearchHit) => hit.type === "script")).toBe(true);
@@ -530,14 +530,14 @@ test("agentIKitSearch finds script assets with broad extensions", async () => {
   }
 });
 
-test("agentIKitSearch returns run for runnable script extensions", async () => {
+test("akmSearch returns run for runnable script extensions", async () => {
   const origStashDir = process.env.AKM_STASH_DIR;
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
   try {
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await agentIKitSearch({ query: "", type: "script" });
+    const result = await akmSearch({ query: "", type: "script" });
     const hit = result.hits.filter(isLocalHit)[0];
 
     expect(result.hits.length).toBe(1);
@@ -553,14 +553,14 @@ test("agentIKitSearch returns run for runnable script extensions", async () => {
   }
 });
 
-test("agentIKitShow returns run for python script (auto-detected interpreter)", async () => {
+test("akmShow returns run for python script (auto-detected interpreter)", async () => {
   const origStashDir = process.env.AKM_STASH_DIR;
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "process.py"), "# A python script\nprint('hello')\n");
 
   try {
     process.env.AKM_STASH_DIR = stashDir;
-    const result = await agentIKitShow({ ref: "script:process.py" });
+    const result = await akmShow({ ref: "script:process.py" });
 
     expect(result.type).toBe("script");
     expect(result.run).toBeDefined();
@@ -575,19 +575,19 @@ test("agentIKitShow returns run for python script (auto-detected interpreter)", 
   }
 });
 
-test("agentIKitShow returns run for runnable script", async () => {
+test("akmShow returns run for runnable script", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitShow({ ref: "script:deploy.sh" });
+  const result = await akmShow({ ref: "script:deploy.sh" });
 
   expect(result.type).toBe("script");
   expect(result.run).toBeTruthy();
   expect(result.run).toContain("bash");
 });
 
-test("agentIKitInit writes config outside the stash directory", async () => {
+test("akmInit writes config outside the stash directory", async () => {
   const origHome = process.env.HOME;
   const origStashDir = process.env.AKM_STASH_DIR;
   const tmpHome = createTmpDir("akm-home-");
@@ -596,7 +596,7 @@ test("agentIKitInit writes config outside the stash directory", async () => {
 
   try {
     stubCachedRg();
-    const result = await agentIKitInit();
+    const result = await akmInit();
     expect(result.configPath).toBe(getConfigPath());
     expect(result.configPath.startsWith(result.stashDir)).toBe(false);
     expect(fs.existsSync(result.configPath)).toBe(true);

@@ -33,7 +33,7 @@ akm config unset llm                # Remove an optional key
 | `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
 | `stashDir` | string | platform default | Path to the stash directory |
 | `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
-| `stashes` | array | `[]` | Additional stash sources such as OpenViking servers (managed via `akm sources add/remove`) |
+| `stashes` | array | `[]` | Additional stash sources such as OpenViking servers (managed via `akm stash add/remove`) |
 | `installed` | array | `[]` | Installed kit metadata (managed by akm) |
 
 ## Embedding Configuration

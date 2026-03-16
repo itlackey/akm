@@ -23,7 +23,7 @@ export interface InitResponse {
   };
 }
 
-export async function agentIKitInit(options?: { dir?: string }): Promise<InitResponse> {
+export async function akmInit(options?: { dir?: string }): Promise<InitResponse> {
   const stashDir = options?.dir ? path.resolve(options.dir) : getDefaultStashDir();
 
   let created = false;

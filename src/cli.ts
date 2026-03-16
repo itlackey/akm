@@ -7,17 +7,17 @@ import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { agentIKitIndex } from "./indexer";
-import { agentIKitInit } from "./init";
-import { agentIKitList, agentIKitRemove, agentIKitUpdate } from "./installed-kits";
+import { akmIndex } from "./indexer";
+import { akmInit } from "./init";
+import { akmList, akmRemove, akmUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { agentIKitAdd } from "./stash-add";
-import { agentIKitClone } from "./stash-clone";
-import { agentIKitSearch, parseSearchSource } from "./stash-search";
-import { agentIKitShowUnified } from "./stash-show";
+import { akmAdd } from "./stash-add";
+import { akmClone } from "./stash-clone";
+import { akmSearch, parseSearchSource } from "./stash-search";
+import { akmShowUnified } from "./stash-show";
 import { addStashSource, listStashSources, removeStashSource } from "./stash-source-manage";
 import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
@@ -425,14 +425,14 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
 const initCommand = defineCommand({
   meta: {
     name: "init",
-    description: "Initialize Agent-i-Kit's working stash directory and persist stashDir in config",
+    description: "Initialize akm's working stash directory and persist stashDir in config",
   },
   args: {
     dir: { type: "string", description: "Custom stash directory path (default: ~/akm)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitInit({ dir: args.dir });
+      const result = await akmInit({ dir: args.dir });
       output("init", result);
     });
   },
@@ -445,7 +445,7 @@ const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitIndex({ full: args.full });
+      const result = await akmIndex({ full: args.full });
       output("index", result);
     });
   },
@@ -473,7 +473,7 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await agentIKitSearch({ query: args.query, type, limit, source });
+      const result = await akmSearch({ query: args.query, type, limit, source });
       output("search", result);
     });
   },
@@ -490,7 +490,7 @@ const addCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitAdd({ ref: args.ref });
+      const result = await akmAdd({ ref: args.ref });
       output("add", result);
     });
   },
@@ -500,7 +500,7 @@ const listCommand = defineCommand({
   meta: { name: "list", description: "List installed kits" },
   async run() {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitList();
+      const result = await akmList();
       output("list", result);
     });
   },
@@ -513,7 +513,7 @@ const removeCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitRemove({ target: args.target });
+      const result = await akmRemove({ target: args.target });
       output("remove", result);
     });
   },
@@ -528,7 +528,7 @@ const updateCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitUpdate({ target: args.target, all: args.all, force: args.force });
+      const result = await akmUpdate({ target: args.target, all: args.all, force: args.force });
       output("update", result);
     });
   },
@@ -599,7 +599,7 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await agentIKitShowUnified({ ref: args.ref, view });
+      const result = await akmShowUnified({ ref: args.ref, view });
       output("show", result);
     });
   },
@@ -712,7 +712,7 @@ const cloneCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitClone({
+      const result = await akmClone({
         sourceRef: args.ref,
         newName: args.name,
         force: args.force,
@@ -940,7 +940,7 @@ const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description: "CLI tool to search, open, and manage assets from Agent-i-Kit stash.",
+    description: "Agent Kit Manager — search, show, and manage assets from your stash.",
   },
   args: {
     format: { type: "string", description: "Output format (json|text|yaml)" },
