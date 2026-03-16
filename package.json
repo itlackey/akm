@@ -1,6 +1,6 @@
 {
   "name": "akm-cli",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "type": "module",
   "description": "CLI tool to search, open, and run extension assets from an akm stash directory.",
   "keywords": [
