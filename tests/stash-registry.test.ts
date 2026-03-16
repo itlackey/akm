@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getConfigPath, loadConfig, saveConfig } from "../src/config";
+import { loadConfig, saveConfig } from "../src/config";
 import { agentikitList, agentikitRemove, agentikitUpdate } from "../src/installed-kits";
 
 const createdTmpDirs: string[] = [];
@@ -250,7 +250,6 @@ describe("agentikitRemove", () => {
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
-
 });
 
 // ── selectTargets (tested via agentikitUpdate error paths) ────────────────
@@ -328,5 +327,4 @@ describe("selectTargets via agentikitUpdate", () => {
     const config = loadConfig();
     expect((config.stashes ?? []).some((s) => s.path === localDir)).toBe(true);
   });
-
 });

@@ -55,14 +55,14 @@ describe("addStashSource", () => {
 
     expect(result.added).toBe(true);
     expect(result.entry).toBeDefined();
-    expect(result.entry!.type).toBe("filesystem");
-    expect(result.entry!.path).toBe(path.resolve(stashPath));
+    expect(result.entry?.type).toBe("filesystem");
+    expect(result.entry?.path).toBe(path.resolve(stashPath));
 
     // Verify persisted
     const config = loadConfig();
     expect(config.stashes).toHaveLength(1);
-    expect(config.stashes![0].type).toBe("filesystem");
-    expect(config.stashes![0].path).toBe(path.resolve(stashPath));
+    expect(config.stashes?.[0].type).toBe("filesystem");
+    expect(config.stashes?.[0].path).toBe(path.resolve(stashPath));
   });
 
   test("adds a filesystem path with a name", () => {
@@ -70,7 +70,7 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: stashPath, name: "my-stash" });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.name).toBe("my-stash");
+    expect(result.entry?.name).toBe("my-stash");
   });
 
   test("rejects duplicate filesystem paths", () => {
@@ -88,14 +88,14 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: relativePath });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.path).toBe(path.resolve(stashPath));
+    expect(result.entry?.path).toBe(path.resolve(stashPath));
   });
 
   test("deduplicates paths that resolve to the same directory", () => {
     const stashPath = createTmpDir("akm-fs-equiv-");
     addStashSource({ target: stashPath });
     // Add again with trailing slash
-    const result = addStashSource({ target: stashPath + "/" });
+    const result = addStashSource({ target: `${stashPath}/` });
 
     expect(result.added).toBe(false);
     expect(result.message).toContain("already configured");
@@ -106,13 +106,13 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: url, providerType: "openviking" });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.type).toBe("openviking");
-    expect(result.entry!.url).toBe(url);
+    expect(result.entry?.type).toBe("openviking");
+    expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
     expect(config.stashes).toHaveLength(1);
-    expect(config.stashes![0].type).toBe("openviking");
-    expect(config.stashes![0].url).toBe(url);
+    expect(config.stashes?.[0].type).toBe("openviking");
+    expect(config.stashes?.[0].url).toBe(url);
   });
 
   test("adds a URL source with name and options", () => {
@@ -125,8 +125,8 @@ describe("addStashSource", () => {
     });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.name).toBe("my-viking");
-    expect(result.entry!.options).toEqual({ searchType: "text" });
+    expect(result.entry?.name).toBe("my-viking");
+    expect(result.entry?.options).toEqual({ searchType: "text" });
   });
 
   test("throws when URL source has no provider type", () => {
@@ -147,7 +147,7 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: url, providerType: "custom-provider" });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.type).toBe("custom-provider");
+    expect(result.entry?.type).toBe("custom-provider");
   });
 
   test("adds an http:// URL source", () => {
@@ -155,7 +155,7 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: url, providerType: "openviking" });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.url).toBe(url);
+    expect(result.entry?.url).toBe(url);
   });
 
   test("allows same URL with different provider types", () => {
@@ -171,7 +171,7 @@ describe("addStashSource", () => {
     const result = addStashSource({ target: fsPath, options: { key: "value" } });
 
     expect(result.added).toBe(true);
-    expect(result.entry!.options).toBeUndefined();
+    expect(result.entry?.options).toBeUndefined();
   });
 
   test("returned stashes array reflects new state", () => {
@@ -190,9 +190,9 @@ describe("addStashSource", () => {
 
     const config = loadConfig();
     expect(config.stashes).toHaveLength(3);
-    expect(config.stashes![0].type).toBe("filesystem");
-    expect(config.stashes![1].type).toBe("openviking");
-    expect(config.stashes![2].type).toBe("custom-provider");
+    expect(config.stashes?.[0].type).toBe("filesystem");
+    expect(config.stashes?.[1].type).toBe("openviking");
+    expect(config.stashes?.[2].type).toBe("custom-provider");
   });
 
   test("preserves existing stashes when adding", () => {
@@ -207,8 +207,8 @@ describe("addStashSource", () => {
 
     const updated = loadConfig();
     expect(updated.stashes).toHaveLength(2);
-    expect(updated.stashes![0].url).toBe("https://existing.example.com");
-    expect(updated.stashes![1].type).toBe("filesystem");
+    expect(updated.stashes?.[0].url).toBe("https://existing.example.com");
+    expect(updated.stashes?.[1].type).toBe("filesystem");
   });
 });
 
@@ -221,8 +221,8 @@ describe("removeStashSource", () => {
 
     const result = removeStashSource(fsPath);
     expect(result.removed).toBe(true);
-    expect(result.entry!.type).toBe("filesystem");
-    expect(result.entry!.path).toBe(path.resolve(fsPath));
+    expect(result.entry?.type).toBe("filesystem");
+    expect(result.entry?.path).toBe(path.resolve(fsPath));
 
     const config = loadConfig();
     expect(config.stashes).toHaveLength(0);
@@ -234,7 +234,7 @@ describe("removeStashSource", () => {
 
     const result = removeStashSource(url);
     expect(result.removed).toBe(true);
-    expect(result.entry!.url).toBe(url);
+    expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
     expect(config.stashes).toHaveLength(0);
@@ -246,7 +246,7 @@ describe("removeStashSource", () => {
 
     const result = removeStashSource("my-viking");
     expect(result.removed).toBe(true);
-    expect(result.entry!.name).toBe("my-viking");
+    expect(result.entry?.name).toBe("my-viking");
   });
 
   test("returns removed: false for non-existent source", () => {
@@ -264,7 +264,7 @@ describe("removeStashSource", () => {
 
     const config = loadConfig();
     expect(config.stashes).toHaveLength(1);
-    expect(config.stashes![0].type).toBe("openviking");
+    expect(config.stashes?.[0].type).toBe("openviking");
   });
 
   test("prefers URL match over name match", () => {
@@ -275,12 +275,12 @@ describe("removeStashSource", () => {
     // Should match by URL (first entry), not by name (second entry)
     const result = removeStashSource(url);
     expect(result.removed).toBe(true);
-    expect(result.entry!.name).toBe("my-source");
+    expect(result.entry?.name).toBe("my-source");
 
     // The second entry (whose name matches the URL) should still exist
     const config = loadConfig();
     expect(config.stashes).toHaveLength(1);
-    expect(config.stashes![0].name).toBe(url);
+    expect(config.stashes?.[0].name).toBe(url);
   });
 
   test("prefers path match over name match", () => {
@@ -291,7 +291,7 @@ describe("removeStashSource", () => {
     // Should match by path (first entry), not by name (second entry)
     const result = removeStashSource(fsPath);
     expect(result.removed).toBe(true);
-    expect(result.entry!.type).toBe("filesystem");
+    expect(result.entry?.type).toBe("filesystem");
   });
 
   test("removes http:// URL source", () => {
@@ -300,7 +300,7 @@ describe("removeStashSource", () => {
 
     const result = removeStashSource(url);
     expect(result.removed).toBe(true);
-    expect(result.entry!.url).toBe(url);
+    expect(result.entry?.url).toBe(url);
   });
 
   test("returned stashes array reflects new state", () => {
@@ -409,8 +409,8 @@ describe("round-trip integration", () => {
     const listed = listStashSources();
     const entry = listed.stashes.find((s) => s.name === "custom-rt");
     expect(entry).toBeDefined();
-    expect(entry!.type).toBe("my-custom");
-    expect(entry!.options).toEqual({ key: "value" });
+    expect(entry?.type).toBe("my-custom");
+    expect(entry?.options).toEqual({ key: "value" });
 
     removeStashSource("custom-rt");
     const afterRemove = listStashSources();
