@@ -1,7 +1,7 @@
 ---
 title: Your AI Agent's Skill List Is Getting Out of Hand
 id: 3327252
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo-sized.webp'
 series: akm
 description: A quick introduction to the Agent-i-Kit CLI for managing AI agent extensions
 tags:
