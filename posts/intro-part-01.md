@@ -1,11 +1,16 @@
 ---
 title: Your AI Agent's Skill List Is Getting Out of Hand
 id: 3327252
-cover_image: https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo.webp
+cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo.webp'
 series: akm
 description: A quick introduction to the Agent-i-Kit CLI for managing AI agent extensions
-tags: [ai, agents, cli, skills]
+tags:
+  - ai
+  - agents
+  - cli
+  - skills
 published: true
+date: '2026-03-08T15:58:28Z'
 ---
 
 If you've been building with Claude Code or OpenCode for any length of time, you've probably hit the same wall. You start with a handful of skills and commands. They work great. So you add more. Then a few more for that new project. Then a teammate shares theirs and you copy those in too.
