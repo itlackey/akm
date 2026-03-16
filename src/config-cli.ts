@@ -32,8 +32,6 @@ export function parseConfigValue(key: string, value: string): Partial<AgentikitC
       return { llm: parseLlmConnectionValue(value) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
-    case "remoteStashSources":
-      return { remoteStashSources: parseStashesValue(value) };
     case "stashes":
       return { stashes: parseStashesValue(value) };
     case "output.format":
@@ -59,8 +57,6 @@ export function getConfigValue(config: AgentikitConfig, key: string): unknown {
       return config.llm ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
-    case "remoteStashSources":
-      return config.remoteStashSources ?? [];
     case "stashes":
       return config.stashes ?? [];
     case "output.format":
@@ -80,7 +76,6 @@ export function setConfigValue(config: AgentikitConfig, key: string, rawValue: s
     case "embedding":
     case "llm":
     case "registries":
-    case "remoteStashSources":
     case "stashes":
     case "output.format":
     case "output.detail":
@@ -100,8 +95,6 @@ export function unsetConfigValue(config: AgentikitConfig, key: string): Agentiki
       return { ...config, llm: undefined };
     case "registries":
       return { ...config, registries: undefined };
-    case "remoteStashSources":
-      return { ...config, remoteStashSources: undefined };
     case "stashes":
       return { ...config, stashes: undefined };
     case "output.format":
@@ -124,9 +117,7 @@ export function listConfig(config: AgentikitConfig): Record<string, unknown> {
   };
   if (config.embedding) result.embedding = config.embedding;
   if (config.llm) result.llm = config.llm;
-  // Show legacy keys only if they still have content
   if (config.searchPaths?.length) result.searchPaths = config.searchPaths;
-  if (config.remoteStashSources?.length) result.remoteStashSources = config.remoteStashSources;
   return result;
 }
 

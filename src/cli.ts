@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { resolveStashDir } from "./common";
-import type { RegistryConfigEntry, StashConfigEntry } from "./config";
+import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
@@ -18,7 +18,7 @@ import { agentikitAdd } from "./stash-add";
 import { agentikitClone } from "./stash-clone";
 import { agentikitSearch, parseSearchSource } from "./stash-search";
 import { agentikitShowUnified } from "./stash-show";
-import { resolveStashSources } from "./stash-source";
+import { addStashSource, listStashSources, removeStashSource } from "./stash-source-manage";
 import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
@@ -845,23 +845,17 @@ const registryCommand = defineCommand({
   },
 });
 
-const sourcesCommand = defineCommand({
-  meta: { name: "sources", description: "Manage stash sources (local paths and remote providers)" },
-  subCommands: {
+/**
+ * Shared subcommand definitions for stash source management.
+ * Used by both `akm stash` (preferred) and `akm sources` (legacy alias).
+ */
+function buildSourceSubCommands(outputPrefix: string) {
+  return {
     list: defineCommand({
       meta: { name: "list", description: "List all stash sources" },
       run() {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
-          const localSources = resolveStashSources();
-          const stashes = config.stashes ?? [];
-          // Legacy fallback: show remoteStashSources if no stashes config
-          const legacyRemote = !config.stashes ? (config.remoteStashSources ?? []) : [];
-          output("sources", {
-            localSources,
-            stashes,
-            ...(legacyRemote.length > 0 ? { remoteSources: legacyRemote } : {}),
-          });
+          output(`${outputPrefix}`, listStashSources());
         });
       },
     }),
@@ -875,50 +869,31 @@ const sourcesCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
-          const stashes = [...(config.stashes ?? [])];
-          const isUrl = args.target.startsWith("http://") || args.target.startsWith("https://");
-
-          if (isUrl) {
-            if (args.target.startsWith("http://")) {
-              warn(
-                "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
-              );
-            }
-            const providerType = args.provider;
-            if (!providerType) {
-              throw new UsageError("--provider is required for URL sources (e.g. --provider openviking)");
-            }
-            if (stashes.some((s) => s.url === args.target)) {
-              output("sources-add", { stashes, added: false, message: "Source URL already configured" });
-              return;
-            }
-            const entry: StashConfigEntry = { type: providerType, url: args.target };
-            if (args.name) entry.name = args.name;
-            if (args.options) {
-              try {
-                entry.options = JSON.parse(args.options);
-              } catch {
-                throw new UsageError("--options must be valid JSON");
-              }
-            }
-            stashes.push(entry);
-          } else {
-            // Filesystem path
-            const resolvedPath = path.resolve(args.target);
-            if (stashes.some((s) => s.path === resolvedPath)) {
-              output("sources-add", { stashes, added: false, message: "Source path already configured" });
-              return;
-            }
-            const entry: StashConfigEntry = { type: "filesystem", path: resolvedPath };
-            if (args.name) entry.name = args.name;
-            stashes.push(entry);
+          if (args.target.startsWith("http://")) {
+            warn(
+              "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+            );
           }
-
-          // Migrate: remove remoteStashSources when moving to stashes
-          const { remoteStashSources, ...rest } = config;
-          saveConfig({ ...rest, stashes });
-          output("sources-add", { stashes, added: true });
+          let parsedOptions: Record<string, unknown> | undefined;
+          if (args.options) {
+            try {
+              const parsed = JSON.parse(args.options);
+              if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+                throw new UsageError("--options must be a JSON object");
+              }
+              parsedOptions = parsed;
+            } catch (err) {
+              if (err instanceof UsageError) throw err;
+              throw new UsageError("--options must be valid JSON");
+            }
+          }
+          const result = addStashSource({
+            target: args.target,
+            name: args.name,
+            providerType: args.provider,
+            options: parsedOptions,
+          });
+          output(`${outputPrefix}-add`, result);
         });
       },
     }),
@@ -929,23 +904,22 @@ const sourcesCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
-          const stashes = [...(config.stashes ?? [])];
-          const resolvedTarget = args.target.startsWith("http") ? args.target : path.resolve(args.target);
-          const idx = stashes.findIndex(
-            (s) => s.url === resolvedTarget || s.path === resolvedTarget || s.name === resolvedTarget,
-          );
-          if (idx === -1) {
-            output("sources-remove", { stashes, removed: false, message: "No matching source found" });
-            return;
-          }
-          const removed = stashes.splice(idx, 1)[0];
-          saveConfig({ ...config, stashes });
-          output("sources-remove", { stashes, removed: true, entry: removed });
+          const result = removeStashSource(args.target);
+          output(`${outputPrefix}-remove`, result);
         });
       },
     }),
-  },
+  };
+}
+
+const stashCommand = defineCommand({
+  meta: { name: "stash", description: "Manage stash sources (local paths and remote providers)" },
+  subCommands: buildSourceSubCommands("stash"),
+});
+
+const sourcesCommand = defineCommand({
+  meta: { name: "sources", description: "Manage stash sources (alias for 'akm stash')" },
+  subCommands: buildSourceSubCommands("sources"),
 });
 
 const hintsCommand = defineCommand({
@@ -984,6 +958,7 @@ const main = defineCommand({
     search: searchCommand,
     show: showCommand,
     clone: cloneCommand,
+    stash: stashCommand,
     sources: sourcesCommand,
     registry: registryCommand,
     config: configCommand,

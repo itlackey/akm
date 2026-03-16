@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getConfigPath, loadConfig, saveConfig } from "../src/config";
+import { loadConfig, saveConfig } from "../src/config";
 import { agentikitList, agentikitRemove, agentikitUpdate } from "../src/installed-kits";
 
 const createdTmpDirs: string[] = [];
@@ -250,39 +250,6 @@ describe("agentikitRemove", () => {
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
-
-  test("local directories are migrated to stashes and not in installed", async () => {
-    const localDir = createTmpDir("akm-registry-remove-local-");
-    fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
-
-    // Write config with a legacy installed[source: "local"] entry
-    const configPath = getConfigPath();
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        semanticSearch: false,
-        searchPaths: [localDir],
-        installed: [
-          {
-            id: `local:${path.basename(localDir)}`,
-            source: "local",
-            ref: localDir,
-            artifactUrl: `file://${localDir}`,
-            stashRoot: localDir,
-            cacheDir: localDir,
-            installedAt: new Date().toISOString(),
-          },
-        ],
-      }),
-    );
-
-    // Loading config triggers migration: local entries move to stashes[]
-    const config = loadConfig();
-    expect((config.installed ?? []).some((e) => e.source === "local")).toBe(false);
-    expect((config.stashes ?? []).some((s) => s.type === "filesystem" && s.path === localDir)).toBe(true);
-    expect(fs.existsSync(localDir)).toBe(true);
-  });
 });
 
 // ── selectTargets (tested via agentikitUpdate error paths) ────────────────
@@ -304,9 +271,6 @@ describe("selectTargets via agentikitUpdate", () => {
 
   test("--all selects all installed entries (registry kits only)", async () => {
     // Use local directory refs so installRegistryRef works without network.
-    // Store as source: "local" but write via saveConfig so the entries survive.
-    // Note: loadConfig() migrates source: "local" entries to stashes[],
-    // so we write raw JSON and use refs that parseRegistryRef detects as local.
     const localDir1 = createTmpDir("akm-registry-all-1-");
     const localDir2 = createTmpDir("akm-registry-all-2-");
     for (const dir of [localDir1, localDir2]) {
@@ -315,9 +279,7 @@ describe("selectTargets via agentikitUpdate", () => {
       }
     }
 
-    // Write raw config to avoid loadConfig cache; use source: "local"
-    // which loadConfig() will migrate to stashes[], leaving installed[] empty.
-    // Instead, store as source: "npm" with local-path refs so they stay in installed[]
+    // Store as source: "npm" with local-path refs so they stay in installed[]
     // but parseRegistryRef recognizes the ref as a local path.
     saveConfig({
       semanticSearch: false,
@@ -364,39 +326,5 @@ describe("selectTargets via agentikitUpdate", () => {
     expect(fs.existsSync(localDir)).toBe(true);
     const config = loadConfig();
     expect((config.stashes ?? []).some((s) => s.path === localDir)).toBe(true);
-  });
-
-  test("migration preserves local directories", async () => {
-    const localDir = createTmpDir("akm-registry-update-local-cache-change-");
-    fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
-
-    // Write raw config with local installed entry
-    const configPath = getConfigPath();
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        semanticSearch: false,
-        searchPaths: [localDir],
-        installed: [
-          {
-            id: `local:${path.basename(localDir)}`,
-            source: "local",
-            ref: localDir,
-            artifactUrl: `file://${localDir}`,
-            stashRoot: localDir,
-            cacheDir: path.join(localDir, "."),
-            installedAt: new Date().toISOString(),
-          },
-        ],
-      }),
-    );
-
-    const config = loadConfig();
-    // Migration moved local entry to stashes
-    expect(config.installed?.length ?? 0).toBe(0);
-    expect((config.stashes ?? []).some((s) => s.path === localDir)).toBe(true);
-    // Directory is still intact
-    expect(fs.existsSync(localDir)).toBe(true);
   });
 });

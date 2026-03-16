@@ -81,12 +81,6 @@ export interface AgentikitConfig {
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
    */
   registries?: RegistryConfigEntry[];
-  /**
-   * @deprecated Use stashes instead. Legacy remote stash sources.
-   * Typed as StashConfigEntry[] because the migration reads them as stash entries.
-   * Will be removed after one release cycle.
-   */
-  remoteStashSources?: StashConfigEntry[];
   /** Additional stash sources (filesystem paths and remote providers) */
   stashes?: StashConfigEntry[];
   /** Output defaults for CLI rendering */
@@ -127,7 +121,7 @@ export function getConfigPath(): string {
 
 let cachedConfig: { config: AgentikitConfig; path: string; mtime: number } | undefined;
 
-export function loadConfig(opts?: { readOnly?: boolean }): AgentikitConfig {
+export function loadConfig(): AgentikitConfig {
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
@@ -156,108 +150,11 @@ export function loadConfig(opts?: { readOnly?: boolean }): AgentikitConfig {
     if (envKey) config.llm.apiKey = envKey;
   }
 
-  if (!opts?.readOnly) {
-    // Migrate installed[source: "local"] → stashes[type: "filesystem"]
-    try {
-      migrateLocalInstalledToStashes(config);
-    } catch (err) {
-      console.warn(
-        "[agentikit] Warning: config migration (local→stashes) failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-
-    // Migrate remoteStashSources → stashes[]
-    try {
-      migrateRemoteStashSourcesToStashes(config);
-    } catch (err) {
-      console.warn(
-        "[agentikit] Warning: config migration (remoteStashSources→stashes) failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
-
   // Cache the parsed config with its path and mtime for subsequent calls.
   // Reuse the stat already obtained above (avoids a second syscall + TOCTOU gap).
   cachedConfig = { config, path: configPath, mtime: stat.mtimeMs };
 
   return config;
-}
-
-/**
- * Migrate installed entries with source "local" to stashes[] as filesystem entries.
- * Local directories are search paths, not registry kits — they don't need version
- * tracking, cache management, or update support.
- *
- * Mutates the config in place and persists to disk if any entries are migrated.
- */
-function migrateLocalInstalledToStashes(config: AgentikitConfig): void {
-  const installed = config.installed;
-  if (!installed) return;
-
-  const localEntries = installed.filter((e) => e.source === "local");
-  if (localEntries.length === 0) return;
-
-  const stashes = [...(config.stashes ?? [])];
-  const existingPaths = new Set(
-    stashes.filter((s): s is StashConfigEntry & { path: string } => !!s.path).map((s) => path.resolve(s.path)),
-  );
-
-  let migrated = 0;
-  for (const entry of localEntries) {
-    const resolved = path.resolve(entry.stashRoot);
-    if (existingPaths.has(resolved)) continue;
-    stashes.push({
-      type: "filesystem",
-      path: resolved,
-      name: entry.id,
-    });
-    existingPaths.add(resolved);
-    migrated++;
-  }
-
-  if (migrated === 0) return;
-
-  // Remove local entries from installed, add to stashes
-  config.installed = installed.filter((e) => e.source !== "local");
-  config.stashes = stashes;
-  saveConfig(config);
-}
-
-/**
- * Migrate remoteStashSources[] to stashes[] entries.
- * Each remote source becomes a typed stash entry (e.g. type: "openviking").
- *
- * Mutates the config in place and persists to disk if any entries are migrated.
- */
-function migrateRemoteStashSourcesToStashes(config: AgentikitConfig): void {
-  const remoteSources = config.remoteStashSources;
-  if (!remoteSources || remoteSources.length === 0) return;
-
-  const stashes = [...(config.stashes ?? [])];
-  const existingUrls = new Set(
-    stashes.filter((s): s is StashConfigEntry & { url: string } => !!s.url).map((s) => s.url),
-  );
-
-  let migrated = 0;
-  for (const entry of remoteSources) {
-    if (!entry.url || existingUrls.has(entry.url)) continue;
-    stashes.push({
-      type: entry.type ?? "openviking",
-      url: entry.url,
-      name: entry.name,
-      options: entry.options,
-    });
-    existingUrls.add(entry.url);
-    migrated++;
-  }
-
-  if (migrated === 0) return;
-
-  config.stashes = stashes;
-  config.remoteStashSources = undefined;
-  saveConfig(config);
 }
 
 export function saveConfig(config: AgentikitConfig): void {
@@ -295,9 +192,8 @@ function sanitizeConfigForWrite(config: AgentikitConfig): Record<string, unknown
     const { apiKey, ...rest } = config.llm;
     sanitized.llm = rest;
   }
-  // Drop empty/migrated keys to keep config clean
+  // Drop empty keys to keep config clean
   if (!config.searchPaths?.length) delete sanitized.searchPaths;
-  if (!config.remoteStashSources?.length) delete sanitized.remoteStashSources;
   return sanitized;
 }
 
@@ -349,9 +245,6 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
 
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
-
-  const remoteStash = parseStashesConfig(raw.remoteStashSources);
-  if (remoteStash) config.remoteStashSources = remoteStash;
 
   const stashes = parseStashesConfig(raw.stashes);
   if (stashes) config.stashes = stashes;
