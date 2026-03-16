@@ -20,6 +20,6 @@ jobs:
         with:
           devto_key: ${{ secrets.DEVTO_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: "posts/**/*.md"
+          files: "docs/posts/**/*.md"
           branch: main
           conventional_commits: true

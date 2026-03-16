@@ -147,12 +147,12 @@ That clones just the skill directly into your project's Claude Code skills direc
 
 Here's the part that ties it all together. Drop this into your `AGENTS.md`, `CLAUDE.md`, or system prompt:
 
-~~~markdown
+```markdown
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
 knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
-~~~
+```
 
 That's the entire integration. No plugins, no SDKs, no integration code. Any model that can run shell commands can use `akm`. Claude Code, OpenCode, Codex, Cursor — if it has a terminal, it works.
 
