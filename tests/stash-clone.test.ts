@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
+import { UsageError } from "../src/errors";
 import { akmClone } from "../src/stash-clone";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
@@ -140,6 +141,46 @@ describe("akmClone", () => {
     await expect(akmClone({ sourceRef: "skill:review" })).rejects.toThrow("same path");
     // Verify the skill was not destroyed
     expect(fs.existsSync(path.join(stashDir, "skills", "review", "SKILL.md"))).toBe(true);
+  });
+
+  describe("newName validation", () => {
+    beforeEach(() => {
+      writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
+      writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "# Review\n");
+    });
+
+    test("throws on empty string newName", async () => {
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "" })).rejects.toThrow(UsageError);
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "" })).rejects.toThrow(/empty/);
+    });
+
+    test("throws on '.' as newName", async () => {
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "." })).rejects.toThrow(UsageError);
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "." })).rejects.toThrow(/Unsafe/);
+    });
+
+    test("throws on '..' as newName", async () => {
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: ".." })).rejects.toThrow(UsageError);
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: ".." })).rejects.toThrow(/Unsafe/);
+    });
+
+    test("throws on path-traversal newName", async () => {
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "../escape.sh" })).rejects.toThrow(UsageError);
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "../escape.sh" })).rejects.toThrow(/Unsafe/);
+    });
+
+    test("throws on absolute path as newName", async () => {
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "/etc/evil.sh" })).rejects.toThrow(UsageError);
+      await expect(akmClone({ sourceRef: "script:deploy.sh", newName: "/etc/evil.sh" })).rejects.toThrow(/Unsafe/);
+    });
+
+    test("empty newName does not wipe the type directory for skills", async () => {
+      writeFile(path.join(stashDir, "skills", "existing", "SKILL.md"), "# Existing\n");
+
+      await expect(akmClone({ sourceRef: "skill:review", newName: "", force: true })).rejects.toThrow(UsageError);
+      // Existing skill must be untouched
+      expect(fs.existsSync(path.join(stashDir, "skills", "existing", "SKILL.md"))).toBe(true);
+    });
   });
 });
 
