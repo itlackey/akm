@@ -1,6 +1,6 @@
 # Project Context Memory
 
-The Agent-i-Kit project is focused on building a flexible, extensible toolkit for
+The akm (Agent Kit Manager) project is focused on building a flexible, extensible toolkit for
 managing AI agent assets. The core philosophy is YAGNI + KISS — only build what's
 needed, keep it simple.
 

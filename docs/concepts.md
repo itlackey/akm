@@ -123,6 +123,22 @@ For script assets, akm resolves execution hints in this order:
 2. Header comment tags (`@run`, `@setup`, `@cwd`)
 3. Auto-detection from extension and nearby dependency files
 
+## Glossary
+
+These terms have precise meanings in akm. Use this table to avoid confusion:
+
+| Term | Meaning | Example |
+| --- | --- | --- |
+| **ref** (asset ref) | A `type:name` handle for an asset | `script:deploy.sh` |
+| **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |
+| **registry ref** | A package identifier passed to `akm add` | `npm:@scope/pkg`, `github:owner/repo` |
+| **git ref** | A branch, tag, or commit (used when installing) | `main`, `v1.0.0` |
+| **stash** | The local library of assets (primary + search paths + installed kits) | `~/akm` |
+| **stash source** | A directory or remote provider in the search path | A filesystem path or OpenViking URL |
+| **search source** | Where to look: `stash`, `registry`, or `both` | `--source stash` |
+| **kit** | An installable package of assets | An npm package or GitHub repo |
+| **registry** | An index of available kits | The official registry, skills.sh |
+
 ## Further Reading
 
 - [CLI Reference](cli.md)
