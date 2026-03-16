@@ -50,7 +50,7 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
   const entry = resolveInstalledTarget(installed, target);
 
   const updatedConfig = removeInstalledRegistryEntry(entry.id);
-  removeLockEntry(entry.id);
+  await removeLockEntry(entry.id);
   // Only clean up cache for non-local sources — local sources point to the
   // user's real directory on disk and must never be deleted.
   if (entry.source !== "local") {

@@ -221,31 +221,31 @@ describe("upsertLockEntry", () => {
 // ── removeLockEntry ─────────────────────────────────────────────────────────
 
 describe("removeLockEntry", () => {
-  test("removes entry by id", () => {
+  test("removes entry by id", async () => {
     writeLockfile([validEntry({ id: "remove-me" }), validEntry({ id: "keep-me" })]);
-    removeLockEntry("remove-me");
+    await removeLockEntry("remove-me");
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("keep-me");
   });
 
-  test("no-op when id does not exist", () => {
+  test("no-op when id does not exist", async () => {
     writeLockfile([validEntry({ id: "existing" })]);
-    removeLockEntry("nonexistent");
+    await removeLockEntry("nonexistent");
     const result = readLockfile();
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("existing");
   });
 
-  test("works when lockfile does not exist", () => {
+  test("works when lockfile does not exist", async () => {
     // Should not throw
-    removeLockEntry("anything");
+    await removeLockEntry("anything");
     expect(readLockfile()).toEqual([]);
   });
 
-  test("removes all entries if all match", () => {
+  test("removes all entries if all match", async () => {
     writeLockfile([validEntry({ id: "only-one" })]);
-    removeLockEntry("only-one");
+    await removeLockEntry("only-one");
     expect(readLockfile()).toEqual([]);
   });
 });
