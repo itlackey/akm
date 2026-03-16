@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
-import { agentIKitIndex, buildSearchText } from "../src/indexer";
+import { akmIndex, buildSearchText } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
 let testConfigDir = "";
@@ -62,7 +62,7 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-test("agentIKitIndex scans directories and builds index", async () => {
+test("akmIndex scans directories and builds index", async () => {
   const stashDir = tmpStash();
   writeFile(
     path.join(stashDir, "scripts", "deploy", "deploy.sh"),
@@ -71,7 +71,7 @@ test("agentIKitIndex scans directories and builds index", async () => {
   writeFile(path.join(stashDir, "scripts", "lint", "lint.ts"), "/**\n * Lint source code\n */\nconsole.log('lint')\n");
 
   process.env.AKM_STASH_DIR = stashDir;
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
 
   expect(result.totalEntries).toBe(2);
   expect(result.generatedMetadata).toBe(2);
@@ -90,7 +90,7 @@ test("agentIKitIndex scans directories and builds index", async () => {
   closeDatabase(db);
 });
 
-test("agentIKitIndex preserves manually-written .stash.json", async () => {
+test("akmIndex preserves manually-written .stash.json", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "git", "summarize.ts"), "console.log('x')\n");
   writeFile(
@@ -108,7 +108,7 @@ test("agentIKitIndex preserves manually-written .stash.json", async () => {
     }),
   );
 
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
 
   expect(result.totalEntries).toBe(1);
   expect(result.generatedMetadata).toBe(0); // no generation needed
@@ -119,11 +119,11 @@ test("agentIKitIndex preserves manually-written .stash.json", async () => {
   expect(stash.entries[0].quality).toBeUndefined();
 });
 
-test("agentIKitIndex writes index to SQLite database", async () => {
+test("akmIndex writes index to SQLite database", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
   expect(fs.existsSync(result.indexPath)).toBe(true);
   expect(result.indexPath).toEndWith(".db");
 
@@ -135,15 +135,15 @@ test("agentIKitIndex writes index to SQLite database", async () => {
   closeDatabase(db);
 });
 
-test("agentIKitIndex handles empty stash gracefully", async () => {
+test("akmIndex handles empty stash gracefully", async () => {
   const stashDir = tmpStash();
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
 
   expect(result.totalEntries).toBe(0);
   expect(result.generatedMetadata).toBe(0);
 });
 
-test("agentIKitIndex handles markdown assets", async () => {
+test("akmIndex handles markdown assets", async () => {
   const stashDir = tmpStash();
   writeFile(
     path.join(stashDir, "commands", "release.md"),
@@ -154,18 +154,18 @@ test("agentIKitIndex handles markdown assets", async () => {
     '---\ndescription: "Refactor code"\n---\n# Refactor skill\n',
   );
 
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
   expect(result.totalEntries).toBe(2);
 });
 
-test("agentIKitIndex generates TOC in database for knowledge entries", async () => {
+test("akmIndex generates TOC in database for knowledge entries", async () => {
   const stashDir = tmpStash();
   writeFile(
     path.join(stashDir, "knowledge", "guide.md"),
     '---\ndescription: "A guide"\n---\n# Getting Started\n\nIntro.\n\n## Installation\n\nInstall steps.\n',
   );
 
-  const result = await agentIKitIndex({ stashDir });
+  const result = await akmIndex({ stashDir });
   expect(result.totalEntries).toBe(1);
 
   // TOC is stored in the database, not in .stash.json
@@ -186,12 +186,12 @@ test("isDirStale detects modified source file newer than index", async () => {
   writeFile(deployFile, "#!/usr/bin/env bash\necho deploy\n");
 
   // First index
-  const result1 = await agentIKitIndex({ stashDir });
+  const result1 = await akmIndex({ stashDir });
   expect(result1.totalEntries).toBe(1);
   expect(result1.mode).toBe("full");
 
   // Second index (incremental) — nothing changed, so dir should be skipped
-  const result2 = await agentIKitIndex({ stashDir });
+  const result2 = await akmIndex({ stashDir });
   expect(result2.mode).toBe("incremental");
   expect(result2.directoriesSkipped).toBeGreaterThanOrEqual(1);
 
@@ -200,20 +200,20 @@ test("isDirStale detects modified source file newer than index", async () => {
   fs.utimesSync(deployFile, futureTime, futureTime);
 
   // Third index (incremental) — should detect stale dir
-  const result3 = await agentIKitIndex({ stashDir });
+  const result3 = await akmIndex({ stashDir });
   expect(result3.mode).toBe("incremental");
   expect(result3.directoriesScanned).toBeGreaterThanOrEqual(1);
 });
 
-test("agentIKitIndex --full mode returns mode full", async () => {
+test("akmIndex --full mode returns mode full", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
   // First index to create a previous index
-  await agentIKitIndex({ stashDir });
+  await akmIndex({ stashDir });
 
   // Second index with full flag — should force full reindex
-  const result = await agentIKitIndex({ stashDir, full: true });
+  const result = await akmIndex({ stashDir, full: true });
   expect(result.mode).toBe("full");
 });
 
@@ -262,14 +262,14 @@ test("buildSearchText handles entries with both searchHints and intent fields", 
   expect(text).toContain("service name");
 });
 
-test("agentIKitIndex does not generate heuristic searchHints (LLM-only)", async () => {
+test("akmIndex does not generate heuristic searchHints (LLM-only)", async () => {
   const stashDir = tmpStash();
   writeFile(
     path.join(stashDir, "scripts", "deploy", "deploy.sh"),
     "#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n",
   );
 
-  await agentIKitIndex({ stashDir });
+  await akmIndex({ stashDir });
 
   // Search hints are only generated when LLM is configured
   const db = openDatabase();
@@ -286,21 +286,21 @@ test("agentIKitIndex does not generate heuristic searchHints (LLM-only)", async 
 // should deduplicate using the `seenPaths` set so each directory is only
 // indexed once and entries are not duplicated.
 
-test("agentIKitIndex deduplicates overlapping directories across multiple stash dirs", async () => {
+test("akmIndex deduplicates overlapping directories across multiple stash dirs", async () => {
   // Create a primary stash dir with a script
   const primaryStash = tmpStash();
   writeFile(path.join(primaryStash, "scripts", "shared", "shared.sh"), "#!/bin/bash\necho shared\n");
 
   // Create a second stash dir that is actually the SAME directory
-  // (simulates overlapping searchPaths pointing to the same location)
+  // (simulates overlapping stashes pointing to the same location)
   const secondStash = primaryStash;
 
-  // Write a config that includes the same directory twice via searchPaths
+  // Write a config that includes the same directory twice via stashes
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearch: false, searchPaths: [secondStash] });
+  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: secondStash }] });
 
-  const result = await agentIKitIndex({ stashDir: primaryStash });
+  const result = await akmIndex({ stashDir: primaryStash });
 
   // The shared script should appear exactly once, not duplicated
   const db = openDatabase();
@@ -312,7 +312,7 @@ test("agentIKitIndex deduplicates overlapping directories across multiple stash 
   expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 });
 
-test("agentIKitIndex deduplicates when two stash dirs share a common subdirectory", async () => {
+test("akmIndex deduplicates when two stash dirs share a common subdirectory", async () => {
   // Create a shared directory with content
   const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-shared-"));
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
@@ -326,9 +326,9 @@ test("agentIKitIndex deduplicates when two stash dirs share a common subdirector
 
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearch: false, searchPaths: [stash2] });
+  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: stash2 }] });
 
-  await agentIKitIndex({ stashDir: stash1, full: true });
+  await akmIndex({ stashDir: stash1, full: true });
 
   const db = openDatabase();
   const entries = getAllEntries(db);

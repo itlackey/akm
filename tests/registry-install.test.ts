@@ -6,8 +6,8 @@ import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
 import { installRegistryRef, validateTarEntries } from "../src/registry-install";
 import { parseRegistryRef } from "../src/registry-resolve";
-import { agentIKitAdd } from "../src/stash-add";
-import { agentIKitShowUnified as agentIKitShow } from "../src/stash-show";
+import { akmAdd } from "../src/stash-add";
+import { akmShowUnified as akmShow } from "../src/stash-show";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -18,7 +18,7 @@ function createEmptyStashDir(prefix: string): string {
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
-  saveConfig({ semanticSearch: false, searchPaths: [] });
+  saveConfig({ semanticSearch: false });
   return stashDir;
 }
 
@@ -110,7 +110,7 @@ function createTarGz(sourceDir: string, archivePath: string): void {
 }
 
 describe("local directory installs", () => {
-  test("agentIKitAdd adds a local directory as a stash source", async () => {
+  test("akmAdd adds a local directory as a stash source", async () => {
     const stashDir = createEmptyStashDir("akm-git-stash-");
     const cacheHome = makeTempDir("akm-git-cache-");
     const repoDir = makeTempDir("akm-git-repo-");
@@ -121,7 +121,7 @@ describe("local directory installs", () => {
 
     try {
       const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentIKitAdd({ ref: kitDir }),
+        akmAdd({ ref: kitDir }),
       );
 
       // Local adds now create stash sources, not installed entries
@@ -136,7 +136,7 @@ describe("local directory installs", () => {
       expect(stashPaths).toContain(result.stashSource?.stashRoot);
 
       const shown = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentIKitShow({ ref: "script:hello.sh" }),
+        akmShow({ ref: "script:hello.sh" }),
       );
       expect(shown.type).toBe("script");
       expect(shown.path).toContain(result.stashSource?.stashRoot);
@@ -147,7 +147,7 @@ describe("local directory installs", () => {
     }
   });
 
-  test("agentIKitAdd references local directory directly (no include config)", async () => {
+  test("akmAdd references local directory directly (no include config)", async () => {
     const stashDir = createEmptyStashDir("akm-nogit-stash-");
     const cacheHome = makeTempDir("akm-nogit-cache-");
     const kitDir = makeTempDir("akm-nogit-kit-");
@@ -155,7 +155,7 @@ describe("local directory installs", () => {
 
     try {
       const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentIKitAdd({ ref: kitDir }),
+        akmAdd({ ref: kitDir }),
       );
 
       expect(result.stashSource).toBeDefined();
@@ -170,7 +170,7 @@ describe("local directory installs", () => {
     }
   });
 
-  test("agentIKitAdd discovers stash dirs nested inside a subdirectory", async () => {
+  test("akmAdd discovers stash dirs nested inside a subdirectory", async () => {
     const stashDir = createEmptyStashDir("akm-nested-stash-");
     const cacheHome = makeTempDir("akm-nested-cache-");
     const projectDir = makeTempDir("akm-nested-project-");
@@ -181,7 +181,7 @@ describe("local directory installs", () => {
 
     try {
       const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentIKitAdd({ ref: projectDir }),
+        akmAdd({ ref: projectDir }),
       );
 
       expect(result.stashSource).toBeDefined();
@@ -196,7 +196,7 @@ describe("local directory installs", () => {
     }
   });
 
-  test("agentIKitAdd indexes type-dir source directly when basename matches type", async () => {
+  test("akmAdd indexes type-dir source directly when basename matches type", async () => {
     const stashDir = createEmptyStashDir("akm-typedir-stash-");
     const cacheHome = makeTempDir("akm-typedir-cache-");
     // Create a directory named "knowledge" with nested files
@@ -208,7 +208,7 @@ describe("local directory installs", () => {
 
     try {
       const result = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        agentIKitAdd({ ref: srcDir }),
+        akmAdd({ ref: srcDir }),
       );
 
       expect(result.stashSource).toBeDefined();
@@ -364,10 +364,10 @@ describe("local directory installs", () => {
     const packageDir = makeTempDir("akm-nested-include-package-");
     const archivePath = path.join(makeTempDir("akm-nested-archive-"), "kit.tgz");
     const tarRoot = path.join(packageDir, "kit");
-    fs.mkdirSync(path.join(tarRoot, "opencode", "scripts"), { recursive: true });
-    fs.mkdirSync(path.join(tarRoot, "opencode", "docs"), { recursive: true });
+    fs.mkdirSync(path.join(tarRoot, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(tarRoot, "docs"), { recursive: true });
     writeFile(
-      path.join(tarRoot, "opencode", "package.json"),
+      path.join(tarRoot, "package.json"),
       JSON.stringify(
         {
           name: "nested-kit",
@@ -379,8 +379,8 @@ describe("local directory installs", () => {
         2,
       ),
     );
-    writeFile(path.join(tarRoot, "opencode", "scripts", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
-    writeFile(path.join(tarRoot, "opencode", "docs", "ignored.md"), "# ignored\n");
+    writeFile(path.join(tarRoot, "scripts", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
+    writeFile(path.join(tarRoot, "docs", "ignored.md"), "# ignored\n");
     createTarGz(tarRoot, archivePath);
 
     const tarballBytes = fs.readFileSync(archivePath);

@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
+import { UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
 import { installRegistryRef } from "./registry-install";
+import { findSourceForPath, getPrimarySource, resolveStashSources, type SearchSource } from "./search-source";
 import { makeAssetRef, parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
-import { findSourceForPath, getPrimarySource, resolveStashSources, type StashSource } from "./stash-source";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
@@ -31,11 +32,11 @@ export interface CloneResponse {
   remoteFetched?: { origin: string; stashRoot: string; cacheDir: string };
 }
 
-export async function agentIKitClone(options: CloneOptions): Promise<CloneResponse> {
+export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const parsed = parseAssetRef(options.sourceRef);
 
   // When --dest is provided, the working stash is optional
-  let allSources: StashSource[];
+  let allSources: SearchSource[];
   try {
     allSources = resolveStashSources();
   } catch (err) {
@@ -59,7 +60,7 @@ export async function agentIKitClone(options: CloneOptions): Promise<CloneRespon
   let remoteFetched: CloneResponse["remoteFetched"] | undefined;
   if (searchSources.length === 0 && parsed.origin && isRemoteOrigin(parsed.origin, allSources)) {
     const installResult = await installRegistryRef(parsed.origin);
-    const syntheticSource: StashSource = {
+    const syntheticSource: SearchSource = {
       path: installResult.stashRoot,
       registryId: installResult.id,
     };
@@ -91,6 +92,34 @@ export async function agentIKitClone(options: CloneOptions): Promise<CloneRespon
 
   const destName = options.newName ?? parsed.name;
   const typeDir = TYPE_DIRS[parsed.type];
+
+  // Validate destName to prevent path traversal (parsed.name is already
+  // validated by parseAssetRef, but newName comes directly from user input).
+  // Run whenever newName is provided, including empty string.
+  if (options.newName !== undefined) {
+    if (destName === "") {
+      throw new UsageError("Clone name must not be empty.");
+    }
+    const normalized = path.posix.normalize(destName.replace(/\\/g, "/"));
+    if (
+      path.isAbsolute(destName) ||
+      normalized === "." ||
+      normalized.startsWith("../") ||
+      normalized === ".." ||
+      destName.includes("\0")
+    ) {
+      throw new UsageError(`Unsafe clone name "${destName}": must not contain path traversal or absolute paths.`);
+    }
+    // Ensure the resolved destination is strictly inside the type directory,
+    // not equal to it (which can happen with crafted multi-segment names).
+    // path.relative() is used instead of startsWith() for cross-platform safety.
+    const destTypeDir = path.resolve(path.join(destRoot, typeDir));
+    const resolvedDest = path.resolve(path.join(destRoot, typeDir, destName));
+    const rel = path.relative(destTypeDir, resolvedDest);
+    if (rel === "" || rel.startsWith("..")) {
+      throw new UsageError(`Unsafe clone name "${destName}": resolves outside the target type directory.`);
+    }
+  }
   const destLabel = options.dest ? "at destination" : "in working stash";
 
   // Guard against self-clone

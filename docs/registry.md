@@ -32,7 +32,7 @@ akm registry add https://example.com/registry/index.json --name my-team
 akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
 # Add an OpenViking stash source
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 
 # Remove a registry by URL or name
 akm registry remove my-team
@@ -50,7 +50,7 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
   ],
   "stashes": [
-    // OpenViking stash provider (configured via `akm sources add`)
+    // OpenViking stash provider (configured via `akm stash add`)
     { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
@@ -120,10 +120,8 @@ which asset to use.
 Not every npm package or GitHub repo is an akm kit. To keep results
 relevant, the registry enforces tag-based filtering:
 
-- **npm** -- Only packages whose `keywords` array includes `"akm"` or
-  `"agent-i-kit"` appear in search results.
-- **GitHub** -- Only repositories with the topic `akm` or `agent-i-kit`
-  appear in search results.
+- **npm** -- Only packages whose `keywords` array includes `"akm-kit"` appear in search results.
+- **GitHub** -- Only repositories with the topic `akm-kit` appear in search results.
 
 If you are publishing a kit, add these tags so it can be discovered:
 
@@ -264,15 +262,16 @@ package that is not yet installed, `akm clone` fetches it to the cache
 automatically. Unlike `akm add`, this does **not** register the package as
 an installed kit -- it only extracts the single requested asset.
 
-## Source Priority
+## Search Priority
 
 When multiple sources provide the same asset name, the first match wins:
 
-1. **Primary stash** -- `AKM_STASH_DIR`
-2. **Search paths** -- Additional directories from config (`searchPaths`)
-3. **Installed packages** -- Registry kits from `akm add` (cache-managed)
+1. **Working stash** -- Your personal assets in `AKM_STASH_DIR` (`~/akm`)
+2. **Additional stashes** -- Directories and remote providers from `akm stash add`
+3. **Installed kits** -- Packages from `akm add`, cached in `~/.cache/akm/`
 
-This means local edits and clones always override installed versions.
+This means your stash assets always override installed kit versions. Use
+`akm clone` to copy a kit asset into your working stash for editing.
 
 ## Registry Providers
 
@@ -324,10 +323,10 @@ for context management. OpenViking is ByteDance's open-source context file
 system for AI agents, using `viking://` URIs.
 
 > **Note:** OpenViking is a *stash provider*, not a registry provider. Configure
-> it via `akm sources add`, not `akm registry add`.
+> it via `akm stash add`, not `akm registry add`.
 
 ```bash
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 ```
 
 Key behaviors:

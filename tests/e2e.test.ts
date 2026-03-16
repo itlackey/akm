@@ -21,10 +21,10 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
 import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
-import { agentIKitIndex } from "../src/indexer";
+import { akmIndex } from "../src/indexer";
 import { loadStashFile } from "../src/metadata";
-import { agentIKitSearch } from "../src/stash-search";
-import { agentIKitShowUnified as agentIKitShow } from "../src/stash-show";
+import { akmSearch } from "../src/stash-search";
+import { akmShowUnified as akmShow } from "../src/stash-show";
 import type { SearchHit, StashSearchHit } from "../src/stash-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   // Re-create per-test config dir for isolation (describe-level beforeAll
-  // already set XDG_CONFIG_HOME so agentIKitIndex doesn't read real user config)
+  // already set XDG_CONFIG_HOME so akmIndex doesn't read real user config)
   if (testConfigDir && fs.existsSync(testConfigDir)) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
   }
@@ -218,7 +218,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("search works without index (substring fallback)", async () => {
-    const result = await agentIKitSearch({ query: "deploy", type: "script" });
+    const result = await akmSearch({ query: "deploy", type: "script" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.hits.some((h) => h.name.includes("deploy"))).toBe(true);
@@ -228,7 +228,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("index generates metadata and builds search index", async () => {
-    const result = await agentIKitIndex({ stashDir });
+    const result = await akmIndex({ stashDir });
 
     expect(result.stashDir).toBe(stashDir);
     expect(result.totalEntries).toBeGreaterThanOrEqual(8);
@@ -288,7 +288,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("search with index returns scored results with descriptions", async () => {
-    const result = await agentIKitSearch({ query: "docker build image", type: "any" });
+    const result = await akmSearch({ query: "docker build image", type: "any" });
 
     expect(result.schemaVersion).toBe(1);
     expect(result.hits.length).toBeGreaterThan(0);
@@ -301,7 +301,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test.skipIf(!!process.env.CI)("search ranks semantically relevant results higher", async () => {
-    const result = await agentIKitSearch({ query: "summarize commit changes", type: "any" });
+    const result = await akmSearch({ query: "summarize commit changes", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     // Git scripts should rank higher than docker scripts for this query
@@ -313,50 +313,50 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
   });
 
   test("search type filter restricts results to that type", async () => {
-    const skillResult = await agentIKitSearch({ query: "review", type: "skill" });
+    const skillResult = await akmSearch({ query: "review", type: "skill" });
     expect(skillResult.hits.every((h) => h.type === "skill")).toBe(true);
 
-    const cmdResult = await agentIKitSearch({ query: "", type: "command" });
+    const cmdResult = await akmSearch({ query: "", type: "command" });
     expect(cmdResult.hits.every((h) => h.type === "command")).toBe(true);
   });
 
   test("search with empty query returns all entries of that type", async () => {
-    const result = await agentIKitSearch({ query: "", type: "agent" });
+    const result = await akmSearch({ query: "", type: "agent" });
     expect(result.hits.length).toBe(2); // architect.md and debugger.md
   });
 
   test("search respects limit parameter", async () => {
-    const result = await agentIKitSearch({ query: "", type: "any", limit: 3 });
+    const result = await akmSearch({ query: "", type: "any", limit: 3 });
     expect(result.hits.length).toBeLessThanOrEqual(3);
   });
 
   test("show a script returns run", async () => {
-    const searchResult = await agentIKitSearch({ query: "deploy", type: "script" });
+    const searchResult = await akmSearch({ query: "deploy", type: "script" });
     const deployHit = searchResult.hits.find((h): h is StashSearchHit => isLocalHit(h) && h.name.includes("deploy"));
     const resolvedDeployHit = expectDefined(deployHit);
 
-    const openResult = await agentIKitShow({ ref: expectDefined(resolvedDeployHit.ref) });
+    const openResult = await akmShow({ ref: expectDefined(resolvedDeployHit.ref) });
     expect(openResult.type).toBe("script");
     expect(openResult.run).toBeTruthy();
     expect(openResult.run).toContain("bash");
   });
 
   test("show a skill returns full SKILL.md content", async () => {
-    const openResult = await agentIKitShow({ ref: "skill:code-review" });
+    const openResult = await akmShow({ ref: "skill:code-review" });
     expect(openResult.type).toBe("skill");
     expect(openResult.content).toContain("Code Review Skill");
     expect(openResult.content).toContain("security vulnerabilities");
   });
 
   test("show a command returns template and description", async () => {
-    const openResult = await agentIKitShow({ ref: "command:release.md" });
+    const openResult = await akmShow({ ref: "command:release.md" });
     expect(openResult.type).toBe("command");
     expect(openResult.description).toBe("Create a new release with changelog and version bump");
     expect(openResult.template).toContain("npm version");
   });
 
   test("show an agent returns prompt, description, model hint, and tool policy", async () => {
-    const openResult = await agentIKitShow({ ref: "agent:architect.md" });
+    const openResult = await akmShow({ ref: "agent:architect.md" });
     expect(openResult.type).toBe("agent");
     expect(openResult.description).toContain("architect");
     expect(openResult.prompt).toContain("software architect");
@@ -378,7 +378,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s2-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
@@ -392,21 +392,21 @@ describe("Scenario: Agent discovers capabilities for task", () => {
   });
 
   test.skipIf(!!process.env.CI)("agent asks 'set up local dev environment' → docker-compose ranks high", async () => {
-    const result = await agentIKitSearch({ query: "set up local development environment" });
+    const result = await akmSearch({ query: "set up local development environment" });
     const names = result.hits.map((h) => h.name.toLowerCase());
     // Docker compose should appear because its intent says "start local development services"
     expect(names.some((n) => n.includes("compose") || n.includes("docker"))).toBe(true);
   });
 
   test("agent asks 'check code quality' → lint script ranks high", async () => {
-    const result = await agentIKitSearch({ query: "check code quality style" });
+    const result = await akmSearch({ query: "check code quality style" });
     expect(result.hits.length).toBeGreaterThan(0);
     const names = result.hits.map((h) => h.name.toLowerCase());
     expect(names.some((n) => n.includes("lint") || n.includes("eslint"))).toBe(true);
   });
 
   test.skipIf(!!process.env.CI)("agent asks 'review my pull request' → code-review skill found", async () => {
-    const result = await agentIKitSearch({ query: "review pull request code changes" });
+    const result = await akmSearch({ query: "review pull request code changes" });
     expect(result.hits.length).toBeGreaterThan(0);
     // Skill ref contains "code-review" (directory name), even though display name is "SKILL"
     expect(
@@ -417,14 +417,14 @@ describe("Scenario: Agent discovers capabilities for task", () => {
   });
 
   test.skipIf(!!process.env.CI)("agent asks 'help me design the system' → architect agent found", async () => {
-    const result = await agentIKitSearch({ query: "system design architecture" });
+    const result = await akmSearch({ query: "system design architecture" });
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.hits.some((h) => h.name.includes("architect"))).toBe(true);
   });
 
   test("agent workflow: search → show (end-to-end)", async () => {
     // Step 1: Agent searches for a script to run tests
-    const searchResult = await agentIKitSearch({ query: "run tests" });
+    const searchResult = await akmSearch({ query: "run tests" });
     expect(searchResult.hits.length).toBeGreaterThan(0);
     const testScript = searchResult.hits.find(
       (h): h is StashSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
@@ -432,7 +432,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     const resolvedTestScript = expectDefined(testScript);
 
     // Step 2: Agent reads the script to get run command for host execution
-    const showResult = await agentIKitShow({ ref: expectDefined(resolvedTestScript.ref) });
+    const showResult = await akmShow({ ref: expectDefined(resolvedTestScript.ref) });
     expect(showResult.run).toBeTruthy();
   });
 });
@@ -446,7 +446,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s2b-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
   });
 
   // Isolate registry index cache per test so mocked fetch responses
@@ -482,7 +482,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
       () => {
         throw new Error("fetch should not be called for source=local");
       },
-      () => agentIKitSearch({ query: "docker", source: "local" }),
+      () => akmSearch({ query: "docker", source: "local" }),
     );
 
     expect(result.source).toBe("stash");
@@ -518,7 +518,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     };
     const result = await withMockedFetch(
       () => new Response(JSON.stringify(registryIndex), { status: 200 }),
-      () => agentIKitSearch({ query: "kit", source: "registry" }),
+      () => akmSearch({ query: "kit", source: "registry" }),
     );
 
     expect(result.source).toBe("registry");
@@ -551,7 +551,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     };
     const result = await withMockedFetch(
       () => new Response(JSON.stringify(registryIndex), { status: 200 }),
-      () => agentIKitSearch({ query: "docker", source: "both", limit: 10 }),
+      () => akmSearch({ query: "docker", source: "both", limit: 10 }),
     );
 
     expect(result.source).toBe("both");
@@ -573,7 +573,7 @@ describe("Scenario: CLI subprocess execution", () => {
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s3-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
@@ -827,7 +827,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm list returns empty installed set when none configured", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-empty-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("list");
@@ -850,7 +850,6 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
       installed: [
         {
           id: "npm:@scope/kit",
@@ -885,7 +884,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update requires target or --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-update-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update");
@@ -900,7 +899,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update rejects target with --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-update-both-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "npm:@scope/kit", "--all");
@@ -915,7 +914,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update missing target returns stable not-installed error", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-missing-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "npm:@scope/kit");
@@ -985,7 +984,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   test("cli: akm update --force requires target or --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-update-force-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "--force");
@@ -1117,13 +1116,13 @@ describe("Scenario: Zero-config progressive improvement", () => {
       "#!/usr/bin/env bash\n# Format code with Prettier\nprettier --check .\n",
     );
 
-    const result = await agentIKitSearch({ query: "prettier", type: "script" });
+    const result = await akmSearch({ query: "prettier", type: "script" });
     expect(result.hits.length).toBe(1);
     expect(result.hits[0].name).toContain("prettier");
   });
 
   test("user runs index — metadata generated in database with description from comments", async () => {
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
 
     // No .stash.json should be auto-generated
     expect(fs.existsSync(path.join(stashDir, "scripts", "format", ".stash.json"))).toBe(false);
@@ -1144,7 +1143,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
       "#!/usr/bin/env bash\n# Run database migrations\necho 'migrating...'\n",
     );
 
-    const result = await agentIKitIndex({ stashDir });
+    const result = await akmIndex({ stashDir });
     expect(result.totalEntries).toBeGreaterThanOrEqual(2);
 
     const db = openDatabase();
@@ -1178,7 +1177,7 @@ describe("Scenario: Zero-config progressive improvement", () => {
     );
 
     // Re-index — should use user override
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
 
     const reloaded = expectDefined(loadStashFile(path.join(stashDir, "scripts", "format")));
     expect(reloaded.entries[0].description).toBe("Check code formatting with Prettier");
@@ -1188,9 +1187,9 @@ describe("Scenario: Zero-config progressive improvement", () => {
 
   test("semantic search finds user-edited metadata after re-index", async () => {
     // Re-index to pick up manual edits in the search index
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
 
-    const result = await agentIKitSearch({ query: "format code style" });
+    const result = await akmSearch({ query: "format code style" });
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.hits.some((h) => h.name.includes("prettier"))).toBe(true);
   });
@@ -1209,7 +1208,7 @@ describe("Scenario: Multi-script directory with hand-written .stash.json", () =>
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s5-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
@@ -1232,13 +1231,13 @@ describe("Scenario: Multi-script directory with hand-written .stash.json", () =>
   });
 
   test("search for 'docker build' returns docker-build as top result", async () => {
-    const result = await agentIKitSearch({ query: "docker build" });
+    const result = await akmSearch({ query: "docker build" });
     expect(result.hits[0].name).toContain("docker");
     expect(result.hits[0].description).toContain("Docker image");
   });
 
   test("search for 'compose development' returns docker-compose", async () => {
-    const result = await agentIKitSearch({ query: "compose development" });
+    const result = await akmSearch({ query: "compose development" });
     const composeHit = result.hits.find((h) => h.name.includes("compose"));
     expect(composeHit).toBeDefined();
     expect(composeHit?.tags).toContain("compose");
@@ -1271,7 +1270,7 @@ describe("Scenario: Index persistence across sessions", () => {
   });
 
   test("index is persisted and loadable", async () => {
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
 
     const db = openDatabase();
     const version = getMeta(db, "version");
@@ -1287,17 +1286,17 @@ describe("Scenario: Index persistence across sessions", () => {
 
   test("search uses persisted index (simulates new session)", async () => {
     // First index
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
 
     // Simulate a new session by just doing search (no re-index)
-    const result = await agentIKitSearch({ query: "docker" });
+    const result = await akmSearch({ query: "docker" });
     expect(result.hits.length).toBeGreaterThan(0);
     // Should have scores from semantic search, not substring
     expect(result.hits[0].score).toBeDefined();
   });
 
   test("re-index updates the persisted index", async () => {
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
     const db1 = openDatabase();
     const entries1 = getAllEntries(db1);
     const builtAt1 = expectDefined(getMeta(db1, "builtAt"));
@@ -1307,7 +1306,7 @@ describe("Scenario: Index persistence across sessions", () => {
     fs.mkdirSync(path.join(stashDir, "scripts", "new-script"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "scripts", "new-script", "hello.sh"), "#!/bin/bash\necho hello\n");
 
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
     const db2 = openDatabase();
     const entries2 = getAllEntries(db2);
     const builtAt2 = expectDefined(getMeta(db2, "builtAt"));
@@ -1341,7 +1340,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const orig = process.env.AKM_STASH_DIR;
     process.env.AKM_STASH_DIR = "/nonexistent/path";
     try {
-      await expect(agentIKitSearch({ query: "test" })).rejects.toThrow(/Unable to read/);
+      await expect(akmSearch({ query: "test" })).rejects.toThrow(/Unable to read/);
     } finally {
       if (orig === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = orig;
@@ -1356,7 +1355,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-nohome-"));
     process.env.HOME = tmpHome;
     try {
-      await expect(agentIKitSearch({ query: "test" })).rejects.toThrow(/No stash directory found/);
+      await expect(akmSearch({ query: "test" })).rejects.toThrow(/No stash directory found/);
     } finally {
       if (orig === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = orig;
@@ -1370,7 +1369,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-err-"));
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      await expect(agentIKitShow({ ref: "badref" })).rejects.toThrow(/Invalid ref/);
+      await expect(akmShow({ ref: "badref" })).rejects.toThrow(/Invalid ref/);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1380,7 +1379,7 @@ describe("Scenario: Error handling and edge cases", () => {
     const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-err-"));
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      await expect(agentIKitShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/);
+      await expect(akmShow({ ref: "widget:foo" })).rejects.toThrow(/Invalid asset type/);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1391,7 +1390,7 @@ describe("Scenario: Error handling and edge cases", () => {
     fs.mkdirSync(path.join(stashDir, "scripts"), { recursive: true });
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      await expect(agentIKitShow({ ref: "script:../../etc/passwd" })).rejects.toThrow(/Path traversal/);
+      await expect(akmShow({ ref: "script:../../etc/passwd" })).rejects.toThrow(/Path traversal/);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1404,7 +1403,7 @@ describe("Scenario: Error handling and edge cases", () => {
     }
     process.env.AKM_STASH_DIR = stashDir;
     try {
-      const result = await agentIKitSearch({ query: "anything" });
+      const result = await akmSearch({ query: "anything" });
       expect(result.hits).toHaveLength(0);
       expect(result.tip).toBeTruthy();
     } finally {
@@ -1418,7 +1417,7 @@ describe("Scenario: Error handling and edge cases", () => {
       fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
     }
     try {
-      const result = await agentIKitIndex({ stashDir });
+      const result = await akmIndex({ stashDir });
       expect(result.totalEntries).toBe(0);
       expect(result.generatedMetadata).toBe(0);
     } finally {
@@ -1440,7 +1439,7 @@ describe("Scenario: Cross-type discovery", () => {
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s8-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
-    await agentIKitIndex({ stashDir });
+    await akmIndex({ stashDir });
   });
 
   beforeEach(() => {
@@ -1454,7 +1453,7 @@ describe("Scenario: Cross-type discovery", () => {
   });
 
   test("search 'any' type returns mixed results across scripts, skills, commands, agents", async () => {
-    const result = await agentIKitSearch({ query: "", type: "any" });
+    const result = await akmSearch({ query: "", type: "any" });
     const types = new Set(result.hits.map((h) => h.type));
     // Should have at least scripts and one other type
     expect(types.has("script")).toBe(true);
@@ -1462,19 +1461,19 @@ describe("Scenario: Cross-type discovery", () => {
   });
 
   test("each hit has a valid ref that can be used with show", async () => {
-    const result = await agentIKitSearch({ query: "", type: "any", limit: 10 });
+    const result = await akmSearch({ query: "", type: "any", limit: 10 });
     for (const hit of result.hits.filter(isLocalHit)) {
       expect(hit.ref).toBeTruthy();
       expect(hit.ref).toContain(":");
 
       // Should not throw when opening
-      const openResult = await agentIKitShow({ ref: expectDefined(hit.ref) });
+      const openResult = await akmShow({ ref: expectDefined(hit.ref) });
       expect(openResult.type).toBe(hit.type);
     }
   });
 
   test("script hits have run", async () => {
-    const result = await agentIKitSearch({ query: "", type: "script" });
+    const result = await akmSearch({ query: "", type: "script" });
     for (const hit of result.hits) {
       expect(hit.type).toBe("script");
     }

@@ -1,13 +1,13 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your stashes first before writing something from scratch.
 
 ## Quick Reference
 
 ```sh
 akm search "<query>"                          # Search for assets
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Search stashes and registries for assets
+akm search "<query>" --source both            # Also search registries for installable kits
 akm show <ref>                                # View asset details
 akm show viking://resources/my-doc           # Show remote OpenViking content
 akm add <ref>                                 # Install a kit (npm, GitHub, git, local)

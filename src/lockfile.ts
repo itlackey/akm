@@ -39,6 +39,10 @@ async function acquireLockSentinel(): Promise<boolean> {
       return true; // Sentinel created — we own the lock
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      // Check for stale lock — if the owning PID is no longer running, reclaim it
+      if (tryReclaimStaleSentinel(sentinelPath)) {
+        continue; // Sentinel removed — retry immediately
+      }
       // Another process holds the lock — wait briefly before retrying
       if (attempt < LOCK_MAX_RETRIES - 1) {
         await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
@@ -47,6 +51,33 @@ async function acquireLockSentinel(): Promise<boolean> {
   }
   // Best-effort: proceed without the lock rather than failing the install
   return false;
+}
+
+/**
+ * Check if the sentinel was left by a dead process and remove it if so.
+ * Returns true if the sentinel was reclaimed (removed).
+ */
+function tryReclaimStaleSentinel(sentinelPath: string): boolean {
+  try {
+    const content = fs.readFileSync(sentinelPath, "utf8").trim();
+    const pid = parseInt(content, 10);
+    if (Number.isNaN(pid) || pid <= 0) {
+      // Invalid PID in sentinel — reclaim it
+      fs.unlinkSync(sentinelPath);
+      return true;
+    }
+    // Check if the process is still alive (signal 0 doesn't kill, just checks)
+    try {
+      process.kill(pid, 0);
+      return false; // Process is alive — lock is valid
+    } catch {
+      // Process is dead — reclaim the stale lock
+      fs.unlinkSync(sentinelPath);
+      return true;
+    }
+  } catch {
+    return false; // Can't read or remove — leave it alone
+  }
 }
 
 function releaseLockSentinel(): void {
@@ -99,9 +130,14 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
   }
 }
 
-export function removeLockEntry(id: string): void {
-  const entries = readLockfile();
-  writeLockfile(entries.filter((e) => e.id !== id));
+export async function removeLockEntry(id: string): Promise<void> {
+  const acquired = await acquireLockSentinel();
+  try {
+    const entries = readLockfile();
+    writeLockfile(entries.filter((e) => e.id !== id));
+  } finally {
+    if (acquired) releaseLockSentinel();
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

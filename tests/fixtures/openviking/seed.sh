@@ -92,5 +92,5 @@ if len(content.strip().split('\n')) > 3:
 
 echo ""
 echo "Done. Test with:"
-echo "  akm sources add http://localhost:1933 --provider openviking --name openviking"
+echo "  akm stash add http://localhost:1933 --provider openviking --name openviking"
 echo "  akm show viking://resources/project-context/project-context.md"

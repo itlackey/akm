@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentIKitConfig } from "../src/config";
+import type { AkmConfig } from "../src/config";
 import { getConfigValue, listConfig, parseConfigValue, setConfigValue, unsetConfigValue } from "../src/config-cli";
 
 describe("config CLI helpers", () => {
   test("listConfig omits unconfigured embedding and llm", () => {
-    const config = listConfig({ semanticSearch: true, searchPaths: [] });
+    const config = listConfig({ semanticSearch: true });
     expect(config.embedding).toBeUndefined();
     expect(config.llm).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
@@ -47,7 +47,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue sets embedding via JSON", () => {
-    const base: AgentIKitConfig = { semanticSearch: true, searchPaths: [] };
+    const base: AkmConfig = { semanticSearch: true };
     const updated = setConfigValue(
       base,
       "embedding",
@@ -60,7 +60,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue sets llm via JSON", () => {
-    const base: AgentIKitConfig = { semanticSearch: true, searchPaths: [] };
+    const base: AkmConfig = { semanticSearch: true };
     const updated = setConfigValue(
       base,
       "llm",
@@ -74,15 +74,14 @@ describe("config CLI helpers", () => {
   });
 
   test("getConfigValue returns null for unconfigured embedding/llm", () => {
-    const base: AgentIKitConfig = { semanticSearch: true, searchPaths: [] };
+    const base: AkmConfig = { semanticSearch: true };
     expect(getConfigValue(base, "embedding")).toBeNull();
     expect(getConfigValue(base, "llm")).toBeNull();
   });
 
   test("getConfigValue returns configured embedding/llm objects", () => {
-    const base: AgentIKitConfig = {
+    const base: AkmConfig = {
       semanticSearch: true,
-      searchPaths: [],
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
@@ -98,9 +97,8 @@ describe("config CLI helpers", () => {
   });
 
   test("unsetConfigValue clears embedding and llm", () => {
-    const base: AgentIKitConfig = {
+    const base: AkmConfig = {
       semanticSearch: true,
-      searchPaths: [],
       embedding: {
         endpoint: "https://api.openai.com/v1/embeddings",
         model: "text-embedding-3-small",
@@ -118,7 +116,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue merges output format and detail", () => {
-    const base: AgentIKitConfig = { semanticSearch: true, searchPaths: [] };
+    const base: AkmConfig = { semanticSearch: true };
     const withFormat = setConfigValue(base, "output.format", "text");
     const withDetail = setConfigValue(withFormat, "output.detail", "full");
 
@@ -126,9 +124,8 @@ describe("config CLI helpers", () => {
   });
 
   test("getConfigValue reads output keys", () => {
-    const base: AgentIKitConfig = {
+    const base: AkmConfig = {
       semanticSearch: true,
-      searchPaths: [],
       output: { format: "yaml", detail: "normal" },
     };
     expect(getConfigValue(base, "output.format")).toBe("yaml");
@@ -136,9 +133,8 @@ describe("config CLI helpers", () => {
   });
 
   test("unsetConfigValue clears individual output keys", () => {
-    const base: AgentIKitConfig = {
+    const base: AkmConfig = {
       semanticSearch: true,
-      searchPaths: [],
       output: { format: "yaml", detail: "normal" },
     };
     expect(unsetConfigValue(base, "output.format").output).toEqual({ detail: "normal" });
@@ -146,7 +142,7 @@ describe("config CLI helpers", () => {
   });
 
   test("setConfigValue rejects unknown keys", () => {
-    const base: AgentIKitConfig = { semanticSearch: true, searchPaths: [] };
+    const base: AkmConfig = { semanticSearch: true };
     expect(() => setConfigValue(base, "embedding.provider", "ollama")).toThrow("Unknown config key");
     expect(() => setConfigValue(base, "llm.temperature", "0.5")).toThrow("Unknown config key");
   });

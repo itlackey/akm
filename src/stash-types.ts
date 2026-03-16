@@ -1,6 +1,6 @@
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
-export type AgentIKitSearchType = string;
+export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
 
@@ -76,7 +76,7 @@ export interface AddResponse {
     stashRoot: string;
   };
   config: {
-    searchPaths: string[];
+    stashCount: number;
     installedKitCount: number;
   };
   index: {
@@ -126,7 +126,7 @@ export interface RemoveResponse {
     stashRoot: string;
   };
   config: {
-    searchPaths: string[];
+    stashCount: number;
     installedKitCount: number;
   };
   index: {
@@ -161,7 +161,7 @@ export interface UpdateResponse {
   all: boolean;
   processed: UpdateResultItem[];
   config: {
-    searchPaths: string[];
+    stashCount: number;
     installedKitCount: number;
   };
   index: {

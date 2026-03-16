@@ -40,13 +40,13 @@ export interface IndexResponse {
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
-export async function agentIKitIndex(options?: { stashDir?: string; full?: boolean }): Promise<IndexResponse> {
+export async function akmIndex(options?: { stashDir?: string; full?: boolean }): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("./config.js");
   const config = loadConfig();
-  const { resolveAllStashDirs } = await import("./stash-source.js");
+  const { resolveAllStashDirs } = await import("./search-source.js");
   const allStashDirs = resolveAllStashDirs(stashDir);
 
   const t0 = Date.now();
@@ -314,7 +314,7 @@ async function indexEntries(
 
 async function enhanceDirsWithLlm(
   db: import("bun:sqlite").Database,
-  config: import("./config").AgentIKitConfig,
+  config: import("./config").AkmConfig,
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
@@ -346,7 +346,7 @@ async function enhanceDirsWithLlm(
 
 async function generateEmbeddingsForDb(
   db: import("bun:sqlite").Database,
-  config: import("./config").AgentIKitConfig,
+  config: import("./config").AkmConfig,
 ): Promise<boolean> {
   if (!config.semanticSearch) return false;
 

@@ -1,5 +1,5 @@
 import {
-  type AgentIKitConfig,
+  type AkmConfig,
   DEFAULT_CONFIG,
   type EmbeddingConnectionConfig,
   type LlmConnectionConfig,
@@ -9,7 +9,7 @@ import {
 } from "./config";
 import { UsageError } from "./errors";
 
-export function parseConfigValue(key: string, value: string): Partial<AgentIKitConfig> {
+export function parseConfigValue(key: string, value: string): Partial<AkmConfig> {
   switch (key) {
     case "stashDir":
       return { stashDir: requireNonEmptyString(value, key) };
@@ -18,14 +18,6 @@ export function parseConfigValue(key: string, value: string): Partial<AgentIKitC
         throw new UsageError(`Invalid value for semanticSearch: expected "true" or "false"`);
       }
       return { semanticSearch: value === "true" };
-    case "searchPaths":
-      try {
-        const parsed = JSON.parse(value);
-        if (!Array.isArray(parsed)) throw new UsageError("expected JSON array");
-        return { searchPaths: parsed.filter((d: unknown): d is string => typeof d === "string") };
-      } catch {
-        throw new UsageError(`Invalid value for searchPaths: expected JSON array (e.g. '["/path/a","/path/b"]')`);
-      }
     case "embedding":
       return { embedding: parseEmbeddingConnectionValue(value) };
     case "llm":
@@ -43,14 +35,12 @@ export function parseConfigValue(key: string, value: string): Partial<AgentIKitC
   }
 }
 
-export function getConfigValue(config: AgentIKitConfig, key: string): unknown {
+export function getConfigValue(config: AkmConfig, key: string): unknown {
   switch (key) {
     case "stashDir":
       return config.stashDir ?? null;
     case "semanticSearch":
       return config.semanticSearch;
-    case "searchPaths":
-      return [...config.searchPaths];
     case "embedding":
       return config.embedding ?? null;
     case "llm":
@@ -68,11 +58,10 @@ export function getConfigValue(config: AgentIKitConfig, key: string): unknown {
   }
 }
 
-export function setConfigValue(config: AgentIKitConfig, key: string, rawValue: string): AgentIKitConfig {
+export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
   switch (key) {
     case "stashDir":
     case "semanticSearch":
-    case "searchPaths":
     case "embedding":
     case "llm":
     case "registries":
@@ -85,7 +74,7 @@ export function setConfigValue(config: AgentIKitConfig, key: string, rawValue: s
   }
 }
 
-export function unsetConfigValue(config: AgentIKitConfig, key: string): AgentIKitConfig {
+export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
   switch (key) {
     case "stashDir":
       return { ...config, stashDir: undefined };
@@ -106,7 +95,7 @@ export function unsetConfigValue(config: AgentIKitConfig, key: string): AgentIKi
   }
 }
 
-export function listConfig(config: AgentIKitConfig): Record<string, unknown> {
+export function listConfig(config: AkmConfig): Record<string, unknown> {
   const result: Record<string, unknown> = {
     semanticSearch: config.semanticSearch,
     registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
@@ -117,11 +106,10 @@ export function listConfig(config: AgentIKitConfig): Record<string, unknown> {
   };
   if (config.embedding) result.embedding = config.embedding;
   if (config.llm) result.llm = config.llm;
-  if (config.searchPaths?.length) result.searchPaths = config.searchPaths;
   return result;
 }
 
-function mergeConfigValue(config: AgentIKitConfig, partial: Partial<AgentIKitConfig>): AgentIKitConfig {
+function mergeConfigValue(config: AkmConfig, partial: Partial<AkmConfig>): AkmConfig {
   return {
     ...config,
     ...partial,

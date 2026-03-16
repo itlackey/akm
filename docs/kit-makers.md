@@ -297,7 +297,7 @@ CLI-based kit submission is planned for a future release. To submit a kit now, o
 ## Sharing on a Network Directory
 
 For teams that want to share assets without publishing to a registry, use
-search paths.
+stashes.
 
 1. Place your kit on a shared filesystem (NFS, SMB, cloud-synced folder):
 
@@ -308,21 +308,21 @@ search paths.
      commands/
    ```
 
-2. Each team member mounts it in their config:
+2. Each team member adds it as a stash:
 
    ```sh
-   akm config set searchPaths '["/mnt/shared/team-kit"]'
+   akm stash add /mnt/shared/team-kit
    ```
 
    Or add it directly to `~/.config/akm/config.json`:
 
    ```json
    {
-     "searchPaths": ["/mnt/shared/team-kit"]
+     "stashes": [{ "type": "filesystem", "path": "/mnt/shared/team-kit" }]
    }
    ```
 
-3. Assets from the search path appear in search results immediately --
+3. Assets from the stash appear in search results immediately --
    no `akm add` needed. To fork an asset into the primary stash, use clone:
 
    ```sh

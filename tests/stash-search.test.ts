@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import { agentIKitIndex } from "../src/indexer";
-import { agentIKitSearch } from "../src/stash-search";
+import { akmIndex } from "../src/indexer";
+import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
@@ -60,8 +60,8 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false, searchPaths: [] });
-  await agentIKitIndex({ stashDir, full: true });
+  saveConfig({ semanticSearch: false });
+  await akmIndex({ stashDir, full: true });
 }
 
 // ── Environment isolation ───────────────────────────────────────────────────
@@ -128,7 +128,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "deploy", source: "local" });
+    const result = await akmSearch({ query: "deploy", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -176,7 +176,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "code", type: "script", source: "local" });
+    const result = await akmSearch({ query: "code", type: "script", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     for (const hit of localHits) {
@@ -213,7 +213,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "", source: "local" });
+    const result = await akmSearch({ query: "", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
@@ -235,7 +235,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "", limit: 3, source: "local" });
+    const result = await akmSearch({ query: "", limit: 3, source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
@@ -264,7 +264,7 @@ describe("Database search path (FTS scoring)", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "deploy", source: "local" });
+    const result = await akmSearch({ query: "deploy", source: "local" });
 
     expect(result.hits.length).toBeGreaterThan(0);
     const deployHit = result.hits.find((h) => h.name === "clamp-deploy");
@@ -298,7 +298,7 @@ describe("Score boosts", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "deploy", source: "local" });
+    const result = await akmSearch({ query: "deploy", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     const deployHit = localHits.find((h) => h.name === "deploy");
 
@@ -327,7 +327,7 @@ describe("Score boosts", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "formatter", source: "local" });
+    const result = await akmSearch({ query: "formatter", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "formatter");
 
@@ -376,7 +376,7 @@ describe("Score boosts", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "testing utility", source: "local" });
+    const result = await akmSearch({ query: "testing utility", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     const curatedHit = localHits.find((h) => h.name === "curated");
@@ -400,12 +400,12 @@ describe("Substring fallback", () => {
   test("falls back to substring search when no index exists", async () => {
     const stashDir = tmpStash();
 
-    // Do NOT call agentIKitIndex — just create files on disk
+    // Do NOT call akmIndex — just create files on disk
     writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    const result = await agentIKitSearch({ query: "deploy", source: "local" });
+    const result = await akmSearch({ query: "deploy", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -422,10 +422,10 @@ describe("Substring fallback", () => {
 
     writeFile(path.join(stashDir, "scripts", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    // Do NOT call agentIKitIndex
-    const result = await agentIKitSearch({ query: "deploy", source: "local" });
+    // Do NOT call akmIndex
+    const result = await akmSearch({ query: "deploy", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -441,9 +441,9 @@ describe("Substring fallback", () => {
       "---\ndescription: Designs agent coordination patterns and context assembly\n---\nYou are an architect.\n",
     );
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    const result = await agentIKitSearch({ query: "coordination", type: "agent", source: "local" });
+    const result = await akmSearch({ query: "coordination", type: "agent", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits).toHaveLength(1);
@@ -470,9 +470,9 @@ describe("Substring fallback", () => {
       }),
     );
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    const result = await agentIKitSearch({ query: "diagnostics", source: "local" });
+    const result = await akmSearch({ query: "diagnostics", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     const doctorHit = localHits.find((h) => h.name === "doctor");
 
@@ -505,7 +505,7 @@ describe("Source filtering", () => {
 
     await buildTestIndex(stashDir, {});
 
-    const result = await agentIKitSearch({ query: "local", source: "local" });
+    const result = await akmSearch({ query: "local", source: "local" });
 
     // All hits should be local, no registry hits
     for (const hit of result.hits) {
@@ -524,9 +524,9 @@ describe("Source filtering", () => {
     // Create a local tool so we know local hits would exist if local were searched
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [], registries: [] });
+    saveConfig({ semanticSearch: false, registries: [] });
 
-    const result = await agentIKitSearch({ query: "deploy", source: "registry" });
+    const result = await akmSearch({ query: "deploy", source: "registry" });
     // All hits (if any) should come from registry, not local
     expect(result.source).toBe("registry");
     for (const hit of result.hits) {
@@ -538,9 +538,9 @@ describe("Source filtering", () => {
     const stashDir = createTmpDir();
     writeFile(path.join(stashDir, "scripts", "merge-test.sh"), "#!/bin/bash\necho merge\n");
     await buildTestIndex(stashDir, {});
-    saveConfig({ semanticSearch: false, searchPaths: [], registries: [] });
+    saveConfig({ semanticSearch: false, registries: [] });
 
-    const result = await agentIKitSearch({ query: "merge", source: "both" });
+    const result = await akmSearch({ query: "merge", source: "both" });
     expect(result.source).toBe("both");
     // Should have at least the local hit
     const localHits = result.hits.filter((h) => h.type !== "registry");
@@ -572,7 +572,7 @@ describe("Edge cases", () => {
     await buildTestIndex(stashDir, {});
 
     // Should not throw
-    const result = await agentIKitSearch({ query: "<script>", source: "local" });
+    const result = await akmSearch({ query: "<script>", source: "local" });
     expect(result).toBeDefined();
     expect(result.hits).toBeDefined();
   });
@@ -599,7 +599,7 @@ describe("Edge cases", () => {
 
     const longQuery = "a".repeat(10_000);
     // Should not throw
-    const result = await agentIKitSearch({ query: longQuery, source: "local" });
+    const result = await akmSearch({ query: longQuery, source: "local" });
     expect(result).toBeDefined();
     expect(result.hits).toBeDefined();
   });

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { fetchWithRetry, isWithin } from "./common";
-import { type AgentIKitConfig, loadConfig, saveConfig } from "./config";
+import { type AkmConfig, loadConfig, saveConfig } from "./config";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
@@ -77,7 +77,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
     extractTarGzSecure(archivePath, extractedDir);
 
     provisionalKitRoot = detectStashRoot(extractedDir);
-    installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
     stashRoot = detectStashRoot(installRoot);
   } catch (err) {
     // Clean up the cache directory so stale or partially-extracted artifacts
@@ -145,7 +145,7 @@ async function installGitRegistryRef(
   if (isDirectory(extractedDir)) {
     try {
       const provisionalKitRoot = detectStashRoot(extractedDir);
-      const installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+      const installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
       const stashRoot = detectStashRoot(installRoot);
       if (stashRoot) {
         return {
@@ -196,7 +196,7 @@ async function installGitRegistryRef(
     fs.rmSync(cloneDir, { recursive: true, force: true });
 
     provisionalKitRoot = detectStashRoot(extractedDir);
-    installRoot = applyAgentIKitIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
     stashRoot = detectStashRoot(installRoot);
   } catch (err) {
     // Clean up the cache directory so stale or partially-cloned artifacts
@@ -223,13 +223,13 @@ async function installGitRegistryRef(
   };
 }
 
-export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AgentIKitConfig {
+export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AkmConfig {
   const current = loadConfig();
   const currentInstalled = current.installed ?? [];
   const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
   const nextInstalled = [...withoutExisting, normalizeInstalledEntry(entry)];
 
-  const nextConfig: AgentIKitConfig = {
+  const nextConfig: AkmConfig = {
     ...current,
     installed: nextInstalled,
   };
@@ -237,12 +237,12 @@ export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AgentIKi
   return nextConfig;
 }
 
-export function removeInstalledRegistryEntry(id: string): AgentIKitConfig {
+export function removeInstalledRegistryEntry(id: string): AkmConfig {
   const current = loadConfig();
   const currentInstalled = current.installed ?? [];
   const nextInstalled = currentInstalled.filter((item) => item.id !== id);
 
-  const nextConfig: AgentIKitConfig = {
+  const nextConfig: AkmConfig = {
     ...current,
     installed: nextInstalled.length > 0 ? nextInstalled : undefined,
   };
@@ -266,11 +266,6 @@ export function detectStashRoot(extractedDir: string): string {
     return root;
   }
 
-  const opencodeDir = path.join(root, "opencode");
-  if (hasStashDirs(opencodeDir)) {
-    return opencodeDir;
-  }
-
   const shallowest = findShallowestStashRoot(root);
   if (shallowest) return shallowest;
 
@@ -286,7 +281,7 @@ function buildInstallCacheDir(cacheRootDir: string, source: KitSource, id: strin
   return path.join(cacheRootDir, slug || source, versionSlug);
 }
 
-function applyAgentIKitIncludeConfig(
+function applyAkmIncludeConfig(
   sourceRoot: string,
   cacheDir: string,
   searchRoot: string = sourceRoot,
@@ -468,13 +463,16 @@ function countStashDirs(dirPath: string): number {
  *
  * Skips `root` itself since the caller already checked it via `hasStashDirs`.
  */
+const BFS_MAX_DEPTH = 5;
+
 function findShallowestStashRoot(root: string): string | undefined {
-  const queue: string[] = [root];
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
   while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) {
+    const item = queue.shift();
+    if (!item) {
       continue;
     }
+    const { dir: current, depth } = item;
     if (current !== root) {
       // .stash directory is a strong stash marker
       if (isDirectory(path.join(current, ".stash"))) {
@@ -486,6 +484,7 @@ function findShallowestStashRoot(root: string): string | undefined {
         return current;
       }
     }
+    if (depth >= BFS_MAX_DEPTH) continue;
     let children: fs.Dirent[];
     try {
       children = fs.readdirSync(current, { withFileTypes: true });
@@ -495,7 +494,7 @@ function findShallowestStashRoot(root: string): string | undefined {
     for (const child of children) {
       if (!child.isDirectory()) continue;
       if (child.name === ".git" || child.name === "node_modules") continue;
-      queue.push(path.join(current, child.name));
+      queue.push({ dir: path.join(current, child.name), depth: depth + 1 });
     }
   }
   return undefined;

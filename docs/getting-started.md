@@ -14,9 +14,10 @@ bun install -g akm-cli
 Or download a standalone binary from the
 [GitHub releases](https://github.com/itlackey/agentikit/releases) page.
 
-## Initialize the Stash
+## Initialize Your Working Stash
 
-Run `akm init` to create the stash directory structure:
+Run `akm init` to create your working stash — the primary directory where
+your personal assets live:
 
 ```sh
 akm init
@@ -40,10 +41,10 @@ EOF
 chmod +x ~/akm/scripts/hello.sh
 ```
 
-Any file with a known extension (`.sh`, `.ts`, `.py`, etc.) placed in the
-stash is automatically recognized. The `scripts/` directory is not required
--- it just increases classification confidence. See [concepts.md](concepts.md)
-for how classification works.
+Any file with a known extension (`.sh`, `.ts`, `.py`, etc.) placed in your
+working stash is automatically recognized. The `scripts/` directory is not
+required -- it just increases classification confidence. See
+[concepts.md](concepts.md) for how classification works.
 
 ## Index
 
@@ -53,8 +54,12 @@ Build the search index so your assets are discoverable:
 akm index
 ```
 
-This scans all stash sources and generates metadata for each asset. Run
-`akm index --full` to force a complete rebuild instead of an incremental
+**`init` vs `index`:** `akm init` creates your working stash directory (run
+once). `akm index` scans all stashes and installed kits, then builds the
+search database (run whenever you add or change assets). They are separate
+steps — `init` sets up the folders, `index` makes their contents searchable.
+
+Run `akm index --full` to force a complete rebuild instead of an incremental
 update.
 
 ## Search
@@ -99,8 +104,8 @@ akm add @scope/kit
 akm add github:owner/repo
 ```
 
-Installed kits are cached locally and their assets become searchable
-immediately. Use `akm list` to see installed kits and `akm update --all`
+Installed kits are cached separately from your stashes (in `~/.cache/akm/`)
+and their assets become searchable immediately. Use `akm list` to see installed kits and `akm update --all`
 to keep them current.
 
 See [registry.md](registry.md) for the full install flow and supported

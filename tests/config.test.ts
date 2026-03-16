@@ -104,7 +104,7 @@ describe("loadConfig", () => {
 
     const config = loadConfig();
     expect(config.semanticSearch).toBe(false);
-    expect(config.searchPaths).toEqual([]);
+    expect(config.stashes).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
     expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
   });
@@ -113,7 +113,7 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
     const config = loadConfig();
     expect(config.semanticSearch).toBe(false);
-    expect(config.searchPaths).toEqual([]);
+    expect(config.stashes).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
@@ -136,23 +136,27 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false, futureKey: "hello", anotherKey: 42 }));
     const config = loadConfig();
     expect(config.semanticSearch).toBe(false);
-    expect(config.searchPaths).toEqual([]);
+    expect(config.stashes).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
     expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
     expect((config as unknown as Record<string, unknown>).futureKey).toBeUndefined();
     expect((config as unknown as Record<string, unknown>).anotherKey).toBeUndefined();
   });
 
-  test("filters non-string entries from searchPaths", () => {
+  test("converts legacy searchPaths into stashes with type filesystem", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ searchPaths: ["/valid", 123, null, "/also-valid"] }));
-    expect(loadConfig().searchPaths).toEqual(["/valid", "/also-valid"]);
+    const config = loadConfig();
+    expect(config.stashes).toEqual([
+      { type: "filesystem", path: "/valid" },
+      { type: "filesystem", path: "/also-valid" },
+    ]);
   });
 
   test("ignores wrong types for known keys", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: "yes", searchPaths: "not-an-array" }));
     const config = loadConfig();
     expect(config.semanticSearch).toBe(true);
-    expect(config.searchPaths).toEqual([]);
+    expect(config.stashes).toBeUndefined();
   });
 
   test("ignores stash-root config.json files", () => {
@@ -172,7 +176,7 @@ describe("loadConfig", () => {
 
 describe("saveConfig", () => {
   test("writes formatted JSON to config.json", () => {
-    const config = { semanticSearch: false, searchPaths: ["/extra"] };
+    const config = { semanticSearch: false, stashes: [{ type: "filesystem" as const, path: "/extra" }] };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
     expect(JSON.parse(raw)).toEqual(config);
@@ -181,18 +185,27 @@ describe("saveConfig", () => {
   });
 
   test("roundtrips with loadConfig", () => {
-    const config = { semanticSearch: false, searchPaths: ["/a", "/b"] };
+    const config = {
+      semanticSearch: false,
+      stashes: [
+        { type: "filesystem" as const, path: "/a" },
+        { type: "filesystem" as const, path: "/b" },
+      ],
+    };
     saveConfig(config);
     const loaded = loadConfig();
     expect(loaded.semanticSearch).toBe(false);
-    expect(loaded.searchPaths).toEqual(["/a", "/b"]);
+    expect(loaded.stashes).toEqual([
+      { type: "filesystem", path: "/a" },
+      { type: "filesystem", path: "/b" },
+    ]);
     expect(loaded.output).toEqual({ format: "json", detail: "brief" });
   });
 
   test("roundtrips output config", () => {
     const config = {
       semanticSearch: false,
-      searchPaths: ["/a"],
+      stashes: [{ type: "filesystem" as const, path: "/a" }],
       output: { format: "yaml" as const, detail: "full" as const },
     };
     saveConfig(config);
@@ -204,17 +217,17 @@ describe("saveConfig", () => {
 
 describe("updateConfig", () => {
   test("merges partial update over existing config", () => {
-    saveConfig({ semanticSearch: true, searchPaths: ["/a"] });
+    saveConfig({ semanticSearch: true, stashes: [{ type: "filesystem", path: "/a" }] });
     const updated = updateConfig({ semanticSearch: false });
     expect(updated.semanticSearch).toBe(false);
-    expect(updated.searchPaths).toEqual(["/a"]);
+    expect(updated.stashes).toEqual([{ type: "filesystem", path: "/a" }]);
     expect(loadConfig()).toEqual(updated);
   });
 
   test("creates config.json if it does not exist", () => {
     const updated = updateConfig({ semanticSearch: false });
     expect(updated.semanticSearch).toBe(false);
-    expect(updated.searchPaths).toEqual([]);
+    expect(updated.stashes).toBeUndefined();
     expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
@@ -435,7 +448,7 @@ describe("stashDir config", () => {
   });
 
   test("saves and preserves stashDir", () => {
-    const config = { semanticSearch: true, searchPaths: [], stashDir: "/my/stash" };
+    const config = { semanticSearch: true, stashDir: "/my/stash" };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
     const parsed = JSON.parse(raw);

@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
-import type { AgentIKitConfig } from "./config";
+import type { AkmConfig } from "./config";
 import { loadConfig } from "./config";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export interface StashSource {
+export interface SearchSource {
   path: string;
   /** For installed sources, the installed kit id */
   registryId?: string;
@@ -16,19 +16,19 @@ export interface StashSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * Build the ordered list of stash sources (search paths):
+ * Build the ordered list of stash sources:
  *   1. Primary stash dir (user's own, destination for clone)
- *   2. Additional search paths (user-configured)
+ *   2. Additional stashes (filesystem and remote providers)
  *   3. Installed kit paths (cache-managed, from registry)
  *
  * The first entry is always the primary stash. Additional entries come
- * from `searchPaths` config and `installed` kit entries.
+ * from `stashes` config and `installed` kit entries.
  */
-export function resolveStashSources(overrideStashDir?: string, existingConfig?: AgentIKitConfig): StashSource[] {
+export function resolveStashSources(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir();
   const config = existingConfig ?? loadConfig();
 
-  const sources: StashSource[] = [{ path: stashDir }];
+  const sources: SearchSource[] = [{ path: stashDir }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
   const addSource = (dir: string, registryId?: string) => {
@@ -42,11 +42,6 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
       sources.push({ path: resolved, ...(registryId ? { registryId } : {}) });
     }
   };
-
-  // Legacy: searchPaths[]
-  for (const dir of config.searchPaths) {
-    addSource(dir);
-  }
 
   // Filesystem entries from stashes[]
   for (const entry of config.stashes ?? []) {
@@ -73,7 +68,7 @@ export function resolveAllStashDirs(overrideStashDir?: string): string[] {
 /**
  * Find which source a file path belongs to.
  */
-export function findSourceForPath(filePath: string, sources: StashSource[]): StashSource | undefined {
+export function findSourceForPath(filePath: string, sources: SearchSource[]): SearchSource | undefined {
   const resolved = path.resolve(filePath);
   for (const source of sources) {
     if (resolved.startsWith(path.resolve(source.path) + path.sep)) return source;
@@ -85,7 +80,7 @@ export function findSourceForPath(filePath: string, sources: StashSource[]): Sta
  * Return the primary stash source (first entry in the list).
  * This is the user's working stash and the default destination for clone.
  */
-export function getPrimarySource(sources: StashSource[]): StashSource | undefined {
+export function getPrimarySource(sources: SearchSource[]): SearchSource | undefined {
   return sources[0];
 }
 
@@ -98,10 +93,10 @@ export function getPrimarySource(sources: StashSource[]): StashSource | undefine
  * managed by the package manager (`installed[].cacheDir`). These
  * will be overwritten by `akm update` without warning.
  *
- * Everything else — working stash, search paths, local project dirs — is
+ * Everything else — working stash, additional stashes, local project dirs — is
  * the user's domain to manage.
  */
-export function isEditable(filePath: string, config?: AgentIKitConfig): boolean {
+export function isEditable(filePath: string, config?: AkmConfig): boolean {
   const cfg = config ?? loadConfig();
   const resolved = path.resolve(filePath);
   const cacheManaged = cfg.installed ?? [];

@@ -50,13 +50,20 @@ akm search "docker" --source both --detail full
 | `--format` | `json`, `text`, `yaml` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
 
-Local hits include a `ref` handle for use with `akm show`. The default brief
-shape is intentionally small: local hits expose `type`, `name`,
-`description`, and `action`; registry hits expose `type`, `name`, `id`,
-`description`, `action`, and `curated`. `--detail normal` adds commonly useful
-fields like `ref`, `origin`, `size`, and `tags`. `--detail full` includes
-debug-oriented fields such as scores, match explanations, timings, and stash
-metadata.
+Local hits include a `ref` handle for use with `akm show`. Key fields in
+search results:
+
+- **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
+- **`name`** -- The asset's filename or identifier
+- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for installed kit assets
+- **`id`** -- Registry-level kit identifier (registry hits only)
+
+The default brief shape is intentionally small: local hits expose `type`,
+`name`, `description`, and `action`; registry hits expose `type`, `name`,
+`id`, `description`, `action`, and `curated`. `--detail normal` adds commonly
+useful fields like `ref`, `origin`, `size`, and `tags`. `--detail full`
+includes debug-oriented fields such as scores, match explanations, timings,
+and stash metadata.
 
 ### show
 
@@ -95,6 +102,37 @@ return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
+
+### Understanding "add" Commands
+
+akm has three `add` commands, one for each core concept:
+
+| Command | What it does | What it manages |
+| --- | --- | --- |
+| `akm add <ref>` | Install a kit (package of assets) | Kits — cached in `~/.cache/akm/`, managed by akm |
+| `akm stash add <path>` | Register a directory as an additional stash | Stashes — directories of assets you own |
+| `akm registry add <url>` | Add a registry to discover kits from | Registries — indexes of installable kits |
+
+### kit
+
+Manage installed kits. The `kit` command has four subcommands: `add`, `list`,
+`remove`, `update`. The top-level `akm add`, `akm list`, `akm remove`, and
+`akm update` are convenience aliases for `akm kit add`, `akm kit list`, etc.
+
+#### kit add
+
+Install a kit from npm, GitHub, or any git host. Unlike `akm add`, this
+command does not accept local directory paths — use `akm stash add` for those.
+
+```sh
+akm kit add @scope/kit
+akm kit add github:owner/repo
+```
+
+#### kit list, kit remove, kit update
+
+These work identically to the top-level `akm list`, `akm remove`, and
+`akm update` commands. See their documentation below.
 
 ### add
 
@@ -233,7 +271,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
 
 ```sh
-akm sources add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
+akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
 ```
 
 Duplicate URLs are rejected.
@@ -279,14 +317,15 @@ akm registry search "docker" --limit 5
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v2 registry indexes |
 
-### stash (alias: sources)
+### stash
 
-Manage stash sources. The `stash` command has three subcommands. `sources`
-is a legacy alias that works identically.
+Manage additional stashes — directories and remote providers that akm
+searches alongside your working stash and installed kits. The `stash`
+command has three subcommands.
 
 #### stash list
 
-List all resolved stash sources in priority order.
+List all resolved stashes in priority order.
 
 ```sh
 akm stash list
@@ -295,7 +334,7 @@ akm stash              # Same as stash list
 
 #### stash add
 
-Add a directory or remote provider as a stash source.
+Register a directory or remote provider as an additional stash.
 
 ```sh
 akm stash add ~/.claude/skills
@@ -311,7 +350,7 @@ akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"
 
 #### stash remove
 
-Remove a stash source by path or name.
+Remove an additional stash by path or name.
 
 ```sh
 akm stash remove ~/.claude/skills

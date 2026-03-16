@@ -7,18 +7,18 @@ import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { agentIKitIndex } from "./indexer";
-import { agentIKitInit } from "./init";
-import { agentIKitList, agentIKitRemove, agentIKitUpdate } from "./installed-kits";
+import { akmIndex } from "./indexer";
+import { akmInit } from "./init";
+import { akmList, akmRemove, akmUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { agentIKitAdd } from "./stash-add";
-import { agentIKitClone } from "./stash-clone";
-import { agentIKitSearch, parseSearchSource } from "./stash-search";
-import { agentIKitShowUnified } from "./stash-show";
-import { addStashSource, listStashSources, removeStashSource } from "./stash-source-manage";
+import { akmAdd, akmKitAdd } from "./stash-add";
+import { akmClone } from "./stash-clone";
+import { akmSearch, parseSearchSource } from "./stash-search";
+import { akmShowUnified } from "./stash-show";
+import { addStash, listStashes, removeStash } from "./stash-source-manage";
 import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
@@ -425,14 +425,14 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
 const initCommand = defineCommand({
   meta: {
     name: "init",
-    description: "Initialize Agent-i-Kit's working stash directory and persist stashDir in config",
+    description: "Initialize akm's working stash directory and persist stashDir in config",
   },
   args: {
     dir: { type: "string", description: "Custom stash directory path (default: ~/akm)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitInit({ dir: args.dir });
+      const result = await akmInit({ dir: args.dir });
       output("init", result);
     });
   },
@@ -445,7 +445,7 @@ const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitIndex({ full: args.full });
+      const result = await akmIndex({ full: args.full });
       output("index", result);
     });
   },
@@ -473,7 +473,7 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await agentIKitSearch({ query: args.query, type, limit, source });
+      const result = await akmSearch({ query: args.query, type, limit, source });
       output("search", result);
     });
   },
@@ -490,7 +490,7 @@ const addCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitAdd({ ref: args.ref });
+      const result = await akmAdd({ ref: args.ref });
       output("add", result);
     });
   },
@@ -500,7 +500,7 @@ const listCommand = defineCommand({
   meta: { name: "list", description: "List installed kits" },
   async run() {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitList();
+      const result = await akmList();
       output("list", result);
     });
   },
@@ -513,7 +513,7 @@ const removeCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitRemove({ target: args.target });
+      const result = await akmRemove({ target: args.target });
       output("remove", result);
     });
   },
@@ -528,9 +528,36 @@ const updateCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitUpdate({ target: args.target, all: args.all, force: args.force });
+      const result = await akmUpdate({ target: args.target, all: args.all, force: args.force });
       output("update", result);
     });
+  },
+});
+
+const kitAddCommand = defineCommand({
+  meta: { name: "add", description: "Install a kit from npm, GitHub, or any git host" },
+  args: {
+    ref: {
+      type: "positional",
+      description: "Registry ref (npm package, owner/repo, or git URL)",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmKitAdd({ ref: args.ref });
+      output("add", result);
+    });
+  },
+});
+
+const kitCommand = defineCommand({
+  meta: { name: "kit", description: "Manage installed kits" },
+  subCommands: {
+    add: kitAddCommand,
+    list: listCommand,
+    remove: removeCommand,
+    update: updateCommand,
   },
 });
 
@@ -599,7 +626,7 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await agentIKitShowUnified({ ref: args.ref, view });
+      const result = await akmShowUnified({ ref: args.ref, view });
       output("show", result);
     });
   },
@@ -702,7 +729,7 @@ const configCommand = defineCommand({
 const cloneCommand = defineCommand({
   meta: {
     name: "clone",
-    description: "Clone an asset from any stash source into the working stash or a custom destination",
+    description: "Clone an asset from any source into the working stash or a custom destination",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//script:deploy.sh)", required: true },
@@ -712,7 +739,7 @@ const cloneCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await agentIKitClone({
+      const result = await akmClone({
         sourceRef: args.ref,
         newName: args.name,
         force: args.force,
@@ -846,21 +873,20 @@ const registryCommand = defineCommand({
 });
 
 /**
- * Shared subcommand definitions for stash source management.
- * Used by both `akm stash` (preferred) and `akm sources` (legacy alias).
+ * Subcommand definitions for managing additional stashes.
  */
 function buildSourceSubCommands(outputPrefix: string) {
   return {
     list: defineCommand({
-      meta: { name: "list", description: "List all stash sources" },
+      meta: { name: "list", description: "List all stashes in search order" },
       run() {
         return runWithJsonErrors(() => {
-          output(`${outputPrefix}`, listStashSources());
+          output(`${outputPrefix}`, listStashes());
         });
       },
     }),
     add: defineCommand({
-      meta: { name: "add", description: "Add a stash source (filesystem path or remote URL)" },
+      meta: { name: "add", description: "Register an additional stash (filesystem path or remote URL)" },
       args: {
         target: { type: "positional", description: "Path or URL to add", required: true },
         name: { type: "string", description: "Human-friendly name for the source" },
@@ -887,7 +913,7 @@ function buildSourceSubCommands(outputPrefix: string) {
               throw new UsageError("--options must be valid JSON");
             }
           }
-          const result = addStashSource({
+          const result = addStash({
             target: args.target,
             name: args.name,
             providerType: args.provider,
@@ -898,13 +924,13 @@ function buildSourceSubCommands(outputPrefix: string) {
       },
     }),
     remove: defineCommand({
-      meta: { name: "remove", description: "Remove a stash source by URL, path, or name" },
+      meta: { name: "remove", description: "Remove an additional stash by URL, path, or name" },
       args: {
         target: { type: "positional", description: "Source URL, path, or name to remove", required: true },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const result = removeStashSource(args.target);
+          const result = removeStash(args.target);
           output(`${outputPrefix}-remove`, result);
         });
       },
@@ -913,13 +939,8 @@ function buildSourceSubCommands(outputPrefix: string) {
 }
 
 const stashCommand = defineCommand({
-  meta: { name: "stash", description: "Manage stash sources (local paths and remote providers)" },
+  meta: { name: "stash", description: "Manage additional stashes (local directories and remote providers)" },
   subCommands: buildSourceSubCommands("stash"),
-});
-
-const sourcesCommand = defineCommand({
-  meta: { name: "sources", description: "Manage stash sources (alias for 'akm stash')" },
-  subCommands: buildSourceSubCommands("sources"),
 });
 
 const hintsCommand = defineCommand({
@@ -940,7 +961,7 @@ const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
-    description: "CLI tool to search, open, and manage assets from Agent-i-Kit stash.",
+    description: "Agent Kit Manager — search, show, and manage assets from your stash.",
   },
   args: {
     format: { type: "string", description: "Output format (json|text|yaml)" },
@@ -954,12 +975,12 @@ const main = defineCommand({
     list: listCommand,
     remove: removeCommand,
     update: updateCommand,
+    kit: kitCommand,
     upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
     clone: cloneCommand,
     stash: stashCommand,
-    sources: sourcesCommand,
     registry: registryCommand,
     config: configCommand,
     hints: hintsCommand,
@@ -1123,14 +1144,14 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
 
 const EMBEDDED_HINTS = `# akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
 
 ## Quick Reference
 
 \`\`\`sh
-akm search "<query>"                          # Search for assets
+akm search "<query>"                          # Search your stashes and installed kits
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Search stash providers and registries for assets
+akm search "<query>" --source both            # Also search registries for installable kits
 akm show <ref>                                # View asset details
 akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
@@ -1152,14 +1173,14 @@ Run \`akm -h\` for the full command reference.
 
 const EMBEDDED_HINTS_FULL = `# akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
 
 ## Search
 
 \`\`\`sh
-akm search "<query>"                          # Search local stash
+akm search "<query>"                          # Search your stashes and installed kits
 akm search "<query>" --type skill             # Filter by asset type
-akm search "<query>" --source both            # Search all stash providers and registries
+akm search "<query>" --source both            # Also search registries for installable kits
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -1200,10 +1221,14 @@ akm show viking://resources/my-doc           # Show remote OpenViking content
 ## Install & Manage Kits
 
 \`\`\`sh
-akm add <ref>                                 # Install a kit
+akm add <ref>                                 # Install a kit (smart router: local dirs become stash adds)
 akm add @scope/kit                            # From npm
 akm add owner/repo                            # From GitHub
-akm add ./path/to/local/kit                   # From local directory
+akm add ./path/to/local/kit                   # From local directory (adds as stash)
+akm kit add <ref>                             # Install a kit (explicit)
+akm kit list                                  # List installed kits
+akm kit remove <target>                       # Remove a kit
+akm kit update --all                          # Update all kits
 akm list                                      # List installed kits
 akm remove <target>                           # Remove by id or ref
 akm update --all                              # Update all installed kits
@@ -1251,10 +1276,11 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 \`\`\`sh
-akm init                                      # Initialize stash directory
+akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm sources                                   # List stash search paths
+akm stash                                     # List all stashes
+akm kit                                       # Kit management (add, list, remove, update)
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

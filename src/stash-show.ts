@@ -2,10 +2,10 @@ import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { resolveSourcesForOrigin } from "./origin-resolve";
+import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./search-source";
 import { resolveStashProviders } from "./stash-provider-factory";
 import { parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
-import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./stash-source";
 import type { KnowledgeView, ShowResponse } from "./stash-types";
 
 // Eagerly import stash providers to trigger self-registration
@@ -15,7 +15,7 @@ import "./stash-providers/index";
  * Unified show: routes to the first stash provider that can handle the ref.
  * viking:// refs are handled by OpenViking provider; everything else by filesystem show.
  */
-export async function agentIKitShowUnified(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
+export async function akmShowUnified(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
   // Try stash providers first (e.g. OpenViking for viking:// URIs)
@@ -29,7 +29,7 @@ export async function agentIKitShowUnified(input: { ref: string; view?: Knowledg
   return showLocal(input);
 }
 
-/** @internal Use agentIKitShowUnified() for all external callers. */
+/** @internal Use akmShowUnified() for all external callers. */
 export async function showLocal(input: {
   ref: string;
   view?: KnowledgeView;
@@ -63,14 +63,23 @@ export async function showLocal(input: {
   }
 
   if (!assetPath) {
-    throw lastError ?? new NotFoundError(`Stash asset not found for ref: ${displayType}:${parsed.name}`);
+    throw (
+      lastError ??
+      new NotFoundError(
+        `Stash asset not found for ref: ${displayType}:${parsed.name}. ` +
+          "Check the name with `akm search` or verify the asset exists in your stash.",
+      )
+    );
   }
 
   const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allStashDirs[0];
 
   if (!sourceStashDir) {
-    throw new UsageError(`Could not determine stash root for asset: ${displayType}:${parsed.name}`);
+    throw new UsageError(
+      `Could not determine stash root for asset: ${displayType}:${parsed.name}. ` +
+        "Run `akm init` to create the stash directory, or check `akm stash list` for configured paths.",
+    );
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);

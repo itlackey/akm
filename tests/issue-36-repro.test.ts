@@ -14,8 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
 import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/db";
-import { agentIKitIndex } from "../src/indexer";
-import { agentIKitSearch } from "../src/stash-search";
+import { akmIndex } from "../src/indexer";
+import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
@@ -56,8 +56,8 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false, searchPaths: [] });
-  return agentIKitIndex({ stashDir, full: true });
+  saveConfig({ semanticSearch: false });
+  return akmIndex({ stashDir, full: true });
 }
 
 // ── Environment isolation ───────────────────────────────────────────────────
@@ -143,7 +143,7 @@ describe("Issue #36: Script search and index", () => {
 
     await buildTestIndex(stashDir);
 
-    const result = await agentIKitSearch({ query: "foundry", source: "local" });
+    const result = await akmSearch({ query: "foundry", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -161,7 +161,7 @@ describe("Issue #36: Script search and index", () => {
 
     await buildTestIndex(stashDir);
 
-    const result = await agentIKitSearch({ query: "provision", source: "local" });
+    const result = await akmSearch({ query: "provision", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -179,7 +179,7 @@ describe("Issue #36: Script search and index", () => {
 
     await buildTestIndex(stashDir);
 
-    const result = await agentIKitSearch({ query: "ai", source: "local" });
+    const result = await akmSearch({ query: "ai", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -227,7 +227,7 @@ describe("Issue #36: Script search and index", () => {
     const result = await buildTestIndex(stashDir);
     expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 
-    const searchResult = await agentIKitSearch({ query: "foundry", source: "local" });
+    const searchResult = await akmSearch({ query: "foundry", source: "local" });
     const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -326,7 +326,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
     expect(result2.totalEntries).toBe(3);
 
     // Step 4: Verify the new script is searchable
-    const searchResult = await agentIKitSearch({ query: "foundry", source: "local" });
+    const searchResult = await akmSearch({ query: "foundry", source: "local" });
     const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -350,14 +350,14 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Incremental index (not full)
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
-    const result = await agentIKitIndex({ stashDir });
+    saveConfig({ semanticSearch: false });
+    const result = await akmIndex({ stashDir });
 
     // Both scripts should be in the index
     expect(result.totalEntries).toBe(2);
 
     // Search should find the new script
-    const searchResult = await agentIKitSearch({ query: "provision", source: "local" });
+    const searchResult = await akmSearch({ query: "provision", source: "local" });
     const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
@@ -375,10 +375,10 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathStash] });
-    await agentIKitIndex({ stashDir: workingStash, full: true });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathStash }] });
+    await akmIndex({ stashDir: workingStash, full: true });
 
-    const result = await agentIKitSearch({ query: "foundry", source: "local" });
+    const result = await akmSearch({ query: "foundry", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
@@ -406,14 +406,14 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathStash] });
-    const indexResult = await agentIKitIndex({ stashDir: workingStash, full: true });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathStash }] });
+    const indexResult = await akmIndex({ stashDir: workingStash, full: true });
 
     // All 4 assets from the search path should be indexed
     expect(indexResult.totalEntries).toBeGreaterThanOrEqual(4);
 
     // Verify search finds the script
-    const searchResult = await agentIKitSearch({ query: "foundry", source: "local" });
+    const searchResult = await akmSearch({ query: "foundry", source: "local" });
     const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });

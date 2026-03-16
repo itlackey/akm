@@ -7,7 +7,7 @@
 #   docker compose up -d
 #
 # Then configure akm:
-#   akm sources add http://localhost:1933 --provider openviking --name openviking
+#   akm stash add http://localhost:1933 --provider openviking --name openviking
 #   akm search "project context" --source both
 #   akm show viking://memories/project-context
 #

@@ -1,6 +1,6 @@
 # Agent Kit Manager
 
-> Agent-i-Kit
+> **akm** — Agent Kit Manager
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
 [![CI](https://github.com/itlackey/agentikit/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/agentikit/actions/workflows/ci.yml)
@@ -25,7 +25,7 @@ Upgrade in place with `akm upgrade`.
 ## Quick Start
 
 ```sh
-akm init                          # Initialize your stash
+akm init                          # Initialize your working stash
 akm add github:owner/repo         # Add a kit from GitHub
 akm search "deploy"               # Find assets
 akm show script:deploy.sh         # View details and run command
@@ -130,7 +130,7 @@ See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
 | [Getting Started](docs/getting-started.md) | Quick setup guide |
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Configuration](docs/configuration.md) | Settings, providers, and Ollama setup |
-| [Concepts](docs/concepts.md) | Asset types, classification, stash model |
+| [Concepts](docs/concepts.md) | Stashes, kits, registries, asset types |
 | [Kit Maker's Guide](docs/kit-makers.md) | Build and share kits |
 | [Registry](docs/registry.md) | Registries, search, and the v2 index format |
 

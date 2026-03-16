@@ -14,14 +14,14 @@ import fs from "node:fs";
 import { resolveStashDir } from "./common";
 import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
-import { agentIKitIndex } from "./indexer";
+import { akmIndex } from "./indexer";
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledKitEntry } from "./registry-types";
 import type { KitInstallStatus, ListResponse, RemoveResponse, UpdateResponse } from "./stash-types";
 
-export async function agentIKitList(input?: { stashDir?: string }): Promise<ListResponse> {
+export async function akmList(input?: { stashDir?: string }): Promise<ListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const config = loadConfig();
   const installed = config.installed ?? [];
@@ -40,9 +40,12 @@ export async function agentIKitList(input?: { stashDir?: string }): Promise<List
   };
 }
 
-export async function agentIKitRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
+export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim();
-  if (!target) throw new UsageError("Target is required.");
+  if (!target)
+    throw new UsageError(
+      "Target is required. Provide the kit id or ref (e.g. `akm remove npm:@scope/kit` or `akm remove owner/repo`).",
+    );
 
   const stashDir = input.stashDir ?? resolveStashDir();
   const config = loadConfig();
@@ -50,13 +53,13 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
   const entry = resolveInstalledTarget(installed, target);
 
   const updatedConfig = removeInstalledRegistryEntry(entry.id);
-  removeLockEntry(entry.id);
+  await removeLockEntry(entry.id);
   // Only clean up cache for non-local sources — local sources point to the
   // user's real directory on disk and must never be deleted.
   if (entry.source !== "local") {
     cleanupDirectoryBestEffort(entry.cacheDir);
   }
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
 
   return {
     schemaVersion: 1,
@@ -70,7 +73,7 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
       stashRoot: entry.stashRoot,
     },
     config: {
-      searchPaths: updatedConfig.searchPaths,
+      stashCount: updatedConfig.stashes?.length ?? 0,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -82,7 +85,7 @@ export async function agentIKitRemove(input: { target: string; stashDir?: string
   };
 }
 
-export async function agentIKitUpdate(input?: {
+export async function akmUpdate(input?: {
   target?: string;
   all?: boolean;
   force?: boolean;
@@ -135,7 +138,7 @@ export async function agentIKitUpdate(input?: {
     });
   }
 
-  const index = await agentIKitIndex({ stashDir });
+  const index = await akmIndex({ stashDir });
   const config = loadConfig();
 
   return {
@@ -145,7 +148,7 @@ export async function agentIKitUpdate(input?: {
     all,
     processed,
     config: {
-      searchPaths: config.searchPaths,
+      stashCount: config.stashes?.length ?? 0,
       installedKitCount: config.installed?.length ?? 0,
     },
     index: {

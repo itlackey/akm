@@ -26,7 +26,7 @@ Options:
 - `--provider <type>` — Provider type (e.g., skills-sh)
 - `--options <json>` — Provider-specific options
 
-### `akm sources add <url|path>`
+### `akm stash add <url|path>`
 Add a stash source (filesystem path or remote provider like OpenViking).
 
 Options:

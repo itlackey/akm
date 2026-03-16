@@ -61,13 +61,11 @@ export interface StashConfigEntry {
   options?: Record<string, unknown>;
 }
 
-export interface AgentIKitConfig {
+export interface AkmConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** Whether semantic search is enabled. Default: true */
   semanticSearch: boolean;
-  /** User-configured additional stash directories to search */
-  searchPaths: string[];
   /** OpenAI-compatible embedding endpoint config. If not set, uses local @xenova/transformers */
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
@@ -94,9 +92,8 @@ export interface OutputConfig {
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-export const DEFAULT_CONFIG: AgentIKitConfig = {
+export const DEFAULT_CONFIG: AkmConfig = {
   semanticSearch: true,
-  searchPaths: [],
   registries: [
     { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" },
     { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh" },
@@ -119,9 +116,9 @@ export function getConfigPath(): string {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
-let cachedConfig: { config: AgentIKitConfig; path: string; mtime: number } | undefined;
+let cachedConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
 
-export function loadConfig(): AgentIKitConfig {
+export function loadConfig(): AkmConfig {
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
@@ -157,7 +154,7 @@ export function loadConfig(): AgentIKitConfig {
   return config;
 }
 
-export function saveConfig(config: AgentIKitConfig): void {
+export function saveConfig(config: AkmConfig): void {
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -182,7 +179,7 @@ export function saveConfig(config: AgentIKitConfig): void {
  * API keys should be provided via environment variables
  * AKM_EMBED_API_KEY and AKM_LLM_API_KEY.
  */
-function sanitizeConfigForWrite(config: AgentIKitConfig): Record<string, unknown> {
+function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
   if (config.embedding) {
     const { apiKey, ...rest } = config.embedding;
@@ -193,14 +190,13 @@ function sanitizeConfigForWrite(config: AgentIKitConfig): Record<string, unknown
     sanitized.llm = rest;
   }
   // Drop empty keys to keep config clean
-  if (!config.searchPaths?.length) delete sanitized.searchPaths;
   return sanitized;
 }
 
-export function updateConfig(partial: Partial<AgentIKitConfig>): AgentIKitConfig {
+export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   const current = loadConfig();
   // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
-  const merged: AgentIKitConfig = { ...current, ...partial };
+  const merged: AkmConfig = { ...current, ...partial };
   // Deep-merge output — partial update should not wipe sibling keys
   if (current.output && partial.output && partial.output !== current.output) {
     merged.output = { ...current.output, ...partial.output };
@@ -219,8 +215,8 @@ export function updateConfig(partial: Partial<AgentIKitConfig>): AgentIKitConfig
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function pickKnownKeys(raw: Record<string, unknown>): AgentIKitConfig {
-  const config: AgentIKitConfig = { ...DEFAULT_CONFIG };
+function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
+  const config: AkmConfig = { ...DEFAULT_CONFIG };
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
@@ -230,8 +226,18 @@ function pickKnownKeys(raw: Record<string, unknown>): AgentIKitConfig {
     config.semanticSearch = raw.semanticSearch;
   }
 
+  // Migrate legacy searchPaths into stashes
   if (Array.isArray(raw.searchPaths)) {
-    config.searchPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
+    const legacyPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
+    if (legacyPaths.length > 0) {
+      const existing = config.stashes ?? [];
+      const migrated: StashConfigEntry[] = legacyPaths
+        .filter((p) => !existing.some((s) => s.type === "filesystem" && s.path === p))
+        .map((p) => ({ type: "filesystem", path: p }));
+      if (migrated.length > 0) {
+        config.stashes = [...existing, ...migrated];
+      }
+    }
   }
 
   const embedding = parseEmbeddingConfig(raw.embedding);

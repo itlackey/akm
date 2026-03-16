@@ -6,9 +6,9 @@ import { resolveStashProviders } from "./stash-provider-factory";
 import "./stash-providers/index";
 import { UsageError } from "./errors";
 import { searchRegistry } from "./registry-search";
-import { resolveStashSources } from "./stash-source";
+import { resolveStashSources } from "./search-source";
 import type {
-  AgentIKitSearchType,
+  AkmSearchType,
   RegistrySearchResultHit,
   SearchHit,
   SearchResponse,
@@ -18,9 +18,9 @@ import type {
 
 const DEFAULT_LIMIT = 20;
 
-export async function agentIKitSearch(input: {
+export async function akmSearch(input: {
   query: string;
-  type?: AgentIKitSearchType;
+  type?: AkmSearchType;
   limit?: number;
   source?: SearchSource | string;
 }): Promise<SearchResponse> {
@@ -40,7 +40,7 @@ export async function agentIKitSearch(input: {
       stashDir: "",
       source,
       hits: [],
-      warnings: ["No stash sources configured. Run `akm init` first."],
+      warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
   }

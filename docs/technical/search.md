@@ -33,8 +33,8 @@ After fusion, additional boosts are applied:
 
 ## Substring Fallback
 
-When no index is available, search falls back to scanning stash directories
-and filtering by substring match. This ensures search always works, even
+When no index is available, search falls back to scanning stash and kit
+directories and filtering by substring match. This ensures search always works, even
 before `akm index` has been run.
 
 ## Registry Search
@@ -44,7 +44,7 @@ When both local and registry sources are enabled, the CLI combines the two hit
 lists and sorts the final results by score.
 
 Registry results are filtered to only include packages and repos tagged with
-`akm` or `agent-i-kit`. Registry search includes pluggable providers
+`akm-kit`. Registry search includes pluggable providers
 (static-index, skills-sh). Stash search includes pluggable stash providers
 (filesystem, openviking). See [../registry.md](../registry.md) for provider
 details.

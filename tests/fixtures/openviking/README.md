@@ -19,7 +19,7 @@ docker compose up -d
 ./seed.sh
 
 # Register with akm
-akm sources add http://localhost:1933 --provider openviking
+akm stash add http://localhost:1933 --provider openviking
 
 # Test remote show
 akm show viking://resources/project-context/project-context.md
@@ -39,7 +39,7 @@ docker compose down
 
 To use with akm's openviking provider including auth:
 ```sh
-akm sources add http://localhost:1933 \
+akm stash add http://localhost:1933 \
   --provider openviking \
   --options '{"apiKey":"akm-test-key"}'
 ```

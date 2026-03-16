@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "../src/origin-resolve";
-import type { StashSource } from "../src/stash-source";
+import type { SearchSource } from "../src/search-source";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ function makeTmpDir(): string {
   return dir;
 }
 
-function makeSource(overrides?: Partial<StashSource>): StashSource {
+function makeSource(overrides?: Partial<SearchSource>): SearchSource {
   return {
     path: overrides?.path ?? makeTmpDir(),
     registryId: overrides?.registryId,

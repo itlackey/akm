@@ -2,7 +2,7 @@
 
 ## System Design
 
-Agent-i-Kit (akm) is a CLI tool for managing AI agent assets — skills, commands,
+akm (Agent Kit Manager) is a CLI tool for managing AI agent assets — skills, commands,
 agents, knowledge, and memories. It uses a local "stash" directory with SQLite
 FTS5 indexing for fast search.
 

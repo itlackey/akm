@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parseRegistryRef } from "./registry-resolve";
-import type { StashSource } from "./stash-source";
+import type { SearchSource } from "./search-source";
 
 /**
  * Given an origin string (from an AssetRef) and the full list of stash
@@ -14,7 +14,7 @@ import type { StashSource } from "./stash-source";
  *   5. path match  → source whose resolved path matches the origin
  *   6. empty       → indicates a remote/uninstalled origin (caller decides)
  */
-export function resolveSourcesForOrigin(origin: string | undefined, allSources: StashSource[]): StashSource[] {
+export function resolveSourcesForOrigin(origin: string | undefined, allSources: SearchSource[]): SearchSource[] {
   if (!origin) return allSources;
 
   // "local" means the primary stash (first entry)
@@ -50,7 +50,7 @@ export function resolveSourcesForOrigin(origin: string | undefined, allSources: 
  * Check whether an origin refers to something that could be fetched remotely
  * (i.e. it looks like a registry ref but isn't installed locally).
  */
-export function isRemoteOrigin(origin: string, allSources: StashSource[]): boolean {
+export function isRemoteOrigin(origin: string, allSources: SearchSource[]): boolean {
   if (origin === "local") return false;
   return resolveSourcesForOrigin(origin, allSources).length === 0;
 }

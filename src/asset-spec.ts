@@ -108,7 +108,7 @@ export function _setAssetTypeHooks(
 }
 
 /**
- * Register a custom asset type with the Agent-i-Kit asset system.
+ * Register a custom asset type with the akm asset system.
  *
  * ## Full extension registration API
  *

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { agentIKitList, agentIKitRemove, agentIKitUpdate } from "../src/installed-kits";
+import { akmList, akmRemove, akmUpdate } from "../src/installed-kits";
 
 const createdTmpDirs: string[] = [];
 
@@ -64,13 +64,13 @@ afterEach(() => {
   }
 });
 
-// ── agentIKitList ────────────────────────────────────────────────────────────
+// ── akmList ────────────────────────────────────────────────────────────
 
-describe("agentIKitList", () => {
+describe("akmList", () => {
   test("returns empty list when no registry installed", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    const result = await agentIKitList({ stashDir });
+    const result = await akmList({ stashDir });
 
     expect(result.totalInstalled).toBe(0);
     expect(result.installed).toEqual([]);
@@ -83,7 +83,7 @@ describe("agentIKitList", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [
         {
           id: "test-pkg",
@@ -97,7 +97,7 @@ describe("agentIKitList", () => {
       ],
     });
 
-    const result = await agentIKitList({ stashDir });
+    const result = await akmList({ stashDir });
 
     expect(result.totalInstalled).toBe(1);
     expect(result.installed.length).toBe(1);
@@ -114,7 +114,7 @@ describe("agentIKitList", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "missing-pkg",
@@ -128,7 +128,7 @@ describe("agentIKitList", () => {
       ],
     });
 
-    const result = await agentIKitList({ stashDir });
+    const result = await akmList({ stashDir });
 
     expect(result.totalInstalled).toBe(1);
     expect(result.installed[0].status.cacheDirExists).toBe(false);
@@ -136,25 +136,25 @@ describe("agentIKitList", () => {
   });
 });
 
-// ── agentIKitRemove ──────────────────────────────────────────────────────────
+// ── akmRemove ──────────────────────────────────────────────────────────
 
-describe("agentIKitRemove", () => {
+describe("akmRemove", () => {
   test("throws for empty target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    await expect(agentIKitRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
+    await expect(akmRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for whitespace-only target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    await expect(agentIKitRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
+    await expect(akmRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for unknown target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    await expect(agentIKitRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
+    await expect(akmRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
       "No installed kit matched target",
     );
   });
@@ -178,11 +178,11 @@ describe("agentIKitRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
-    const result = await agentIKitRemove({ target: entry.id, stashDir });
+    const result = await akmRemove({ target: entry.id, stashDir });
 
     expect(result.removed.id).toBe(entry.id);
 
@@ -210,11 +210,11 @@ describe("agentIKitRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
-    const result = await agentIKitRemove({ target: entry.ref, stashDir });
+    const result = await akmRemove({ target: entry.ref, stashDir });
 
     expect(result.removed.id).toBe(entry.id);
 
@@ -242,31 +242,31 @@ describe("agentIKitRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
-    await agentIKitRemove({ target: entry.id, stashDir });
+    await akmRemove({ target: entry.id, stashDir });
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
 });
 
-// ── selectTargets (tested via agentIKitUpdate error paths) ────────────────
+// ── selectTargets (tested via akmUpdate error paths) ────────────────
 
-describe("selectTargets via agentIKitUpdate", () => {
+describe("selectTargets via akmUpdate", () => {
   test("throws when both target and all are specified", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    await expect(agentIKitUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
+    await expect(akmUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
       "Specify either <target> or --all, not both.",
     );
   });
 
   test("throws when neither target nor all is specified", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
-    await expect(agentIKitUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
+    await expect(akmUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
   });
 
   test("--all selects all installed entries (registry kits only)", async () => {
@@ -283,7 +283,7 @@ describe("selectTargets via agentIKitUpdate", () => {
     // but parseRegistryRef recognizes the ref as a local path.
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: `local:${path.basename(localDir1)}`,
@@ -306,7 +306,7 @@ describe("selectTargets via agentIKitUpdate", () => {
       ],
     });
 
-    const result = await agentIKitUpdate({ all: true, stashDir });
+    const result = await akmUpdate({ all: true, stashDir });
 
     expect(result.processed).toHaveLength(2);
   });
@@ -317,7 +317,7 @@ describe("selectTargets via agentIKitUpdate", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       stashes: [{ type: "filesystem", path: localDir, name: "test-local" }],
       installed: [],
     });

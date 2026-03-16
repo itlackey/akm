@@ -37,7 +37,7 @@ interface OVResponse {
 }
 
 /**
- * Single source of truth for OpenViking type → Agent-i-Kit asset type mapping.
+ * Single source of truth for OpenViking type → akm asset type mapping.
  * Used by both search hit mapping and show response mapping.
  */
 const OV_TYPE_MAP: Record<string, string> = {
