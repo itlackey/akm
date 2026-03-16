@@ -9,7 +9,7 @@ tags:
   - agents
   - cli
   - skills
-published: false
+published: true
 ---
 
 In the [last post](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about the problem: your agent's skill collection is growing faster than your ability to manage it. Skills scattered across directories, no search, no sharing, no sanity. I introduced [Agentikit](https://github.com/itlackey/agentikit) as the fix — a CLI called `akm` that gives your agent a searchable, indexed stash of assets.
