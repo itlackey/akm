@@ -20,7 +20,7 @@ jobs:
 
       - run: bun install
 
-      - run: bun test
+      - run: bun run check
 
   version:
     needs: test
@@ -76,6 +76,8 @@ jobs:
       - run: bun install
       - run: npm install -g npm@latest
       - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   build:
     needs: version

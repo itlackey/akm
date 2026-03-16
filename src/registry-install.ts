@@ -468,13 +468,16 @@ function countStashDirs(dirPath: string): number {
  *
  * Skips `root` itself since the caller already checked it via `hasStashDirs`.
  */
+const BFS_MAX_DEPTH = 5;
+
 function findShallowestStashRoot(root: string): string | undefined {
-  const queue: string[] = [root];
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
   while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) {
+    const item = queue.shift();
+    if (!item) {
       continue;
     }
+    const { dir: current, depth } = item;
     if (current !== root) {
       // .stash directory is a strong stash marker
       if (isDirectory(path.join(current, ".stash"))) {
@@ -486,6 +489,7 @@ function findShallowestStashRoot(root: string): string | undefined {
         return current;
       }
     }
+    if (depth >= BFS_MAX_DEPTH) continue;
     let children: fs.Dirent[];
     try {
       children = fs.readdirSync(current, { withFileTypes: true });
@@ -495,7 +499,7 @@ function findShallowestStashRoot(root: string): string | undefined {
     for (const child of children) {
       if (!child.isDirectory()) continue;
       if (child.name === ".git" || child.name === "node_modules") continue;
-      queue.push(path.join(current, child.name));
+      queue.push({ dir: path.join(current, child.name), depth: depth + 1 });
     }
   }
   return undefined;

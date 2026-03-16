@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
+import { UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
 import { installRegistryRef } from "./registry-install";
 import { makeAssetRef, parseAssetRef } from "./stash-ref";
@@ -90,6 +91,15 @@ export async function agentIKitClone(options: CloneOptions): Promise<CloneRespon
   const sourceSource = findSourceForPath(sourcePath, allSources);
 
   const destName = options.newName ?? parsed.name;
+
+  // Validate destName to prevent path traversal (parsed.name is already
+  // validated by parseAssetRef, but newName comes directly from user input)
+  if (options.newName) {
+    const normalized = path.posix.normalize(destName.replace(/\\/g, "/"));
+    if (path.isAbsolute(destName) || normalized.startsWith("../") || normalized === ".." || destName.includes("\0")) {
+      throw new UsageError(`Unsafe clone name "${destName}": must not contain path traversal or absolute paths.`);
+    }
+  }
   const typeDir = TYPE_DIRS[parsed.type];
   const destLabel = options.dest ? "at destination" : "in working stash";
 
