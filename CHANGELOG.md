@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Memory asset type**: `memory` is a built-in asset type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
 - **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via their REST API; add with `akm sources add <url> --provider openviking`
 - **Remote show for `viking://` URIs**: `akm show viking://resources/my-doc` fetches content directly from an OpenViking server (returns `editable: false`)
-- **`--options` flag for `akm registry add`**: pass provider-specific JSON config (e.g., `--options '{"apiKey":"key"}'`)
+- **`--options` flag for `akm registry add` and `akm sources add`**: pass provider-specific JSON config (e.g., `--options '{"apiKey":"key"}'`)
 - **`akm registry build-index` command**: generates a v2 registry index JSON from npm/GitHub discovery with `--out`, `--manual`, `--npmRegistry`, `--githubApi`, and `--format` flags
 - Test fixture for OpenViking manual testing (`tests/fixtures/openviking/`)
 

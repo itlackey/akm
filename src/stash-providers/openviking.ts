@@ -202,16 +202,20 @@ class OpenVikingStashProvider implements StashProvider {
     const maxScore = entries.reduce((max, e) => Math.max(max, e.score), 0.01);
 
     return entries.map((entry) => {
-      const assetType = OV_TYPE_MAP[entry.type ?? ""] ?? "knowledge";
-      const ref = uriToVikingRef(entry.uri);
+      const name = sanitizeString(entry.name);
+      const abstract = sanitizeString(entry.abstract, 1000);
+      const type = sanitizeString(entry.type);
+      const uri = sanitizeString(entry.uri, 2048);
+      const assetType = OV_TYPE_MAP[type] ?? "knowledge";
+      const ref = uriToVikingRef(uri);
       return {
         type: assetType,
-        name: entry.name,
+        name,
         path: ref,
         ref,
-        origin: this.name,
+        origin: this.type,
         editable: false,
-        description: entry.abstract,
+        description: abstract || undefined,
         action: `akm show ${ref}`,
         score: Math.round((entry.score / maxScore) * 1000) / 1000,
       };

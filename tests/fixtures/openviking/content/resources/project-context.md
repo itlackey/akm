@@ -11,7 +11,7 @@ FTS5 indexing for fast search.
 - **CLI**: Built with citty, handles user commands (`search`, `show`, `add`)
 - **Stash**: Local directory tree organized by asset type
 - **Indexer**: Walks the stash, extracts metadata, builds FTS5 + vector indexes
-- **Providers**: Pluggable registry backends (skills.sh, openviking)
+- **Providers**: Pluggable registry backends (skills.sh) and stash providers (filesystem, openviking)
 - **Renderers**: Format assets for display (`akm show`)
 
 ## Data Flow

@@ -5,6 +5,9 @@ import path from "node:path";
 import { saveConfig } from "../src/config";
 import { agentikitShowUnified as agentikitShow } from "../src/stash-show";
 
+// Trigger stash-provider self-registration (needed for openviking provider)
+import "../src/stash-providers/index";
+
 const createdTmpDirs: string[] = [];
 
 function createTmpDir(prefix = "akm-show-"): string {
@@ -393,5 +396,68 @@ describe("agentikitShow content-based classification", () => {
       view: { mode: "section", heading: "Setup" },
     });
     expect(sectionResult.content).toContain("Install things.");
+  });
+});
+
+// ── Remote show via OpenViking provider ──────────────────────────────────────
+
+describe("agentikitShow remote (viking://)", () => {
+  const remoteServers: Array<{ stop: (force: boolean) => void }> = [];
+
+  afterEach(() => {
+    for (const s of remoteServers) {
+      try {
+        s.stop(true);
+      } catch {
+        /* already stopped */
+      }
+    }
+    remoteServers.length = 0;
+  });
+
+  test("routes viking:// ref to openviking provider and returns correct structure", async () => {
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/api/v1/fs/stat") {
+          return new Response(
+            JSON.stringify({
+              status: "ok",
+              result: { name: "test-skill", type: "skills", abstract: "A remote skill" },
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.pathname === "/api/v1/content/read") {
+          return new Response(JSON.stringify({ status: "ok", result: "# Remote Skill\n\nDo the thing." }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    remoteServers.push(server);
+
+    saveConfig({
+      semanticSearch: false,
+      searchPaths: [],
+      stashes: [
+        {
+          type: "openviking",
+          url: `http://localhost:${server.port}`,
+          name: "test-ov",
+        },
+      ],
+    });
+
+    const result = await agentikitShow({ ref: "viking://skills/test-skill" });
+
+    expect(result.type).toBe("skill");
+    expect(result.name).toBe("test-skill");
+    expect(result.content).toBe("# Remote Skill\n\nDo the thing.");
+    expect(result.description).toBe("A remote skill");
+    expect(result.editable).toBe(false);
+    expect(result.path).toBe("viking://skills/test-skill");
   });
 });

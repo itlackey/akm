@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +6,7 @@ import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { parseRegistryIndex, type RegistryIndex, type RegistryKitEntry } from "./providers/static-index";
-import { detectStashRoot, validateTarEntries } from "./registry-install";
+import { detectStashRoot, extractTarGzSecure } from "./registry-install";
 import { walkStashFlat } from "./walker";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
@@ -272,20 +271,11 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
     if (!response.ok) {
       throw new Error(`Failed to fetch archive (${response.status}) from ${url}`);
     }
-    fs.mkdirSync(extractDir, { recursive: true });
     await Bun.write(archivePath, response);
 
-    // Validate tar entries for path traversal before extracting
-    const listResult = spawnSync("tar", ["tzf", archivePath], { encoding: "utf8", timeout: 120_000 });
-    if (listResult.status !== 0) {
-      throw new Error(listResult.stderr?.trim() || `tar list failed with ${listResult.status}`);
-    }
-    validateTarEntries(listResult.stdout);
-
-    const result = spawnSync("tar", ["xzf", archivePath, "-C", extractDir], { encoding: "utf8", timeout: 120_000 });
-    if (result.status !== 0) {
-      throw new Error(result.stderr || result.stdout || `tar exited with ${result.status}`);
-    }
+    // Reuse the secure extraction from registry-install which validates entries,
+    // uses --no-same-owner, strips components, and runs a post-extraction scan.
+    extractTarGzSecure(archivePath, extractDir);
 
     const stashRoot = detectStashRoot(extractDir);
     const inspectionRoot = applyIncludeConfigForInspection(stashRoot, tempDir, extractDir) ?? stashRoot;

@@ -90,7 +90,7 @@ describe("OpenVikingStashProvider", () => {
       expect(first.ref).toBe("viking://memories/project-context");
       expect(first.path).toBe("viking://memories/project-context");
       expect(first.action).toBe("akm show viking://memories/project-context");
-      expect(first.origin).toBe("test-ov");
+      expect(first.origin).toBe("openviking");
       expect(first.editable).toBe(false);
       expect(first.score).toBeGreaterThan(0);
     } finally {

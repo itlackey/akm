@@ -19,9 +19,17 @@ Accepts local refs (`skill:my-skill`) or remote URIs (`viking://resources/doc`).
 Install an asset from a registry into the local stash.
 
 ### `akm registry add <url>`
-Register a new search provider.
+Register a new registry search provider.
 
 Options:
 - `--name <name>` — Display name for the registry
-- `--provider <type>` — Provider type (skills-sh, openviking)
+- `--provider <type>` — Provider type (e.g., skills-sh)
+- `--options <json>` — Provider-specific options
+
+### `akm sources add <url|path>`
+Add a stash source (filesystem path or remote provider like OpenViking).
+
+Options:
+- `--provider <type>` — Provider type (e.g., openviking); required for URL sources
+- `--name <name>` — Display name for the source
 - `--options <json>` — Provider-specific options (e.g., apiKey)

@@ -357,7 +357,7 @@ export function verifyArchiveIntegrity(archivePath: string, expected: string | u
   warn("Unrecognized integrity format: %s — verification skipped", expected);
 }
 
-function extractTarGzSecure(archivePath: string, destinationDir: string): void {
+export function extractTarGzSecure(archivePath: string, destinationDir: string): void {
   const listResult = spawnSync("tar", ["tzf", archivePath], { encoding: "utf8" });
   if (listResult.status !== 0) {
     const err = listResult.stderr?.trim() || listResult.error?.message || "unknown error";
@@ -369,9 +369,11 @@ function extractTarGzSecure(archivePath: string, destinationDir: string): void {
   fs.rmSync(destinationDir, { recursive: true, force: true });
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  const extractResult = spawnSync("tar", ["xzf", archivePath, "--strip-components=1", "-C", destinationDir], {
-    encoding: "utf8",
-  });
+  const extractResult = spawnSync(
+    "tar",
+    ["xzf", archivePath, "--no-same-owner", "--strip-components=1", "-C", destinationDir],
+    { encoding: "utf8" },
+  );
   if (extractResult.status !== 0) {
     const err = extractResult.stderr?.trim() || extractResult.error?.message || "unknown error";
     throw new Error(`Failed to extract archive ${archivePath}: ${err}`);
@@ -391,8 +393,16 @@ function scanExtractedFiles(dir: string, root: string): void {
   }
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
-    if (!isWithin(fullPath, root)) {
-      throw new Error(`Post-extraction scan: file outside destination directory: ${fullPath}`);
+    // Check for ".." segments in names (e.g. symlink tricks or crafted filenames)
+    if (entry.name.includes("..")) {
+      throw new Error(`Post-extraction scan: suspicious entry name: ${fullPath}`);
+    }
+    // Resolve symlinks to detect escapes outside the destination directory
+    if (entry.isSymbolicLink()) {
+      const target = fs.realpathSync(fullPath);
+      if (!isWithin(target, root)) {
+        throw new Error(`Post-extraction scan: symlink escapes destination directory: ${fullPath} -> ${target}`);
+      }
     }
     if (entry.isDirectory()) {
       scanExtractedFiles(fullPath, root);

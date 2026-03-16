@@ -29,14 +29,14 @@ function getLockSentinelPath(): string {
   return `${getLockfilePath()}.lck`;
 }
 
-async function acquireLockSentinel(): Promise<void> {
+async function acquireLockSentinel(): Promise<boolean> {
   const sentinelPath = getLockSentinelPath();
   // Ensure the directory exists before attempting to create the sentinel
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
     try {
       fs.writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
-      return; // Sentinel created — we own the lock
+      return true; // Sentinel created — we own the lock
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       // Another process holds the lock — wait briefly before retrying
@@ -46,6 +46,7 @@ async function acquireLockSentinel(): Promise<void> {
     }
   }
   // Best-effort: proceed without the lock rather than failing the install
+  return false;
 }
 
 function releaseLockSentinel(): void {
@@ -88,13 +89,13 @@ export function writeLockfile(entries: LockfileEntry[]): void {
 }
 
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
-  await acquireLockSentinel();
+  const acquired = await acquireLockSentinel();
   try {
     const entries = readLockfile();
     const withoutExisting = entries.filter((e) => e.id !== entry.id);
     writeLockfile([...withoutExisting, entry]);
   } finally {
-    releaseLockSentinel();
+    if (acquired) releaseLockSentinel();
   }
 }
 

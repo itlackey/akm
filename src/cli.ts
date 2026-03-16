@@ -162,9 +162,12 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
   // Shape kit hits as registry type
   const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
 
+  // Shape asset hits by detail level
+  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
+
   const shaped: Record<string, unknown> = {
     hits: shapedKitHits,
-    ...(assetHits.length > 0 ? { assetHits } : {}),
+    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
 
@@ -173,6 +176,17 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
   }
 
   return shaped;
+}
+
+function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action"]);
+  if (detail === "normal") {
+    return capDescription(
+      pickFields(hit, ["assetName", "assetType", "description", "kit", "action"]),
+      NORMAL_DESCRIPTION_LIMIT,
+    );
+  }
+  return hit;
 }
 
 function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -404,7 +418,7 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
  * Naming Conventions:
  * - stash-*     : Operations on the user's local asset store (stash-show, stash-add, stash-clone)
  * - stash-provider-* : Runtime data source providers (filesystem, openviking)
- * - registry-*  : Kit discovery from remote registries (npm, GitHub, OpenViking index)
+ * - registry-*  : Kit discovery from remote registries (npm, GitHub)
  * - installed-kits : Management of kits already installed locally
  */
 

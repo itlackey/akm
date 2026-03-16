@@ -47,9 +47,11 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", "name": "official" },
     { "url": "https://example.com/registry/index.json", "name": "my-team", "enabled": true },
     // skills.sh provider
-    { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" },
-    // OpenViking provider
-    { "url": "http://localhost:1933", "name": "openviking", "provider": "openviking", "options": { "apiKey": "..." } }
+    { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
+  ],
+  "stashes": [
+    // OpenViking stash provider (configured via `akm sources add`)
+    { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
 ```
