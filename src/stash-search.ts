@@ -40,7 +40,7 @@ export async function akmSearch(input: {
       stashDir: "",
       source,
       hits: [],
-      warnings: ["No stash sources configured. Run `akm init` first."],
+      warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
   }

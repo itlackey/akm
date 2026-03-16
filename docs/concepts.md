@@ -6,21 +6,30 @@ library that any AI coding assistant can use.
 
 ## Mental Model
 
-Four layers, from broadest to most specific:
+Three core concepts:
 
 ```text
-registries --> kits --> stash --> assets
+registries    → where you discover kits (indexes of what's available)
+kits          → packages you install (cached separately, managed by akm)
+stashes       → directories of assets you own (your working stash + any extras)
 ```
 
 1. **Registries** are indexes of available kits. The official registry ships
-   by default; you can add third-party registries with `akm registry add`.
+   by default; add third-party registries with `akm registry add`. Registries
+   contain **installable** kits.
 2. **Kits** are installable packages of assets. Install them with `akm add`
-   from npm, GitHub, any git host, or a local directory.
-3. **The stash** is the local library where assets live. It merges your
-   personal assets, search-path directories, and installed kits into a
-   single searchable collection.
+   from npm, GitHub, any git host, or a local directory. Installed kits are
+   cached in a separate directory (`~/.cache/akm/registry/`) managed by akm —
+   you don't edit these files directly.
+3. **Stashes** are directories of assets you own. Your **working stash**
+   (`~/akm`) is created by `akm init`. You can register additional stashes
+   with `akm stash add` — team shared folders, project-specific directories,
+   or remote providers like OpenViking.
 4. **Assets** are the individual capabilities an agent discovers and uses:
    scripts, skills, commands, agents, knowledge documents, and memories.
+
+When you search, akm merges all three sources transparently — your stashes
+and installed kits appear as one unified collection.
 
 ## What's In a Kit?
 
@@ -95,16 +104,18 @@ provide the same information in a parseable form.
 `akm show` also accepts `viking://` URIs for remote OpenViking content, in
 addition to the standard `type:name` format.
 
-## Stash Sources
+## Search Priority
 
-akm searches three source layers in priority order:
+When you search or show an asset, akm checks three layers in order. The
+first match wins:
 
-1. **Primary stash** -- Your personal assets under `AKM_STASH_DIR`
-2. **Search paths** -- Additional directories listed in config
-3. **Installed kits** -- Cache-managed assets added via `akm add`
+1. **Working stash** -- Your personal assets under `AKM_STASH_DIR` (`~/akm`)
+2. **Additional stashes** -- Directories and remote providers added via
+   `akm stash add`
+3. **Installed kits** -- Cache-managed packages added via `akm add`
 
-The first match wins when searching or showing assets. Local edits therefore
-override installed versions.
+This means your local assets always override installed kit versions. Use
+`akm clone` to copy a kit asset into your working stash for editing.
 
 ## Metadata
 
@@ -133,11 +144,12 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |
 | **registry ref** | A package identifier passed to `akm add` | `npm:@scope/pkg`, `github:owner/repo` |
 | **git ref** | A branch, tag, or commit (used when installing) | `main`, `v1.0.0` |
-| **stash** | The local library of assets (primary + search paths + installed kits) | `~/akm` |
-| **stash source** | A directory or remote provider in the search path | A filesystem path or OpenViking URL |
-| **search source** | Where to look: `stash`, `registry`, or `both` | `--source stash` |
-| **kit** | An installable package of assets | An npm package or GitHub repo |
-| **registry** | An index of available kits | The official registry, skills.sh |
+| **stash** | A directory of assets you own | `~/akm`, `~/.claude/skills` |
+| **working stash** | Your primary stash, created by `akm init` | `~/akm` |
+| **additional stash** | An extra directory or remote provider registered via `akm stash add` | A filesystem path or OpenViking URL |
+| **kit** | An installable package of assets, cached separately from stashes | An npm package or GitHub repo |
+| **registry** | An index of available (installable) kits | The official registry, skills.sh |
+| **search source** | Where to look: `stash` (local), `registry`, or `both` | `--source stash` |
 
 ## Further Reading
 

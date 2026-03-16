@@ -702,7 +702,7 @@ const configCommand = defineCommand({
 const cloneCommand = defineCommand({
   meta: {
     name: "clone",
-    description: "Clone an asset from any stash source into the working stash or a custom destination",
+    description: "Clone an asset from any source into the working stash or a custom destination",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (e.g. npm:@scope/pkg//script:deploy.sh)", required: true },
@@ -846,12 +846,12 @@ const registryCommand = defineCommand({
 });
 
 /**
- * Subcommand definitions for stash source management.
+ * Subcommand definitions for managing additional stashes.
  */
 function buildSourceSubCommands(outputPrefix: string) {
   return {
     list: defineCommand({
-      meta: { name: "list", description: "List all stash sources" },
+      meta: { name: "list", description: "List all stashes in search order" },
       run() {
         return runWithJsonErrors(() => {
           output(`${outputPrefix}`, listStashSources());
@@ -859,7 +859,7 @@ function buildSourceSubCommands(outputPrefix: string) {
       },
     }),
     add: defineCommand({
-      meta: { name: "add", description: "Add a stash source (filesystem path or remote URL)" },
+      meta: { name: "add", description: "Register an additional stash (filesystem path or remote URL)" },
       args: {
         target: { type: "positional", description: "Path or URL to add", required: true },
         name: { type: "string", description: "Human-friendly name for the source" },
@@ -897,7 +897,7 @@ function buildSourceSubCommands(outputPrefix: string) {
       },
     }),
     remove: defineCommand({
-      meta: { name: "remove", description: "Remove a stash source by URL, path, or name" },
+      meta: { name: "remove", description: "Remove an additional stash by URL, path, or name" },
       args: {
         target: { type: "positional", description: "Source URL, path, or name to remove", required: true },
       },
@@ -912,7 +912,7 @@ function buildSourceSubCommands(outputPrefix: string) {
 }
 
 const stashCommand = defineCommand({
-  meta: { name: "stash", description: "Manage stash sources (local paths and remote providers)" },
+  meta: { name: "stash", description: "Manage additional stashes (local directories and remote providers)" },
   subCommands: buildSourceSubCommands("stash"),
 });
 
@@ -1116,14 +1116,14 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
 
 const EMBEDDED_HINTS = `# akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
 
 ## Quick Reference
 
 \`\`\`sh
-akm search "<query>"                          # Search for assets
+akm search "<query>"                          # Search your stashes and installed kits
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Search stash providers and registries for assets
+akm search "<query>" --source both            # Also search registries for installable kits
 akm show <ref>                                # View asset details
 akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
@@ -1145,14 +1145,14 @@ Run \`akm -h\` for the full command reference.
 
 const EMBEDDED_HINTS_FULL = `# akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
 
 ## Search
 
 \`\`\`sh
-akm search "<query>"                          # Search local stash
+akm search "<query>"                          # Search your stashes and installed kits
 akm search "<query>" --type skill             # Filter by asset type
-akm search "<query>" --source both            # Search all stash providers and registries
+akm search "<query>" --source both            # Also search registries for installable kits
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -1244,10 +1244,10 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 \`\`\`sh
-akm init                                      # Initialize stash directory
+akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm stash                                     # List stash search paths
+akm stash                                     # List all stashes
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

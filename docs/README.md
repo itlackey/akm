@@ -2,7 +2,7 @@
 
 ## Getting Started
 
-- [Concepts](concepts.md) -- Asset types, classification, refs, stash sources, and metadata
+- [Concepts](concepts.md) -- Stashes, kits, registries, asset types, and refs
 - [Getting Started](getting-started.md) -- Quick setup guide
 - [Kit Maker's Guide](kit-makers.md) -- Build and share a kit on GitHub, npm, or a network directory
 

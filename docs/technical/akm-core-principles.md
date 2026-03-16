@@ -28,12 +28,14 @@ akm mirrors the Debian apt model with four layers:
 | `apt search` | `akm search` | Discovers capabilities by keyword |
 | `apt update` | `akm update --all` | Refreshes installed kits to latest versions |
 
-The four layers map cleanly:
+The layers map cleanly:
 
 1. **Registries** are `sources.list` -- indexes of what's available. The official registry ships by default; add third-party ones with `akm registry add`.
-2. **Kits** are packages -- installable bundles of assets. Install with `akm add`, remove with `akm remove`, update with `akm update`.
-3. **The stash** is the local filesystem -- where installed assets live alongside your personal ones. Multiple stash sources merge into one searchable collection, just as apt merges `/usr/bin`, `/usr/local/bin`, etc.
+2. **Kits** are packages -- installable bundles of assets. Install with `akm add`, remove with `akm remove`, update with `akm update`. Installed kits are cached separately in `~/.cache/akm/`, managed by akm.
+3. **Stashes** are the local directories you own -- your working stash (`~/akm`) plus any additional stashes registered via `akm stash add`. Think of them like `/usr/local/bin` (your stuff) alongside `/usr/bin` (system packages).
 4. **Assets** are the individual programs/files -- the scripts, skills, commands, agents, and knowledge documents an agent discovers and uses.
+
+Search merges stashes and installed kits into one searchable collection, just as `$PATH` merges multiple directories.
 
 ## The Rules
 
@@ -67,7 +69,7 @@ Information flows down, never up. Search never contains show-level detail. Show 
 
 ### 5. Registries are catalogs, stashes are local, kits are packages
 
-This maps cleanly to the apt model. Registries list what's available. `akm add` installs a kit from a registry source into a local cache directory and adds it to the stash. `akm remove` reverses this. `akm update` refreshes installed kits. The agent doesn't know or care whether an asset is local or installed -- it searches, it shows, it uses.
+This maps cleanly to the apt model. Registries list what's available. `akm add` installs a kit into a local cache directory. `akm remove` reverses this. `akm update` refreshes installed kits. Stashes are directories you own — your working stash plus any extras. The agent doesn't know or care whether an asset comes from a stash or an installed kit — it searches, it shows, it uses.
 
 Users can add any npm package, GitHub repo, git URL, or local directory as a kit source. They can add third-party registries for team or community discovery.
 
@@ -85,7 +87,7 @@ The feature checklist:
 
 - Does it help agents **find** the right asset? --> search improvement, indexing, metadata quality
 - Does it help agents **use** an asset? --> show output, action field, payload format
-- Does it help users **manage** their stashes? --> add, remove, update, clone, sources, config
+- Does it help users **manage** their stashes and kits? --> add, remove, update, clone, stash, config
 - Does it help kit makers **publish** assets? --> registry, indexing, metadata authoring
 
 If a proposed feature doesn't fit one of these four categories, it probably doesn't belong in akm. Features that sound useful in the abstract but don't serve the search-->show-->use pipeline are how tools become bloated.

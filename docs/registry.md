@@ -262,15 +262,16 @@ package that is not yet installed, `akm clone` fetches it to the cache
 automatically. Unlike `akm add`, this does **not** register the package as
 an installed kit -- it only extracts the single requested asset.
 
-## Source Priority
+## Search Priority
 
 When multiple sources provide the same asset name, the first match wins:
 
-1. **Primary stash** -- `AKM_STASH_DIR`
-2. **Search paths** -- Additional directories from config (`searchPaths`)
-3. **Installed packages** -- Registry kits from `akm add` (cache-managed)
+1. **Working stash** -- Your personal assets in `AKM_STASH_DIR` (`~/akm`)
+2. **Additional stashes** -- Directories and remote providers from `akm stash add`
+3. **Installed kits** -- Packages from `akm add`, cached in `~/.cache/akm/`
 
-This means local edits and clones always override installed versions.
+This means your stash assets always override installed kit versions. Use
+`akm clone` to copy a kit asset into your working stash for editing.
 
 ## Registry Providers
 

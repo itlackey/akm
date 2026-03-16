@@ -1,13 +1,13 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search the stash first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your stashes first before writing something from scratch.
 
 ## Search
 
 ```sh
-akm search "<query>"                          # Search local stash
+akm search "<query>"                          # Search your stashes and installed kits
 akm search "<query>" --type skill             # Filter by asset type
-akm search "<query>" --source both            # Search local stash and registries
+akm search "<query>" --source both            # Also search registries for installable kits
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -97,10 +97,10 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 ```sh
-akm init                                      # Initialize stash directory
+akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm stash                                     # List stash search paths
+akm stash                                     # List all stashes
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

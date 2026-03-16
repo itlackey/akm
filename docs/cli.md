@@ -105,13 +105,13 @@ returns guidance to run `akm add <origin>` first.
 
 ### Understanding "add" Commands
 
-akm has three `add` commands that operate on different layers:
+akm has three `add` commands, one for each core concept:
 
-| Command | What it does | Analogy |
+| Command | What it does | What it manages |
 | --- | --- | --- |
-| `akm add <ref>` | Install a kit (package of assets) | `npm install` |
-| `akm registry add <url>` | Add a registry to discover kits from | Adding a package source |
-| `akm stash add <path>` | Add a search path so akm finds assets there | Adding to `$PATH` |
+| `akm add <ref>` | Install a kit (package of assets) | Kits — cached in `~/.cache/akm/`, managed by akm |
+| `akm stash add <path>` | Register a directory as an additional stash | Stashes — directories of assets you own |
+| `akm registry add <url>` | Add a registry to discover kits from | Registries — indexes of installable kits |
 
 ### add
 
@@ -298,11 +298,13 @@ akm registry search "docker" --limit 5
 
 ### stash
 
-Manage stash search paths. The `stash` command has three subcommands.
+Manage additional stashes — directories and remote providers that akm
+searches alongside your working stash and installed kits. The `stash`
+command has three subcommands.
 
 #### stash list
 
-List all resolved stash sources in priority order.
+List all resolved stashes in priority order.
 
 ```sh
 akm stash list
@@ -311,7 +313,7 @@ akm stash              # Same as stash list
 
 #### stash add
 
-Add a directory or remote provider as a stash source.
+Register a directory or remote provider as an additional stash.
 
 ```sh
 akm stash add ~/.claude/skills
@@ -327,7 +329,7 @@ akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"
 
 #### stash remove
 
-Remove a stash source by path or name.
+Remove an additional stash by path or name.
 
 ```sh
 akm stash remove ~/.claude/skills

@@ -33,8 +33,8 @@ After fusion, additional boosts are applied:
 
 ## Substring Fallback
 
-When no index is available, search falls back to scanning stash directories
-and filtering by substring match. This ensures search always works, even
+When no index is available, search falls back to scanning stash and kit
+directories and filtering by substring match. This ensures search always works, even
 before `akm index` has been run.
 
 ## Registry Search

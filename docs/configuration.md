@@ -26,15 +26,15 @@ akm config unset llm                # Remove an optional key
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `semanticSearch` | boolean | `true` | Enable semantic vector search |
-| `searchPaths` | string[] | `[]` | Additional stash directories to search |
+| `searchPaths` | string[] | `[]` | Additional stash directories to search (legacy; prefer `akm stash add`) |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
 | `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
-| `stashDir` | string | platform default | Path to the stash directory |
+| `stashDir` | string | platform default | Path to the working stash directory |
 | `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
-| `stashes` | array | `[]` | Additional stash sources such as OpenViking servers (managed via `akm stash add/remove`) |
-| `installed` | array | `[]` | Installed kit metadata (managed by akm) |
+| `stashes` | array | `[]` | Additional stashes — directories and remote providers (managed via `akm stash add/remove`) |
+| `installed` | array | `[]` | Installed kit metadata, cached separately in `~/.cache/akm/` (managed by akm) |
 
 ## Embedding Configuration
 

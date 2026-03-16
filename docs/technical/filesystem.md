@@ -2,9 +2,9 @@
 
 Quick reference for where akm stores files.
 
-## Stash Directory
+## Working Stash
 
-The main working directory for all assets.
+Your primary stash directory — where your personal assets live.
 
 | Env / Default | Path |
 |---|---|
