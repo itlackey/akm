@@ -113,6 +113,27 @@ akm has three `add` commands, one for each core concept:
 | `akm stash add <path>` | Register a directory as an additional stash | Stashes — directories of assets you own |
 | `akm registry add <url>` | Add a registry to discover kits from | Registries — indexes of installable kits |
 
+### kit
+
+Manage installed kits. The `kit` command has four subcommands: `add`, `list`,
+`remove`, `update`. The top-level `akm add`, `akm list`, `akm remove`, and
+`akm update` are convenience aliases for `akm kit add`, `akm kit list`, etc.
+
+#### kit add
+
+Install a kit from npm, GitHub, or any git host. Unlike `akm add`, this
+command does not accept local directory paths — use `akm stash add` for those.
+
+```sh
+akm kit add @scope/kit
+akm kit add github:owner/repo
+```
+
+#### kit list, kit remove, kit update
+
+These work identically to the top-level `akm list`, `akm remove`, and
+`akm update` commands. See their documentation below.
+
 ### add
 
 Install a kit from npm, GitHub, any git host, or a local directory.

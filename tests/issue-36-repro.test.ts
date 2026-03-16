@@ -56,7 +56,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false, searchPaths: [] });
+  saveConfig({ semanticSearch: false });
   return akmIndex({ stashDir, full: true });
 }
 
@@ -350,7 +350,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Incremental index (not full)
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
     const result = await akmIndex({ stashDir });
 
     // Both scripts should be in the index
@@ -375,7 +375,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathStash] });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathStash }] });
     await akmIndex({ stashDir: workingStash, full: true });
 
     const result = await akmSearch({ query: "foundry", source: "local" });
@@ -406,7 +406,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathStash] });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathStash }] });
     const indexResult = await akmIndex({ stashDir: workingStash, full: true });
 
     // All 4 assets from the search path should be indexed

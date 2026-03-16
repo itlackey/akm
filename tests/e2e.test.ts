@@ -827,7 +827,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm list returns empty installed set when none configured", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-empty-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("list");
@@ -850,7 +850,6 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
       installed: [
         {
           id: "npm:@scope/kit",
@@ -885,7 +884,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update requires target or --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-update-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update");
@@ -900,7 +899,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update rejects target with --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-update-both-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "npm:@scope/kit", "--all");
@@ -915,7 +914,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
   test("cli: akm update missing target returns stable not-installed error", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-missing-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "npm:@scope/kit");
@@ -985,7 +984,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   test("cli: akm update --force requires target or --all", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-update-force-");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     try {
       const result = runCli("update", "--force");

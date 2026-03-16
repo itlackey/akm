@@ -83,7 +83,7 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "test-pkg",
@@ -111,7 +111,7 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "github:sveltejs/ai-tools",
@@ -142,7 +142,7 @@ describe("akmShow installed ref", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "github:sveltejs/ai-tools",
@@ -172,7 +172,7 @@ describe("akmShow search path", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathDir }] });
 
     const result = await akmShow({ ref: "script:deploy.sh" });
 
@@ -188,7 +188,7 @@ describe("akmShow editability", () => {
   test("working stash asset has editable true", async () => {
     writeFile(path.join(stashDir, "scripts", "local.sh"), "#!/usr/bin/env bash\necho local\n");
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "script:local.sh" });
 
@@ -203,7 +203,7 @@ describe("akmShow editability", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
     writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
 
-    saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
+    saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathDir }] });
 
     const result = await akmShow({ ref: "script:remote.sh" });
 
@@ -219,7 +219,7 @@ describe("akmShow editability", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "installed-pkg",
@@ -255,7 +255,7 @@ describe("akmShow content-based classification", () => {
       ["---", "model: gpt-4", "description: Deploy command", "---", "Deploy $ARGUMENTS."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "command:deploy.md" });
 
@@ -273,7 +273,7 @@ describe("akmShow content-based classification", () => {
       ["---", "tools:", "  read: allow", "model: gpt-4", "---", "You are a hybrid agent."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "command:hybrid.md" });
 
@@ -295,7 +295,7 @@ describe("akmShow content-based classification", () => {
       ].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "command:deploy.md" });
 
@@ -313,7 +313,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Positional args", "---", "Run release $1 with notes from $2 and flag $9."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "command:positional.md" });
 
@@ -327,7 +327,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Named args", "---", "Deploy {{env}} with {{version}} using {{env}} again."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "command:named.md" });
 
@@ -338,7 +338,7 @@ describe("akmShow content-based classification", () => {
   test("script in scripts/ directory uses new renderer pipeline", async () => {
     writeFile(path.join(stashDir, "scripts", "build.sh"), "#!/usr/bin/env bash\necho build\n");
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "script:build.sh" });
 
@@ -353,7 +353,7 @@ describe("akmShow content-based classification", () => {
       ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     // $ARGUMENTS placeholder (specificity 18) beats knowledge/ directory hint (10)
     const result = await akmShow({ ref: "knowledge:deploy-cmd.md" });
@@ -369,7 +369,7 @@ describe("akmShow content-based classification", () => {
       ["---", "agent: build", "description: Build dispatch", "---", "Build the project."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     // agent frontmatter (specificity 18) beats agents/ directory hint (15)
     const result = await akmShow({ ref: "agent:build-cmd.md" });
@@ -385,7 +385,7 @@ describe("akmShow content-based classification", () => {
       ["# Intro", "Welcome.", "", "## Setup", "Install things.", "", "## Usage", "Use things."].join("\n"),
     );
 
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const tocResult = await akmShow({ ref: "knowledge:guide.md", view: { mode: "toc" } });
     expect(tocResult.content).toContain("Intro");
@@ -441,7 +441,7 @@ describe("akmShow remote (viking://)", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       stashes: [
         {
           type: "openviking",

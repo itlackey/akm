@@ -2,10 +2,10 @@ import { resolveStashDir } from "../common";
 import type { AkmConfig, StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { searchLocal } from "../local-search";
+import { resolveStashSources } from "../search-source";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import { showLocal } from "../stash-show";
-import { resolveStashSources } from "../stash-source";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
 
 class FilesystemStashProvider implements StashProvider {

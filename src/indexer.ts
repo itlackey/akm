@@ -46,7 +46,7 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
   // Load config and resolve all stash sources
   const { loadConfig } = await import("./config.js");
   const config = loadConfig();
-  const { resolveAllStashDirs } = await import("./stash-source.js");
+  const { resolveAllStashDirs } = await import("./search-source.js");
   const allStashDirs = resolveAllStashDirs(stashDir);
 
   const t0 = Date.now();

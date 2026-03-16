@@ -2,7 +2,7 @@ import path from "node:path";
 import type { StashConfigEntry } from "./config";
 import { loadConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
-import { resolveStashSources } from "./stash-source";
+import { resolveStashSources } from "./search-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ export interface SourceListResult {
  * `http://` or `https://`. URL sources require a `providerType` option
  * (e.g. "openviking").
  */
-export function addStashSource(opts: {
+export function addStash(opts: {
   target: string;
   name?: string;
   providerType?: string;
@@ -78,7 +78,7 @@ export function addStashSource(opts: {
  * Remove a stash source by URL, path, or name.
  * Match priority: URL > path > name (most specific first).
  */
-export function removeStashSource(target: string): SourceRemoveResult {
+export function removeStash(target: string): SourceRemoveResult {
   const config = loadConfig();
   const stashes = [...(config.stashes ?? [])];
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
@@ -109,7 +109,7 @@ export function removeStashSource(target: string): SourceRemoveResult {
 /**
  * List all stash sources (local filesystem + configured stashes).
  */
-export function listStashSources(): SourceListResult {
+export function listStashes(): SourceListResult {
   const config = loadConfig();
   const localSources = resolveStashSources();
   const stashes = config.stashes ?? [];

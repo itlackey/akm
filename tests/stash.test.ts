@@ -139,7 +139,7 @@ test("akmSearch resolves script run correctly for search path directories", asyn
   writeFile(path.join(searchPathDir, "scripts", "group", "nested", "job.js"), "console.log('job')\n");
   writeFile(path.join(searchPathDir, "scripts", "group", "package.json"), '{"name":"group"}');
 
-  saveConfig({ semanticSearch: false, searchPaths: [searchPathDir] });
+  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: searchPathDir }] });
 
   process.env.AKM_STASH_DIR = primaryStashDir;
   await akmIndex({ stashDir: primaryStashDir, full: true });
@@ -156,7 +156,7 @@ test("akmSearch includes explainability reasons for indexed hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   writeFile(path.join(stashDir, "scripts", "summarize-diff.ts"), "console.log('summarize')\n");
 
-  saveConfig({ semanticSearch: true, searchPaths: [] });
+  saveConfig({ semanticSearch: true });
   process.env.AKM_STASH_DIR = stashDir;
 
   await akmIndex({ stashDir, full: true });
@@ -191,7 +191,7 @@ test("akmSearch includes ref, action, and size for local hits", async () => {
     }),
   );
 
-  saveConfig({ semanticSearch: false, searchPaths: [] });
+  saveConfig({ semanticSearch: false });
   process.env.AKM_STASH_DIR = stashDir;
 
   await akmIndex({ stashDir, full: true });
@@ -211,7 +211,6 @@ test("akmSearch includes origin for installed-source hits", async () => {
 
   saveConfig({
     semanticSearch: false,
-    searchPaths: [],
     installed: [
       {
         id: "npm:@scope/deploy-kit",

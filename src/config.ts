@@ -66,8 +66,6 @@ export interface AkmConfig {
   stashDir?: string;
   /** Whether semantic search is enabled. Default: true */
   semanticSearch: boolean;
-  /** User-configured additional stash directories to search */
-  searchPaths: string[];
   /** OpenAI-compatible embedding endpoint config. If not set, uses local @xenova/transformers */
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
@@ -96,7 +94,6 @@ export interface OutputConfig {
 
 export const DEFAULT_CONFIG: AkmConfig = {
   semanticSearch: true,
-  searchPaths: [],
   registries: [
     { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" },
     { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh" },
@@ -193,7 +190,6 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
     sanitized.llm = rest;
   }
   // Drop empty keys to keep config clean
-  if (!config.searchPaths?.length) delete sanitized.searchPaths;
   return sanitized;
 }
 
@@ -230,8 +226,18 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
     config.semanticSearch = raw.semanticSearch;
   }
 
+  // Migrate legacy searchPaths into stashes
   if (Array.isArray(raw.searchPaths)) {
-    config.searchPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
+    const legacyPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
+    if (legacyPaths.length > 0) {
+      const existing = config.stashes ?? [];
+      const migrated: StashConfigEntry[] = legacyPaths
+        .filter((p) => !existing.some((s) => s.type === "filesystem" && s.path === p))
+        .map((p) => ({ type: "filesystem", path: p }));
+      if (migrated.length > 0) {
+        config.stashes = [...existing, ...migrated];
+      }
+    }
   }
 
   const embedding = parseEmbeddingConfig(raw.embedding);

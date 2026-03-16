@@ -2,10 +2,10 @@ import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { resolveSourcesForOrigin } from "./origin-resolve";
+import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./search-source";
 import { resolveStashProviders } from "./stash-provider-factory";
 import { parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
-import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./stash-source";
 import type { KnowledgeView, ShowResponse } from "./stash-types";
 
 // Eagerly import stash providers to trigger self-registration

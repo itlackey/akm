@@ -6,7 +6,7 @@ import { resolveStashProviders } from "./stash-provider-factory";
 import "./stash-providers/index";
 import { UsageError } from "./errors";
 import { searchRegistry } from "./registry-search";
-import { resolveStashSources } from "./stash-source";
+import { resolveStashSources } from "./search-source";
 import type {
   AkmSearchType,
   RegistrySearchResultHit,

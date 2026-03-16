@@ -68,7 +68,7 @@ afterEach(() => {
 
 describe("akmList", () => {
   test("returns empty list when no registry installed", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     const result = await akmList({ stashDir });
 
@@ -83,7 +83,7 @@ describe("akmList", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [
         {
           id: "test-pkg",
@@ -114,7 +114,7 @@ describe("akmList", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: "missing-pkg",
@@ -140,19 +140,19 @@ describe("akmList", () => {
 
 describe("akmRemove", () => {
   test("throws for empty target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     await expect(akmRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for whitespace-only target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     await expect(akmRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for unknown target", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     await expect(akmRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
       "No installed kit matched target",
@@ -178,7 +178,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -210,7 +210,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -242,7 +242,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [stashRoot],
+      stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -256,7 +256,7 @@ describe("akmRemove", () => {
 
 describe("selectTargets via akmUpdate", () => {
   test("throws when both target and all are specified", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     await expect(akmUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
       "Specify either <target> or --all, not both.",
@@ -264,7 +264,7 @@ describe("selectTargets via akmUpdate", () => {
   });
 
   test("throws when neither target nor all is specified", async () => {
-    saveConfig({ semanticSearch: false, searchPaths: [] });
+    saveConfig({ semanticSearch: false });
 
     await expect(akmUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
   });
@@ -283,7 +283,7 @@ describe("selectTargets via akmUpdate", () => {
     // but parseRegistryRef recognizes the ref as a local path.
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       installed: [
         {
           id: `local:${path.basename(localDir1)}`,
@@ -317,7 +317,7 @@ describe("selectTargets via akmUpdate", () => {
 
     saveConfig({
       semanticSearch: false,
-      searchPaths: [],
+
       stashes: [{ type: "filesystem", path: localDir, name: "test-local" }],
       installed: [],
     });

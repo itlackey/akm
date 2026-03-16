@@ -73,7 +73,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       stashRoot: entry.stashRoot,
     },
     config: {
-      searchPaths: updatedConfig.searchPaths,
+      stashCount: updatedConfig.stashes?.length ?? 0,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -148,7 +148,7 @@ export async function akmUpdate(input?: {
     all,
     processed,
     config: {
-      searchPaths: config.searchPaths,
+      stashCount: config.stashes?.length ?? 0,
       installedKitCount: config.installed?.length ?? 0,
     },
     index: {

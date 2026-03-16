@@ -14,11 +14,11 @@ import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { akmAdd } from "./stash-add";
+import { akmAdd, akmKitAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
-import { addStashSource, listStashSources, removeStashSource } from "./stash-source-manage";
+import { addStash, listStashes, removeStash } from "./stash-source-manage";
 import type { KnowledgeView } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
@@ -534,6 +534,33 @@ const updateCommand = defineCommand({
   },
 });
 
+const kitAddCommand = defineCommand({
+  meta: { name: "add", description: "Install a kit from npm, GitHub, or any git host" },
+  args: {
+    ref: {
+      type: "positional",
+      description: "Registry ref (npm package, owner/repo, or git URL)",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmKitAdd({ ref: args.ref });
+      output("add", result);
+    });
+  },
+});
+
+const kitCommand = defineCommand({
+  meta: { name: "kit", description: "Manage installed kits" },
+  subCommands: {
+    add: kitAddCommand,
+    list: listCommand,
+    remove: removeCommand,
+    update: updateCommand,
+  },
+});
+
 const upgradeCommand = defineCommand({
   meta: { name: "upgrade", description: "Upgrade akm to the latest release" },
   args: {
@@ -854,7 +881,7 @@ function buildSourceSubCommands(outputPrefix: string) {
       meta: { name: "list", description: "List all stashes in search order" },
       run() {
         return runWithJsonErrors(() => {
-          output(`${outputPrefix}`, listStashSources());
+          output(`${outputPrefix}`, listStashes());
         });
       },
     }),
@@ -886,7 +913,7 @@ function buildSourceSubCommands(outputPrefix: string) {
               throw new UsageError("--options must be valid JSON");
             }
           }
-          const result = addStashSource({
+          const result = addStash({
             target: args.target,
             name: args.name,
             providerType: args.provider,
@@ -903,7 +930,7 @@ function buildSourceSubCommands(outputPrefix: string) {
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const result = removeStashSource(args.target);
+          const result = removeStash(args.target);
           output(`${outputPrefix}-remove`, result);
         });
       },
@@ -948,6 +975,7 @@ const main = defineCommand({
     list: listCommand,
     remove: removeCommand,
     update: updateCommand,
+    kit: kitCommand,
     upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
@@ -1193,10 +1221,14 @@ akm show viking://resources/my-doc           # Show remote OpenViking content
 ## Install & Manage Kits
 
 \`\`\`sh
-akm add <ref>                                 # Install a kit
+akm add <ref>                                 # Install a kit (smart router: local dirs become stash adds)
 akm add @scope/kit                            # From npm
 akm add owner/repo                            # From GitHub
-akm add ./path/to/local/kit                   # From local directory
+akm add ./path/to/local/kit                   # From local directory (adds as stash)
+akm kit add <ref>                             # Install a kit (explicit)
+akm kit list                                  # List installed kits
+akm kit remove <target>                       # Remove a kit
+akm kit update --all                          # Update all kits
 akm list                                      # List installed kits
 akm remove <target>                           # Remove by id or ref
 akm update --all                              # Update all installed kits
@@ -1248,6 +1280,7 @@ akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm stash                                     # List all stashes
+akm kit                                       # Kit management (add, list, remove, update)
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

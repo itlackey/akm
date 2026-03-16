@@ -4,9 +4,9 @@ import { TYPE_DIRS } from "./asset-spec";
 import { UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
 import { installRegistryRef } from "./registry-install";
+import { findSourceForPath, getPrimarySource, resolveStashSources, type SearchSource } from "./search-source";
 import { makeAssetRef, parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
-import { findSourceForPath, getPrimarySource, resolveStashSources, type StashSource } from "./stash-source";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
@@ -36,7 +36,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const parsed = parseAssetRef(options.sourceRef);
 
   // When --dest is provided, the working stash is optional
-  let allSources: StashSource[];
+  let allSources: SearchSource[];
   try {
     allSources = resolveStashSources();
   } catch (err) {
@@ -60,7 +60,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   let remoteFetched: CloneResponse["remoteFetched"] | undefined;
   if (searchSources.length === 0 && parsed.origin && isRemoteOrigin(parsed.origin, allSources)) {
     const installResult = await installRegistryRef(parsed.origin);
-    const syntheticSource: StashSource = {
+    const syntheticSource: SearchSource = {
       path: installResult.stashRoot,
       registryId: installResult.id,
     };

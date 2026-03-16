@@ -18,14 +18,6 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
         throw new UsageError(`Invalid value for semanticSearch: expected "true" or "false"`);
       }
       return { semanticSearch: value === "true" };
-    case "searchPaths":
-      try {
-        const parsed = JSON.parse(value);
-        if (!Array.isArray(parsed)) throw new UsageError("expected JSON array");
-        return { searchPaths: parsed.filter((d: unknown): d is string => typeof d === "string") };
-      } catch {
-        throw new UsageError(`Invalid value for searchPaths: expected JSON array (e.g. '["/path/a","/path/b"]')`);
-      }
     case "embedding":
       return { embedding: parseEmbeddingConnectionValue(value) };
     case "llm":
@@ -49,8 +41,6 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return config.stashDir ?? null;
     case "semanticSearch":
       return config.semanticSearch;
-    case "searchPaths":
-      return [...config.searchPaths];
     case "embedding":
       return config.embedding ?? null;
     case "llm":
@@ -72,7 +62,6 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
   switch (key) {
     case "stashDir":
     case "semanticSearch":
-    case "searchPaths":
     case "embedding":
     case "llm":
     case "registries":
@@ -117,7 +106,6 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   };
   if (config.embedding) result.embedding = config.embedding;
   if (config.llm) result.llm = config.llm;
-  if (config.searchPaths?.length) result.searchPaths = config.searchPaths;
   return result;
 }
 

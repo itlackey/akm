@@ -299,7 +299,7 @@ describe("config roundtrip", () => {
       { url: "https://a.com/index.json", name: "alpha" },
       { url: "https://b.com/index.json", name: "beta", enabled: false },
     ];
-    saveConfig({ semanticSearch: true, searchPaths: [], registries });
+    saveConfig({ semanticSearch: true, registries });
 
     const loaded = loadConfig();
     expect(loaded.registries?.length).toBe(2);
@@ -311,7 +311,6 @@ describe("config roundtrip", () => {
     const configPath = getConfigPath();
     writeConfig(configPath, {
       semanticSearch: true,
-      searchPaths: [],
       registries: [
         { url: "https://valid.com/index.json", name: "valid" },
         { url: "", name: "empty-url" },

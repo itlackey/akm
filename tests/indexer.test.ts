@@ -292,13 +292,13 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   writeFile(path.join(primaryStash, "scripts", "shared", "shared.sh"), "#!/bin/bash\necho shared\n");
 
   // Create a second stash dir that is actually the SAME directory
-  // (simulates overlapping searchPaths pointing to the same location)
+  // (simulates overlapping stashes pointing to the same location)
   const secondStash = primaryStash;
 
-  // Write a config that includes the same directory twice via searchPaths
+  // Write a config that includes the same directory twice via stashes
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearch: false, searchPaths: [secondStash] });
+  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: secondStash }] });
 
   const result = await akmIndex({ stashDir: primaryStash });
 
@@ -326,7 +326,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearch: false, searchPaths: [stash2] });
+  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: stash2 }] });
 
   await akmIndex({ stashDir: stash1, full: true });
 

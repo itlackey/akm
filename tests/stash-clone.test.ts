@@ -37,7 +37,7 @@ beforeEach(() => {
 
   saveConfig({
     semanticSearch: false,
-    searchPaths: [searchPathDir],
+    stashes: [{ type: "filesystem", path: searchPathDir }],
   });
 });
 
@@ -230,7 +230,7 @@ describe("akmClone remote", () => {
   });
 
   test("clones a script from a remote origin via installRegistryRef", async () => {
-    // Use bare path as origin — not in searchPaths, so isRemoteOrigin returns true
+    // Use bare path as origin — not in stashes, so isRemoteOrigin returns true
     const result = await akmClone({
       sourceRef: `${remoteFixtureDir}//script:remote-tool.sh`,
     });

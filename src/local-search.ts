@@ -27,8 +27,8 @@ import { getRenderer } from "./file-context";
 import { buildSearchText } from "./indexer";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import { makeAssetRef } from "./stash-ref";
-import { buildEditHint, findSourceForPath, isEditable, type StashSource } from "./stash-source";
 import type { AkmSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
@@ -88,7 +88,7 @@ export async function searchLocal(input: {
   searchType: AkmSearchType;
   limit: number;
   stashDir: string;
-  sources: StashSource[];
+  sources: SearchSource[];
   config: AkmConfig;
 }): Promise<{
   hits: StashSearchHit[];
@@ -161,7 +161,7 @@ async function searchDatabase(
   stashDir: string,
   allStashDirs: string[],
   config: AkmConfig,
-  sources: StashSource[],
+  sources: SearchSource[],
 ): Promise<{
   hits: StashSearchHit[];
   embedMs?: number;
@@ -353,7 +353,7 @@ async function substringSearch(
   searchType: AkmSearchType,
   limit: number,
   stashDir: string,
-  sources: StashSource[],
+  sources: SearchSource[],
   config?: AkmConfig,
 ): Promise<StashSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType);
@@ -416,7 +416,7 @@ export async function buildDbHit(input: {
   rankingMode: "semantic" | "fts";
   defaultStashDir: string;
   allStashDirs: string[];
-  sources: StashSource[];
+  sources: SearchSource[];
   config?: AkmConfig;
 }): Promise<StashSearchHit> {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
@@ -487,7 +487,7 @@ async function assetToSearchHit(
   asset: IndexedAsset,
   _query: string,
   stashDir: string,
-  sources: StashSource[],
+  sources: SearchSource[],
   config?: AkmConfig,
   score?: number,
 ): Promise<StashSearchHit> {

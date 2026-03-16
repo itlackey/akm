@@ -18,7 +18,7 @@ function createEmptyStashDir(prefix: string): string {
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
-  saveConfig({ semanticSearch: false, searchPaths: [] });
+  saveConfig({ semanticSearch: false });
   return stashDir;
 }
 

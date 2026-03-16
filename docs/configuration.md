@@ -26,7 +26,6 @@ akm config unset llm                # Remove an optional key
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `semanticSearch` | boolean | `true` | Enable semantic vector search |
-| `searchPaths` | string[] | `[]` | Additional stash directories to search (legacy; prefer `akm stash add`) |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
