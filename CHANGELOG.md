@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- **Extensible asset type system**: `AgentikitAssetType` is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
+- **Extensible asset type system**: `AgentIKitAssetType` is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
 - **Memory asset type**: `memory` is a built-in asset type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
 - **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via their REST API; add with `akm sources add <url> --provider openviking`
 - **Remote show for `viking://` URIs**: `akm show viking://resources/my-doc` fetches content directly from an OpenViking server (returns `editable: false`)
@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.0] - 2026-03-10
 
 Major internal overhaul and rebrand. This release simplifies the asset model,
-cleans up the CLI surface, and renames the package from `agentikit` to `akm-cli`.
+cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cli`.
 
 ### Added
 - `--verbose` flag on `search` for detailed scoring output
@@ -32,12 +32,12 @@ cleans up the CLI surface, and renames the package from `agentikit` to `akm-cli`
 - README badges (npm version, CI status, license)
 
 ### Changed
-- **Rebrand**: npm package `agentikit` renamed to `akm-cli`; binary remains `akm`
-- **Rebrand**: config field `"agentikit"` renamed to `"akm"` in `package.json`
-- **Rebrand**: plugin `agentikit-opencode` renamed to `akm-opencode`
-- **Rebrand**: registry `agentikit-registry` renamed to `akm-registry`
-- **Rebrand**: default paths changed (`~/agentikit` to `~/akm`, `~/.config/agentikit` to `~/.config/akm`)
-- **Rebrand**: environment variables `AGENTIKIT_*` renamed to `AKM_*`
+- **Rebrand**: npm package `agent-i-kit` renamed to `akm-cli`; binary remains `akm`
+- **Rebrand**: config field `"agent-i-kit"` renamed to `"akm"` in `package.json`
+- **Rebrand**: plugin `agent-i-kit-opencode` renamed to `akm-opencode`
+- **Rebrand**: registry `agent-i-kit-registry` renamed to `akm-registry`
+- **Rebrand**: default paths changed (`~/agent-i-kit` to `~/akm`, `~/.config/agent-i-kit` to `~/.config/akm`)
+- **Rebrand**: environment variables `AGENT_I_KIT_*` renamed to `AKM_*`
 - Removed `tool` asset type entirely; `script` is the only script-like type
 - `.stash.json` field renames: `intents` to `searchHints`, `entry` to `filename`; removed `generated` boolean
 - `show` command: `--view` flag replaced with positional syntax (`akm show <ref> toc`)
@@ -92,7 +92,7 @@ rewrites all documentation against the final asset model.
 Initial public release of Agent-i-Kit (`akm` CLI).
 
 ### Added
-- CLI tool (`akm`) for searching, showing, and running agentikit stash assets
+- CLI tool (`akm`) for searching, showing, and running Agent-i-Kit stash assets
 - Hybrid search with FTS5 full-text and optional vector similarity scoring
 - Registry support for discovering, installing, and updating community kits
 - Multiple install sources: npm, GitHub, git URLs, and local directories

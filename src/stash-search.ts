@@ -8,7 +8,7 @@ import { UsageError } from "./errors";
 import { searchRegistry } from "./registry-search";
 import { resolveStashSources } from "./stash-source";
 import type {
-  AgentikitSearchType,
+  AgentIKitSearchType,
   RegistrySearchResultHit,
   SearchHit,
   SearchResponse,
@@ -18,9 +18,9 @@ import type {
 
 const DEFAULT_LIMIT = 20;
 
-export async function agentikitSearch(input: {
+export async function agentIKitSearch(input: {
   query: string;
-  type?: AgentikitSearchType;
+  type?: AgentIKitSearchType;
   limit?: number;
   source?: SearchSource | string;
 }): Promise<SearchResponse> {

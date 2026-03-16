@@ -12,7 +12,7 @@ export interface IncludeConfig {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Keys to check in package.json for akm include configuration. */
-const INCLUDE_CONFIG_KEYS = ["akm", "agentikit"] as const;
+const INCLUDE_CONFIG_KEYS = ["akm", "agent-i-kit", "agentikit"] as const;
 
 function readPackageJsonAt(dirPath: string): Record<string, unknown> | undefined {
   try {
@@ -47,7 +47,7 @@ function extractIncludeList(pkg: Record<string, unknown> | undefined): string[] 
 
 /**
  * Walk up the directory tree from `startDir` to `boundary` (inclusive) looking
- * for a package.json that declares an `akm.include` or `agentikit.include` list.
+ * for a package.json that declares an `akm.include` or `agent-i-kit.include` list.
  * Returns the first config found, or `undefined` if none is found within the
  * boundary.
  */

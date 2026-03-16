@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { agentikitList, agentikitRemove, agentikitUpdate } from "../src/installed-kits";
+import { agentIKitList, agentIKitRemove, agentIKitUpdate } from "../src/installed-kits";
 
 const createdTmpDirs: string[] = [];
 
@@ -64,13 +64,13 @@ afterEach(() => {
   }
 });
 
-// ── agentikitList ────────────────────────────────────────────────────────────
+// ── agentIKitList ────────────────────────────────────────────────────────────
 
-describe("agentikitList", () => {
+describe("agentIKitList", () => {
   test("returns empty list when no registry installed", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    const result = await agentikitList({ stashDir });
+    const result = await agentIKitList({ stashDir });
 
     expect(result.totalInstalled).toBe(0);
     expect(result.installed).toEqual([]);
@@ -97,7 +97,7 @@ describe("agentikitList", () => {
       ],
     });
 
-    const result = await agentikitList({ stashDir });
+    const result = await agentIKitList({ stashDir });
 
     expect(result.totalInstalled).toBe(1);
     expect(result.installed.length).toBe(1);
@@ -128,7 +128,7 @@ describe("agentikitList", () => {
       ],
     });
 
-    const result = await agentikitList({ stashDir });
+    const result = await agentIKitList({ stashDir });
 
     expect(result.totalInstalled).toBe(1);
     expect(result.installed[0].status.cacheDirExists).toBe(false);
@@ -136,25 +136,25 @@ describe("agentikitList", () => {
   });
 });
 
-// ── agentikitRemove ──────────────────────────────────────────────────────────
+// ── agentIKitRemove ──────────────────────────────────────────────────────────
 
-describe("agentikitRemove", () => {
+describe("agentIKitRemove", () => {
   test("throws for empty target", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    await expect(agentikitRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
+    await expect(agentIKitRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for whitespace-only target", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    await expect(agentikitRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
+    await expect(agentIKitRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for unknown target", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    await expect(agentikitRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
+    await expect(agentIKitRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
       "No installed kit matched target",
     );
   });
@@ -182,7 +182,7 @@ describe("agentikitRemove", () => {
       installed: [entry],
     });
 
-    const result = await agentikitRemove({ target: entry.id, stashDir });
+    const result = await agentIKitRemove({ target: entry.id, stashDir });
 
     expect(result.removed.id).toBe(entry.id);
 
@@ -214,7 +214,7 @@ describe("agentikitRemove", () => {
       installed: [entry],
     });
 
-    const result = await agentikitRemove({ target: entry.ref, stashDir });
+    const result = await agentIKitRemove({ target: entry.ref, stashDir });
 
     expect(result.removed.id).toBe(entry.id);
 
@@ -246,19 +246,19 @@ describe("agentikitRemove", () => {
       installed: [entry],
     });
 
-    await agentikitRemove({ target: entry.id, stashDir });
+    await agentIKitRemove({ target: entry.id, stashDir });
 
     expect(fs.existsSync(cacheDir)).toBe(false);
   });
 });
 
-// ── selectTargets (tested via agentikitUpdate error paths) ────────────────
+// ── selectTargets (tested via agentIKitUpdate error paths) ────────────────
 
-describe("selectTargets via agentikitUpdate", () => {
+describe("selectTargets via agentIKitUpdate", () => {
   test("throws when both target and all are specified", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    await expect(agentikitUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
+    await expect(agentIKitUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
       "Specify either <target> or --all, not both.",
     );
   });
@@ -266,7 +266,7 @@ describe("selectTargets via agentikitUpdate", () => {
   test("throws when neither target nor all is specified", async () => {
     saveConfig({ semanticSearch: false, searchPaths: [] });
 
-    await expect(agentikitUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
+    await expect(agentIKitUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
   });
 
   test("--all selects all installed entries (registry kits only)", async () => {
@@ -306,7 +306,7 @@ describe("selectTargets via agentikitUpdate", () => {
       ],
     });
 
-    const result = await agentikitUpdate({ all: true, stashDir });
+    const result = await agentIKitUpdate({ all: true, stashDir });
 
     expect(result.processed).toHaveLength(2);
   });

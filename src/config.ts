@@ -61,7 +61,7 @@ export interface StashConfigEntry {
   options?: Record<string, unknown>;
 }
 
-export interface AgentikitConfig {
+export interface AgentIKitConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
   /** Whether semantic search is enabled. Default: true */
@@ -94,7 +94,7 @@ export interface OutputConfig {
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
-export const DEFAULT_CONFIG: AgentikitConfig = {
+export const DEFAULT_CONFIG: AgentIKitConfig = {
   semanticSearch: true,
   searchPaths: [],
   registries: [
@@ -119,9 +119,9 @@ export function getConfigPath(): string {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
-let cachedConfig: { config: AgentikitConfig; path: string; mtime: number } | undefined;
+let cachedConfig: { config: AgentIKitConfig; path: string; mtime: number } | undefined;
 
-export function loadConfig(): AgentikitConfig {
+export function loadConfig(): AgentIKitConfig {
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
@@ -157,7 +157,7 @@ export function loadConfig(): AgentikitConfig {
   return config;
 }
 
-export function saveConfig(config: AgentikitConfig): void {
+export function saveConfig(config: AgentIKitConfig): void {
   cachedConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -182,7 +182,7 @@ export function saveConfig(config: AgentikitConfig): void {
  * API keys should be provided via environment variables
  * AKM_EMBED_API_KEY and AKM_LLM_API_KEY.
  */
-function sanitizeConfigForWrite(config: AgentikitConfig): Record<string, unknown> {
+function sanitizeConfigForWrite(config: AgentIKitConfig): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
   if (config.embedding) {
     const { apiKey, ...rest } = config.embedding;
@@ -197,10 +197,10 @@ function sanitizeConfigForWrite(config: AgentikitConfig): Record<string, unknown
   return sanitized;
 }
 
-export function updateConfig(partial: Partial<AgentikitConfig>): AgentikitConfig {
+export function updateConfig(partial: Partial<AgentIKitConfig>): AgentIKitConfig {
   const current = loadConfig();
   // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
-  const merged: AgentikitConfig = { ...current, ...partial };
+  const merged: AgentIKitConfig = { ...current, ...partial };
   // Deep-merge output — partial update should not wipe sibling keys
   if (current.output && partial.output && partial.output !== current.output) {
     merged.output = { ...current.output, ...partial.output };
@@ -219,8 +219,8 @@ export function updateConfig(partial: Partial<AgentikitConfig>): AgentikitConfig
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function pickKnownKeys(raw: Record<string, unknown>): AgentikitConfig {
-  const config: AgentikitConfig = { ...DEFAULT_CONFIG };
+function pickKnownKeys(raw: Record<string, unknown>): AgentIKitConfig {
+  const config: AgentIKitConfig = { ...DEFAULT_CONFIG };
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
@@ -381,7 +381,7 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
   if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
     console.warn(
-      `[agentikit] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`,
+      `[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`,
     );
     return undefined;
   }
@@ -415,9 +415,7 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   const obj = value as Record<string, unknown>;
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
   if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    console.warn(
-      `[agentikit] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`,
-    );
+    console.warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
     return undefined;
   }
   if (typeof obj.model !== "string" || !obj.model) return undefined;

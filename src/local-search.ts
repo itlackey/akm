@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { _setAssetTypeHooks, deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
-import type { AgentikitConfig } from "./config";
+import type { AgentIKitConfig } from "./config";
 import {
   closeDatabase,
   type DbSearchResult,
@@ -29,7 +29,7 @@ import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata
 import { getDbPath } from "./paths";
 import { makeAssetRef } from "./stash-ref";
 import { buildEditHint, findSourceForPath, isEditable, type StashSource } from "./stash-source";
-import type { AgentikitSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
+import type { AgentIKitSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -85,11 +85,11 @@ export function buildLocalAction(type: string, ref: string): string {
 
 export async function searchLocal(input: {
   query: string;
-  searchType: AgentikitSearchType;
+  searchType: AgentIKitSearchType;
   limit: number;
   stashDir: string;
   sources: StashSource[];
-  config: AgentikitConfig;
+  config: AgentIKitConfig;
 }): Promise<{
   hits: StashSearchHit[];
   tip?: string;
@@ -156,11 +156,11 @@ export async function searchLocal(input: {
 async function searchDatabase(
   db: import("bun:sqlite").Database,
   query: string,
-  searchType: AgentikitSearchType,
+  searchType: AgentIKitSearchType,
   limit: number,
   stashDir: string,
   allStashDirs: string[],
-  config: AgentikitConfig,
+  config: AgentIKitConfig,
   sources: StashSource[],
 ): Promise<{
   hits: StashSearchHit[];
@@ -322,7 +322,7 @@ async function tryVecScores(
   db: import("bun:sqlite").Database,
   query: string,
   k: number,
-  config: AgentikitConfig,
+  config: AgentIKitConfig,
 ): Promise<Map<number, number> | null> {
   if (!config.semanticSearch) return null;
   const hasEmbeddings = getMeta(db, "hasEmbeddings");
@@ -350,11 +350,11 @@ async function tryVecScores(
 
 async function substringSearch(
   query: string,
-  searchType: AgentikitSearchType,
+  searchType: AgentIKitSearchType,
   limit: number,
   stashDir: string,
   sources: StashSource[],
-  config?: AgentikitConfig,
+  config?: AgentIKitConfig,
 ): Promise<StashSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType);
   const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
@@ -417,7 +417,7 @@ export async function buildDbHit(input: {
   defaultStashDir: string;
   allStashDirs: string[];
   sources: StashSource[];
-  config?: AgentikitConfig;
+  config?: AgentIKitConfig;
 }): Promise<StashSearchHit> {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
@@ -488,7 +488,7 @@ async function assetToSearchHit(
   _query: string,
   stashDir: string,
   sources: StashSource[],
-  config?: AgentikitConfig,
+  config?: AgentIKitConfig,
   score?: number,
 ): Promise<StashSearchHit> {
   const source = findSourceForPath(asset.path, sources);
@@ -536,7 +536,7 @@ function readFileSize(filePath: string): number | undefined {
   }
 }
 
-async function indexAssets(stashDir: string, type: AgentikitSearchType): Promise<IndexedAsset[]> {
+async function indexAssets(stashDir: string, type: AgentIKitSearchType): Promise<IndexedAsset[]> {
   const assets: IndexedAsset[] = [];
   const filterType = type === "any" ? undefined : type;
   const fileContexts = walkStashFlat(stashDir);

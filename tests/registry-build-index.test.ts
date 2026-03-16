@@ -43,7 +43,7 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
                 name: "agent-kit",
                 version: "1.2.3",
                 description: "npm description",
-                keywords: ["agentikit", "deploy"],
+                keywords: ["agent-i-kit", "deploy"],
                 links: {
                   homepage: "https://example.test/agent-kit",
                   repository: "https://github.com/acme/agent-kit",
@@ -59,7 +59,7 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
         return Response.json({
           version: "1.2.3",
           description: "npm latest description",
-          keywords: ["agentikit", "deploy", "review"],
+          keywords: ["agent-i-kit", "deploy", "review"],
           license: "MIT",
           dist: {
             tarball: `${url.origin}/archives/npm-agent-kit.tgz`,
@@ -77,7 +77,7 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
               html_url: "https://github.com/acme/release-kit",
               owner: { login: "acme" },
               license: { spdx_id: "Apache-2.0" },
-              topics: ["agentikit", "release"],
+              topics: ["agent-i-kit", "release"],
               default_branch: "main",
             },
           ],
@@ -129,7 +129,7 @@ describe("buildRegistryIndex", () => {
         name: "agent-kit",
         version: "1.2.3",
         description: "package archive description",
-        keywords: ["agentikit", "deploy", "review"],
+        keywords: ["agent-i-kit", "deploy", "review"],
         license: "MIT",
       }),
     );
@@ -145,7 +145,7 @@ describe("buildRegistryIndex", () => {
         name: "release-kit",
         version: "0.4.0",
         description: "repo archive description",
-        keywords: ["agentikit", "release", "automation"],
+        keywords: ["agent-i-kit", "release", "automation"],
       }),
     );
     writeFile(path.join(githubRepoDir, "agents", "planner.md"), "---\ndescription: Plan releases\n---\n");

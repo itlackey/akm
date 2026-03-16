@@ -97,7 +97,7 @@ export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): Reg
       const url = raw.trim();
       if (!url) continue;
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        console.warn(`[agentikit] Ignoring AKM_REGISTRY_URL entry: must start with http:// or https://, got "${url}"`);
+        console.warn(`[akm] Ignoring AKM_REGISTRY_URL entry: must start with http:// or https://, got "${url}"`);
         continue;
       }
       entries.push({ url });

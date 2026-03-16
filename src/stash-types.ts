@@ -1,6 +1,6 @@
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
-export type AgentikitSearchType = string;
+export type AgentIKitSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
 

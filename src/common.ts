@@ -6,7 +6,7 @@ import { getConfigPath, getDefaultStashDir } from "./paths";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type AgentikitAssetType = string;
+export type AgentIKitAssetType = string;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -14,7 +14,7 @@ export const IS_WINDOWS = process.platform === "win32";
 
 // ── Validators ──────────────────────────────────────────────────────────────
 
-export function isAssetType(type: string): type is AgentikitAssetType {
+export function isAssetType(type: string): type is AgentIKitAssetType {
   return Object.hasOwn(TYPE_DIRS, type);
 }
 
