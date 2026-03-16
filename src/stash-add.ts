@@ -12,7 +12,11 @@ import type { AddResponse } from "./stash-types";
 
 export async function akmAdd(input: { ref: string }): Promise<AddResponse> {
   const ref = input.ref.trim();
-  if (!ref) throw new UsageError("Install ref or local directory is required.");
+  if (!ref)
+    throw new UsageError(
+      "Install ref or local directory is required. " +
+        "Examples: `akm add @scope/kit`, `akm add github:owner/repo`, `akm add ./local/path`",
+    );
 
   const stashDir = resolveStashDir();
 

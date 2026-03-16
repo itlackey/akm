@@ -42,7 +42,10 @@ export async function akmList(input?: { stashDir?: string }): Promise<ListRespon
 
 export async function akmRemove(input: { target: string; stashDir?: string }): Promise<RemoveResponse> {
   const target = input.target.trim();
-  if (!target) throw new UsageError("Target is required.");
+  if (!target)
+    throw new UsageError(
+      "Target is required. Provide the kit id or ref (e.g. `akm remove npm:@scope/kit` or `akm remove owner/repo`).",
+    );
 
   const stashDir = input.stashDir ?? resolveStashDir();
   const config = loadConfig();

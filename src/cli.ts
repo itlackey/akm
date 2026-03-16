@@ -846,8 +846,7 @@ const registryCommand = defineCommand({
 });
 
 /**
- * Shared subcommand definitions for stash source management.
- * Used by both `akm stash` (preferred) and `akm sources` (legacy alias).
+ * Subcommand definitions for stash source management.
  */
 function buildSourceSubCommands(outputPrefix: string) {
   return {
@@ -917,11 +916,6 @@ const stashCommand = defineCommand({
   subCommands: buildSourceSubCommands("stash"),
 });
 
-const sourcesCommand = defineCommand({
-  meta: { name: "sources", description: "Manage stash sources (alias for 'akm stash')" },
-  subCommands: buildSourceSubCommands("sources"),
-});
-
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -959,7 +953,6 @@ const main = defineCommand({
     show: showCommand,
     clone: cloneCommand,
     stash: stashCommand,
-    sources: sourcesCommand,
     registry: registryCommand,
     config: configCommand,
     hints: hintsCommand,
@@ -1254,7 +1247,7 @@ akm config path --all                         # Show all config paths
 akm init                                      # Initialize stash directory
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm sources                                   # List stash search paths
+akm stash                                     # List stash search paths
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

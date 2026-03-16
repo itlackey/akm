@@ -50,13 +50,20 @@ akm search "docker" --source both --detail full
 | `--format` | `json`, `text`, `yaml` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
 
-Local hits include a `ref` handle for use with `akm show`. The default brief
-shape is intentionally small: local hits expose `type`, `name`,
-`description`, and `action`; registry hits expose `type`, `name`, `id`,
-`description`, `action`, and `curated`. `--detail normal` adds commonly useful
-fields like `ref`, `origin`, `size`, and `tags`. `--detail full` includes
-debug-oriented fields such as scores, match explanations, timings, and stash
-metadata.
+Local hits include a `ref` handle for use with `akm show`. Key fields in
+search results:
+
+- **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
+- **`name`** -- The asset's filename or identifier
+- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for installed kit assets
+- **`id`** -- Registry-level kit identifier (registry hits only)
+
+The default brief shape is intentionally small: local hits expose `type`,
+`name`, `description`, and `action`; registry hits expose `type`, `name`,
+`id`, `description`, `action`, and `curated`. `--detail normal` adds commonly
+useful fields like `ref`, `origin`, `size`, and `tags`. `--detail full`
+includes debug-oriented fields such as scores, match explanations, timings,
+and stash metadata.
 
 ### show
 
@@ -95,6 +102,16 @@ return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
+
+### Understanding "add" Commands
+
+akm has three `add` commands that operate on different layers:
+
+| Command | What it does | Analogy |
+| --- | --- | --- |
+| `akm add <ref>` | Install a kit (package of assets) | `npm install` |
+| `akm registry add <url>` | Add a registry to discover kits from | Adding a package source |
+| `akm stash add <path>` | Add a search path so akm finds assets there | Adding to `$PATH` |
 
 ### add
 
@@ -279,10 +296,9 @@ akm registry search "docker" --limit 5
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v2 registry indexes |
 
-### stash (alias: sources)
+### stash
 
-Manage stash sources. The `stash` command has three subcommands. `sources`
-is a legacy alias that works identically.
+Manage stash search paths. The `stash` command has three subcommands.
 
 #### stash list
 

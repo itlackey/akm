@@ -53,8 +53,12 @@ Build the search index so your assets are discoverable:
 akm index
 ```
 
-This scans all stash sources and generates metadata for each asset. Run
-`akm index --full` to force a complete rebuild instead of an incremental
+**`init` vs `index`:** `akm init` creates the stash directory structure (run
+once). `akm index` scans all stash paths and builds the search database (run
+whenever you add or change assets). They are separate steps — `init` sets up
+the folders, `index` makes their contents searchable.
+
+Run `akm index --full` to force a complete rebuild instead of an incremental
 update.
 
 ## Search

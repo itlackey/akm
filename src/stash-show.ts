@@ -63,14 +63,23 @@ export async function showLocal(input: {
   }
 
   if (!assetPath) {
-    throw lastError ?? new NotFoundError(`Stash asset not found for ref: ${displayType}:${parsed.name}`);
+    throw (
+      lastError ??
+      new NotFoundError(
+        `Stash asset not found for ref: ${displayType}:${parsed.name}. ` +
+          "Check the name with `akm search` or verify the asset exists in your stash.",
+      )
+    );
   }
 
   const source = findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allStashDirs[0];
 
   if (!sourceStashDir) {
-    throw new UsageError(`Could not determine stash root for asset: ${displayType}:${parsed.name}`);
+    throw new UsageError(
+      `Could not determine stash root for asset: ${displayType}:${parsed.name}. ` +
+        "Run `akm init` to create the stash directory, or check `akm stash list` for configured paths.",
+    );
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);

@@ -364,10 +364,10 @@ describe("local directory installs", () => {
     const packageDir = makeTempDir("akm-nested-include-package-");
     const archivePath = path.join(makeTempDir("akm-nested-archive-"), "kit.tgz");
     const tarRoot = path.join(packageDir, "kit");
-    fs.mkdirSync(path.join(tarRoot, "opencode", "scripts"), { recursive: true });
-    fs.mkdirSync(path.join(tarRoot, "opencode", "docs"), { recursive: true });
+    fs.mkdirSync(path.join(tarRoot, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(tarRoot, "docs"), { recursive: true });
     writeFile(
-      path.join(tarRoot, "opencode", "package.json"),
+      path.join(tarRoot, "package.json"),
       JSON.stringify(
         {
           name: "nested-kit",
@@ -379,8 +379,8 @@ describe("local directory installs", () => {
         2,
       ),
     );
-    writeFile(path.join(tarRoot, "opencode", "scripts", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
-    writeFile(path.join(tarRoot, "opencode", "docs", "ignored.md"), "# ignored\n");
+    writeFile(path.join(tarRoot, "scripts", "kept.sh"), "#!/usr/bin/env bash\necho kept\n");
+    writeFile(path.join(tarRoot, "docs", "ignored.md"), "# ignored\n");
     createTarGz(tarRoot, archivePath);
 
     const tarballBytes = fs.readFileSync(archivePath);

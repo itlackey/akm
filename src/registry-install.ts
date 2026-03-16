@@ -266,11 +266,6 @@ export function detectStashRoot(extractedDir: string): string {
     return root;
   }
 
-  const opencodeDir = path.join(root, "opencode");
-  if (hasStashDirs(opencodeDir)) {
-    return opencodeDir;
-  }
-
   const shallowest = findShallowestStashRoot(root);
   if (shallowest) return shallowest;
 
