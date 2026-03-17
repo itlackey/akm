@@ -230,6 +230,7 @@ export interface UpgradeResponse {
 }
 
 export interface InfoResponse {
+  schemaVersion: number;
   version: string;
   assetTypes: string[];
   searchModes: string[];

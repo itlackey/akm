@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig } from "../src/config";
+import { loadConfig, saveConfig } from "../src/config";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/db";
 import { assembleInfo } from "../src/info";
 import type { StashEntry } from "../src/metadata";
@@ -169,5 +169,44 @@ describe("assembleInfo", () => {
     expect(parsed.assetTypes).toEqual(info.assetTypes);
     expect(parsed.searchModes).toEqual(info.searchModes);
     expect(parsed.indexStats).toEqual(info.indexStats);
+  });
+
+  test("includes semantic and hybrid modes when semanticSearch is enabled", () => {
+    const stashDir = makeStashDir();
+    process.env.AKM_STASH_DIR = stashDir;
+
+    // Default config has semanticSearch: true
+    const info = assembleInfo();
+
+    expect(info.searchModes).toContain("fts");
+    expect(info.searchModes).toContain("semantic");
+    expect(info.searchModes).toContain("hybrid");
+  });
+
+  test("does not leak apiKey from registry options", () => {
+    const stashDir = makeStashDir();
+    process.env.AKM_STASH_DIR = stashDir;
+
+    // Write a config with a registry that has an apiKey in its options
+    const config = loadConfig();
+    config.registries = [
+      {
+        url: "https://example.com/registry",
+        name: "test-registry",
+        provider: "static-index",
+        options: { apiKey: "super-secret-key-12345" },
+      },
+    ];
+    saveConfig(config);
+
+    const info = assembleInfo();
+
+    expect(info.registries).toHaveLength(1);
+    expect(info.registries[0].url).toBe("https://example.com/registry");
+    expect(info.registries[0].name).toBe("test-registry");
+    // Ensure apiKey is not present anywhere in the serialized output
+    const serialized = JSON.stringify(info);
+    expect(serialized).not.toContain("super-secret-key-12345");
+    expect(serialized).not.toContain("apiKey");
   });
 });

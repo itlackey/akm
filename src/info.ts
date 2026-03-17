@@ -1,28 +1,11 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import { getAssetTypes } from "./asset-spec";
 import { loadConfig } from "./config";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openDatabase } from "./db";
 import { getDbPath } from "./paths";
 import type { InfoResponse } from "./stash-types";
-
-// Version: prefer compile-time define, then package.json, then fallback
-const infoVersion: string = (() => {
-  if (typeof AKM_VERSION !== "undefined") return AKM_VERSION;
-  try {
-    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json");
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (typeof pkg.version === "string") return pkg.version;
-    }
-  } catch {
-    // swallow — running as compiled binary without package.json
-  }
-  return "0.0.0-dev";
-})();
-
-declare const AKM_VERSION: string;
+import { pkgVersion } from "./version";
 
 /**
  * Assemble system info describing the current capabilities, configuration,
@@ -39,10 +22,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   // Search modes
   const searchModes: string[] = ["fts"];
   if (config.semanticSearch) {
-    searchModes.push("semantic");
-    if (searchModes.includes("fts")) {
-      searchModes.push("hybrid");
-    }
+    searchModes.push("semantic", "hybrid");
   }
 
   // Registries (strip sensitive fields like apiKey from options)
@@ -66,7 +46,8 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   const indexStats = readIndexStats(options?.dbPath);
 
   return {
-    version: infoVersion,
+    schemaVersion: 1,
+    version: pkgVersion,
     assetTypes,
     searchModes,
     registries,
@@ -94,15 +75,7 @@ function readIndexStats(dbPath?: string): InfoResponse["indexStats"] {
     const entryCount = getEntryCount(db);
     const lastBuiltAt = getMeta(db, "builtAt") ?? null;
     const vecAvailable = isVecAvailable(db);
-
-    // Check if any embeddings exist
-    let hasEmbeddings = false;
-    try {
-      const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number } | undefined;
-      hasEmbeddings = (row?.cnt ?? 0) > 0;
-    } catch {
-      // embeddings table may not exist
-    }
+    const hasEmbeddings = getMeta(db, "hasEmbeddings") === "1";
 
     return {
       entryCount,
