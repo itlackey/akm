@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentikit.dev/schemas/akm-config.schema.json",
+  "title": "AKM Configuration",
+  "description": "Configuration file for the akm CLI (Agentikit). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments).",
+  "type": "object",
+  "properties": {
+    "stashDir": {
+      "type": "string",
+      "description": "Path to the working stash directory. Resolved from AKM_STASH_DIR env var → this config value → platform default (~/akm or ~/Documents/akm on Windows). Supports ${VAR} and ${VAR:-default} environment variable expansion.",
+      "minLength": 1
+    },
+    "semanticSearch": {
+      "type": "boolean",
+      "description": "Whether semantic vector search is enabled. When true, the indexer builds vector embeddings for FTS5 + vector search. When false, only text-based search is available.",
+      "default": true
+    },
+    "embedding": {
+      "$ref": "#/$defs/EmbeddingConnectionConfig"
+    },
+    "llm": {
+      "$ref": "#/$defs/LlmConnectionConfig"
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig"
+    },
+    "registries": {
+      "type": "array",
+      "description": "Configured registries for kit discovery. When absent, built-in defaults are used (official registry + skills.sh). An explicit empty array disables all registries.",
+      "items": {
+        "$ref": "#/$defs/RegistryConfigEntry"
+      }
+    },
+    "stashes": {
+      "type": "array",
+      "description": "Additional stash sources (filesystem paths and remote providers).",
+      "items": {
+        "$ref": "#/$defs/StashConfigEntry"
+      }
+    },
+    "installed": {
+      "type": "array",
+      "description": "Installed kit metadata. Managed automatically by akm install/uninstall commands — do not edit manually.",
+      "items": {
+        "$ref": "#/$defs/InstalledKitEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "EmbeddingConnectionConfig": {
+      "type": "object",
+      "description": "OpenAI-compatible embedding endpoint configuration. When not set, uses local @xenova/transformers with Xenova/all-MiniLM-L6-v2 (384-dimensional, CPU-based).",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Provider name for display purposes (e.g. \"openai\", \"ollama\").",
+          "minLength": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "OpenAI-compatible embeddings endpoint URL (e.g. \"http://localhost:11434/v1/embeddings\").",
+          "pattern": "^https?://",
+          "examples": [
+            "http://localhost:11434/v1/embeddings",
+            "https://api.openai.com/v1/embeddings"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name to use for embeddings (e.g. \"nomic-embed-text\", \"text-embedding-3-small\").",
+          "minLength": 1,
+          "examples": [
+            "nomic-embed-text",
+            "text-embedding-3-small"
+          ]
+        },
+        "dimension": {
+          "type": "integer",
+          "description": "Output vector dimension. Must match the index dimension (typically 384).",
+          "exclusiveMinimum": 0
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key for authenticated endpoints. Prefer the AKM_EMBED_API_KEY environment variable instead — API keys are stripped from the config file on save.",
+          "minLength": 1
+        }
+      },
+      "required": ["endpoint", "model"],
+      "additionalProperties": false
+    },
+    "LlmConnectionConfig": {
+      "type": "object",
+      "description": "OpenAI-compatible LLM endpoint configuration for metadata generation. When not set, the indexer uses heuristic metadata generation instead.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Provider name for display purposes (e.g. \"openai\", \"ollama\").",
+          "minLength": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "OpenAI-compatible chat completions endpoint URL (e.g. \"http://localhost:11434/v1/chat/completions\").",
+          "pattern": "^https?://",
+          "examples": [
+            "http://localhost:11434/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name to use (e.g. \"llama3.2\", \"gpt-4o-mini\").",
+          "minLength": 1,
+          "examples": [
+            "llama3.2",
+            "gpt-4o-mini"
+          ]
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Sampling temperature for generation."
+        },
+        "maxTokens": {
+          "type": "integer",
+          "description": "Maximum response token limit.",
+          "exclusiveMinimum": 0
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key for authenticated endpoints. Prefer the AKM_LLM_API_KEY environment variable instead — API keys are stripped from the config file on save.",
+          "minLength": 1
+        }
+      },
+      "required": ["endpoint", "model"],
+      "additionalProperties": false
+    },
+    "OutputConfig": {
+      "type": "object",
+      "description": "Default CLI output formatting options.",
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Default output format for CLI commands.",
+          "enum": ["json", "yaml", "text"],
+          "default": "json"
+        },
+        "detail": {
+          "type": "string",
+          "description": "Default output detail level for CLI commands.",
+          "enum": ["brief", "normal", "full"],
+          "default": "brief"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RegistryConfigEntry": {
+      "type": "object",
+      "description": "Configuration for a kit registry used for discovery and installation.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL of the registry index.",
+          "pattern": "^https?://",
+          "examples": [
+            "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+            "https://skills.sh"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-friendly label for this registry.",
+          "minLength": 1,
+          "examples": ["official", "skills.sh"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this registry is active.",
+          "default": true
+        },
+        "provider": {
+          "type": "string",
+          "description": "Provider type that handles this registry. Built-in providers: \"static-index\", \"skills-sh\", \"openviking\".",
+          "minLength": 1,
+          "default": "static-index",
+          "examples": ["static-index", "skills-sh", "openviking"]
+        },
+        "options": {
+          "type": "object",
+          "description": "Arbitrary provider-specific options passed through to the provider.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false
+    },
+    "StashConfigEntry": {
+      "type": "object",
+      "description": "Configuration for an additional stash source (filesystem or remote).",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Provider type for this stash (e.g. \"filesystem\", \"openviking\").",
+          "minLength": 1,
+          "examples": ["filesystem", "openviking"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Filesystem path. Used when type is \"filesystem\".",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "description": "Remote URL. Used for remote providers like \"openviking\".",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-friendly label for this stash.",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this stash is active.",
+          "default": true
+        },
+        "options": {
+          "type": "object",
+          "description": "Arbitrary provider-specific options.",
+          "additionalProperties": true
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+    "InstalledKitEntry": {
+      "type": "object",
+      "description": "Metadata for an installed kit. Managed by akm — do not edit manually.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kit identifier.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Installation source type.",
+          "enum": ["npm", "github", "git", "local"]
+        },
+        "ref": {
+          "type": "string",
+          "description": "Full reference string used to resolve the kit.",
+          "minLength": 1
+        },
+        "artifactUrl": {
+          "type": "string",
+          "description": "URL to the kit artifact.",
+          "minLength": 1
+        },
+        "stashRoot": {
+          "type": "string",
+          "description": "Filesystem path where the kit assets are installed.",
+          "minLength": 1
+        },
+        "cacheDir": {
+          "type": "string",
+          "description": "Filesystem path to the kit's cache directory.",
+          "minLength": 1
+        },
+        "installedAt": {
+          "type": "string",
+          "description": "ISO 8601 timestamp of when the kit was installed.",
+          "minLength": 1
+        },
+        "resolvedVersion": {
+          "type": "string",
+          "description": "Resolved version or tag (source-dependent).",
+          "minLength": 1
+        },
+        "resolvedRevision": {
+          "type": "string",
+          "description": "Resolved commit or revision (source-dependent).",
+          "minLength": 1
+        }
+      },
+      "required": ["id", "source", "ref", "artifactUrl", "stashRoot", "cacheDir", "installedAt"],
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "semanticSearch": true,
+      "registries": [
+        {
+          "url": "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+          "name": "official"
+        },
+        {
+          "url": "https://skills.sh",
+          "name": "skills.sh",
+          "provider": "skills-sh"
+        }
+      ],
+      "output": {
+        "format": "json",
+        "detail": "brief"
+      }
+    },
+    {
+      "semanticSearch": true,
+      "stashDir": "/home/user/my-stash",
+      "embedding": {
+        "provider": "ollama",
+        "endpoint": "http://localhost:11434/v1/embeddings",
+        "model": "nomic-embed-text"
+      },
+      "llm": {
+        "provider": "ollama",
+        "endpoint": "http://localhost:11434/v1/chat/completions",
+        "model": "llama3.2",
+        "temperature": 0.3,
+        "maxTokens": 512
+      },
+      "stashes": [
+        {
+          "type": "filesystem",
+          "path": "/home/user/extra-stash",
+          "name": "extra"
+        }
+      ]
+    }
+  ]
+}
