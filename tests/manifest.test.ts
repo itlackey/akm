@@ -100,7 +100,6 @@ describe("akm manifest", () => {
     const result = await akmManifest({ stashDir });
 
     expect(result.entries.length).toBe(5);
-    expect(result.count).toBe(5);
   });
 
   test("entries have compact shape (name, type, ref, description only)", async () => {
@@ -178,9 +177,9 @@ describe("akm manifest", () => {
     expect(result.entries.length).toBe(50);
     const json = JSON.stringify(result);
     // Compact: each entry averages ~120 bytes (name, type, ref, short description).
-    // 50 entries should stay well under 8KB (token-efficient vs full search hits
-    // which include path, tags, score, action, whyMatched, etc.)
-    expect(json.length).toBeLessThan(8192);
+    // 50 entries ≈ 6000 bytes ≈ 1500 tokens. Cap at ~2500 bytes per token budget
+    // would be too tight for 50 entries, so we allow up to 7500 bytes (~1875 tokens).
+    expect(json.length).toBeLessThan(7500);
 
     // Verify no entry carries heavyweight fields
     for (const entry of result.entries) {
@@ -206,10 +205,9 @@ describe("akm manifest", () => {
 
     // Should find entries via walker fallback even without index
     expect(result.entries.length).toBeGreaterThanOrEqual(1);
-    expect(result.count).toBe(result.entries.length);
   });
 
-  test("includes entry count matching entries array length", async () => {
+  test("response has schemaVersion and entries array", async () => {
     const stashDir = tmpStash();
     await buildTestIndex(stashDir, {
       "scripts/deploy/deploy.sh": "#!/bin/bash\n# Deploy\necho deploy",
@@ -219,8 +217,8 @@ describe("akm manifest", () => {
 
     const result = await akmManifest({ stashDir });
 
-    expect(result.count).toBe(result.entries.length);
     expect(result.schemaVersion).toBe(1);
+    expect(result.entries.length).toBe(3);
   });
 
   test("empty stash returns empty manifest", async () => {
@@ -231,7 +229,6 @@ describe("akm manifest", () => {
     const result = await akmManifest({ stashDir });
 
     expect(result.entries).toEqual([]);
-    expect(result.count).toBe(0);
     expect(result.schemaVersion).toBe(1);
   });
 

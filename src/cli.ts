@@ -1038,7 +1038,6 @@ const manifestCommand = defineCommand({
   },
   args: {
     type: { type: "string", description: "Filter by asset type (e.g. skill, script, command)" },
-    format: { type: "string", description: "Output format (json|text)", default: "json" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {

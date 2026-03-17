@@ -10,11 +10,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
-import { loadConfig } from "./config";
+import { resolveStashDir } from "./common";
+import { type AkmConfig, loadConfig } from "./config";
 import { closeDatabase, getAllEntries, getEntryCount, getMeta, openDatabase } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
-import { resolveStashSources } from "./search-source";
+import { resolveStashSources, type SearchSource as StashSource } from "./search-source";
 import { makeAssetRef } from "./stash-ref";
 import type { ManifestEntry, ManifestResponse } from "./stash-types";
 import { walkStashFlat } from "./walker";
@@ -33,35 +34,53 @@ function truncateDescription(desc: string | undefined): string | undefined {
 
 /**
  * Build a compact ManifestEntry from a StashEntry.
+ * Returns null if the entry cannot be converted (e.g. malformed name).
  */
-function toManifestEntry(entry: StashEntry, filePath: string, stashDir: string, registryId?: string): ManifestEntry {
-  const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
-  const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
-  const ref = makeAssetRef(entry.type, refName, registryId);
+function toManifestEntry(
+  entry: StashEntry,
+  filePath: string,
+  stashDir: string,
+  registryId?: string,
+): ManifestEntry | null {
+  try {
+    const canonical = deriveCanonicalAssetNameFromStashRoot(entry.type, stashDir, filePath);
+    const refName = canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : entry.name;
+    const ref = makeAssetRef(entry.type, refName, registryId);
 
-  const result: ManifestEntry = {
-    name: entry.name,
-    type: entry.type,
-    ref,
-  };
+    const result: ManifestEntry = {
+      name: entry.name,
+      type: entry.type,
+      ref,
+    };
 
-  const desc = truncateDescription(entry.description);
-  if (desc) {
-    result.description = desc;
+    const desc = truncateDescription(entry.description);
+    if (desc) {
+      result.description = desc;
+    }
+
+    return result;
+  } catch (error) {
+    warn(
+      `Manifest: skipping entry "${entry.name}" (${entry.type}):`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
   }
-
-  return result;
 }
 
 /**
  * Get the manifest from the database (fast path).
  */
-function getManifestFromDb(stashDir: string, type?: string): ManifestEntry[] | null {
+function getManifestFromDb(
+  stashDir: string,
+  config: AkmConfig,
+  sources: StashSource[],
+  type?: string,
+): ManifestEntry[] | null {
   const dbPath = getDbPath();
   try {
     if (!fs.existsSync(dbPath)) return null;
 
-    const config = loadConfig();
     const embeddingDim = config.embedding?.dimension;
     const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
     try {
@@ -71,7 +90,6 @@ function getManifestFromDb(stashDir: string, type?: string): ManifestEntry[] | n
 
       const typeFilter = type && type !== "any" ? type : undefined;
       const allEntries = getAllEntries(db, typeFilter);
-      const sources = resolveStashSources(stashDir, config);
 
       // Deduplicate by file path
       const seenFilePaths = new Set<string>();
@@ -82,7 +100,8 @@ function getManifestFromDb(stashDir: string, type?: string): ManifestEntry[] | n
 
         // Find origin for this entry
         const source = sources.find((s) => ie.filePath.startsWith(path.resolve(s.path) + path.sep));
-        entries.push(toManifestEntry(ie.entry, ie.filePath, ie.stashDir, source?.registryId));
+        const entry = toManifestEntry(ie.entry, ie.filePath, ie.stashDir, source?.registryId);
+        if (entry) entries.push(entry);
       }
 
       return entries;
@@ -101,9 +120,7 @@ function getManifestFromDb(stashDir: string, type?: string): ManifestEntry[] | n
 /**
  * Get the manifest by walking the stash directory (fallback when no index).
  */
-async function getManifestFromWalker(stashDir: string, type?: string): Promise<ManifestEntry[]> {
-  const config = loadConfig();
-  const sources = resolveStashSources(stashDir, config);
+async function getManifestFromWalker(sources: StashSource[], type?: string): Promise<ManifestEntry[]> {
   const allStashDirs = sources.map((s) => s.path);
 
   const entries: ManifestEntry[] = [];
@@ -140,10 +157,11 @@ async function getManifestFromWalker(stashDir: string, type?: string): Promise<M
 
       const source = sources.find((s) => dirPath.startsWith(path.resolve(s.path) + path.sep));
 
-      for (const entry of stash.entries) {
-        if (type && type !== "any" && entry.type !== type) continue;
-        const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-        entries.push(toManifestEntry(entry, entryPath, currentStashDir, source?.registryId));
+      for (const stashEntry of stash.entries) {
+        if (type && type !== "any" && stashEntry.type !== type) continue;
+        const entryPath = stashEntry.filename ? path.join(dirPath, stashEntry.filename) : files[0] || dirPath;
+        const manifestEntry = toManifestEntry(stashEntry, entryPath, currentStashDir, source?.registryId);
+        if (manifestEntry) entries.push(manifestEntry);
       }
     }
   }
@@ -158,24 +176,24 @@ async function getManifestFromWalker(stashDir: string, type?: string): Promise<M
  * if no index is available.
  */
 export async function akmManifest(options?: { stashDir?: string; type?: string }): Promise<ManifestResponse> {
-  const stashDir = options?.stashDir || (await import("./common.js")).resolveStashDir();
+  const stashDir = options?.stashDir ?? resolveStashDir();
   const type = options?.type;
+  const config = loadConfig();
+  const sources = resolveStashSources(stashDir, config);
 
   // Fast path: try database
-  const dbEntries = getManifestFromDb(stashDir, type);
+  const dbEntries = getManifestFromDb(stashDir, config, sources, type);
   if (dbEntries !== null) {
     return {
       schemaVersion: 1,
       entries: dbEntries,
-      count: dbEntries.length,
     };
   }
 
   // Fallback: walk filesystem
-  const walkerEntries = await getManifestFromWalker(stashDir, type);
+  const walkerEntries = await getManifestFromWalker(sources, type);
   return {
     schemaVersion: 1,
     entries: walkerEntries,
-    count: walkerEntries.length,
   };
 }

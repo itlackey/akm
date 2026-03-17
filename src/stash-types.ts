@@ -239,7 +239,6 @@ export interface ManifestEntry {
 export interface ManifestResponse {
   schemaVersion: number;
   entries: ManifestEntry[];
-  count: number;
 }
 
 export interface UpgradeCheckResponse {
