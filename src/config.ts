@@ -47,7 +47,7 @@ export interface RegistryConfigEntry {
 }
 
 export interface StashConfigEntry {
-  /** Provider type (e.g. "filesystem", "openviking") */
+  /** Provider type (e.g. "filesystem", "openviking", "context-hub") */
   type: string;
   /** Filesystem path (for type: "filesystem") */
   path?: string;

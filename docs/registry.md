@@ -338,6 +338,28 @@ Key behaviors:
 - Optional API key authentication via `options.apiKey`
 - Optional `options.searchType`: `"semantic"` (default) or `"text"`
 
+#### `context-hub` (stash provider)
+
+Connects to a GitHub-hosted
+[Context Hub](https://github.com/andrewyng/context-hub) repository and exposes
+its docs/skills directly in `akm search` and `akm show`.
+
+> **Why stash, not registry?** Context Hub entries are immediately searchable
+> knowledge assets, not installable kits. Modeling them as a stash provider
+> gives the best UX because users can search and open docs directly instead of
+> getting `akm add ...` install prompts.
+
+```bash
+akm stash add https://github.com/andrewyng/context-hub --provider context-hub
+```
+
+Key behaviors:
+- Downloads and securely mirrors the GitHub repo archive into akm's cache
+- Discovers `content/**/DOC.md` and `content/**/SKILL.md` entries
+- Maps Context Hub docs to `knowledge` hits and skills to `skill` hits
+- Returns direct `akm show ...` actions for matched entries
+- Reuses cached content on subsequent searches and falls back to stale cache on network failure
+
 ### Implementing a Custom Provider
 
 Each provider is a TypeScript class implementing the `RegistryProvider`
