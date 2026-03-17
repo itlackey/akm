@@ -16,12 +16,20 @@ import type {
 } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
+import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
 import { getDefaultStashDir } from "./paths";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const CONTEXT_HUB_URL = "https://github.com/andrewyng/context-hub";
+/** Recommended GitHub repositories shown during setup. */
+const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string }> = [
+  {
+    url: "https://github.com/andrewyng/context-hub",
+    name: "context-hub",
+    hint: "community knowledge",
+  },
+];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -34,8 +42,10 @@ function bail(): never {
  * Check if a prompt result was cancelled (Escape). If so, ask the user
  * whether they really want to quit. Returns true if the user chose to
  * stay (i.e. the caller should re-prompt), or calls bail() to exit.
+ *
+ * @internal Exported for testing only.
  */
-async function onCancel(value: unknown): Promise<boolean> {
+export async function onCancel(value: unknown): Promise<boolean> {
   if (!p.isCancel(value)) return false;
 
   const confirmExit = await p.confirm({
@@ -43,8 +53,10 @@ async function onCancel(value: unknown): Promise<boolean> {
     initialValue: false,
   });
 
-  // Double-cancel or confirmed exit → leave
-  if (p.isCancel(confirmExit) || confirmExit) {
+  // Only exit when the user explicitly confirms "Yes".
+  // Pressing Escape on the confirmation (isCancel) or choosing "No"
+  // both mean "stay in the wizard".
+  if (confirmExit === true) {
     bail();
   }
 
@@ -62,6 +74,16 @@ async function prompt<T>(fn: () => Promise<T | symbol>): Promise<T> {
     if (await onCancel(result)) continue;
     return result as T;
   }
+}
+
+/**
+ * Like `prompt`, but pressing Escape returns `null` instead of re-prompting.
+ * Use inside sub-actions so the user can back out to the parent menu.
+ */
+async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null> {
+  const result = await fn();
+  if (p.isCancel(result)) return null;
+  return result as T;
 }
 
 // ── Steps ───────────────────────────────────────────────────────────────────
@@ -278,34 +300,56 @@ async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[]
   return result;
 }
 
-async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]> {
+/**
+ * @internal Exported for testing only.
+ */
+export async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]> {
   const stashes: StashConfigEntry[] = [...(current.stashes ?? [])];
-
-  // Check if context-hub is already configured
-  const hasContextHub = stashes.some((s) => s.type === "context-hub" && s.url === CONTEXT_HUB_URL);
 
   if (stashes.length > 0) {
     p.log.info(`You have ${stashes.length} existing stash source(s).`);
   }
 
-  // Context Hub toggle — simple on/off for the default context-hub
-  if (!hasContextHub) {
-    const enableContextHub = await prompt(() =>
-      p.confirm({
-        message: "Enable Context Hub? (community knowledge from github.com/andrewyng/context-hub)",
-        initialValue: true,
-      }),
-    );
+  // ── Recommended GitHub repos ───────────────────────────────────────────
+  const existingUrls = new Set(stashes.map((s) => s.url));
 
-    if (enableContextHub) {
-      stashes.push({ type: "context-hub", url: CONTEXT_HUB_URL, name: "context-hub" });
-      p.log.success("Context Hub enabled.");
+  const repoOptions = RECOMMENDED_GITHUB_REPOS.map((r) => ({
+    value: r.url,
+    label: r.name,
+    hint: existingUrls.has(r.url) ? `${r.hint} (already added)` : r.hint,
+  }));
+
+  const selectedRepos = await prompt(() =>
+    p.multiselect({
+      message: "Recommended GitHub repositories — toggle to add or remove:",
+      options: repoOptions,
+      initialValues: repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value),
+      required: false,
+    }),
+  );
+
+  // Add newly selected repos
+  for (const url of selectedRepos) {
+    if (!existingUrls.has(url)) {
+      const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
+      stashes.push({ type: "github", url, name: rec?.name });
+      existingUrls.add(url);
     }
-  } else {
-    p.log.info("Context Hub is already configured.");
   }
 
-  // Additional stash sources loop
+  // Remove deselected repos that were previously configured
+  for (const rec of RECOMMENDED_GITHUB_REPOS) {
+    if (existingUrls.has(rec.url) && !selectedRepos.includes(rec.url)) {
+      const idx = stashes.findIndex((s) => s.url === rec.url);
+      if (idx !== -1) {
+        stashes.splice(idx, 1);
+        existingUrls.delete(rec.url);
+        p.log.info(`Removed ${rec.name}.`);
+      }
+    }
+  }
+
+  // ── Additional stash sources loop ──────────────────────────────────────
   let addMore = true;
   while (addMore) {
     const action = await prompt(() =>
@@ -313,7 +357,7 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
         message: "Add another stash source?",
         options: [
           { value: "openviking", label: "OpenViking server", hint: "remote stash" },
-          { value: "github-repo", label: "GitHub repository", hint: "via context-hub provider" },
+          { value: "github-repo", label: "GitHub repository", hint: "custom URL" },
           { value: "filesystem", label: "Filesystem path", hint: "local directory" },
           { value: "done", label: "Done — no more sources" },
         ],
@@ -326,7 +370,7 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
     }
 
     if (action === "openviking") {
-      const url = await prompt(() =>
+      const url = await promptOrBack(() =>
         p.text({
           message: "Enter the OpenViking server URL:",
           placeholder: "https://your-openviking-server.example.com",
@@ -336,6 +380,7 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
           },
         }),
       );
+      if (url === null) continue;
 
       const spin = p.spinner();
       spin.start("Checking OpenViking server...");
@@ -346,12 +391,13 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
         spin.stop("Server not reachable — adding anyway (it may be temporarily down)");
       }
 
-      const name = await prompt(() =>
+      const name = await promptOrBack(() =>
         p.text({
           message: "Give this stash a name (optional):",
           placeholder: "my-openviking",
         }),
       );
+      if (name === null) continue;
 
       // Use the normalized URL from detection (trailing slashes stripped)
       const entry: StashConfigEntry = { type: "openviking", url: result.url };
@@ -364,7 +410,7 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
     }
 
     if (action === "github-repo") {
-      const url = await prompt(() =>
+      const url = await promptOrBack(() =>
         p.text({
           message: "Enter the GitHub repository URL:",
           placeholder: "https://github.com/owner/repo",
@@ -373,15 +419,17 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
           },
         }),
       );
+      if (url === null) continue;
 
-      const name = await prompt(() =>
+      const name = await promptOrBack(() =>
         p.text({
           message: "Give this stash a name (optional):",
           placeholder: "my-repo",
         }),
       );
+      if (name === null) continue;
 
-      const entry: StashConfigEntry = { type: "context-hub", url: url.trim() };
+      const entry: StashConfigEntry = { type: "github", url: url.trim() };
       if (name.trim()) entry.name = name.trim();
       if (!stashes.some((s) => s.url === entry.url)) {
         stashes.push(entry);
@@ -391,7 +439,7 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
     }
 
     if (action === "filesystem") {
-      const fsPath = await prompt(() =>
+      const fsPath = await promptOrBack(() =>
         p.text({
           message: "Enter the directory path:",
           placeholder: "/path/to/stash",
@@ -400,14 +448,16 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
           },
         }),
       );
+      if (fsPath === null) continue;
 
       const resolved = fsPath.trim();
-      const name = await prompt(() =>
+      const name = await promptOrBack(() =>
         p.text({
           message: "Give this stash a name (optional):",
           placeholder: "my-stash",
         }),
       );
+      if (name === null) continue;
 
       const entry: StashConfigEntry = { type: "filesystem", path: resolved };
       if (name.trim()) entry.name = name.trim();
@@ -543,6 +593,17 @@ export async function runSetupWizard(): Promise<void> {
   // Initialize stash directory
   await akmInit({ dir: stashDir });
 
+  // Build search index
+  const spin = p.spinner();
+  spin.start("Building search index...");
+  try {
+    const indexResult = await akmIndex({ stashDir });
+    spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
+  } catch (err) {
+    spin.stop("Indexing failed — you can run `akm index` manually later.");
+    p.log.warn(String(err));
+  }
+
   // API key reminder
   if (embedding?.apiKey === undefined && embedding?.provider !== "ollama") {
     // Only remind about API keys for non-Ollama remote providers
@@ -556,5 +617,5 @@ export async function runSetupWizard(): Promise<void> {
     }
   }
 
-  p.outro(`Configuration saved to ${configPath}\nRun \`akm index\` to build your search index.`);
+  p.outro(`Configuration saved to ${configPath}`);
 }

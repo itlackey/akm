@@ -212,4 +212,37 @@ describe("detectOpenViking", () => {
     const result = await detectOpenViking("https://example.com///");
     expect(result.url).toBe("https://example.com");
   });
+
+  test("returns available=true when stat endpoint returns 404 (server is up)", async () => {
+    globalThis.fetch = (async () => {
+      return new Response("Not Found", { status: 404 });
+    }) as typeof fetch;
+
+    const { detectOpenViking } = await import("../src/detect");
+    const result = await detectOpenViking("https://example.com");
+    expect(result.available).toBe(true);
+  });
+
+  test("returns available=true when stat endpoint returns 500", async () => {
+    globalThis.fetch = (async () => {
+      return new Response("Internal Server Error", { status: 500 });
+    }) as typeof fetch;
+
+    const { detectOpenViking } = await import("../src/detect");
+    const result = await detectOpenViking("https://example.com");
+    expect(result.available).toBe(true);
+  });
+
+  test("returns available=true via root fallback when stat throws but root responds", async () => {
+    let callCount = 0;
+    globalThis.fetch = (async () => {
+      callCount++;
+      if (callCount === 1) throw new Error("Connection refused"); // stat endpoint
+      return new Response("OK", { status: 200 }); // root fallback
+    }) as typeof fetch;
+
+    const { detectOpenViking } = await import("../src/detect");
+    const result = await detectOpenViking("https://example.com");
+    expect(result.available).toBe(true);
+  });
 });

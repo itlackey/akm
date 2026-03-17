@@ -128,19 +128,19 @@ export function detectAgentPlatforms(): AgentPlatform[] {
 export async function detectOpenViking(url: string): Promise<OpenVikingDetectionResult> {
   const normalized = url.replace(/\/+$/, "");
   try {
-    // Try stat endpoint first — lightweight GET that confirms the API is up
-    const statResp = await fetch(`${normalized}/api/v1/fs/stat?uri=${encodeURIComponent("viking://")}`, {
+    // Any HTTP response (even non-2xx) from the API endpoint means the server is reachable.
+    // Only network errors / timeouts indicate the server is truly unavailable.
+    await fetch(`${normalized}/api/v1/fs/stat?uri=${encodeURIComponent("viking://")}`, {
       signal: AbortSignal.timeout(5000),
     });
-    if (statResp.ok) {
-      return { available: true, url: normalized };
-    }
-    // Fall back to root URL — some servers may respond at /
-    const rootResp = await fetch(normalized, {
-      signal: AbortSignal.timeout(5000),
-    });
-    return { available: rootResp.ok, url: normalized };
+    return { available: true, url: normalized };
   } catch {
-    return { available: false, url: normalized };
+    // stat endpoint unreachable — try root URL as fallback
+    try {
+      await fetch(normalized, { signal: AbortSignal.timeout(5000) });
+      return { available: true, url: normalized };
+    } catch {
+      return { available: false, url: normalized };
+    }
   }
 }
