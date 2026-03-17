@@ -1,5 +1,5 @@
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "./asset-registry";
+import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { toPosix } from "./common";
 
 export interface AssetSpec {
@@ -122,10 +122,10 @@ export function registerAssetType(type: string, spec: AssetSpec): void {
 
   // Auto-register renderer and action builder if provided in spec
   if (spec.rendererName) {
-    TYPE_TO_RENDERER[type] = spec.rendererName;
+    registerTypeRenderer(type, spec.rendererName);
   }
   if (spec.actionBuilder) {
-    ACTION_BUILDERS[type] = spec.actionBuilder;
+    registerActionBuilder(type, spec.actionBuilder);
   }
 }
 

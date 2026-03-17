@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
+import type { AssetSpec } from "../src/asset-spec";
 import { ASSET_SPECS, ASSET_TYPES, registerAssetType, TYPE_DIRS } from "../src/asset-spec";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
 const TEST_TYPE = "registry-test-widget";
 
-function makeWidgetSpec(overrides: Record<string, unknown> = {}) {
+function makeWidgetSpec(overrides: Partial<AssetSpec> = {}) {
   return {
     stashDir: "widgets",
     isRelevantFile: (f: string) => f.endsWith(".widget"),
@@ -97,6 +98,10 @@ describe("asset-registry singleton", () => {
       delete TYPE_TO_RENDERER[type2];
       delete ACTION_BUILDERS[type1];
       delete ACTION_BUILDERS[type2];
+      for (const t of [type1, type2]) {
+        const idx = ASSET_TYPES.indexOf(t);
+        if (idx !== -1) ASSET_TYPES.splice(idx, 1);
+      }
     }
   });
 
