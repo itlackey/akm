@@ -7,6 +7,7 @@ import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
+import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
@@ -21,6 +22,7 @@ import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash, listStashes, removeStash } from "./stash-source-manage";
 import type { KnowledgeView, ShowDetailLevel } from "./stash-types";
+import { insertUsageEvent } from "./usage-events";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -976,6 +978,49 @@ const stashCommand = defineCommand({
   subCommands: buildSourceSubCommands("stash"),
 });
 
+const feedbackCommand = defineCommand({
+  meta: {
+    name: "feedback",
+    description: "Record positive or negative feedback for a stash asset",
+  },
+  args: {
+    ref: { type: "positional", description: "Asset ref (type:name)", required: true },
+    positive: { type: "boolean", description: "Record positive feedback", default: false },
+    negative: { type: "boolean", description: "Record negative feedback", default: false },
+    note: { type: "string", description: "Optional note to attach to the feedback" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const ref = args.ref.trim();
+      if (!ref) {
+        throw new UsageError("Asset ref is required. Usage: akm feedback <ref> --positive|--negative");
+      }
+      if (args.positive && args.negative) {
+        throw new UsageError("Specify either --positive or --negative, not both.");
+      }
+      if (!args.positive && !args.negative) {
+        throw new UsageError("Specify --positive or --negative.");
+      }
+      const signal = args.positive ? "positive" : "negative";
+      const metadata = args.note ? JSON.stringify({ note: args.note }) : undefined;
+
+      const db = openDatabase();
+      try {
+        insertUsageEvent(db, {
+          event_type: "feedback",
+          entry_ref: ref,
+          signal,
+          metadata,
+        });
+      } finally {
+        closeDatabase(db);
+      }
+
+      output("feedback", { ok: true, ref, signal, note: args.note ?? null });
+    });
+  },
+});
+
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -1049,6 +1094,7 @@ const main = defineCommand({
     stash: stashCommand,
     registry: registryCommand,
     config: configCommand,
+    feedback: feedbackCommand,
     hints: hintsCommand,
     completions: completionsCommand,
   },

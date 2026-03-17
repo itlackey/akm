@@ -1,4 +1,5 @@
 import { loadConfig } from "./config";
+import { closeDatabase, openDatabase } from "./db";
 import { ACTION_BUILDERS, buildLocalAction, rendererForType, searchLocal, TYPE_TO_RENDERER } from "./local-search";
 import { resolveStashProviders } from "./stash-provider-factory";
 
@@ -15,6 +16,7 @@ import type {
   SearchSource,
   StashSearchHit,
 } from "./stash-types";
+import { insertUsageEvent } from "./usage-events";
 
 const DEFAULT_LIMIT = 20;
 
@@ -35,7 +37,7 @@ export async function akmSearch(input: {
   if (sources.length === 0) {
     // stashDir: "" is a safe sentinel here — the response carries zero hits
     // and a warning, so no downstream code will try to use the empty path.
-    return {
+    const response: SearchResponse = {
       schemaVersion: 1,
       stashDir: "",
       source,
@@ -43,6 +45,8 @@ export async function akmSearch(input: {
       warnings: ["No stashes configured. Run `akm init` to create your working stash."],
       timing: { totalMs: Date.now() - t0 },
     };
+    logSearchEvent(query, response);
+    return response;
   }
   // Primary stash directory — used for DB path lookups and as the default
   // stash root. Safe because the empty-sources case is handled above.
@@ -91,7 +95,7 @@ export async function akmSearch(input: {
     const allStashHits = mergeStashHits(localResult?.hits ?? [], additionalHits, limit);
     const localWarnings = [...(localResult?.warnings ?? []), ...additionalWarnings];
     const hasResults = allStashHits.length > 0;
-    return {
+    const response: SearchResponse = {
       schemaVersion: 1,
       stashDir,
       source,
@@ -100,6 +104,8 @@ export async function akmSearch(input: {
       warnings: localWarnings.length > 0 ? localWarnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
+    logSearchEvent(query, response);
+    return response;
   }
 
   const registryHits = (registryResult?.hits ?? []).map((hit): RegistrySearchResultHit => {
@@ -120,7 +126,7 @@ export async function akmSearch(input: {
   if (source === "registry") {
     const hits = registryHits.slice(0, limit);
     const hasResults = hits.length > 0;
-    return {
+    const response: SearchResponse = {
       schemaVersion: 1,
       stashDir,
       source,
@@ -129,6 +135,8 @@ export async function akmSearch(input: {
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
     };
+    logSearchEvent(query, response);
+    return response;
   }
 
   // source === "both"
@@ -137,7 +145,7 @@ export async function akmSearch(input: {
   const warnings = [...(localResult?.warnings ?? []), ...additionalWarnings, ...(registryResult?.warnings ?? [])];
   const hasResults = mergedHits.length > 0;
 
-  return {
+  const response: SearchResponse = {
     schemaVersion: 1,
     stashDir,
     source,
@@ -146,6 +154,33 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
+  logSearchEvent(query, response);
+  return response;
+}
+
+/**
+ * Fire-and-forget: log a search event to the usage_events table.
+ * Never blocks the caller; errors are silently ignored.
+ */
+function logSearchEvent(query: string, response: SearchResponse): void {
+  try {
+    const db = openDatabase();
+    try {
+      const entryRefs = response.hits
+        .filter((h): h is StashSearchHit => h.type !== "registry")
+        .map((h) => h.ref)
+        .slice(0, 50);
+      insertUsageEvent(db, {
+        event_type: "search",
+        query,
+        metadata: JSON.stringify({ resultCount: response.hits.length, entry_refs: entryRefs }),
+      });
+    } finally {
+      closeDatabase(db);
+    }
+  } catch {
+    /* fire-and-forget */
+  }
 }
 
 // Re-export searchLocal so existing callers (filesystem.ts) still work via this module

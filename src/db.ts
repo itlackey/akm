@@ -5,6 +5,7 @@ import path from "node:path";
 import { cosineSimilarity, type EmbeddingVector } from "./embedder";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
+import { ensureUsageEventsSchema } from "./usage-events";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -34,7 +35,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -134,6 +135,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     db.exec("DROP INDEX IF EXISTS idx_entries_dir");
     db.exec("DROP INDEX IF EXISTS idx_entries_type");
     db.exec("DROP TABLE IF EXISTS entries");
+    db.exec("DROP TABLE IF EXISTS usage_events");
     db.exec("DELETE FROM index_meta");
   }
 
@@ -214,6 +216,9 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     }
     setMeta(db, "embeddingDim", String(embeddingDim));
   }
+
+  // Usage telemetry table
+  ensureUsageEventsSchema(db);
 }
 
 // ── Meta helpers ────────────────────────────────────────────────────────────

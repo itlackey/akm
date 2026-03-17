@@ -1,5 +1,6 @@
 import path from "node:path";
 import { loadConfig } from "./config";
+import { closeDatabase, openDatabase } from "./db";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
@@ -10,6 +11,7 @@ import { resolveStashProviders } from "./stash-provider-factory";
 import { parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./stash-types";
+import { insertUsageEvent } from "./usage-events";
 
 // Eagerly import stash providers to trigger self-registration
 import "./stash-providers/index";
@@ -33,6 +35,8 @@ export async function akmShowUnified(input: {
   const provider = resolveStashProviders(config).find((p) => p.canShow(ref));
   if (provider) {
     const response = await provider.show(ref, input.view);
+    // Log only successful shows; not-found errors throw before reaching here.
+    logShowEvent(ref);
     if (input.detail === "summary") {
       return buildSummaryResponse(response);
     }
@@ -40,7 +44,29 @@ export async function akmShowUnified(input: {
   }
 
   // Default: local filesystem show
-  return showLocal(input);
+  const result = await showLocal(input);
+  logShowEvent(ref);
+  return result;
+}
+
+/**
+ * Fire-and-forget: log a show event to the usage_events table.
+ * Never blocks the caller; errors are silently ignored.
+ */
+function logShowEvent(ref: string): void {
+  try {
+    const db = openDatabase();
+    try {
+      insertUsageEvent(db, {
+        event_type: "show",
+        entry_ref: ref,
+      });
+    } finally {
+      closeDatabase(db);
+    }
+  } catch {
+    /* fire-and-forget */
+  }
 }
 
 /** @internal Use akmShowUnified() for all external callers. */
