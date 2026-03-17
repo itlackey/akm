@@ -19,7 +19,7 @@ export const DEFAULT_LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
  * When `overrideModel` is provided it takes precedence; otherwise
  * the default model is returned.
  */
-export function getLocalModelName(overrideModel?: string): string {
+function getLocalModelName(overrideModel?: string): string {
   return overrideModel || DEFAULT_LOCAL_MODEL;
 }
 

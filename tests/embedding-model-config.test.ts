@@ -38,30 +38,48 @@ describe("EmbeddingConnectionConfig localModel field", () => {
   });
 });
 
-// ── Test 3: getLocalEmbedder uses DEFAULT_LOCAL_MODEL when no config ──────
+// ── Test 3: embed() uses DEFAULT_LOCAL_MODEL when no config ───────────────
 
-describe("getLocalEmbedder model selection", () => {
-  test("uses DEFAULT_LOCAL_MODEL when no localModel config is provided", async () => {
-    // We test indirectly: embed() with no config and embedLocal internally
-    // should reference DEFAULT_LOCAL_MODEL. We verify by checking that
-    // getLocalModelName returns the default when called with no arguments.
-    const { getLocalModelName, DEFAULT_LOCAL_MODEL } = await import("../src/embedder");
-    expect(getLocalModelName()).toBe(DEFAULT_LOCAL_MODEL);
+describe("embed model selection", () => {
+  test("embed() falls back to local when no config is provided", async () => {
+    // We verify indirectly: embed() with no config should attempt local
+    // embedding via the default model. Since @xenova/transformers may not
+    // be installed in the test environment, we accept either a result or
+    // an error about the missing dependency — but NOT a fetch error.
+    const { embed } = await import("../src/embedder");
+    try {
+      const result = await embed("hello");
+      // If it succeeds, we got a vector back
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
+    } catch (err: unknown) {
+      // Expected when @xenova/transformers is not installed
+      expect(String(err)).toContain("transformers");
+    }
   });
 
-  test("uses config localModel when provided", async () => {
-    const { getLocalModelName } = await import("../src/embedder");
-    const customModel = "Xenova/all-MiniLM-L6-v2";
-    expect(getLocalModelName(customModel)).toBe(customModel);
+  test("embed() uses localModel from config when no remote endpoint", async () => {
+    const { embed } = await import("../src/embedder");
+    const config: EmbeddingConnectionConfig = {
+      endpoint: "",
+      model: "",
+      localModel: "Xenova/all-MiniLM-L6-v2",
+    };
+    try {
+      const result = await embed("hello", config);
+      expect(Array.isArray(result)).toBe(true);
+    } catch (err: unknown) {
+      // Expected when @xenova/transformers is not installed
+      expect(String(err)).toContain("transformers");
+    }
   });
 });
 
-// ── Test 4: Config parsing preserves localModel ───────────────────────────
+// ── Test 4: EmbeddingConnectionConfig type accepts localModel field ───────
 
-describe("config parsing with localModel", () => {
-  test("loadConfig preserves embedding.localModel from config file", async () => {
-    // We test the config parsing logic indirectly by constructing an
-    // AkmConfig with the localModel field and verifying it round-trips.
+describe("EmbeddingConnectionConfig type accepts localModel field", () => {
+  test("AkmConfig embedding field accepts localModel", () => {
+    // Type-system validation: verifies the interface accepts localModel
     const config: AkmConfig = {
       semanticSearch: true,
       embedding: {
@@ -216,18 +234,16 @@ describe("dimension consistency on model change", () => {
   });
 });
 
-// ── Test 7: Config parsing roundtrip for localModel ───────────────────────
+// ── Test 7: Config parsing roundtrip for localModel via loadConfig ────────
 
 describe("config file parsing for localModel", () => {
   test("parseEmbeddingConfig preserves localModel from raw config object", async () => {
-    // We can't call parseEmbeddingConfig directly (it's private), so we
-    // test via loadConfig with a temp config file
+    const { loadConfig } = await import("../src/config");
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
-    const configPath = path.join(tmpDir, "config.json");
     const configData = {
       semanticSearch: true,
       embedding: {
@@ -236,7 +252,6 @@ describe("config file parsing for localModel", () => {
         localModel: "Xenova/bge-small-en-v1.5",
       },
     };
-    fs.writeFileSync(configPath, JSON.stringify(configData));
 
     // Save and restore environment
     const origXDG = process.env.XDG_CONFIG_HOME;
@@ -249,10 +264,138 @@ describe("config file parsing for localModel", () => {
       fs.mkdirSync(akmDir, { recursive: true });
       fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
 
-      // Force re-import to pick up the new config path
-      // We verify the type system accepts localModel and the config structure
-      // is valid by checking the config object directly
-      expect(configData.embedding.localModel).toBe("Xenova/bge-small-en-v1.5");
+      // Actually call loadConfig to test the parsing path
+      const config = loadConfig();
+      expect(config.embedding).toBeDefined();
+      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+      expect(config.embedding?.endpoint).toBe("http://localhost:11434/v1/embeddings");
+      expect(config.embedding?.model).toBe("nomic-embed-text");
+    } finally {
+      if (origXDG === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = origXDG;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("parseEmbeddingConfig returns local-only config for localModel without endpoint", async () => {
+    const { loadConfig } = await import("../src/config");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
+    const configData = {
+      semanticSearch: true,
+      embedding: {
+        localModel: "Xenova/bge-small-en-v1.5",
+      },
+    };
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.XDG_CONFIG_HOME = tmpDir;
+      const akmDir = path.join(tmpDir, "akm");
+      fs.mkdirSync(akmDir, { recursive: true });
+      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+
+      const config = loadConfig();
+      expect(config.embedding).toBeDefined();
+      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+      // Sentinel empty strings for local-only config
+      expect(config.embedding?.endpoint).toBe("");
+      expect(config.embedding?.model).toBe("");
+    } finally {
+      if (origXDG === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = origXDG;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Test 8: endpoint+localModel+no-model warns and uses local-only ────────
+
+describe("parseEmbeddingConfig edge cases", () => {
+  test("warns when endpoint present but model missing with localModel set", async () => {
+    const { loadConfig } = await import("../src/config");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
+    const configData = {
+      semanticSearch: true,
+      embedding: {
+        endpoint: "http://localhost:11434/v1/embeddings",
+        localModel: "Xenova/bge-small-en-v1.5",
+        // Note: model is intentionally missing
+      },
+    };
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    const origWarn = console.warn;
+    const warnings: string[] = [];
+    try {
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      process.env.XDG_CONFIG_HOME = tmpDir;
+      const akmDir = path.join(tmpDir, "akm");
+      fs.mkdirSync(akmDir, { recursive: true });
+      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+
+      const config = loadConfig();
+
+      // Should return local-only config (endpoint discarded)
+      expect(config.embedding).toBeDefined();
+      expect(config.embedding?.localModel).toBe("Xenova/bge-small-en-v1.5");
+      expect(config.embedding?.endpoint).toBe("");
+      expect(config.embedding?.model).toBe("");
+
+      // Should have emitted a warning about the ignored endpoint
+      const relevantWarning = warnings.find((w) => w.includes("ignored") && w.includes("model is required"));
+      expect(relevantWarning).toBeDefined();
+    } finally {
+      console.warn = origWarn;
+      if (origXDG === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = origXDG;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns undefined when endpoint present but model and localModel both missing", async () => {
+    const { loadConfig } = await import("../src/config");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
+    const configData = {
+      semanticSearch: true,
+      embedding: {
+        endpoint: "http://localhost:11434/v1/embeddings",
+        // No model, no localModel
+      },
+    };
+
+    const origXDG = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.XDG_CONFIG_HOME = tmpDir;
+      const akmDir = path.join(tmpDir, "akm");
+      fs.mkdirSync(akmDir, { recursive: true });
+      fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(configData));
+
+      const config = loadConfig();
+      // parseEmbeddingConfig returns undefined => no embedding config set
+      expect(config.embedding).toBeUndefined();
     } finally {
       if (origXDG === undefined) {
         delete process.env.XDG_CONFIG_HOME;

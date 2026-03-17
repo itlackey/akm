@@ -391,7 +391,10 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   const localModel = typeof obj.localModel === "string" && obj.localModel ? obj.localModel : undefined;
 
   // If no endpoint is provided, the config is only valid when localModel is set
-  // (local-only embedding configuration)
+  // (local-only embedding configuration).
+  // Sentinel: { endpoint: "", model: "" } means "local-only" — use hasRemoteEndpoint()
+  // (in embedder.ts) to distinguish from a real remote config. Do NOT check
+  // endpoint/model directly in consuming code.
   if (typeof obj.endpoint !== "string" || !obj.endpoint) {
     if (localModel) {
       return { endpoint: "", model: "", localModel };
@@ -411,6 +414,9 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   if (typeof obj.model !== "string" || !obj.model) {
     // No remote model, but localModel may still be valid
     if (localModel) {
+      console.warn(
+        `[akm] Embedding endpoint "${obj.endpoint as string}" ignored: model is required for remote embeddings. Using local model only.`,
+      );
       return { endpoint: "", model: "", localModel };
     }
     return undefined;
