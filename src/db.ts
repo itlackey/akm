@@ -413,7 +413,7 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   // Short tokens (1-2 chars) are excluded from prefix expansion because
   // they produce too many false positives.
   const prefixQuery = buildPrefixQuery(ftsQuery);
-  if (!prefixQuery || prefixQuery === ftsQuery) return [];
+  if (!prefixQuery) return [];
 
   return runFtsQuery(db, prefixQuery, limit, entryType);
 }
@@ -425,7 +425,7 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
  *
  * Returns null if no tokens qualify for prefix expansion.
  */
-export function buildPrefixQuery(ftsQuery: string): string | null {
+function buildPrefixQuery(ftsQuery: string): string | null {
   const tokens = ftsQuery.split(/\s+/).filter(Boolean);
   let hasPrefix = false;
 

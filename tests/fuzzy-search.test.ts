@@ -101,7 +101,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
     }
   });
 
-  test("typo triggers prefix fallback — 'kuberntes' matches 'kubernetes'", () => {
+  test("truncated prefix — 'kubernet' matches 'kubernetes' via prefix expansion", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "kubernetes", {
@@ -109,13 +109,7 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       });
       rebuildFts(db);
 
-      // "kuberntes" is a typo — exact AND match returns zero results.
-      // The prefix fallback should try "kuberntes*" which won't match,
-      // but more importantly, let's test with a truncated prefix like "kubernet"
-      // that would match "kubernetes" via "kubernet*".
-      // Actually, "kuberntes" won't match via prefix either since the letters
-      // are transposed. Let's verify that the prefix approach works for
-      // truncated/incomplete tokens that share a common prefix.
+      // "kubernet" has no exact FTS match; the prefix fallback expands it to "kubernet*".
       const results = searchFts(db, "kubernet", 10);
       expect(results.length).toBe(1);
       expect(results[0].entry.name).toBe("kubernetes");
@@ -207,6 +201,24 @@ describe("Fuzzy prefix fallback in searchFts", () => {
       // "ka" is a 2-char token — also should not be prefix-expanded.
       const results2 = searchFts(db, "ka", 10);
       expect(results2).toEqual([]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("all short tokens produce no prefix fallback and return empty", () => {
+    const db = openDatabase(tmpDbPath());
+    try {
+      insertTestEntry(db, "golang-setup", {
+        searchText: "go golang setup configuration",
+      });
+      insertTestEntry(db, "js-tooling", {
+        searchText: "js javascript tooling bundler",
+      });
+      rebuildFts(db);
+
+      const results = searchFts(db, "go js", 10);
+      expect(results).toEqual([]);
     } finally {
       closeDatabase(db);
     }
