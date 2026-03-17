@@ -1,4 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { ConfigError } from "../../src/errors";
 import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
 import { OpenVikingStashProvider, parseOVSearchResponse, uriToVikingRef } from "../../src/stash-providers/openviking";
@@ -23,7 +26,14 @@ const ERROR_RESPONSE = { status: "error", error: "Something went wrong" };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+const createdTmpDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
+
+function createTmpDir(prefix = "akm-openviking-"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTmpDirs.push(dir);
+  return dir;
+}
 
 function serveJson(body: unknown, statusCode = 200): { url: string; close: () => void } {
   const server = Bun.serve({
@@ -49,13 +59,32 @@ function getFactory() {
   return factory!;
 }
 
-afterAll(() => {
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+
+beforeEach(() => {
+  process.env.XDG_CACHE_HOME = createTmpDir("akm-openviking-cache-");
+});
+
+afterEach(() => {
   for (const s of servers) {
     try {
       s.stop(true);
     } catch {
       /* ignore */
     }
+  }
+  servers.length = 0;
+
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME;
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+});
+
+afterAll(() => {
+  for (const dir of createdTmpDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
