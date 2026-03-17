@@ -21,6 +21,8 @@ export interface StashSearchHit {
   score?: number;
   whyMatched?: string[];
   run?: string;
+  /** Approximate token count derived from fileSize (fileSize / 4). Helps agents decide whether to load full content. */
+  estimatedTokens?: number;
 }
 
 export interface RegistrySearchResultHit {
@@ -172,6 +174,9 @@ export interface UpdateResponse {
   };
 }
 
+/** Detail level for show responses. "summary" returns compact metadata only (under 200 tokens). */
+export type ShowDetailLevel = "summary" | "normal" | "full";
+
 export interface ShowResponse {
   schemaVersion?: number;
   type: string;
@@ -181,6 +186,7 @@ export interface ShowResponse {
   template?: string;
   prompt?: string;
   description?: string;
+  tags?: string[];
   /**
    * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
    * Can be a single tool name, a list of tool names, or a structured policy object

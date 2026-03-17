@@ -482,6 +482,8 @@ export async function buildDbHit(input: {
   const source = findSourceForPath(input.path, input.sources);
 
   const editable = isEditable(input.path, input.config);
+  const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
+
   const hit: StashSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
@@ -496,6 +498,7 @@ export async function buildDbHit(input: {
     action: buildLocalAction(input.entry.type, makeAssetRef(input.entry.type, refName, source?.registryId)),
     score,
     whyMatched,
+    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
 
   const renderer = await rendererForType(input.entry.type);

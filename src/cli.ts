@@ -20,7 +20,7 @@ import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash, listStashes, removeStash } from "./stash-source-manage";
-import type { KnowledgeView } from "./stash-types";
+import type { KnowledgeView, ShowDetailLevel } from "./stash-types";
 import { setQuiet, warn } from "./warn";
 
 // Version: prefer compile-time define, then package.json, then fallback
@@ -43,7 +43,7 @@ const pkgVersion: string = (() => {
 declare const AKM_VERSION: string;
 
 type OutputFormat = "json" | "yaml" | "text";
-type DetailLevel = "brief" | "normal" | "full";
+type DetailLevel = "brief" | "normal" | "full" | "summary";
 
 interface OutputMode {
   format: OutputFormat;
@@ -51,7 +51,7 @@ interface OutputMode {
 }
 
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
-const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
 const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
@@ -202,10 +202,10 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
   }
 
   // Stash hit (local or remote)
-  if (detail === "brief") return pickFields(hit, ["type", "name", "action"]);
+  if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
   if (detail === "normal") {
     return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score"]),
+      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }
@@ -228,12 +228,17 @@ function truncateDescription(description: string, limit: number): string {
 }
 
 function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "summary") {
+    return pickFields(result, ["type", "name", "description", "tags", "parameters", "action", "run", "origin"]);
+  }
+
   const base = pickFields(result, [
     "type",
     "name",
     "origin",
     "action",
     "description",
+    "tags",
     "content",
     "template",
     "prompt",
@@ -651,7 +656,10 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await akmShowUnified({ ref: args.ref, view });
+      // Map CLI detail level to ShowDetailLevel for the show function
+      const cliDetail = resolveOutputMode().detail;
+      const showDetail: ShowDetailLevel | undefined = cliDetail === "summary" ? "summary" : undefined;
+      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
       output("show", result);
     });
   },
