@@ -10,12 +10,14 @@ export interface EmbeddingConnectionConfig {
   provider?: string;
   /** OpenAI-compatible embeddings endpoint (e.g. "http://localhost:11434/v1/embeddings") */
   endpoint: string;
-  /** Model name to use for embeddings (e.g. "nomic-embed-text") */
+  /** Model name to use for remote embeddings (e.g. "nomic-embed-text") */
   model: string;
   /** Optional output dimension for providers that support it */
   dimension?: number;
   /** Optional API key for authenticated endpoints */
   apiKey?: string;
+  /** Optional local transformer model name (e.g. "Xenova/bge-small-en-v1.5"). Overrides the default when using local embeddings. */
+  localModel?: string;
 }
 
 export interface LlmConnectionConfig {
@@ -384,14 +386,35 @@ export function stripJsonComments(text: string): string {
 function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
-  if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
+
+  // Extract localModel early — it's valid even without a remote endpoint
+  const localModel = typeof obj.localModel === "string" && obj.localModel ? obj.localModel : undefined;
+
+  // If no endpoint is provided, the config is only valid when localModel is set
+  // (local-only embedding configuration)
+  if (typeof obj.endpoint !== "string" || !obj.endpoint) {
+    if (localModel) {
+      return { endpoint: "", model: "", localModel };
+    }
+    return undefined;
+  }
   if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
     console.warn(
       `[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`,
     );
+    // Still return localModel-only config if localModel was set
+    if (localModel) {
+      return { endpoint: "", model: "", localModel };
+    }
     return undefined;
   }
-  if (typeof obj.model !== "string" || !obj.model) return undefined;
+  if (typeof obj.model !== "string" || !obj.model) {
+    // No remote model, but localModel may still be valid
+    if (localModel) {
+      return { endpoint: "", model: "", localModel };
+    }
+    return undefined;
+  }
   const result: EmbeddingConnectionConfig = {
     endpoint: obj.endpoint,
     model: obj.model,
@@ -412,6 +435,9 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
+  }
+  if (localModel) {
+    result.localModel = localModel;
   }
   return result;
 }

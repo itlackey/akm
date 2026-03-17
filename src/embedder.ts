@@ -6,6 +6,23 @@ import { warn } from "./warn";
 
 export type EmbeddingVector = number[];
 
+// ── Default local model ─────────────────────────────────────────────────────
+/**
+ * Default local transformer model for embeddings.
+ * `bge-small-en-v1.5` scores higher on MTEB benchmarks than the previous
+ * `all-MiniLM-L6-v2` at the same 384-dimension footprint.
+ */
+export const DEFAULT_LOCAL_MODEL = "Xenova/bge-small-en-v1.5";
+
+/**
+ * Return the local model name that will be used for embedding.
+ * When `overrideModel` is provided it takes precedence; otherwise
+ * the default model is returned.
+ */
+export function getLocalModelName(overrideModel?: string): string {
+  return overrideModel || DEFAULT_LOCAL_MODEL;
+}
+
 // ── Singleton local embedder ────────────────────────────────────────────────
 // localEmbedder is an intentional module-level singleton. The underlying
 // @xenova/transformers pipeline is expensive to initialise (model download +
@@ -19,10 +36,19 @@ type TransformerPipeline = (
 
 // Cache the promise itself (not the resolved result) so concurrent calls share
 // the same initialisation work and never download the model twice.
+// The cache is keyed by model name so switching models gets a fresh pipeline.
 let localEmbedderPromise: Promise<TransformerPipeline> | undefined;
+let localEmbedderModelName: string | undefined;
 
-async function getLocalEmbedder(): Promise<TransformerPipeline> {
+async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline> {
+  const resolvedModel = getLocalModelName(modelName);
+  // If the cached pipeline was created for a different model, discard it.
+  if (localEmbedderPromise && localEmbedderModelName !== resolvedModel) {
+    localEmbedderPromise = undefined;
+    localEmbedderModelName = undefined;
+  }
   if (!localEmbedderPromise) {
+    localEmbedderModelName = resolvedModel;
     localEmbedderPromise = (async () => {
       let pipeline: unknown;
       try {
@@ -34,19 +60,20 @@ async function getLocalEmbedder(): Promise<TransformerPipeline> {
         );
       }
       const pipelineFn = pipeline as (task: string, model: string) => Promise<TransformerPipeline>;
-      return pipelineFn("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+      return pipelineFn("feature-extraction", resolvedModel);
     })();
     // HI-13: Clear the cached promise on failure so the next call retries
     // instead of permanently rejecting every subsequent call with the same error.
     localEmbedderPromise.catch(() => {
       localEmbedderPromise = undefined;
+      localEmbedderModelName = undefined;
     });
   }
   return localEmbedderPromise;
 }
 
-async function embedLocal(text: string): Promise<EmbeddingVector> {
-  const model = await getLocalEmbedder();
+async function embedLocal(text: string, modelName?: string): Promise<EmbeddingVector> {
+  const model = await getLocalEmbedder(modelName);
   const result = await model(text, { pooling: "mean", normalize: true });
   return Array.from(result.data) as number[];
 }
@@ -103,18 +130,26 @@ async function embedRemote(text: string, config: EmbeddingConnectionConfig): Pro
   return l2Normalize(json.data[0].embedding);
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Check whether an EmbeddingConnectionConfig has a valid remote endpoint. */
+function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
+  return !!config.endpoint && (config.endpoint.startsWith("http://") || config.endpoint.startsWith("https://"));
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
  * Generate an embedding for the given text.
- * If embeddingConfig is provided, uses the configured OpenAI-compatible endpoint.
- * Otherwise falls back to local @xenova/transformers.
+ * If embeddingConfig has a remote endpoint, uses the configured OpenAI-compatible endpoint.
+ * Otherwise falls back to local @xenova/transformers using the model from
+ * `embeddingConfig.localModel` or `DEFAULT_LOCAL_MODEL`.
  */
 export async function embed(text: string, embeddingConfig?: EmbeddingConnectionConfig): Promise<EmbeddingVector> {
-  if (embeddingConfig) {
+  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     return embedRemote(text, embeddingConfig);
   }
-  return embedLocal(text);
+  return embedLocal(text, embeddingConfig?.localModel);
 }
 
 // ── Batch embedding ─────────────────────────────────────────────────────────
@@ -130,14 +165,15 @@ export async function embedBatch(
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return [];
 
-  if (embeddingConfig) {
+  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     return embedRemoteBatch(texts, embeddingConfig);
   }
 
   // Local transformer: process sequentially (pipeline handles one at a time)
+  const localModel = embeddingConfig?.localModel;
   const results: EmbeddingVector[] = [];
   for (const text of texts) {
-    results.push(await embedLocal(text));
+    results.push(await embedLocal(text, localModel));
   }
   return results;
 }
@@ -221,7 +257,7 @@ export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number
 // ── Availability check ──────────────────────────────────────────────────────
 
 export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnectionConfig): Promise<boolean> {
-  if (embeddingConfig) {
+  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
     try {
       await embedRemote("test", embeddingConfig);
       return true;
@@ -230,7 +266,7 @@ export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnection
     }
   }
   try {
-    await getLocalEmbedder();
+    await getLocalEmbedder(embeddingConfig?.localModel);
     return true;
   } catch {
     return false;
