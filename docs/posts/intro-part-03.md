@@ -9,7 +9,7 @@ tags:
   - agents
   - cli
   - skills
-published: false
+published: true
 ---
 
 This is part three in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about why progressive disclosure beats loading everything into context. In [part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them), I showed how `akm` unifies your existing Claude Code, OpenCode, and Cursor assets into one searchable stash.
@@ -175,12 +175,12 @@ akm index
 
 Now drop the `AGENTS.md` snippet into every project and your agent has access to all of it:
 
-~~~markdown
+```markdown
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
 knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
-~~~
+```
 
 Local skills, remote knowledge, team kits, community registries, persistent memories. One search, one interface, every agent.
 

@@ -214,12 +214,12 @@ akm index
 
 Drop the `AGENTS.md` snippet into every project:
 
-~~~markdown
+```markdown
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
 knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
-~~~
+```
 
 And your agent has access to everything: local skills, platform assets, team kits, community registries, remote knowledge, persistent memories, and curated community context. One search, one interface.
 
