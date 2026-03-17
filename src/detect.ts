@@ -122,17 +122,24 @@ export function detectAgentPlatforms(): AgentPlatform[] {
 
 /**
  * Check if an OpenViking server is reachable at the given URL.
+ * Uses the lightweight /api/v1/fs/stat endpoint (GET) rather than
+ * the search endpoint which requires a running search index.
  */
 export async function detectOpenViking(url: string): Promise<OpenVikingDetectionResult> {
   const normalized = url.replace(/\/+$/, "");
   try {
-    const response = await fetch(`${normalized}/api/v1/search/find`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: "test", limit: 1 }),
+    // Try stat endpoint first — lightweight GET that confirms the API is up
+    const statResp = await fetch(`${normalized}/api/v1/fs/stat?uri=${encodeURIComponent("viking://")}`, {
       signal: AbortSignal.timeout(5000),
     });
-    return { available: response.ok, url: normalized };
+    if (statResp.ok) {
+      return { available: true, url: normalized };
+    }
+    // Fall back to root URL — some servers may respond at /
+    const rootResp = await fetch(normalized, {
+      signal: AbortSignal.timeout(5000),
+    });
+    return { available: rootResp.ok, url: normalized };
   } catch {
     return { available: false, url: normalized };
   }

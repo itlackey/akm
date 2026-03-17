@@ -19,15 +19,49 @@ import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
 import { akmInit } from "./init";
 import { getDefaultStashDir } from "./paths";
 
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const CONTEXT_HUB_URL = "https://github.com/andrewyng/context-hub";
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function bail(): never {
-  p.cancel("Setup cancelled.");
+  p.cancel("Setup cancelled. No changes were saved.");
   process.exit(0);
 }
 
-function cancelled(value: unknown): value is symbol {
-  return p.isCancel(value);
+/**
+ * Check if a prompt result was cancelled (Escape). If so, ask the user
+ * whether they really want to quit. Returns true if the user chose to
+ * stay (i.e. the caller should re-prompt), or calls bail() to exit.
+ */
+async function onCancel(value: unknown): Promise<boolean> {
+  if (!p.isCancel(value)) return false;
+
+  const confirmExit = await p.confirm({
+    message: "Exit the wizard? No changes will be saved.",
+    initialValue: false,
+  });
+
+  // Double-cancel or confirmed exit → leave
+  if (p.isCancel(confirmExit) || confirmExit) {
+    bail();
+  }
+
+  // User chose to stay
+  return true;
+}
+
+/**
+ * Run a prompt function in a loop, retrying if the user presses Escape
+ * but decides to stay. Returns the non-cancelled result.
+ */
+async function prompt<T>(fn: () => Promise<T | symbol>): Promise<T> {
+  for (;;) {
+    const result = await fn();
+    if (await onCancel(result)) continue;
+    return result as T;
+  }
 }
 
 // ── Steps ───────────────────────────────────────────────────────────────────
@@ -35,25 +69,27 @@ function cancelled(value: unknown): value is symbol {
 async function stepStashDir(current: AkmConfig): Promise<string> {
   const defaultDir = current.stashDir ?? getDefaultStashDir();
 
-  const choice = await p.select({
-    message: "Where should akm store skills, commands, and other assets?",
-    options: [
-      { value: "default", label: defaultDir, hint: current.stashDir ? "current" : "default" },
-      { value: "custom", label: "Enter a custom path..." },
-    ],
-  });
-  if (cancelled(choice)) bail();
+  const choice = await prompt(() =>
+    p.select({
+      message: "Where should akm store skills, commands, and other assets?",
+      options: [
+        { value: "default", label: defaultDir, hint: current.stashDir ? "current" : "default" },
+        { value: "custom", label: "Enter a custom path..." },
+      ],
+    }),
+  );
 
   if (choice === "default") return defaultDir;
 
-  const customPath = await p.text({
-    message: "Enter the stash directory path:",
-    placeholder: defaultDir,
-    validate: (v) => {
-      if (!v?.trim()) return "Path cannot be empty";
-    },
-  });
-  if (cancelled(customPath)) bail();
+  const customPath = await prompt(() =>
+    p.text({
+      message: "Enter the stash directory path:",
+      placeholder: defaultDir,
+      validate: (v) => {
+        if (!v?.trim()) return "Path cannot be empty";
+      },
+    }),
+  );
 
   return customPath.trim();
 }
@@ -111,27 +147,29 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
     });
   }
 
-  const embChoice = await p.select({
-    message: "Which embedding provider should akm use?",
-    options: embeddingOptions,
-    initialValue: hasEmbeddingModels ? embeddingModels[0] : "local",
-  });
-  if (cancelled(embChoice)) bail();
+  const embChoice = await prompt(() =>
+    p.select({
+      message: "Which embedding provider should akm use?",
+      options: embeddingOptions,
+      initialValue: hasEmbeddingModels ? embeddingModels[0] : "local",
+    }),
+  );
 
   if (embChoice === "keep") {
     embedding = current.embedding;
   } else if (embChoice !== "local") {
     // Ask for dimension — different models produce different sizes
-    const dimChoice = await p.text({
-      message: "Embedding dimension (must match your index; 384 is common for MiniLM/nomic):",
-      placeholder: "384",
-      defaultValue: "384",
-      validate: (v) => {
-        const n = Number(v);
-        if (!Number.isInteger(n) || n <= 0) return "Must be a positive integer";
-      },
-    });
-    if (cancelled(dimChoice)) bail();
+    const dimChoice = await prompt(() =>
+      p.text({
+        message: "Embedding dimension (must match your index; 384 is common for MiniLM/nomic):",
+        placeholder: "384",
+        defaultValue: "384",
+        validate: (v) => {
+          const n = Number(v);
+          if (!Number.isInteger(n) || n <= 0) return "Must be a positive integer";
+        },
+      }),
+    );
 
     embedding = {
       provider: "ollama",
@@ -166,12 +204,13 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
     });
   }
 
-  const llmChoice = await p.select({
-    message: "Use an LLM for richer metadata during indexing?",
-    options: llmOptions,
-    initialValue: allLlmCandidates.length > 0 ? allLlmCandidates[0] : "none",
-  });
-  if (cancelled(llmChoice)) bail();
+  const llmChoice = await prompt(() =>
+    p.select({
+      message: "Use an LLM for richer metadata during indexing?",
+      options: llmOptions,
+      initialValue: allLlmCandidates.length > 0 ? allLlmCandidates[0] : "none",
+    }),
+  );
 
   if (llmChoice === "keep") {
     llm = current.llm;
@@ -210,12 +249,13 @@ async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[]
     );
   }
 
-  const selected = await p.multiselect({
-    message: "Which built-in registries should be enabled?",
-    options,
-    initialValues: options.filter((o) => enabledUrls.has(o.value)).map((o) => o.value),
-  });
-  if (cancelled(selected)) bail();
+  const selected = await prompt(() =>
+    p.multiselect({
+      message: "Which built-in registries should be enabled?",
+      options,
+      initialValues: options.filter((o) => enabledUrls.has(o.value)).map((o) => o.value),
+    }),
+  );
 
   // If all defaults are selected and there are no custom registries,
   // return undefined to use the built-in defaults (avoids pinning)
@@ -241,22 +281,44 @@ async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[]
 async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]> {
   const stashes: StashConfigEntry[] = [...(current.stashes ?? [])];
 
+  // Check if context-hub is already configured
+  const hasContextHub = stashes.some((s) => s.type === "context-hub" && s.url === CONTEXT_HUB_URL);
+
   if (stashes.length > 0) {
     p.log.info(`You have ${stashes.length} existing stash source(s).`);
   }
 
+  // Context Hub toggle — simple on/off for the default context-hub
+  if (!hasContextHub) {
+    const enableContextHub = await prompt(() =>
+      p.confirm({
+        message: "Enable Context Hub? (community knowledge from github.com/andrewyng/context-hub)",
+        initialValue: true,
+      }),
+    );
+
+    if (enableContextHub) {
+      stashes.push({ type: "context-hub", url: CONTEXT_HUB_URL, name: "context-hub" });
+      p.log.success("Context Hub enabled.");
+    }
+  } else {
+    p.log.info("Context Hub is already configured.");
+  }
+
+  // Additional stash sources loop
   let addMore = true;
   while (addMore) {
-    const action = await p.select({
-      message: "Add a stash source?",
-      options: [
-        { value: "openviking", label: "OpenViking server", hint: "remote stash" },
-        { value: "context-hub", label: "Context Hub", hint: "GitHub repo mirror" },
-        { value: "filesystem", label: "Filesystem path", hint: "local directory" },
-        { value: "done", label: "Done — no more sources" },
-      ],
-    });
-    if (cancelled(action)) bail();
+    const action = await prompt(() =>
+      p.select({
+        message: "Add another stash source?",
+        options: [
+          { value: "openviking", label: "OpenViking server", hint: "remote stash" },
+          { value: "github-repo", label: "GitHub repository", hint: "via context-hub provider" },
+          { value: "filesystem", label: "Filesystem path", hint: "local directory" },
+          { value: "done", label: "Done — no more sources" },
+        ],
+      }),
+    );
 
     if (action === "done") {
       addMore = false;
@@ -264,15 +326,16 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
     }
 
     if (action === "openviking") {
-      const url = await p.text({
-        message: "Enter the OpenViking server URL:",
-        placeholder: "https://your-openviking-server.example.com",
-        validate: (v) => {
-          if (!v?.trim()) return "URL cannot be empty";
-          if (!v.startsWith("http://") && !v.startsWith("https://")) return "URL must start with http:// or https://";
-        },
-      });
-      if (cancelled(url)) bail();
+      const url = await prompt(() =>
+        p.text({
+          message: "Enter the OpenViking server URL:",
+          placeholder: "https://your-openviking-server.example.com",
+          validate: (v) => {
+            if (!v?.trim()) return "URL cannot be empty";
+            if (!v.startsWith("http://") && !v.startsWith("https://")) return "URL must start with http:// or https://";
+          },
+        }),
+      );
 
       const spin = p.spinner();
       spin.start("Checking OpenViking server...");
@@ -283,11 +346,12 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
         spin.stop("Server not reachable — adding anyway (it may be temporarily down)");
       }
 
-      const name = await p.text({
-        message: "Give this stash a name (optional):",
-        placeholder: "my-openviking",
-      });
-      if (cancelled(name)) bail();
+      const name = await prompt(() =>
+        p.text({
+          message: "Give this stash a name (optional):",
+          placeholder: "my-openviking",
+        }),
+      );
 
       // Use the normalized URL from detection (trailing slashes stripped)
       const entry: StashConfigEntry = { type: "openviking", url: result.url };
@@ -299,21 +363,23 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
       }
     }
 
-    if (action === "context-hub") {
-      const url = await p.text({
-        message: "Enter the GitHub repository URL or context-hub:// URI:",
-        placeholder: "https://github.com/owner/repo",
-        validate: (v) => {
-          if (!v?.trim()) return "URL cannot be empty";
-        },
-      });
-      if (cancelled(url)) bail();
+    if (action === "github-repo") {
+      const url = await prompt(() =>
+        p.text({
+          message: "Enter the GitHub repository URL:",
+          placeholder: "https://github.com/owner/repo",
+          validate: (v) => {
+            if (!v?.trim()) return "URL cannot be empty";
+          },
+        }),
+      );
 
-      const name = await p.text({
-        message: "Give this stash a name (optional):",
-        placeholder: "my-context-hub",
-      });
-      if (cancelled(name)) bail();
+      const name = await prompt(() =>
+        p.text({
+          message: "Give this stash a name (optional):",
+          placeholder: "my-repo",
+        }),
+      );
 
       const entry: StashConfigEntry = { type: "context-hub", url: url.trim() };
       if (name.trim()) entry.name = name.trim();
@@ -325,21 +391,23 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
     }
 
     if (action === "filesystem") {
-      const fsPath = await p.text({
-        message: "Enter the directory path:",
-        placeholder: "/path/to/stash",
-        validate: (v) => {
-          if (!v?.trim()) return "Path cannot be empty";
-        },
-      });
-      if (cancelled(fsPath)) bail();
+      const fsPath = await prompt(() =>
+        p.text({
+          message: "Enter the directory path:",
+          placeholder: "/path/to/stash",
+          validate: (v) => {
+            if (!v?.trim()) return "Path cannot be empty";
+          },
+        }),
+      );
 
       const resolved = fsPath.trim();
-      const name = await p.text({
-        message: "Give this stash a name (optional):",
-        placeholder: "my-stash",
-      });
-      if (cancelled(name)) bail();
+      const name = await prompt(() =>
+        p.text({
+          message: "Give this stash a name (optional):",
+          placeholder: "my-stash",
+        }),
+      );
 
       const entry: StashConfigEntry = { type: "filesystem", path: resolved };
       if (name.trim()) entry.name = name.trim();
@@ -372,16 +440,17 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[
     return [];
   }
 
-  const selected = await p.multiselect({
-    message: "Found agent platform configurations. Add as stash sources?",
-    options: newPlatforms.map((pl) => ({
-      value: pl.path,
-      label: pl.name,
-      hint: pl.path,
-    })),
-    required: false,
-  });
-  if (cancelled(selected)) bail();
+  const selected = await prompt(() =>
+    p.multiselect({
+      message: "Found agent platform configurations. Add as stash sources?",
+      options: newPlatforms.map((pl) => ({
+        value: pl.path,
+        label: pl.name,
+        hint: pl.path,
+      })),
+      required: false,
+    }),
+  );
 
   const entries: StashConfigEntry[] = [];
   for (const selectedPath of selected) {
@@ -460,11 +529,13 @@ export async function runSetupWizard(): Promise<void> {
     "Configuration Summary",
   );
 
-  const shouldSave = await p.confirm({
-    message: "Save this configuration?",
-    initialValue: true,
-  });
-  if (cancelled(shouldSave) || !shouldSave) bail();
+  const shouldSave = await prompt(() =>
+    p.confirm({
+      message: "Save this configuration?",
+      initialValue: true,
+    }),
+  );
+  if (!shouldSave) bail();
 
   // Save config
   saveConfig(newConfig);
