@@ -144,7 +144,17 @@ export async function searchLocal(input: {
   const hitArrays = await Promise.all(
     allStashDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config)),
   );
-  const hits = hitArrays.flat().slice(0, limit);
+  // Deduplicate across stash roots: same asset can exist in multiple roots
+  const seenIdentities = new Set<string>();
+  const hits = hitArrays
+    .flat()
+    .filter((hit) => {
+      const key = assetIdentityKey(hit.type, hit.path ?? "", hit.description);
+      if (seenIdentities.has(key)) return false;
+      seenIdentities.add(key);
+      return true;
+    })
+    .slice(0, limit);
   return {
     hits,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
@@ -173,9 +183,17 @@ async function searchDatabase(
     const allEntries = getAllEntries(db, typeFilter);
     // Deduplicate by file path — multiple entries can share the same file
     const seenFilePaths = new Set<string>();
-    const uniqueEntries = allEntries.filter((ie) => {
+    const pathUnique = allEntries.filter((ie) => {
       if (seenFilePaths.has(ie.filePath)) return false;
       seenFilePaths.add(ie.filePath);
+      return true;
+    });
+    // Second dedup: same asset in multiple stash roots (different paths, same content)
+    const seenIdentities = new Set<string>();
+    const uniqueEntries = pathUnique.filter((ie) => {
+      const key = assetIdentityKey(ie.entry.type, ie.filePath, ie.entry.description);
+      if (seenIdentities.has(key)) return false;
+      seenIdentities.add(key);
       return true;
     });
     const selected = uniqueEntries.slice(0, limit);
@@ -226,12 +244,13 @@ async function searchDatabase(
   }
 
   // Merge results using RRF
+  // Issue #15: "hybrid" for results appearing in both FTS and vec results.
   const scored: Array<{
     id: number;
     entry: StashEntry;
     filePath: string;
     score: number;
-    rankingMode: "semantic" | "fts";
+    rankingMode: "hybrid" | "semantic" | "fts";
   }> = [];
   const seenIds = new Set<number>();
 
@@ -242,7 +261,8 @@ async function searchDatabase(
     const embedRank = embedRankMap.get(id);
     const embedRrf = embedRank !== undefined ? 1 / (RRF_K + embedRank) : 0;
     const rrfScore = ftsRrf + embedRrf;
-    const rankingMode = embedRrf > 0 ? ("semantic" as const) : ("fts" as const);
+    // Issue #15: combined FTS+vec results are "hybrid", not "semantic"
+    const rankingMode = embedRrf > 0 ? ("hybrid" as const) : ("fts" as const);
     scored.push({ id, entry: result.entry, filePath: result.filePath, score: rrfScore, rankingMode });
   }
 
@@ -267,46 +287,70 @@ async function searchDatabase(
     }
   }
 
-  // Apply boosts as multiplicative factors
+  // Apply boosts as multiplicative factors (all boosts in a single phase
+  // so that sort order and displayed scores are always consistent — Issue #1).
   const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
   for (const item of scored) {
     const entry = item.entry;
     let boostSum = 0;
-    // Tag boost
+
+    // Tag boost — capped at 0.30 (Issue #7)
     if (entry.tags) {
+      let tagBoost = 0;
       for (const tag of entry.tags) {
         if (queryTokens.some((t) => tag.toLowerCase() === t)) {
-          boostSum += 0.15;
+          tagBoost += 0.15;
         }
       }
+      boostSum += Math.min(0.3, tagBoost);
     }
-    // Search hint boost
+
+    // Search hint boost — capped at 0.24 (Issue #7)
     if (entry.searchHints) {
+      let hintBoost = 0;
       for (const hint of entry.searchHints) {
         const hintLower = hint.toLowerCase();
         for (const token of queryTokens) {
           if (hintLower.includes(token)) {
-            boostSum += 0.12;
+            hintBoost += 0.12;
             break;
           }
         }
       }
+      boostSum += Math.min(0.24, hintBoost);
     }
+
     // Name boost
     const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ");
     if (queryTokens.some((t) => nameLower.includes(t))) {
       boostSum += 0.1;
     }
+
+    // Quality boost (Issue #1: moved from buildDbHit to single-phase)
+    const qualityBoost = entry.quality === "generated" ? 0 : 0.05;
+    boostSum += qualityBoost;
+
+    // Confidence boost (Issue #1: moved from buildDbHit to single-phase)
+    const confidenceBoost =
+      typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
+    boostSum += confidenceBoost;
+
     item.score = item.score * (1 + boostSum);
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  // Issue #14: deterministic tiebreaker on equal scores
+  scored.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
   // Multiple .stash.json entries can map to the same file (e.g. entries without
   // a filename field all collapse to files[0]). Showing the same path/ref
   // multiple times clutters results.
-  const deduped = deduplicateByPath(scored);
+  const dedupedByPath = deduplicateByPath(scored);
+
+  // Second dedup pass: the same asset can exist in multiple stash roots
+  // (e.g. primary stash + installed kit) with different absolute paths.
+  // Deduplicate by content identity (type + filename + description).
+  const deduped = deduplicateByIdentity(dedupedByPath);
 
   const rankMs = Date.now() - tRank0;
 
@@ -316,7 +360,8 @@ async function searchDatabase(
       buildDbHit({
         entry,
         path: filePath,
-        score: Math.round(score * 100) / 100,
+        // Issue #8: round to 4 decimal places instead of 2
+        score: Math.round(score * 10000) / 10000,
         query,
         rankingMode,
         defaultStashDir: stashDir,
@@ -349,9 +394,10 @@ async function tryVecScores(
 
     const scores = new Map<number, number>();
     for (const { id, distance } of vecResults) {
-      // Convert L2 distance to cosine similarity (vectors are normalized)
-      const cosineSim = 1 - (distance * distance) / 2;
-      scores.set(id, Math.max(0, cosineSim));
+      // Convert L2 distance to cosine similarity (vectors are normalized).
+      // Issue #3: guard against NaN/Infinity from sqlite-vec edge cases.
+      const raw = 1 - (distance * distance) / 2;
+      scores.set(id, Number.isFinite(raw) ? Math.max(0, raw) : 0);
     }
     return scores;
   } catch (error) {
@@ -421,7 +467,8 @@ function scoreSubstringMatch(entry: StashEntry, query: string): number {
     score += 0.05;
   }
 
-  return Math.round(Math.min(1, score) * 100) / 100;
+  // Issue #8: round to 4 decimal places instead of 2
+  return Math.round(Math.min(1, score) * 10000) / 10000;
 }
 
 // ── Hit building ────────────────────────────────────────────────────────────
@@ -431,7 +478,8 @@ export async function buildDbHit(input: {
   path: string;
   score: number;
   query: string;
-  rankingMode: "semantic" | "fts";
+  // Issue #15: added "hybrid" for combined FTS+vec results
+  rankingMode: "hybrid" | "semantic" | "fts";
   defaultStashDir: string;
   allStashDirs: string[];
   sources: SearchSource[];
@@ -442,10 +490,15 @@ export async function buildDbHit(input: {
   const refName =
     canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : input.entry.name;
 
+  // Issue #1: Quality and confidence boosts are now applied in the main scoring
+  // phase (searchDatabase). buildDbHit receives the already-final score and
+  // passes it through without further multiplication. We still compute the
+  // boost values here for buildWhyMatched reporting.
   const qualityBoost = input.entry.quality === "generated" ? 0 : 0.05;
   const confidenceBoost =
     typeof input.entry.confidence === "number" ? Math.min(0.05, Math.max(0, input.entry.confidence) * 0.05) : 0;
-  const score = Math.round(input.score * (1 + qualityBoost + confidenceBoost) * 100) / 100;
+  // Issue #8: round to 4 decimal places, no boost multiplication
+  const score = Math.round(input.score * 10000) / 10000;
 
   const whyMatched = buildWhyMatched(input.entry, input.query, input.rankingMode, qualityBoost, confidenceBoost);
 
@@ -479,22 +532,34 @@ export async function buildDbHit(input: {
 export function buildWhyMatched(
   entry: StashEntry,
   query: string,
-  rankingMode: "semantic" | "fts",
+  // Issue #15: added "hybrid" ranking mode
+  rankingMode: "hybrid" | "semantic" | "fts",
   qualityBoost: number,
   confidenceBoost: number,
 ): string[] {
-  const reasons: string[] = [rankingMode === "semantic" ? "semantic similarity" : "fts bm25 relevance"];
+  // Issue #15: "hybrid" label for combined FTS+vec results
+  const reasons: string[] = [
+    rankingMode === "hybrid"
+      ? "hybrid (fts + semantic)"
+      : rankingMode === "semantic"
+        ? "semantic similarity"
+        : "fts bm25 relevance",
+  ];
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
 
   const name = entry.name.toLowerCase();
   const tags = entry.tags?.join(" ").toLowerCase() ?? "";
   const searchHints = entry.searchHints?.join(" ").toLowerCase() ?? "";
   const aliases = entry.aliases?.join(" ").toLowerCase() ?? "";
+  // Issue #12: include description in match reasons
+  const desc = entry.description?.toLowerCase() ?? "";
 
   if (tokens.some((t) => name.includes(t))) reasons.push("matched name tokens");
   if (tokens.some((t) => tags.includes(t))) reasons.push("matched tags");
   if (tokens.some((t) => searchHints.includes(t))) reasons.push("matched searchHints");
   if (tokens.some((t) => aliases.includes(t))) reasons.push("matched aliases");
+  // Issue #12: report description matches
+  if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
 
@@ -618,11 +683,14 @@ function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
 
 /**
  * Deduplicate scored results by file path, keeping only the highest-scored
- * entry per unique path. The input must already be sorted by score descending.
+ * entry per unique path. Sorts by score descending internally to ensure the
+ * precondition is always met regardless of caller (Issue #4).
  */
-function deduplicateByPath<T extends { filePath: string }>(items: T[]): T[] {
+function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
+  // Issue #4: sort inside to enforce the descending-score precondition
+  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const seen = new Set<string>();
-  return items.filter((item) => {
+  return sorted.filter((item) => {
     if (seen.has(item.filePath)) return false;
     seen.add(item.filePath);
     return true;
@@ -637,6 +705,33 @@ function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
   return assets.filter((asset) => {
     if (seen.has(asset.path)) return false;
     seen.add(asset.path);
+    return true;
+  });
+}
+
+/**
+ * Build a content-identity key for cross-stash deduplication.
+ * Two entries from different stash roots that represent the same asset
+ * share the same type, filename, and description.
+ */
+function assetIdentityKey(type: string, filePath: string, description?: string): string {
+  const basename = filePath.split("/").pop() ?? filePath;
+  return `${type}\0${basename}\0${description ?? ""}`;
+}
+
+/**
+ * Deduplicate scored results by content identity (type + filename + description).
+ * Catches the same asset indexed from multiple stash roots with different absolute paths.
+ * Input must be sorted by score descending (highest-scored entry per identity wins).
+ */
+function deduplicateByIdentity<T extends { entry: { type: string; description?: string }; filePath: string }>(
+  items: T[],
+): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = assetIdentityKey(item.entry.type, item.filePath, item.entry.description);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

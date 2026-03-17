@@ -51,6 +51,20 @@ async function embedLocal(text: string): Promise<EmbeddingVector> {
   return Array.from(result.data) as number[];
 }
 
+// ── Vector normalization ─────────────────────────────────────────────────────
+
+/**
+ * L2-normalize a vector to unit length.
+ * Required for remote embeddings because the scoring pipeline's L2-to-cosine
+ * conversion formula (1 - distance^2/2) is only correct for unit vectors.
+ * The local embedder already normalizes via `normalize: true`.
+ */
+function l2Normalize(vec: number[]): number[] {
+  const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
+  if (norm === 0) return vec;
+  return vec.map((v) => v / norm);
+}
+
 // ── OpenAI-compatible remote embedder ───────────────────────────────────────
 
 async function embedRemote(text: string, config: EmbeddingConnectionConfig): Promise<EmbeddingVector> {
@@ -86,7 +100,7 @@ async function embedRemote(text: string, config: EmbeddingConnectionConfig): Pro
     throw new Error("Unexpected embedding response format: missing data[0].embedding");
   }
 
-  return json.data[0].embedding;
+  return l2Normalize(json.data[0].embedding);
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -158,7 +172,7 @@ async function embedRemoteBatch(texts: string[], config: EmbeddingConnectionConf
     }
 
     const json = (await response.json()) as {
-      data: Array<{ embedding: number[] }>;
+      data: Array<{ embedding: number[]; index: number }>;
     };
 
     if (!json.data || json.data.length !== batch.length) {
@@ -167,11 +181,14 @@ async function embedRemoteBatch(texts: string[], config: EmbeddingConnectionConf
       );
     }
 
-    for (const [idx, d] of json.data.entries()) {
+    // Sort by index to guarantee correct order (OpenAI API doesn't guarantee order)
+    const sorted = [...json.data].sort((a, b) => a.index - b.index);
+
+    for (const [idx, d] of sorted.entries()) {
       if (!Array.isArray(d.embedding)) {
         throw new Error(`Unexpected embedding at batch index ${idx}: missing or invalid`);
       }
-      results.push(d.embedding);
+      results.push(l2Normalize(d.embedding));
     }
   }
 

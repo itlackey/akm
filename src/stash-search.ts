@@ -166,15 +166,43 @@ export { buildLocalAction, rendererForType };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function mergeStashHits(
+/**
+ * Merge hits from local stash and additional providers using Reciprocal Rank
+ * Fusion (RRF). Each list is already internally sorted by relevance. RRF
+ * assigns scores based on rank position rather than raw score values, so
+ * sources with incompatible score scales (e.g. RRF ~0.01-0.03 vs 0-1 or
+ * 0-100) are merged fairly.
+ */
+export function mergeStashHits(
   localHits: StashSearchHit[],
   additionalHits: StashSearchHit[],
   limit: number,
 ): StashSearchHit[] {
   if (additionalHits.length === 0) return localHits.slice(0, limit);
-  const all = [...localHits, ...additionalHits];
-  all.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  return all.slice(0, limit);
+
+  const RRF_K = 60;
+  const scoreMap = new Map<string, { hit: StashSearchHit; score: number }>();
+
+  const applyRankedList = (hits: StashSearchHit[]) => {
+    for (let i = 0; i < hits.length; i++) {
+      const key = hits[i].path ?? hits[i].ref ?? hits[i].name;
+      const rrf = 1 / (RRF_K + i + 1);
+      const existing = scoreMap.get(key);
+      if (existing) {
+        existing.score += rrf;
+      } else {
+        scoreMap.set(key, { hit: hits[i], score: rrf });
+      }
+    }
+  };
+
+  applyRankedList(localHits);
+  applyRankedList(additionalHits);
+
+  return [...scoreMap.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((v) => ({ ...v.hit, score: Math.round(v.score * 10000) / 10000 }));
 }
 
 function normalizeLimit(limit?: number): number {
@@ -192,12 +220,51 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
   throw new UsageError(`Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`);
 }
 
-function mergeSearchHits(
+/**
+ * Merge stash hits and registry hits using RRF, same rationale as mergeStashHits.
+ */
+export function mergeSearchHits(
   localHits: StashSearchHit[],
   registryHits: RegistrySearchResultHit[],
   limit: number,
 ): SearchHit[] {
-  const all: SearchHit[] = [...localHits, ...registryHits];
-  all.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  return all.slice(0, limit);
+  if (registryHits.length === 0) return localHits.slice(0, limit);
+  if (localHits.length === 0) return registryHits.slice(0, limit);
+
+  const RRF_K = 60;
+  const scoreMap = new Map<string, { hit: SearchHit; score: number }>();
+
+  const applyStashList = (hits: StashSearchHit[]) => {
+    for (let i = 0; i < hits.length; i++) {
+      const key = hits[i].path ?? hits[i].ref ?? hits[i].name;
+      const rrf = 1 / (RRF_K + i + 1);
+      const existing = scoreMap.get(key);
+      if (existing) {
+        existing.score += rrf;
+      } else {
+        scoreMap.set(key, { hit: hits[i], score: rrf });
+      }
+    }
+  };
+
+  const applyRegistryList = (hits: RegistrySearchResultHit[]) => {
+    for (let i = 0; i < hits.length; i++) {
+      const key = `registry:${hits[i].id ?? hits[i].name}`;
+      const rrf = 1 / (RRF_K + i + 1);
+      const existing = scoreMap.get(key);
+      if (existing) {
+        existing.score += rrf;
+      } else {
+        scoreMap.set(key, { hit: hits[i], score: rrf });
+      }
+    }
+  };
+
+  applyStashList(localHits);
+  applyRegistryList(registryHits);
+
+  return [...scoreMap.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((v) => ({ ...v.hit, score: Math.round(v.score * 10000) / 10000 }));
 }

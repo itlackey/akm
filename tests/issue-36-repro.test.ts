@@ -280,20 +280,20 @@ describe("Issue #36: FTS5 query sanitization", () => {
     }
   });
 
-  test("sanitizeFtsQuery filters single-character tokens", async () => {
+  test("sanitizeFtsQuery preserves single-character tokens", async () => {
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "x-tool.sh"), "#!/bin/bash\n# X tool\necho x\n");
 
     await buildTestIndex(stashDir);
 
-    // Single-char tokens are filtered out (minimum token length is 2) to reduce noise.
-    // Multi-char queries against this asset should still work.
+    // Single-char tokens are now passed through to FTS5 so that searches
+    // for short identifiers (e.g., "R", "C", "x") can return results.
     const db = openDatabase();
     try {
       const results = searchFts(db, "x", 10);
-      // Single-char "x" is filtered, so no FTS results expected
-      expect(results.length).toBe(0);
+      // "x" appears in the indexed search text, so FTS should find it
+      expect(results.length).toBeGreaterThanOrEqual(1);
     } finally {
       closeDatabase(db);
     }

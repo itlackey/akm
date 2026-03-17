@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
-import { akmIndex, buildSearchText } from "../src/indexer";
+import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
 let testConfigDir = "";
@@ -246,6 +246,19 @@ test("buildSearchText includes searchHints array content", () => {
   expect(text).toContain("show commit summary");
 });
 
+test("buildSearchText includes usage array content", () => {
+  const entry = {
+    name: "ci-runner",
+    type: "script" as const,
+    description: "run CI pipeline",
+    usage: ["run in CI", "deploy to production"],
+  };
+
+  const text = buildSearchText(entry);
+  expect(text).toContain("run in ci");
+  expect(text).toContain("deploy to production");
+});
+
 test("buildSearchText handles entries with both searchHints and intent fields", () => {
   const entry = {
     name: "deploy",
@@ -339,4 +352,33 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   // Clean up
   fs.rmSync(sharedDir, { recursive: true, force: true });
+});
+
+// ── Issue #13: matchEntryToFile returns null for empty files ─────────────
+
+test("matchEntryToFile returns null when files array is empty", () => {
+  const fileMap = buildFileBasenameMap([]);
+  const result = matchEntryToFile("nonexistent-entry", fileMap, []);
+  expect(result).toBeNull();
+});
+
+test("matchEntryToFile returns first file when no name match exists", () => {
+  const files = ["/stash/scripts/deploy/deploy.sh"];
+  const fileMap = buildFileBasenameMap(files);
+  const result = matchEntryToFile("no-match", fileMap, files);
+  expect(result).toBe("/stash/scripts/deploy/deploy.sh");
+});
+
+test("matchEntryToFile returns exact match when entry name matches basename", () => {
+  const files = ["/stash/scripts/deploy/deploy.sh", "/stash/scripts/deploy/util.sh"];
+  const fileMap = buildFileBasenameMap(files);
+  const result = matchEntryToFile("deploy", fileMap, files);
+  expect(result).toBe("/stash/scripts/deploy/deploy.sh");
+});
+
+test("matchEntryToFile matches last path segment for hierarchical names", () => {
+  const files = ["/stash/scripts/deploy/deploy.sh"];
+  const fileMap = buildFileBasenameMap(files);
+  const result = matchEntryToFile("corpus/deploy", fileMap, files);
+  expect(result).toBe("/stash/scripts/deploy/deploy.sh");
 });

@@ -296,6 +296,7 @@ async function indexEntries(
           const entryPath = entry.filename
             ? path.join(dirPath, entry.filename)
             : matchEntryToFile(entry.name, fileBasenameMap, files);
+          if (!entryPath) continue; // skip unresolvable entries
           const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
@@ -467,7 +468,7 @@ async function enhanceStashWithLlm(
 /**
  * Build a map from base filename (without extension) to full path for quick lookups.
  */
-function buildFileBasenameMap(files: string[]): Map<string, string> {
+export function buildFileBasenameMap(files: string[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const file of files) {
     const base = path.basename(file, path.extname(file));
@@ -484,9 +485,9 @@ function buildFileBasenameMap(files: string[]): Map<string, string> {
  *   1. Exact basename match: entry.name === filename without extension
  *   2. Last path segment match: for entries with names like "dir/sub-entry",
  *      try matching the last segment
- *   3. Fallback: first file in the directory (existing behavior)
+ *   3. Fallback: first file in the directory, or null if no files are available
  */
-function matchEntryToFile(entryName: string, fileMap: Map<string, string>, files: string[]): string {
+export function matchEntryToFile(entryName: string, fileMap: Map<string, string>, files: string[]): string | null {
   // Exact match on entry name
   const exact = fileMap.get(entryName);
   if (exact) return exact;
@@ -498,8 +499,8 @@ function matchEntryToFile(entryName: string, fileMap: Map<string, string>, files
     if (segmentMatch) return segmentMatch;
   }
 
-  // Fallback to first file
-  return files[0] || "";
+  // Fallback to first file, or null if no files are available
+  return files[0] || null;
 }
 
 export function buildSearchText(entry: StashEntry): string {
@@ -509,6 +510,7 @@ export function buildSearchText(entry: StashEntry): string {
   if (entry.examples) parts.push(entry.examples.join(" "));
   if (entry.aliases) parts.push(entry.aliases.join(" "));
   if (entry.searchHints) parts.push(entry.searchHints.join(" "));
+  if (entry.usage) parts.push(entry.usage.join(" "));
   if (entry.intent) {
     if (entry.intent.when) parts.push(entry.intent.when);
     if (entry.intent.input) parts.push(entry.intent.input);

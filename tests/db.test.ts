@@ -406,14 +406,14 @@ describe("FTS search", () => {
     }
   });
 
-  test("query with only 1-character tokens returns no results", () => {
+  test("query with only 1-character tokens returns no results when content has no matching single-char terms", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
       rebuildFts(db);
 
-      // "a b c" — after sanitization each token is 1 char, below the
-      // min-length threshold of 2, so all are filtered out.
+      // "a b c" — single-char tokens are passed to FTS5 but don't match
+      // "alpha", "bravo", "charlie" because FTS5 doesn't do prefix matching.
       const results = searchFts(db, "a b c", 10);
       expect(results).toEqual([]);
     } finally {
@@ -429,13 +429,13 @@ describe("FTS search", () => {
       rebuildFts(db);
 
       // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
-      // After sanitization, non-alpha chars are stripped, leaving tokens
-      // "NEAR", "foo", "bar" joined with OR — should not throw and should
-      // return matches for foo and/or bar.
+      // After sanitization, syntax chars and NEAR are stripped, leaving
+      // tokens "foo" "bar" (implicit AND) — should not throw and should
+      // return matches containing both foo and bar.
       const results = searchFts(db, "NEAR(foo, bar)", 10);
       expect(results.length).toBeGreaterThanOrEqual(1);
 
-      // Verify both tools can appear (OR semantics)
+      // foo-tool has both "foo" and "bar" in its search text
       const names = results.map((r) => r.entry.name);
       expect(names).toContain("foo-tool");
     } finally {

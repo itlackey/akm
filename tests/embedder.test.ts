@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/config";
-import { cosineSimilarity, embed, isEmbeddingAvailable } from "../src/embedder";
+import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable } from "../src/embedder";
 
 function createMockEmbeddingServer(
   embedding: number[] = [0.1, 0.2, 0.3],
@@ -29,12 +29,18 @@ function createMockEmbeddingServer(
 }
 
 describe("remote embed", () => {
-  test("returns embedding from OpenAI-compatible endpoint", async () => {
+  test("returns normalized embedding from OpenAI-compatible endpoint", async () => {
     const { url, server } = createMockEmbeddingServer([0.5, 0.6, 0.7]);
     try {
       const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
       const result = await embed("hello world", config);
-      expect(result).toEqual([0.5, 0.6, 0.7]);
+      // Vector is L2-normalized: norm of [0.5, 0.6, 0.7] = sqrt(1.1) ~ 1.0488
+      const norm = Math.sqrt(result.reduce((sum, v) => sum + v * v, 0));
+      expect(norm).toBeCloseTo(1.0, 5);
+      // Direction is preserved
+      expect(result[0]).toBeCloseTo(0.5 / Math.sqrt(1.1), 5);
+      expect(result[1]).toBeCloseTo(0.6 / Math.sqrt(1.1), 5);
+      expect(result[2]).toBeCloseTo(0.7 / Math.sqrt(1.1), 5);
     } finally {
       server.stop();
     }
@@ -90,6 +96,87 @@ describe("remote embed", () => {
     };
     const available = await isEmbeddingAvailable(config);
     expect(available).toBe(false);
+  });
+
+  test("remote embed normalizes returned vectors to unit length", async () => {
+    // Raw vector [3, 4] has norm 5, so normalized should be [0.6, 0.8]
+    const { url, server } = createMockEmbeddingServer([3, 4]);
+    try {
+      const config: EmbeddingConnectionConfig = { endpoint: url, model: "test-model" };
+      const result = await embed("hello", config);
+      // Verify unit length
+      const norm = Math.sqrt(result.reduce((sum, v) => sum + v * v, 0));
+      expect(norm).toBeCloseTo(1.0, 5);
+      // Verify correct direction
+      expect(result[0]).toBeCloseTo(0.6, 5);
+      expect(result[1]).toBeCloseTo(0.8, 5);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("remote embedBatch normalizes returned vectors to unit length", async () => {
+    // Mock server that returns batch embeddings
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = (await request.json()) as { input: string[] };
+        const data = body.input.map((_, i) => ({
+          embedding: [3, 4], // non-normalized
+          index: i,
+        }));
+        return new Response(JSON.stringify({ data, model: "test", usage: { prompt_tokens: 10, total_tokens: 10 } }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    try {
+      const config: EmbeddingConnectionConfig = {
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+      };
+      const results = await embedBatch(["hello", "world"], config);
+      expect(results).toHaveLength(2);
+      for (const vec of results) {
+        const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
+        expect(norm).toBeCloseTo(1.0, 5);
+      }
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("remote embedBatch preserves correct order when API returns shuffled indices", async () => {
+    // Mock server that returns embeddings in shuffled order with index field
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        // Return index 1 first, then index 0 (reversed)
+        const data = [
+          { embedding: [0, 1], index: 1 }, // second input
+          { embedding: [1, 0], index: 0 }, // first input
+        ];
+        return new Response(JSON.stringify({ data, model: "test", usage: { prompt_tokens: 10, total_tokens: 10 } }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    try {
+      const config: EmbeddingConnectionConfig = {
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+      };
+      const results = await embedBatch(["first", "second"], config);
+      expect(results).toHaveLength(2);
+      // After sorting by index: index 0 -> [1,0], index 1 -> [0,1]
+      // These are already unit vectors, so normalization preserves them
+      expect(results[0][0]).toBeCloseTo(1.0, 5); // first result is [1, 0]
+      expect(results[0][1]).toBeCloseTo(0.0, 5);
+      expect(results[1][0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
+      expect(results[1][1]).toBeCloseTo(1.0, 5);
+    } finally {
+      server.stop();
+    }
   });
 });
 

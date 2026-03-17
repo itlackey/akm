@@ -466,16 +466,25 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   }
 }
 
-function sanitizeFtsQuery(query: string): string {
-  const tokens = query
-    .replace(/[^a-zA-Z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 2);
+export function sanitizeFtsQuery(query: string): string {
+  // Allow only characters safe in FTS5 queries: letters, digits, underscores,
+  // and whitespace. Everything else (hyphens, dots, quotes, parens, asterisks,
+  // colons, carets, @, !, etc.) is replaced with a space so that compound
+  // identifiers like "code-review" or "k8s.setup" become AND-joined tokens
+  // ("code review", "k8s setup") rather than triggering FTS5 syntax errors.
+  let sanitized = query.replace(/[^a-zA-Z0-9_\s]/g, " ");
+
+  // Neutralize the NEAR operator (FTS5 proximity syntax)
+  sanitized = sanitized.replace(/\bNEAR\b/g, " ");
+
+  const tokens = sanitized.split(/\s+/).filter((t) => t.length >= 1);
+
   if (tokens.length === 0) return "";
-  // MD-1: Use OR so that any matching token returns results (better recall for
-  // exploratory search). Use unquoted tokens so the porter stemmer can
-  // normalize word forms.
-  return tokens.join(" OR ");
+
+  // Use implicit AND (space-separated tokens) for precision. FTS5 treats
+  // space-separated tokens as an implicit AND, matching only rows that
+  // contain ALL terms.
+  return tokens.join(" ");
 }
 
 // ── All entries ─────────────────────────────────────────────────────────────

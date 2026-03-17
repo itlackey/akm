@@ -165,10 +165,11 @@ test("akmSearch includes explainability reasons for indexed hits", async () => {
   expect(result.hits.length).toBeGreaterThan(0);
   expect(result.hits[0].whyMatched).toBeDefined();
   // Ranking mode depends on whether semantic search (embeddings) is available.
-  // Accept either "semantic similarity" or "fts bm25 relevance".
+  // Accept "fts bm25 relevance", "semantic similarity", or "hybrid (fts + semantic)".
   expect(
     result.hits[0].whyMatched?.includes("fts bm25 relevance") ||
-      result.hits[0].whyMatched?.includes("semantic similarity"),
+      result.hits[0].whyMatched?.includes("semantic similarity") ||
+      result.hits[0].whyMatched?.includes("hybrid (fts + semantic)"),
   ).toBe(true);
   expect(result.hits[0].whyMatched).toContain("matched name tokens");
 });
