@@ -197,15 +197,13 @@ async function searchDatabase(
     return { hits };
   }
 
-  // Score using FTS5 (BM25) and optionally sqlite-vec in parallel.
-  // FTS queries the database while vector search generates an embedding via
-  // the embedder — these are independent operations.
+  // Start the async embedding request without awaiting, then run FTS
+  // synchronously while the HTTP/local embedding request is in-flight.
   const typeFilter = searchType === "any" ? undefined : searchType;
   const tEmbed0 = Date.now();
-  const [embeddingScores, ftsResults] = await Promise.all([
-    tryVecScores(db, query, limit * 3, config),
-    Promise.resolve(searchFts(db, query, limit * 3, typeFilter)),
-  ]);
+  const embeddingPromise = tryVecScores(db, query, limit * 3, config);
+  const ftsResults = searchFts(db, query, limit * 3, typeFilter);
+  const embeddingScores = await embeddingPromise;
   const embedMs = Date.now() - tEmbed0;
 
   const tRank0 = Date.now();

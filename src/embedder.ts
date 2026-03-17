@@ -113,6 +113,7 @@ const embedCache = new Map<string, EmbeddingVector>();
 /**
  * Build a cache key from query text and optional config.
  * Different endpoints/models should not share cached embeddings.
+ * apiKey deliberately excluded: same endpoint+model produce identical embeddings regardless of auth
  */
 function embedCacheKey(text: string, config?: EmbeddingConnectionConfig): string {
   if (!config) return `local:${text}`;
