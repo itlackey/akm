@@ -534,5 +534,11 @@ export function buildSearchText(entry: StashEntry): string {
   if (entry.toc) {
     parts.push(entry.toc.map((h) => h.text).join(" "));
   }
+  if (entry.parameters) {
+    for (const param of entry.parameters) {
+      parts.push(param.name);
+      if (param.description) parts.push(param.description);
+    }
+  }
   return parts.join(" ").toLowerCase();
 }
