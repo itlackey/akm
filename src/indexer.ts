@@ -518,21 +518,60 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   return files[0] || null;
 }
 
-export function buildSearchText(entry: StashEntry): string {
-  const parts: string[] = [entry.name.replace(/[-_]/g, " ")];
-  if (entry.description) parts.push(entry.description);
-  if (entry.tags) parts.push(entry.tags.join(" "));
-  if (entry.examples) parts.push(entry.examples.join(" "));
-  if (entry.aliases) parts.push(entry.aliases.join(" "));
-  if (entry.searchHints) parts.push(entry.searchHints.join(" "));
-  if (entry.usage) parts.push(entry.usage.join(" "));
+/**
+ * Return per-field search text for multi-column FTS5 indexing.
+ *
+ * Fields:
+ *  - name: entry name with hyphens/underscores replaced by spaces
+ *  - description: entry description
+ *  - tags: tags + aliases joined
+ *  - hints: searchHints + examples + usage + intent fields
+ *  - content: TOC headings (lowest-weight catch-all)
+ */
+export function buildSearchFields(entry: StashEntry): {
+  name: string;
+  description: string;
+  tags: string;
+  hints: string;
+  content: string;
+} {
+  const name = entry.name.replace(/[-_]/g, " ").toLowerCase();
+
+  const description = (entry.description ?? "").toLowerCase();
+
+  const tagParts: string[] = [];
+  if (entry.tags) tagParts.push(entry.tags.join(" "));
+  if (entry.aliases) tagParts.push(entry.aliases.join(" "));
+  const tags = tagParts.join(" ").toLowerCase();
+
+  const hintParts: string[] = [];
+  if (entry.searchHints) hintParts.push(entry.searchHints.join(" "));
+  if (entry.examples) hintParts.push(entry.examples.join(" "));
+  if (entry.usage) hintParts.push(entry.usage.join(" "));
   if (entry.intent) {
-    if (entry.intent.when) parts.push(entry.intent.when);
-    if (entry.intent.input) parts.push(entry.intent.input);
-    if (entry.intent.output) parts.push(entry.intent.output);
+    if (entry.intent.when) hintParts.push(entry.intent.when);
+    if (entry.intent.input) hintParts.push(entry.intent.input);
+    if (entry.intent.output) hintParts.push(entry.intent.output);
   }
+  const hints = hintParts.join(" ").toLowerCase();
+
+  const contentParts: string[] = [];
   if (entry.toc) {
-    parts.push(entry.toc.map((h) => h.text).join(" "));
+    contentParts.push(entry.toc.map((h) => h.text).join(" "));
   }
-  return parts.join(" ").toLowerCase();
+  const content = contentParts.join(" ").toLowerCase();
+
+  return { name, description, tags, hints, content };
+}
+
+/**
+ * Build a single concatenated search text string for an entry.
+ * Used for the `search_text` column in the entries table (backward compat)
+ * and for generating embedding text.
+ */
+export function buildSearchText(entry: StashEntry): string {
+  const fields = buildSearchFields(entry);
+  return [fields.name, fields.description, fields.tags, fields.hints, fields.content]
+    .filter((s) => s.length > 0)
+    .join(" ");
 }

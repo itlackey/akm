@@ -247,6 +247,10 @@ async function searchDatabase(
     let boostSum = 0;
 
     // Tag boost — capped at 0.30 (Issue #7)
+    // Tag boost retained: FTS5 bm25 weights term frequency, but exact-tag equality
+    // (e.g. query token "deploy" exactly matching tag "deploy") is a stronger signal
+    // than partial term overlap in the tags column. This distinguishes exact tag
+    // identity from incidental keyword presence.
     if (entry.tags) {
       let tagBoost = 0;
       for (const tag of entry.tags) {
@@ -258,6 +262,10 @@ async function searchDatabase(
     }
 
     // Search hint boost — capped at 0.24 (Issue #7)
+    // Hint boost retained: hints are author-curated retrieval cues (e.g. "use when
+    // deploying to k8s"). A substring match between a query token and a hint
+    // carries intent-level relevance that FTS5 term-frequency scoring alone cannot
+    // capture, so the post-FTS boost remains valuable.
     if (entry.searchHints) {
       let hintBoost = 0;
       for (const hint of entry.searchHints) {
@@ -272,11 +280,8 @@ async function searchDatabase(
       boostSum += Math.min(0.24, hintBoost);
     }
 
-    // Name boost
-    const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ");
-    if (queryTokens.some((t) => nameLower.includes(t))) {
-      boostSum += 0.1;
-    }
+    // S-3: Name boost removed — FTS5 multi-column bm25() weights now handle
+    // name-match ranking natively via the 10.0 weight on the name column.
 
     // Quality boost (Issue #1: moved from buildDbHit to single-phase)
     const qualityBoost = entry.quality === "generated" ? 0 : 0.05;

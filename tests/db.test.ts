@@ -361,6 +361,7 @@ describe("FTS search", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "hello-tool", {
+        description: "hello world 123 greeting",
         searchText: "hello world 123 greeting",
       });
       rebuildFts(db);
@@ -424,8 +425,8 @@ describe("FTS search", () => {
   test("FTS5 syntax injection is neutralized", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "foo-tool", { searchText: "foo bar baz" });
-      insertTestEntry(db, "bar-tool", { searchText: "bar qux quux" });
+      insertTestEntry(db, "foo-tool", { description: "foo bar baz", searchText: "foo bar baz" });
+      insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
       rebuildFts(db);
 
       // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
@@ -447,9 +448,11 @@ describe("FTS search", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-prod", {
+        description: "deploy application production servers",
         searchText: "deploy application production servers",
       });
       insertTestEntry(db, "test-runner", {
+        description: "test runner unit integration",
         searchText: "test runner unit integration",
       });
       rebuildFts(db);
@@ -465,9 +468,9 @@ describe("FTS search", () => {
   test("rebuildFts synchronizes FTS with entries table", () => {
     const db = openDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "alpha", { searchText: "alpha functionality" });
-      insertTestEntry(db, "beta", { searchText: "beta functionality" });
-      insertTestEntry(db, "gamma", { searchText: "gamma functionality" });
+      insertTestEntry(db, "alpha", { description: "alpha functionality", searchText: "alpha functionality" });
+      insertTestEntry(db, "beta", { description: "beta functionality", searchText: "beta functionality" });
+      insertTestEntry(db, "gamma", { description: "gamma functionality", searchText: "gamma functionality" });
 
       rebuildFts(db);
 
