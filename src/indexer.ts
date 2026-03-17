@@ -262,6 +262,14 @@ async function indexEntries(
   }
 
   // Phase 2 (sync): write all pre-generated metadata inside a single transaction.
+  //
+  // Cross-stash dedup: track indexed assets by content identity
+  // (type + filename + description) so the same asset from a lower-priority
+  // stash root is skipped when a higher-priority root already covers it.
+  // Sources are ordered by priority (primary stash first), so the first
+  // occurrence wins.
+  const indexedAssetIdentities = new Set<string>();
+
   const insertTransaction = db.transaction(() => {
     // HI-5: Perform the full-rebuild wipe as the FIRST step of the insert
     // transaction so delete and re-insert are atomic — a concurrent reader
@@ -297,6 +305,13 @@ async function indexEntries(
             ? path.join(dirPath, entry.filename)
             : matchEntryToFile(entry.name, fileBasenameMap, files);
           if (!entryPath) continue; // skip unresolvable entries
+
+          // Skip if a higher-priority stash root already indexed this asset
+          const basename = path.basename(entryPath);
+          const identityKey = `${entry.type}\0${basename}\0${entry.description ?? ""}`;
+          if (indexedAssetIdentities.has(identityKey)) continue;
+          indexedAssetIdentities.add(identityKey);
+
           const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);

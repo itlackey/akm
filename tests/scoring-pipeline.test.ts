@@ -703,10 +703,10 @@ describe("Issue #15: Hybrid ranking mode label", () => {
   });
 });
 
-// ── Cross-stash deduplication ────────────────────────────────────────────────
+// ── Cross-stash deduplication (indexer level) ────────────────────────────────
 
-describe("Cross-stash deduplication", () => {
-  test("same asset in two stash sources produces only one search hit", async () => {
+describe("Cross-stash deduplication at index time", () => {
+  test("same asset in two stash sources produces only one index entry", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
@@ -745,11 +745,13 @@ describe("Cross-stash deduplication", () => {
       (h) => h.name.includes("github") && h.description?.includes("GitHub Platform Adapter"),
     );
 
-    // Should be exactly 1 — not 2 from different stash roots
+    // Indexer should skip the duplicate — only one entry in the DB
     expect(githubHits.length).toBe(1);
+    // The surviving hit should be from the primary stash (higher priority)
+    expect(githubHits[0].path).toContain(primaryStash);
   });
 
-  test("same asset from different stash roots deduped by basename+type+description", async () => {
+  test("different stash directory structures deduped by type+basename+description", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
@@ -798,7 +800,42 @@ describe("Cross-stash deduplication", () => {
     // Filter to just the adapter hits (same description from different roots)
     const adapterHits = localHits.filter((h) => h.description?.includes("GitHub Platform Adapter"));
 
-    // Should be deduped to 1 despite different paths
+    // Indexer dedup: only one entry despite different paths
     expect(adapterHits.length).toBe(1);
+  });
+
+  test("different assets with same filename but different descriptions are NOT deduped", async () => {
+    const primaryStash = tmpStash();
+    const secondStash = tmpStash();
+
+    writeFile(path.join(primaryStash, "scripts", "utils", "helper.sh"), "#!/bin/bash\necho primary\n");
+    writeFile(
+      path.join(primaryStash, "scripts", "utils", ".stash.json"),
+      JSON.stringify({
+        entries: [{ name: "helper", type: "script", description: "Build helper for CI", filename: "helper.sh" }],
+      }),
+    );
+
+    writeFile(path.join(secondStash, "scripts", "tools", "helper.sh"), "#!/bin/bash\necho second\n");
+    writeFile(
+      path.join(secondStash, "scripts", "tools", ".stash.json"),
+      JSON.stringify({
+        entries: [{ name: "helper", type: "script", description: "Test helper for local dev", filename: "helper.sh" }],
+      }),
+    );
+
+    process.env.AKM_STASH_DIR = primaryStash;
+    saveConfig({
+      semanticSearch: false,
+      stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+    });
+    await akmIndex({ stashDir: primaryStash, full: true });
+
+    const result = await akmSearch({ query: "helper", source: "stash" });
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const helperHits = localHits.filter((h) => h.name.includes("helper"));
+
+    // Different descriptions = different assets — both should be indexed
+    expect(helperHits.length).toBe(2);
   });
 });

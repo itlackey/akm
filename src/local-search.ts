@@ -144,17 +144,7 @@ export async function searchLocal(input: {
   const hitArrays = await Promise.all(
     allStashDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config)),
   );
-  // Deduplicate across stash roots: same asset can exist in multiple roots
-  const seenIdentities = new Set<string>();
-  const hits = hitArrays
-    .flat()
-    .filter((hit) => {
-      const key = assetIdentityKey(hit.type, hit.path ?? "", hit.description);
-      if (seenIdentities.has(key)) return false;
-      seenIdentities.add(key);
-      return true;
-    })
-    .slice(0, limit);
+  const hits = hitArrays.flat().slice(0, limit);
   return {
     hits,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
@@ -183,17 +173,9 @@ async function searchDatabase(
     const allEntries = getAllEntries(db, typeFilter);
     // Deduplicate by file path — multiple entries can share the same file
     const seenFilePaths = new Set<string>();
-    const pathUnique = allEntries.filter((ie) => {
+    const uniqueEntries = allEntries.filter((ie) => {
       if (seenFilePaths.has(ie.filePath)) return false;
       seenFilePaths.add(ie.filePath);
-      return true;
-    });
-    // Second dedup: same asset in multiple stash roots (different paths, same content)
-    const seenIdentities = new Set<string>();
-    const uniqueEntries = pathUnique.filter((ie) => {
-      const key = assetIdentityKey(ie.entry.type, ie.filePath, ie.entry.description);
-      if (seenIdentities.has(key)) return false;
-      seenIdentities.add(key);
       return true;
     });
     const selected = uniqueEntries.slice(0, limit);
@@ -345,12 +327,7 @@ async function searchDatabase(
   // Multiple .stash.json entries can map to the same file (e.g. entries without
   // a filename field all collapse to files[0]). Showing the same path/ref
   // multiple times clutters results.
-  const dedupedByPath = deduplicateByPath(scored);
-
-  // Second dedup pass: the same asset can exist in multiple stash roots
-  // (e.g. primary stash + installed kit) with different absolute paths.
-  // Deduplicate by content identity (type + filename + description).
-  const deduped = deduplicateByIdentity(dedupedByPath);
+  const deduped = deduplicateByPath(scored);
 
   const rankMs = Date.now() - tRank0;
 
@@ -705,33 +682,6 @@ function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
   return assets.filter((asset) => {
     if (seen.has(asset.path)) return false;
     seen.add(asset.path);
-    return true;
-  });
-}
-
-/**
- * Build a content-identity key for cross-stash deduplication.
- * Two entries from different stash roots that represent the same asset
- * share the same type, filename, and description.
- */
-function assetIdentityKey(type: string, filePath: string, description?: string): string {
-  const basename = filePath.split("/").pop() ?? filePath;
-  return `${type}\0${basename}\0${description ?? ""}`;
-}
-
-/**
- * Deduplicate scored results by content identity (type + filename + description).
- * Catches the same asset indexed from multiple stash roots with different absolute paths.
- * Input must be sorted by score descending (highest-scored entry per identity wins).
- */
-function deduplicateByIdentity<T extends { entry: { type: string; description?: string }; filePath: string }>(
-  items: T[],
-): T[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = assetIdentityKey(item.entry.type, item.filePath, item.entry.description);
-    if (seen.has(key)) return false;
-    seen.add(key);
     return true;
   });
 }
