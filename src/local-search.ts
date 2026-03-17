@@ -20,6 +20,7 @@ import {
   getEntryById,
   getEntryCount,
   getMeta,
+  getUtilityScoresByIds,
   openDatabase,
   searchFts,
   searchVec,
@@ -203,6 +204,7 @@ async function searchDatabase(
     filePath: string;
     score: number;
     rankingMode: "hybrid" | "semantic" | "fts";
+    utilityBoosted?: boolean;
   }> = [];
   const seenIds = new Set<number>();
 
@@ -295,6 +297,35 @@ async function searchDatabase(
     item.score = item.score * (1 + boostSum);
   }
 
+  // M-2: Utility-based re-ranking (MemRL pattern).
+  // After the existing RRF+boost scoring pass, apply a multiplicative
+  // utility factor based on aggregated usage telemetry.
+  // Issue #4: Batch-load all utility scores in one query to avoid N+1.
+  const UTILITY_WEIGHT = 0.5;
+  const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
+  const RECENCY_HALF_LIFE_DAYS = 30;
+  const utilScoresMap = getUtilityScoresByIds(
+    db,
+    scored.map((s) => s.id),
+  );
+  for (const item of scored) {
+    const utilScore = utilScoresMap.get(item.id);
+    if (utilScore && utilScore.utility > 0) {
+      // Compute recency factor: exponential decay based on days since last use
+      let recencyFactor = 1;
+      if (utilScore.lastUsedAt) {
+        const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
+        const daysSinceLastUse = Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
+        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_HALF_LIFE_DAYS);
+      }
+      // Compute raw utility boost and cap it
+      const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
+      const cappedBoost = Math.min(rawBoost, UTILITY_MAX_BOOST);
+      item.score = item.score * cappedBoost;
+      item.utilityBoosted = true;
+    }
+  }
+
   // Issue #14: deterministic tiebreaker on equal scores
   scored.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
 
@@ -308,7 +339,7 @@ async function searchDatabase(
 
   const selected = deduped.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode }) =>
+    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
       buildDbHit({
         entry,
         path: filePath,
@@ -320,6 +351,7 @@ async function searchDatabase(
         allStashDirs,
         sources,
         config,
+        utilityBoosted,
       }),
     ),
   );
@@ -436,6 +468,8 @@ export async function buildDbHit(input: {
   allStashDirs: string[];
   sources: SearchSource[];
   config?: AkmConfig;
+  // M-2: whether this entry received a utility boost
+  utilityBoosted?: boolean;
 }): Promise<StashSearchHit> {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
@@ -452,7 +486,14 @@ export async function buildDbHit(input: {
   // Issue #8: round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
-  const whyMatched = buildWhyMatched(input.entry, input.query, input.rankingMode, qualityBoost, confidenceBoost);
+  const whyMatched = buildWhyMatched(
+    input.entry,
+    input.query,
+    input.rankingMode,
+    qualityBoost,
+    confidenceBoost,
+    input.utilityBoosted,
+  );
 
   const source = findSourceForPath(input.path, input.sources);
 
@@ -491,6 +532,8 @@ export function buildWhyMatched(
   rankingMode: "hybrid" | "semantic" | "fts",
   qualityBoost: number,
   confidenceBoost: number,
+  // M-2: whether this entry received a utility boost
+  utilityBoosted?: boolean,
 ): string[] {
   // Issue #15: "hybrid" label for combined FTS+vec results
   const reasons: string[] = [
@@ -517,6 +560,8 @@ export function buildWhyMatched(
   if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
+  // M-2: report utility-based re-ranking boost
+  if (utilityBoosted) reasons.push("usage history boost");
 
   return reasons;
 }
