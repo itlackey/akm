@@ -10,6 +10,7 @@ import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./
 import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
+import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
 import { akmManifest } from "./manifest";
@@ -24,26 +25,8 @@ import { akmShowUnified } from "./stash-show";
 import { addStash, listStashes, removeStash } from "./stash-source-manage";
 import type { KnowledgeView, ShowDetailLevel } from "./stash-types";
 import { insertUsageEvent } from "./usage-events";
+import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
-
-// Version: prefer compile-time define, then package.json, then fallback
-const pkgVersion: string = (() => {
-  // Injected at compile time via `bun build --define`
-  if (typeof AKM_VERSION !== "undefined") return AKM_VERSION;
-  try {
-    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json");
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (typeof pkg.version === "string") return pkg.version;
-    }
-  } catch {
-    // swallow — running as compiled binary without package.json
-  }
-  return "0.0.0-dev";
-})();
-
-// Declared by `bun build --define` at compile time; unused at dev time.
-declare const AKM_VERSION: string;
 
 type OutputFormat = "json" | "yaml" | "text";
 type DetailLevel = "brief" | "normal" | "full" | "summary";
@@ -480,6 +463,16 @@ const indexCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const result = await akmIndex({ full: args.full });
       output("index", result);
+    });
+  },
+});
+
+const infoCommand = defineCommand({
+  meta: { name: "info", description: "Show system capabilities, configuration, and index stats as JSON" },
+  run() {
+    return runWithJsonErrors(() => {
+      const result = assembleInfo();
+      output("info", result);
     });
   },
 });
@@ -1110,6 +1103,7 @@ const main = defineCommand({
     setup: setupCommand,
     init: initCommand,
     index: indexCommand,
+    info: infoCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
