@@ -222,7 +222,7 @@ describe("ContextHubStashProvider", () => {
   });
 
   test("show sanitizes author names derived from cached repo paths", async () => {
-    const archivePath = buildContextHubArchiveWithAuthor("open\tai");
+    const archivePath = buildContextHubArchiveWithAuthor(`open\tai`);
     const restoreFetch = mockArchiveFetch(archivePath);
 
     try {
@@ -232,7 +232,7 @@ describe("ContextHubStashProvider", () => {
         name: "context-hub",
       }) as ContextHubStashProvider;
 
-      const result = await provider.show(makeContextHubRef("content/open\tai/docs/chat-api/python/DOC.md"));
+      const result = await provider.show(makeContextHubRef(`content/open\tai/docs/chat-api/python/DOC.md`));
       expect(result.name).toBe("openai/chat-api");
     } finally {
       restoreFetch();
