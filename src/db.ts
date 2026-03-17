@@ -34,7 +34,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -128,6 +128,8 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   // Check stored version — if it differs from DB_VERSION, drop and recreate all tables
   const storedVersion = getMeta(db, "version");
   if (storedVersion && storedVersion !== String(DB_VERSION)) {
+    db.exec("DROP TABLE IF EXISTS utility_scores");
+    db.exec("DROP TABLE IF EXISTS usage_events");
     db.exec("DROP TABLE IF EXISTS embeddings");
     db.exec("DROP TABLE IF EXISTS entries_vec");
     db.exec("DROP TABLE IF EXISTS entries_fts");
@@ -180,6 +182,34 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       );
     `);
   }
+
+  // Usage events table (M-1: tracks search appearances and show events)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      entry_id   INTEGER NOT NULL,
+      timestamp  TEXT NOT NULL,
+      query      TEXT,
+      FOREIGN KEY (entry_id) REFERENCES entries(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
+  `);
+
+  // Utility scores table (M-2: aggregated per-entry utility metrics)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS utility_scores (
+      entry_id     INTEGER PRIMARY KEY,
+      utility      REAL NOT NULL DEFAULT 0,
+      show_count   INTEGER NOT NULL DEFAULT 0,
+      search_count INTEGER NOT NULL DEFAULT 0,
+      select_rate  REAL NOT NULL DEFAULT 0,
+      last_used_at TEXT,
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (entry_id) REFERENCES entries(id)
+    );
+  `);
 
   // sqlite-vec table
   if (isVecAvailable(db)) {
@@ -592,4 +622,67 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
     });
   }
   return entries;
+}
+
+// ── Utility score operations ────────────────────────────────────────────────
+
+export interface UtilityScoreData {
+  utility: number;
+  showCount: number;
+  searchCount: number;
+  selectRate: number;
+  lastUsedAt?: string;
+}
+
+export interface UtilityScoreRow extends UtilityScoreData {
+  entryId: number;
+  updatedAt: string;
+}
+
+/**
+ * Get the utility score for an entry, or undefined if none exists.
+ */
+export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow | undefined {
+  const row = db
+    .prepare(
+      "SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id = ?",
+    )
+    .get(entryId) as
+    | {
+        entry_id: number;
+        utility: number;
+        show_count: number;
+        search_count: number;
+        select_rate: number;
+        last_used_at: string | null;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    entryId: row.entry_id,
+    utility: row.utility,
+    showCount: row.show_count,
+    searchCount: row.search_count,
+    selectRate: row.select_rate,
+    lastUsedAt: row.last_used_at ?? undefined,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Insert or update a utility score for an entry.
+ */
+export function upsertUtilityScore(db: Database, entryId: number, data: UtilityScoreData): void {
+  db.prepare(`
+    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entry_id) DO UPDATE SET
+      utility = excluded.utility,
+      show_count = excluded.show_count,
+      search_count = excluded.search_count,
+      select_rate = excluded.select_rate,
+      last_used_at = excluded.last_used_at,
+      updated_at = datetime('now')
+  `).run(entryId, data.utility, data.showCount, data.searchCount, data.selectRate, data.lastUsedAt ?? null);
 }

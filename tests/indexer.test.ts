@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
@@ -129,7 +129,7 @@ test("akmIndex writes index to SQLite database", async () => {
 
   const db = openDatabase();
   const version = getMeta(db, "version");
-  expect(version).toBe("6");
+  expect(version).toBe(String(DB_VERSION));
   const entries = getAllEntries(db);
   expect(entries.length).toBeGreaterThan(0);
   closeDatabase(db);

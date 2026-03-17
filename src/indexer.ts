@@ -8,19 +8,23 @@ import {
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
+  getAllEntries,
   getEntriesByDir,
   getEntryCount,
   getMeta,
+  getUtilityScore,
   isVecAvailable,
   openDatabase,
   rebuildFts,
   setMeta,
   upsertEmbedding,
   upsertEntry,
+  upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
+import { getLastUsedAt, getUsageEventCounts } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -117,6 +121,9 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     // Rebuild FTS after all inserts
     rebuildFts(db);
     const tFtsEnd = Date.now();
+
+    // M-2: Recompute utility scores from usage_events after FTS rebuild
+    recomputeUtilityScores(db);
 
     // Generate embeddings if semantic search is enabled
     const hasEmbeddings = await generateEmbeddingsForDb(db, config);
@@ -535,4 +542,44 @@ export function buildSearchText(entry: StashEntry): string {
     parts.push(entry.toc.map((h) => h.text).join(" "));
   }
   return parts.join(" ").toLowerCase();
+}
+
+// ── M-2: Utility score recomputation ─────────────────────────────────────────
+
+/**
+ * Recompute utility scores for all entries based on usage_events data.
+ *
+ * For each entry:
+ *   - Count search appearances (event_type = 'search')
+ *   - Count show events (event_type = 'show')
+ *   - Compute select_rate = showCount / searchCount (0 if no searches)
+ *   - Update utility via EMA: utility = previousUtility * 0.7 + selectRate * 0.3
+ *
+ * Called during `akm index` after FTS rebuild.
+ */
+export function recomputeUtilityScores(db: import("bun:sqlite").Database): void {
+  const EMA_DECAY = 0.7;
+  const EMA_NEW = 0.3;
+
+  const allEntries = getAllEntries(db);
+  for (const entry of allEntries) {
+    const { searchCount, showCount } = getUsageEventCounts(db, entry.id);
+    if (searchCount === 0 && showCount === 0) continue;
+
+    const selectRate = searchCount > 0 ? showCount / searchCount : 0;
+    const lastUsedAt = getLastUsedAt(db, entry.id);
+
+    // Get previous utility for EMA calculation
+    const prev = getUtilityScore(db, entry.id);
+    const prevUtility = prev?.utility ?? 0;
+    const utility = prevUtility * EMA_DECAY + selectRate * EMA_NEW;
+
+    upsertUtilityScore(db, entry.id, {
+      utility,
+      showCount,
+      searchCount,
+      selectRate,
+      lastUsedAt,
+    });
+  }
 }
