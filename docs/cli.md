@@ -382,3 +382,32 @@ the CLI.
 ```sh
 akm hints
 ```
+
+### completions
+
+Generate or install a bash completion script for `akm`. The script is built
+dynamically from the command tree, so it always reflects the current set of
+subcommands and flags.
+
+```sh
+akm completions                # Print bash completion script to stdout
+akm completions --install      # Install to the appropriate directory
+```
+
+| Flag | Description |
+| --- | --- |
+| `--install` | Write the script to the XDG-compliant completions directory |
+| `--shell` | Shell type (currently only `bash` is supported) |
+
+**Manual activation:** pipe the output into your shell or source it from
+your profile:
+
+```sh
+source <(akm completions)
+```
+
+**Install locations** (checked in order):
+
+1. `$XDG_DATA_HOME/bash-completion/completions/akm`
+2. `~/.local/share/bash-completion/completions/akm`
+3. `~/.bash_completion.d/akm`

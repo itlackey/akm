@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
 import { resolveStashDir } from "./common";
+import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
@@ -957,6 +958,38 @@ const hintsCommand = defineCommand({
   },
 });
 
+const completionsCommand = defineCommand({
+  meta: {
+    name: "completions",
+    description: "Generate or install shell completion script",
+  },
+  args: {
+    install: {
+      type: "boolean",
+      description: "Install completions to the appropriate directory",
+      default: false,
+    },
+    shell: {
+      type: "string",
+      description: "Shell type (bash)",
+      default: "bash",
+    },
+  },
+  run({ args }) {
+    if (args.shell !== "bash") {
+      throw new UsageError(`Unsupported shell: ${args.shell}. Only bash is supported.`);
+    }
+    const script = generateBashCompletions(main);
+    if (args.install) {
+      const dest = installBashCompletions(script);
+      console.error(`Completions installed to ${dest}`);
+      console.error(`Restart your shell or run:  source ${dest}`);
+    } else {
+      process.stdout.write(script);
+    }
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -984,6 +1017,7 @@ const main = defineCommand({
     registry: registryCommand,
     config: configCommand,
     hints: hintsCommand,
+    completions: completionsCommand,
   },
 });
 
@@ -1284,6 +1318,8 @@ akm kit                                       # Kit management (add, list, remov
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference
+akm completions                               # Print bash completion script
+akm completions --install                     # Install completions
 \`\`\`
 
 ## Output Control
