@@ -404,6 +404,45 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   const ftsQuery = sanitizeFtsQuery(query);
   if (!ftsQuery) return [];
 
+  // Try the exact AND query first
+  const exactResults = runFtsQuery(db, ftsQuery, limit, entryType);
+  if (exactResults.length > 0) return exactResults;
+
+  // Exact match returned zero results — try prefix fallback.
+  // Append FTS5 `*` suffix to each token that is >= 3 characters long.
+  // Short tokens (1-2 chars) are excluded from prefix expansion because
+  // they produce too many false positives.
+  const prefixQuery = buildPrefixQuery(ftsQuery);
+  if (!prefixQuery || prefixQuery === ftsQuery) return [];
+
+  return runFtsQuery(db, prefixQuery, limit, entryType);
+}
+
+/**
+ * Build a prefix query from an FTS5 query string by appending `*` to each
+ * token that is 3+ characters long. Tokens shorter than 3 characters are
+ * kept as-is (no prefix expansion) to avoid overly broad matches.
+ *
+ * Returns null if no tokens qualify for prefix expansion.
+ */
+export function buildPrefixQuery(ftsQuery: string): string | null {
+  const tokens = ftsQuery.split(/\s+/).filter(Boolean);
+  let hasPrefix = false;
+
+  const prefixTokens = tokens.map((t) => {
+    if (t.length >= 3) {
+      hasPrefix = true;
+      return `${t}*`;
+    }
+    return t;
+  });
+
+  if (!hasPrefix) return null;
+
+  return prefixTokens.join(" ");
+}
+
+function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: string): DbSearchResult[] {
   let sql: string;
   let params: unknown[];
 
