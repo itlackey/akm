@@ -24,7 +24,7 @@ import {
 } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
-import { getLastUsedAt, getUsageEventCounts } from "./usage-events";
+import { ensureUsageEventsSchema, getLastUsedAt, getUsageEventCounts, purgeOldUsageEvents } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -546,14 +546,20 @@ export function buildSearchText(entry: StashEntry): string {
 
 // ── M-2: Utility score recomputation ─────────────────────────────────────────
 
+/** Retention window for usage events: events older than this are purged. */
+const USAGE_EVENT_RETENTION_DAYS = 90;
+
 /**
  * Recompute utility scores for all entries based on usage_events data.
  *
  * For each entry:
  *   - Count search appearances (event_type = 'search')
  *   - Count show events (event_type = 'show')
- *   - Compute select_rate = showCount / searchCount (0 if no searches)
+ *   - Compute select_rate = showCount / searchCount, clamped to [0, 1]
  *   - Update utility via EMA: utility = previousUtility * 0.7 + selectRate * 0.3
+ *
+ * Also purges usage_events older than 90 days and ensures the M-1
+ * usage_events table exists before querying.
  *
  * Called during `akm index` after FTS rebuild.
  */
@@ -561,12 +567,19 @@ export function recomputeUtilityScores(db: import("bun:sqlite").Database): void 
   const EMA_DECAY = 0.7;
   const EMA_NEW = 0.3;
 
+  // Ensure M-1 usage_events table exists before querying
+  ensureUsageEventsSchema(db);
+
+  // Purge stale usage events (Issue #6: 90-day retention)
+  purgeOldUsageEvents(db, USAGE_EVENT_RETENTION_DAYS);
+
   const allEntries = getAllEntries(db);
   for (const entry of allEntries) {
     const { searchCount, showCount } = getUsageEventCounts(db, entry.id);
     if (searchCount === 0 && showCount === 0) continue;
 
-    const selectRate = searchCount > 0 ? showCount / searchCount : 0;
+    // Issue #3: clamp selectRate to [0, 1]
+    const selectRate = searchCount > 0 ? Math.min(1, showCount / searchCount) : 0;
     const lastUsedAt = getLastUsedAt(db, entry.id);
 
     // Get previous utility for EMA calculation

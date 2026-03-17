@@ -34,7 +34,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -183,19 +183,8 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     `);
   }
 
-  // Usage events table (M-1: tracks search appearances and show events)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS usage_events (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      event_type TEXT NOT NULL,
-      entry_id   INTEGER NOT NULL,
-      timestamp  TEXT NOT NULL,
-      query      TEXT,
-      FOREIGN KEY (entry_id) REFERENCES entries(id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
-    CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
-  `);
+  // Usage events table — created by M-1's ensureUsageEventsSchema() at runtime.
+  // M-2 does NOT redefine this table; it only reads from it.
 
   // Utility scores table (M-2: aggregated per-entry utility metrics)
   db.exec(`
@@ -207,7 +196,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       select_rate  REAL NOT NULL DEFAULT 0,
       last_used_at TEXT,
       updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (entry_id) REFERENCES entries(id)
+      FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
     );
   `);
 
@@ -337,6 +326,18 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
       } catch {
         /* ignore */
       }
+    }
+    // M-2: Clean up utility scores before deleting entries
+    try {
+      db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* ignore */
+    }
+    // M-2: Clean up usage events before deleting entries
+    try {
+      db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -668,6 +669,45 @@ export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow 
     lastUsedAt: row.last_used_at ?? undefined,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Batch-load utility scores for multiple entry IDs in a single query.
+ * Returns a Map keyed by entry_id for O(1) lookup.
+ */
+export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, UtilityScoreRow> {
+  if (ids.length === 0) return new Map();
+  const result = new Map<number, UtilityScoreRow>();
+  // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
+  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id IN (${placeholders})`,
+      )
+      .all(...chunk) as Array<{
+      entry_id: number;
+      utility: number;
+      show_count: number;
+      search_count: number;
+      select_rate: number;
+      last_used_at: string | null;
+      updated_at: string;
+    }>;
+    for (const row of rows) {
+      result.set(row.entry_id, {
+        entryId: row.entry_id,
+        utility: row.utility,
+        showCount: row.show_count,
+        searchCount: row.search_count,
+        selectRate: row.select_rate,
+        lastUsedAt: row.last_used_at ?? undefined,
+        updatedAt: row.updated_at,
+      });
+    }
+  }
+  return result;
 }
 
 /**

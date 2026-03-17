@@ -19,7 +19,7 @@ import {
   getEntryById,
   getEntryCount,
   getMeta,
-  getUtilityScore,
+  getUtilityScoresByIds,
   openDatabase,
   searchFts,
   searchVec,
@@ -325,11 +325,16 @@ async function searchDatabase(
   // M-2: Utility-based re-ranking (MemRL pattern).
   // After the existing RRF+boost scoring pass, apply a multiplicative
   // utility factor based on aggregated usage telemetry.
+  // Issue #4: Batch-load all utility scores in one query to avoid N+1.
   const UTILITY_WEIGHT = 0.5;
   const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
   const RECENCY_HALF_LIFE_DAYS = 30;
+  const utilScoresMap = getUtilityScoresByIds(
+    db,
+    scored.map((s) => s.id),
+  );
   for (const item of scored) {
-    const utilScore = getUtilityScore(db, item.id);
+    const utilScore = utilScoresMap.get(item.id);
     if (utilScore && utilScore.utility > 0) {
       // Compute recency factor: exponential decay based on days since last use
       let recencyFactor = 1;
@@ -578,7 +583,7 @@ export function buildWhyMatched(
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
   // M-2: report utility-based re-ranking boost
-  if (utilityBoosted) reasons.push("utilityBoost");
+  if (utilityBoosted) reasons.push("usage history boost");
 
   return reasons;
 }

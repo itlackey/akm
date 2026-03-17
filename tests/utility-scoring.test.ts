@@ -334,7 +334,7 @@ describe("No utility boost for entries without usage data", () => {
     const resolved = expectDefined(hit);
     // No utility data means no utilityBoost in whyMatched
     expect(resolved.whyMatched).toBeDefined();
-    expect(resolved.whyMatched).not.toContain("utilityBoost");
+    expect(resolved.whyMatched).not.toContain("usage history boost");
   });
 });
 
@@ -585,10 +585,10 @@ describe("recomputeUtilityScores", () => {
   });
 });
 
-// ── Test 8: whyMatched includes utilityBoost when applicable ─────────────────
+// ── Test 8: whyMatched includes usage history boost when applicable ──────────
 
-describe("whyMatched includes utilityBoost", () => {
-  test("whyMatched includes utilityBoost when utility > 0", async () => {
+describe("whyMatched includes usage history boost", () => {
+  test("whyMatched includes usage history boost when utility > 0", async () => {
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "why-util", "why-util.sh"), "#!/bin/bash\necho why utility\n");
@@ -634,6 +634,6 @@ describe("whyMatched includes utilityBoost", () => {
 
     const resolved = expectDefined(hit);
     expect(resolved.whyMatched).toBeDefined();
-    expect(resolved.whyMatched).toContain("utilityBoost");
+    expect(resolved.whyMatched).toContain("usage history boost");
   });
 });
