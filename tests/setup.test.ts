@@ -61,11 +61,24 @@ describe("detectAgentPlatforms", () => {
     expect(claude).toBeUndefined();
   });
 
-  test("returns empty when HOME is unset", async () => {
+  test("returns empty when HOME and USERPROFILE are both unset", async () => {
     delete process.env.HOME;
+    delete process.env.USERPROFILE;
     const { detectAgentPlatforms } = await import("../src/detect");
     const result = detectAgentPlatforms();
     expect(result).toEqual([]);
+  });
+
+  test("falls back to USERPROFILE when HOME is unset (Windows)", async () => {
+    delete process.env.HOME;
+    process.env.USERPROFILE = testHome;
+    fs.mkdirSync(path.join(testHome, ".claude"), { recursive: true });
+    const { detectAgentPlatforms } = await import("../src/detect");
+    const result = detectAgentPlatforms();
+    const claude = result.find((p) => p.name === "Claude Code");
+    expect(claude).toBeDefined();
+    expect(claude?.path).toBe(path.join(testHome, ".claude"));
+    delete process.env.USERPROFILE;
   });
 });
 
@@ -178,6 +191,16 @@ describe("detectOpenViking", () => {
     const { detectOpenViking } = await import("../src/detect");
     const result = await detectOpenViking("https://unreachable.example.com");
     expect(result.available).toBe(false);
+  });
+
+  test("normalizes URL even on failure", async () => {
+    globalThis.fetch = (async () => {
+      throw new Error("Connection refused");
+    }) as typeof fetch;
+
+    const { detectOpenViking } = await import("../src/detect");
+    const result = await detectOpenViking("https://example.com///");
+    expect(result.url).toBe("https://example.com");
   });
 
   test("strips trailing slashes from URL", async () => {

@@ -99,9 +99,10 @@ const AGENT_PLATFORMS: Array<{ name: string; relPath: string }> = [
 
 /**
  * Scan the user's home directory for known agent platform config directories.
+ * Supports both HOME (Unix) and USERPROFILE (Windows).
  */
 export function detectAgentPlatforms(): AgentPlatform[] {
-  const home = process.env.HOME?.trim();
+  const home = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
   if (!home) return [];
 
   return AGENT_PLATFORMS.filter((p) => {
@@ -123,8 +124,8 @@ export function detectAgentPlatforms(): AgentPlatform[] {
  * Check if an OpenViking server is reachable at the given URL.
  */
 export async function detectOpenViking(url: string): Promise<OpenVikingDetectionResult> {
+  const normalized = url.replace(/\/+$/, "");
   try {
-    const normalized = url.replace(/\/+$/, "");
     const response = await fetch(`${normalized}/api/v1/search/find`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -133,6 +134,6 @@ export async function detectOpenViking(url: string): Promise<OpenVikingDetection
     });
     return { available: response.ok, url: normalized };
   } catch {
-    return { available: false, url };
+    return { available: false, url: normalized };
   }
 }

@@ -75,7 +75,8 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       "Ollama is not running. Embeddings will use the built-in local model.\n" +
         "To use Ollama later, install it from https://ollama.com and re-run `akm setup`.",
     );
-    return {};
+    // Preserve existing embedding/LLM config when Ollama is not available
+    return { embedding: current.embedding, llm: current.llm };
   }
 
   spin.stop(`Ollama detected at ${ollama.endpoint}`);
@@ -120,11 +121,23 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
   if (embChoice === "keep") {
     embedding = current.embedding;
   } else if (embChoice !== "local") {
+    // Ask for dimension — different models produce different sizes
+    const dimChoice = await p.text({
+      message: "Embedding dimension (must match your index; 384 is common for MiniLM/nomic):",
+      placeholder: "384",
+      defaultValue: "384",
+      validate: (v) => {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n <= 0) return "Must be a positive integer";
+      },
+    });
+    if (cancelled(dimChoice)) bail();
+
     embedding = {
       provider: "ollama",
       endpoint: `${ollama.endpoint}/v1/embeddings`,
       model: embChoice,
-      dimension: 384,
+      dimension: Number(dimChoice),
     };
   }
   // else: undefined → use built-in local
@@ -175,27 +188,54 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
   return { embedding, llm };
 }
 
-async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[]> {
+async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[] | undefined> {
   const defaults = DEFAULT_CONFIG.registries ?? [];
-  const currentUrls = new Set((current.registries ?? defaults).filter((r) => r.enabled !== false).map((r) => r.url));
+  const currentRegistries = current.registries ?? defaults;
+  const defaultUrls = new Set(defaults.map((r) => r.url));
+  const enabledUrls = new Set(currentRegistries.filter((r) => r.enabled !== false).map((r) => r.url));
 
+  // Collect custom (non-default) registries to preserve them
+  const customRegistries = currentRegistries.filter((r) => !defaultUrls.has(r.url));
+
+  // Show default registries for toggling
   const options = defaults.map((r) => ({
     value: r.url,
     label: r.name ?? r.url,
     hint: r.provider ?? "static index",
   }));
 
+  if (customRegistries.length > 0) {
+    p.log.info(
+      `You have ${customRegistries.length} custom registr${customRegistries.length === 1 ? "y" : "ies"} that will be preserved.`,
+    );
+  }
+
   const selected = await p.multiselect({
-    message: "Which kit registries should be enabled?",
+    message: "Which built-in registries should be enabled?",
     options,
-    initialValues: options.filter((o) => currentUrls.has(o.value)).map((o) => o.value),
+    initialValues: options.filter((o) => enabledUrls.has(o.value)).map((o) => o.value),
   });
   if (cancelled(selected)) bail();
 
-  return defaults.map((r) => ({
+  // If all defaults are selected and there are no custom registries,
+  // return undefined to use the built-in defaults (avoids pinning)
+  const allDefaultsSelected = defaults.every((r) => selected.includes(r.url));
+  if (allDefaultsSelected && customRegistries.length === 0) {
+    return undefined;
+  }
+
+  // Build explicit list: toggled defaults + preserved custom registries
+  const result: RegistryConfigEntry[] = defaults.map((r) => ({
     ...r,
     enabled: selected.includes(r.url),
   }));
+
+  // Re-add custom registries unchanged
+  for (const custom of customRegistries) {
+    result.push(custom);
+  }
+
+  return result;
 }
 
 async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]> {
@@ -249,7 +289,8 @@ async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]>
       });
       if (cancelled(name)) bail();
 
-      const entry: StashConfigEntry = { type: "openviking", url: url.trim() };
+      // Use the normalized URL from detection (trailing slashes stripped)
+      const entry: StashConfigEntry = { type: "openviking", url: result.url };
       if (name.trim()) entry.name = name.trim();
       if (!stashes.some((s) => s.url === entry.url)) {
         stashes.push(entry);
@@ -342,17 +383,18 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[
   });
   if (cancelled(selected)) bail();
 
-  return selected
-    .map((selectedPath) => {
-      const platform = newPlatforms.find((pl) => pl.path === selectedPath);
-      if (!platform) return undefined;
-      return {
-        type: "filesystem" as const,
+  const entries: StashConfigEntry[] = [];
+  for (const selectedPath of selected) {
+    const platform = newPlatforms.find((pl) => pl.path === selectedPath);
+    if (platform) {
+      entries.push({
+        type: "filesystem",
         path: platform.path,
         name: platform.name.toLowerCase().replace(/\s+/g, "-"),
-      };
-    })
-    .filter((entry): entry is StashConfigEntry => entry !== undefined);
+      });
+    }
+  }
+  return entries;
 }
 
 // ── Main Wizard ─────────────────────────────────────────────────────────────
@@ -406,12 +448,13 @@ export async function runSetupWizard(): Promise<void> {
   };
 
   // Confirm before saving
+  const effectiveRegistries = registries ?? DEFAULT_CONFIG.registries ?? [];
   p.note(
     [
       `Stash directory:  ${stashDir}`,
       `Embedding:        ${embedding ? `${embedding.provider ?? "remote"} / ${embedding.model}` : "built-in local"}`,
       `LLM:              ${llm ? `${llm.provider ?? "remote"} / ${llm.model}` : "disabled"}`,
-      `Registries:       ${registries.filter((r) => r.enabled !== false).length} enabled`,
+      `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
     ].join("\n"),
     "Configuration Summary",
