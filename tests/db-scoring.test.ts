@@ -167,9 +167,11 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "code-review", {
+        description: "code-review skill for reviewing pull requests",
         searchText: "code-review skill for reviewing pull requests",
       });
       insertTestEntry(db, "deploy-prod", {
+        description: "deploy-prod deploy to production servers",
         searchText: "deploy-prod deploy to production servers",
       });
       rebuildFts(db);
@@ -187,12 +189,15 @@ describe("searchFts — hyphenated identifier search (Issue #2)", () => {
     const db = openDatabase(tmpDbPath());
     try {
       insertTestEntry(db, "deploy-tool", {
+        description: "deploy applications to production servers",
         searchText: "deploy applications to production servers",
       });
       insertTestEntry(db, "code-tool", {
+        description: "code linting and formatting tool",
         searchText: "code linting and formatting tool",
       });
       insertTestEntry(db, "review-tool", {
+        description: "review pull requests and merge code",
         searchText: "review pull requests and merge code",
       });
       rebuildFts(db);

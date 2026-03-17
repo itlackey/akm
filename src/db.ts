@@ -34,7 +34,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 6;
+export const DB_VERSION = 7;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -169,13 +169,17 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
-  // FTS5 table — standalone with explicit entry_id for joining
+  // FTS5 table — multi-column with per-field weighting via bm25()
   const ftsExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_fts'").get();
   if (!ftsExists) {
     db.exec(`
       CREATE VIRTUAL TABLE entries_fts USING fts5(
         entry_id UNINDEXED,
-        search_text,
+        name,
+        description,
+        tags,
+        hints,
+        content,
         tokenize='porter unicode61'
       );
     `);
@@ -316,9 +320,35 @@ export function rebuildFts(db: Database): void {
   // never left empty between the two statements if a crash occurs.
   // HI-14: Store the integer id directly (FTS5 stores all content as text
   // internally; the join in searchFts compares numerically without CAST).
+  //
+  // S-3: Insert into separate FTS5 columns by extracting per-field text from
+  // the entry_json using buildSearchFields(). The entries.search_text column
+  // is kept as a concatenated fallback for embedding generation.
+  const { buildSearchFields } = require("./indexer") as typeof import("./indexer");
+
   db.transaction(() => {
     db.exec("DELETE FROM entries_fts");
-    db.exec("INSERT INTO entries_fts (entry_id, search_text) SELECT id, search_text FROM entries");
+
+    const rows = db.prepare("SELECT id, entry_json FROM entries").all() as Array<{
+      id: number;
+      entry_json: string;
+    }>;
+
+    const insertStmt = db.prepare(
+      "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+
+    for (const row of rows) {
+      let entry: import("./metadata").StashEntry;
+      try {
+        entry = JSON.parse(row.entry_json) as import("./metadata").StashEntry;
+      } catch {
+        console.warn(`[db] rebuildFts: skipping entry id=${row.id} — corrupt entry_json`);
+        continue;
+      }
+      const fields = buildSearchFields(entry);
+      insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+    }
   })();
 }
 
@@ -408,10 +438,11 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   let params: unknown[];
 
   // HI-14: Join on integer entry_id directly (no CAST needed; we store integer)
+  // S-3: Use bm25() with per-column weights: entry_id(0), name(10), description(5), tags(3), hints(2), content(1)
   if (entryType && entryType !== "any") {
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
-             bm25(entries_fts) AS bm25Score
+             bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
@@ -423,7 +454,7 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   } else {
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
-             bm25(entries_fts) AS bm25Score
+             bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?

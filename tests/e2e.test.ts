@@ -20,7 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { loadStashFile } from "../src/metadata";
 import { akmSearch } from "../src/stash-search";
@@ -1274,7 +1274,7 @@ describe("Scenario: Index persistence across sessions", () => {
 
     const db = openDatabase();
     const version = getMeta(db, "version");
-    expect(version).toBe("6");
+    expect(version).toBe(String(DB_VERSION));
     const storedStashDir = getMeta(db, "stashDir");
     expect(storedStashDir).toBe(stashDir);
     const entries = getAllEntries(db);

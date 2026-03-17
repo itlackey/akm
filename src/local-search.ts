@@ -302,11 +302,8 @@ async function searchDatabase(
       boostSum += Math.min(0.24, hintBoost);
     }
 
-    // Name boost
-    const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ");
-    if (queryTokens.some((t) => nameLower.includes(t))) {
-      boostSum += 0.1;
-    }
+    // S-3: Name boost removed — FTS5 multi-column bm25() weights now handle
+    // name-match ranking natively via the 10.0 weight on the name column.
 
     // Quality boost (Issue #1: moved from buildDbHit to single-phase)
     const qualityBoost = entry.quality === "generated" ? 0 : 0.05;
