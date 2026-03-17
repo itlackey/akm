@@ -290,8 +290,12 @@ async function indexEntries(
       deleteEntriesByDir(db, dirPath);
 
       if (stash) {
+        // Build a lookup for matching filename-less entries to actual files
+        const fileBasenameMap = buildFileBasenameMap(files);
         for (const entry of stash.entries) {
-          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+          const entryPath = entry.filename
+            ? path.join(dirPath, entry.filename)
+            : matchEntryToFile(entry.name, fileBasenameMap, files);
           const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
@@ -458,6 +462,44 @@ async function enhanceStashWithLlm(
     }
   }
   return { entries: enhanced };
+}
+
+/**
+ * Build a map from base filename (without extension) to full path for quick lookups.
+ */
+function buildFileBasenameMap(files: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const file of files) {
+    const base = path.basename(file, path.extname(file));
+    // Only keep first match per base name to avoid ambiguity
+    if (!map.has(base)) map.set(base, file);
+  }
+  return map;
+}
+
+/**
+ * Try to match a filename-less entry to an actual file in the directory.
+ *
+ * Matching strategy (in priority order):
+ *   1. Exact basename match: entry.name === filename without extension
+ *   2. Last path segment match: for entries with names like "dir/sub-entry",
+ *      try matching the last segment
+ *   3. Fallback: first file in the directory (existing behavior)
+ */
+function matchEntryToFile(entryName: string, fileMap: Map<string, string>, files: string[]): string {
+  // Exact match on entry name
+  const exact = fileMap.get(entryName);
+  if (exact) return exact;
+
+  // Try last segment for hierarchical names (e.g. "corpus/agentic-patterns/foo")
+  const lastSegment = entryName.split("/").pop() ?? entryName;
+  if (lastSegment !== entryName) {
+    const segmentMatch = fileMap.get(lastSegment);
+    if (segmentMatch) return segmentMatch;
+  }
+
+  // Fallback to first file
+  return files[0] || "";
 }
 
 export function buildSearchText(entry: StashEntry): string {

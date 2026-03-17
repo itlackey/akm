@@ -171,7 +171,14 @@ async function searchDatabase(
   if (!query) {
     const typeFilter = searchType === "any" ? undefined : searchType;
     const allEntries = getAllEntries(db, typeFilter);
-    const selected = allEntries.slice(0, limit);
+    // Deduplicate by file path — multiple entries can share the same file
+    const seenFilePaths = new Set<string>();
+    const uniqueEntries = allEntries.filter((ie) => {
+      if (seenFilePaths.has(ie.filePath)) return false;
+      seenFilePaths.add(ie.filePath);
+      return true;
+    });
+    const selected = uniqueEntries.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -294,9 +301,16 @@ async function searchDatabase(
   }
 
   scored.sort((a, b) => b.score - a.score);
+
+  // Deduplicate by file path — keep only the highest-scored entry per file.
+  // Multiple .stash.json entries can map to the same file (e.g. entries without
+  // a filename field all collapse to files[0]). Showing the same path/ref
+  // multiple times clutters results.
+  const deduped = deduplicateByPath(scored);
+
   const rankMs = Date.now() - tRank0;
 
-  const selected = scored.slice(0, limit);
+  const selected = deduped.slice(0, limit);
   const hits = await Promise.all(
     selected.map(({ entry, filePath, score, rankingMode }) =>
       buildDbHit({
@@ -360,11 +374,10 @@ async function substringSearch(
   const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
   if (!query) {
+    const sorted = matched.sort(compareAssets);
+    const unique = deduplicateAssetsByPath(sorted);
     return Promise.all(
-      matched
-        .sort(compareAssets)
-        .slice(0, limit)
-        .map((asset) => assetToSearchHit(asset, query, stashDir, sources, config)),
+      unique.slice(0, limit).map((asset) => assetToSearchHit(asset, query, stashDir, sources, config)),
     );
   }
 
@@ -372,8 +385,13 @@ async function substringSearch(
   const scored = matched.map((asset) => ({ asset, score: scoreSubstringMatch(asset.entry, query) }));
   scored.sort((a, b) => b.score - a.score || compareAssets(a.asset, b.asset));
 
+  // Deduplicate by path — keep highest-scored entry per file
+  const dedupedScored = deduplicateByPath(scored.map((s) => ({ ...s, filePath: s.asset.path })));
+
   return Promise.all(
-    scored.slice(0, limit).map(({ asset, score }) => assetToSearchHit(asset, query, stashDir, sources, config, score)),
+    dedupedScored
+      .slice(0, limit)
+      .map(({ asset, score }) => assetToSearchHit(asset, query, stashDir, sources, config, score)),
   );
 }
 
@@ -568,9 +586,24 @@ async function indexAssets(stashDir: string, type: AkmSearchType): Promise<Index
       stash = generated;
     }
 
+    // Build a lookup for matching filename-less entries to actual files
+    const fileBasenameMap = new Map<string, string>();
+    for (const file of files) {
+      const base = path.basename(file, path.extname(file));
+      if (!fileBasenameMap.has(base)) fileBasenameMap.set(base, file);
+    }
     for (const entry of stash.entries) {
       if (filterType && entry.type !== filterType) continue;
-      const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+      let entryPath: string;
+      if (entry.filename) {
+        entryPath = path.join(dirPath, entry.filename);
+      } else {
+        // Try matching entry name to a file by basename
+        entryPath =
+          fileBasenameMap.get(entry.name) ??
+          fileBasenameMap.get(entry.name.split("/").pop() ?? "") ??
+          (files[0] || dirPath);
+      }
       assets.push({ entry, path: entryPath });
     }
   }
@@ -581,4 +614,29 @@ async function indexAssets(stashDir: string, type: AkmSearchType): Promise<Index
 function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
   if (a.entry.type !== b.entry.type) return a.entry.type.localeCompare(b.entry.type);
   return a.entry.name.localeCompare(b.entry.name);
+}
+
+/**
+ * Deduplicate scored results by file path, keeping only the highest-scored
+ * entry per unique path. The input must already be sorted by score descending.
+ */
+function deduplicateByPath<T extends { filePath: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.filePath)) return false;
+    seen.add(item.filePath);
+    return true;
+  });
+}
+
+/**
+ * Deduplicate IndexedAsset[] by path, keeping the first (highest-priority) entry.
+ */
+function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
+  const seen = new Set<string>();
+  return assets.filter((asset) => {
+    if (seen.has(asset.path)) return false;
+    seen.add(asset.path);
+    return true;
+  });
 }
