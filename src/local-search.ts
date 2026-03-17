@@ -10,7 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { _setAssetTypeHooks, deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "./asset-registry";
+import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import {
   closeDatabase,
@@ -37,39 +38,6 @@ type IndexedAsset = {
   entry: StashEntry;
   path: string;
 };
-
-// ── Type renderer/action maps (re-exported so stash-search.ts can register) ──
-
-/** Map asset types to their primary renderer names. */
-export const TYPE_TO_RENDERER: Record<string, string> = {
-  script: "script-source",
-  skill: "skill-md",
-  command: "command-md",
-  agent: "agent-md",
-  knowledge: "knowledge-md",
-  memory: "memory-md",
-};
-
-export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
-  script: (ref) => `akm show ${ref} -> execute the run command`,
-  skill: (ref) => `akm show ${ref} -> follow the instructions`,
-  command: (ref) => `akm show ${ref} -> fill placeholders and dispatch`,
-  agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
-  knowledge: (ref) => `akm show ${ref} -> read reference material`,
-  memory: (ref) => `akm show ${ref} -> recall context`,
-};
-
-// Wire asset-spec's deferred hooks so that registerAssetType() automatically
-// populates TYPE_TO_RENDERER and ACTION_BUILDERS when the optional spec fields
-// rendererName / actionBuilder are provided.
-_setAssetTypeHooks(
-  (type, rendererName) => {
-    TYPE_TO_RENDERER[type] = rendererName;
-  },
-  (type, builder) => {
-    ACTION_BUILDERS[type] = builder;
-  },
-);
 
 export async function rendererForType(type: string) {
   const name = TYPE_TO_RENDERER[type];

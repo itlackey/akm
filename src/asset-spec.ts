@@ -1,4 +1,5 @@
 import path from "node:path";
+import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { toPosix } from "./common";
 
 export interface AssetSpec {
@@ -8,14 +9,14 @@ export interface AssetSpec {
   toAssetPath: (typeRoot: string, name: string) => string;
   /**
    * Optional renderer name to use for this asset type in search results and show.
-   * If provided, calling `registerAssetType` will automatically call
-   * `registerTypeRenderer(type, rendererName)` in stash-search.ts.
+   * If provided, calling `registerAssetType` will automatically populate
+   * `TYPE_TO_RENDERER` in the asset-registry singleton.
    */
   rendererName?: string;
   /**
    * Optional action builder for this asset type in search results.
-   * If provided, calling `registerAssetType` will automatically call
-   * `registerActionBuilder(type, actionBuilder)` in stash-search.ts.
+   * If provided, calling `registerAssetType` will automatically populate
+   * `ACTION_BUILDERS` in the asset-registry singleton.
    */
   actionBuilder?: (ref: string) => string;
 }
@@ -81,33 +82,6 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;
 
 /**
- * Deferred hooks set by `local-search.ts` at module init time to avoid a
- * circular dependency (asset-spec → local-search → asset-spec).
- *
- * When `registerAssetType` is called with a spec that includes `rendererName`
- * or `actionBuilder`, these hooks are invoked automatically so callers only
- * need a single `registerAssetType(type, spec)` call to fully register a new
- * asset type — no separate `registerTypeRenderer`/`registerActionBuilder` calls
- * are required.
- */
-let _registerTypeRenderer: ((type: string, rendererName: string) => void) | undefined;
-let _registerActionBuilder: ((type: string, builder: (ref: string) => string) => void) | undefined;
-
-/**
- * Called once by `local-search.ts` during module initialization to wire in the
- * renderer and action-builder registration hooks.
- *
- * @internal — not part of the public extension API; use `registerAssetType` instead.
- */
-export function _setAssetTypeHooks(
-  rendererHook: (type: string, rendererName: string) => void,
-  actionBuilderHook: (type: string, builder: (ref: string) => string) => void,
-): void {
-  _registerTypeRenderer = rendererHook;
-  _registerActionBuilder = actionBuilderHook;
-}
-
-/**
  * Register a custom asset type with the akm asset system.
  *
  * ## Full extension registration API
@@ -138,9 +112,8 @@ export function _setAssetTypeHooks(
  * });
  * ```
  *
- * If `rendererName` or `actionBuilder` is provided but the hooks have not yet
- * been wired (i.e. `local-search.ts` has not been imported), the values are
- * stored in the spec and will take effect once the hooks are set.
+ * Renderer and action builder registration is handled directly via the
+ * `asset-registry` singleton — no deferred hooks or import-order concerns.
  */
 export function registerAssetType(type: string, spec: AssetSpec): void {
   ASSET_SPECS_INTERNAL[type] = spec;
@@ -148,11 +121,11 @@ export function registerAssetType(type: string, spec: AssetSpec): void {
   ASSET_TYPES = getAssetTypes();
 
   // Auto-register renderer and action builder if provided in spec
-  if (spec.rendererName && _registerTypeRenderer) {
-    _registerTypeRenderer(type, spec.rendererName);
+  if (spec.rendererName) {
+    registerTypeRenderer(type, spec.rendererName);
   }
-  if (spec.actionBuilder && _registerActionBuilder) {
-    _registerActionBuilder(type, spec.actionBuilder);
+  if (spec.actionBuilder) {
+    registerActionBuilder(type, spec.actionBuilder);
   }
 }
 
