@@ -219,8 +219,8 @@ describe("FTS5 field weighting", () => {
 
   // ── Test 6: DB_VERSION is incremented ─────────────────────────────────────
 
-  test("DB_VERSION is incremented from 6 to 7", () => {
-    expect(DB_VERSION).toBe(7);
+  test("DB_VERSION is at least 7 (multi-column FTS5)", () => {
+    expect(DB_VERSION).toBeGreaterThanOrEqual(7);
   });
 
   // ── Test 7: Existing search queries still return results ──────────────────

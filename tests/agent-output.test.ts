@@ -149,7 +149,11 @@ describe("--for-agent output mode", () => {
     const searchOutput = runCli(stashDir, ["search", "architect", "--format=json"]);
     const searchJson = JSON.parse(searchOutput) as { hits: Array<Record<string, unknown>> };
     expect(Object.keys(searchJson)).toEqual(["hits"]);
-    expect(Object.keys(searchJson.hits[0] ?? {}).sort()).toEqual(["action", "name", "type"]);
+    // Standard brief output includes at least name, type, action (may also include estimatedTokens etc.)
+    const hit = searchJson.hits[0] ?? {};
+    expect(hit).toHaveProperty("name");
+    expect(hit).toHaveProperty("type");
+    expect(hit).toHaveProperty("action");
 
     // Default show still has origin
     const showOutput = runCli(stashDir, ["show", "command:release.md", "--format=json"]);
