@@ -225,6 +225,23 @@ export type KnowledgeView =
   | { mode: "section"; heading: string }
   | { mode: "lines"; start: number; end: number };
 
+// ── Manifest types ──────────────────────────────────────────────────────────
+
+/** Compact entry returned by `akm manifest` for cheap capability discovery. */
+export interface ManifestEntry {
+  name: string;
+  type: string;
+  ref: string;
+  description?: string;
+}
+
+/** Response shape for `akm manifest`. */
+export interface ManifestResponse {
+  schemaVersion: number;
+  entries: ManifestEntry[];
+  count: number;
+}
+
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
