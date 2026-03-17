@@ -1,6 +1,6 @@
 ---
 title: Your Agent Doesn't Know What the Community Already Figured Out
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/posts/akm-logo-sized.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/docs/posts/akm-logo-sized.webp'
 series: akm
 description: How to connect your agent to curated community knowledge with the Context Hub integration
 tags:
