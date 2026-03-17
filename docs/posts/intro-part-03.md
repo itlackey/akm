@@ -10,6 +10,7 @@ tags:
   - cli
   - skills
 published: true
+date: '2026-03-17T16:07:09Z'
 ---
 
 This is part three in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about why progressive disclosure beats loading everything into context. In [part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them), I showed how `akm` unifies your existing Claude Code, OpenCode, and Cursor assets into one searchable stash.
