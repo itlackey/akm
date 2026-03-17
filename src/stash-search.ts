@@ -162,6 +162,9 @@ export async function akmSearch(input: {
  * Fire-and-forget: log a search event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
  */
+// TODO: Pass the existing DB connection from the search/show path
+// instead of opening a second connection. Not a correctness issue
+// (WAL mode handles concurrent access) but wasteful.
 function logSearchEvent(query: string, response: SearchResponse): void {
   try {
     const db = openDatabase();

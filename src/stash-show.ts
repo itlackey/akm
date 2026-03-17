@@ -45,6 +45,7 @@ export async function akmShowUnified(input: {
 
   // Default: local filesystem show
   const result = await showLocal(input);
+  // Log only successful shows; not-found errors throw before reaching here.
   logShowEvent(ref);
   return result;
 }
@@ -53,6 +54,9 @@ export async function akmShowUnified(input: {
  * Fire-and-forget: log a show event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
  */
+// TODO: Pass the existing DB connection from the search/show path
+// instead of opening a second connection. Not a correctness issue
+// (WAL mode handles concurrent access) but wasteful.
 function logShowEvent(ref: string): void {
   try {
     const db = openDatabase();

@@ -43,6 +43,7 @@ export function ensureUsageEventsSchema(db: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
     CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
   `);
 }
 
@@ -91,7 +92,7 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const sql = `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, created_at
                FROM usage_events ${where}
-               ORDER BY created_at ASC`;
+               ORDER BY id ASC`;
 
   return db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
 }
