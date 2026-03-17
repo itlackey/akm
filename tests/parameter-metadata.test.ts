@@ -5,7 +5,7 @@ import path from "node:path";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
 import { akmIndex, buildSearchText } from "../src/indexer";
 import type { StashEntry } from "../src/metadata";
-import { generateMetadataFlat } from "../src/metadata";
+import { extractCommandParameters, generateMetadataFlat } from "../src/metadata";
 import { getDbPath } from "../src/paths";
 
 let testConfigDir = "";
@@ -391,5 +391,83 @@ describe("indexing pipeline with parameters", () => {
     const searchText = entries[0].searchText;
     expect(searchText).toContain("registry_url");
     closeDatabase(db);
+  });
+});
+
+// ── Test 10: Knowledge articles should NOT have command parameters extracted ──
+
+describe("knowledge articles skip command parameter extraction", () => {
+  test("knowledge article with {{variable}} should NOT have parameters extracted", async () => {
+    const stashDir = tmpStash();
+    writeFile(
+      path.join(stashDir, "knowledge", "template-guide.md"),
+      [
+        "---",
+        'description: "Template syntax guide"',
+        "---",
+        "# Template Guide",
+        "",
+        "Use {{variable}} placeholders in your templates.",
+        "For example: {{project_name}} and {{region}}.",
+      ].join("\n"),
+    );
+
+    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "knowledge", "template-guide.md")]);
+
+    expect(result.entries.length).toBe(1);
+    expect(result.entries[0].type).toBe("knowledge");
+    // Knowledge articles should NOT have command parameters extracted
+    expect(result.entries[0].parameters).toBeUndefined();
+  });
+
+  test("knowledge article with frontmatter params should still have parameters", async () => {
+    const stashDir = tmpStash();
+    writeFile(
+      path.join(stashDir, "knowledge", "config-ref.md"),
+      [
+        "---",
+        'description: "Configuration reference"',
+        "params:",
+        "  api_key: Your API key",
+        "---",
+        "# Configuration",
+        "",
+        "Set {{api_key}} in your config file.",
+      ].join("\n"),
+    );
+
+    const result = await generateMetadataFlat(stashDir, [path.join(stashDir, "knowledge", "config-ref.md")]);
+
+    expect(result.entries.length).toBe(1);
+    expect(result.entries[0].type).toBe("knowledge");
+    // Frontmatter params: should still be extracted for all types
+    expect(result.entries[0].parameters).toBeDefined();
+    expect(result.entries[0].parameters?.length).toBe(1);
+    expect(result.entries[0].parameters?.[0].name).toBe("api_key");
+    // But {{api_key}} from the body should NOT be extracted (not a command)
+  });
+});
+
+// ── Test 11: Positional regex should not match $10 as $1 ─────────────────
+
+describe("positional parameter boundary matching", () => {
+  test("$10 should not produce a $1 parameter", () => {
+    const params = extractCommandParameters("Process $10 items");
+    expect(params).toBeUndefined();
+  });
+
+  test("$1 followed by non-digit is still matched", () => {
+    const params = extractCommandParameters("Deploy $1 to $2");
+    expect(params).toBeDefined();
+    expect(params?.length).toBe(2);
+    expect(params?.[0].name).toBe("$1");
+    expect(params?.[1].name).toBe("$2");
+  });
+
+  test("$1 at end of string is matched", () => {
+    const params = extractCommandParameters("Deploy $1");
+    expect(params).toBeDefined();
+    expect(params?.length).toBe(1);
+    expect(params?.[0].name).toBe("$1");
   });
 });

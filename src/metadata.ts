@@ -178,7 +178,7 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
         if (typeof rec.type === "string" && rec.type.trim()) param.type = rec.type.trim();
         if (typeof rec.description === "string" && rec.description.trim()) param.description = rec.description.trim();
         if (typeof rec.required === "boolean") param.required = rec.required;
-        if (typeof rec.default === "string") param.default = rec.default;
+        if (typeof rec.default === "string" && rec.default.trim().length > 0) param.default = rec.default;
         return param;
       });
     if (validated.length > 0) result.parameters = validated;
@@ -209,11 +209,11 @@ function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
 export function extractCommandParameters(template: string): AssetParameter[] | undefined {
   const params: AssetParameter[] = [];
 
-  if (/\$ARGUMENTS\b/i.test(template)) {
+  if (/\$ARGUMENTS\b/.test(template)) {
     params.push({ name: "ARGUMENTS" });
   }
 
-  for (const match of template.matchAll(/\$([1-9])/g)) {
+  for (const match of template.matchAll(/\$([1-9])(?!\d)/g)) {
     const name = `$${match[1]}`;
     if (!params.some((p) => p.name === name)) {
       params.push({ name });
@@ -236,12 +236,13 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
  * Supports both JSDoc-style (`/** ... * /`) and hash-style (`# @param ...`)
  * comments. Optionally captures `{type}` annotations.
  */
-export function extractScriptParameters(filePath: string): AssetParameter[] | undefined {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return undefined;
+export function extractScriptParameters(filePath: string, content?: string): AssetParameter[] | undefined {
+  if (content === undefined) {
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return undefined;
+    }
   }
 
   const lines = content.split(/\r?\n/).slice(0, 50);
@@ -367,9 +368,11 @@ export async function generateMetadata(
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
-      const cmdParams = extractCommandParameters(parsed.content);
-      if (cmdParams) {
-        entry.parameters = mergeParameters(entry.parameters, cmdParams);
+      if (entry.type === "command") {
+        const cmdParams = extractCommandParameters(parsed.content);
+        if (cmdParams) {
+          entry.parameters = mergeParameters(entry.parameters, cmdParams);
+        }
       }
     }
 
@@ -476,15 +479,17 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
-      const cmdParams = extractCommandParameters(parsed.content);
-      if (cmdParams) {
-        entry.parameters = mergeParameters(entry.parameters, cmdParams);
+      if (entry.type === "command") {
+        const cmdParams = extractCommandParameters(parsed.content);
+        if (cmdParams) {
+          entry.parameters = mergeParameters(entry.parameters, cmdParams);
+        }
       }
     }
 
     // Extract @param from script files
     if (ext !== ".md") {
-      const scriptParams = extractScriptParameters(file);
+      const scriptParams = extractScriptParameters(file, ctx.content());
       if (scriptParams) entry.parameters = scriptParams;
     }
 
