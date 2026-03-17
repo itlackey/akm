@@ -228,3 +228,17 @@ export interface UpgradeResponse {
   checksumVerified?: boolean;
   message?: string;
 }
+
+export interface InfoResponse {
+  version: string;
+  assetTypes: string[];
+  searchModes: string[];
+  registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
+  stashProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
+  indexStats: {
+    entryCount: number;
+    lastBuiltAt: string | null;
+    hasEmbeddings: boolean;
+    vecAvailable: boolean;
+  };
+}

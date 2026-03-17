@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config"
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
+import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
@@ -463,6 +464,16 @@ const indexCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const result = await akmIndex({ full: args.full });
       output("index", result);
+    });
+  },
+});
+
+const infoCommand = defineCommand({
+  meta: { name: "info", description: "Show system capabilities, configuration, and index stats as JSON" },
+  run() {
+    return runWithJsonErrors(() => {
+      const result = assembleInfo();
+      output("info", result);
     });
   },
 });
@@ -1029,6 +1040,7 @@ const main = defineCommand({
     setup: setupCommand,
     init: initCommand,
     index: indexCommand,
+    info: infoCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
