@@ -137,6 +137,31 @@ function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
   return !!config.endpoint && (config.endpoint.startsWith("http://") || config.endpoint.startsWith("https://"));
 }
 
+// ── LRU embedding cache ─────────────────────────────────────────────────────
+// Caches query embeddings to avoid redundant computation for repeated queries.
+// Uses a simple Map with LRU eviction (delete + re-insert to move to end).
+
+const EMBED_CACHE_MAX = 100;
+const embedCache = new Map<string, EmbeddingVector>();
+
+/**
+ * Build a cache key from query text and optional config.
+ * Different endpoints/models should not share cached embeddings.
+ * apiKey deliberately excluded: same endpoint+model produce identical embeddings regardless of auth
+ */
+function embedCacheKey(text: string, config?: EmbeddingConnectionConfig): string {
+  if (!config) return `local:${text}`;
+  return `${config.endpoint}:${config.model}:${text}`;
+}
+
+/**
+ * Clear the embedding cache. Call when the embedding model changes
+ * or when you want to force fresh embeddings.
+ */
+export function clearEmbeddingCache(): void {
+  embedCache.clear();
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -144,12 +169,38 @@ function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
  * If embeddingConfig has a remote endpoint, uses the configured OpenAI-compatible endpoint.
  * Otherwise falls back to local @xenova/transformers using the model from
  * `embeddingConfig.localModel` or `DEFAULT_LOCAL_MODEL`.
+ *
+ * Results are cached in an LRU cache (max ~100 entries) keyed by query text
+ * and embedding config. Repeated identical queries return the cached vector.
  */
 export async function embed(text: string, embeddingConfig?: EmbeddingConnectionConfig): Promise<EmbeddingVector> {
-  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    return embedRemote(text, embeddingConfig);
+  const key = embedCacheKey(text, embeddingConfig);
+
+  // Check cache first
+  const cached = embedCache.get(key);
+  if (cached) {
+    // Move to end (most recently used) for LRU ordering
+    embedCache.delete(key);
+    embedCache.set(key, cached);
+    return cached;
   }
-  return embedLocal(text, embeddingConfig?.localModel);
+
+  // Compute the embedding
+  const result =
+    embeddingConfig && hasRemoteEndpoint(embeddingConfig)
+      ? await embedRemote(text, embeddingConfig)
+      : await embedLocal(text, embeddingConfig?.localModel);
+
+  // Evict oldest entry if at capacity
+  if (embedCache.size >= EMBED_CACHE_MAX) {
+    const oldest = embedCache.keys().next().value;
+    if (oldest !== undefined) {
+      embedCache.delete(oldest);
+    }
+  }
+
+  embedCache.set(key, result);
+  return result;
 }
 
 // ── Batch embedding ─────────────────────────────────────────────────────────
