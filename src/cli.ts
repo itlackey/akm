@@ -28,15 +28,16 @@ import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
 
-type OutputFormat = "json" | "yaml" | "text";
+type OutputFormat = "json" | "yaml" | "text" | "jsonl";
 type DetailLevel = "brief" | "normal" | "full" | "summary";
 
 interface OutputMode {
   format: OutputFormat;
   detail: DetailLevel;
+  forAgent: boolean;
 }
 
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
+const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
@@ -82,16 +83,28 @@ function parseFlagValue(flag: string): string | undefined {
   return undefined;
 }
 
+// Uses process.argv directly because the global output() function (called by all
+// commands) needs this flag but doesn't have access to citty's parsed args.
+function hasBooleanFlag(flag: string): boolean {
+  return process.argv.some((arg) => arg === flag || arg === `${flag}=true`);
+}
+
 function resolveOutputMode(): OutputMode {
   const config = loadConfig();
   const format = parseOutputFormat(parseFlagValue("--format")) ?? config.output?.format ?? "json";
   const detail = parseDetailLevel(parseFlagValue("--detail")) ?? config.output?.detail ?? "brief";
-  return { format, detail };
+  const forAgent = hasBooleanFlag("--for-agent");
+  return { format, detail, forAgent };
 }
 
 function output(command: string, result: unknown): void {
   const mode = resolveOutputMode();
-  const shaped = shapeForCommand(command, result, mode.detail);
+  const shaped = shapeForCommand(command, result, mode.detail, mode.forAgent);
+
+  if (mode.format === "jsonl") {
+    outputJsonl(command, shaped);
+    return;
+  }
 
   switch (mode.format) {
     case "json":
@@ -108,22 +121,48 @@ function output(command: string, result: unknown): void {
   }
 }
 
-function shapeForCommand(command: string, result: unknown, detail: DetailLevel): unknown {
+function outputJsonl(command: string, shaped: unknown): void {
+  if (command === "search" || command === "registry-search") {
+    const r = shaped as Record<string, unknown>;
+    const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
+    for (const hit of hits) {
+      console.log(JSON.stringify(hit));
+    }
+    return;
+  }
+  // For non-search commands, output the whole object as a single JSONL line
+  console.log(JSON.stringify(shaped));
+}
+
+function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
   switch (command) {
     case "search":
-      return shapeSearchOutput(result as Record<string, unknown>, detail);
+      return shapeSearchOutput(result as Record<string, unknown>, detail, forAgent);
     case "registry-search":
       return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
-      return shapeShowOutput(result as Record<string, unknown>, detail);
+      return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
     default:
       return result;
   }
 }
 
-function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+function shapeSearchOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+  forAgent = false,
+): Record<string, unknown> {
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const shapedHits = hits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedHits = forAgent
+    ? hits.map((hit) => shapeSearchHitForAgent(hit))
+    : hits.map((hit) => shapeSearchHit(hit, detail));
+
+  if (forAgent) {
+    return {
+      hits: shapedHits,
+      ...(result.tip ? { tip: result.tip } : {}),
+    };
+  }
 
   if (detail === "full") {
     return {
@@ -198,6 +237,12 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
   return hit;
 }
 
+/** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
+function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
+  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score"]);
+  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
+}
+
 function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
   if (typeof hit.description !== "string") return hit;
   return { ...hit, description: truncateDescription(hit.description, limit) };
@@ -213,7 +258,29 @@ function truncateDescription(description: string, limit: number): string {
   return `${safe.trimEnd()}...`;
 }
 
-function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+function shapeShowOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+  forAgent = false,
+): Record<string, unknown> {
+  if (forAgent) {
+    return pickFields(result, [
+      "type",
+      "name",
+      "description",
+      "action",
+      "content",
+      "template",
+      "prompt",
+      "run",
+      "setup",
+      "cwd",
+      "toolPolicy",
+      "modelHint",
+      "agent",
+      "parameters",
+    ]);
+  }
   if (detail === "summary") {
     return pickFields(result, ["type", "name", "description", "tags", "parameters", "action", "run", "origin"]);
   }
@@ -487,7 +554,7 @@ const searchCommand = defineCommand({
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
-    format: { type: "string", description: "Output format (json|text|yaml)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
   },
   async run({ args }) {
@@ -628,7 +695,7 @@ const showCommand = defineCommand({
   },
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
-    format: { type: "string", description: "Output format (json|text|yaml)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
     akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
     akmHeading: { type: "string", description: "Internal positional section heading parser" },
@@ -1170,7 +1237,7 @@ function buildHint(message: string): string | undefined {
   if (message.includes("remote package fetched but asset not found"))
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
-  if (message.includes("Invalid value for --format")) return "Pick one of: json, text, yaml.";
+  if (message.includes("Invalid value for --format")) return "Pick one of: json, jsonl, text, yaml.";
   if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary.";
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
@@ -1213,7 +1280,7 @@ function normalizeShowArgv(argv: string[]): string[] {
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q") {
+    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
       globalFlags.push(arg);
       continue;
     }
@@ -1328,8 +1395,9 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`script\`, \`memory\`, \`any\` | \`any\` |
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
-| \`--format\` | \`json\`, \`text\`, \`yaml\` | \`json\` |
+| \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
 | \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
+| \`--for-agent\` | boolean | \`false\` |
 
 ## Show
 
@@ -1431,12 +1499,14 @@ akm completions --install                     # Install completions
 All commands accept \`--format\` and \`--detail\` flags:
 
 - \`--format json\` (default) — structured JSON
+- \`--format jsonl\` — one JSON object per line (streaming-friendly)
 - \`--format text\` — human-readable plain text
 - \`--format yaml\` — YAML output
 - \`--detail brief\` (default) — compact output
 - \`--detail normal\` — adds tags, refs, origins
 - \`--detail full\` — includes scores, paths, timing, debug info
 - \`--detail summary\` — metadata only (no content/template/prompt), under 200 tokens
+- \`--for-agent\` — agent-optimized output: strips non-actionable fields (takes precedence over \`--detail\`)
 
 Run \`akm -h\` or \`akm <command> -h\` for per-command help.
 `;
