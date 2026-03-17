@@ -559,6 +559,12 @@ export function buildSearchFields(entry: StashEntry): {
   if (entry.toc) {
     contentParts.push(entry.toc.map((h) => h.text).join(" "));
   }
+  if (entry.parameters) {
+    for (const param of entry.parameters) {
+      contentParts.push(param.name);
+      if (param.description) contentParts.push(param.description);
+    }
+  }
   const content = contentParts.join(" ").toLowerCase();
 
   return { name, description, tags, hints, content };

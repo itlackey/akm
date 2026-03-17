@@ -15,6 +15,14 @@ export interface StashIntent {
   output?: string;
 }
 
+export interface AssetParameter {
+  name: string;
+  type?: string;
+  description?: string;
+  required?: boolean;
+  default?: string;
+}
+
 export interface StashEntry {
   name: string;
   type: string;
@@ -38,6 +46,8 @@ export interface StashEntry {
   cwd?: string;
   /** File size in bytes for output sizing hints */
   fileSize?: number;
+  /** Structured parameter definitions extracted from the asset content */
+  parameters?: AssetParameter[];
 }
 
 export interface StashFile {
@@ -155,6 +165,24 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
   if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
   if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
+  if (Array.isArray(e.parameters)) {
+    const validated = e.parameters
+      .filter((p: unknown): p is AssetParameter => {
+        if (typeof p !== "object" || p === null) return false;
+        const rec = p as Record<string, unknown>;
+        return typeof rec.name === "string" && rec.name.trim().length > 0;
+      })
+      .map((p: unknown) => {
+        const rec = p as Record<string, unknown>;
+        const param: AssetParameter = { name: (rec.name as string).trim() };
+        if (typeof rec.type === "string" && rec.type.trim()) param.type = rec.type.trim();
+        if (typeof rec.description === "string" && rec.description.trim()) param.description = rec.description.trim();
+        if (typeof rec.required === "boolean") param.required = rec.required;
+        if (typeof rec.default === "string" && rec.default.trim().length > 0) param.default = rec.default;
+        return param;
+      });
+    if (validated.length > 0) result.parameters = validated;
+  }
 
   return result;
 }
@@ -170,6 +198,121 @@ function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   return filtered.length > 0 ? filtered : undefined;
+}
+
+// ── Parameter Extraction ─────────────────────────────────────────────────────
+
+/**
+ * Extract structured parameters from a command template containing
+ * `$ARGUMENTS`, `$1`-`$9`, or `{{named}}` placeholders.
+ */
+export function extractCommandParameters(template: string): AssetParameter[] | undefined {
+  const params: AssetParameter[] = [];
+
+  if (/\$ARGUMENTS\b/.test(template)) {
+    params.push({ name: "ARGUMENTS" });
+  }
+
+  for (const match of template.matchAll(/\$([1-9])(?!\d)/g)) {
+    const name = `$${match[1]}`;
+    if (!params.some((p) => p.name === name)) {
+      params.push({ name });
+    }
+  }
+
+  for (const match of template.matchAll(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g)) {
+    const name = match[1];
+    if (!params.some((p) => p.name === name)) {
+      params.push({ name });
+    }
+  }
+
+  return params.length > 0 ? params : undefined;
+}
+
+/**
+ * Extract `@param` JSDoc tags from a script file's leading comment block.
+ *
+ * Supports both JSDoc-style (`/** ... * /`) and hash-style (`# @param ...`)
+ * comments. Optionally captures `{type}` annotations.
+ */
+export function extractScriptParameters(filePath: string, content?: string): AssetParameter[] | undefined {
+  if (content === undefined) {
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return undefined;
+    }
+  }
+
+  const lines = content.split(/\r?\n/).slice(0, 50);
+  const params: AssetParameter[] = [];
+
+  // Match @param lines in any comment style:
+  // JSDoc:  * @param {string} name - description
+  // JSDoc:  * @param name - description
+  // Hash:   # @param name - description
+  const paramRegex = /^[\s/*#;-]*@param\s+(?:\{([^}]+)\}\s+)?(\w+)(?:\s+-\s+(.+))?/;
+
+  for (const line of lines) {
+    const match = line.match(paramRegex);
+    if (match) {
+      const param: AssetParameter = { name: match[2] };
+      if (match[1]) param.type = match[1].trim();
+      if (match[3]) param.description = match[3].trim();
+      params.push(param);
+    }
+  }
+
+  return params.length > 0 ? params : undefined;
+}
+
+/**
+ * Extract parameters from frontmatter `params:` key.
+ *
+ * The frontmatter parser produces a nested object for `params:` like:
+ * ```
+ * { region: "AWS region to deploy to", instance_type: "EC2 instance type" }
+ * ```
+ */
+export function extractFrontmatterParameters(fmData: Record<string, unknown>): AssetParameter[] | undefined {
+  const paramsRaw = fmData.params;
+  if (typeof paramsRaw !== "object" || paramsRaw === null || Array.isArray(paramsRaw)) return undefined;
+
+  const paramsObj = paramsRaw as Record<string, unknown>;
+  const params: AssetParameter[] = [];
+
+  for (const [key, value] of Object.entries(paramsObj)) {
+    const param: AssetParameter = { name: key };
+    if (typeof value === "string" && value.trim()) {
+      param.description = value.trim();
+    }
+    params.push(param);
+  }
+
+  return params.length > 0 ? params : undefined;
+}
+
+/**
+ * Merge two parameter lists, deduplicating by name.
+ * Parameters from `additional` are appended only if their name is not already present.
+ */
+function mergeParameters(
+  existing: AssetParameter[] | undefined,
+  additional: AssetParameter[] | undefined,
+): AssetParameter[] | undefined {
+  if (!additional || additional.length === 0) return existing;
+  if (!existing || existing.length === 0) return additional;
+
+  const names = new Set(existing.map((p) => p.name));
+  const merged = [...existing];
+  for (const param of additional) {
+    if (!names.has(param.name)) {
+      merged.push(param);
+      names.add(param.name);
+    }
+  }
+  return merged;
 }
 
 // ── Metadata Generation ─────────────────────────────────────────────────────
@@ -213,12 +356,30 @@ export async function generateMetadata(
 
     // Priority 2: Frontmatter (for .md files -- overrides package.json description)
     if (ext === ".md") {
-      const fm = extractFrontmatterDescription(file);
+      const content = fs.readFileSync(file, "utf8");
+      const parsed = parseFrontmatter(content);
+      const fm = toStringOrUndefined(parsed.data.description);
       if (fm) {
         entry.description = fm;
         entry.source = "frontmatter";
         entry.confidence = 0.9;
       }
+      // Extract parameters from frontmatter params: key
+      const fmParams = extractFrontmatterParameters(parsed.data);
+      if (fmParams) entry.parameters = fmParams;
+      // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
+      if (entry.type === "command") {
+        const cmdParams = extractCommandParameters(parsed.content);
+        if (cmdParams) {
+          entry.parameters = mergeParameters(entry.parameters, cmdParams);
+        }
+      }
+    }
+
+    // Extract @param from script files
+    if (ext !== ".md") {
+      const scriptParams = extractScriptParameters(file);
+      if (scriptParams) entry.parameters = scriptParams;
     }
 
     // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for scripts)
@@ -306,12 +467,30 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
 
     // Frontmatter
     if (ext === ".md") {
-      const fm = extractFrontmatterDescription(file);
+      const content = ctx.content();
+      const parsed = parseFrontmatter(content);
+      const fm = toStringOrUndefined(parsed.data.description);
       if (fm) {
         entry.description = fm;
         entry.source = "frontmatter";
         entry.confidence = 0.9;
       }
+      // Extract parameters from frontmatter params: key
+      const fmParams = extractFrontmatterParameters(parsed.data);
+      if (fmParams) entry.parameters = fmParams;
+      // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
+      if (entry.type === "command") {
+        const cmdParams = extractCommandParameters(parsed.content);
+        if (cmdParams) {
+          entry.parameters = mergeParameters(entry.parameters, cmdParams);
+        }
+      }
+    }
+
+    // Extract @param from script files
+    if (ext !== ".md") {
+      const scriptParams = extractScriptParameters(file, ctx.content());
+      if (scriptParams) entry.parameters = scriptParams;
     }
 
     // Renderer metadata extraction
