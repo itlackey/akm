@@ -53,6 +53,8 @@ interface OutputMode {
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
+const CONTEXT_HUB_ALIAS_REF = "context-hub";
+const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 
 /** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
 interface BunWithYAML {
@@ -491,6 +493,15 @@ const addCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (args.ref.trim() === CONTEXT_HUB_ALIAS_REF) {
+        const result = addStash({
+          target: CONTEXT_HUB_ALIAS_URL,
+          providerType: "context-hub",
+          name: "context-hub",
+        });
+        output("stash-add", result);
+        return;
+      }
       const result = await akmAdd({ ref: args.ref });
       output("add", result);
     });
@@ -1188,6 +1199,7 @@ akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries for installable kits
 akm show <ref>                                # View asset details
 akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
+akm add context-hub                           # Shortcut for adding Context Hub as a stash provider
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
 akm registry search "<query>"                 # Search all registries
 \`\`\`
@@ -1259,6 +1271,7 @@ akm add <ref>                                 # Install a kit (smart router: loc
 akm add @scope/kit                            # From npm
 akm add owner/repo                            # From GitHub
 akm add ./path/to/local/kit                   # From local directory (adds as stash)
+akm add context-hub                           # Add the official Context Hub stash
 akm kit add <ref>                             # Install a kit (explicit)
 akm kit list                                  # List installed kits
 akm kit remove <target>                       # Remove a kit

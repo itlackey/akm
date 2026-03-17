@@ -81,7 +81,7 @@ class ContextHubStashProvider implements StashProvider {
     const relFromContent = path.posix.normalize(
       path.relative(path.join(repoDir, "content"), resolved).replace(/\\/g, "/"),
     );
-    const author = relFromContent.split("/")[0] ?? "unknown";
+    const author = sanitizeString(relFromContent.split("/")[0] ?? "") || "unknown";
     const name = sanitizeString(toStringOrUndefined(parsed.data.name) ?? path.basename(path.dirname(resolved)));
     const description = sanitizeString(toStringOrUndefined(parsed.data.description), 1000);
     const assetType = path.basename(resolved) === "SKILL.md" ? "skill" : "knowledge";
@@ -111,7 +111,7 @@ class ContextHubStashProvider implements StashProvider {
 
   private async loadRepoDir(): Promise<string> {
     const cachePaths = getCachePaths(this.repo.canonicalUrl);
-    await ensureContextHubMirror(this.repo, cachePaths);
+    await ensureContextHubMirror(this.repo, cachePaths, { requireRepoDir: true });
     return cachePaths.repoDir;
   }
 }
@@ -137,9 +137,11 @@ function getCachePaths(repoUrl: string): {
 async function ensureContextHubMirror(
   repo: ParsedRepoUrl,
   cachePaths: ReturnType<typeof getCachePaths>,
+  options?: { requireRepoDir?: boolean },
 ): Promise<{ entries: ContextHubEntry[] }> {
+  const requireRepoDir = options?.requireRepoDir === true;
   const cached = readCachedIndex(cachePaths.indexPath);
-  if (cached && !isExpired(cached.mtime, CACHE_TTL_MS)) {
+  if (cached && !isExpired(cached.mtime, CACHE_TTL_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
     return { entries: cached.entries };
   }
 
@@ -151,10 +153,22 @@ async function ensureContextHubMirror(
     writeCachedIndex(cachePaths.indexPath, entries);
     return { entries };
   } catch (err) {
-    if (cached && !isExpired(cached.mtime, CACHE_STALE_MS)) {
+    if (
+      cached &&
+      !isExpired(cached.mtime, CACHE_STALE_MS) &&
+      (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))
+    ) {
       return { entries: cached.entries };
     }
     throw err;
+  }
+}
+
+function hasExtractedRepo(repoDir: string): boolean {
+  try {
+    return fs.statSync(repoDir).isDirectory() && fs.statSync(path.join(repoDir, "content")).isDirectory();
+  } catch {
+    return false;
   }
 }
 

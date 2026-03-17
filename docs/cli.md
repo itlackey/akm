@@ -145,9 +145,16 @@ akm add github:owner/repo#v1.2.3
 akm add https://github.com/owner/repo
 akm add git+https://gitlab.com/org/kit
 akm add ./path/to/local/kit
+akm add context-hub
 ```
 
 See [registry.md](registry.md) for the full install flow.
+
+`akm add context-hub` is a convenience alias for:
+
+```sh
+akm stash add https://github.com/andrewyng/context-hub --provider context-hub
+```
 
 ### list
 

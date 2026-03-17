@@ -73,6 +73,29 @@ Chain multiple prompts together.
   return archivePath;
 }
 
+function buildContextHubArchiveWithAuthor(author: string): string {
+  const repoDir = path.join(createTmpDir("akm-context-hub-author-repo-"), "context-hub-main");
+
+  writeFile(
+    path.join(repoDir, "content", author, "docs", "chat-api", "python", "DOC.md"),
+    `---
+name: chat-api
+description: "Python chat completions reference"
+metadata:
+  languages: "python"
+  versions: "1.1.0"
+---
+# Chat API
+
+Sanitized author test.
+`,
+  );
+
+  const archivePath = path.join(createTmpDir("akm-context-hub-author-archive-"), "context-hub-main.tar.gz");
+  createTarball(repoDir, archivePath);
+  return archivePath;
+}
+
 function mockArchiveFetch(archivePath: string): () => void {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -193,6 +216,56 @@ describe("ContextHubStashProvider", () => {
       expect(showResult.content).toContain("# Prompt Chaining");
       expect(showResult.editable).toBe(false);
       expect(showResult.origin).toBe("context-hub");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test("show sanitizes author names derived from cached repo paths", async () => {
+    const archivePath = buildContextHubArchiveWithAuthor("open\tai");
+    const restoreFetch = mockArchiveFetch(archivePath);
+
+    try {
+      const provider = getFactory()({
+        type: "context-hub",
+        url: "https://github.com/andrewyng/context-hub",
+        name: "context-hub",
+      }) as ContextHubStashProvider;
+
+      const result = await provider.show(makeContextHubRef("content/open\tai/docs/chat-api/python/DOC.md"));
+      expect(result.name).toBe("openai/chat-api");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test("show refreshes the mirror when the cached repo directory is missing", async () => {
+    const archivePath = buildContextHubArchive();
+    const restoreFetch = mockArchiveFetch(archivePath);
+
+    try {
+      const provider = getFactory()({
+        type: "context-hub",
+        url: "https://github.com/andrewyng/context-hub",
+        name: "context-hub",
+      }) as ContextHubStashProvider;
+
+      const searchResult = await provider.search({ query: "openai chat", limit: 10 });
+      expect(searchResult.hits.some((entry) => entry.name === "openai/chat-api")).toBe(true);
+
+      const cacheHome = process.env.XDG_CACHE_HOME;
+      expect(cacheHome).toBeDefined();
+      if (!cacheHome) throw new Error("Expected XDG_CACHE_HOME to be set in test");
+      const cacheRoot = path.join(cacheHome, "akm", "registry-index");
+      const mirrorDir = fs.readdirSync(cacheRoot).find((entry) => entry.startsWith("context-hub-"));
+      expect(mirrorDir).toBeDefined();
+      if (!mirrorDir) throw new Error("Expected context-hub cache directory to exist");
+
+      fs.rmSync(path.join(cacheRoot, mirrorDir, "repo"), { recursive: true, force: true });
+
+      const showResult = await provider.show(makeContextHubRef("content/openai/docs/chat-api/python/DOC.md"));
+      expect(showResult.name).toBe("openai/chat-api");
+      expect(showResult.content).toContain("# Chat API");
     } finally {
       restoreFetch();
     }
