@@ -324,6 +324,8 @@ export function rebuildFts(db: Database): void {
   // S-3: Insert into separate FTS5 columns by extracting per-field text from
   // the entry_json using buildSearchFields(). The entries.search_text column
   // is kept as a concatenated fallback for embedding generation.
+  // Lazy require() to avoid a circular module dependency:
+  // indexer.ts imports from db.ts, so a static import here would create a cycle.
   const { buildSearchFields } = require("./indexer") as typeof import("./indexer");
 
   db.transaction(() => {
@@ -340,13 +342,14 @@ export function rebuildFts(db: Database): void {
 
     for (const row of rows) {
       let entry: import("./metadata").StashEntry;
+      let fields: ReturnType<typeof buildSearchFields>;
       try {
         entry = JSON.parse(row.entry_json) as import("./metadata").StashEntry;
+        fields = buildSearchFields(entry);
       } catch {
-        console.warn(`[db] rebuildFts: skipping entry id=${row.id} — corrupt entry_json`);
+        console.warn(`[db] rebuildFts: skipping entry id=${row.id} — invalid entry_json`);
         continue;
       }
-      const fields = buildSearchFields(entry);
       insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
     }
   })();
