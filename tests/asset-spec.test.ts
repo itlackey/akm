@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
 import {
   ASSET_SPECS,
   ASSET_TYPES,
@@ -10,9 +11,6 @@ import {
   SCRIPT_EXTENSIONS,
   TYPE_DIRS,
 } from "../src/asset-spec";
-// Import local-search to wire the deferred hooks (_setAssetTypeHooks) so that
-// registerAssetType automatically populates TYPE_TO_RENDERER and ACTION_BUILDERS.
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/local-search";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -176,8 +174,8 @@ describe("resolveAssetPathFromName", () => {
 // ── R3.17: registerAssetType — single-call full registration ────────────────
 //
 // When `registerAssetType` is called with `rendererName` and `actionBuilder`
-// in the spec, it should automatically wire those into TYPE_TO_RENDERER and
-// ACTION_BUILDERS (via the deferred hooks set by local-search.ts).
+// in the spec, it should automatically populate TYPE_TO_RENDERER and
+// ACTION_BUILDERS via the asset-registry singleton.
 // This means callers need only one `registerAssetType` call to fully integrate
 // a new asset type with the search and renderer systems.
 

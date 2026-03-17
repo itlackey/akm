@@ -1,5 +1,6 @@
+import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { loadConfig } from "./config";
-import { ACTION_BUILDERS, buildLocalAction, rendererForType, searchLocal, TYPE_TO_RENDERER } from "./local-search";
+import { buildLocalAction, rendererForType, searchLocal } from "./local-search";
 import { resolveStashProviders } from "./stash-provider-factory";
 
 // Eagerly import stash providers to trigger self-registration
@@ -151,18 +152,8 @@ export async function akmSearch(input: {
 // Re-export searchLocal so existing callers (filesystem.ts) still work via this module
 export { searchLocal };
 
-// ── Type renderer and action builder registration ────────────────────────────
-
-export function registerTypeRenderer(type: string, rendererName: string): void {
-  TYPE_TO_RENDERER[type] = rendererName;
-}
-
-export function registerActionBuilder(type: string, builder: (ref: string) => string): void {
-  ACTION_BUILDERS[type] = builder;
-}
-
 // Re-export for consumers that were already importing from stash-search
-export { buildLocalAction, rendererForType };
+export { buildLocalAction, rendererForType, registerTypeRenderer, registerActionBuilder };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
