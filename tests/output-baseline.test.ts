@@ -97,7 +97,7 @@ describe("output baseline", () => {
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(Object.keys(json)).toEqual(["hits"]);
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "name", "type"]);
+    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "type"]);
   });
 
   test("search normal detail includes description capped at 250 characters", () => {

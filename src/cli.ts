@@ -483,7 +483,7 @@ const searchCommand = defineCommand({
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
     format: { type: "string", description: "Output format (json|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -624,7 +624,7 @@ const showCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
     akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
     akmHeading: { type: "string", description: "Internal positional section heading parser" },
     akmStart: { type: "string", description: "Internal positional start-line parser" },
@@ -1102,7 +1102,7 @@ function buildHint(message: string): string | undefined {
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
   if (message.includes("Invalid value for --format")) return "Pick one of: json, text, yaml.";
-  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full.";
+  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary.";
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
   }
@@ -1260,7 +1260,7 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
 | \`--format\` | \`json\`, \`text\`, \`yaml\` | \`json\` |
-| \`--detail\` | \`brief\`, \`normal\`, \`full\` | \`brief\` |
+| \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
 
 ## Show
 
@@ -1367,6 +1367,7 @@ All commands accept \`--format\` and \`--detail\` flags:
 - \`--detail brief\` (default) — compact output
 - \`--detail normal\` — adds tags, refs, origins
 - \`--detail full\` — includes scores, paths, timing, debug info
+- \`--detail summary\` — metadata only (no content/template/prompt), under 200 tokens
 
 Run \`akm -h\` or \`akm <command> -h\` for per-command help.
 `;

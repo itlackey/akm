@@ -135,6 +135,10 @@ export async function showLocal(input: {
  * type, name, path, description, tags, parameters, action.
  * Enriches description and tags from frontmatter or .stash.json when available.
  *
+ * Enrichment via frontmatter and .stash.json is only performed when `assetPath`
+ * is supplied (local assets). Remote provider responses (e.g. OpenViking) rely
+ * on the provider having already populated description and tags.
+ *
  * The resulting JSON should be under 200 tokens.
  */
 function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowResponse {
@@ -147,9 +151,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     const textContent = full.content ?? full.template ?? full.prompt;
     if (textContent && !description) {
       const parsed = parseFrontmatter(textContent);
-      if (!description) {
-        description = toStringOrUndefined(parsed.data.description);
-      }
+      description = toStringOrUndefined(parsed.data.description);
     }
 
     // Try .stash.json for richer metadata (tags especially)

@@ -559,6 +559,7 @@ async function assetToSearchHit(
   const ref = makeAssetRef(asset.entry.type, asset.entry.name, source?.registryId);
   const fileSize = readFileSize(asset.path);
   const size = deriveSize(fileSize);
+  const estimatedTokens = typeof fileSize === "number" ? Math.round(fileSize / 4) : undefined;
   const hit: StashSearchHit = {
     type: asset.entry.type,
     name: asset.entry.name,
@@ -574,6 +575,7 @@ async function assetToSearchHit(
     ...(size ? { size } : {}),
     action: buildLocalAction(asset.entry.type, ref),
     ...(score !== undefined ? { score } : {}),
+    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
   const renderer = await rendererForType(asset.entry.type);
   if (renderer?.enrichSearchHit) {

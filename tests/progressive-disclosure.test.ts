@@ -330,13 +330,15 @@ describe("summary show for different asset types", () => {
     expect(result.content).toBeUndefined();
   });
 
-  test("script summary omits content and run details", async () => {
+  test("script summary omits content", async () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy");
     saveConfig({ semanticSearch: false });
 
     const result = await akmShow({ ref: "script:deploy.sh", detail: "summary" });
     expect(result.type).toBe("script");
     expect(result.content).toBeUndefined();
+    // Summary preserves run (action metadata) but omits content body
+    expect(result.run).toBeDefined();
   });
 
   test("knowledge summary omits content", async () => {
