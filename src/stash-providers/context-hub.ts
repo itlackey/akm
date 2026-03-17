@@ -117,6 +117,7 @@ class ContextHubStashProvider implements StashProvider {
 }
 
 registerStashProvider("context-hub", (config) => new ContextHubStashProvider(config));
+registerStashProvider("github", (config) => new ContextHubStashProvider(config));
 
 function getCachePaths(repoUrl: string): {
   rootDir: string;

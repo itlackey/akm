@@ -425,6 +425,19 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
  * - installed-kits : Management of kits already installed locally
  */
 
+const setupCommand = defineCommand({
+  meta: {
+    name: "setup",
+    description: "Interactive configuration wizard for embeddings, LLM, registries, and stash sources",
+  },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const { runSetupWizard } = await import("./setup");
+      await runSetupWizard();
+    });
+  },
+});
+
 const initCommand = defineCommand({
   meta: {
     name: "init",
@@ -1013,6 +1026,7 @@ const main = defineCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
+    setup: setupCommand,
     init: initCommand,
     index: indexCommand,
     add: addCommand,
