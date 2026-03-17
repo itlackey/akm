@@ -97,8 +97,10 @@ function parseFlagValue(flag: string): string | undefined {
   return undefined;
 }
 
+// Uses process.argv directly because the global output() function (called by all
+// commands) needs this flag but doesn't have access to citty's parsed args.
 function hasBooleanFlag(flag: string): boolean {
-  return process.argv.includes(flag);
+  return process.argv.some((arg) => arg === flag || arg === `${flag}=true`);
 }
 
 function resolveOutputMode(): OutputMode {
@@ -251,7 +253,8 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
 
 /** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
 function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  return pickFields(hit, ["name", "ref", "type", "description", "action", "score"]);
+  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score"]);
+  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
 }
 
 function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
@@ -544,11 +547,6 @@ const searchCommand = defineCommand({
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full)" },
-    forAgent: {
-      type: "boolean",
-      description: "Agent-optimized output: only name, ref, type, description, action, score",
-      default: false,
-    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -690,11 +688,6 @@ const showCommand = defineCommand({
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full)" },
-    forAgent: {
-      type: "boolean",
-      description: "Agent-optimized output: only essential fields for LLM consumption",
-      default: false,
-    },
     akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
     akmHeading: { type: "string", description: "Internal positional section heading parser" },
     akmStart: { type: "string", description: "Internal positional start-line parser" },
@@ -1211,7 +1204,7 @@ function normalizeShowArgv(argv: string[]): string[] {
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent") {
+    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
       globalFlags.push(arg);
       continue;
     }
@@ -1436,7 +1429,7 @@ All commands accept \`--format\` and \`--detail\` flags:
 - \`--detail brief\` (default) — compact output
 - \`--detail normal\` — adds tags, refs, origins
 - \`--detail full\` — includes scores, paths, timing, debug info
-- \`--for-agent\` — agent-optimized output: strips non-actionable fields
+- \`--for-agent\` — agent-optimized output: strips non-actionable fields (takes precedence over \`--detail\`)
 
 Run \`akm -h\` or \`akm <command> -h\` for per-command help.
 `;

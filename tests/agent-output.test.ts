@@ -38,7 +38,9 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
       XDG_CONFIG_HOME: xdgConfig,
     },
   });
-  expect(result.status).toBe(0);
+  if (result.status !== 0) {
+    throw new Error(`CLI exited ${result.status}:\n${result.stderr}`);
+  }
   return result.stdout.trim();
 }
 
