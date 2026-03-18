@@ -177,27 +177,47 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
 
-  // Reciprocal Rank Fusion (RRF) constant
-  const RRF_K = 60;
+  // ── Score normalization ──────────────────────────────────────────────
+  // BM25 scores from FTS5 are negative (lower = better match). We normalize
+  // them to a 0-1 range using min-max normalization so that boosts can
+  // produce meaningful differentiation. Embedding cosine similarities are
+  // already in 0-1 range.
+  //
+  // When both FTS and vector results exist, we combine them with weighted
+  // addition (FTS weight 0.7, vector weight 0.3) rather than RRF, which
+  // was destroying score differentiation by compressing everything to
+  // the narrow 0.0164-0.0139 range.
 
-  // Build FTS rank map: rank 1 = best BM25, rank 2 = second best, etc.
-  const ftsRankMap = new Map<number, { rank: number; result: DbSearchResult }>();
-  for (let i = 0; i < ftsResults.length; i++) {
-    const r = ftsResults[i];
-    ftsRankMap.set(r.id, { rank: i + 1, result: r });
-  }
+  // Normalize FTS BM25 scores to 0-1 range
+  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
+  if (ftsResults.length > 0) {
+    // BM25 scores are negative; most negative = best match
+    const bestBm25 = ftsResults[0].bm25Score; // most negative (best)
+    const worstBm25 = ftsResults[ftsResults.length - 1].bm25Score; // least negative (worst)
+    const range = bestBm25 - worstBm25; // negative range
 
-  // Build embedding rank map: sort by cosine similarity descending
-  const embedRankMap = new Map<number, number>();
-  if (embeddingScores) {
-    const sortedEmbeddings = [...embeddingScores.entries()].sort((a, b) => b[1] - a[1]);
-    for (let i = 0; i < sortedEmbeddings.length; i++) {
-      embedRankMap.set(sortedEmbeddings[i][0], i + 1);
+    for (const r of ftsResults) {
+      // Normalize: best match = 1.0, worst match approaches 0
+      // When range is 0 (all same score), all get 1.0
+      const normalized = range !== 0 ? (r.bm25Score - worstBm25) / range : 1.0;
+      // Scale to 0.3-1.0 range so even the worst FTS hit has a meaningful base score
+      const ftsScore = 0.3 + normalized * 0.7;
+      ftsScoreMap.set(r.id, { score: ftsScore, result: r });
     }
   }
 
-  // Merge results using RRF
-  // Issue #15: "hybrid" for results appearing in both FTS and vec results.
+  // Build embedding score map (cosine similarities already 0-1)
+  const embedScoreMap = new Map<number, number>();
+  if (embeddingScores) {
+    for (const [id, cosine] of embeddingScores) {
+      embedScoreMap.set(id, cosine);
+    }
+  }
+
+  // ── Combine FTS + vector scores ──────────────────────────────────────
+  const FTS_WEIGHT = 0.7;
+  const VEC_WEIGHT = 0.3;
+
   const scored: Array<{
     id: number;
     entry: StashEntry;
@@ -209,32 +229,33 @@ async function searchDatabase(
   const seenIds = new Set<number>();
 
   // Process FTS results
-  for (const [id, { rank, result }] of ftsRankMap) {
+  for (const [id, { score: ftsScore, result }] of ftsScoreMap) {
     seenIds.add(id);
-    const ftsRrf = 1 / (RRF_K + rank);
-    const embedRank = embedRankMap.get(id);
-    const embedRrf = embedRank !== undefined ? 1 / (RRF_K + embedRank) : 0;
-    const rrfScore = ftsRrf + embedRrf;
-    // Issue #15: combined FTS+vec results are "hybrid", not "semantic"
-    const rankingMode = embedRrf > 0 ? ("hybrid" as const) : ("fts" as const);
-    scored.push({ id, entry: result.entry, filePath: result.filePath, score: rrfScore, rankingMode });
+    const embedScore = embedScoreMap.get(id);
+    let combinedScore: number;
+    let rankingMode: "hybrid" | "fts";
+    if (embedScore !== undefined) {
+      combinedScore = ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT;
+      rankingMode = "hybrid";
+    } else {
+      combinedScore = ftsScore;
+      rankingMode = "fts";
+    }
+    scored.push({ id, entry: result.entry, filePath: result.filePath, score: combinedScore, rankingMode });
   }
 
   // Add vec-only results not already in FTS results
   if (embeddingScores) {
-    for (const [id] of embeddingScores) {
+    for (const [id, cosine] of embeddingScores) {
       if (seenIds.has(id)) continue;
-      const embedRank = embedRankMap.get(id);
-      if (embedRank === undefined) continue;
       const found = getEntryById(db, id);
       if (found) {
         if (typeFilter && found.entry.type !== typeFilter) continue;
-        const rrfScore = 1 / (RRF_K + embedRank);
         scored.push({
           id,
           entry: found.entry,
           filePath: found.filePath,
-          score: rrfScore,
+          score: cosine * VEC_WEIGHT, // Only vector score, no FTS
           rankingMode: "semantic",
         });
       }
