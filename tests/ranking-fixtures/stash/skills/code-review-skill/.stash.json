@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "name": "code-review-skill",
+      "type": "skill",
+      "description": "Review code for quality issues, bugs, and adherence to best practices",
+      "tags": ["review", "quality", "lint"],
+      "searchHints": ["review pull request", "check code quality", "code review best practices"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "semanticSearch": false,
+  "stashes": [{ "type": "filesystem", "path": "<will be overridden in tests>" }],
+  "registries": [],
+  "output": {
+    "format": "json",
+    "detail": "brief"
+  }
+}
