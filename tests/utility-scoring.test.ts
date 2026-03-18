@@ -16,7 +16,7 @@ import { akmIndex, recomputeUtilityScores } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
-import { recordUsageEvent } from "../src/usage-events";
+import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -635,5 +635,57 @@ describe("whyMatched includes usage history boost", () => {
     const resolved = expectDefined(hit);
     expect(resolved.whyMatched).toBeDefined();
     expect(resolved.whyMatched).toContain("usage history boost");
+  });
+});
+
+// ── Test 9: Production path end-to-end ───────────────────────────────────────
+
+describe("Production path end-to-end", () => {
+  test("index → search → usage_events have entry_id → recompute populates utility_scores", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(path.join(stashDir, "scripts", "e2e-tool", "e2e-tool.sh"), "#!/bin/bash\necho e2e\n");
+    writeFile(
+      path.join(stashDir, "scripts", "e2e-tool", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "e2e-tool",
+            type: "script",
+            description: "An end-to-end test tool for production validation",
+            filename: "e2e-tool.sh",
+          },
+        ],
+      }),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    // Search to trigger usage event logging
+    const result = await akmSearch({ query: "end-to-end test", source: "local" });
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    expect(localHits.length).toBeGreaterThan(0);
+
+    // Verify usage_events have entry_id
+    const dbPath = getDbPath();
+    const db = openDatabase(dbPath);
+    try {
+      const events = db
+        .prepare("SELECT entry_id FROM usage_events WHERE event_type = 'search' AND entry_id IS NOT NULL")
+        .all() as Array<{ entry_id: number }>;
+      expect(events.length).toBeGreaterThan(0);
+
+      // Recompute utility scores
+      recomputeUtilityScores(db);
+
+      // Verify utility_scores populated
+      const scores = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
+        entry_id: number;
+        utility: number;
+      }>;
+      expect(scores.length).toBeGreaterThan(0);
+    } finally {
+      closeDatabase(db);
+    }
   });
 });

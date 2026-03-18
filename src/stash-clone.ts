@@ -131,7 +131,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     }
   } else {
     const resolvedSource = path.resolve(sourcePath);
-    const resolvedDest = path.resolve(path.join(destRoot, typeDir, destName));
+    const sourceExt = path.extname(sourcePath);
+    const effectiveDestName = !path.extname(destName) && sourceExt ? destName + sourceExt : destName;
+    const resolvedDest = path.resolve(path.join(destRoot, typeDir, effectiveDestName));
     if (resolvedSource === resolvedDest) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }

@@ -1,16 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getAssetTypes } from "./asset-spec";
 
 // biome-ignore lint/suspicious/noExplicitAny: citty command tree uses dynamic shapes
 type AnyCmd = Record<string, any>;
 
 // ── Known flag values ────────────────────────────────────────────────────────
 
-const FLAG_VALUES: Record<string, string[]> = {
+const FLAG_VALUES: Record<string, string[] | (() => string[])> = {
   "--format": ["json", "text", "yaml"],
   "--detail": ["brief", "normal", "full"],
-  "--type": ["skill", "command", "agent", "knowledge", "script", "memory", "any"],
+  "--type": () => [...getAssetTypes(), "any"],
   "--source": ["stash", "registry", "both"],
   "--shell": ["bash"],
 };
@@ -83,7 +84,8 @@ export function generateBashCompletions(cmd: AnyCmd): string {
 
   // Build flag-value completion cases
   const valueCases: string[] = [];
-  for (const [flag, values] of Object.entries(FLAG_VALUES)) {
+  for (const [flag, valuesOrFn] of Object.entries(FLAG_VALUES)) {
+    const values = typeof valuesOrFn === "function" ? valuesOrFn() : valuesOrFn;
     valueCases.push(`    ${flag})
       COMPREPLY=( $(compgen -W "${values.join(" ")}" -- "\${cur}") )
       return 0

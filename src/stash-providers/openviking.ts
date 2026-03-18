@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry } from "../common";
@@ -7,13 +8,7 @@ import { getRegistryIndexCacheDir } from "../paths";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "../stash-types";
-
-/** Strip terminal control characters from untrusted strings. */
-function sanitizeString(value: unknown, maxLength = 255): string {
-  if (typeof value !== "string") return "";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip control chars from untrusted remote data
-  return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, maxLength);
-}
+import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Per-query cache TTL in milliseconds (5 minutes). */
 const QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -224,7 +219,7 @@ class OpenVikingStashProvider implements StashProvider {
 
   private queryCachePath(query: string, limit: number): string {
     const cacheDir = getRegistryIndexCacheDir();
-    const hasher = new Bun.CryptoHasher("md5");
+    const hasher = createHash("md5");
     hasher.update(this.config.url ?? "");
     hasher.update("\0");
     hasher.update(query.trim().toLowerCase());
@@ -368,10 +363,6 @@ function extractNameFromUri(uri: string): string {
   const segments = uriPath.split("/").filter(Boolean);
   const last = segments[segments.length - 1] ?? "unknown";
   return last.replace(/\.[^.]+$/, "");
-}
-
-function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
 }
 
 async function fetchOVJson(url: string, headers: Record<string, string>): Promise<unknown> {

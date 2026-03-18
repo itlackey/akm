@@ -118,7 +118,8 @@ export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;
 export function registerAssetType(type: string, spec: AssetSpec): void {
   ASSET_SPECS_INTERNAL[type] = spec;
   TYPE_DIRS[type] = spec.stashDir;
-  ASSET_TYPES = getAssetTypes();
+  ASSET_TYPES.length = 0;
+  ASSET_TYPES.push(...getAssetTypes());
 
   // Auto-register renderer and action builder if provided in spec
   if (spec.rendererName) {
@@ -133,8 +134,8 @@ export function getAssetTypes(): string[] {
   return Object.keys(ASSET_SPECS_INTERNAL);
 }
 
-/** Warning: mutable `let` — stale if captured before `registerAssetType()` calls. Prefer `getAssetTypes()`. */
-export let ASSET_TYPES: string[] = getAssetTypes();
+/** Warning: mutable array — stale if captured before `registerAssetType()` calls. Prefer `getAssetTypes()`. */
+export const ASSET_TYPES: string[] = getAssetTypes();
 
 export const TYPE_DIRS: Record<string, string> = Object.fromEntries(
   Object.entries(ASSET_SPECS_INTERNAL).map(([type, spec]) => [type, spec.stashDir]),

@@ -19,22 +19,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import {
-  closeDatabase,
-  getEntryCount,
-  getMeta,
-  openDatabase,
-  rebuildFts,
-  searchFts,
-  upsertEntry,
-  upsertUtilityScore,
-} from "../src/db";
-import { buildSearchFields, buildSearchText, recomputeUtilityScores } from "../src/indexer";
+import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/db";
+import { buildSearchFields, recomputeUtilityScores } from "../src/indexer";
 import { assembleInfo } from "../src/info";
 import { getDbPath } from "../src/paths";
 import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
-import { insertUsageEvent, recordUsageEvent } from "../src/usage-events";
+import { insertUsageEvent } from "../src/usage-events";
+import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 
@@ -749,7 +741,7 @@ const QUALITY_QUERIES: SearchQualityQuery[] = [
   },
 ];
 
-async function benchmarkSearchQuality(stashDir: string): Promise<{
+async function benchmarkSearchQuality(_stashDir: string): Promise<{
   mrr: number;
   recall_at_5: number;
   recall_at_10: number;
@@ -793,7 +785,7 @@ async function benchmarkSearchQuality(stashDir: string): Promise<{
 
 // ── Scenario 2: Search Performance ───────────────────────────────────────────
 
-async function benchmarkSearchPerformance(stashDir: string): Promise<{
+async function benchmarkSearchPerformance(_stashDir: string): Promise<{
   cold_ms: number;
   warm_ms: number;
   fts_only_ms: number;
@@ -1069,7 +1061,7 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
 
 // ── Scenario 5: Utility Scoring ──────────────────────────────────────────────
 
-async function benchmarkUtilityScoring(stashDir: string): Promise<{
+async function benchmarkUtilityScoring(_stashDir: string): Promise<{
   baseline_no_usage: boolean;
   boost_applied: boolean;
   decay_works: boolean;
@@ -1108,7 +1100,7 @@ async function benchmarkUtilityScoring(stashDir: string): Promise<{
 
       if (entries.length >= 2) {
         const boostedId = entries[0].id;
-        const baselineId = entries[1].id;
+        const _baselineId = entries[1].id;
 
         // Record usage events for the boosted entry
         for (let i = 0; i < 10; i++) {
@@ -1254,7 +1246,7 @@ async function benchmarkUtilityScoring(stashDir: string): Promise<{
   }
 
   return {
-    baseline_no_usage: !cases[0].passed ? false : true, // pass means no boost = correct
+    baseline_no_usage: !!cases[0].passed, // pass means no boost = correct
     boost_applied: boostApplied,
     decay_works: decayWorks,
     cap_works: capWorks,
@@ -1264,7 +1256,7 @@ async function benchmarkUtilityScoring(stashDir: string): Promise<{
 
 // ── Scenario 6: Feature Correctness ──────────────────────────────────────────
 
-async function benchmarkFeatureCorrectness(stashDir: string): Promise<{
+async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   fuzzy_works: boolean;
   field_weighting_correct: boolean;
   parameter_extraction: boolean;

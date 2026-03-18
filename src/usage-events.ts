@@ -1,5 +1,5 @@
 /**
- * Usage event helpers for telemetry (M-1) and utility-based re-ranking (M-2).
+ * Usage event helpers for telemetry and utility-based re-ranking.
  *
  * Schema (created by ensureUsageEventsSchema):
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, created_at
@@ -54,7 +54,7 @@ export function ensureUsageEventsSchema(db: Database): void {
   `);
 }
 
-// ── Insert (M-1) ────────────────────────────────────────────────────────────
+// ── Insert ───────────────────────────────────────────────────────────────────
 
 /**
  * Insert a usage event into the database. Fire-and-forget: errors are
@@ -78,7 +78,7 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
   }
 }
 
-// ── Query (M-1) ─────────────────────────────────────────────────────────────
+// ── Query ────────────────────────────────────────────────────────────────────
 
 /**
  * Retrieve usage events, optionally filtered by event_type and/or entry_ref.
@@ -104,70 +104,14 @@ export function getUsageEvents(db: Database, filters?: UsageEventFilters): Usage
   return db.prepare(sql).all(...(params as import("bun:sqlite").SQLQueryBindings[])) as UsageEventRow[];
 }
 
-// ── M-2: Utility scoring helpers ────────────────────────────────────────────
-
-/**
- * Get usage event counts for an entry, grouped by event type.
- */
-export function getUsageEventCounts(db: Database, entryId: number): { searchCount: number; showCount: number } {
-  try {
-    const rows = db
-      .prepare("SELECT event_type, COUNT(*) AS cnt FROM usage_events WHERE entry_id = ? GROUP BY event_type")
-      .all(entryId) as Array<{ event_type: string; cnt: number }>;
-
-    let searchCount = 0;
-    let showCount = 0;
-    for (const row of rows) {
-      if (row.event_type === "search") searchCount = row.cnt;
-      if (row.event_type === "show") showCount = row.cnt;
-    }
-    return { searchCount, showCount };
-  } catch {
-    return { searchCount: 0, showCount: 0 };
-  }
-}
-
-/**
- * Get the most recent created_at for any event on this entry.
- */
-export function getLastUsedAt(db: Database, entryId: number): string | undefined {
-  try {
-    const row = db.prepare("SELECT MAX(created_at) AS last_used FROM usage_events WHERE entry_id = ?").get(entryId) as
-      | { last_used: string | null }
-      | undefined;
-    return row?.last_used ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Record a usage event (used by M-2 tests and utility scoring).
- */
-export function recordUsageEvent(
-  db: Database,
-  event: {
-    eventType: "search" | "show";
-    entryId: number;
-    timestamp?: string;
-    query?: string;
-  },
-): void {
-  ensureUsageEventsSchema(db);
-  db.prepare("INSERT INTO usage_events (event_type, entry_id, query, created_at) VALUES (?, ?, ?, ?)").run(
-    event.eventType,
-    event.entryId,
-    event.query ?? null,
-    event.timestamp ?? new Date().toISOString(),
-  );
-}
-
 /**
  * Delete usage events older than the given number of days.
  */
 export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
   try {
-    db.prepare(`DELETE FROM usage_events WHERE created_at < datetime('now', '-${retentionDays} days')`).run();
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+    db.prepare("DELETE FROM usage_events WHERE created_at < ?").run(cutoff);
   } catch {
     /* Table may not exist yet */
   }

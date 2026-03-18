@@ -334,7 +334,7 @@ describe("Score boosts", () => {
     const resolvedHit = expectDefined(hit);
     expect(resolvedHit.whyMatched).toBeDefined();
     // Exact name match is now reported as "exact name match" or "near-exact name match"
-    const hasNameMatch = resolvedHit.whyMatched!.some((r) => r.includes("name match") || r.includes("name tokens"));
+    const hasNameMatch = resolvedHit.whyMatched?.some((r) => r.includes("name match") || r.includes("name tokens"));
     expect(hasNameMatch).toBe(true);
   });
 
@@ -529,10 +529,13 @@ describe("Source filtering", () => {
     saveConfig({ semanticSearch: false, registries: [] });
 
     const result = await akmSearch({ query: "deploy", source: "registry" });
-    // All hits (if any) should come from registry, not local
+    // Registry source puts results in registryHits, hits is empty
     expect(result.source).toBe("registry");
-    for (const hit of result.hits) {
-      expect(hit.type).toBe("registry");
+    expect(result.hits.length).toBe(0);
+    if (result.registryHits) {
+      for (const hit of result.registryHits) {
+        expect(hit.type).toBe("registry");
+      }
     }
   });
 

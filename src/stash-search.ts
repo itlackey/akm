@@ -1,7 +1,6 @@
-import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
-import { buildLocalAction, rendererForType, searchLocal } from "./local-search";
+import { searchLocal } from "./local-search";
 import { resolveStashProviders } from "./stash-provider-factory";
 
 // Eagerly import stash providers to trigger self-registration
@@ -54,7 +53,7 @@ export async function akmSearch(input: {
   const stashDir = sources[0].path;
 
   // Resolve additional stash providers (e.g. OpenViking) from config
-  const additionalStashProviders = resolveStashProviders(config);
+  const additionalStashProviders = resolveStashProviders(config).filter((p) => p.type !== "filesystem");
 
   const localResult =
     source === "registry"
@@ -68,9 +67,9 @@ export async function akmSearch(input: {
           config,
         });
 
-  // Query additional stash providers (e.g. OpenViking)
+  // Pass original case to providers — FTS5 requires lowercase but remote providers handle case themselves
   const additionalStashResults =
-    source === "registry" || additionalStashProviders.length === 0 || !query
+    source === "registry" || additionalStashProviders.length === 0
       ? []
       : await Promise.all(
           additionalStashProviders.map(async (provider) => {
@@ -125,13 +124,14 @@ export async function akmSearch(input: {
   });
 
   if (source === "registry") {
-    const hits = registryHits.slice(0, limit);
-    const hasResults = hits.length > 0;
+    const slicedRegistryHits = registryHits.slice(0, limit);
+    const hasResults = slicedRegistryHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
       stashDir,
       source,
-      hits,
+      hits: [],
+      registryHits: slicedRegistryHits,
       tip: hasResults ? undefined : "No matching registry entries were found.",
       warnings: registryResult?.warnings.length ? registryResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0 },
@@ -142,15 +142,15 @@ export async function akmSearch(input: {
 
   // source === "both"
   const allStashHits = mergeStashHits(localResult?.hits ?? [], additionalHits, limit * 2);
-  const mergedHits = mergeSearchHits(allStashHits, registryHits, limit);
   const warnings = [...(localResult?.warnings ?? []), ...additionalWarnings, ...(registryResult?.warnings ?? [])];
-  const hasResults = mergedHits.length > 0;
+  const hasResults = allStashHits.length > 0 || registryHits.length > 0;
 
   const response: SearchResponse = {
     schemaVersion: 1,
     stashDir,
     source,
-    hits: mergedHits,
+    hits: allStashHits.slice(0, limit),
+    registryHits,
     tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
@@ -160,49 +160,58 @@ export async function akmSearch(input: {
 }
 
 /**
+ * Resolve entry IDs by file_path lookup (exact match, not LIKE).
+ */
+function resolveEntryIds(
+  db: import("bun:sqlite").Database,
+  hits: StashSearchHit[],
+): Array<{ entryId: number; ref: string }> {
+  const results: Array<{ entryId: number; ref: string }> = [];
+  const stmt = db.prepare("SELECT id FROM entries WHERE file_path = ? LIMIT 1");
+  for (const hit of hits) {
+    try {
+      const row = stmt.get(hit.path) as { id: number } | undefined;
+      if (row) results.push({ entryId: row.id, ref: hit.ref });
+    } catch {
+      /* skip unresolvable */
+    }
+  }
+  return results;
+}
+
+/**
  * Fire-and-forget: log a search event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
  */
-// TODO: Pass the existing DB connection from the search/show path
-// instead of opening a second connection. Not a correctness issue
-// (WAL mode handles concurrent access) but wasteful.
-function logSearchEvent(query: string, response: SearchResponse): void {
+function logSearchEvent(query: string, response: SearchResponse, existingDb?: import("bun:sqlite").Database): void {
   try {
-    const db = openDatabase();
+    const db = existingDb ?? openDatabase();
     try {
-      const entryRefs = response.hits
-        .filter((h): h is StashSearchHit => h.type !== "registry")
-        .map((h) => h.ref)
-        .slice(0, 50);
+      const stashHits = response.hits.filter((h): h is StashSearchHit => h.type !== "registry").slice(0, 50);
+      const resolved = resolveEntryIds(db, stashHits);
+      for (const { entryId, ref } of resolved) {
+        insertUsageEvent(db, {
+          event_type: "search",
+          query,
+          entry_id: entryId,
+          entry_ref: ref,
+        });
+      }
       insertUsageEvent(db, {
         event_type: "search",
         query,
-        metadata: JSON.stringify({ resultCount: response.hits.length, entry_refs: entryRefs }),
+        metadata: JSON.stringify({ resultCount: response.hits.length, resolvedCount: resolved.length }),
       });
     } finally {
-      closeDatabase(db);
+      if (!existingDb) closeDatabase(db);
     }
   } catch {
     /* fire-and-forget */
   }
 }
 
-// Re-export searchLocal so existing callers (filesystem.ts) still work via this module
-export { searchLocal };
-
-// Re-export for consumers that were already importing from stash-search
-export { buildLocalAction, rendererForType, registerTypeRenderer, registerActionBuilder };
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Merge local and additional stash hits preserving local score quality.
- *
- * Local hits retain their original scores from the FTS+boost pipeline.
- * Provider-only hits are placed below the lowest local hit so they don't
- * displace well-ranked local results. Duplicates (same path) keep the
- * local version.
- */
 /**
  * Merge local and additional stash hits preserving local score quality.
  *
@@ -238,7 +247,7 @@ export function mergeStashHits(
   for (let i = 0; i < additionalHits.length; i++) {
     const key = additionalHits[i].path ?? additionalHits[i].ref ?? additionalHits[i].name;
     if (localKeys.has(key)) continue; // Local version wins
-    const providerScore = Math.max(0, minLocalScore * 0.9 - i * 0.0001);
+    const providerScore = minLocalScore <= 0 ? 0.01 - i * 0.0001 : Math.max(0, minLocalScore * 0.9 - i * 0.0001);
     providerOnly.push({
       ...additionalHits[i],
       score: Math.round(providerScore * 10000) / 10000,
@@ -265,29 +274,12 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
 }
 
 /**
- * Merge stash hits and registry hits, preserving local scores.
- *
- * Local stash hits retain their original scores. Registry hits are placed
- * after local hits with scores derived from their rank position, scaled
- * below the lowest local score. This ensures local results (which have
- * gone through the full FTS+boost pipeline) are not displaced by registry
- * results on a different score scale.
+ * Merge stash hits and registry hits via simple concatenation.
  */
 export function mergeSearchHits(
   localHits: StashSearchHit[],
   registryHits: RegistrySearchResultHit[],
   limit: number,
 ): SearchHit[] {
-  if (registryHits.length === 0) return localHits.slice(0, limit);
-  if (localHits.length === 0) return registryHits.slice(0, limit);
-
-  const minLocalScore = Math.min(...localHits.map((h) => h.score ?? 0));
-
-  // Registry hits get scores below the lowest local hit
-  const scoredRegistry: SearchHit[] = registryHits.map((hit, i) => ({
-    ...hit,
-    score: Math.round(Math.max(0, minLocalScore * 0.9 - i * 0.0001) * 10000) / 10000,
-  }));
-
-  return [...localHits, ...scoredRegistry].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+  return [...localHits, ...registryHits].slice(0, limit);
 }

@@ -8,6 +8,7 @@
  * stash-providers/filesystem.ts also imports `searchLocal` from here.
  */
 
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "./asset-registry";
@@ -123,7 +124,7 @@ export async function searchLocal(input: {
 // ── Database search ─────────────────────────────────────────────────────────
 
 async function searchDatabase(
-  db: import("bun:sqlite").Database,
+  db: Database,
   query: string,
   searchType: AkmSearchType,
   limit: number,
@@ -178,15 +179,8 @@ async function searchDatabase(
   const tRank0 = Date.now();
 
   // ── Score normalization ──────────────────────────────────────────────
-  // BM25 scores from FTS5 are negative (lower = better match). We normalize
-  // them to a 0-1 range using min-max normalization so that boosts can
-  // produce meaningful differentiation. Embedding cosine similarities are
-  // already in 0-1 range.
-  //
-  // When both FTS and vector results exist, we combine them with weighted
-  // addition (FTS weight 0.7, vector weight 0.3) rather than RRF, which
-  // was destroying score differentiation by compressing everything to
-  // the narrow 0.0164-0.0139 range.
+  // Normalized BM25 + cosine similarity with weighted addition
+  // (FTS 0.7, vector 0.3) for well-differentiated combined scores.
 
   // Normalize FTS BM25 scores to 0-1 range
   const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
@@ -217,6 +211,7 @@ async function searchDatabase(
   // ── Combine FTS + vector scores ──────────────────────────────────────
   const FTS_WEIGHT = 0.7;
   const VEC_WEIGHT = 0.3;
+  const MAX_BOOST_SUM = 3.0;
 
   const scored: Array<{
     id: number;
@@ -264,7 +259,7 @@ async function searchDatabase(
 
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
-  // so that sort order and displayed scores are always consistent — Issue #1).
+  // so that sort order and displayed scores are always consistent).
   //
   // Ranking philosophy: the goal is to surface the MOST USEFUL result for the
   // user's intent. An exact name match is the strongest signal. Actionable
@@ -377,16 +372,17 @@ async function searchDatabase(
       typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
     boostSum += confidenceBoost;
 
-    item.score = item.score * (1 + boostSum);
+    const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
+    item.score = item.score * (1 + cappedBoost);
   }
 
-  // M-2: Utility-based re-ranking (MemRL pattern).
+  // Utility-based re-ranking (MemRL pattern).
   // After the FTS+boost scoring pass, apply a multiplicative
   // utility factor based on aggregated usage telemetry.
-  // Issue #4: Batch-load all utility scores in one query to avoid N+1.
+  // Batch-load all utility scores in one query to avoid N+1.
   const UTILITY_WEIGHT = 0.5;
   const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
-  const RECENCY_HALF_LIFE_DAYS = 30;
+  const RECENCY_DECAY_DAYS = 30;
   const utilScoresMap = getUtilityScoresByIds(
     db,
     scored.map((s) => s.id),
@@ -399,7 +395,7 @@ async function searchDatabase(
       if (utilScore.lastUsedAt) {
         const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
         const daysSinceLastUse = Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
-        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_HALF_LIFE_DAYS);
+        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
       }
       // Compute raw utility boost and cap it
       const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
@@ -409,7 +405,7 @@ async function searchDatabase(
     }
   }
 
-  // Issue #14: deterministic tiebreaker on equal scores
+  // Deterministic tiebreaker on equal scores
   scored.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
@@ -426,7 +422,7 @@ async function searchDatabase(
       buildDbHit({
         entry,
         path: filePath,
-        // Issue #8: round to 4 decimal places instead of 2
+        // Round to 4 decimal places
         score: Math.round(score * 10000) / 10000,
         query,
         rankingMode,
@@ -445,7 +441,7 @@ async function searchDatabase(
 // ── Vector scorer ───────────────────────────────────────────────────────────
 
 async function tryVecScores(
-  db: import("bun:sqlite").Database,
+  db: Database,
   query: string,
   k: number,
   config: AkmConfig,
@@ -462,7 +458,7 @@ async function tryVecScores(
     const scores = new Map<number, number>();
     for (const { id, distance } of vecResults) {
       // Convert L2 distance to cosine similarity (vectors are normalized).
-      // Issue #3: guard against NaN/Infinity from sqlite-vec edge cases.
+      // Guard against NaN/Infinity from sqlite-vec edge cases.
       const raw = 1 - (distance * distance) / 2;
       scores.set(id, Number.isFinite(raw) ? Math.max(0, raw) : 0);
     }
@@ -489,9 +485,7 @@ async function substringSearch(
   if (!query) {
     const sorted = matched.sort(compareAssets);
     const unique = deduplicateAssetsByPath(sorted);
-    return Promise.all(
-      unique.slice(0, limit).map((asset) => assetToSearchHit(asset, query, stashDir, sources, config)),
-    );
+    return Promise.all(unique.slice(0, limit).map((asset) => assetToSearchHit(asset, stashDir, sources, config)));
   }
 
   // Score and sort by relevance
@@ -502,9 +496,7 @@ async function substringSearch(
   const dedupedScored = deduplicateByPath(scored.map((s) => ({ ...s, filePath: s.asset.path })));
 
   return Promise.all(
-    dedupedScored
-      .slice(0, limit)
-      .map(({ asset, score }) => assetToSearchHit(asset, query, stashDir, sources, config, score)),
+    dedupedScored.slice(0, limit).map(({ asset, score }) => assetToSearchHit(asset, stashDir, sources, config, score)),
   );
 }
 
@@ -545,13 +537,11 @@ export async function buildDbHit(input: {
   path: string;
   score: number;
   query: string;
-  // Issue #15: added "hybrid" for combined FTS+vec results
   rankingMode: "hybrid" | "semantic" | "fts";
   defaultStashDir: string;
   allStashDirs: string[];
   sources: SearchSource[];
   config?: AkmConfig;
-  // M-2: whether this entry received a utility boost
   utilityBoosted?: boolean;
 }): Promise<StashSearchHit> {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
@@ -559,14 +549,14 @@ export async function buildDbHit(input: {
   const refName =
     canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : input.entry.name;
 
-  // Issue #1: Quality and confidence boosts are now applied in the main scoring
+  // Quality and confidence boosts are now applied in the main scoring
   // phase (searchDatabase). buildDbHit receives the already-final score and
   // passes it through without further multiplication. We still compute the
   // boost values here for buildWhyMatched reporting.
   const qualityBoost = input.entry.quality === "generated" ? 0 : 0.05;
   const confidenceBoost =
     typeof input.entry.confidence === "number" ? Math.min(0.05, Math.max(0, input.entry.confidence) * 0.05) : 0;
-  // Issue #8: round to 4 decimal places, no boost multiplication
+  // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
   const whyMatched = buildWhyMatched(
@@ -611,14 +601,12 @@ export async function buildDbHit(input: {
 export function buildWhyMatched(
   entry: StashEntry,
   query: string,
-  // Issue #15: added "hybrid" ranking mode
+  // "hybrid" ranking mode
   rankingMode: "hybrid" | "semantic" | "fts",
   qualityBoost: number,
   confidenceBoost: number,
-  // M-2: whether this entry received a utility boost
   utilityBoosted?: boolean,
 ): string[] {
-  // Issue #15: "hybrid" label for combined FTS+vec results
   const reasons: string[] = [
     rankingMode === "hybrid"
       ? "hybrid (fts + semantic)"
@@ -663,7 +651,6 @@ export function buildWhyMatched(
 
 async function assetToSearchHit(
   asset: IndexedAsset,
-  _query: string,
   stashDir: string,
   sources: SearchSource[],
   config?: AkmConfig,
@@ -781,10 +768,10 @@ function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
 /**
  * Deduplicate scored results by file path, keeping only the highest-scored
  * entry per unique path. Sorts by score descending internally to ensure the
- * precondition is always met regardless of caller (Issue #4).
+ * precondition is always met regardless of caller.
  */
 function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
-  // Issue #4: sort inside to enforce the descending-score precondition
+  // Sort inside to enforce the descending-score precondition
   const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const seen = new Set<string>();
   return sorted.filter((item) => {

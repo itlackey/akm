@@ -47,6 +47,7 @@ export interface SearchResponse {
   stashDir: string;
   source: SearchSource;
   hits: SearchHit[];
+  registryHits?: RegistrySearchResultHit[];
   tip?: string;
   warnings?: string[];
   /** Timing counters in milliseconds */

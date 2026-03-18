@@ -54,19 +54,22 @@ export async function akmShowUnified(input: {
  * Fire-and-forget: log a show event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
  */
-// TODO: Pass the existing DB connection from the search/show path
-// instead of opening a second connection. Not a correctness issue
-// (WAL mode handles concurrent access) but wasteful.
-function logShowEvent(ref: string): void {
+function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
   try {
-    const db = openDatabase();
+    const db = existingDb ?? openDatabase();
     try {
+      const parsed = parseAssetRef(ref);
+      const safeName = parsed.name.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const row = db
+        .prepare("SELECT id FROM entries WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1")
+        .get(`%:${parsed.type}:${safeName}`, parsed.type) as { id: number } | undefined;
       insertUsageEvent(db, {
         event_type: "show",
         entry_ref: ref,
+        entry_id: row?.id,
       });
     } finally {
-      closeDatabase(db);
+      if (!existingDb) closeDatabase(db);
     }
   } catch {
     /* fire-and-forget */

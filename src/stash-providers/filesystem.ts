@@ -1,5 +1,5 @@
 import { resolveStashDir } from "../common";
-import type { AkmConfig, StashConfigEntry } from "../config";
+import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { searchLocal } from "../local-search";
 import { resolveStashSources } from "../search-source";
@@ -12,23 +12,22 @@ class FilesystemStashProvider implements StashProvider {
   readonly type = "filesystem";
   readonly name: string;
   private readonly stashDir: string;
-  private readonly config: AkmConfig;
 
   constructor(entry: StashConfigEntry) {
-    this.config = loadConfig();
     this.stashDir = entry.path ?? resolveStashDir();
     this.name = entry.name ?? this.stashDir;
   }
 
   async search(options: StashSearchOptions): Promise<StashSearchResult> {
-    const sources = resolveStashSources(this.stashDir, this.config);
+    const config = loadConfig();
+    const sources = resolveStashSources(this.stashDir, config);
     const result = await searchLocal({
       query: options.query.toLowerCase(),
       searchType: options.type ?? "any",
       limit: options.limit,
       stashDir: this.stashDir,
       sources,
-      config: this.config,
+      config,
     });
     return {
       hits: result.hits,
@@ -43,7 +42,7 @@ class FilesystemStashProvider implements StashProvider {
   }
 
   canShow(ref: string): boolean {
-    return !ref.trim().startsWith("viking://");
+    return !ref.includes("://");
   }
 }
 

@@ -128,6 +128,10 @@ function outputJsonl(command: string, shaped: unknown): void {
     for (const hit of hits) {
       console.log(JSON.stringify(hit));
     }
+    const registryHits = Array.isArray(r.registryHits) ? (r.registryHits as Record<string, unknown>[]) : [];
+    for (const hit of registryHits) {
+      console.log(JSON.stringify(hit));
+    }
     return;
   }
   // For non-search commands, output the whole object as a single JSONL line
@@ -153,13 +157,18 @@ function shapeSearchOutput(
   forAgent = false,
 ): Record<string, unknown> {
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
+  const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
   const shapedHits = forAgent
     ? hits.map((hit) => shapeSearchHitForAgent(hit))
     : hits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedRegistryHits = forAgent
+    ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
+    : registryHits.map((hit) => shapeSearchHit(hit, detail));
 
   if (forAgent) {
     return {
       hits: shapedHits,
+      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
     };
   }
@@ -170,6 +179,7 @@ function shapeSearchOutput(
       stashDir: result.stashDir,
       source: result.source,
       hits: shapedHits,
+      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(result.warnings ? { warnings: result.warnings } : {}),
       ...(result.timing ? { timing: result.timing } : {}),
@@ -178,6 +188,7 @@ function shapeSearchOutput(
 
   return {
     hits: shapedHits,
+    ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
@@ -434,14 +445,16 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
 
 function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const hits = (r.hits as Record<string, unknown>[]) ?? [];
+  const registryHits = (r.registryHits as Record<string, unknown>[]) ?? [];
+  const allHits = [...hits, ...registryHits];
 
-  if (hits.length === 0) {
+  if (allHits.length === 0) {
     return r.tip ? String(r.tip) : "No results found.";
   }
 
   const lines: string[] = [];
 
-  for (const hit of hits) {
+  for (const hit of allHits) {
     const type = hit.type ?? "unknown";
     const name = hit.name ?? "unnamed";
     const score = hit.score != null ? ` (score: ${hit.score})` : "";

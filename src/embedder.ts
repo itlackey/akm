@@ -72,6 +72,11 @@ async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline
   return localEmbedderPromise;
 }
 
+export function resetLocalEmbedder(): void {
+  localEmbedderPromise = undefined;
+  localEmbedderModelName = undefined;
+}
+
 async function embedLocal(text: string, modelName?: string): Promise<EmbeddingVector> {
   const model = await getLocalEmbedder(modelName);
   const result = await model(text, { pooling: "mean", normalize: true });

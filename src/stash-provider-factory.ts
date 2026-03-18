@@ -35,7 +35,6 @@ export function resolveStashProviders(
 
   for (const entry of config.stashes ?? []) {
     if (entry.enabled === false) continue;
-    if (entry.type === "filesystem") continue;
     const factory = registry.resolve(entry.type);
     if (factory) {
       providers.push(factory(entry));

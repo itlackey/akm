@@ -11,6 +11,7 @@ import { extractTarGzSecure } from "../registry-install";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "../stash-types";
+import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Cache TTL before refreshing the mirrored repo (12 hours). */
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -439,16 +440,6 @@ function parseCsv(value: unknown): string[] | undefined {
     .map((item) => sanitizeString(item.trim(), 100))
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
-}
-
-function sanitizeString(value: unknown, maxLength = 255): string {
-  if (typeof value !== "string") return "";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: strips untrusted control chars from remote metadata
-  return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, maxLength);
-}
-
-function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
 }
 
 function isContextHubEntry(value: unknown): value is ContextHubEntry {

@@ -522,14 +522,14 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     );
 
     expect(result.source).toBe("registry");
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits.length).toBe(0);
+    expect(result.registryHits).toBeDefined();
+    expect(result.registryHits?.length).toBeGreaterThan(0);
 
-    for (const hit of result.hits) {
+    for (const hit of result.registryHits!) {
       expect(hit.type).toBe("registry");
-      if (hit.type === "registry") {
-        expect(hit.action?.startsWith("akm add ")).toBe(true);
-        expect(hit.id.length).toBeGreaterThan(0);
-      }
+      expect(hit.action?.startsWith("akm add ")).toBe(true);
+      expect(hit.id.length).toBeGreaterThan(0);
     }
   });
 
@@ -556,7 +556,8 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
     expect(result.source).toBe("both");
     expect(result.hits.some((h) => h.type !== "registry")).toBe(true);
-    expect(result.hits.some((h) => h.type === "registry")).toBe(true);
+    expect(result.registryHits).toBeDefined();
+    expect(result.registryHits?.length).toBeGreaterThan(0);
   });
 });
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { cosineSimilarity, type EmbeddingVector } from "./embedder";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildSearchFields } from "./search-fields";
 import { ensureUsageEventsSchema } from "./usage-events";
 import { warn } from "./warn";
 
@@ -137,7 +138,6 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     db.exec("DROP INDEX IF EXISTS idx_entries_dir");
     db.exec("DROP INDEX IF EXISTS idx_entries_type");
     db.exec("DROP TABLE IF EXISTS entries");
-    db.exec("DROP TABLE IF EXISTS usage_events");
     db.exec("DELETE FROM index_meta");
   }
 
@@ -189,10 +189,9 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     `);
   }
 
-  // Usage events table — created by M-1's ensureUsageEventsSchema() at runtime.
-  // M-2 does NOT redefine this table; it only reads from it.
+  // Usage events table — created by ensureUsageEventsSchema() at runtime.
 
-  // Utility scores table (M-2: aggregated per-entry utility metrics)
+  // Utility scores table (aggregated per-entry utility metrics)
   db.exec(`
     CREATE TABLE IF NOT EXISTS utility_scores (
       entry_id     INTEGER PRIMARY KEY,
@@ -216,7 +215,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       } catch {
         /* ignore */
       }
-      // CR-2: Delete stale BLOB embeddings so they don't produce silently wrong
+      // Delete stale BLOB embeddings so they don't produce silently wrong
       // similarity scores against the new-dimension vec table.
       try {
         db.exec("DELETE FROM embeddings");
@@ -323,7 +322,7 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
     } catch {
       /* ignore */
     }
-    // HI-1: Also delete from FTS table so orphaned FTS rows don't remain
+    // Also delete from FTS table so orphaned FTS rows don't remain
     try {
       db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
@@ -336,13 +335,13 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
         /* ignore */
       }
     }
-    // M-2: Clean up utility scores before deleting entries
+    // Clean up utility scores before deleting entries
     try {
       db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
       /* ignore */
     }
-    // M-2: Clean up usage events before deleting entries
+    // Clean up usage events before deleting entries
     try {
       db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
@@ -352,17 +351,14 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
 }
 
 export function rebuildFts(db: Database): void {
-  // CR-1: Wrap DELETE + INSERT in a single transaction so the FTS table is
+  // Wrap DELETE + INSERT in a single transaction so the FTS table is
   // never left empty between the two statements if a crash occurs.
-  // HI-14: Store the integer id directly (FTS5 stores all content as text
+  // Store the integer id directly (FTS5 stores all content as text
   // internally; the join in searchFts compares numerically without CAST).
   //
-  // S-3: Insert into separate FTS5 columns by extracting per-field text from
+  // Insert into separate FTS5 columns by extracting per-field text from
   // the entry_json using buildSearchFields(). The entries.search_text column
   // is kept as a concatenated fallback for embedding generation.
-  // Lazy require() to avoid a circular module dependency:
-  // indexer.ts imports from db.ts, so a static import here would create a cycle.
-  const { buildSearchFields } = require("./indexer") as typeof import("./indexer");
 
   db.transaction(() => {
     db.exec("DELETE FROM entries_fts");
@@ -383,7 +379,7 @@ export function rebuildFts(db: Database): void {
         entry = JSON.parse(row.entry_json) as import("./metadata").StashEntry;
         fields = buildSearchFields(entry);
       } catch {
-        console.warn(`[db] rebuildFts: skipping entry id=${row.id} — invalid entry_json`);
+        warn(`[db] rebuildFts: skipping entry id=${row.id} — invalid entry_json`);
         continue;
       }
       insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
@@ -419,8 +415,8 @@ export function searchVec(db: Database, queryEmbedding: EmbeddingVector, k: numb
         .prepare("SELECT id, distance FROM entries_vec WHERE embedding MATCH ? AND k = ?")
         .all(buf, k) as DbVecResult[];
     } catch (err) {
-      // MD-5: Log the failure so it's visible in diagnostics
-      console.warn("[db] searchVec (sqlite-vec path) failed:", err instanceof Error ? err.message : String(err));
+      // Log the failure so it's visible in diagnostics
+      warn("[db] searchVec (sqlite-vec path) failed:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -462,7 +458,7 @@ function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number)
     }));
   } catch (err) {
     // MD-5: Log the failure so it's visible in diagnostics
-    console.warn("[db] searchBlobVec (JS fallback) failed:", err instanceof Error ? err.message : String(err));
+    warn("[db] searchBlobVec (JS fallback) failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -515,8 +511,8 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
   let sql: string;
   let params: unknown[];
 
-  // HI-14: Join on integer entry_id directly (no CAST needed; we store integer)
-  // S-3: Use bm25() with per-column weights: entry_id(0), name(10), description(5), tags(3), hints(2), content(1)
+  // Join on integer entry_id directly (no CAST needed; we store integer)
+  // Use bm25() with per-column weights: entry_id(0), name(10), description(5), tags(3), hints(2), content(1)
   if (entryType && entryType !== "any") {
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
@@ -551,14 +547,14 @@ function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: 
       bm25Score: number;
     }>;
 
-    // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+    // Guard against corrupt JSON — skip the row rather than crashing
     const results: DbSearchResult[] = [];
     for (const row of rows) {
       let entry: StashEntry;
       try {
         entry = JSON.parse(row.entry_json) as StashEntry;
       } catch {
-        console.warn(`[db] searchFts: skipping entry id=${row.id} — corrupt entry_json`);
+        warn(`[db] searchFts: skipping entry id=${row.id} — corrupt entry_json`);
         continue;
       }
       results.push({
@@ -621,14 +617,14 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     search_text: string;
   }>;
 
-  // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+  // Guard against corrupt JSON — skip the row rather than crashing
   const entries: DbIndexedEntry[] = [];
   for (const row of rows) {
     let entry: StashEntry;
     try {
       entry = JSON.parse(row.entry_json) as StashEntry;
     } catch {
-      console.warn(`[db] getAllEntries: skipping entry id=${row.id} — corrupt entry_json`);
+      warn(`[db] getAllEntries: skipping entry id=${row.id} — corrupt entry_json`);
       continue;
     }
     entries.push({
@@ -654,12 +650,12 @@ export function getEntryById(db: Database, id: number): { filePath: string; entr
     | { file_path: string; entry_json: string }
     | undefined;
   if (!row) return undefined;
-  // CR-6: Guard against corrupt JSON
+  // Guard against corrupt JSON
   let entry: StashEntry;
   try {
     entry = JSON.parse(row.entry_json) as StashEntry;
   } catch {
-    console.warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
+    warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
     return undefined;
   }
   return { filePath: row.file_path, entry };
@@ -680,14 +676,14 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
     search_text: string;
   }>;
 
-  // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+  // Guard against corrupt JSON — skip the row rather than crashing
   const entries: DbIndexedEntry[] = [];
   for (const row of rows) {
     let entry: StashEntry;
     try {
       entry = JSON.parse(row.entry_json) as StashEntry;
     } catch {
-      console.warn(`[db] getEntriesByDir: skipping entry id=${row.id} — corrupt entry_json`);
+      warn(`[db] getEntriesByDir: skipping entry id=${row.id} — corrupt entry_json`);
       continue;
     }
     entries.push({

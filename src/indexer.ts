@@ -1,10 +1,10 @@
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
-  DB_VERSION,
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
@@ -22,6 +22,7 @@ import {
 } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildSearchText } from "./search-fields";
 import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
@@ -66,7 +67,7 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
     if (options?.full || !isIncremental) {
-      // HI-5: the delete is now merged into the insert transaction inside
+      // The delete is now merged into the insert transaction inside
       // indexEntries() so that a reader never sees an empty database between
       // the wipe and the re-inserts.  The doFullDelete flag signals this path.
     } else {
@@ -98,12 +99,11 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
 
     // Walk stash dirs and index entries.
     // doFullDelete=true merges the wipe into the same transaction as the
-    // inserts (HI-5) so readers never see an empty database mid-rebuild.
+    // inserts so readers never see an empty database mid-rebuild.
     const doFullDelete = options?.full || !isIncremental;
     const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = await indexEntries(
       db,
       allStashDirs,
-      stashDir,
       isIncremental,
       builtAtMs,
       doFullDelete,
@@ -120,7 +120,7 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     rebuildFts(db);
     const tFtsEnd = Date.now();
 
-    // M-2: Recompute utility scores from usage_events after FTS rebuild
+    // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
 
     // Generate embeddings if semantic search is enabled
@@ -129,7 +129,6 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     const tEmbedEnd = Date.now();
 
     // Update metadata
-    setMeta(db, "version", String(DB_VERSION));
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDir", stashDir);
     setMeta(db, "stashDirs", JSON.stringify(allStashDirs));
@@ -166,9 +165,8 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
 // ── Extracted helpers for indexing ────────────────────────────────────────────
 
 async function indexEntries(
-  db: import("bun:sqlite").Database,
+  db: Database,
   allStashDirs: string[],
-  _stashDir: string,
   isIncremental: boolean,
   builtAtMs: number,
   doFullDelete = false,
@@ -276,7 +274,7 @@ async function indexEntries(
   const indexedAssetIdentities = new Set<string>();
 
   const insertTransaction = db.transaction(() => {
-    // HI-5: Perform the full-rebuild wipe as the FIRST step of the insert
+    // Perform the full-rebuild wipe as the FIRST step of the insert
     // transaction so delete and re-insert are atomic — a concurrent reader
     // never observes an empty database between the two operations.
     if (doFullDelete) {
@@ -293,6 +291,8 @@ async function indexEntries(
         }
       }
       db.exec("DELETE FROM entries_fts");
+      db.exec("DELETE FROM utility_scores");
+      db.exec("DELETE FROM usage_events");
       db.exec("DELETE FROM entries");
     }
 
@@ -338,7 +338,7 @@ async function indexEntries(
 }
 
 async function enhanceDirsWithLlm(
-  db: import("bun:sqlite").Database,
+  db: Database,
   config: import("./config").AkmConfig,
   dirsNeedingLlm: Array<{
     dirPath: string;
@@ -354,9 +354,9 @@ async function enhanceDirsWithLlm(
     const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
     if (generatedEntries.length === 0) continue;
     const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, dirPath, files);
+    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, files);
 
-    // HI-2: Re-upsert the enhanced entries in a single transaction so a crash
+    // Re-upsert the enhanced entries in a single transaction so a crash
     // cannot leave half the entries updated and the rest stale.
     db.transaction(() => {
       for (const entry of enhanced.entries) {
@@ -369,10 +369,7 @@ async function enhanceDirsWithLlm(
   }
 }
 
-async function generateEmbeddingsForDb(
-  db: import("bun:sqlite").Database,
-  config: import("./config").AkmConfig,
-): Promise<boolean> {
+async function generateEmbeddingsForDb(db: Database, config: import("./config").AkmConfig): Promise<boolean> {
   if (!config.semanticSearch) return false;
 
   try {
@@ -381,7 +378,7 @@ async function generateEmbeddingsForDb(
     if (allEntries.length === 0) return true;
     const texts = allEntries.map((e) => e.searchText);
     const embeddings = await embedBatch(texts, config.embedding);
-    // HI-3: Wrap all embedding upserts in a single transaction so partial
+    // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
     db.transaction(() => {
       for (let i = 0; i < allEntries.length; i++) {
@@ -397,7 +394,7 @@ async function generateEmbeddingsForDb(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ id: number; searchText: string }> {
+function getAllEntriesForEmbedding(db: Database): Array<{ id: number; searchText: string }> {
   return db
     .prepare(`
       SELECT e.id, e.search_text AS searchText FROM entries e
@@ -414,7 +411,6 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   }
 }
 
-/** Set of all known type directory names */
 function isDirStale(
   dirPath: string,
   currentFiles: string[],
@@ -452,7 +448,6 @@ function isDirStale(
 async function enhanceStashWithLlm(
   llmConfig: LlmConnectionConfig,
   stash: StashFile,
-  _dirPath: string,
   files: string[],
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("./llm.js");
@@ -523,71 +518,9 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   return files[0] || null;
 }
 
-/**
- * Return per-field search text for multi-column FTS5 indexing.
- *
- * Fields:
- *  - name: entry name with hyphens/underscores replaced by spaces
- *  - description: entry description
- *  - tags: tags + aliases joined
- *  - hints: searchHints + examples + usage + intent fields
- *  - content: TOC headings (lowest-weight catch-all)
- */
-export function buildSearchFields(entry: StashEntry): {
-  name: string;
-  description: string;
-  tags: string;
-  hints: string;
-  content: string;
-} {
-  const name = entry.name.replace(/[-_]/g, " ").toLowerCase();
+export { buildSearchFields, buildSearchText } from "./search-fields";
 
-  const description = (entry.description ?? "").toLowerCase();
-
-  const tagParts: string[] = [];
-  if (entry.tags) tagParts.push(entry.tags.join(" "));
-  if (entry.aliases) tagParts.push(entry.aliases.join(" "));
-  const tags = tagParts.join(" ").toLowerCase();
-
-  const hintParts: string[] = [];
-  if (entry.searchHints) hintParts.push(entry.searchHints.join(" "));
-  if (entry.examples) hintParts.push(entry.examples.join(" "));
-  if (entry.usage) hintParts.push(entry.usage.join(" "));
-  if (entry.intent) {
-    if (entry.intent.when) hintParts.push(entry.intent.when);
-    if (entry.intent.input) hintParts.push(entry.intent.input);
-    if (entry.intent.output) hintParts.push(entry.intent.output);
-  }
-  const hints = hintParts.join(" ").toLowerCase();
-
-  const contentParts: string[] = [];
-  if (entry.toc) {
-    contentParts.push(entry.toc.map((h) => h.text).join(" "));
-  }
-  if (entry.parameters) {
-    for (const param of entry.parameters) {
-      contentParts.push(param.name);
-      if (param.description) contentParts.push(param.description);
-    }
-  }
-  const content = contentParts.join(" ").toLowerCase();
-
-  return { name, description, tags, hints, content };
-}
-
-/**
- * Build a single concatenated search text string for an entry.
- * Used for the `search_text` column in the entries table (backward compat)
- * and for generating embedding text.
- */
-export function buildSearchText(entry: StashEntry): string {
-  const fields = buildSearchFields(entry);
-  return [fields.name, fields.description, fields.tags, fields.hints, fields.content]
-    .filter((s) => s.length > 0)
-    .join(" ");
-}
-
-// ── M-2: Utility score recomputation ─────────────────────────────────────────
+// ── Utility score recomputation ──────────────────────────────────────────────
 
 /** Retention window for usage events: events older than this are purged. */
 const USAGE_EVENT_RETENTION_DAYS = 90;
@@ -606,11 +539,11 @@ const USAGE_EVENT_RETENTION_DAYS = 90;
  *
  * Called during `akm index` after FTS rebuild.
  */
-export function recomputeUtilityScores(db: import("bun:sqlite").Database): void {
+export function recomputeUtilityScores(db: Database): void {
   const EMA_DECAY = 0.7;
   const EMA_NEW = 0.3;
 
-  // Ensure M-1 usage_events table exists before querying
+  // Ensure usage_events table exists before querying
   ensureUsageEventsSchema(db);
 
   // Purge stale usage events (90-day retention)

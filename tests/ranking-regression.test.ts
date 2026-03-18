@@ -10,7 +10,7 @@
  * same index to keep the suite fast.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,25 +38,31 @@ function createTmpDir(prefix = "akm-ranking-"): string {
 
 // ── Environment isolation ───────────────────────────────────────────────────
 
-const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
-const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const originalAkmStashDir = process.env.AKM_STASH_DIR;
-const testCacheDir = createTmpDir("akm-ranking-cache-");
-const testConfigDir = createTmpDir("akm-ranking-config-");
+let originalXdgCacheHome: string | undefined;
+let originalXdgConfigHome: string | undefined;
+let originalAkmStashDir: string | undefined;
+let testCacheDir: string;
+let testConfigDir: string;
 
-// Set up environment and build index before any tests run.
-// (Module-level setup — runs once when the test file loads.)
-process.env.XDG_CACHE_HOME = testCacheDir;
-process.env.XDG_CONFIG_HOME = testConfigDir;
-process.env.AKM_STASH_DIR = FIXTURE_STASH;
+beforeAll(async () => {
+  originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+  originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalAkmStashDir = process.env.AKM_STASH_DIR;
+  testCacheDir = createTmpDir("akm-ranking-cache-");
+  testConfigDir = createTmpDir("akm-ranking-config-");
 
-saveConfig({
-  semanticSearch: false,
-  stashes: [{ type: "filesystem", path: FIXTURE_STASH }],
-  registries: [],
+  process.env.XDG_CACHE_HOME = testCacheDir;
+  process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.AKM_STASH_DIR = FIXTURE_STASH;
+
+  saveConfig({
+    semanticSearch: false,
+    stashes: [{ type: "filesystem", path: FIXTURE_STASH }],
+    registries: [],
+  });
+
+  buildFixtureIndex();
 });
-
-buildFixtureIndex();
 
 afterAll(() => {
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;

@@ -251,10 +251,13 @@ describe("output baseline", () => {
           registries: [{ url: `http://127.0.0.1:${address.port}/index.json` }],
         },
       );
-      const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
-      // Brief local hits have type; registry hits in brief only have name + action
+      const json = JSON.parse(output) as {
+        hits: Array<Record<string, unknown>>;
+        registryHits?: Array<Record<string, unknown>>;
+      };
+      // Brief local hits have type; registry hits are in registryHits
       const localHit = json.hits.find((hit) => hit.type === "script");
-      const registryHit = json.hits.find((hit) => hit.name === "deploy-kit");
+      const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-kit");
 
       expect(localHit?.action).toBeTruthy();
       expect(registryHit?.action).toBeTruthy();

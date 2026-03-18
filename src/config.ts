@@ -120,6 +120,10 @@ export function getConfigPath(): string {
 
 let cachedConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
 
+export function resetConfigCache(): void {
+  cachedConfig = undefined;
+}
+
 export function loadConfig(): AkmConfig {
   const configPath = getConfigPath();
 
@@ -296,11 +300,12 @@ const URL_FIELD_NAMES = new Set(["url", "endpoint", "artifactUrl"]);
  */
 function expandEnvVars<T>(value: T, fieldName?: string): T {
   if (typeof value === "string") {
-    // Skip URL-type fields by name or by value prefix
+    // Skip URL-type fields by name or by value prefix, unless they contain ${VAR} syntax
     if (
-      (fieldName !== undefined && URL_FIELD_NAMES.has(fieldName)) ||
-      value.startsWith("http://") ||
-      value.startsWith("https://")
+      !value.includes("${") &&
+      ((fieldName !== undefined && URL_FIELD_NAMES.has(fieldName)) ||
+        value.startsWith("http://") ||
+        value.startsWith("https://"))
     ) {
       return value;
     }

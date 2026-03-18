@@ -99,11 +99,21 @@ describe("mergeStashHits — score-preserving merge", () => {
       }
     }
   });
+
+  test("X-9: empty localHits gives provider hits positive scores", () => {
+    const additional = [makeStashHit("remote-1", 5.0), makeStashHit("remote-2", 3.0)];
+    const result = mergeStashHits([], additional, 10);
+
+    expect(result.length).toBe(2);
+    for (const hit of result) {
+      expect(hit.score).toBeGreaterThan(0);
+    }
+  });
 });
 
 // ── mergeSearchHits ─────────────────────────────────────────────────────────
 
-describe("mergeSearchHits — score-preserving merge", () => {
+describe("mergeSearchHits — simple concatenation", () => {
   test("returns local hits when registryHits is empty", () => {
     const local = [makeStashHit("a", 0.85)];
     const result = mergeSearchHits(local, [], 10);
@@ -119,20 +129,17 @@ describe("mergeSearchHits — score-preserving merge", () => {
     expect(result[0].name).toBe("pkg-a");
   });
 
-  test("local hits preserve scores; registry hits placed below", () => {
+  test("concatenates local and registry hits", () => {
     const local = [makeStashHit("local-1", 0.85), makeStashHit("local-2", 0.65)];
     const registry = [makeRegistryHit("pkg-1", 0.95), makeRegistryHit("pkg-2", 0.8)];
 
-    const result = mergeSearchHits(local, registry, 4);
+    const result = mergeSearchHits(local, registry, 10);
 
     expect(result).toHaveLength(4);
-    // Local hits retain scores and rank first
     expect(result[0].name).toBe("local-1");
-    expect(result[0].score).toBe(0.85);
     expect(result[1].name).toBe("local-2");
-    expect(result[1].score).toBe(0.65);
-    // Registry hits placed below
-    expect(result[2].score!).toBeLessThan(0.65);
+    expect(result[2].name).toBe("pkg-1");
+    expect(result[3].name).toBe("pkg-2");
   });
 
   test("respects limit parameter", () => {
@@ -140,20 +147,5 @@ describe("mergeSearchHits — score-preserving merge", () => {
     const registry = [makeRegistryHit("c", 0.9), makeRegistryHit("d", 0.8)];
     const result = mergeSearchHits(local, registry, 2);
     expect(result).toHaveLength(2);
-  });
-
-  test("high-score registry hits do not displace local stash hits", () => {
-    const local = [makeStashHit("best-local", 0.85), makeStashHit("ok-local", 0.6)];
-    const registry = [makeRegistryHit("best-pkg", 100), makeRegistryHit("ok-pkg", 80)];
-
-    const result = mergeSearchHits(local, registry, 4);
-
-    // Local hits should always be in top 2 regardless of registry scores
-    expect(result[0].name).toBe("best-local");
-    expect(result[1].name).toBe("ok-local");
-    // Registry raw scores (100, 80) must not leak through
-    for (const hit of result.slice(2)) {
-      expect(hit.score!).toBeLessThan(0.6);
-    }
   });
 });
