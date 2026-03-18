@@ -105,16 +105,27 @@ function detectRegistrySearchId(ref: string): string | undefined {
   if (!/^[a-z][a-z0-9-]*$/.test(prefix)) return undefined;
 
   const rest = ref.slice(colonIdx + 1);
-  return [
+
+  // Try to extract a plausible owner/repo from the rest (e.g. "org/repo/skill" → "org/repo")
+  const segments = rest.split("/").filter(Boolean);
+  const suggestedRef = segments.length >= 2 ? `github:${segments[0]}/${segments[1]}` : undefined;
+
+  const lines = [
     `"${ref}" looks like a registry search result ID, not an installable ref.`,
     `The "${prefix}:" prefix is a registry identifier and cannot be passed to \`akm add\`.`,
     "",
-    "Use the installRef or ref field from the search result instead. For example:",
-    `  akm registry search "${rest}" --format json`,
+  ];
+  if (suggestedRef) {
+    lines.push(`Try installing the source repository directly:`, `  akm add ${suggestedRef}`, "");
+  }
+  lines.push(
+    "Or search for the installable ref:",
+    `  akm search "${segments.length > 2 ? segments[segments.length - 1] : rest}" --source registry`,
     "Then install using the installRef value from the result:",
     "  akm add github:owner/repo",
     "  akm add npm:package-name",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {

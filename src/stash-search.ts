@@ -113,8 +113,11 @@ export async function akmSearch(input: {
   }
 
   const registryHits = (registryResult?.hits ?? []).map((hit): RegistrySearchResultHit => {
+    // Use the provider-supplied installRef when available (already correctly
+    // prefixed), otherwise derive it from source + ref for backward compat.
     const installRef =
-      hit.source === "npm" ? `npm:${hit.ref}` : hit.source === "git" ? `git+${hit.ref}` : `github:${hit.ref}`;
+      hit.installRef ??
+      (hit.source === "npm" ? `npm:${hit.ref}` : hit.source === "git" ? `git+${hit.ref}` : `github:${hit.ref}`);
     return {
       type: "registry",
       name: hit.title,
