@@ -52,8 +52,12 @@ export async function akmSearch(input: {
   // stash root. Safe because the empty-sources case is handled above.
   const stashDir = sources[0].path;
 
-  // Resolve additional stash providers (e.g. OpenViking) from config
-  const additionalStashProviders = resolveStashProviders(config).filter((p) => p.type !== "filesystem");
+  // Resolve additional stash providers (e.g. OpenViking) from config.
+  // Exclude filesystem (handled by resolveStashSources) and context-hub/github
+  // (content now indexed through the unified FTS5 pipeline).
+  const additionalStashProviders = resolveStashProviders(config).filter(
+    (p) => p.type !== "filesystem" && p.type !== "context-hub",
+  );
 
   const localResult =
     source === "registry"
@@ -213,17 +217,17 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Merge local and additional stash hits preserving local score quality.
+ * Merge local and additional stash hits into a single ranked list.
  *
- * Local hits have meaningful scores from the FTS+boost pipeline. Additional
- * provider hits (context-hub, OpenViking) have their own scores that may use
- * a different scale. The merge strategy:
+ * Provider hits (e.g. OpenViking) keep their original scores and compete
+ * fairly alongside local hits. Duplicates are resolved in favour of the
+ * local version.
  *
- * 1. Local hits retain their original scores (the scoring pipeline already
- *    produced well-differentiated values).
- * 2. Provider hits that duplicate a local hit are dropped (local version wins).
- * 3. Provider-only hits are interleaved using their rank position, scored
- *    below the lowest local hit so they don't displace locally-ranked results.
+ * 1. Build set of local hit keys for dedup.
+ * 2. Filter provider hits that aren't duplicates.
+ * 3. Combine local + non-duplicate provider hits.
+ * 4. Sort by score descending.
+ * 5. Slice to limit.
  */
 export function mergeStashHits(
   localHits: StashSearchHit[],
@@ -238,23 +242,13 @@ export function mergeStashHits(
     localKeys.add(h.path ?? h.ref ?? h.name);
   }
 
-  // Find the lowest local score to use as a ceiling for provider-only hits
-  const minLocalScore = localHits.length > 0 ? Math.min(...localHits.map((h) => h.score ?? 0)) : 0;
+  // Keep non-duplicate provider hits with their original scores
+  const providerOnly = additionalHits.filter((h) => {
+    const key = h.path ?? h.ref ?? h.name;
+    return !localKeys.has(key);
+  });
 
-  // Provider-only hits get scores just below the lowest local hit,
-  // decreasing by rank position so their relative order is preserved.
-  const providerOnly: StashSearchHit[] = [];
-  for (let i = 0; i < additionalHits.length; i++) {
-    const key = additionalHits[i].path ?? additionalHits[i].ref ?? additionalHits[i].name;
-    if (localKeys.has(key)) continue; // Local version wins
-    const providerScore = minLocalScore <= 0 ? 0.01 - i * 0.0001 : Math.max(0, minLocalScore * 0.9 - i * 0.0001);
-    providerOnly.push({
-      ...additionalHits[i],
-      score: Math.round(providerScore * 10000) / 10000,
-    });
-  }
-
-  // Combine: local hits first (already sorted by score), then provider hits
+  // Combine and sort by score descending
   return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
 }
 

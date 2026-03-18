@@ -10,7 +10,7 @@ import { getRegistryIndexCacheDir } from "../paths";
 import { extractTarGzSecure } from "../registry-install";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
-import type { KnowledgeView, ShowResponse, StashSearchHit } from "../stash-types";
+import type { KnowledgeView, ShowResponse } from "../stash-types";
 import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Cache TTL before refreshing the mirrored repo (12 hours). */
@@ -51,23 +51,12 @@ class ContextHubStashProvider implements StashProvider {
     this.name = config.name ?? `${this.repo.owner}/${this.repo.repo}`;
   }
 
-  async search(options: StashSearchOptions): Promise<StashSearchResult> {
-    try {
-      const entries = await this.loadEntries();
-      const filtered = entries
-        .filter((entry) => matchesType(entry, options.type))
-        .map((entry) => ({ entry, score: scoreEntry(entry, options.query) }))
-        .filter(({ score }) => options.query.trim() === "" || score > 0)
-        .sort((a, b) => b.score - a.score || a.entry.sortName.localeCompare(b.entry.sortName))
-        .slice(0, options.limit);
-
-      return {
-        hits: filtered.map(({ entry, score }) => entryToHit(entry, score)),
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { hits: [], warnings: [`Stash ${this.name}: ${message}`] };
-    }
+  /**
+   * Context-hub content is now indexed through the standard FTS5 pipeline.
+   * This method returns an empty result; the unified search handles discovery.
+   */
+  async search(_options: StashSearchOptions): Promise<StashSearchResult> {
+    return { hits: [] };
   }
 
   async show(ref: string, view?: KnowledgeView): Promise<ShowResponse> {
@@ -103,12 +92,6 @@ class ContextHubStashProvider implements StashProvider {
 
   canShow(ref: string): boolean {
     return ref.trim().startsWith(CONTEXT_HUB_REF_PREFIX);
-  }
-
-  private async loadEntries(): Promise<ContextHubEntry[]> {
-    const cachePaths = getCachePaths(this.repo.canonicalUrl);
-    const index = await ensureContextHubMirror(this.repo, cachePaths);
-    return index.entries;
   }
 
   private async loadRepoDir(): Promise<string> {
@@ -274,64 +257,6 @@ function buildEntry(repoDir: string, contentDir: string, fullPath: string): Cont
   };
 }
 
-function scoreEntry(entry: ContextHubEntry, query: string): number {
-  const trimmed = query.trim().toLowerCase();
-  if (!trimmed) return 1;
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return 1;
-
-  const haystacks = [
-    { text: entry.id.toLowerCase(), weight: 4 },
-    { text: entry.description?.toLowerCase() ?? "", weight: 2 },
-    { text: (entry.tags ?? []).join(" ").toLowerCase(), weight: 2 },
-    { text: entry.language?.toLowerCase() ?? "", weight: 1 },
-    { text: entry.version?.toLowerCase() ?? "", weight: 1 },
-  ];
-
-  let matched = 0;
-  let score = 0;
-  for (const token of tokens) {
-    let tokenScore = 0;
-    for (const { text, weight } of haystacks) {
-      if (!text) continue;
-      if (text === token) tokenScore = Math.max(tokenScore, weight * 2);
-      else if (text.includes(token)) tokenScore = Math.max(tokenScore, weight);
-    }
-    if (tokenScore > 0) {
-      matched++;
-      score += tokenScore;
-    }
-  }
-
-  if (matched === 0) return 0;
-  const coverage = matched / tokens.length;
-  return Math.round((score * coverage + (entry.id.toLowerCase() === trimmed ? 5 : 0)) * 1000) / 1000;
-}
-
-function matchesType(entry: ContextHubEntry, requested: string | undefined): boolean {
-  if (!requested || requested === "any") return true;
-  return entry.assetType === requested;
-}
-
-function entryToHit(entry: ContextHubEntry, score: number): StashSearchHit {
-  const details = [entry.language, entry.version].filter(Boolean).join(" • ");
-  const description = [entry.description, details].filter(Boolean).join(" — ") || undefined;
-  const estimatedTokens = typeof entry.fileSize === "number" ? Math.round(entry.fileSize / 4) : undefined;
-  return {
-    type: entry.assetType,
-    name: entry.id,
-    path: entry.ref,
-    ref: entry.ref,
-    origin: "context-hub",
-    editable: false,
-    description,
-    tags: entry.tags,
-    action: `akm show ${entry.ref}`,
-    score,
-    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-  };
-}
-
 function renderContentForView(content: string, view?: KnowledgeView): string {
   if (!view || view.mode === "full") return content;
 
@@ -454,4 +379,12 @@ function isContextHubEntry(value: unknown): value is ContextHubEntry {
   );
 }
 
-export { ContextHubStashProvider, buildContextHubIndex, makeContextHubRef, parseContextHubRef, parseContextHubRepoUrl };
+export {
+  ContextHubStashProvider,
+  buildContextHubIndex,
+  ensureContextHubMirror,
+  getCachePaths,
+  makeContextHubRef,
+  parseContextHubRef,
+  parseContextHubRepoUrl,
+};

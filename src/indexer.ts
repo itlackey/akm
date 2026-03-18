@@ -49,7 +49,11 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
   // Load config and resolve all stash sources
   const { loadConfig } = await import("./config.js");
   const config = loadConfig();
-  const { resolveAllStashDirs } = await import("./search-source.js");
+
+  // Ensure context-hub caches are extracted before resolving stash dirs,
+  // so their content directories exist on disk for the walker to discover.
+  const { ensureContextHubCaches, resolveAllStashDirs } = await import("./search-source.js");
+  await ensureContextHubCaches(config);
   const allStashDirs = resolveAllStashDirs(stashDir);
 
   const t0 = Date.now();
@@ -541,13 +545,23 @@ const USAGE_EVENT_RETENTION_DAYS = 90;
  */
 export function recomputeUtilityScores(db: Database): void {
   const EMA_DECAY = 0.7;
-  const EMA_NEW = 0.3;
 
   // Ensure usage_events table exists before querying
   ensureUsageEventsSchema(db);
 
   // Purge stale usage events (90-day retention)
   purgeOldUsageEvents(db, USAGE_EVENT_RETENTION_DAYS);
+
+  // Time-proportional decay: apply one round of EMA per elapsed day so
+  // indexing frequency doesn't affect how fast scores decay.
+  const lastComputedAt = getMeta(db, "last_utility_computed_at");
+  let elapsedDays = 1; // default for first run
+  if (lastComputedAt) {
+    const ms = Date.now() - new Date(lastComputedAt).getTime();
+    elapsedDays = Math.max(1, ms / (1000 * 60 * 60 * 24));
+  }
+  const emaDecay = EMA_DECAY ** elapsedDays;
+  const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
   // Single aggregate query instead of N+1 per-entry queries.
   // Only processes entries that actually have usage events.
@@ -568,7 +582,10 @@ export function recomputeUtilityScores(db: Database): void {
     last_used_at: string | null;
   }>;
 
-  if (usageRows.length === 0) return;
+  if (usageRows.length === 0) {
+    setMeta(db, "last_utility_computed_at", new Date().toISOString());
+    return;
+  }
 
   // Batch-load existing utility scores
   const existingScores = new Map<number, number>();
@@ -583,7 +600,7 @@ export function recomputeUtilityScores(db: Database): void {
   for (const row of usageRows) {
     const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
     const prevUtility = existingScores.get(row.entry_id) ?? 0;
-    const utility = prevUtility * EMA_DECAY + selectRate * EMA_NEW;
+    const utility = prevUtility * emaDecay + selectRate * emaNew;
 
     upsertUtilityScore(db, row.entry_id, {
       utility,
@@ -593,4 +610,6 @@ export function recomputeUtilityScores(db: Database): void {
       lastUsedAt: row.last_used_at ?? undefined,
     });
   }
+
+  setMeta(db, "last_utility_computed_at", new Date().toISOString());
 }

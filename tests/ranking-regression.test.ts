@@ -418,7 +418,7 @@ describe("Provider merge (score not destroyed)", () => {
     expect(mergedLocal2.score).toBe(1.8);
   });
 
-  test("provider-only hits rank below local hits", () => {
+  test("provider hits sort fairly by score alongside local hits", () => {
     const localHits: StashSearchHit[] = [
       {
         type: "skill",
@@ -445,17 +445,20 @@ describe("Provider merge (score not destroyed)", () => {
         path: "/remote/skills/1/SKILL.md",
         ref: "skill:remote-1",
         origin: "openviking",
-        score: 5.0, // High original score from provider
+        score: 1.0, // Normalized provider score between local-high and local-low
       },
     ];
 
     const merged = mergeStashHits(localHits, additionalHits, 20);
 
-    // Remote hit should rank below local hits
+    // Provider hit keeps its original score and sorts by score
     const remoteRank = merged.findIndex((h) => h.name === "remote-1") + 1;
+    const localHighRank = merged.findIndex((h) => h.name === "local-high") + 1;
     const localLowRank = merged.findIndex((h) => h.name === "local-low") + 1;
 
-    expect(remoteRank).toBeGreaterThan(localLowRank);
+    // remote-1 (1.0) should rank between local-high (2.0) and local-low (0.5)
+    expect(remoteRank).toBeGreaterThan(localHighRank);
+    expect(remoteRank).toBeLessThan(localLowRank);
   });
 
   test("duplicate provider hits are deduplicated (local version wins)", () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { AkmConfig } from "./config";
 import { loadConfig } from "./config";
+import { ensureContextHubMirror, getCachePaths, parseContextHubRepoUrl } from "./stash-providers/context-hub";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -47,6 +48,25 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   for (const entry of config.stashes ?? []) {
     if (entry.type === "filesystem" && entry.path && entry.enabled !== false) {
       addSource(entry.path, entry.name);
+    }
+  }
+
+  // Context-hub entries: resolve cache directory so the indexer can walk it.
+  // Both "context-hub" and "github" provider types are handled.
+  for (const entry of config.stashes ?? []) {
+    if ((entry.type === "context-hub" || entry.type === "github") && entry.url && entry.enabled !== false) {
+      try {
+        const repo = parseContextHubRepoUrl(entry.url);
+        const cachePaths = getCachePaths(repo.canonicalUrl);
+        // The content/ subdirectory inside the extracted repo is the actual
+        // stash root containing DOC.md / SKILL.md files that the walker indexes.
+        const contentDir = path.join(cachePaths.repoDir, "content");
+        addSource(contentDir, entry.name);
+      } catch (err) {
+        warn(
+          `Warning: failed to resolve context-hub cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
@@ -150,5 +170,30 @@ function isValidDirectory(dir: string): boolean {
     return fs.statSync(dir).isDirectory();
   } catch {
     return false;
+  }
+}
+
+// ── Context-Hub integration ─────────────────────────────────────────────────
+
+const CONTEXT_HUB_TYPES = new Set(["context-hub", "github"]);
+
+/**
+ * Ensure all context-hub mirrors are refreshed so their cache directories
+ * exist on disk. Must be called (async) before `resolveStashSources()` so
+ * the content directories pass the `isValidDirectory()` check.
+ */
+export async function ensureContextHubCaches(config?: AkmConfig): Promise<void> {
+  const cfg = config ?? loadConfig();
+  for (const entry of cfg.stashes ?? []) {
+    if (!CONTEXT_HUB_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
+    try {
+      const repo = parseContextHubRepoUrl(entry.url);
+      const cachePaths = getCachePaths(repo.canonicalUrl);
+      await ensureContextHubMirror(repo, cachePaths, { requireRepoDir: true });
+    } catch (err) {
+      warn(
+        `Warning: failed to refresh context-hub mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }

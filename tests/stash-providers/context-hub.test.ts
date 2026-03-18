@@ -3,10 +3,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../../src/config";
+import { resetConfigCache, saveConfig } from "../../src/config";
 import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
-import { type ContextHubStashProvider, makeContextHubRef } from "../../src/stash-providers/context-hub";
-import { akmSearch } from "../../src/stash-search";
+import {
+  type ContextHubStashProvider,
+  ensureContextHubMirror,
+  getCachePaths,
+  makeContextHubRef,
+  parseContextHubRepoUrl,
+} from "../../src/stash-providers/context-hub";
 import { akmShowUnified } from "../../src/stash-show";
 
 // Trigger self-registration
@@ -163,7 +168,7 @@ describe("ContextHubStashProvider", () => {
     expect(resolveStashProviderFactory("context-hub")).toBeTruthy();
   });
 
-  test("searches a GitHub context-hub repo archive as stash content", async () => {
+  test("search() returns empty hits (content indexed via FTS5 pipeline)", async () => {
     const archivePath = buildContextHubArchive();
     const restoreFetch = mockArchiveFetch(archivePath);
 
@@ -174,25 +179,40 @@ describe("ContextHubStashProvider", () => {
         name: "context-hub",
       }) as ContextHubStashProvider;
 
+      // search() now delegates to the unified FTS5 pipeline and returns empty
       const result = await provider.search({ query: "openai chat", limit: 10 });
-
-      expect(result.warnings).toBeUndefined();
-      const hit = result.hits.find((entry) => entry.name === "openai/chat-api");
-      expect(hit).toBeDefined();
-      expect(hit).toMatchObject({
-        type: "knowledge",
-        name: "openai/chat-api",
-        ref: makeContextHubRef("content/openai/docs/chat-api/python/DOC.md"),
-        editable: false,
-        origin: "context-hub",
-      });
-      expect(hit?.description).toContain("Python chat completions reference");
+      expect(result.hits).toEqual([]);
     } finally {
       restoreFetch();
     }
   });
 
-  test("integrates with akm search and akm show", async () => {
+  test("cache mirror extracts content accessible via show()", async () => {
+    const archivePath = buildContextHubArchive();
+    const restoreFetch = mockArchiveFetch(archivePath);
+
+    try {
+      const provider = getFactory()({
+        type: "context-hub",
+        url: "https://github.com/andrewyng/context-hub",
+        name: "context-hub",
+      }) as ContextHubStashProvider;
+
+      const showResult = await provider.show(makeContextHubRef("content/openai/docs/chat-api/python/DOC.md"));
+      expect(showResult).toMatchObject({
+        type: "knowledge",
+        name: "openai/chat-api",
+        editable: false,
+        origin: "context-hub",
+      });
+      expect(showResult.description).toContain("Python chat completions reference");
+      expect(showResult.content).toContain("# Chat API");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test("integrates with akm show and resolves cache to stash sources", async () => {
     const archivePath = buildContextHubArchive();
     const restoreFetch = mockArchiveFetch(archivePath);
 
@@ -201,11 +221,21 @@ describe("ContextHubStashProvider", () => {
         semanticSearch: false,
         stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
       });
+      resetConfigCache();
 
-      const searchResult = await akmSearch({ query: "prompt chaining", source: "stash" });
-      const hit = searchResult.hits.find((entry) => entry.type === "skill" && entry.name === "openai/prompt-chaining");
-      expect(hit).toBeDefined();
+      // Ensure the cache mirror is populated so the content directory exists
+      const { ensureContextHubCaches } = await import("../../src/search-source");
+      const { loadConfig } = await import("../../src/config");
+      const config = loadConfig();
+      await ensureContextHubCaches(config);
 
+      // Verify context-hub content dir appears in stash sources
+      const { resolveStashSources } = await import("../../src/search-source");
+      const sources = resolveStashSources(undefined, config);
+      const contextHubSource = sources.find((s) => s.path.includes("context-hub-"));
+      expect(contextHubSource).toBeDefined();
+
+      // Show still works via the context-hub provider
       const showResult = await akmShowUnified({
         ref: makeContextHubRef("content/openai/skills/prompt-chaining/SKILL.md"),
         view: { mode: "lines", start: 9, end: 11 },
@@ -250,8 +280,10 @@ describe("ContextHubStashProvider", () => {
         name: "context-hub",
       }) as ContextHubStashProvider;
 
-      const searchResult = await provider.search({ query: "openai chat", limit: 10 });
-      expect(searchResult.hits.some((entry) => entry.name === "openai/chat-api")).toBe(true);
+      // Trigger initial cache population via ensureContextHubMirror
+      const repo = parseContextHubRepoUrl("https://github.com/andrewyng/context-hub");
+      const cachePaths = getCachePaths(repo.canonicalUrl);
+      await ensureContextHubMirror(repo, cachePaths, { requireRepoDir: true });
 
       const cacheHome = process.env.XDG_CACHE_HOME;
       expect(cacheHome).toBeDefined();
