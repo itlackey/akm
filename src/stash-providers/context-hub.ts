@@ -30,6 +30,7 @@ interface ContextHubEntry {
   language?: string;
   version?: string;
   sortName: string;
+  fileSize?: number;
 }
 
 interface ParsedRepoUrl {
@@ -268,6 +269,7 @@ function buildEntry(repoDir: string, contentDir: string, fullPath: string): Cont
     language: language || undefined,
     version: version || undefined,
     sortName: `${id}:${language ?? ""}:${version ?? ""}`,
+    fileSize: Buffer.byteLength(raw, "utf8"),
   };
 }
 
@@ -313,6 +315,7 @@ function matchesType(entry: ContextHubEntry, requested: string | undefined): boo
 function entryToHit(entry: ContextHubEntry, score: number): StashSearchHit {
   const details = [entry.language, entry.version].filter(Boolean).join(" • ");
   const description = [entry.description, details].filter(Boolean).join(" — ") || undefined;
+  const estimatedTokens = typeof entry.fileSize === "number" ? Math.round(entry.fileSize / 4) : undefined;
   return {
     type: entry.assetType,
     name: entry.id,
@@ -324,6 +327,7 @@ function entryToHit(entry: ContextHubEntry, score: number): StashSearchHit {
     tags: entry.tags,
     action: `akm show ${entry.ref}`,
     score,
+    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
 }
 
