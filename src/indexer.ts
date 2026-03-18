@@ -8,11 +8,9 @@ import {
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
-  getAllEntries,
   getEntriesByDir,
   getEntryCount,
   getMeta,
-  getUtilityScore,
   isVecAvailable,
   openDatabase,
   rebuildFts,
@@ -24,7 +22,7 @@ import {
 } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
-import { ensureUsageEventsSchema, getLastUsedAt, getUsageEventCounts, purgeOldUsageEvents } from "./usage-events";
+import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -615,29 +613,51 @@ export function recomputeUtilityScores(db: import("bun:sqlite").Database): void 
   // Ensure M-1 usage_events table exists before querying
   ensureUsageEventsSchema(db);
 
-  // Purge stale usage events (Issue #6: 90-day retention)
+  // Purge stale usage events (90-day retention)
   purgeOldUsageEvents(db, USAGE_EVENT_RETENTION_DAYS);
 
-  const allEntries = getAllEntries(db);
-  for (const entry of allEntries) {
-    const { searchCount, showCount } = getUsageEventCounts(db, entry.id);
-    if (searchCount === 0 && showCount === 0) continue;
+  // Single aggregate query instead of N+1 per-entry queries.
+  // Only processes entries that actually have usage events.
+  const usageRows = db
+    .prepare(`
+      SELECT entry_id,
+             SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
+             SUM(CASE WHEN event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
+             MAX(created_at) AS last_used_at
+      FROM usage_events
+      WHERE entry_id IS NOT NULL
+      GROUP BY entry_id
+    `)
+    .all() as Array<{
+    entry_id: number;
+    search_count: number;
+    show_count: number;
+    last_used_at: string | null;
+  }>;
 
-    // Issue #3: clamp selectRate to [0, 1]
-    const selectRate = searchCount > 0 ? Math.min(1, showCount / searchCount) : 0;
-    const lastUsedAt = getLastUsedAt(db, entry.id);
+  if (usageRows.length === 0) return;
 
-    // Get previous utility for EMA calculation
-    const prev = getUtilityScore(db, entry.id);
-    const prevUtility = prev?.utility ?? 0;
+  // Batch-load existing utility scores
+  const existingScores = new Map<number, number>();
+  const scoreRows = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
+    entry_id: number;
+    utility: number;
+  }>;
+  for (const row of scoreRows) {
+    existingScores.set(row.entry_id, row.utility);
+  }
+
+  for (const row of usageRows) {
+    const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
+    const prevUtility = existingScores.get(row.entry_id) ?? 0;
     const utility = prevUtility * EMA_DECAY + selectRate * EMA_NEW;
 
-    upsertUtilityScore(db, entry.id, {
+    upsertUtilityScore(db, row.entry_id, {
       utility,
-      showCount,
-      searchCount,
+      showCount: row.show_count,
+      searchCount: row.search_count,
       selectRate,
-      lastUsedAt,
+      lastUsedAt: row.last_used_at ?? undefined,
     });
   }
 }
