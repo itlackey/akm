@@ -41,36 +41,37 @@ describe("mergeStashHits — RRF merge", () => {
     expect(result).toHaveLength(2);
   });
 
-  test("merges using rank position, not raw scores", () => {
-    // Local hits have small RRF-scale scores (0.01-0.03)
-    const local = [makeStashHit("local-1", 0.03), makeStashHit("local-2", 0.02), makeStashHit("local-3", 0.01)];
-    // Additional hits have large provider-scale scores (0-100)
-    const additional = [makeStashHit("remote-1", 95), makeStashHit("remote-2", 80), makeStashHit("remote-3", 50)];
+  test("local hits preserve scores; provider-only hits rank below", () => {
+    const local = [makeStashHit("local-1", 0.85), makeStashHit("local-2", 0.65), makeStashHit("local-3", 0.4)];
+    const additional = [makeStashHit("remote-1", 95), makeStashHit("remote-2", 80)];
 
     const result = mergeStashHits(local, additional, 6);
 
-    // With RRF, rank-1 items from both lists should be interleaved fairly.
-    // local-1 (rank 0 in local) and remote-1 (rank 0 in additional) both get
-    // RRF score of 1/(60+1) = 0.01639... so they should appear near the top.
-    // The key property: raw scores should NOT determine order across lists.
-    // Without RRF, remote-1 (score 95) would always dominate local-1 (score 0.03).
-    expect(result).toHaveLength(6);
-
-    // The top-ranked item from each source should both appear in top 2
-    const topNames = result.slice(0, 2).map((h) => h.name);
-    expect(topNames).toContain("local-1");
-    expect(topNames).toContain("remote-1");
+    expect(result).toHaveLength(5);
+    // Local hits retain their original scores and rank first
+    expect(result[0].name).toBe("local-1");
+    expect(result[0].score).toBe(0.85);
+    expect(result[1].name).toBe("local-2");
+    expect(result[1].score).toBe(0.65);
+    expect(result[2].name).toBe("local-3");
+    expect(result[2].score).toBe(0.4);
+    // Provider-only hits are placed below with reduced scores
+    expect(result[3].score!).toBeLessThan(0.4);
+    expect(result[4].score!).toBeLessThan(result[3].score!);
   });
 
-  test("items appearing in both lists get combined RRF score", () => {
-    // Same item appears in both lists — should get boosted
-    const local = [makeStashHit("shared-item", 0.03), makeStashHit("local-only", 0.02)];
+  test("duplicate items: local version wins, provider copy dropped", () => {
+    const local = [makeStashHit("shared-item", 0.85), makeStashHit("local-only", 0.6)];
     const additional = [makeStashHit("shared-item", 50), makeStashHit("remote-only", 40)];
 
     const result = mergeStashHits(local, additional, 10);
 
-    // shared-item should rank first because it appears in both lists (double RRF score)
+    // shared-item appears once with local score, not duplicated
+    expect(result.filter((h) => h.name === "shared-item")).toHaveLength(1);
     expect(result[0].name).toBe("shared-item");
+    expect(result[0].score).toBe(0.85);
+    // remote-only ranks below local hits
+    expect(result.find((h) => h.name === "remote-only")).toBeDefined();
   });
 
   test("respects limit parameter", () => {
@@ -80,25 +81,23 @@ describe("mergeStashHits — RRF merge", () => {
     expect(result).toHaveLength(2);
   });
 
-  test("merged hits carry RRF scores, not original raw scores", () => {
-    // Local hits have tiny RRF-scale scores
-    const local = [makeStashHit("local-1", 0.016)];
-    // Additional hits have large provider-scale scores (e.g. context-hub scores 4+)
+  test("local scores preserved; provider raw scores do not leak through", () => {
+    const local = [makeStashHit("local-1", 0.85)];
     const additional = [makeStashHit("remote-1", 4.0), makeStashHit("remote-2", 3.5)];
 
     const result = mergeStashHits(local, additional, 10);
 
-    // All output scores must be RRF-derived (in the range 0-1, typically < 0.05)
-    // Raw scores of 4.0 or 3.5 must NOT leak through
+    // Local hit retains its score
+    expect(result[0].name).toBe("local-1");
+    expect(result[0].score).toBe(0.85);
+    // Provider raw scores (4.0, 3.5) must NOT leak through — they should
+    // be reduced to below the local minimum
     for (const hit of result) {
-      expect(hit.score).toBeDefined();
-      expect(hit.score).toBeLessThan(1);
-      expect(hit.score).toBeGreaterThan(0);
+      if (hit.name !== "local-1") {
+        expect(hit.score!).toBeLessThan(0.85);
+        expect(hit.score).toBeGreaterThanOrEqual(0);
+      }
     }
-    // Specifically: no hit should have the original raw score
-    expect(result.find((h) => h.score === 4.0)).toBeUndefined();
-    expect(result.find((h) => h.score === 3.5)).toBeUndefined();
-    expect(result.find((h) => h.score === 0.016)).toBeUndefined();
   });
 });
 

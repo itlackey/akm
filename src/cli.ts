@@ -207,10 +207,10 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
 }
 
 function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action"]);
+  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
   if (detail === "normal") {
     return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "kit", "action"]),
+      pickFields(hit, ["assetName", "assetType", "description", "kit", "action", "estimatedTokens"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }

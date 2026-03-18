@@ -39,12 +39,14 @@ const V2_INDEX: RegistryIndex = {
           name: "deploy.sh",
           description: "Deploy the application",
           tags: ["deploy", "ci"],
+          estimatedTokens: 64,
         },
         {
           type: "skill",
           name: "code-review",
           description: "Automated code review skill",
           tags: ["review", "quality"],
+          estimatedTokens: 96,
         },
       ],
     },
@@ -177,6 +179,7 @@ describe("parser: v2 index with assets", () => {
       expect(deployHit?.type).toBe("registry-asset");
       expect(deployHit?.assetType).toBe("script");
       expect(deployHit?.description).toBe("Deploy the application");
+      expect(deployHit?.estimatedTokens).toBe(64);
       expect(deployHit?.kit.id).toBe("github:owner/my-kit");
       expect(deployHit?.kit.name).toBe("My Kit");
       expect(deployHit?.action).toBe("akm add github:owner/my-kit");

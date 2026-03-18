@@ -202,6 +202,19 @@ export { buildLocalAction, rendererForType, registerTypeRenderer, registerAction
  * sources with incompatible score scales (e.g. RRF ~0.01-0.03 vs 0-1 or
  * 0-100) are merged fairly.
  */
+/**
+ * Merge local and additional stash hits preserving local score quality.
+ *
+ * Local hits have meaningful scores from the FTS+boost pipeline. Additional
+ * provider hits (context-hub, OpenViking) have their own scores that may use
+ * a different scale. The merge strategy:
+ *
+ * 1. Local hits retain their original scores (the scoring pipeline already
+ *    produced well-differentiated values).
+ * 2. Provider hits that duplicate a local hit are dropped (local version wins).
+ * 3. Provider-only hits are interleaved using their rank position, scored
+ *    below the lowest local hit so they don't displace locally-ranked results.
+ */
 export function mergeStashHits(
   localHits: StashSearchHit[],
   additionalHits: StashSearchHit[],
@@ -209,29 +222,30 @@ export function mergeStashHits(
 ): StashSearchHit[] {
   if (additionalHits.length === 0) return localHits.slice(0, limit);
 
-  const RRF_K = 60;
-  const scoreMap = new Map<string, { hit: StashSearchHit; score: number }>();
+  // Track local hits by a dedup key (path > ref > name)
+  const localKeys = new Set<string>();
+  for (const h of localHits) {
+    localKeys.add(h.path ?? h.ref ?? h.name);
+  }
 
-  const applyRankedList = (hits: StashSearchHit[]) => {
-    for (let i = 0; i < hits.length; i++) {
-      const key = hits[i].path ?? hits[i].ref ?? hits[i].name;
-      const rrf = 1 / (RRF_K + i + 1);
-      const existing = scoreMap.get(key);
-      if (existing) {
-        existing.score += rrf;
-      } else {
-        scoreMap.set(key, { hit: hits[i], score: rrf });
-      }
-    }
-  };
+  // Find the lowest local score to use as a ceiling for provider-only hits
+  const minLocalScore = localHits.length > 0 ? Math.min(...localHits.map((h) => h.score ?? 0)) : 0;
 
-  applyRankedList(localHits);
-  applyRankedList(additionalHits);
+  // Provider-only hits get scores just below the lowest local hit,
+  // decreasing by rank position so their relative order is preserved.
+  const providerOnly: StashSearchHit[] = [];
+  for (let i = 0; i < additionalHits.length; i++) {
+    const key = additionalHits[i].path ?? additionalHits[i].ref ?? additionalHits[i].name;
+    if (localKeys.has(key)) continue; // Local version wins
+    const providerScore = Math.max(0, minLocalScore * 0.9 - i * 0.0001);
+    providerOnly.push({
+      ...additionalHits[i],
+      score: Math.round(providerScore * 10000) / 10000,
+    });
+  }
 
-  return [...scoreMap.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((v) => ({ ...v.hit, score: Math.round(v.score * 10000) / 10000 }));
+  // Combine: local hits first (already sorted by score), then provider hits
+  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
 }
 
 function normalizeLimit(limit?: number): number {
