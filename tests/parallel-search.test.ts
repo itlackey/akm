@@ -306,7 +306,7 @@ describe("Parallel search: hybrid result ordering", () => {
   test("hybrid search returns results sorted by score descending", async () => {
     // We verify the parallelization indirectly by checking that the search
     // works correctly with both FTS and vector data present, and that
-    // results are properly merged (RRF fusion produces correct hybrid results)
+    // results are properly merged (normalized BM25 + weighted combination)
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "build", "build.sh"), "#!/bin/bash\necho build\n");

@@ -26,7 +26,7 @@ function makeRegistryHit(name: string, score: number): RegistrySearchResultHit {
 
 // ── mergeStashHits ──────────────────────────────────────────────────────────
 
-describe("mergeStashHits — RRF merge", () => {
+describe("mergeStashHits — score-preserving merge", () => {
   test("returns local hits when additionalHits is empty", () => {
     const local = [makeStashHit("a", 0.03), makeStashHit("b", 0.02)];
     const result = mergeStashHits(local, [], 10);
