@@ -296,7 +296,7 @@ async function indexEntries(
       }
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM utility_scores");
-      db.exec("DELETE FROM usage_events");
+      db.exec("UPDATE usage_events SET entry_id = NULL");
       db.exec("DELETE FROM entries");
     }
 

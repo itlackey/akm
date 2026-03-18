@@ -394,7 +394,9 @@ async function searchDatabase(
       let recencyFactor = 1;
       if (utilScore.lastUsedAt) {
         const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
-        const daysSinceLastUse = Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
+        const daysSinceLastUse = Number.isNaN(lastUsedMs)
+          ? Infinity
+          : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
         recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
       }
       // Compute raw utility boost and cap it

@@ -171,15 +171,13 @@ communicates which result is more useful.
 
 ### Local + provider merge (stash providers)
 
-When additional stash providers (context-hub, OpenViking) return results:
+When additional stash providers (git, OpenViking) return results:
 
 - **Local hits keep their original scores** from the pipeline above
-- **Provider-only hits** are scored just below the lowest local hit, with
-  their relative order preserved
+- **Provider hits keep their original scores** and sort fairly alongside
+  local hits by score descending
 - **Duplicates** (same file path): local version wins, provider copy dropped
-
-This ensures the scoring pipeline's careful differentiation is not destroyed
-by provider results on a different scale.
+- **No score suppression** — provider results compete on equal footing
 
 ### Local + registry merge
 

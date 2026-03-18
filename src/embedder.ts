@@ -155,8 +155,10 @@ const embedCache = new Map<string, EmbeddingVector>();
  * apiKey deliberately excluded: same endpoint+model produce identical embeddings regardless of auth
  */
 function embedCacheKey(text: string, config?: EmbeddingConnectionConfig): string {
-  if (!config) return `local:${text}`;
-  return `${config.endpoint}:${config.model}:${text}`;
+  if (!config) return `local::${text}`;
+  const endpoint = config.endpoint || "";
+  const model = config.model || config.localModel || "";
+  return `${endpoint}:${model}:${text}`;
 }
 
 /**
