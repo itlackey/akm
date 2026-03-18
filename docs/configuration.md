@@ -9,6 +9,11 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
+For a guided first-run experience, use `akm setup` to choose a stash directory,
+configure embeddings/LLM settings, review registries, and add stash sources.
+The wizard saves this file for you, initializes the stash, and builds the
+search index.
+
 ## Managing Config
 
 ```sh

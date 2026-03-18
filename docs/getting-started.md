@@ -14,13 +14,26 @@ bun install -g akm-cli
 Or download a standalone binary from the
 [GitHub releases](https://github.com/itlackey/agentikit/releases) page.
 
+## First-Time Setup
+
+For a guided first run, start with:
+
+```sh
+akm setup
+```
+
+`akm setup` walks through stash location, embedding/LLM settings, registries,
+and stash sources, then saves your config, initializes the stash directory, and
+builds the search index.
+
 ## Initialize Your Working Stash
 
-Run `akm init` to create your working stash — the primary directory where
-your personal assets live:
+If you prefer to skip the wizard, run `akm init` to create your working stash —
+the primary directory where your personal assets live:
 
 ```sh
 akm init
+akm init --dir ~/custom-stash
 ```
 
 This creates `~/akm` with subdirectories for each asset type: `scripts/`,
