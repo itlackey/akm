@@ -23,9 +23,9 @@ That's where [OpenViking](https://github.com/volcengine/OpenViking) comes in, an
 
 ## What Is OpenViking?
 
-OpenViking is an open-source context database built by ByteDance's Volcano Engine team. Instead of treating agent context as flat vectors in a RAG pipeline, it organizes everything — memories, resources, skills — into a hierarchical virtual filesystem under the `viking://` protocol.
+OpenViking is an open-source context database built by ByteDance's Volcano Engine team. Instead of treating agent context as flat vectors in a RAG pipeline, it organizes everything — memories, resources, skills — into a hierarchical virtual filesystem with semantic search.
 
-The mental model is deliberate: agent context should be as navigable as a file tree. You can `ls` a directory, read a specific document by URI, and search semantically across the entire tree. Everything gets a unique address like `viking://resources/project-context` or `viking://memories/sprint-decisions`.
+The part that matters: it stores and retrieves agent context (project docs, team decisions, coding standards) via a REST API. When you connect it to `akm`, its content shows up in search results alongside your local assets — same `type:name` refs, same ranking, same `akm show` workflow.
 
 The part that matters for `akm` is the API. OpenViking exposes REST endpoints for search (semantic and text), content read, and file stat. That's exactly what a stash provider needs: the ability to find things and retrieve them. So we built one.
 
@@ -72,13 +72,13 @@ Here's what changes in practice. Before OpenViking, an `akm search` hit your loc
 akm search "project architecture"
 ```
 
-This might return a local skill from your Claude Code directory *and* a resource document from OpenViking. The results are unified: same format, same scoring, same `ref` handles. The only difference is that OpenViking hits use `viking://` URIs instead of local `type:name` refs.
+This might return a local skill from your Claude Code directory *and* a knowledge doc from OpenViking. The results are unified: same format, same scoring, same `type:name` refs. Your agent can't tell the difference between a local asset and one from OpenViking — and it shouldn't need to.
 
 ```bash
-akm show viking://resources/project-context/project-context.md
+akm show knowledge:project-context
 ```
 
-That fetches the full content directly from the OpenViking server. No local copy needed. The response comes back in the same format as any other `akm show` — with a `content` field, an `action` field, and type metadata. Your agent doesn't need to know or care whether the asset was local or remote.
+That fetches the content — from the local index if available, or from the OpenViking server as a fallback. The response comes back in the same format as any other `akm show` — with a `content` field, an `action` field, and type metadata.
 
 By default, OpenViking search uses semantic matching (via `POST /api/v1/search/find`). If you prefer text search for exact matching, configure the provider with:
 
@@ -105,7 +105,7 @@ docker compose up -d
 ./seed.sh
 ```
 
-The seed script loads a handful of test documents — project architecture notes, coding standards, an API reference, and a project memory — into the OpenViking server. These map to `viking://resources/` and `viking://memories/` URIs.
+The seed script loads a handful of test documents — project architecture notes, coding standards, an API reference, and a project memory — into the OpenViking server.
 
 Now register it:
 
@@ -119,10 +119,11 @@ akm stash add http://localhost:1933 \
 And test:
 
 ```bash
-akm show viking://resources/project-context/project-context.md
+akm search "project architecture"
+akm show knowledge:project-context
 ```
 
-You should get back the full markdown content of the project architecture document. Search works too:
+You should get back the full markdown content of the project architecture document. Search works across all sources:
 
 ```bash
 akm search "coding standards"

@@ -101,8 +101,8 @@ Agents should treat refs as opaque tokens -- get them from search, pass them
 to show. The structured fields `type`, `name`, and `origin` in search results
 provide the same information in a parseable form.
 
-`akm show` also accepts `viking://` URIs for remote OpenViking content, in
-addition to the standard `type:name` format.
+Assets from remote stash providers (such as OpenViking) use the same
+`type:name` ref format as everything else.
 
 ## Search Priority
 
