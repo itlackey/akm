@@ -20,20 +20,14 @@ VETOED - keep for explicit usage
 
 ### 2. Ref format inconsistency across search → show → add → clone
 
-Users must understand 4+ ref formats to navigate the core workflow:
+**RESOLVED.** URI schemes (`viking://`, `context-hub://`) are eliminated from user-facing refs. The ref format is now:
 
-| Command | Accepts | Example |
-|---------|---------|---------|
-| `search` output | `ref` (local) or `id` (registry) | `skill:deploy`, `npm:@scope/pkg` |
-| `show` | `type:name`, `viking://path`, `npm:@scope/pkg//type:name` | `akm show skill:deploy` |
-| `add` | `github:owner/repo`, `npm:pkg`, local path (becomes stash add) | `akm add github:org/repo` |
-| `clone` | `type:name` or `npm:@scope/pkg//type:name` | `akm clone skill:deploy` |
+- **Asset refs:** `type:name` (e.g., `skill:deploy`, `script:deploy.sh`) -- used by `search`, `show`, `clone`
+- **Source locators:** URLs and shorthands (`github:owner/repo`, `npm:@scope/pkg`) -- used by `add` only
 
-No help text explains the grammar. A user going from search result to `show` to `clone` must translate between formats manually.
+Provider routing is internal, based on source metadata. Users never need to know which provider holds an asset.
 
-**Files:** `src/stash-ref.ts`, `src/registry-resolve.ts`, `src/cli.ts`, `src/origin-resolve.ts`
-
-**Recommendation:** Normalize to a universal ref format. Every search hit should include an `action` field with the exact command to use, and a `ref` field that works across all commands.
+See `ARCHITECTURE.md` for the full ref format specification.
 
 ---
 
@@ -125,7 +119,7 @@ Error hint matching (lines 1225-1241) uses `message.includes("...")` checks. If 
 
 ## Recommended Priority Order
 
-1. Normalize ref format (issue #2) — highest user impact
+1. ~~Normalize ref format (issue #2) — highest user impact~~ **RESOLVED** (see ARCHITECTURE.md)
 2. Deprecate redundant commands (issue #1) — reduces confusion
 3. Merge registry search into search --source (issue #3) — simplifies CLI surface
 4. Document detail levels and --for-agent scope (issues #4, #5) — reduces guesswork

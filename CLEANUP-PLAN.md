@@ -1,3 +1,6 @@
+> **Status: Completed.** This audit was performed on 2026-03-17 and the identified issues
+> have been addressed. See ARCHITECTURE.md for current design decisions.
+
 # Cleanup Plan: feat/searchImprovements
 
 Comprehensive list of everything that needs to be cleaned up, with regression risks identified.
