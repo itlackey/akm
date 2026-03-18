@@ -25,11 +25,14 @@ Upgrade in place with `akm upgrade`.
 ## Quick Start
 
 ```sh
-akm init                          # Initialize your working stash
+akm setup                         # Guided setup: configure, initialize, and index
 akm add github:owner/repo         # Add a kit from GitHub
 akm search "deploy"               # Find assets
 akm show script:deploy.sh         # View details and run command
 ```
+
+If you want to skip the wizard, `akm init --dir ~/custom-stash` initializes the
+working stash at a custom path.
 
 ## Features
 

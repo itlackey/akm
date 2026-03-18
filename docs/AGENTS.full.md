@@ -97,7 +97,9 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 ```sh
+akm setup                                     # Guided config, init, and index
 akm init                                      # Initialize working stash
+akm init --dir ~/custom-stash                 # Initialize at a custom path
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm stash                                     # List all stashes

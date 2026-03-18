@@ -9,15 +9,29 @@ brief|normal|full` when you want a different presentation. Errors include
 
 ### init
 
-Create the stash directory structure and config file.
+Create the stash directory structure and persist the working stash path in
+config.
 
 ```sh
-akm init
+akm init                         # Initialize at the default location
+akm init --dir ~/custom-stash    # Initialize at a custom location
 ```
 
 Creates `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`
 subdirectories under the stash path. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
+
+### setup
+
+Run the interactive first-run wizard.
+
+```sh
+akm setup
+```
+
+The wizard lets you choose a stash directory, configure embedding and LLM
+providers, review registries, and add stash sources. When you save, akm writes
+the config file, initializes the stash directory, and builds the search index.
 
 ### index
 
@@ -208,6 +222,7 @@ akm upgrade --force      # Force upgrade even if already on latest
 | --- | --- |
 | `--check` | Check for updates without installing |
 | `--force` | Force upgrade even if on latest version |
+| `--skipChecksum` | Skip checksum verification during upgrade (not recommended) |
 
 ### clone
 
