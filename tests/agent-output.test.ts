@@ -79,8 +79,8 @@ describe("--for-agent output mode", () => {
     expect(keys).toContain("type");
     expect(keys).toContain("action");
 
-    // Only allowed keys
-    const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score"]);
+    // Only allowed keys (estimatedTokens is optional — present when fileSize is known)
+    const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
     for (const key of keys) {
       expect(allowedKeys.has(key)).toBe(true);
     }
@@ -209,7 +209,7 @@ describe("--format jsonl", () => {
 
     for (const line of lines) {
       const parsed = JSON.parse(line) as Record<string, unknown>;
-      const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score"]);
+      const allowedKeys = new Set(["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
       for (const key of Object.keys(parsed)) {
         expect(allowedKeys.has(key)).toBe(true);
       }

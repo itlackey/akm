@@ -239,7 +239,7 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
 
 /** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
 function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score"]);
+  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
   return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
 }
 
