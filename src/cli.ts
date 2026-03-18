@@ -13,7 +13,6 @@ import { akmIndex } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
-import { akmManifest } from "./manifest";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
@@ -405,15 +404,6 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       }
       if (r.message) return String(r.message);
       return null;
-    }
-    case "manifest": {
-      const entries = (r.entries as Array<Record<string, unknown>>) ?? [];
-      if (entries.length === 0) return "No assets found.";
-      const lines = entries.map((e) => {
-        const desc = e.description ? `  ${String(e.description)}` : "";
-        return `${String(e.ref)}${desc}`;
-      });
-      return `${lines.join("\n")}\n\n${entries.length} assets`;
     }
     case "clone": {
       const dst = (r.destination as Record<string, unknown>)?.path ?? "unknown";
@@ -1087,24 +1077,6 @@ const feedbackCommand = defineCommand({
   },
 });
 
-const manifestCommand = defineCommand({
-  meta: {
-    name: "manifest",
-    description: "List all assets with compact metadata (name, type, ref, description)",
-  },
-  args: {
-    type: { type: "string", description: "Filter by asset type (e.g. skill, script, command)" },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const result = await akmManifest({
-        type: args.type || undefined,
-      });
-      output("manifest", result);
-    });
-  },
-});
-
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -1175,7 +1147,6 @@ const main = defineCommand({
     upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
-    manifest: manifestCommand,
     clone: cloneCommand,
     stash: stashCommand,
     registry: registryCommand,
