@@ -216,13 +216,12 @@ Comprehensive list of everything that needs to be cleaned up, with regression ri
 - **Impact:** Every user who switches to this branch must rebuild their entire index. With Ollama LLM configured, this takes 10+ minutes for 1200 entries.
 - **Mitigation:** Document in release notes. Consider if version 7 (multi-column FTS5) is enough — utility_scores could be added without a version bump since it's `CREATE TABLE IF NOT EXISTS`.
 
-### R-2. Score scale change breaks external consumers
-- **Impact:** Any tool/script parsing akm search output that expected scores in the 0.01-0.03 range (RRF) will see scores in the 0.3-4.0 range. Comparisons like `if score > 0.02` break.
-- **Mitigation:** Document the score scale change. The scores were never documented as stable, but agents consuming them may have learned the old range.
+### ~~R-2. Score scale change breaks external consumers~~
+- **Not a concern** — no current external consumers of the score values.
 
-### R-3. `mergeStashHits` behavior change
-- **Impact:** On main, local and provider results are interleaved via RRF (fair merge). On feat, local results always rank above provider results. If a user has valuable OpenViking results, they'll be suppressed below all local hits regardless of relevance.
-- **Mitigation:** For truly remote providers (OpenViking), this may be wrong. Consider keeping RRF for OpenViking-only merges, or using the provider's own relevance score rather than forcing it below local.
+### R-3. `mergeStashHits` behavior change — OpenViking must be treated as local
+- **Impact:** On feat, provider results are suppressed below all local hits. OpenViking is a stash — its results should compete on equal footing with local results, not be treated as second-class.
+- **Fix:** OpenViking results should go through the same scoring pipeline as local stash results. OpenViking content should be indexed into the local FTS5 index, just like context-hub content should be. If that's not feasible (truly remote, no local cache), then OpenViking's own relevance scores should be normalized and merged fairly — not suppressed.
 
 ### R-4. Name boost removal + type boost addition changes ranking
 - **Impact:** On main, name match adds +0.10 flat. On feat, it adds up to +2.0 (exact match). Scripts that expected a specific asset at rank N may see different rankings.
@@ -240,12 +239,18 @@ Comprehensive list of everything that needs to be cleaned up, with regression ri
 - **Impact:** `buildEntry` now adds `fileSize` to `ContextHubEntry`. The cached `index.json` format changes. Old caches won't have this field. `isContextHubEntry` validator doesn't check for it, so old caches still load — but `estimatedTokens` will be `undefined` for old cached entries until the cache refreshes (12hr TTL).
 - **Mitigation:** None needed — graceful degradation. Field is optional.
 
-### R-8. Removing context-hub search path (if done)
-- **Impact:** If context-hub `search()` is removed and content is indexed instead, there's a transition period where:
-  1. The cache dir must be added to stash sources
-  2. `akm index` must run to index the content
-  3. Until then, context-hub results disappear from search
-- **Mitigation:** Add the cache dir to sources first, run index, THEN remove the search path. Or keep the search path as a fallback when content isn't indexed.
+### R-8. Replacing context-hub provider with standard git stash provider
+- **Impact:** The `context-hub` stash type must be replaced with a standard git-based stash provider that works like `akm add` for git repos: clone → cache → register as filesystem stash → index through normal pipeline.
+- **Approach:**
+  1. Create a generic `git` stash provider type that handles any git repo URL (not just context-hub)
+  2. `type=git` (or `type=context-hub` as alias) in config triggers: clone/pull the repo to cache dir, register the cache dir as a filesystem stash source
+  3. `resolveStashSources` includes the cache dir so the indexer walks and indexes it
+  4. Search goes through the unified FTS5 pipeline — no separate `scoreEntry`, no separate `search()` method
+  5. The provider retains `show()` for `context-hub://` ref resolution and `canShow()` for routing
+  6. Consolidate with the existing `akm add github:owner/repo` behavior — both should use the same clone/cache mechanism
+  7. The existing `ContextHubStashProvider.search()` method and `scoreEntry`/`entryToHit` functions become dead code and are removed
+- **Migration:** On first `akm index` after the change, context-hub content appears in the FTS5 index. No user action needed beyond re-indexing (which the DB_VERSION bump already forces).
+- **Risk:** Low if done correctly — the indexer already handles walking arbitrary directories. The main risk is that context-hub's cache structure (tarball extraction, nested `content/` dir) may not match what the walker expects. Test with the real repo.
 
 ---
 
@@ -276,7 +281,7 @@ Comprehensive list of everything that needs to be cleaned up, with regression ri
 16. F-8: Evaluate stash-search.ts re-exports
 
 ### Phase 5: Foundational fixes (highest risk, highest value)
-17. Index context-hub through normal pipeline
-18. Remove FilesystemStashProvider dead code
-19. Separate registry results from stash results
-20. Fix mergeStashHits for OpenViking (may need different strategy than "suppress below local")
+17. Replace context-hub provider with standard git stash provider — clone → cache → filesystem stash → index. Consolidate with existing `akm add github:repo` clone/cache mechanism. Keep provider for `show` (context-hub:// ref resolution) only. Remove `scoreEntry`, `entryToHit`, and `search()` from provider.
+18. Treat OpenViking as a local stash — index its content if possible, or normalize its scores to compete fairly with local results instead of suppressing below.
+19. Remove FilesystemStashProvider dead code.
+20. Separate registry results from stash results — different `hits` vs `registryHits` arrays in SearchResponse.

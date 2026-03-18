@@ -159,22 +159,20 @@ Mixing them in one array with merged scores confuses both humans and agents. An 
 
 But step 1 already covers everything that's indexed. The only providers that need step 2 are those whose content is NOT indexed (OpenViking — truly remote). If context-hub content were indexed (fix #0), step 2 would only be needed for OpenViking.
 
-The merge function `mergeStashHits` exists solely because of this two-path architecture. If all indexable content goes through one index, the merge disappears. Only OpenViking results need to be appended (not merged with score reconciliation — just appended at the bottom since they're remote results without local FTS scoring).
+The merge function `mergeStashHits` exists solely because of this two-path architecture. If all indexable content goes through one index, the merge simplifies dramatically.
 
 ---
 
 ## Summary: What actually needs to happen
 
-1. **Treat all git-based stash sources the same as installed kits** — clone → cache → include cache dir in `resolveStashSources` → index through normal pipeline. Context-hub is just one instance of this. Any `type=git` or `type=context-hub` stash entry should resolve to a cached filesystem directory.
+1. **Replace context-hub provider with a standard git stash provider.** Any git repo URL in stash config should go through the same path as `akm add github:repo`: clone → cache → register cache dir as filesystem stash → index through normal pipeline. The context-hub provider keeps `show()` for `context-hub://` ref resolution but loses `search()`, `scoreEntry`, and `entryToHit`. Consolidate the clone/cache mechanism with the existing `akm add` git behavior — one code path for all git-sourced stashes.
 
-2. **Context-hub provider stays for `show` only** — the provider can still handle `context-hub://` refs for display. But `search` should go through the unified FTS5 index, not the provider.
+2. **Treat OpenViking as a local stash.** Its content should be indexed into the local FTS5 index and searched through the unified pipeline. If that's not feasible (truly ephemeral remote content), normalize its scores to compete fairly with local results instead of suppressing them.
 
-3. **Simplify `mergeStashHits`** — with context-hub indexed, the only non-indexed provider is OpenViking. OpenViking results can be appended to the results list without score reconciliation. The complex merge function can be reduced to a simple concatenation + dedup.
+3. **Simplify `mergeStashHits`** — with both context-hub and OpenViking indexed, the merge function may not be needed at all. If any truly remote-only provider remains, a simple append + dedup is sufficient.
 
 4. **Separate registry results from stash results** — don't merge installable kits into the same hits array as usable assets.
 
 5. **Remove dead `FilesystemStashProvider`** — it's never used for search.
 
-6. **Remove `scoreEntry` / `entryToHit` from context-hub.ts** — search goes through FTS5, these become unnecessary.
-
-7. **Fix the interrupted index** — rebuild so all configured stash dirs are properly indexed.
+6. **Fix the interrupted index** — rebuild so all configured stash dirs are properly indexed.
