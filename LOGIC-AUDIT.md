@@ -4,6 +4,18 @@ These are not code quality issues. These are places where the code fundamentally
 
 ---
 
+## 0. Context-hub is treated as something special when it's just a git repo
+
+**The root confusion:** Context-hub has its own `StashProvider` class (`ContextHubStashProvider`), its own scoring function (`scoreEntry`), its own index format (`index.json`), its own cache management, its own entry type (`ContextHubEntry`), and its own search path. None of this is necessary. It's just a git repository.
+
+The system already knows how to handle git repos as stash sources — `akm add github:owner/repo` clones a repo, extracts it to a cache directory, and registers that directory as a filesystem stash source. The indexer walks it, classifies files, generates metadata, and indexes everything into FTS5. Search finds it through the normal pipeline with all the scoring, boosting, and ranking.
+
+Context-hub should work exactly the same way. Clone the repo, point a filesystem stash at the cached directory, let the normal pipeline handle the rest. Instead, ~450 lines of custom provider code duplicates what the existing git clone + filesystem stash + indexer pipeline already does, but worse — no FTS5 field weighting, no type boosts, no alias matching, no utility scoring, no `whyMatched`, and scores on an incompatible scale.
+
+**Every git-based stash source should be: clone → cache → filesystem stash → index → search through the unified pipeline.** There is no reason for a separate code path.
+
+---
+
 ## 1. Context-hub is searched outside the scoring pipeline
 
 **The confusion:** Context-hub is a git repository that gets cloned and cached locally. Its content lives on disk as real files. But it's registered as a `StashProvider` (`type=context-hub`) which means it has its own `search()` method with its own scoring function (`scoreEntry`). This scoring function is completely separate from the FTS5 + boost pipeline that all local/filesystem stash entries go through.
