@@ -117,10 +117,64 @@ The RRF removal and normalized BM25 ARE improvements to the local pipeline. But 
 
 ---
 
+## 9. FilesystemStashProvider is dead code
+
+**The confusion:** `FilesystemStashProvider` is registered as a stash provider but `resolveStashProviders()` explicitly skips `type=filesystem` entries (line 38 of `stash-provider-factory.ts`). The class is never instantiated for search. Filesystem stashes go through `resolveStashSources` → indexer → FTS5 → `searchLocal`. The provider exists but is never used for search — only `canShow` matters, and even that falls through to `showLocal` as the default.
+
+**Impact:** 52 lines of dead code that looks important.
+
+---
+
+## 10. Any git-based stash should go through the same path as installed kits
+
+**The confusion:** Installed kits from `akm add github:owner/repo` are:
+1. Cloned/downloaded to `~/.cache/akm/registry/...`
+2. Added to `config.installed[]` with `stashRoot` pointing to the cache dir
+3. Included in `resolveStashSources` (line 54 of `search-source.ts`)
+4. Indexed into FTS5 by the indexer
+5. Searched through the unified scoring pipeline
+
+Context-hub repos should follow the EXACT same path. Instead they have a parallel universe of code. The only difference is that context-hub's cache management (tarball download, extraction) is slightly different from installed kits — but that's an implementation detail of the clone step, not a reason for a separate search/scoring path.
+
+---
+
+## 11. `source: "both"` merges stash and registry results into one array
+
+**The confusion:** When `--source both` is used, `mergeSearchHits` combines stash hits (assets you USE) with registry hits (kits you can INSTALL) into a single `hits` array. These are fundamentally different things:
+- A stash hit's action is `akm show skill:deploy → follow instructions`
+- A registry hit's action is `akm add github:owner/repo → install first, then search again`
+
+Mixing them in one array with merged scores confuses both humans and agents. An agent seeing a registry hit ranked at #3 might try to `akm show` it and fail.
+
+**What it should be:** The `SearchResponse` should have separate `hits` and `registryHits` arrays when `source: "both"`. The CLI can display them in separate sections. Agents can ignore registry hits when looking for actionable tools.
+
+---
+
+## 12. The search orchestration layer duplicates what the index already does
+
+**The confusion:** `akmSearch` in `stash-search.ts` does this:
+1. Call `searchLocal` → searches the FTS5 index (which contains all filesystem stash dirs + installed kits)
+2. Call each stash provider's `search()` → context-hub and OpenViking do their own thing
+3. Merge results from step 1 and step 2
+
+But step 1 already covers everything that's indexed. The only providers that need step 2 are those whose content is NOT indexed (OpenViking — truly remote). If context-hub content were indexed (fix #0), step 2 would only be needed for OpenViking.
+
+The merge function `mergeStashHits` exists solely because of this two-path architecture. If all indexable content goes through one index, the merge disappears. Only OpenViking results need to be appended (not merged with score reconciliation — just appended at the bottom since they're remote results without local FTS scoring).
+
+---
+
 ## Summary: What actually needs to happen
 
-1. **Index context-hub content** — add the context-hub cache directory to `resolveAllStashDirs` so its files go through the normal walk → classify → metadata → FTS5 pipeline
-2. **Simplify the merge** — with context-hub indexed, `mergeStashHits` only needs to handle OpenViking (the only truly remote provider). The current score-preservation logic is correct for that case.
-3. **Separate registry results** — don't merge registry hits into the same array as stash hits
-4. **Remove the duplicate scoring in context-hub.ts** — `scoreEntry` and `entryToHit` become unnecessary for search (still needed for `show`)
-5. **Fix the interrupted index** — rebuild so `.hyphn/skills`, `.codex`, and context-hub are all properly indexed
+1. **Treat all git-based stash sources the same as installed kits** — clone → cache → include cache dir in `resolveStashSources` → index through normal pipeline. Context-hub is just one instance of this. Any `type=git` or `type=context-hub` stash entry should resolve to a cached filesystem directory.
+
+2. **Context-hub provider stays for `show` only** — the provider can still handle `context-hub://` refs for display. But `search` should go through the unified FTS5 index, not the provider.
+
+3. **Simplify `mergeStashHits`** — with context-hub indexed, the only non-indexed provider is OpenViking. OpenViking results can be appended to the results list without score reconciliation. The complex merge function can be reduced to a simple concatenation + dedup.
+
+4. **Separate registry results from stash results** — don't merge installable kits into the same hits array as usable assets.
+
+5. **Remove dead `FilesystemStashProvider`** — it's never used for search.
+
+6. **Remove `scoreEntry` / `entryToHit` from context-hub.ts** — search goes through FTS5, these become unnecessary.
+
+7. **Fix the interrupted index** — rebuild so all configured stash dirs are properly indexed.
