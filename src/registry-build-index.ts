@@ -279,6 +279,7 @@ async function inspectArchive(url: string, headers?: HeadersInit): Promise<Packa
       name: entry.name,
       ...(entry.description ? { description: entry.description } : {}),
       ...(entry.tags && entry.tags.length > 0 ? { tags: entry.tags } : {}),
+      ...(typeof entry.fileSize === "number" ? { estimatedTokens: Math.round(entry.fileSize / 4) } : {}),
     }));
 
     return {
@@ -339,10 +340,19 @@ async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
       stash = generated;
     }
 
-    entries.push(...stash.entries);
+    entries.push(...stash.entries.map((entry) => attachFileSize(dirPath, entry)));
   }
 
   return entries.sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
+}
+
+function attachFileSize(dirPath: string, entry: StashEntry): StashEntry {
+  if (typeof entry.fileSize === "number" || !entry.filename) return entry;
+  try {
+    return { ...entry, fileSize: fs.statSync(path.join(dirPath, entry.filename)).size };
+  } catch {
+    return entry;
+  }
 }
 
 function applyIncludeConfigForInspection(stashRoot: string, tempDir: string, searchRoot: string): string | undefined {

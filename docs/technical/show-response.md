@@ -114,9 +114,9 @@ field.
 
 ## Remote Show
 
-When showing `viking://` URIs, the response includes `editable: false` and
-content is fetched from the remote OpenViking server. These URIs are not
-standard refs but remote resource identifiers.
+Assets from remote stash providers (such as OpenViking) use standard
+`type:name` refs and always return `editable: false`. Content is fetched from
+the remote server transparently.
 
 ## Example Responses
 

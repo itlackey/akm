@@ -319,7 +319,7 @@ describe("SkillsShProvider", () => {
       const srv = serveJson(FIXTURE_RESPONSE);
       const provider = makeProvider(srv.url);
       const result = await provider.search({ query: "react", limit: 10, includeAssets: true });
-      expect(result.assetHits?.[0].action).toBe("akm add vercel-labs/agent-skills");
+      expect(result.assetHits?.[0].action).toBe("akm add github:vercel-labs/agent-skills");
     });
 
     test("no asset hits when includeAssets is false", async () => {

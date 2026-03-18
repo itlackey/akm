@@ -20,7 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { closeDatabase, getAllEntries, getMeta, openDatabase } from "../src/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { loadStashFile } from "../src/metadata";
 import { akmSearch } from "../src/stash-search";
@@ -522,14 +522,14 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     );
 
     expect(result.source).toBe("registry");
-    expect(result.hits.length).toBeGreaterThan(0);
+    expect(result.hits.length).toBe(0);
+    expect(result.registryHits).toBeDefined();
+    expect(result.registryHits?.length).toBeGreaterThan(0);
 
-    for (const hit of result.hits) {
+    for (const hit of result.registryHits!) {
       expect(hit.type).toBe("registry");
-      if (hit.type === "registry") {
-        expect(hit.action?.startsWith("akm add ")).toBe(true);
-        expect(hit.id.length).toBeGreaterThan(0);
-      }
+      expect(hit.action?.startsWith("akm add ")).toBe(true);
+      expect(hit.id.length).toBeGreaterThan(0);
     }
   });
 
@@ -556,7 +556,8 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
     expect(result.source).toBe("both");
     expect(result.hits.some((h) => h.type !== "registry")).toBe(true);
-    expect(result.hits.some((h) => h.type === "registry")).toBe(true);
+    expect(result.registryHits).toBeDefined();
+    expect(result.registryHits?.length).toBeGreaterThan(0);
   });
 });
 
@@ -663,20 +664,19 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.every((h: CliJsonHit) => h.whyMatched !== undefined)).toBe(true);
   });
 
-  test("cli: akm search --format yaml returns YAML output (or JSON fallback)", async () => {
+  test("cli: akm search --format yaml returns valid YAML output", async () => {
     const result = spawnSync("bun", [CLI, "search", "docker", "--format", "yaml"], {
       encoding: "utf8",
       timeout: 30_000,
       env: { ...process.env },
     });
     expect(result.status).toBe(0);
-    // Bun.YAML may not be available in all Bun versions; the CLI falls back to JSON.
-    // Accept either YAML (hits:) or JSON ("hits":) as valid output.
+    // Output must be YAML (unquoted keys like "hits:"), not JSON (quoted keys like '"hits"')
     const hasYaml = result.stdout.includes("hits:") && !result.stdout.includes('"hits"');
-    const hasJsonFallback = result.stdout.includes('"hits"');
-    expect(hasYaml || hasJsonFallback).toBe(true);
-    // Either way, results should be present
+    expect(hasYaml).toBe(true);
     expect(result.stdout).toContain("docker");
+    // Should not contain the fallback warning
+    expect(result.stderr).not.toContain("YAML output not available");
   });
 
   test("cli: akm show --format text includes execution fields", async () => {
@@ -1274,7 +1274,7 @@ describe("Scenario: Index persistence across sessions", () => {
 
     const db = openDatabase();
     const version = getMeta(db, "version");
-    expect(version).toBe("6");
+    expect(version).toBe(String(DB_VERSION));
     const storedStashDir = getMeta(db, "stashDir");
     expect(storedStashDir).toBe(stashDir);
     const entries = getAllEntries(db);

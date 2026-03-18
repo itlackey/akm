@@ -23,10 +23,8 @@ export interface StashProvider {
   search(options: StashSearchOptions): Promise<StashSearchResult>;
   show(ref: string, view?: KnowledgeView): Promise<ShowResponse>;
   /**
-   * Returns true if this provider can handle the given ref.
-   * Providers are checked in registration order; first match wins.
-   * Convention: filesystem provider handles all non-viking:// refs,
-   * OpenViking provider handles viking:// refs.
+   * Returns true if this provider is available to show assets.
+   * Local show is tried first; remote providers are tried as fallbacks.
    */
   canShow(ref: string): boolean;
 }

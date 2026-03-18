@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "name": "security-review",
+      "type": "command",
+      "description": "Review code for security vulnerabilities and compliance issues",
+      "tags": ["security", "review", "code"],
+      "searchHints": ["find security vulnerabilities", "audit code security"],
+      "filename": "security-review.md",
+      "quality": "curated",
+      "confidence": 0.9,
+      "parameters": [{ "name": "ARGUMENTS", "description": "Code files or directories to review" }]
+    },
+    {
+      "name": "release-manager",
+      "type": "command",
+      "description": "Manage release process including versioning, changelog, and deployment",
+      "tags": ["release", "deploy"],
+      "searchHints": ["create a release", "bump version", "deploy release"],
+      "filename": "release-manager.md",
+      "quality": "curated",
+      "confidence": 0.85,
+      "parameters": [{ "name": "$1", "description": "Version number (e.g. 1.2.3)" }]
+    }
+  ]
+}

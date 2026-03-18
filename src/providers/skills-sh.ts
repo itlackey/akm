@@ -92,15 +92,18 @@ class SkillsShProvider implements RegistryProvider {
     const baseUrl = this.config.url.replace(/\/+$/, "");
 
     return entries.map((entry) => {
-      const owner = entry.source.split("/")[0] ?? "";
+      const segments = entry.source.split("/");
+      const owner = segments[0] ?? "";
+      const repo = segments[1] ?? "";
+      const ownerRepo = owner && repo ? `${owner}/${repo}` : entry.source;
       const score = Math.round((entry.installs / maxInstalls) * 1000) / 1000;
 
       return {
         source: "github" as const,
         id: `skills-sh:${entry.id}`,
         title: entry.name,
-        ref: entry.source,
-        installRef: `github:${entry.source}`,
+        ref: ownerRepo,
+        installRef: `github:${ownerRepo}`,
         homepage: `${baseUrl}/${entry.id}`,
         score,
         metadata: {
@@ -118,15 +121,21 @@ class SkillsShProvider implements RegistryProvider {
     const registryName = this.config.name ?? "skills.sh";
     const maxInstalls = Math.max(...entries.map((e) => e.installs), 1);
 
-    const hits: RegistryAssetSearchHit[] = entries.map((entry) => ({
-      type: "registry-asset",
-      assetType: "skill",
-      assetName: entry.name,
-      kit: { id: `skills-sh:${entry.id}`, name: entry.name },
-      registryName,
-      action: `akm add ${entry.source}`,
-      score: Math.round((entry.installs / maxInstalls) * 1000) / 1000,
-    }));
+    const hits: RegistryAssetSearchHit[] = entries.map((entry) => {
+      const segments = entry.source.split("/");
+      const owner = segments[0] ?? "";
+      const repo = segments[1] ?? "";
+      const ownerRepo = owner && repo ? `${owner}/${repo}` : entry.source;
+      return {
+        type: "registry-asset",
+        assetType: "skill",
+        assetName: entry.name,
+        kit: { id: `skills-sh:${entry.id}`, name: entry.name },
+        registryName,
+        action: `akm add github:${ownerRepo}`,
+        score: Math.round((entry.installs / maxInstalls) * 1000) / 1000,
+      };
+    });
 
     return hits.length > 0 ? hits : undefined;
   }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { AkmConfig } from "./config";
 import { loadConfig } from "./config";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-providers/git";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -47,6 +48,25 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   for (const entry of config.stashes ?? []) {
     if (entry.type === "filesystem" && entry.path && entry.enabled !== false) {
       addSource(entry.path, entry.name);
+    }
+  }
+
+  // Git stash entries: resolve cache directory so the indexer can walk it.
+  // "context-hub", "github", and "git" provider types are handled.
+  for (const entry of config.stashes ?? []) {
+    if (GIT_STASH_TYPES.has(entry.type) && entry.url && entry.enabled !== false) {
+      try {
+        const repo = parseGitRepoUrl(entry.url);
+        const cachePaths = getCachePaths(repo.canonicalUrl);
+        // The content/ subdirectory inside the extracted repo is the actual
+        // stash root containing DOC.md / SKILL.md files that the walker indexes.
+        const contentDir = path.join(cachePaths.repoDir, "content");
+        addSource(contentDir, entry.name);
+      } catch (err) {
+        warn(
+          `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
@@ -152,3 +172,31 @@ function isValidDirectory(dir: string): boolean {
     return false;
   }
 }
+
+// ── Git stash cache integration ──────────────────────────────────────────────
+
+const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
+
+/**
+ * Ensure all git stash mirrors are refreshed so their cache directories
+ * exist on disk. Must be called (async) before `resolveStashSources()` so
+ * the content directories pass the `isValidDirectory()` check.
+ */
+export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
+  const cfg = config ?? loadConfig();
+  for (const entry of cfg.stashes ?? []) {
+    if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
+    try {
+      const repo = parseGitRepoUrl(entry.url);
+      const cachePaths = getCachePaths(repo.canonicalUrl);
+      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+    } catch (err) {
+      warn(
+        `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/** @deprecated Use ensureGitCaches instead. */
+export const ensureContextHubCaches = ensureGitCaches;

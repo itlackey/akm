@@ -313,6 +313,7 @@ function parseAssetEntry(raw: unknown): RegistryAssetEntry | null {
     name,
     description: asString(obj.description),
     tags: asStringArray(obj.tags),
+    estimatedTokens: typeof obj.estimatedTokens === "number" ? obj.estimatedTokens : undefined,
   };
 }
 
@@ -342,6 +343,7 @@ function scoreAssets(
             assetType: asset.type,
             assetName: asset.name,
             description: asset.description,
+            estimatedTokens: asset.estimatedTokens,
             kit: { id: kit.id, name: kit.name },
             registryName,
             action: `akm add ${installRef}`,
@@ -411,7 +413,7 @@ function buildInstallRef(source: string, ref: string): string {
     case "git":
       return `git+${ref}`;
     case "local":
-      return ref;
+      return `file:${ref}`;
     default:
       return `github:${ref}`;
   }

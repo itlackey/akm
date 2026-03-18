@@ -93,7 +93,6 @@ akm show knowledge:guide toc
 akm show knowledge:guide section "Authentication"
 akm show knowledge:guide lines 10 30
 akm show knowledge:guide frontmatter
-akm show viking://resources/my-doc
 ```
 
 The default JSON shape includes only action-relevant fields. For `show`,
@@ -111,8 +110,8 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | memory | `content` |
 
-`viking://` refs fetch content from a remote OpenViking server and always
-return `editable: false`.
+Assets from OpenViking stash sources use standard `type:name` refs like
+everything else, and always return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
@@ -167,7 +166,7 @@ See [registry.md](registry.md) for the full install flow.
 `akm add context-hub` is a convenience alias for:
 
 ```sh
-akm stash add https://github.com/andrewyng/context-hub --provider context-hub
+akm stash add https://github.com/andrewyng/context-hub --provider git
 ```
 
 ### list

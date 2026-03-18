@@ -21,6 +21,8 @@ export interface StashSearchHit {
   score?: number;
   whyMatched?: string[];
   run?: string;
+  /** Approximate token count derived from fileSize (fileSize / 4). Helps agents decide whether to load full content. */
+  estimatedTokens?: number;
 }
 
 export interface RegistrySearchResultHit {
@@ -45,6 +47,7 @@ export interface SearchResponse {
   stashDir: string;
   source: SearchSource;
   hits: SearchHit[];
+  registryHits?: RegistrySearchResultHit[];
   tip?: string;
   warnings?: string[];
   /** Timing counters in milliseconds */
@@ -172,6 +175,16 @@ export interface UpdateResponse {
   };
 }
 
+/**
+ * Detail level for show responses.
+ *
+ * - `"summary"` — returns compact metadata only (no content/template/prompt), under 200 tokens.
+ * - `"normal"` and `"full"` — both return the complete show response with full content.
+ *   The show function treats all non-"summary" values identically; these variants exist
+ *   so callers can forward the detail level to output formatting without translation.
+ */
+export type ShowDetailLevel = "summary" | "normal" | "full";
+
 export interface ShowResponse {
   schemaVersion?: number;
   type: string;
@@ -181,6 +194,7 @@ export interface ShowResponse {
   template?: string;
   prompt?: string;
   description?: string;
+  tags?: string[];
   /**
    * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
    * Can be a single tool name, a list of tool names, or a structured policy object
@@ -212,6 +226,22 @@ export type KnowledgeView =
   | { mode: "section"; heading: string }
   | { mode: "lines"; start: number; end: number };
 
+// ── Manifest types ──────────────────────────────────────────────────────────
+
+/** Compact entry returned by `akm manifest` for cheap capability discovery. */
+export interface ManifestEntry {
+  name: string;
+  type: string;
+  ref: string;
+  description?: string;
+}
+
+/** Response shape for `akm manifest`. */
+export interface ManifestResponse {
+  schemaVersion: number;
+  entries: ManifestEntry[];
+}
+
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
@@ -227,4 +257,19 @@ export interface UpgradeResponse {
   binaryPath?: string;
   checksumVerified?: boolean;
   message?: string;
+}
+
+export interface InfoResponse {
+  schemaVersion: number;
+  version: string;
+  assetTypes: string[];
+  searchModes: string[];
+  registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
+  stashProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
+  indexStats: {
+    entryCount: number;
+    lastBuiltAt: string | null;
+    hasEmbeddings: boolean;
+    vecAvailable: boolean;
+  };
 }

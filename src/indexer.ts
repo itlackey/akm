@@ -1,10 +1,10 @@
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
-  DB_VERSION,
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
@@ -17,10 +17,13 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
+  upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildSearchText } from "./search-fields";
+import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -46,7 +49,11 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
   // Load config and resolve all stash sources
   const { loadConfig } = await import("./config.js");
   const config = loadConfig();
-  const { resolveAllStashDirs } = await import("./search-source.js");
+
+  // Ensure git stash caches are extracted before resolving stash dirs,
+  // so their content directories exist on disk for the walker to discover.
+  const { ensureGitCaches, resolveAllStashDirs } = await import("./search-source.js");
+  await ensureGitCaches(config);
   const allStashDirs = resolveAllStashDirs(stashDir);
 
   const t0 = Date.now();
@@ -64,7 +71,7 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
 
     if (options?.full || !isIncremental) {
-      // HI-5: the delete is now merged into the insert transaction inside
+      // The delete is now merged into the insert transaction inside
       // indexEntries() so that a reader never sees an empty database between
       // the wipe and the re-inserts.  The doFullDelete flag signals this path.
     } else {
@@ -96,12 +103,11 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
 
     // Walk stash dirs and index entries.
     // doFullDelete=true merges the wipe into the same transaction as the
-    // inserts (HI-5) so readers never see an empty database mid-rebuild.
+    // inserts so readers never see an empty database mid-rebuild.
     const doFullDelete = options?.full || !isIncremental;
     const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = await indexEntries(
       db,
       allStashDirs,
-      stashDir,
       isIncremental,
       builtAtMs,
       doFullDelete,
@@ -118,13 +124,15 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     rebuildFts(db);
     const tFtsEnd = Date.now();
 
+    // Recompute utility scores from usage_events after FTS rebuild
+    recomputeUtilityScores(db);
+
     // Generate embeddings if semantic search is enabled
     const hasEmbeddings = await generateEmbeddingsForDb(db, config);
 
     const tEmbedEnd = Date.now();
 
     // Update metadata
-    setMeta(db, "version", String(DB_VERSION));
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDir", stashDir);
     setMeta(db, "stashDirs", JSON.stringify(allStashDirs));
@@ -161,9 +169,8 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
 // ── Extracted helpers for indexing ────────────────────────────────────────────
 
 async function indexEntries(
-  db: import("bun:sqlite").Database,
+  db: Database,
   allStashDirs: string[],
-  _stashDir: string,
   isIncremental: boolean,
   builtAtMs: number,
   doFullDelete = false,
@@ -271,7 +278,7 @@ async function indexEntries(
   const indexedAssetIdentities = new Set<string>();
 
   const insertTransaction = db.transaction(() => {
-    // HI-5: Perform the full-rebuild wipe as the FIRST step of the insert
+    // Perform the full-rebuild wipe as the FIRST step of the insert
     // transaction so delete and re-insert are atomic — a concurrent reader
     // never observes an empty database between the two operations.
     if (doFullDelete) {
@@ -288,6 +295,8 @@ async function indexEntries(
         }
       }
       db.exec("DELETE FROM entries_fts");
+      db.exec("DELETE FROM utility_scores");
+      db.exec("DELETE FROM usage_events");
       db.exec("DELETE FROM entries");
     }
 
@@ -333,7 +342,7 @@ async function indexEntries(
 }
 
 async function enhanceDirsWithLlm(
-  db: import("bun:sqlite").Database,
+  db: Database,
   config: import("./config").AkmConfig,
   dirsNeedingLlm: Array<{
     dirPath: string;
@@ -349,9 +358,9 @@ async function enhanceDirsWithLlm(
     const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
     if (generatedEntries.length === 0) continue;
     const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, dirPath, files);
+    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, files);
 
-    // HI-2: Re-upsert the enhanced entries in a single transaction so a crash
+    // Re-upsert the enhanced entries in a single transaction so a crash
     // cannot leave half the entries updated and the rest stale.
     db.transaction(() => {
       for (const entry of enhanced.entries) {
@@ -364,10 +373,7 @@ async function enhanceDirsWithLlm(
   }
 }
 
-async function generateEmbeddingsForDb(
-  db: import("bun:sqlite").Database,
-  config: import("./config").AkmConfig,
-): Promise<boolean> {
+async function generateEmbeddingsForDb(db: Database, config: import("./config").AkmConfig): Promise<boolean> {
   if (!config.semanticSearch) return false;
 
   try {
@@ -376,7 +382,7 @@ async function generateEmbeddingsForDb(
     if (allEntries.length === 0) return true;
     const texts = allEntries.map((e) => e.searchText);
     const embeddings = await embedBatch(texts, config.embedding);
-    // HI-3: Wrap all embedding upserts in a single transaction so partial
+    // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
     db.transaction(() => {
       for (let i = 0; i < allEntries.length; i++) {
@@ -392,7 +398,7 @@ async function generateEmbeddingsForDb(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function getAllEntriesForEmbedding(db: import("bun:sqlite").Database): Array<{ id: number; searchText: string }> {
+function getAllEntriesForEmbedding(db: Database): Array<{ id: number; searchText: string }> {
   return db
     .prepare(`
       SELECT e.id, e.search_text AS searchText FROM entries e
@@ -409,7 +415,6 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   }
 }
 
-/** Set of all known type directory names */
 function isDirStale(
   dirPath: string,
   currentFiles: string[],
@@ -447,7 +452,6 @@ function isDirStale(
 async function enhanceStashWithLlm(
   llmConfig: LlmConnectionConfig,
   stash: StashFile,
-  _dirPath: string,
   files: string[],
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("./llm.js");
@@ -518,21 +522,94 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   return files[0] || null;
 }
 
-export function buildSearchText(entry: StashEntry): string {
-  const parts: string[] = [entry.name.replace(/[-_]/g, " ")];
-  if (entry.description) parts.push(entry.description);
-  if (entry.tags) parts.push(entry.tags.join(" "));
-  if (entry.examples) parts.push(entry.examples.join(" "));
-  if (entry.aliases) parts.push(entry.aliases.join(" "));
-  if (entry.searchHints) parts.push(entry.searchHints.join(" "));
-  if (entry.usage) parts.push(entry.usage.join(" "));
-  if (entry.intent) {
-    if (entry.intent.when) parts.push(entry.intent.when);
-    if (entry.intent.input) parts.push(entry.intent.input);
-    if (entry.intent.output) parts.push(entry.intent.output);
+export { buildSearchFields, buildSearchText } from "./search-fields";
+
+// ── Utility score recomputation ──────────────────────────────────────────────
+
+/** Retention window for usage events: events older than this are purged. */
+const USAGE_EVENT_RETENTION_DAYS = 90;
+
+/**
+ * Recompute utility scores for all entries based on usage_events data.
+ *
+ * For each entry:
+ *   - Count search appearances (event_type = 'search')
+ *   - Count show events (event_type = 'show')
+ *   - Compute select_rate = showCount / searchCount, clamped to [0, 1]
+ *   - Update utility via EMA: utility = previousUtility * 0.7 + selectRate * 0.3
+ *
+ * Also purges usage_events older than 90 days and ensures the M-1
+ * usage_events table exists before querying.
+ *
+ * Called during `akm index` after FTS rebuild.
+ */
+export function recomputeUtilityScores(db: Database): void {
+  const EMA_DECAY = 0.7;
+
+  // Ensure usage_events table exists before querying
+  ensureUsageEventsSchema(db);
+
+  // Purge stale usage events (90-day retention)
+  purgeOldUsageEvents(db, USAGE_EVENT_RETENTION_DAYS);
+
+  // Time-proportional decay: apply one round of EMA per elapsed day so
+  // indexing frequency doesn't affect how fast scores decay.
+  const lastComputedAt = getMeta(db, "last_utility_computed_at");
+  let elapsedDays = 1; // default for first run
+  if (lastComputedAt) {
+    const ms = Date.now() - new Date(lastComputedAt).getTime();
+    elapsedDays = Math.max(1, ms / (1000 * 60 * 60 * 24));
   }
-  if (entry.toc) {
-    parts.push(entry.toc.map((h) => h.text).join(" "));
+  const emaDecay = EMA_DECAY ** elapsedDays;
+  const emaNew = 1 - emaDecay; // complement so weights still sum to 1
+
+  // Single aggregate query instead of N+1 per-entry queries.
+  // Only processes entries that actually have usage events.
+  const usageRows = db
+    .prepare(`
+      SELECT entry_id,
+             SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
+             SUM(CASE WHEN event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
+             MAX(created_at) AS last_used_at
+      FROM usage_events
+      WHERE entry_id IS NOT NULL
+      GROUP BY entry_id
+    `)
+    .all() as Array<{
+    entry_id: number;
+    search_count: number;
+    show_count: number;
+    last_used_at: string | null;
+  }>;
+
+  if (usageRows.length === 0) {
+    setMeta(db, "last_utility_computed_at", new Date().toISOString());
+    return;
   }
-  return parts.join(" ").toLowerCase();
+
+  // Batch-load existing utility scores
+  const existingScores = new Map<number, number>();
+  const scoreRows = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
+    entry_id: number;
+    utility: number;
+  }>;
+  for (const row of scoreRows) {
+    existingScores.set(row.entry_id, row.utility);
+  }
+
+  for (const row of usageRows) {
+    const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
+    const prevUtility = existingScores.get(row.entry_id) ?? 0;
+    const utility = prevUtility * emaDecay + selectRate * emaNew;
+
+    upsertUtilityScore(db, row.entry_id, {
+      utility,
+      showCount: row.show_count,
+      searchCount: row.search_count,
+      selectRate,
+      lastUsedAt: row.last_used_at ?? undefined,
+    });
+  }
+
+  setMeta(db, "last_utility_computed_at", new Date().toISOString());
 }

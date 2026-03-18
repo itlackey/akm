@@ -1,0 +1,23 @@
+{
+  "entries": [
+    {
+      "name": "svelte-components",
+      "type": "skill",
+      "description": "Build reusable Svelte components with best practices for composition and state management",
+      "tags": ["svelte", "components", "ui"],
+      "searchHints": ["create svelte component", "svelte best practices", "component architecture"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    },
+    {
+      "name": "svelte-components/references/web-components",
+      "type": "knowledge",
+      "description": "Web components integration guide for Svelte",
+      "tags": ["svelte", "web components", "custom elements"],
+      "filename": "references/web-components.md",
+      "quality": "curated",
+      "confidence": 0.8
+    }
+  ]
+}

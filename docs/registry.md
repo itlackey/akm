@@ -320,7 +320,7 @@ akm add vercel-labs/agent-skills
 
 Connects to an [OpenViking](https://github.com/volcengine/openviking) server
 for context management. OpenViking is ByteDance's open-source context file
-system for AI agents, using `viking://` URIs.
+system for AI agents.
 
 > **Note:** OpenViking is a *stash provider*, not a registry provider. Configure
 > it via `akm stash add`, not `akm registry add`.
@@ -332,25 +332,24 @@ akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"
 Key behaviors:
 - Semantic search via `POST /api/v1/search/find` (or text search via `POST /api/v1/search/grep`)
 - Results returned as stash hits in the unified `hits[]` array (not installable via `akm add`)
-- `viking://` URIs viewable with `akm show viking://path`
+- Results use standard `type:name` refs, viewable with `akm show`
 - Per-query response caching with 5-minute TTL
 - Stale cache fallback (up to 1 hour) on network failure
 - Optional API key authentication via `options.apiKey`
 - Optional `options.searchType`: `"semantic"` (default) or `"text"`
 
-#### `context-hub` (stash provider)
+#### `git` (stash provider)
 
-Connects to a GitHub-hosted
-[Context Hub](https://github.com/andrewyng/context-hub) repository and exposes
-its docs/skills directly in `akm search` and `akm show`.
+Indexes a git repository locally and exposes its docs/skills directly in
+`akm search` and `akm show`.
 
-> **Why stash, not registry?** Context Hub entries are immediately searchable
+> **Why stash, not registry?** Git-hosted entries are immediately searchable
 > knowledge assets, not installable kits. Modeling them as a stash provider
 > gives the best UX because users can search and open docs directly instead of
 > getting `akm add ...` install prompts.
 
 ```bash
-akm stash add https://github.com/andrewyng/context-hub --provider context-hub
+akm stash add https://github.com/andrewyng/context-hub --provider git
 ```
 
 Key behaviors:

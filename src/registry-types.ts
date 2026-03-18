@@ -64,6 +64,7 @@ export interface RegistryAssetEntry {
   name: string;
   description?: string;
   tags?: string[];
+  estimatedTokens?: number;
 }
 
 export interface RegistrySearchHit {
@@ -88,6 +89,7 @@ export interface RegistryAssetSearchHit {
   assetType: string;
   assetName: string;
   description?: string;
+  estimatedTokens?: number;
   kit: { id: string; name: string };
   registryName?: string;
   action: string;

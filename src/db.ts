@@ -5,6 +5,8 @@ import path from "node:path";
 import { cosineSimilarity, type EmbeddingVector } from "./embedder";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildSearchFields } from "./search-fields";
+import { ensureUsageEventsSchema } from "./usage-events";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -34,7 +36,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 6;
+export const DB_VERSION = 8;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -128,6 +130,8 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   // Check stored version — if it differs from DB_VERSION, drop and recreate all tables
   const storedVersion = getMeta(db, "version");
   if (storedVersion && storedVersion !== String(DB_VERSION)) {
+    db.exec("DROP TABLE IF EXISTS utility_scores");
+    db.exec("DROP TABLE IF EXISTS usage_events");
     db.exec("DROP TABLE IF EXISTS embeddings");
     db.exec("DROP TABLE IF EXISTS entries_vec");
     db.exec("DROP TABLE IF EXISTS entries_fts");
@@ -169,17 +173,37 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
-  // FTS5 table — standalone with explicit entry_id for joining
+  // FTS5 table — multi-column with per-field weighting via bm25()
   const ftsExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_fts'").get();
   if (!ftsExists) {
     db.exec(`
       CREATE VIRTUAL TABLE entries_fts USING fts5(
         entry_id UNINDEXED,
-        search_text,
+        name,
+        description,
+        tags,
+        hints,
+        content,
         tokenize='porter unicode61'
       );
     `);
   }
+
+  // Usage events table — created by ensureUsageEventsSchema() at runtime.
+
+  // Utility scores table (aggregated per-entry utility metrics)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS utility_scores (
+      entry_id     INTEGER PRIMARY KEY,
+      utility      REAL NOT NULL DEFAULT 0,
+      show_count   INTEGER NOT NULL DEFAULT 0,
+      search_count INTEGER NOT NULL DEFAULT 0,
+      select_rate  REAL NOT NULL DEFAULT 0,
+      last_used_at TEXT,
+      updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+    );
+  `);
 
   // sqlite-vec table
   if (isVecAvailable(db)) {
@@ -191,7 +215,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       } catch {
         /* ignore */
       }
-      // CR-2: Delete stale BLOB embeddings so they don't produce silently wrong
+      // Delete stale BLOB embeddings so they don't produce silently wrong
       // similarity scores against the new-dimension vec table.
       try {
         db.exec("DELETE FROM embeddings");
@@ -214,6 +238,9 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     }
     setMeta(db, "embeddingDim", String(embeddingDim));
   }
+
+  // Usage telemetry table
+  ensureUsageEventsSchema(db);
 }
 
 // ── Meta helpers ────────────────────────────────────────────────────────────
@@ -295,7 +322,7 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
     } catch {
       /* ignore */
     }
-    // HI-1: Also delete from FTS table so orphaned FTS rows don't remain
+    // Also delete from FTS table so orphaned FTS rows don't remain
     try {
       db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
     } catch {
@@ -308,17 +335,55 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
         /* ignore */
       }
     }
+    // Clean up utility scores before deleting entries
+    try {
+      db.prepare(`DELETE FROM utility_scores WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* ignore */
+    }
+    // Clean up usage events before deleting entries
+    try {
+      db.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
 export function rebuildFts(db: Database): void {
-  // CR-1: Wrap DELETE + INSERT in a single transaction so the FTS table is
+  // Wrap DELETE + INSERT in a single transaction so the FTS table is
   // never left empty between the two statements if a crash occurs.
-  // HI-14: Store the integer id directly (FTS5 stores all content as text
+  // Store the integer id directly (FTS5 stores all content as text
   // internally; the join in searchFts compares numerically without CAST).
+  //
+  // Insert into separate FTS5 columns by extracting per-field text from
+  // the entry_json using buildSearchFields(). The entries.search_text column
+  // is kept as a concatenated fallback for embedding generation.
+
   db.transaction(() => {
     db.exec("DELETE FROM entries_fts");
-    db.exec("INSERT INTO entries_fts (entry_id, search_text) SELECT id, search_text FROM entries");
+
+    const rows = db.prepare("SELECT id, entry_json FROM entries").all() as Array<{
+      id: number;
+      entry_json: string;
+    }>;
+
+    const insertStmt = db.prepare(
+      "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+
+    for (const row of rows) {
+      let entry: import("./metadata").StashEntry;
+      let fields: ReturnType<typeof buildSearchFields>;
+      try {
+        entry = JSON.parse(row.entry_json) as import("./metadata").StashEntry;
+        fields = buildSearchFields(entry);
+      } catch {
+        warn(`[db] rebuildFts: skipping entry id=${row.id} — invalid entry_json`);
+        continue;
+      }
+      insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+    }
   })();
 }
 
@@ -350,8 +415,8 @@ export function searchVec(db: Database, queryEmbedding: EmbeddingVector, k: numb
         .prepare("SELECT id, distance FROM entries_vec WHERE embedding MATCH ? AND k = ?")
         .all(buf, k) as DbVecResult[];
     } catch (err) {
-      // MD-5: Log the failure so it's visible in diagnostics
-      console.warn("[db] searchVec (sqlite-vec path) failed:", err instanceof Error ? err.message : String(err));
+      // Log the failure so it's visible in diagnostics
+      warn("[db] searchVec (sqlite-vec path) failed:", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -393,7 +458,7 @@ function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number)
     }));
   } catch (err) {
     // MD-5: Log the failure so it's visible in diagnostics
-    console.warn("[db] searchBlobVec (JS fallback) failed:", err instanceof Error ? err.message : String(err));
+    warn("[db] searchBlobVec (JS fallback) failed:", err instanceof Error ? err.message : String(err));
     return [];
   }
 }
@@ -404,14 +469,54 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   const ftsQuery = sanitizeFtsQuery(query);
   if (!ftsQuery) return [];
 
+  // Try the exact AND query first
+  const exactResults = runFtsQuery(db, ftsQuery, limit, entryType);
+  if (exactResults.length > 0) return exactResults;
+
+  // Exact match returned zero results — try prefix fallback.
+  // Append FTS5 `*` suffix to each token that is >= 3 characters long.
+  // Short tokens (1-2 chars) are excluded from prefix expansion because
+  // they produce too many false positives.
+  const prefixQuery = buildPrefixQuery(ftsQuery);
+  if (!prefixQuery) return [];
+
+  return runFtsQuery(db, prefixQuery, limit, entryType);
+}
+
+/**
+ * Build a prefix query from an FTS5 query string by appending `*` to each
+ * token that is 3+ characters long. Tokens shorter than 3 characters are
+ * kept as-is (no prefix expansion) to avoid overly broad matches.
+ *
+ * Returns null if no tokens qualify for prefix expansion.
+ */
+function buildPrefixQuery(ftsQuery: string): string | null {
+  const tokens = ftsQuery.split(/\s+/).filter(Boolean);
+  let hasPrefix = false;
+
+  const prefixTokens = tokens.map((t) => {
+    if (t.length >= 3) {
+      hasPrefix = true;
+      return `${t}*`;
+    }
+    return t;
+  });
+
+  if (!hasPrefix) return null;
+
+  return prefixTokens.join(" ");
+}
+
+function runFtsQuery(db: Database, ftsQuery: string, limit: number, entryType?: string): DbSearchResult[] {
   let sql: string;
   let params: unknown[];
 
-  // HI-14: Join on integer entry_id directly (no CAST needed; we store integer)
+  // Join on integer entry_id directly (no CAST needed; we store integer)
+  // Use bm25() with per-column weights: entry_id(0), name(10), description(5), tags(3), hints(2), content(1)
   if (entryType && entryType !== "any") {
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
-             bm25(entries_fts) AS bm25Score
+             bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
@@ -423,7 +528,7 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
   } else {
     sql = `
       SELECT e.id, e.file_path AS filePath, e.entry_json, e.search_text AS searchText,
-             bm25(entries_fts) AS bm25Score
+             bm25(entries_fts, 0, 10.0, 5.0, 3.0, 2.0, 1.0) AS bm25Score
       FROM entries_fts f
       JOIN entries e ON e.id = f.entry_id
       WHERE entries_fts MATCH ?
@@ -442,14 +547,14 @@ export function searchFts(db: Database, query: string, limit: number, entryType?
       bm25Score: number;
     }>;
 
-    // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+    // Guard against corrupt JSON — skip the row rather than crashing
     const results: DbSearchResult[] = [];
     for (const row of rows) {
       let entry: StashEntry;
       try {
         entry = JSON.parse(row.entry_json) as StashEntry;
       } catch {
-        console.warn(`[db] searchFts: skipping entry id=${row.id} — corrupt entry_json`);
+        warn(`[db] searchFts: skipping entry id=${row.id} — corrupt entry_json`);
         continue;
       }
       results.push({
@@ -512,14 +617,14 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     search_text: string;
   }>;
 
-  // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+  // Guard against corrupt JSON — skip the row rather than crashing
   const entries: DbIndexedEntry[] = [];
   for (const row of rows) {
     let entry: StashEntry;
     try {
       entry = JSON.parse(row.entry_json) as StashEntry;
     } catch {
-      console.warn(`[db] getAllEntries: skipping entry id=${row.id} — corrupt entry_json`);
+      warn(`[db] getAllEntries: skipping entry id=${row.id} — corrupt entry_json`);
       continue;
     }
     entries.push({
@@ -545,12 +650,12 @@ export function getEntryById(db: Database, id: number): { filePath: string; entr
     | { file_path: string; entry_json: string }
     | undefined;
   if (!row) return undefined;
-  // CR-6: Guard against corrupt JSON
+  // Guard against corrupt JSON
   let entry: StashEntry;
   try {
     entry = JSON.parse(row.entry_json) as StashEntry;
   } catch {
-    console.warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
+    warn(`[db] getEntryById: skipping entry id=${id} — corrupt entry_json`);
     return undefined;
   }
   return { filePath: row.file_path, entry };
@@ -571,14 +676,14 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
     search_text: string;
   }>;
 
-  // CR-6: Guard against corrupt JSON — skip the row rather than crashing
+  // Guard against corrupt JSON — skip the row rather than crashing
   const entries: DbIndexedEntry[] = [];
   for (const row of rows) {
     let entry: StashEntry;
     try {
       entry = JSON.parse(row.entry_json) as StashEntry;
     } catch {
-      console.warn(`[db] getEntriesByDir: skipping entry id=${row.id} — corrupt entry_json`);
+      warn(`[db] getEntriesByDir: skipping entry id=${row.id} — corrupt entry_json`);
       continue;
     }
     entries.push({
@@ -592,4 +697,106 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
     });
   }
   return entries;
+}
+
+// ── Utility score operations ────────────────────────────────────────────────
+
+export interface UtilityScoreData {
+  utility: number;
+  showCount: number;
+  searchCount: number;
+  selectRate: number;
+  lastUsedAt?: string;
+}
+
+export interface UtilityScoreRow extends UtilityScoreData {
+  entryId: number;
+  updatedAt: string;
+}
+
+/**
+ * Get the utility score for an entry, or undefined if none exists.
+ */
+export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow | undefined {
+  const row = db
+    .prepare(
+      "SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id = ?",
+    )
+    .get(entryId) as
+    | {
+        entry_id: number;
+        utility: number;
+        show_count: number;
+        search_count: number;
+        select_rate: number;
+        last_used_at: string | null;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    entryId: row.entry_id,
+    utility: row.utility,
+    showCount: row.show_count,
+    searchCount: row.search_count,
+    selectRate: row.select_rate,
+    lastUsedAt: row.last_used_at ?? undefined,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Batch-load utility scores for multiple entry IDs in a single query.
+ * Returns a Map keyed by entry_id for O(1) lookup.
+ */
+export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, UtilityScoreRow> {
+  if (ids.length === 0) return new Map();
+  const result = new Map<number, UtilityScoreRow>();
+  // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
+  for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at FROM utility_scores WHERE entry_id IN (${placeholders})`,
+      )
+      .all(...chunk) as Array<{
+      entry_id: number;
+      utility: number;
+      show_count: number;
+      search_count: number;
+      select_rate: number;
+      last_used_at: string | null;
+      updated_at: string;
+    }>;
+    for (const row of rows) {
+      result.set(row.entry_id, {
+        entryId: row.entry_id,
+        utility: row.utility,
+        showCount: row.show_count,
+        searchCount: row.search_count,
+        selectRate: row.select_rate,
+        lastUsedAt: row.last_used_at ?? undefined,
+        updatedAt: row.updated_at,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Insert or update a utility score for an entry.
+ */
+export function upsertUtilityScore(db: Database, entryId: number, data: UtilityScoreData): void {
+  db.prepare(`
+    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entry_id) DO UPDATE SET
+      utility = excluded.utility,
+      show_count = excluded.show_count,
+      search_count = excluded.search_count,
+      select_rate = excluded.select_rate,
+      last_used_at = excluded.last_used_at,
+      updated_at = datetime('now')
+  `).run(entryId, data.utility, data.showCount, data.searchCount, data.selectRate, data.lastUsedAt ?? null);
 }

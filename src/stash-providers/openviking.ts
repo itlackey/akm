@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry } from "../common";
@@ -7,13 +8,7 @@ import { getRegistryIndexCacheDir } from "../paths";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "../stash-types";
-
-/** Strip terminal control characters from untrusted strings. */
-function sanitizeString(value: unknown, maxLength = 255): string {
-  if (typeof value !== "string") return "";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip control chars from untrusted remote data
-  return value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, maxLength);
-}
+import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Per-query cache TTL in milliseconds (5 minutes). */
 const QUERY_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -94,7 +89,9 @@ class OpenVikingStashProvider implements StashProvider {
   }
 
   async show(ref: string, _view?: KnowledgeView): Promise<ShowResponse> {
-    const uri = ref.trim();
+    const trimmed = ref.trim();
+    // Accept both viking:// URIs (legacy/internal) and type:name refs
+    const uri = trimmed.startsWith("viking://") ? trimmed : refToVikingUri(trimmed);
     const baseUrl = this.baseUrl;
     const headers = this.authHeaders;
 
@@ -105,12 +102,12 @@ class OpenVikingStashProvider implements StashProvider {
 
     if (statResult == null && contentResult == null) {
       throw new NotFoundError(
-        `Could not fetch remote asset "${uri}". The OpenViking server at ${baseUrl} may be unreachable or the resource does not exist.`,
+        `Could not fetch remote asset "${trimmed}". The OpenViking server at ${baseUrl} may be unreachable or the resource does not exist.`,
       );
     }
     if (contentResult == null) {
       throw new NotFoundError(
-        `Content not found for remote asset "${uri}". The server returned metadata but no content.`,
+        `Content not found for remote asset "${trimmed}". The server returned metadata but no content.`,
       );
     }
 
@@ -122,12 +119,13 @@ class OpenVikingStashProvider implements StashProvider {
     const assetType = OV_TYPE_MAP[ovType] ?? "knowledge";
     const content = typeof contentResult === "string" ? contentResult : "";
     const description = sanitizeString(stat.abstract, 1000) || undefined;
+    const assetRef = `${assetType}:${name}`;
 
     return {
       type: assetType,
       name,
-      path: uri,
-      action: `Remote content from OpenViking — ${uri}`,
+      path: assetRef,
+      action: `Remote content from OpenViking — ${assetRef}`,
       content,
       description,
       editable: false,
@@ -135,8 +133,8 @@ class OpenVikingStashProvider implements StashProvider {
     };
   }
 
-  canShow(ref: string): boolean {
-    return ref.trim().startsWith("viking://");
+  canShow(_ref: string): boolean {
+    return !!(this.config.url ?? "").trim();
   }
 
   private get baseUrl(): string {
@@ -205,9 +203,8 @@ class OpenVikingStashProvider implements StashProvider {
       const name = sanitizeString(entry.name);
       const abstract = sanitizeString(entry.abstract, 1000);
       const type = sanitizeString(entry.type);
-      const uri = sanitizeString(entry.uri, 2048);
       const assetType = OV_TYPE_MAP[type] ?? "knowledge";
-      const ref = uriToVikingRef(uri);
+      const ref = `${assetType}:${name}`;
       return {
         type: assetType,
         name,
@@ -224,7 +221,7 @@ class OpenVikingStashProvider implements StashProvider {
 
   private queryCachePath(query: string, limit: number): string {
     const cacheDir = getRegistryIndexCacheDir();
-    const hasher = new Bun.CryptoHasher("md5");
+    const hasher = createHash("md5");
     hasher.update(this.config.url ?? "");
     hasher.update("\0");
     hasher.update(query.trim().toLowerCase());
@@ -272,10 +269,28 @@ registerStashProvider("openviking", (config) => new OpenVikingStashProvider(conf
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function uriToVikingRef(uri: string): string {
-  if (uri.startsWith("viking://")) return uri;
-  return `viking://${uri.replace(/^\/+/, "")}`;
+/**
+ * Convert a type:name ref to a viking:// URI for the OpenViking API.
+ * Maps the akm asset type back to the OV plural form (e.g. "skill" -> "skills").
+ */
+function refToVikingUri(ref: string): string {
+  const colon = ref.indexOf(":");
+  if (colon <= 0) return `viking://${ref}`;
+  const name = ref.slice(colon + 1);
+  const type = ref.slice(0, colon);
+  const ovDir = AKM_TO_OV_DIR[type] ?? type;
+  return `viking://${ovDir}/${name}`;
 }
+
+/** Reverse map: akm asset type → OpenViking directory name (plural). */
+const AKM_TO_OV_DIR: Record<string, string> = {
+  skill: "skills",
+  memory: "memories",
+  knowledge: "resources",
+  agent: "agents",
+  command: "commands",
+  script: "scripts",
+};
 
 function parseOVSearchResponse(result: unknown): OVSearchEntry[] {
   if (Array.isArray(result)) return result.filter(isValidOVEntry);
@@ -370,10 +385,6 @@ function extractNameFromUri(uri: string): string {
   return last.replace(/\.[^.]+$/, "");
 }
 
-function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
-}
-
 async function fetchOVJson(url: string, headers: Record<string, string>): Promise<unknown> {
   try {
     const response = await fetchWithRetry(url, { headers }, { timeout: 10_000, retries: 1 });
@@ -394,4 +405,4 @@ function inferTypeFromUri(uri: string): string {
 
 // ── Exports for testing ─────────────────────────────────────────────────────
 
-export { OpenVikingStashProvider, uriToVikingRef, parseOVSearchResponse };
+export { OpenVikingStashProvider, refToVikingUri, parseOVSearchResponse };

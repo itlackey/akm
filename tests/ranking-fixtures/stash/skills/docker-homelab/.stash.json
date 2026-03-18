@@ -1,0 +1,51 @@
+{
+  "entries": [
+    {
+      "name": "docker-homelab",
+      "type": "skill",
+      "description": "Manage Docker containers, images, and networks in a homelab environment",
+      "tags": ["docker", "compose", "containers", "homelab"],
+      "aliases": ["docker-compose"],
+      "searchHints": ["manage containers", "troubleshoot docker", "homelab setup", "docker compose orchestration"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.95
+    },
+    {
+      "name": "docker-homelab/references/containers",
+      "type": "knowledge",
+      "description": "Docker container management reference documentation",
+      "tags": ["docker", "containers", "reference"],
+      "filename": "references/containers.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "docker-homelab/references/compose",
+      "type": "knowledge",
+      "description": "Docker Compose configuration reference",
+      "tags": ["docker", "compose", "reference"],
+      "filename": "references/compose.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "docker-homelab/references/images",
+      "type": "knowledge",
+      "description": "Docker image management reference",
+      "tags": ["docker", "images", "registry", "reference"],
+      "filename": "references/images.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "docker-homelab/references/networking",
+      "type": "knowledge",
+      "description": "Docker networking configuration reference",
+      "tags": ["docker", "networking", "bridge", "overlay"],
+      "filename": "references/networking.md",
+      "quality": "curated",
+      "confidence": 0.85
+    }
+  ]
+}

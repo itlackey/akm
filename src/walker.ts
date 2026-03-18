@@ -11,6 +11,8 @@ import path from "node:path";
 import { isRelevantAssetFile } from "./asset-spec";
 import { buildFileContext, type FileContext } from "./file-context";
 
+const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);
+
 export interface DirectoryGroup {
   dirPath: string;
   files: string[];
@@ -89,7 +91,6 @@ function walkStashGit(stashRoot: string): FileContext[] | null {
   // result.success is false if the process exited non-zero OR git was not found
   if (!result.success) return null;
 
-  const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);
   const SKIP_FILES = new Set([".stash.json", ".gitignore", ".gitattributes"]);
 
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : String(result.stdout ?? "");
@@ -147,7 +148,6 @@ function isInsideGitRepo(dir: string): boolean {
 /** Manual walk for non-git directories. */
 function walkStashManual(stashRoot: string): FileContext[] {
   const results: FileContext[] = [];
-  const SKIP_DIRS = new Set([".git", "node_modules", "bin", ".cache"]);
 
   const stack = [stashRoot];
   while (stack.length > 0) {

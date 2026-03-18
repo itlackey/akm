@@ -213,6 +213,7 @@ describe("buildRegistryIndex", () => {
       "agent:planner",
       "command:release",
     ]);
+    expect(githubKit?.assets?.every((asset) => typeof asset.estimatedTokens === "number")).toBe(true);
     expect(githubKit?.latestVersion).toBe("0.4.0");
     expect(githubKit?.tags).toEqual(["automation", "release"]);
 
@@ -278,6 +279,7 @@ describe("buildRegistryIndex", () => {
     const reviewAsset = npmKit?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
     expect(reviewAsset?.description).toBe("Curated review workflow");
     expect(reviewAsset?.tags).toEqual(["quality", "code-review"]);
+    expect(reviewAsset?.estimatedTokens).toBeGreaterThan(0);
     expect(npmKit?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });
 });

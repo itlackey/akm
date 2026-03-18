@@ -39,12 +39,14 @@ const V2_INDEX: RegistryIndex = {
           name: "deploy.sh",
           description: "Deploy the application",
           tags: ["deploy", "ci"],
+          estimatedTokens: 64,
         },
         {
           type: "skill",
           name: "code-review",
           description: "Automated code review skill",
           tags: ["review", "quality"],
+          estimatedTokens: 96,
         },
       ],
     },
@@ -177,6 +179,7 @@ describe("parser: v2 index with assets", () => {
       expect(deployHit?.type).toBe("registry-asset");
       expect(deployHit?.assetType).toBe("script");
       expect(deployHit?.description).toBe("Deploy the application");
+      expect(deployHit?.estimatedTokens).toBe(64);
       expect(deployHit?.kit.id).toBe("github:owner/my-kit");
       expect(deployHit?.kit.name).toBe("My Kit");
       expect(deployHit?.action).toBe("akm add github:owner/my-kit");
@@ -262,7 +265,7 @@ describe("asset-level search", () => {
     }
   });
 
-  test("local source kit uses raw ref in action string", async () => {
+  test("local source kit uses file: prefix in action string", async () => {
     const localIndex: RegistryIndex = {
       version: 2,
       updatedAt: "2026-03-12T00:00:00Z",
@@ -298,8 +301,8 @@ describe("asset-level search", () => {
       expect(hit).toBeDefined();
       expect(hit?.assetName).toBe("setup.sh");
       expect(hit?.kit.id).toBe("local:my-local-kit");
-      // Local source should use the raw ref, not prefixed with "github:"
-      expect(hit?.action).toBe("akm add /home/user/kits/my-local-kit");
+      // Local source should use file: prefix, not "github:"
+      expect(hit?.action).toBe("akm add file:/home/user/kits/my-local-kit");
       expect(hit?.action).not.toContain("github:");
     } finally {
       srv.close();

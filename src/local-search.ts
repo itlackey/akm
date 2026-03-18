@@ -8,9 +8,11 @@
  * stash-providers/filesystem.ts also imports `searchLocal` from here.
  */
 
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { _setAssetTypeHooks, deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "./asset-registry";
+import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import {
   closeDatabase,
@@ -19,6 +21,7 @@ import {
   getEntryById,
   getEntryCount,
   getMeta,
+  getUtilityScoresByIds,
   openDatabase,
   searchFts,
   searchVec,
@@ -37,39 +40,6 @@ type IndexedAsset = {
   entry: StashEntry;
   path: string;
 };
-
-// ── Type renderer/action maps (re-exported so stash-search.ts can register) ──
-
-/** Map asset types to their primary renderer names. */
-export const TYPE_TO_RENDERER: Record<string, string> = {
-  script: "script-source",
-  skill: "skill-md",
-  command: "command-md",
-  agent: "agent-md",
-  knowledge: "knowledge-md",
-  memory: "memory-md",
-};
-
-export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
-  script: (ref) => `akm show ${ref} -> execute the run command`,
-  skill: (ref) => `akm show ${ref} -> follow the instructions`,
-  command: (ref) => `akm show ${ref} -> fill placeholders and dispatch`,
-  agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
-  knowledge: (ref) => `akm show ${ref} -> read reference material`,
-  memory: (ref) => `akm show ${ref} -> recall context`,
-};
-
-// Wire asset-spec's deferred hooks so that registerAssetType() automatically
-// populates TYPE_TO_RENDERER and ACTION_BUILDERS when the optional spec fields
-// rendererName / actionBuilder are provided.
-_setAssetTypeHooks(
-  (type, rendererName) => {
-    TYPE_TO_RENDERER[type] = rendererName;
-  },
-  (type, builder) => {
-    ACTION_BUILDERS[type] = builder;
-  },
-);
 
 export async function rendererForType(type: string) {
   const name = TYPE_TO_RENDERER[type];
@@ -154,7 +124,7 @@ export async function searchLocal(input: {
 // ── Database search ─────────────────────────────────────────────────────────
 
 async function searchDatabase(
-  db: import("bun:sqlite").Database,
+  db: Database,
   query: string,
   searchType: AkmSearchType,
   limit: number,
@@ -197,86 +167,149 @@ async function searchDatabase(
     return { hits };
   }
 
-  // Score using FTS5 (BM25) and optionally sqlite-vec
+  // Start the async embedding request without awaiting, then run FTS
+  // synchronously while the HTTP/local embedding request is in-flight.
+  const typeFilter = searchType === "any" ? undefined : searchType;
   const tEmbed0 = Date.now();
-  const embeddingScores = await tryVecScores(db, query, limit * 3, config);
+  const embeddingPromise = tryVecScores(db, query, limit * 3, config);
+  const ftsResults = searchFts(db, query, limit * 3, typeFilter);
+  const embeddingScores = await embeddingPromise;
   const embedMs = Date.now() - tEmbed0;
 
   const tRank0 = Date.now();
-  const typeFilter = searchType === "any" ? undefined : searchType;
-  const ftsResults = searchFts(db, query, limit * 3, typeFilter);
 
-  // Reciprocal Rank Fusion (RRF) constant
-  const RRF_K = 60;
+  // ── Score normalization ──────────────────────────────────────────────
+  // Normalized BM25 + cosine similarity with weighted addition
+  // (FTS 0.7, vector 0.3) for well-differentiated combined scores.
 
-  // Build FTS rank map: rank 1 = best BM25, rank 2 = second best, etc.
-  const ftsRankMap = new Map<number, { rank: number; result: DbSearchResult }>();
-  for (let i = 0; i < ftsResults.length; i++) {
-    const r = ftsResults[i];
-    ftsRankMap.set(r.id, { rank: i + 1, result: r });
-  }
+  // Normalize FTS BM25 scores to 0-1 range
+  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
+  if (ftsResults.length > 0) {
+    // BM25 scores are negative; most negative = best match
+    const bestBm25 = ftsResults[0].bm25Score; // most negative (best)
+    const worstBm25 = ftsResults[ftsResults.length - 1].bm25Score; // least negative (worst)
+    const range = bestBm25 - worstBm25; // negative range
 
-  // Build embedding rank map: sort by cosine similarity descending
-  const embedRankMap = new Map<number, number>();
-  if (embeddingScores) {
-    const sortedEmbeddings = [...embeddingScores.entries()].sort((a, b) => b[1] - a[1]);
-    for (let i = 0; i < sortedEmbeddings.length; i++) {
-      embedRankMap.set(sortedEmbeddings[i][0], i + 1);
+    for (const r of ftsResults) {
+      // Normalize: best match = 1.0, worst match approaches 0
+      // When range is 0 (all same score), all get 1.0
+      const normalized = range !== 0 ? (r.bm25Score - worstBm25) / range : 1.0;
+      // Scale to 0.3-1.0 range so even the worst FTS hit has a meaningful base score
+      const ftsScore = 0.3 + normalized * 0.7;
+      ftsScoreMap.set(r.id, { score: ftsScore, result: r });
     }
   }
 
-  // Merge results using RRF
-  // Issue #15: "hybrid" for results appearing in both FTS and vec results.
+  // Build embedding score map (cosine similarities already 0-1)
+  const embedScoreMap = new Map<number, number>();
+  if (embeddingScores) {
+    for (const [id, cosine] of embeddingScores) {
+      embedScoreMap.set(id, cosine);
+    }
+  }
+
+  // ── Combine FTS + vector scores ──────────────────────────────────────
+  const FTS_WEIGHT = 0.7;
+  const VEC_WEIGHT = 0.3;
+  const MAX_BOOST_SUM = 3.0;
+
   const scored: Array<{
     id: number;
     entry: StashEntry;
     filePath: string;
     score: number;
     rankingMode: "hybrid" | "semantic" | "fts";
+    utilityBoosted?: boolean;
   }> = [];
   const seenIds = new Set<number>();
 
   // Process FTS results
-  for (const [id, { rank, result }] of ftsRankMap) {
+  for (const [id, { score: ftsScore, result }] of ftsScoreMap) {
     seenIds.add(id);
-    const ftsRrf = 1 / (RRF_K + rank);
-    const embedRank = embedRankMap.get(id);
-    const embedRrf = embedRank !== undefined ? 1 / (RRF_K + embedRank) : 0;
-    const rrfScore = ftsRrf + embedRrf;
-    // Issue #15: combined FTS+vec results are "hybrid", not "semantic"
-    const rankingMode = embedRrf > 0 ? ("hybrid" as const) : ("fts" as const);
-    scored.push({ id, entry: result.entry, filePath: result.filePath, score: rrfScore, rankingMode });
+    const embedScore = embedScoreMap.get(id);
+    let combinedScore: number;
+    let rankingMode: "hybrid" | "fts";
+    if (embedScore !== undefined) {
+      combinedScore = ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT;
+      rankingMode = "hybrid";
+    } else {
+      combinedScore = ftsScore;
+      rankingMode = "fts";
+    }
+    scored.push({ id, entry: result.entry, filePath: result.filePath, score: combinedScore, rankingMode });
   }
 
   // Add vec-only results not already in FTS results
   if (embeddingScores) {
-    for (const [id] of embeddingScores) {
+    for (const [id, cosine] of embeddingScores) {
       if (seenIds.has(id)) continue;
-      const embedRank = embedRankMap.get(id);
-      if (embedRank === undefined) continue;
       const found = getEntryById(db, id);
       if (found) {
         if (typeFilter && found.entry.type !== typeFilter) continue;
-        const rrfScore = 1 / (RRF_K + embedRank);
         scored.push({
           id,
           entry: found.entry,
           filePath: found.filePath,
-          score: rrfScore,
+          score: cosine * VEC_WEIGHT, // Only vector score, no FTS
           rankingMode: "semantic",
         });
       }
     }
   }
 
+  // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
-  // so that sort order and displayed scores are always consistent — Issue #1).
+  // so that sort order and displayed scores are always consistent).
+  //
+  // Ranking philosophy: the goal is to surface the MOST USEFUL result for the
+  // user's intent. An exact name match is the strongest signal. Actionable
+  // asset types (skills, commands, agents) are more useful than passive
+  // reference docs. Curated metadata is more reliable than auto-generated.
   const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const queryLower = query.toLowerCase().trim();
+
   for (const item of scored) {
     const entry = item.entry;
     let boostSum = 0;
 
-    // Tag boost — capped at 0.30 (Issue #7)
+    // ── 1. Exact / near-exact name match (strongest signal) ──
+    // If the query IS the asset name (or very close), this is almost certainly
+    // what the user wants. This is the single most important ranking signal.
+    const nameLower = entry.name.toLowerCase();
+    const nameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
+    if (nameBase === queryLower || nameLower === queryLower) {
+      // Exact match: massive boost
+      boostSum += 2.0;
+    } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
+      // Near-exact: query is substring of name or vice versa
+      boostSum += 1.0;
+    } else {
+      // Token overlap: how many query tokens appear in the base name?
+      const nameTokens = nameBase.split(/[-_\s]+/).filter(Boolean);
+      const matchCount = queryTokens.filter((qt) => nameTokens.some((nt) => nt === qt || nt.includes(qt))).length;
+      if (matchCount > 0) {
+        // Proportional to how many query tokens match (0.3 per token, max 0.9)
+        boostSum += Math.min(0.9, matchCount * 0.3);
+      }
+    }
+
+    // ── 2. Type relevance boost ──
+    // Actionable assets (skills, commands, agents) are generally more useful
+    // than passive reference material when the user is searching for something
+    // to use. Knowledge docs are reference — valuable but secondary.
+    const TYPE_BOOST: Record<string, number> = {
+      skill: 0.4,
+      command: 0.35,
+      agent: 0.3,
+      script: 0.2,
+      memory: 0.1,
+      knowledge: 0,
+    };
+    boostSum += TYPE_BOOST[entry.type] ?? 0;
+
+    // ── 3. Tag exact match ──
+    // Exact tag equality is a strong signal — the author explicitly tagged
+    // this asset with the user's search term.
     if (entry.tags) {
       let tagBoost = 0;
       for (const tag of entry.tags) {
@@ -287,7 +320,8 @@ async function searchDatabase(
       boostSum += Math.min(0.3, tagBoost);
     }
 
-    // Search hint boost — capped at 0.24 (Issue #7)
+    // ── 4. Search hint match ──
+    // Hints are author-curated retrieval cues (e.g. "use when deploying to k8s").
     if (entry.searchHints) {
       let hintBoost = 0;
       for (const hint of entry.searchHints) {
@@ -302,25 +336,78 @@ async function searchDatabase(
       boostSum += Math.min(0.24, hintBoost);
     }
 
-    // Name boost
-    const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ");
-    if (queryTokens.some((t) => nameLower.includes(t))) {
-      boostSum += 0.1;
+    // ── 5. Alias match ──
+    // Aliases are alternate names the author defined for discovery.
+    if (entry.aliases) {
+      for (const alias of entry.aliases) {
+        const aliasLower = alias.toLowerCase();
+        if (aliasLower === queryLower) {
+          boostSum += 1.5; // Nearly as strong as exact name match
+          break;
+        }
+        if (queryTokens.some((t) => aliasLower.includes(t))) {
+          boostSum += 0.3;
+        }
+      }
     }
 
-    // Quality boost (Issue #1: moved from buildDbHit to single-phase)
+    // ── 6. Description relevance ──
+    // All query tokens appearing in description suggests strong relevance.
+    if (entry.description) {
+      const descLower = entry.description.toLowerCase();
+      const descMatchCount = queryTokens.filter((t) => descLower.includes(t)).length;
+      if (descMatchCount === queryTokens.length && queryTokens.length > 1) {
+        // All query tokens found in description — high relevance
+        boostSum += 0.25;
+      } else if (descMatchCount > 0) {
+        boostSum += 0.1;
+      }
+    }
+
+    // ── 7. Metadata quality signals ──
     const qualityBoost = entry.quality === "generated" ? 0 : 0.05;
     boostSum += qualityBoost;
 
-    // Confidence boost (Issue #1: moved from buildDbHit to single-phase)
     const confidenceBoost =
       typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
     boostSum += confidenceBoost;
 
-    item.score = item.score * (1 + boostSum);
+    const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
+    item.score = item.score * (1 + cappedBoost);
   }
 
-  // Issue #14: deterministic tiebreaker on equal scores
+  // Utility-based re-ranking (MemRL pattern).
+  // After the FTS+boost scoring pass, apply a multiplicative
+  // utility factor based on aggregated usage telemetry.
+  // Batch-load all utility scores in one query to avoid N+1.
+  const UTILITY_WEIGHT = 0.5;
+  const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
+  const RECENCY_DECAY_DAYS = 30;
+  const utilScoresMap = getUtilityScoresByIds(
+    db,
+    scored.map((s) => s.id),
+  );
+  for (const item of scored) {
+    const utilScore = utilScoresMap.get(item.id);
+    if (utilScore && utilScore.utility > 0) {
+      // Compute recency factor: exponential decay based on days since last use
+      let recencyFactor = 1;
+      if (utilScore.lastUsedAt) {
+        const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
+        const daysSinceLastUse = Number.isNaN(lastUsedMs)
+          ? Infinity
+          : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
+        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
+      }
+      // Compute raw utility boost and cap it
+      const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
+      const cappedBoost = Math.min(rawBoost, UTILITY_MAX_BOOST);
+      item.score = item.score * cappedBoost;
+      item.utilityBoosted = true;
+    }
+  }
+
+  // Deterministic tiebreaker on equal scores
   scored.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
@@ -333,11 +420,11 @@ async function searchDatabase(
 
   const selected = deduped.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode }) =>
+    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
       buildDbHit({
         entry,
         path: filePath,
-        // Issue #8: round to 4 decimal places instead of 2
+        // Round to 4 decimal places
         score: Math.round(score * 10000) / 10000,
         query,
         rankingMode,
@@ -345,6 +432,7 @@ async function searchDatabase(
         allStashDirs,
         sources,
         config,
+        utilityBoosted,
       }),
     ),
   );
@@ -355,7 +443,7 @@ async function searchDatabase(
 // ── Vector scorer ───────────────────────────────────────────────────────────
 
 async function tryVecScores(
-  db: import("bun:sqlite").Database,
+  db: Database,
   query: string,
   k: number,
   config: AkmConfig,
@@ -372,7 +460,7 @@ async function tryVecScores(
     const scores = new Map<number, number>();
     for (const { id, distance } of vecResults) {
       // Convert L2 distance to cosine similarity (vectors are normalized).
-      // Issue #3: guard against NaN/Infinity from sqlite-vec edge cases.
+      // Guard against NaN/Infinity from sqlite-vec edge cases.
       const raw = 1 - (distance * distance) / 2;
       scores.set(id, Number.isFinite(raw) ? Math.max(0, raw) : 0);
     }
@@ -399,9 +487,7 @@ async function substringSearch(
   if (!query) {
     const sorted = matched.sort(compareAssets);
     const unique = deduplicateAssetsByPath(sorted);
-    return Promise.all(
-      unique.slice(0, limit).map((asset) => assetToSearchHit(asset, query, stashDir, sources, config)),
-    );
+    return Promise.all(unique.slice(0, limit).map((asset) => assetToSearchHit(asset, stashDir, sources, config)));
   }
 
   // Score and sort by relevance
@@ -412,9 +498,7 @@ async function substringSearch(
   const dedupedScored = deduplicateByPath(scored.map((s) => ({ ...s, filePath: s.asset.path })));
 
   return Promise.all(
-    dedupedScored
-      .slice(0, limit)
-      .map(({ asset, score }) => assetToSearchHit(asset, query, stashDir, sources, config, score)),
+    dedupedScored.slice(0, limit).map(({ asset, score }) => assetToSearchHit(asset, stashDir, sources, config, score)),
   );
 }
 
@@ -455,33 +539,42 @@ export async function buildDbHit(input: {
   path: string;
   score: number;
   query: string;
-  // Issue #15: added "hybrid" for combined FTS+vec results
   rankingMode: "hybrid" | "semantic" | "fts";
   defaultStashDir: string;
   allStashDirs: string[];
   sources: SearchSource[];
   config?: AkmConfig;
+  utilityBoosted?: boolean;
 }): Promise<StashSearchHit> {
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
   const refName =
     canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : input.entry.name;
 
-  // Issue #1: Quality and confidence boosts are now applied in the main scoring
+  // Quality and confidence boosts are now applied in the main scoring
   // phase (searchDatabase). buildDbHit receives the already-final score and
   // passes it through without further multiplication. We still compute the
   // boost values here for buildWhyMatched reporting.
   const qualityBoost = input.entry.quality === "generated" ? 0 : 0.05;
   const confidenceBoost =
     typeof input.entry.confidence === "number" ? Math.min(0.05, Math.max(0, input.entry.confidence) * 0.05) : 0;
-  // Issue #8: round to 4 decimal places, no boost multiplication
+  // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
-  const whyMatched = buildWhyMatched(input.entry, input.query, input.rankingMode, qualityBoost, confidenceBoost);
+  const whyMatched = buildWhyMatched(
+    input.entry,
+    input.query,
+    input.rankingMode,
+    qualityBoost,
+    confidenceBoost,
+    input.utilityBoosted,
+  );
 
   const source = findSourceForPath(input.path, input.sources);
 
   const editable = isEditable(input.path, input.config);
+  const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
+
   const hit: StashSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
@@ -496,6 +589,7 @@ export async function buildDbHit(input: {
     action: buildLocalAction(input.entry.type, makeAssetRef(input.entry.type, refName, source?.registryId)),
     score,
     whyMatched,
+    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
 
   const renderer = await rendererForType(input.entry.type);
@@ -509,12 +603,12 @@ export async function buildDbHit(input: {
 export function buildWhyMatched(
   entry: StashEntry,
   query: string,
-  // Issue #15: added "hybrid" ranking mode
+  // "hybrid" ranking mode
   rankingMode: "hybrid" | "semantic" | "fts",
   qualityBoost: number,
   confidenceBoost: number,
+  utilityBoosted?: boolean,
 ): string[] {
-  // Issue #15: "hybrid" label for combined FTS+vec results
   const reasons: string[] = [
     rankingMode === "hybrid"
       ? "hybrid (fts + semantic)"
@@ -524,28 +618,41 @@ export function buildWhyMatched(
   ];
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
 
+  const queryLower = query.toLowerCase().trim();
   const name = entry.name.toLowerCase();
+  const nameBase = name.split("/").pop() ?? name;
   const tags = entry.tags?.join(" ").toLowerCase() ?? "";
   const searchHints = entry.searchHints?.join(" ").toLowerCase() ?? "";
   const aliases = entry.aliases?.join(" ").toLowerCase() ?? "";
-  // Issue #12: include description in match reasons
   const desc = entry.description?.toLowerCase() ?? "";
 
-  if (tokens.some((t) => name.includes(t))) reasons.push("matched name tokens");
+  // Name match quality
+  if (nameBase === queryLower || name === queryLower) {
+    reasons.push("exact name match");
+  } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
+    reasons.push("near-exact name match");
+  } else if (tokens.some((t) => nameBase.includes(t))) {
+    reasons.push("matched name tokens");
+  }
+
+  // Type relevance
+  if (entry.type === "skill" || entry.type === "command" || entry.type === "agent") {
+    reasons.push(`${entry.type} type boost`);
+  }
+
   if (tokens.some((t) => tags.includes(t))) reasons.push("matched tags");
   if (tokens.some((t) => searchHints.includes(t))) reasons.push("matched searchHints");
   if (tokens.some((t) => aliases.includes(t))) reasons.push("matched aliases");
-  // Issue #12: report description matches
   if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
+  if (utilityBoosted) reasons.push("usage history boost");
 
   return reasons;
 }
 
 async function assetToSearchHit(
   asset: IndexedAsset,
-  _query: string,
   stashDir: string,
   sources: SearchSource[],
   config?: AkmConfig,
@@ -556,6 +663,7 @@ async function assetToSearchHit(
   const ref = makeAssetRef(asset.entry.type, asset.entry.name, source?.registryId);
   const fileSize = readFileSize(asset.path);
   const size = deriveSize(fileSize);
+  const estimatedTokens = typeof fileSize === "number" ? Math.round(fileSize / 4) : undefined;
   const hit: StashSearchHit = {
     type: asset.entry.type,
     name: asset.entry.name,
@@ -571,6 +679,7 @@ async function assetToSearchHit(
     ...(size ? { size } : {}),
     action: buildLocalAction(asset.entry.type, ref),
     ...(score !== undefined ? { score } : {}),
+    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
   const renderer = await rendererForType(asset.entry.type);
   if (renderer?.enrichSearchHit) {
@@ -661,10 +770,10 @@ function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
 /**
  * Deduplicate scored results by file path, keeping only the highest-scored
  * entry per unique path. Sorts by score descending internally to ensure the
- * precondition is always met regardless of caller (Issue #4).
+ * precondition is always met regardless of caller.
  */
 function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
-  // Issue #4: sort inside to enforce the descending-score precondition
+  // Sort inside to enforce the descending-score precondition
   const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const seen = new Set<string>();
   return sorted.filter((item) => {

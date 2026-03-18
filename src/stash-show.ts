@@ -1,38 +1,97 @@
+import path from "node:path";
 import { loadConfig } from "./config";
+import { closeDatabase, openDatabase } from "./db";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
+import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
+import { loadStashFile } from "./metadata";
 import { resolveSourcesForOrigin } from "./origin-resolve";
 import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./search-source";
 import { resolveStashProviders } from "./stash-provider-factory";
 import { parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
-import type { KnowledgeView, ShowResponse } from "./stash-types";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./stash-types";
+import { insertUsageEvent } from "./usage-events";
 
 // Eagerly import stash providers to trigger self-registration
 import "./stash-providers/index";
 
 /**
- * Unified show: routes to the first stash provider that can handle the ref.
- * viking:// refs are handled by OpenViking provider; everything else by filesystem show.
+ * Unified show: tries local FTS5 index first, then remote providers.
+ *
+ * When `detail` is `"summary"`, the response omits content/template/prompt and
+ * returns only compact metadata (name, type, description, tags, parameters).
  */
-export async function akmShowUnified(input: { ref: string; view?: KnowledgeView }): Promise<ShowResponse> {
+export async function akmShowUnified(input: {
+  ref: string;
+  view?: KnowledgeView;
+  detail?: ShowDetailLevel;
+}): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
-  // Try stash providers first (e.g. OpenViking for viking:// URIs)
-  const config = loadConfig();
-  const provider = resolveStashProviders(config).find((p) => p.canShow(ref));
-  if (provider) {
-    return provider.show(ref, input.view);
+  // 1. Try local filesystem first (FTS5 index lookup)
+  let localError: Error | undefined;
+  try {
+    const result = await showLocal(input);
+    logShowEvent(ref);
+    return result;
+  } catch (err) {
+    // Only fall through to remote providers on NotFoundError
+    if (!(err instanceof NotFoundError)) throw err;
+    localError = err;
   }
 
-  // Default: local filesystem show
-  return showLocal(input);
+  // 2. Try remote providers (e.g. OpenViking)
+  const config = loadConfig();
+  const providers = resolveStashProviders(config).filter((p) => p.type !== "filesystem" && p.canShow(ref));
+  for (const provider of providers) {
+    try {
+      const response = await provider.show(ref, input.view);
+      logShowEvent(ref);
+      if (input.detail === "summary") {
+        return buildSummaryResponse(response);
+      }
+      return response;
+    } catch (err) {
+      if (!(err instanceof NotFoundError)) throw err;
+    }
+  }
+
+  // Nothing found anywhere — rethrow the original local error with its specific message
+  throw localError;
+}
+
+/**
+ * Fire-and-forget: log a show event to the usage_events table.
+ * Never blocks the caller; errors are silently ignored.
+ */
+function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
+  try {
+    const db = existingDb ?? openDatabase();
+    try {
+      const parsed = parseAssetRef(ref);
+      const safeName = parsed.name.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const row = db
+        .prepare("SELECT id FROM entries WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1")
+        .get(`%:${parsed.type}:${safeName}`, parsed.type) as { id: number } | undefined;
+      insertUsageEvent(db, {
+        event_type: "show",
+        entry_ref: ref,
+        entry_id: row?.id,
+      });
+    } finally {
+      if (!existingDb) closeDatabase(db);
+    }
+  } catch {
+    /* fire-and-forget */
+  }
 }
 
 /** @internal Use akmShowUnified() for all external callers. */
 export async function showLocal(input: {
   ref: string;
   view?: KnowledgeView;
+  detail?: ShowDetailLevel;
   stashDir?: string;
 }): Promise<ShowResponse> {
   const parsed = parseAssetRef(input.ref);
@@ -99,10 +158,74 @@ export async function showLocal(input: {
   const renderCtx = buildRenderContext(fileCtx, match, allStashDirs);
   const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
-  return {
+  const fullResponse: ShowResponse = {
     ...response,
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
   };
+
+  if (input.detail === "summary") {
+    return buildSummaryResponse(fullResponse, assetPath);
+  }
+
+  return fullResponse;
+}
+
+/**
+ * Build a compact summary response from a full ShowResponse.
+ *
+ * Strips content/template/prompt and returns only metadata fields:
+ * type, name, path, description, tags, parameters, action.
+ * Enriches description and tags from frontmatter or .stash.json when available.
+ *
+ * Enrichment via frontmatter and .stash.json is only performed when `assetPath`
+ * is supplied (local assets). Remote provider responses (e.g. OpenViking) rely
+ * on the provider having already populated description and tags.
+ *
+ * The resulting JSON should be under 200 tokens.
+ */
+function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowResponse {
+  // Try to enrich metadata from .stash.json if description or tags are missing
+  let description = full.description;
+  let tags = full.tags;
+
+  if (assetPath) {
+    // Try frontmatter extraction from content fields
+    const textContent = full.content ?? full.template ?? full.prompt;
+    if (textContent && !description) {
+      const parsed = parseFrontmatter(textContent);
+      description = toStringOrUndefined(parsed.data.description);
+    }
+
+    // Try .stash.json for richer metadata (tags especially)
+    const dir = path.dirname(assetPath);
+    const stashFile = loadStashFile(dir);
+    if (stashFile) {
+      const fileName = path.basename(assetPath);
+      const entry = stashFile.entries.find((e) => e.filename === fileName);
+      if (entry) {
+        if (!description && entry.description) {
+          description = entry.description;
+        }
+        if (!tags && entry.tags) {
+          tags = entry.tags;
+        }
+      }
+    }
+  }
+
+  const summary: ShowResponse = {
+    type: full.type,
+    name: full.name,
+    path: full.path,
+    ...(description ? { description } : {}),
+    ...(tags && tags.length > 0 ? { tags } : {}),
+    ...(full.parameters ? { parameters: full.parameters } : {}),
+    ...(full.action ? { action: full.action } : {}),
+    ...(full.run ? { run: full.run } : {}),
+    ...(full.origin !== undefined ? { origin: full.origin } : {}),
+  };
+
+  return summary;
 }

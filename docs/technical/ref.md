@@ -49,11 +49,6 @@ order.
 Consumers should use structured fields like `type`, `name`, and `origin` for
 display, and pass the full `ref` string back to `show` as the lookup token.
 
-## Viking URIs
-
-`akm show` also accepts `viking://` URIs for remote OpenViking content. These
-are not standard refs but remote resource identifiers.
-
 ## Deferred Simplification
 
 Non-script refs for `command`, `agent`, and `knowledge` are now emitted in a

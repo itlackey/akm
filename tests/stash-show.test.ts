@@ -401,7 +401,7 @@ describe("akmShow content-based classification", () => {
 
 // ── Remote show via OpenViking provider ──────────────────────────────────────
 
-describe("akmShow remote (viking://)", () => {
+describe("akmShow remote (OpenViking)", () => {
   const remoteServers: Array<{ stop: (force: boolean) => void }> = [];
 
   afterEach(() => {
@@ -415,7 +415,7 @@ describe("akmShow remote (viking://)", () => {
     remoteServers.length = 0;
   });
 
-  test("routes viking:// ref to openviking provider and returns correct structure", async () => {
+  test("falls back to openviking provider when asset not found locally", async () => {
     const server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -451,13 +451,13 @@ describe("akmShow remote (viking://)", () => {
       ],
     });
 
-    const result = await akmShow({ ref: "viking://skills/test-skill" });
+    const result = await akmShow({ ref: "skill:test-skill" });
 
     expect(result.type).toBe("skill");
     expect(result.name).toBe("test-skill");
     expect(result.content).toBe("# Remote Skill\n\nDo the thing.");
     expect(result.description).toBe("A remote skill");
     expect(result.editable).toBe(false);
-    expect(result.path).toBe("viking://skills/test-skill");
+    expect(result.path).toBe("skill:test-skill");
   });
 });

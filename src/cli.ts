@@ -7,10 +7,13 @@ import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
+import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
+import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
+import { akmManifest } from "./manifest";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
@@ -20,60 +23,27 @@ import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash, listStashes, removeStash } from "./stash-source-manage";
-import type { KnowledgeView } from "./stash-types";
+import type { KnowledgeView, ShowDetailLevel } from "./stash-types";
+import { insertUsageEvent } from "./usage-events";
+import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
 
-// Version: prefer compile-time define, then package.json, then fallback
-const pkgVersion: string = (() => {
-  // Injected at compile time via `bun build --define`
-  if (typeof AKM_VERSION !== "undefined") return AKM_VERSION;
-  try {
-    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json");
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (typeof pkg.version === "string") return pkg.version;
-    }
-  } catch {
-    // swallow — running as compiled binary without package.json
-  }
-  return "0.0.0-dev";
-})();
-
-// Declared by `bun build --define` at compile time; unused at dev time.
-declare const AKM_VERSION: string;
-
-type OutputFormat = "json" | "yaml" | "text";
-type DetailLevel = "brief" | "normal" | "full";
+type OutputFormat = "json" | "yaml" | "text" | "jsonl";
+type DetailLevel = "brief" | "normal" | "full" | "summary";
 
 interface OutputMode {
   format: OutputFormat;
   detail: DetailLevel;
+  forAgent: boolean;
 }
 
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text"];
-const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
+const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
+const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
 const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 
-/** Bun >= 1.2 exposes Bun.YAML; declared locally until bun-types ships it */
-interface BunWithYAML {
-  YAML: { stringify(value: unknown): string };
-}
-
-function hasBunYAML(b: typeof Bun): b is typeof Bun & BunWithYAML {
-  // biome-ignore lint/suspicious/noExplicitAny: type guard for runtime feature detection
-  return typeof (b as any).YAML?.stringify === "function";
-}
-
-/** Try Bun.YAML.stringify; fall back to JSON if the API is unavailable */
-function yamlStringify(obj: unknown): string {
-  if (hasBunYAML(Bun)) {
-    return Bun.YAML.stringify(obj);
-  }
-  warn("YAML output not available, using JSON");
-  return JSON.stringify(obj, null, 2);
-}
+import { stringify as yamlStringify } from "yaml";
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
@@ -96,16 +66,28 @@ function parseFlagValue(flag: string): string | undefined {
   return undefined;
 }
 
+// Uses process.argv directly because the global output() function (called by all
+// commands) needs this flag but doesn't have access to citty's parsed args.
+function hasBooleanFlag(flag: string): boolean {
+  return process.argv.some((arg) => arg === flag || arg === `${flag}=true`);
+}
+
 function resolveOutputMode(): OutputMode {
   const config = loadConfig();
   const format = parseOutputFormat(parseFlagValue("--format")) ?? config.output?.format ?? "json";
   const detail = parseDetailLevel(parseFlagValue("--detail")) ?? config.output?.detail ?? "brief";
-  return { format, detail };
+  const forAgent = hasBooleanFlag("--for-agent");
+  return { format, detail, forAgent };
 }
 
 function output(command: string, result: unknown): void {
   const mode = resolveOutputMode();
-  const shaped = shapeForCommand(command, result, mode.detail);
+  const shaped = shapeForCommand(command, result, mode.detail, mode.forAgent);
+
+  if (mode.format === "jsonl") {
+    outputJsonl(command, shaped);
+    return;
+  }
 
   switch (mode.format) {
     case "json":
@@ -122,22 +104,57 @@ function output(command: string, result: unknown): void {
   }
 }
 
-function shapeForCommand(command: string, result: unknown, detail: DetailLevel): unknown {
+function outputJsonl(command: string, shaped: unknown): void {
+  if (command === "search" || command === "registry-search") {
+    const r = shaped as Record<string, unknown>;
+    const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
+    for (const hit of hits) {
+      console.log(JSON.stringify(hit));
+    }
+    const registryHits = Array.isArray(r.registryHits) ? (r.registryHits as Record<string, unknown>[]) : [];
+    for (const hit of registryHits) {
+      console.log(JSON.stringify(hit));
+    }
+    return;
+  }
+  // For non-search commands, output the whole object as a single JSONL line
+  console.log(JSON.stringify(shaped));
+}
+
+function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
   switch (command) {
     case "search":
-      return shapeSearchOutput(result as Record<string, unknown>, detail);
+      return shapeSearchOutput(result as Record<string, unknown>, detail, forAgent);
     case "registry-search":
       return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
-      return shapeShowOutput(result as Record<string, unknown>, detail);
+      return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
     default:
       return result;
   }
 }
 
-function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+function shapeSearchOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+  forAgent = false,
+): Record<string, unknown> {
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const shapedHits = hits.map((hit) => shapeSearchHit(hit, detail));
+  const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
+  const shapedHits = forAgent
+    ? hits.map((hit) => shapeSearchHitForAgent(hit))
+    : hits.map((hit) => shapeSearchHit(hit, detail));
+  const shapedRegistryHits = forAgent
+    ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
+    : registryHits.map((hit) => shapeSearchHit(hit, detail));
+
+  if (forAgent) {
+    return {
+      hits: shapedHits,
+      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
+      ...(result.tip ? { tip: result.tip } : {}),
+    };
+  }
 
   if (detail === "full") {
     return {
@@ -145,6 +162,7 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
       stashDir: result.stashDir,
       source: result.source,
       hits: shapedHits,
+      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(result.warnings ? { warnings: result.warnings } : {}),
       ...(result.timing ? { timing: result.timing } : {}),
@@ -153,6 +171,7 @@ function shapeSearchOutput(result: Record<string, unknown>, detail: DetailLevel)
 
   return {
     hits: shapedHits,
+    ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
@@ -182,10 +201,10 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
 }
 
 function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action"]);
+  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
   if (detail === "normal") {
     return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "kit", "action"]),
+      pickFields(hit, ["assetName", "assetType", "description", "kit", "action", "estimatedTokens"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }
@@ -202,14 +221,20 @@ function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Reco
   }
 
   // Stash hit (local or remote)
-  if (detail === "brief") return pickFields(hit, ["type", "name", "action"]);
+  if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
   if (detail === "normal") {
     return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score"]),
+      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }
   return hit;
+}
+
+/** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
+function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
+  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
+  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
 }
 
 function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
@@ -227,13 +252,40 @@ function truncateDescription(description: string, limit: number): string {
   return `${safe.trimEnd()}...`;
 }
 
-function shapeShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+function shapeShowOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+  forAgent = false,
+): Record<string, unknown> {
+  if (forAgent) {
+    return pickFields(result, [
+      "type",
+      "name",
+      "description",
+      "action",
+      "content",
+      "template",
+      "prompt",
+      "run",
+      "setup",
+      "cwd",
+      "toolPolicy",
+      "modelHint",
+      "agent",
+      "parameters",
+    ]);
+  }
+  if (detail === "summary") {
+    return pickFields(result, ["type", "name", "description", "tags", "parameters", "action", "run", "origin"]);
+  }
+
   const base = pickFields(result, [
     "type",
     "name",
     "origin",
     "action",
     "description",
+    "tags",
     "content",
     "template",
     "prompt",
@@ -354,6 +406,15 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       if (r.message) return String(r.message);
       return null;
     }
+    case "manifest": {
+      const entries = (r.entries as Array<Record<string, unknown>>) ?? [];
+      if (entries.length === 0) return "No assets found.";
+      const lines = entries.map((e) => {
+        const desc = e.description ? `  ${String(e.description)}` : "";
+        return `${String(e.ref)}${desc}`;
+      });
+      return `${lines.join("\n")}\n\n${entries.length} assets`;
+    }
     case "clone": {
       const dst = (r.destination as Record<string, unknown>)?.path ?? "unknown";
       const remote = r.remoteFetched ? " (fetched from remote)" : "";
@@ -367,14 +428,16 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
 
 function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const hits = (r.hits as Record<string, unknown>[]) ?? [];
+  const registryHits = (r.registryHits as Record<string, unknown>[]) ?? [];
+  const allHits = [...hits, ...registryHits];
 
-  if (hits.length === 0) {
+  if (allHits.length === 0) {
     return r.tip ? String(r.tip) : "No results found.";
   }
 
   const lines: string[] = [];
 
-  for (const hit of hits) {
+  for (const hit of allHits) {
     const type = hit.type ?? "unknown";
     const name = hit.name ?? "unnamed";
     const score = hit.score != null ? ` (score: ${hit.score})` : "";
@@ -467,6 +530,16 @@ const indexCommand = defineCommand({
   },
 });
 
+const infoCommand = defineCommand({
+  meta: { name: "info", description: "Show system capabilities, configuration, and index stats as JSON" },
+  run() {
+    return runWithJsonErrors(() => {
+      const result = assembleInfo();
+      output("info", result);
+    });
+  },
+});
+
 const searchCommand = defineCommand({
   meta: { name: "search", description: "Search the stash" },
   args: {
@@ -477,8 +550,8 @@ const searchCommand = defineCommand({
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
-    format: { type: "string", description: "Output format (json|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -618,8 +691,8 @@ const showCommand = defineCommand({
   },
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
-    format: { type: "string", description: "Output format (json|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
     akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
     akmHeading: { type: "string", description: "Internal positional section heading parser" },
     akmStart: { type: "string", description: "Internal positional start-line parser" },
@@ -651,7 +724,10 @@ const showCommand = defineCommand({
             );
         }
       }
-      const result = await akmShowUnified({ ref: args.ref, view });
+      // Map CLI detail level to ShowDetailLevel for the show function
+      const cliDetail = resolveOutputMode().detail;
+      const showDetail: ShowDetailLevel | undefined = cliDetail === "summary" ? "summary" : undefined;
+      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
       output("show", result);
     });
   },
@@ -968,6 +1044,67 @@ const stashCommand = defineCommand({
   subCommands: buildSourceSubCommands("stash"),
 });
 
+const feedbackCommand = defineCommand({
+  meta: {
+    name: "feedback",
+    description: "Record positive or negative feedback for a stash asset",
+  },
+  args: {
+    ref: { type: "positional", description: "Asset ref (type:name)", required: true },
+    positive: { type: "boolean", description: "Record positive feedback", default: false },
+    negative: { type: "boolean", description: "Record negative feedback", default: false },
+    note: { type: "string", description: "Optional note to attach to the feedback" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const ref = args.ref.trim();
+      if (!ref) {
+        throw new UsageError("Asset ref is required. Usage: akm feedback <ref> --positive|--negative");
+      }
+      if (args.positive && args.negative) {
+        throw new UsageError("Specify either --positive or --negative, not both.");
+      }
+      if (!args.positive && !args.negative) {
+        throw new UsageError("Specify --positive or --negative.");
+      }
+      const signal = args.positive ? "positive" : "negative";
+      const metadata = args.note ? JSON.stringify({ note: args.note }) : undefined;
+
+      const db = openDatabase();
+      try {
+        insertUsageEvent(db, {
+          event_type: "feedback",
+          entry_ref: ref,
+          signal,
+          metadata,
+        });
+      } finally {
+        closeDatabase(db);
+      }
+
+      output("feedback", { ok: true, ref, signal, note: args.note ?? null });
+    });
+  },
+});
+
+const manifestCommand = defineCommand({
+  meta: {
+    name: "manifest",
+    description: "List all assets with compact metadata (name, type, ref, description)",
+  },
+  args: {
+    type: { type: "string", description: "Filter by asset type (e.g. skill, script, command)" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmManifest({
+        type: args.type || undefined,
+      });
+      output("manifest", result);
+    });
+  },
+});
+
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -1029,6 +1166,7 @@ const main = defineCommand({
     setup: setupCommand,
     init: initCommand,
     index: indexCommand,
+    info: infoCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
@@ -1037,10 +1175,12 @@ const main = defineCommand({
     upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
+    manifest: manifestCommand,
     clone: cloneCommand,
     stash: stashCommand,
     registry: registryCommand,
     config: configCommand,
+    feedback: feedbackCommand,
     hints: hintsCommand,
     completions: completionsCommand,
   },
@@ -1093,8 +1233,8 @@ function buildHint(message: string): string | undefined {
   if (message.includes("remote package fetched but asset not found"))
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
-  if (message.includes("Invalid value for --format")) return "Pick one of: json, text, yaml.";
-  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full.";
+  if (message.includes("Invalid value for --format")) return "Pick one of: json, jsonl, text, yaml.";
+  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary.";
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
   }
@@ -1136,7 +1276,7 @@ function normalizeShowArgv(argv: string[]): string[] {
 
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q") {
+    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
       globalFlags.push(arg);
       continue;
     }
@@ -1251,8 +1391,9 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`script\`, \`memory\`, \`any\` | \`any\` |
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
-| \`--format\` | \`json\`, \`text\`, \`yaml\` | \`json\` |
-| \`--detail\` | \`brief\`, \`normal\`, \`full\` | \`brief\` |
+| \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
+| \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
+| \`--for-agent\` | boolean | \`false\` |
 
 ## Show
 
@@ -1266,7 +1407,7 @@ akm show agent:architect                      # Show agent (returns system promp
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
-akm show viking://resources/my-doc           # Show remote OpenViking content
+akm show knowledge:my-doc                    # Show content (local or remote)
 \`\`\`
 
 | Type | Key fields returned |
@@ -1354,11 +1495,14 @@ akm completions --install                     # Install completions
 All commands accept \`--format\` and \`--detail\` flags:
 
 - \`--format json\` (default) — structured JSON
+- \`--format jsonl\` — one JSON object per line (streaming-friendly)
 - \`--format text\` — human-readable plain text
 - \`--format yaml\` — YAML output
 - \`--detail brief\` (default) — compact output
 - \`--detail normal\` — adds tags, refs, origins
 - \`--detail full\` — includes scores, paths, timing, debug info
+- \`--detail summary\` — metadata only (no content/template/prompt), under 200 tokens
+- \`--for-agent\` — agent-optimized output: strips non-actionable fields (takes precedence over \`--detail\`)
 
 Run \`akm -h\` or \`akm <command> -h\` for per-command help.
 `;
