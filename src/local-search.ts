@@ -241,18 +241,59 @@ async function searchDatabase(
     }
   }
 
+  // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
   // so that sort order and displayed scores are always consistent — Issue #1).
+  //
+  // Ranking philosophy: the goal is to surface the MOST USEFUL result for the
+  // user's intent. An exact name match is the strongest signal. Actionable
+  // asset types (skills, commands, agents) are more useful than passive
+  // reference docs. Curated metadata is more reliable than auto-generated.
   const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const queryLower = query.toLowerCase().trim();
+
   for (const item of scored) {
     const entry = item.entry;
     let boostSum = 0;
 
-    // Tag boost — capped at 0.30 (Issue #7)
-    // Tag boost retained: FTS5 bm25 weights term frequency, but exact-tag equality
-    // (e.g. query token "deploy" exactly matching tag "deploy") is a stronger signal
-    // than partial term overlap in the tags column. This distinguishes exact tag
-    // identity from incidental keyword presence.
+    // ── 1. Exact / near-exact name match (strongest signal) ──
+    // If the query IS the asset name (or very close), this is almost certainly
+    // what the user wants. This is the single most important ranking signal.
+    const nameLower = entry.name.toLowerCase();
+    const nameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
+    if (nameBase === queryLower || nameLower === queryLower) {
+      // Exact match: massive boost
+      boostSum += 2.0;
+    } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
+      // Near-exact: query is substring of name or vice versa
+      boostSum += 1.0;
+    } else {
+      // Token overlap: how many query tokens appear in the base name?
+      const nameTokens = nameBase.split(/[-_\s]+/).filter(Boolean);
+      const matchCount = queryTokens.filter((qt) => nameTokens.some((nt) => nt === qt || nt.includes(qt))).length;
+      if (matchCount > 0) {
+        // Proportional to how many query tokens match (0.3 per token, max 0.9)
+        boostSum += Math.min(0.9, matchCount * 0.3);
+      }
+    }
+
+    // ── 2. Type relevance boost ──
+    // Actionable assets (skills, commands, agents) are generally more useful
+    // than passive reference material when the user is searching for something
+    // to use. Knowledge docs are reference — valuable but secondary.
+    const TYPE_BOOST: Record<string, number> = {
+      skill: 0.4,
+      command: 0.35,
+      agent: 0.3,
+      script: 0.2,
+      memory: 0.1,
+      knowledge: 0,
+    };
+    boostSum += TYPE_BOOST[entry.type] ?? 0;
+
+    // ── 3. Tag exact match ──
+    // Exact tag equality is a strong signal — the author explicitly tagged
+    // this asset with the user's search term.
     if (entry.tags) {
       let tagBoost = 0;
       for (const tag of entry.tags) {
@@ -263,11 +304,8 @@ async function searchDatabase(
       boostSum += Math.min(0.3, tagBoost);
     }
 
-    // Search hint boost — capped at 0.24 (Issue #7)
-    // Hint boost retained: hints are author-curated retrieval cues (e.g. "use when
-    // deploying to k8s"). A substring match between a query token and a hint
-    // carries intent-level relevance that FTS5 term-frequency scoring alone cannot
-    // capture, so the post-FTS boost remains valuable.
+    // ── 4. Search hint match ──
+    // Hints are author-curated retrieval cues (e.g. "use when deploying to k8s").
     if (entry.searchHints) {
       let hintBoost = 0;
       for (const hint of entry.searchHints) {
@@ -282,14 +320,38 @@ async function searchDatabase(
       boostSum += Math.min(0.24, hintBoost);
     }
 
-    // S-3: Name boost removed — FTS5 multi-column bm25() weights now handle
-    // name-match ranking natively via the 10.0 weight on the name column.
+    // ── 5. Alias match ──
+    // Aliases are alternate names the author defined for discovery.
+    if (entry.aliases) {
+      for (const alias of entry.aliases) {
+        const aliasLower = alias.toLowerCase();
+        if (aliasLower === queryLower) {
+          boostSum += 1.5; // Nearly as strong as exact name match
+          break;
+        }
+        if (queryTokens.some((t) => aliasLower.includes(t))) {
+          boostSum += 0.3;
+        }
+      }
+    }
 
-    // Quality boost (Issue #1: moved from buildDbHit to single-phase)
+    // ── 6. Description relevance ──
+    // All query tokens appearing in description suggests strong relevance.
+    if (entry.description) {
+      const descLower = entry.description.toLowerCase();
+      const descMatchCount = queryTokens.filter((t) => descLower.includes(t)).length;
+      if (descMatchCount === queryTokens.length && queryTokens.length > 1) {
+        // All query tokens found in description — high relevance
+        boostSum += 0.25;
+      } else if (descMatchCount > 0) {
+        boostSum += 0.1;
+      }
+    }
+
+    // ── 7. Metadata quality signals ──
     const qualityBoost = entry.quality === "generated" ? 0 : 0.05;
     boostSum += qualityBoost;
 
-    // Confidence boost (Issue #1: moved from buildDbHit to single-phase)
     const confidenceBoost =
       typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
     boostSum += confidenceBoost;
@@ -545,22 +607,34 @@ export function buildWhyMatched(
   ];
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
 
+  const queryLower = query.toLowerCase().trim();
   const name = entry.name.toLowerCase();
+  const nameBase = name.split("/").pop() ?? name;
   const tags = entry.tags?.join(" ").toLowerCase() ?? "";
   const searchHints = entry.searchHints?.join(" ").toLowerCase() ?? "";
   const aliases = entry.aliases?.join(" ").toLowerCase() ?? "";
-  // Issue #12: include description in match reasons
   const desc = entry.description?.toLowerCase() ?? "";
 
-  if (tokens.some((t) => name.includes(t))) reasons.push("matched name tokens");
+  // Name match quality
+  if (nameBase === queryLower || name === queryLower) {
+    reasons.push("exact name match");
+  } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
+    reasons.push("near-exact name match");
+  } else if (tokens.some((t) => nameBase.includes(t))) {
+    reasons.push("matched name tokens");
+  }
+
+  // Type relevance
+  if (entry.type === "skill" || entry.type === "command" || entry.type === "agent") {
+    reasons.push(`${entry.type} type boost`);
+  }
+
   if (tokens.some((t) => tags.includes(t))) reasons.push("matched tags");
   if (tokens.some((t) => searchHints.includes(t))) reasons.push("matched searchHints");
   if (tokens.some((t) => aliases.includes(t))) reasons.push("matched aliases");
-  // Issue #12: report description matches
   if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
-  // M-2: report utility-based re-ranking boost
   if (utilityBoosted) reasons.push("usage history boost");
 
   return reasons;

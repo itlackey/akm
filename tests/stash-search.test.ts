@@ -333,7 +333,9 @@ describe("Score boosts", () => {
 
     const resolvedHit = expectDefined(hit);
     expect(resolvedHit.whyMatched).toBeDefined();
-    expect(resolvedHit.whyMatched).toContain("matched name tokens");
+    // Exact name match is now reported as "exact name match" or "near-exact name match"
+    const hasNameMatch = resolvedHit.whyMatched!.some((r) => r.includes("name match") || r.includes("name tokens"));
+    expect(hasNameMatch).toBe(true);
   });
 
   test("curated metadata gets quality boost", async () => {
