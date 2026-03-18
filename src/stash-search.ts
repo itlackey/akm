@@ -196,11 +196,12 @@ export { buildLocalAction, rendererForType, registerTypeRenderer, registerAction
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Merge hits from local stash and additional providers using Reciprocal Rank
- * Fusion (RRF). Each list is already internally sorted by relevance. RRF
- * assigns scores based on rank position rather than raw score values, so
- * sources with incompatible score scales (e.g. RRF ~0.01-0.03 vs 0-1 or
- * 0-100) are merged fairly.
+ * Merge local and additional stash hits preserving local score quality.
+ *
+ * Local hits retain their original scores from the FTS+boost pipeline.
+ * Provider-only hits are placed below the lowest local hit so they don't
+ * displace well-ranked local results. Duplicates (same path) keep the
+ * local version.
  */
 /**
  * Merge local and additional stash hits preserving local score quality.
@@ -264,7 +265,13 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
 }
 
 /**
- * Merge stash hits and registry hits using RRF, same rationale as mergeStashHits.
+ * Merge stash hits and registry hits, preserving local scores.
+ *
+ * Local stash hits retain their original scores. Registry hits are placed
+ * after local hits with scores derived from their rank position, scaled
+ * below the lowest local score. This ensures local results (which have
+ * gone through the full FTS+boost pipeline) are not displaced by registry
+ * results on a different score scale.
  */
 export function mergeSearchHits(
   localHits: StashSearchHit[],
@@ -274,40 +281,13 @@ export function mergeSearchHits(
   if (registryHits.length === 0) return localHits.slice(0, limit);
   if (localHits.length === 0) return registryHits.slice(0, limit);
 
-  const RRF_K = 60;
-  const scoreMap = new Map<string, { hit: SearchHit; score: number }>();
+  const minLocalScore = Math.min(...localHits.map((h) => h.score ?? 0));
 
-  const applyStashList = (hits: StashSearchHit[]) => {
-    for (let i = 0; i < hits.length; i++) {
-      const key = hits[i].path ?? hits[i].ref ?? hits[i].name;
-      const rrf = 1 / (RRF_K + i + 1);
-      const existing = scoreMap.get(key);
-      if (existing) {
-        existing.score += rrf;
-      } else {
-        scoreMap.set(key, { hit: hits[i], score: rrf });
-      }
-    }
-  };
+  // Registry hits get scores below the lowest local hit
+  const scoredRegistry: SearchHit[] = registryHits.map((hit, i) => ({
+    ...hit,
+    score: Math.round(Math.max(0, minLocalScore * 0.9 - i * 0.0001) * 10000) / 10000,
+  }));
 
-  const applyRegistryList = (hits: RegistrySearchResultHit[]) => {
-    for (let i = 0; i < hits.length; i++) {
-      const key = `registry:${hits[i].id ?? hits[i].name}`;
-      const rrf = 1 / (RRF_K + i + 1);
-      const existing = scoreMap.get(key);
-      if (existing) {
-        existing.score += rrf;
-      } else {
-        scoreMap.set(key, { hit: hits[i], score: rrf });
-      }
-    }
-  };
-
-  applyStashList(localHits);
-  applyRegistryList(registryHits);
-
-  return [...scoreMap.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((v) => ({ ...v.hit, score: Math.round(v.score * 10000) / 10000 }));
+  return [...localHits, ...scoredRegistry].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
 }

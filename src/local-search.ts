@@ -381,7 +381,7 @@ async function searchDatabase(
   }
 
   // M-2: Utility-based re-ranking (MemRL pattern).
-  // After the existing RRF+boost scoring pass, apply a multiplicative
+  // After the FTS+boost scoring pass, apply a multiplicative
   // utility factor based on aggregated usage telemetry.
   // Issue #4: Batch-load all utility scores in one query to avoid N+1.
   const UTILITY_WEIGHT = 0.5;

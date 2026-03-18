@@ -58,11 +58,13 @@ bun run tests/benchmark-suite.ts --json > results-$(git rev-parse --short HEAD).
 Measures how well the search pipeline finds the right asset for a given query.
 
 **Metrics:**
+
 - **MRR (Mean Reciprocal Rank)** — average of `1/rank` across all test queries. MRR of 1.0 means every query found its expected result at rank 1. MRR of 0.5 means results average rank 2.
 - **Recall@5** — fraction of queries where the expected result appears in the top 5. Should be 1.0.
 - **Recall@10** — fraction of queries where the expected result appears in the top 10. Should be 1.0.
 
 **15 test queries covering:**
+
 - Exact keyword matches (name, tags, description)
 - Partial/prefix matches ("kube" → k8s-deploy)
 - Multi-word queries ("ci cd pipeline")
@@ -77,6 +79,7 @@ Measures how well the search pipeline finds the right asset for a given query.
 Measures search latency in milliseconds.
 
 **Metrics:**
+
 - **cold_ms** — first query (no caches warm)
 - **warm_ms** — repeated identical query (LRU cache hit)
 - **fts_only_ms** — search with no embeddings
@@ -89,6 +92,7 @@ Measures search latency in milliseconds.
 Measures index build time in milliseconds.
 
 **Metrics:**
+
 - **full_ms** — full index build from empty DB
 - **incremental_ms** — incremental index (no changes, should be faster)
 - **fts_rebuild_ms** — FTS5 table rebuild only
@@ -101,6 +105,7 @@ Measures index build time in milliseconds.
 Measures how much output size is reduced by new features.
 
 **Metrics:**
+
 - **summary_savings_pct** — `--detail summary` vs full show output (target: >60%)
 - **manifest_bytes_per_asset** — bytes per asset in `akm manifest` (target: <200)
 - **for_agent_savings_pct** — `--for-agent` vs normal output (target: >40%)
@@ -113,6 +118,7 @@ Measures how much output size is reduced by new features.
 Validates the MemRL-pattern utility-based re-ranking.
 
 **Tests:**
+
 - **baseline_no_usage** — fresh index has no utility boosts (clean baseline)
 - **boost_applied** — simulated usage events produce positive utility scores
 - **decay_works** — old usage events contribute less than recent ones
@@ -125,6 +131,7 @@ Validates the MemRL-pattern utility-based re-ranking.
 Validates that individual features work correctly.
 
 **Tests:**
+
 - Fuzzy/prefix fallback triggers for partial matches
 - Field weighting: name matches outrank description-only matches
 - Parameter extraction from `$ARGUMENTS` and `@param`
@@ -174,6 +181,7 @@ bun test ./tests
 ### Test categories (35 tests)
 
 #### Score Differentiation (5 tests)
+
 Validates that the right asset ranks highest for common queries.
 
 - "docker homelab" → `skill:docker-homelab` in top 3
@@ -185,6 +193,7 @@ Validates that the right asset ranks highest for common queries.
 **Why this matters:** The most common failure mode is skills being buried under their own sub-reference knowledge docs, or irrelevant context-hub results interleaving with local hits.
 
 #### Exact/Near-exact Name Matching (5 tests)
+
 Validates that querying an asset by its exact name always returns it at rank 1.
 
 - "mem0-search" → rank 1
@@ -196,6 +205,7 @@ Validates that querying an asset by its exact name always returns it at rank 1.
 **Why this matters:** If a user types the exact name of an asset, that asset must be #1 with a clear score gap. This catches regressions in the exact-name-match boost.
 
 #### Type Ranking (2 tests)
+
 Validates that actionable assets rank above passive reference material.
 
 - "deploy" → skills/commands/scripts above knowledge docs
@@ -204,6 +214,7 @@ Validates that actionable assets rank above passive reference material.
 **Why this matters:** When a user searches for "deploy", they want something they can execute, not a reference doc that mentions deployment in passing.
 
 #### Fuzzy/Prefix Matching (3 tests)
+
 Validates that partial terms and aliases find the right assets.
 
 - "kube" → finds k8s-deploy via alias
@@ -213,6 +224,7 @@ Validates that partial terms and aliases find the right assets.
 **Why this matters:** Users don't always type exact names. Aliases, abbreviations, and partial terms must work.
 
 #### Score Preservation (4 tests)
+
 Validates that the scoring pipeline produces meaningful, differentiated scores.
 
 - Top result score > 0.5 (not capped at 0.016 from old RRF)
@@ -223,6 +235,7 @@ Validates that the scoring pipeline produces meaningful, differentiated scores.
 **Why this matters:** This catches the most critical regression — the score flattening bug where RRF or provider merging destroys differentiation, making all results look equally relevant.
 
 #### Provider Merge (4 tests)
+
 Validates that merging local and provider results preserves local score quality.
 
 - Local scores unchanged after merge
@@ -233,12 +246,15 @@ Validates that merging local and provider results preserves local score quality.
 **Why this matters:** When context-hub or OpenViking providers add results, they must not flatten or displace well-ranked local results.
 
 #### Cross-type Search Consistency (4 tests)
+
 Validates search works across asset types and narrows correctly with multi-word queries.
 
 #### Metadata Signal Strength (5 tests)
+
 Validates that tags, hints, aliases, and quality metadata actually contribute to ranking.
 
 #### Edge Cases (3 tests)
+
 Empty query, non-matching query, single character query.
 
 ---
@@ -326,6 +342,7 @@ Final score:             1.0 × (1 + 2.14) = 3.14
 ### Provider merge behavior
 
 When additional providers (context-hub, OpenViking) return results:
+
 - **Local hits keep their original scores** from the pipeline above
 - **Provider-only hits** are scored below the lowest local hit
 - **Duplicates** (same path): local version wins, provider copy dropped
