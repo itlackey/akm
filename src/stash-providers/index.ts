@@ -6,5 +6,5 @@
  * side-effect imports that were duplicated in stash-search.ts and stash-show.ts.
  */
 import "./filesystem";
-import "./context-hub";
+import "./git";
 import "./openviking";

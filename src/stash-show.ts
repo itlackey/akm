@@ -17,8 +17,7 @@ import { insertUsageEvent } from "./usage-events";
 import "./stash-providers/index";
 
 /**
- * Unified show: routes to the first stash provider that can handle the ref.
- * viking:// refs are handled by OpenViking provider; everything else by filesystem show.
+ * Unified show: tries local FTS5 index first, then remote providers.
  *
  * When `detail` is `"summary"`, the response omits content/template/prompt and
  * returns only compact metadata (name, type, description, tags, parameters).
@@ -30,24 +29,36 @@ export async function akmShowUnified(input: {
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
-  // Try stash providers first (e.g. OpenViking for viking:// URIs)
-  const config = loadConfig();
-  const provider = resolveStashProviders(config).find((p) => p.canShow(ref));
-  if (provider) {
-    const response = await provider.show(ref, input.view);
-    // Log only successful shows; not-found errors throw before reaching here.
+  // 1. Try local filesystem first (FTS5 index lookup)
+  let localError: Error | undefined;
+  try {
+    const result = await showLocal(input);
     logShowEvent(ref);
-    if (input.detail === "summary") {
-      return buildSummaryResponse(response);
-    }
-    return response;
+    return result;
+  } catch (err) {
+    // Only fall through to remote providers on NotFoundError
+    if (!(err instanceof NotFoundError)) throw err;
+    localError = err;
   }
 
-  // Default: local filesystem show
-  const result = await showLocal(input);
-  // Log only successful shows; not-found errors throw before reaching here.
-  logShowEvent(ref);
-  return result;
+  // 2. Try remote providers (e.g. OpenViking)
+  const config = loadConfig();
+  const providers = resolveStashProviders(config).filter((p) => p.type !== "filesystem" && p.canShow(ref));
+  for (const provider of providers) {
+    try {
+      const response = await provider.show(ref, input.view);
+      logShowEvent(ref);
+      if (input.detail === "summary") {
+        return buildSummaryResponse(response);
+      }
+      return response;
+    } catch (err) {
+      if (!(err instanceof NotFoundError)) throw err;
+    }
+  }
+
+  // Nothing found anywhere — rethrow the original local error with its specific message
+  throw localError;
 }
 
 /**

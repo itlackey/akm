@@ -50,10 +50,10 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
   const { loadConfig } = await import("./config.js");
   const config = loadConfig();
 
-  // Ensure context-hub caches are extracted before resolving stash dirs,
+  // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
-  const { ensureContextHubCaches, resolveAllStashDirs } = await import("./search-source.js");
-  await ensureContextHubCaches(config);
+  const { ensureGitCaches, resolveAllStashDirs } = await import("./search-source.js");
+  await ensureGitCaches(config);
   const allStashDirs = resolveAllStashDirs(stashDir);
 
   const t0 = Date.now();

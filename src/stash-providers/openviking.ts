@@ -89,7 +89,9 @@ class OpenVikingStashProvider implements StashProvider {
   }
 
   async show(ref: string, _view?: KnowledgeView): Promise<ShowResponse> {
-    const uri = ref.trim();
+    const trimmed = ref.trim();
+    // Accept both viking:// URIs (legacy/internal) and type:name refs
+    const uri = trimmed.startsWith("viking://") ? trimmed : refToVikingUri(trimmed);
     const baseUrl = this.baseUrl;
     const headers = this.authHeaders;
 
@@ -100,12 +102,12 @@ class OpenVikingStashProvider implements StashProvider {
 
     if (statResult == null && contentResult == null) {
       throw new NotFoundError(
-        `Could not fetch remote asset "${uri}". The OpenViking server at ${baseUrl} may be unreachable or the resource does not exist.`,
+        `Could not fetch remote asset "${trimmed}". The OpenViking server at ${baseUrl} may be unreachable or the resource does not exist.`,
       );
     }
     if (contentResult == null) {
       throw new NotFoundError(
-        `Content not found for remote asset "${uri}". The server returned metadata but no content.`,
+        `Content not found for remote asset "${trimmed}". The server returned metadata but no content.`,
       );
     }
 
@@ -117,12 +119,13 @@ class OpenVikingStashProvider implements StashProvider {
     const assetType = OV_TYPE_MAP[ovType] ?? "knowledge";
     const content = typeof contentResult === "string" ? contentResult : "";
     const description = sanitizeString(stat.abstract, 1000) || undefined;
+    const assetRef = `${assetType}:${name}`;
 
     return {
       type: assetType,
       name,
-      path: uri,
-      action: `Remote content from OpenViking — ${uri}`,
+      path: assetRef,
+      action: `Remote content from OpenViking — ${assetRef}`,
       content,
       description,
       editable: false,
@@ -130,8 +133,8 @@ class OpenVikingStashProvider implements StashProvider {
     };
   }
 
-  canShow(ref: string): boolean {
-    return ref.trim().startsWith("viking://");
+  canShow(_ref: string): boolean {
+    return !!(this.config.url ?? "").trim();
   }
 
   private get baseUrl(): string {
@@ -200,9 +203,8 @@ class OpenVikingStashProvider implements StashProvider {
       const name = sanitizeString(entry.name);
       const abstract = sanitizeString(entry.abstract, 1000);
       const type = sanitizeString(entry.type);
-      const uri = sanitizeString(entry.uri, 2048);
       const assetType = OV_TYPE_MAP[type] ?? "knowledge";
-      const ref = uriToVikingRef(uri);
+      const ref = `${assetType}:${name}`;
       return {
         type: assetType,
         name,
@@ -267,10 +269,28 @@ registerStashProvider("openviking", (config) => new OpenVikingStashProvider(conf
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function uriToVikingRef(uri: string): string {
-  if (uri.startsWith("viking://")) return uri;
-  return `viking://${uri.replace(/^\/+/, "")}`;
+/**
+ * Convert a type:name ref to a viking:// URI for the OpenViking API.
+ * Maps the akm asset type back to the OV plural form (e.g. "skill" -> "skills").
+ */
+function refToVikingUri(ref: string): string {
+  const colon = ref.indexOf(":");
+  if (colon <= 0) return `viking://${ref}`;
+  const name = ref.slice(colon + 1);
+  const type = ref.slice(0, colon);
+  const ovDir = AKM_TO_OV_DIR[type] ?? type;
+  return `viking://${ovDir}/${name}`;
 }
+
+/** Reverse map: akm asset type → OpenViking directory name (plural). */
+const AKM_TO_OV_DIR: Record<string, string> = {
+  skill: "skills",
+  memory: "memories",
+  knowledge: "resources",
+  agent: "agents",
+  command: "commands",
+  script: "scripts",
+};
 
 function parseOVSearchResponse(result: unknown): OVSearchEntry[] {
   if (Array.isArray(result)) return result.filter(isValidOVEntry);
@@ -385,4 +405,4 @@ function inferTypeFromUri(uri: string): string {
 
 // ── Exports for testing ─────────────────────────────────────────────────────
 
-export { OpenVikingStashProvider, uriToVikingRef, parseOVSearchResponse };
+export { OpenVikingStashProvider, refToVikingUri, parseOVSearchResponse };

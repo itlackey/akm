@@ -3,7 +3,7 @@ import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { AkmConfig } from "./config";
 import { loadConfig } from "./config";
-import { ensureContextHubMirror, getCachePaths, parseContextHubRepoUrl } from "./stash-providers/context-hub";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-providers/git";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -51,12 +51,12 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
     }
   }
 
-  // Context-hub entries: resolve cache directory so the indexer can walk it.
-  // Both "context-hub" and "github" provider types are handled.
+  // Git stash entries: resolve cache directory so the indexer can walk it.
+  // "context-hub", "github", and "git" provider types are handled.
   for (const entry of config.stashes ?? []) {
-    if ((entry.type === "context-hub" || entry.type === "github") && entry.url && entry.enabled !== false) {
+    if (GIT_STASH_TYPES.has(entry.type) && entry.url && entry.enabled !== false) {
       try {
-        const repo = parseContextHubRepoUrl(entry.url);
+        const repo = parseGitRepoUrl(entry.url);
         const cachePaths = getCachePaths(repo.canonicalUrl);
         // The content/ subdirectory inside the extracted repo is the actual
         // stash root containing DOC.md / SKILL.md files that the walker indexes.
@@ -64,7 +64,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
         addSource(contentDir, entry.name);
       } catch (err) {
         warn(
-          `Warning: failed to resolve context-hub cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+          `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -173,27 +173,30 @@ function isValidDirectory(dir: string): boolean {
   }
 }
 
-// ── Context-Hub integration ─────────────────────────────────────────────────
+// ── Git stash cache integration ──────────────────────────────────────────────
 
-const CONTEXT_HUB_TYPES = new Set(["context-hub", "github"]);
+const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
 
 /**
- * Ensure all context-hub mirrors are refreshed so their cache directories
+ * Ensure all git stash mirrors are refreshed so their cache directories
  * exist on disk. Must be called (async) before `resolveStashSources()` so
  * the content directories pass the `isValidDirectory()` check.
  */
-export async function ensureContextHubCaches(config?: AkmConfig): Promise<void> {
+export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
   const cfg = config ?? loadConfig();
   for (const entry of cfg.stashes ?? []) {
-    if (!CONTEXT_HUB_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
+    if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
     try {
-      const repo = parseContextHubRepoUrl(entry.url);
+      const repo = parseGitRepoUrl(entry.url);
       const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureContextHubMirror(repo, cachePaths, { requireRepoDir: true });
+      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
     } catch (err) {
       warn(
-        `Warning: failed to refresh context-hub mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+        `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 }
+
+/** @deprecated Use ensureGitCaches instead. */
+export const ensureContextHubCaches = ensureGitCaches;

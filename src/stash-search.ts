@@ -56,7 +56,7 @@ export async function akmSearch(input: {
   // Exclude filesystem (handled by resolveStashSources) and context-hub/github
   // (content now indexed through the unified FTS5 pipeline).
   const additionalStashProviders = resolveStashProviders(config).filter(
-    (p) => p.type !== "filesystem" && p.type !== "context-hub",
+    (p) => p.type !== "filesystem" && p.type !== "context-hub" && p.type !== "git",
   );
 
   const localResult =

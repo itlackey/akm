@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "../../src/errors";
 import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
-import { OpenVikingStashProvider, parseOVSearchResponse, uriToVikingRef } from "../../src/stash-providers/openviking";
+import { OpenVikingStashProvider, parseOVSearchResponse, refToVikingUri } from "../../src/stash-providers/openviking";
 
 // Trigger self-registration
 import "../../src/stash-providers/openviking";
@@ -116,9 +116,9 @@ describe("OpenVikingStashProvider", () => {
       const first = result.hits[0];
       expect(first.type).toBe("memory");
       expect(first.name).toBe("project-context");
-      expect(first.ref).toBe("viking://memories/project-context");
-      expect(first.path).toBe("viking://memories/project-context");
-      expect(first.action).toBe("akm show viking://memories/project-context");
+      expect(first.ref).toBe("memory:project-context");
+      expect(first.path).toBe("memory:project-context");
+      expect(first.action).toBe("akm show memory:project-context");
       expect(first.origin).toBe("openviking");
       expect(first.editable).toBe(false);
       expect(first.score).toBeGreaterThan(0);
@@ -218,13 +218,13 @@ describe("OpenVikingStashProvider", () => {
     }
   });
 
-  test("canShow returns true for viking:// URIs", () => {
+  test("canShow returns true when provider has a URL configured", () => {
     const factory = getFactory();
-    const provider = factory({ type: "openviking", url: "http://localhost:1933" });
-    expect(provider.canShow("viking://memories/foo")).toBe(true);
-    expect(provider.canShow("  viking://skills/bar")).toBe(true);
-    expect(provider.canShow("script:deploy.sh")).toBe(false);
-    expect(provider.canShow("skill:ops")).toBe(false);
+    const withUrl = factory({ type: "openviking", url: "http://localhost:1933" });
+    expect(withUrl.canShow("memory:project-context")).toBe(true);
+    expect(withUrl.canShow("skill:ops")).toBe(true);
+    const noUrl = factory({ type: "openviking", url: "" });
+    expect(noUrl.canShow("skill:ops")).toBe(false);
   });
 
   test("uses text search when searchType is 'text'", async () => {
@@ -539,10 +539,10 @@ describe("mapOVType", () => {
     expect((await hitForOVType("completely_unknown_type")).type).toBe("knowledge");
   });
 
-  test("uriToVikingRef normalises plain URIs to viking:// scheme", () => {
-    expect(uriToVikingRef("viking://skills/foo")).toBe("viking://skills/foo");
-    expect(uriToVikingRef("skills/foo")).toBe("viking://skills/foo");
-    expect(uriToVikingRef("/skills/foo")).toBe("viking://skills/foo");
+  test("refToVikingUri converts type:name refs to viking:// URIs", () => {
+    expect(refToVikingUri("skill:foo")).toBe("viking://skills/foo");
+    expect(refToVikingUri("memory:bar")).toBe("viking://memories/bar");
+    expect(refToVikingUri("knowledge:api-docs")).toBe("viking://resources/api-docs");
   });
 });
 

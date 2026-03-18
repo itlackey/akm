@@ -1407,7 +1407,7 @@ akm show agent:architect                      # Show agent (returns system promp
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
-akm show viking://resources/my-doc           # Show remote OpenViking content
+akm show knowledge:my-doc                    # Show content (local or remote)
 \`\`\`
 
 | Type | Key fields returned |
