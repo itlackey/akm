@@ -413,7 +413,7 @@ function buildInstallRef(source: string, ref: string): string {
     case "git":
       return `git+${ref}`;
     case "local":
-      return ref;
+      return `file:${ref}`;
     default:
       return `github:${ref}`;
   }

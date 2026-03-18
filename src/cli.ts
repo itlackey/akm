@@ -53,13 +53,87 @@ function hasBunYAML(b: typeof Bun): b is typeof Bun & BunWithYAML {
   return typeof (b as any).YAML?.stringify === "function";
 }
 
-/** Try Bun.YAML.stringify; fall back to JSON if the API is unavailable */
+/**
+ * Minimal JSON-to-YAML serializer for the simple object structures used in CLI output.
+ * Handles primitives, arrays, and nested objects. Produces valid YAML parseable by any
+ * compliant YAML parser.
+ */
+function simpleYamlStringify(value: unknown, indent = 0): string {
+  const pad = "  ".repeat(indent);
+
+  if (value === null || value === undefined) return `${pad}null`;
+  if (typeof value === "boolean") return `${pad}${value}`;
+  if (typeof value === "number") return `${pad}${value}`;
+
+  if (typeof value === "string") {
+    // Strings that need quoting: empty, contain special YAML chars, look like
+    // numbers/booleans, or contain newlines
+    if (
+      value === "" ||
+      value === "true" ||
+      value === "false" ||
+      value === "null" ||
+      /^[\d.+-]/.test(value) ||
+      /[:#[\]{}&*!|>'"%@`,?\\\t\n]/.test(value)
+    ) {
+      // Use double-quote style with JSON escaping for safety
+      return `${pad}${JSON.stringify(value)}`;
+    }
+    return `${pad}${value}`;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${pad}[]`;
+    const lines: string[] = [];
+    for (const item of value) {
+      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+        // Object items: first key on same line as dash, rest indented
+        const objLines = simpleYamlStringify(item, 0).split("\n");
+        lines.push(`${pad}- ${objLines[0].trimStart()}`);
+        for (let i = 1; i < objLines.length; i++) {
+          lines.push(`${pad}  ${objLines[i].trimStart()}`);
+        }
+      } else {
+        const rendered = simpleYamlStringify(item, 0).trimStart();
+        lines.push(`${pad}- ${rendered}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return `${pad}{}`;
+    const lines: string[] = [];
+    for (const [key, val] of entries) {
+      // Keys that need quoting
+      const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) ? key : JSON.stringify(key);
+      if (typeof val === "object" && val !== null) {
+        if (Array.isArray(val) && val.length === 0) {
+          lines.push(`${pad}${safeKey}: []`);
+        } else if (!Array.isArray(val) && Object.keys(val).length === 0) {
+          lines.push(`${pad}${safeKey}: {}`);
+        } else {
+          lines.push(`${pad}${safeKey}:`);
+          lines.push(simpleYamlStringify(val, indent + 1));
+        }
+      } else {
+        const rendered = simpleYamlStringify(val, 0).trimStart();
+        lines.push(`${pad}${safeKey}: ${rendered}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  return `${pad}${String(value)}`;
+}
+
+/** Try Bun.YAML.stringify first; fall back to built-in simple serializer */
 function yamlStringify(obj: unknown): string {
   if (hasBunYAML(Bun)) {
     return Bun.YAML.stringify(obj);
   }
-  warn("YAML output not available, using JSON");
-  return JSON.stringify(obj, null, 2);
+  return simpleYamlStringify(obj);
 }
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {

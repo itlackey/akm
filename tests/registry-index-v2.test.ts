@@ -265,7 +265,7 @@ describe("asset-level search", () => {
     }
   });
 
-  test("local source kit uses raw ref in action string", async () => {
+  test("local source kit uses file: prefix in action string", async () => {
     const localIndex: RegistryIndex = {
       version: 2,
       updatedAt: "2026-03-12T00:00:00Z",
@@ -301,8 +301,8 @@ describe("asset-level search", () => {
       expect(hit).toBeDefined();
       expect(hit?.assetName).toBe("setup.sh");
       expect(hit?.kit.id).toBe("local:my-local-kit");
-      // Local source should use the raw ref, not prefixed with "github:"
-      expect(hit?.action).toBe("akm add /home/user/kits/my-local-kit");
+      // Local source should use file: prefix, not "github:"
+      expect(hit?.action).toBe("akm add file:/home/user/kits/my-local-kit");
       expect(hit?.action).not.toContain("github:");
     } finally {
       srv.close();

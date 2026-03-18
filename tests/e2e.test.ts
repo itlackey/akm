@@ -664,20 +664,19 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.every((h: CliJsonHit) => h.whyMatched !== undefined)).toBe(true);
   });
 
-  test("cli: akm search --format yaml returns YAML output (or JSON fallback)", async () => {
+  test("cli: akm search --format yaml returns valid YAML output", async () => {
     const result = spawnSync("bun", [CLI, "search", "docker", "--format", "yaml"], {
       encoding: "utf8",
       timeout: 30_000,
       env: { ...process.env },
     });
     expect(result.status).toBe(0);
-    // Bun.YAML may not be available in all Bun versions; the CLI falls back to JSON.
-    // Accept either YAML (hits:) or JSON ("hits":) as valid output.
+    // Output must be YAML (unquoted keys like "hits:"), not JSON (quoted keys like '"hits"')
     const hasYaml = result.stdout.includes("hits:") && !result.stdout.includes('"hits"');
-    const hasJsonFallback = result.stdout.includes('"hits"');
-    expect(hasYaml || hasJsonFallback).toBe(true);
-    // Either way, results should be present
+    expect(hasYaml).toBe(true);
     expect(result.stdout).toContain("docker");
+    // Should not contain the fallback warning
+    expect(result.stderr).not.toContain("YAML output not available");
   });
 
   test("cli: akm show --format text includes execution fields", async () => {
