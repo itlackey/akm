@@ -185,7 +185,8 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     p.log.warn(
-      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})`,
+      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})\n` +
+        "Check file permissions and available disk space in the cache directory, or run `akm index --full --verbose` to diagnose.",
     );
   } finally {
     if (db) closeDatabase(db);
