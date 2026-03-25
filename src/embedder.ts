@@ -314,19 +314,62 @@ export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number
 
 // ── Availability check ──────────────────────────────────────────────────────
 
-export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnectionConfig): Promise<boolean> {
-  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    try {
-      await embedRemote("test", embeddingConfig);
-      return true;
-    } catch {
-      return false;
-    }
-  }
+/**
+ * Check whether the `@huggingface/transformers` package can be imported.
+ * Returns `true` if it can, `false` otherwise.
+ */
+export async function isTransformersAvailable(): Promise<boolean> {
   try {
-    await getLocalEmbedder(embeddingConfig?.localModel);
+    await import("@huggingface/transformers");
     return true;
   } catch {
     return false;
   }
+}
+
+export type EmbeddingCheckResult =
+  | { available: true }
+  | { available: false; reason: "missing-package" | "model-download-failed" | "remote-unreachable"; message: string };
+
+/**
+ * Check whether embedding is available with a detailed reason on failure.
+ */
+export async function checkEmbeddingAvailability(
+  embeddingConfig?: EmbeddingConnectionConfig,
+): Promise<EmbeddingCheckResult> {
+  if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
+    try {
+      await embedRemote("test", embeddingConfig);
+      return { available: true };
+    } catch (err) {
+      return {
+        available: false,
+        reason: "remote-unreachable",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+  // Check if the package is importable before attempting the model download.
+  if (!(await isTransformersAvailable())) {
+    return {
+      available: false,
+      reason: "missing-package",
+      message: "@huggingface/transformers is not installed.",
+    };
+  }
+  try {
+    await getLocalEmbedder(embeddingConfig?.localModel);
+    return { available: true };
+  } catch (err) {
+    return {
+      available: false,
+      reason: "model-download-failed",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function isEmbeddingAvailable(embeddingConfig?: EmbeddingConnectionConfig): Promise<boolean> {
+  const result = await checkEmbeddingAvailability(embeddingConfig);
+  return result.available;
 }

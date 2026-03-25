@@ -18,7 +18,7 @@ import type {
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
 import { closeDatabase, isVecAvailable, openDatabase } from "./db";
 import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
-import { DEFAULT_LOCAL_MODEL, isEmbeddingAvailable } from "./embedder";
+import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedder";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
 import { getDefaultStashDir } from "./paths";
@@ -152,21 +152,61 @@ export async function stepSemanticSearch(
 
 async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> {
   const remote = isRemoteEmbeddingConfig(config.embedding);
+
+  // For local embeddings, ensure the required package is installed first.
+  if (!remote) {
+    if (!(await isTransformersAvailable())) {
+      const spin = p.spinner();
+      spin.start("Installing @huggingface/transformers...");
+      try {
+        const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        if (proc.exitCode !== 0) {
+          const stderr = await new Response(proc.stderr).text();
+          throw new Error(stderr || `exit code ${proc.exitCode}`);
+        }
+        spin.stop("@huggingface/transformers installed.");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spin.stop("Could not install @huggingface/transformers.");
+        p.log.warn(
+          `Automatic install failed: ${msg}\n` +
+            "Install it manually with: bun add @huggingface/transformers\n" +
+            "Then re-run `akm setup` or `akm index --full --verbose`.",
+        );
+        return false;
+      }
+    }
+  }
+
   const spin = p.spinner();
   spin.start(
     remote
       ? "Checking remote embedding endpoint..."
-      : `Preparing local embedding model (${config.embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
+      : `Downloading local embedding model (${config.embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
   );
 
-  const available = await isEmbeddingAvailable(config.embedding);
-  if (!available) {
+  const result = await checkEmbeddingAvailability(config.embedding);
+  if (!result.available) {
     spin.stop("Semantic-search assets could not be prepared.");
-    p.log.warn(
-      remote
-        ? "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`."
-        : "The local embedding model could not be initialized. Retry `akm index --full --verbose` after confirming local model downloads are permitted.",
-    );
+    if (result.reason === "remote-unreachable") {
+      p.log.warn(
+        "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`.",
+      );
+    } else if (result.reason === "missing-package") {
+      p.log.warn(
+        "@huggingface/transformers is not installed. Install it with: bun add @huggingface/transformers\n" +
+          "Then re-run `akm setup` or `akm index --full --verbose`.",
+      );
+    } else {
+      p.log.warn(
+        `The local embedding model could not be downloaded: ${result.message}\n` +
+          "Retry `akm index --full --verbose` after confirming local model downloads are permitted.",
+      );
+    }
     return false;
   }
 
@@ -726,6 +766,7 @@ export async function runSetupWizard(): Promise<void> {
   }
 
   // Build search index
+  p.log.info("Building search index...");
   const spin = p.spinner();
   spin.start("Building search index...");
   try {
