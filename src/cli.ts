@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config"
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { akmIndex } from "./indexer";
+import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
@@ -332,7 +332,13 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       return out;
     }
     case "index": {
-      return `Indexed ${r.totalEntries ?? 0} entries from ${r.directoriesScanned ?? 0} directories (mode: ${r.mode ?? "unknown"})`;
+      const indexResult = result as Partial<IndexResponse>;
+      let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+      const verification = indexResult.verification;
+      if (verification?.ok === false && verification.message) {
+        out += `\nVerification: ${String(verification.message)}`;
+      }
+      return out;
     }
     case "show": {
       const lines: string[] = [];
@@ -511,10 +517,14 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
+    verbose: { type: "boolean", description: "Print indexing summary and phase progress to stderr", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmIndex({ full: args.full });
+      const result = await akmIndex({
+        full: args.full,
+        onProgress: args.verbose ? ({ message }) => console.error(`[index] ${message}`) : undefined,
+      });
       output("index", result);
     });
   },

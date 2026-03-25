@@ -12,6 +12,10 @@ export type AkmAssetType = string;
 
 export const IS_WINDOWS = process.platform === "win32";
 
+export function isHttpUrl(value: string | undefined): boolean {
+  return !!value && /^https?:\/\//.test(value);
+}
+
 // ── Validators ──────────────────────────────────────────────────────────────
 
 export function isAssetType(type: string): type is AkmAssetType {

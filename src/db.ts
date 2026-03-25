@@ -645,6 +645,11 @@ export function getEntryCount(db: Database): number {
   return row.cnt;
 }
 
+export function getEmbeddingCount(db: Database): number {
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM embeddings").get() as { cnt: number };
+  return row.cnt;
+}
+
 export function getEntryById(db: Database, id: number): { filePath: string; entry: StashEntry } | undefined {
   const row = db.prepare("SELECT file_path, entry_json FROM entries WHERE id = ?").get(id) as
     | { file_path: string; entry_json: string }

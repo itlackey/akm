@@ -7,6 +7,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { isHttpUrl } from "./common";
 import type {
   AkmConfig,
   EmbeddingConnectionConfig,
@@ -15,7 +16,9 @@ import type {
   StashConfigEntry,
 } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
+import { closeDatabase, isVecAvailable, openDatabase } from "./db";
 import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
+import { DEFAULT_LOCAL_MODEL, isEmbeddingAvailable } from "./embedder";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
 import { getDefaultStashDir } from "./paths";
@@ -30,6 +33,12 @@ const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string 
     hint: "community knowledge",
   },
 ];
+
+// Approximate first-download sizes used in the setup note.
+// LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
+const LOCAL_MODEL_APPROX_SIZE_MB = 130;
+// SQLITE_VEC_APPROX_SIZE_MB reflects the optional sqlite-vec install footprint.
+const SQLITE_VEC_APPROX_SIZE_MB = 5;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +93,106 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
   const result = await fn();
   if (p.isCancel(result)) return null;
   return result as T;
+}
+
+function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
+  return isHttpUrl(embedding?.endpoint);
+}
+
+/**
+ * @internal Exported for testing only.
+ */
+export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConfig): string[] {
+  if (isRemoteEmbeddingConfig(embedding)) {
+    return [
+      `• Embedding endpoint: ${embedding?.provider ?? "custom"} / ${embedding?.model} (no local model download)`,
+      `• sqlite-vec acceleration: optional native extension (~${SQLITE_VEC_APPROX_SIZE_MB} MB when installed separately)`,
+    ];
+  }
+
+  return [
+    `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download on first use)`,
+    `• sqlite-vec acceleration: optional native extension (~${SQLITE_VEC_APPROX_SIZE_MB} MB when installed separately)`,
+  ];
+}
+
+interface SemanticSearchChoice {
+  enabled: boolean;
+  prepareAssets: boolean;
+}
+
+export async function stepSemanticSearch(
+  current: AkmConfig,
+  embedding?: EmbeddingConnectionConfig,
+): Promise<SemanticSearchChoice> {
+  const enabled = await prompt(() =>
+    p.confirm({
+      message: "Enable semantic search?",
+      initialValue: current.semanticSearch,
+    }),
+  );
+
+  if (!enabled) {
+    return { enabled: false, prepareAssets: false };
+  }
+
+  p.note(describeSemanticSearchAssets(embedding).join("\n"), "Semantic Search Assets");
+
+  const prepareAssets = await prompt(() =>
+    p.confirm({
+      message: isRemoteEmbeddingConfig(embedding)
+        ? "Check the embedding endpoint and verify semantic search now?"
+        : "Download and verify semantic-search assets now?",
+      initialValue: true,
+    }),
+  );
+
+  return { enabled: true, prepareAssets };
+}
+
+async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> {
+  const remote = isRemoteEmbeddingConfig(config.embedding);
+  const spin = p.spinner();
+  spin.start(
+    remote
+      ? "Checking remote embedding endpoint..."
+      : `Preparing local embedding model (${config.embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
+  );
+
+  const available = await isEmbeddingAvailable(config.embedding);
+  if (!available) {
+    spin.stop("Semantic-search assets could not be prepared.");
+    p.log.warn(
+      remote
+        ? "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`."
+        : "The local embedding model could not be initialized. Retry `akm index --full --verbose` after confirming local model downloads are permitted.",
+    );
+    return false;
+  }
+
+  spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
+
+  let db: ReturnType<typeof openDatabase> | undefined;
+  try {
+    db = openDatabase();
+    if (isVecAvailable(db)) {
+      p.log.info("sqlite-vec is available for fast vector search.");
+    } else {
+      p.log.info(
+        "sqlite-vec is not available. Semantic search will use the JS fallback until the optional extension is installed.",
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    p.log.warn(
+      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})\n` +
+        "Check file permissions and available disk space in the cache directory, or run `akm index --full --verbose` to diagnose.",
+    );
+  } finally {
+    if (db) closeDatabase(db);
+  }
+
+  return true;
 }
 
 // ── Steps ───────────────────────────────────────────────────────────────────
@@ -532,16 +641,20 @@ export async function runSetupWizard(): Promise<void> {
   p.log.step("Step 2: Embedding & LLM");
   const { embedding, llm } = await stepOllama(current);
 
-  // Step 3: Registries
-  p.log.step("Step 3: Registries");
+  // Step 3: Semantic search assets
+  p.log.step("Step 3: Semantic Search");
+  const semanticSearch = await stepSemanticSearch(current, embedding);
+
+  // Step 4: Registries
+  p.log.step("Step 4: Registries");
   const registries = await stepRegistries(current);
 
-  // Step 4: Stash sources
-  p.log.step("Step 4: Stash Sources");
+  // Step 5: Stash sources
+  p.log.step("Step 5: Stash Sources");
   const stashes = await stepStashSources(current);
 
-  // Step 5: Agent platform detection
-  p.log.step("Step 5: Agent Platform Detection");
+  // Step 6: Agent platform detection
+  p.log.step("Step 6: Agent Platform Detection");
   const platformStashes = await stepAgentPlatforms(current);
 
   // Merge platform stashes into main stashes list
@@ -561,7 +674,7 @@ export async function runSetupWizard(): Promise<void> {
     registries,
     stashes: allStashes.length > 0 ? allStashes : undefined,
     // Preserve existing fields
-    semanticSearch: current.semanticSearch,
+    semanticSearch: semanticSearch.enabled,
     installed: current.installed,
     output: current.output,
   };
@@ -573,6 +686,7 @@ export async function runSetupWizard(): Promise<void> {
       `Stash directory:  ${stashDir}`,
       `Embedding:        ${embedding ? `${embedding.provider ?? "remote"} / ${embedding.model}` : "built-in local"}`,
       `LLM:              ${llm ? `${llm.provider ?? "remote"} / ${llm.model}` : "disabled"}`,
+      `Semantic search:  ${semanticSearch.enabled ? "enabled" : "disabled"}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
     ].join("\n"),
@@ -593,12 +707,40 @@ export async function runSetupWizard(): Promise<void> {
   // Initialize stash directory
   await akmInit({ dir: stashDir });
 
+  if (semanticSearch.enabled) {
+    if (semanticSearch.prepareAssets) {
+      const ready = await prepareSemanticSearchAssets(newConfig);
+      if (!ready) {
+        // Asset preparation failed: disable semantic search and persist the update.
+        newConfig.semanticSearch = false;
+        saveConfig(newConfig);
+        p.log.warn(
+          "Semantic search has been disabled in the saved configuration. Re-run `akm setup` or `akm index --full --verbose` once the issue is resolved.",
+        );
+      }
+    } else {
+      p.log.info(
+        "Semantic search will be enabled, but asset preparation was skipped. Run `akm index --full --verbose` later to verify it.",
+      );
+    }
+  }
+
   // Build search index
   const spin = p.spinner();
   spin.start("Building search index...");
   try {
     const indexResult = await akmIndex({ stashDir });
     spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
+    if (newConfig.semanticSearch) {
+      if (indexResult.verification.ok) {
+        p.log.success(indexResult.verification.message);
+      } else {
+        p.log.warn(indexResult.verification.message);
+        if (indexResult.verification.guidance) {
+          p.log.info(indexResult.verification.guidance);
+        }
+      }
+    }
   } catch (err) {
     spin.stop("Indexing failed — you can run `akm index` manually later.");
     p.log.warn(String(err));

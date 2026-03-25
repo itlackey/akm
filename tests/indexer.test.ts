@@ -141,6 +141,8 @@ test("akmIndex handles empty stash gracefully", async () => {
 
   expect(result.totalEntries).toBe(0);
   expect(result.generatedMetadata).toBe(0);
+  expect(result.verification.ok).toBe(true);
+  expect(result.verification.message).toContain("No assets");
 });
 
 test("akmIndex handles markdown assets", async () => {
@@ -215,6 +217,86 @@ test("akmIndex --full mode returns mode full", async () => {
   // Second index with full flag — should force full reindex
   const result = await akmIndex({ stashDir, full: true });
   expect(result.mode).toBe("full");
+});
+
+test("akmIndex reports progress events and semantic-search verification details", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("TEST_EMBEDDING_ERROR");
+  };
+
+  try {
+    const stashDir = tmpStash();
+    writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+
+    const { saveConfig } = await import("../src/config");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({
+      semanticSearch: true,
+      embedding: {
+        endpoint: "https://example.test/v1/embeddings",
+        model: "demo-embed",
+      },
+    });
+
+    const messages: string[] = [];
+    const result = await akmIndex({
+      stashDir,
+      onProgress: ({ message }) => {
+        messages.push(message);
+      },
+    });
+
+    expect(messages[0]).toContain("Starting full index");
+    expect(messages[0]).toContain("1 stash source");
+    expect(messages[0]).toContain("semantic search: remote embeddings");
+    expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
+    expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
+      true,
+    );
+    expect(messages.at(-1)).toContain("Semantic search verification failed");
+    expect(result.verification.ok).toBe(false);
+    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.embeddingProvider).toBe("remote");
+    expect(result.verification.guidance).toContain("akm index --full --verbose");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("akmIndex verifies semantic search when remote embeddings succeed", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+
+  const { saveConfig } = await import("../src/config");
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearch: true,
+    embedding: {
+      endpoint: "https://example.test/v1/embeddings",
+      model: "demo-embed",
+      dimension: 3,
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+    new Response(
+      JSON.stringify({
+        data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }],
+      }),
+      { status: 200 },
+    )) as typeof globalThis.fetch;
+
+  try {
+    const result = await akmIndex({ stashDir });
+    expect(result.verification.ok).toBe(true);
+    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.embeddingCount).toBe(result.totalEntries);
+    expect(result.verification.message).toContain("Semantic search ready");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("buildSearchText includes TOC heading text for knowledge entries", async () => {
