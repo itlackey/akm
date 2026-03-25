@@ -405,4 +405,4 @@ function inferTypeFromUri(uri: string): string {
 
 // ── Exports for testing ─────────────────────────────────────────────────────
 
-export { OpenVikingStashProvider, refToVikingUri, parseOVSearchResponse };
+export { OpenVikingStashProvider, parseOVSearchResponse, refToVikingUri };

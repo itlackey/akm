@@ -1,5 +1,19 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../src/config";
+
+mock.module("@huggingface/transformers", () => ({
+  pipeline: async () => {
+    return async () => ({
+      data: new Float32Array([0.1, 0.2, 0.3]),
+    });
+  },
+}));
+
+beforeEach(async () => {
+  const { clearEmbeddingCache, resetLocalEmbedder } = await import("../src/embedder");
+  clearEmbeddingCache();
+  resetLocalEmbedder();
+});
 
 // ── Test 1: DEFAULT_LOCAL_MODEL constant is exported and correct ──────────
 
@@ -42,20 +56,10 @@ describe("EmbeddingConnectionConfig localModel field", () => {
 
 describe("embed model selection", () => {
   test("embed() falls back to local when no config is provided", async () => {
-    // We verify indirectly: embed() with no config should attempt local
-    // embedding via the default model. Since @xenova/transformers may not
-    // be installed in the test environment, we accept either a result or
-    // an error about the missing dependency — but NOT a fetch error.
     const { embed } = await import("../src/embedder");
-    try {
-      const result = await embed("hello");
-      // If it succeeds, we got a vector back
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBeGreaterThan(0);
-    } catch (err: unknown) {
-      // Expected when @xenova/transformers is not installed
-      expect(String(err)).toContain("transformers");
-    }
+    const result = await embed("hello");
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
   });
 
   test("embed() uses localModel from config when no remote endpoint", async () => {
@@ -65,13 +69,8 @@ describe("embed model selection", () => {
       model: "",
       localModel: "Xenova/all-MiniLM-L6-v2",
     };
-    try {
-      const result = await embed("hello", config);
-      expect(Array.isArray(result)).toBe(true);
-    } catch (err: unknown) {
-      // Expected when @xenova/transformers is not installed
-      expect(String(err)).toContain("transformers");
-    }
+    const result = await embed("hello", config);
+    expect(Array.isArray(result)).toBe(true);
   });
 });
 

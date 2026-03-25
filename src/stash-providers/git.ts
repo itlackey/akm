@@ -183,4 +183,4 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
 
 // ── Exports ─────────────────────────────────────────────────────────────────
 
-export { GitStashProvider, ensureGitMirror, getCachePaths, parseGitRepoUrl };
+export { ensureGitMirror, GitStashProvider, getCachePaths, parseGitRepoUrl };

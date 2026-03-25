@@ -50,7 +50,7 @@
   "$defs": {
     "EmbeddingConnectionConfig": {
       "type": "object",
-      "description": "OpenAI-compatible embedding endpoint configuration. When not set, uses local @xenova/transformers with Xenova/all-MiniLM-L6-v2 (384-dimensional, CPU-based).",
+      "description": "OpenAI-compatible embedding endpoint configuration. When not set, uses local @huggingface/transformers with Xenova/bge-small-en-v1.5 (384-dimensional, CPU-based).",
       "properties": {
         "provider": {
           "type": "string",

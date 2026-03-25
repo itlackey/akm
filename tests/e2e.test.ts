@@ -526,7 +526,8 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     expect(result.registryHits).toBeDefined();
     expect(result.registryHits?.length).toBeGreaterThan(0);
 
-    for (const hit of result.registryHits!) {
+    const registryHits = result.registryHits ?? [];
+    for (const hit of registryHits) {
       expect(hit.type).toBe("registry");
       expect(hit.action?.startsWith("akm add ")).toBe(true);
       expect(hit.id.length).toBeGreaterThan(0);
