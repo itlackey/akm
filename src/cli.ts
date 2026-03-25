@@ -332,7 +332,12 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       return out;
     }
     case "index": {
-      return `Indexed ${r.totalEntries ?? 0} entries from ${r.directoriesScanned ?? 0} directories (mode: ${r.mode ?? "unknown"})`;
+      let out = `Indexed ${r.totalEntries ?? 0} entries from ${r.directoriesScanned ?? 0} directories (mode: ${r.mode ?? "unknown"})`;
+      const verification = r.verification as Record<string, unknown> | undefined;
+      if (verification?.ok === false && verification.message) {
+        out += `\nVerification: ${String(verification.message)}`;
+      }
+      return out;
     }
     case "show": {
       const lines: string[] = [];
@@ -511,10 +516,14 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
+    verbose: { type: "boolean", description: "Print indexing summary and phase progress to stderr", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmIndex({ full: args.full });
+      const result = await akmIndex({
+        full: args.full,
+        onProgress: args.verbose ? ({ message }) => console.error(`[index] ${message}`) : undefined,
+      });
       output("index", result);
     });
   },

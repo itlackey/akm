@@ -30,8 +30,9 @@ akm setup
 ```
 
 The wizard lets you choose a stash directory, configure embedding and LLM
-providers, review registries, and add stash sources. When you save, akm writes
-the config file, initializes the stash directory, and builds the search index.
+providers, review semantic-search assets, review registries, and add stash
+sources. When you save, akm writes the config file, initializes the stash
+directory, and builds the search index.
 
 ### index
 
@@ -40,10 +41,13 @@ Build or refresh the search index.
 ```sh
 akm index          # Incremental (only changed directories)
 akm index --full   # Full rebuild
+akm index --verbose
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
-`directoriesSkipped`, and `timing` breakdown in milliseconds.
+`directoriesSkipped`, `verification`, and `timing` breakdown in milliseconds.
+Use `--verbose` to print the indexing mode, semantic-search settings, and
+phase-by-phase progress to stderr while the index is being built.
 
 ### search
 

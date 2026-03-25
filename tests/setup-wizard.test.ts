@@ -52,7 +52,9 @@ mock.module("@clack/prompts", () => ({
   },
   intro: () => {},
   outro: () => {},
-  note: () => {},
+  note: (msg: string, title?: string) => {
+    q.logged.push(`[note] ${title ?? ""} ${msg}`.trim());
+  },
 }));
 
 // ── onCancel tests ───────────────────────────────────────────────────────────
@@ -166,6 +168,36 @@ describe("stepStashSources – recommended GitHub repos", () => {
 
     const result = await stepStashSources({ stashes: [] } as never);
     expect(result).toEqual([]);
+  });
+});
+
+describe("semantic search setup", () => {
+  beforeEach(reset);
+
+  test("describeSemanticSearchAssets lists local model and sqlite-vec guidance", async () => {
+    const { describeSemanticSearchAssets } = await import("../src/setup");
+    const assets = describeSemanticSearchAssets();
+
+    expect(assets[0]).toContain("Local embedding model");
+    expect(assets[0]).toContain("download");
+    expect(assets[1]).toContain("sqlite-vec");
+  });
+
+  test("stepSemanticSearch returns disabled when user opts out", async () => {
+    const { stepSemanticSearch } = await import("../src/setup");
+    q.confirms.push(false);
+
+    const result = await stepSemanticSearch({ semanticSearch: true } as never);
+    expect(result).toEqual({ enabled: false, prepareAssets: false });
+  });
+
+  test("stepSemanticSearch shows assets and allows asset preparation", async () => {
+    const { stepSemanticSearch } = await import("../src/setup");
+    q.confirms.push(true, true);
+
+    const result = await stepSemanticSearch({ semanticSearch: true } as never);
+    expect(result).toEqual({ enabled: true, prepareAssets: true });
+    expect(q.logged.some((entry) => entry.includes("Semantic Search Assets"))).toBe(true);
   });
 });
 

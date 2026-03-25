@@ -8,6 +8,7 @@ import {
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
+  getEmbeddingCount,
   getEntriesByDir,
   getEntryCount,
   getMeta,
@@ -37,14 +38,38 @@ export interface IndexResponse {
   mode: "full" | "incremental";
   directoriesScanned: number;
   directoriesSkipped: number;
+  verification: IndexVerification;
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
 }
 
+export interface IndexVerification {
+  ok: boolean;
+  message: string;
+  guidance?: string;
+  semanticSearchEnabled: boolean;
+  embeddingProvider: "local" | "remote";
+  entryCount: number;
+  embeddingCount: number;
+  vecAvailable: boolean;
+}
+
+export interface IndexProgressEvent {
+  phase: "summary" | "scan" | "llm" | "fts" | "embeddings" | "verify";
+  message: string;
+}
+
+interface IndexOptions {
+  stashDir?: string;
+  full?: boolean;
+  onProgress?: (event: IndexProgressEvent) => void;
+}
+
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
-export async function akmIndex(options?: { stashDir?: string; full?: boolean }): Promise<IndexResponse> {
+export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
+  const onProgress = options?.onProgress ?? (() => {});
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("./config.js");
@@ -69,6 +94,17 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     const prevBuiltAt = getMeta(db, "builtAt");
     const isIncremental = !options?.full && prevStashDir === stashDir && !!prevBuiltAt;
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
+    onProgress({
+      phase: "summary",
+      message: describeIndexSettings({
+        mode: isIncremental ? "incremental" : "full",
+        stashSources: allStashDirs.length,
+        semanticSearch: config.semanticSearch,
+        embeddingProvider: getEmbeddingProvider(config.embedding),
+        llmEnabled: !!config.llm,
+        vecAvailable: isVecAvailable(db),
+      }),
+    });
 
     if (options?.full || !isIncremental) {
       // The delete is now merged into the insert transaction inside
@@ -112,23 +148,34 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
       builtAtMs,
       doFullDelete,
     );
+    onProgress({
+      phase: "scan",
+      message: `Scanned ${scannedDirs} director${scannedDirs === 1 ? "y" : "ies"} and skipped ${skippedDirs}.`,
+    });
 
     const tWalkEnd = Date.now();
 
     // Enhance entries with LLM if configured
     await enhanceDirsWithLlm(db, config, dirsNeedingLlm);
+    onProgress({
+      phase: "llm",
+      message: config.llm
+        ? `LLM enhancement reviewed ${dirsNeedingLlm.length} director${dirsNeedingLlm.length === 1 ? "y" : "ies"}.`
+        : "LLM enhancement disabled.",
+    });
 
     const tLlmEnd = Date.now();
 
     // Rebuild FTS after all inserts
     rebuildFts(db);
+    onProgress({ phase: "fts", message: "Rebuilt full-text search index." });
     const tFtsEnd = Date.now();
 
     // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
 
     // Generate embeddings if semantic search is enabled
-    const hasEmbeddings = await generateEmbeddingsForDb(db, config);
+    const hasEmbeddings = await generateEmbeddingsForDb(db, config, onProgress);
 
     const tEmbedEnd = Date.now();
 
@@ -144,6 +191,8 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
     warnIfVecMissing(db);
 
     const tEnd = Date.now();
+    const verification = verifyIndexState(db, config, totalEntries);
+    onProgress({ phase: "verify", message: verification.message });
 
     return {
       stashDir,
@@ -153,6 +202,7 @@ export async function akmIndex(options?: { stashDir?: string; full?: boolean }):
       mode: isIncremental ? "incremental" : "full",
       directoriesScanned: scannedDirs,
       directoriesSkipped: skippedDirs,
+      verification,
       timing: {
         totalMs: tEnd - t0,
         walkMs: tWalkEnd - tWalkStart,
@@ -373,13 +423,27 @@ async function enhanceDirsWithLlm(
   }
 }
 
-async function generateEmbeddingsForDb(db: Database, config: import("./config").AkmConfig): Promise<boolean> {
-  if (!config.semanticSearch) return false;
+async function generateEmbeddingsForDb(
+  db: Database,
+  config: import("./config").AkmConfig,
+  onProgress: (event: IndexProgressEvent) => void,
+): Promise<boolean> {
+  if (!config.semanticSearch) {
+    onProgress({ phase: "embeddings", message: "Semantic search disabled; skipping embeddings." });
+    return false;
+  }
 
   try {
     const { embedBatch } = await import("./embedder.js");
     const allEntries = getAllEntriesForEmbedding(db);
-    if (allEntries.length === 0) return true;
+    if (allEntries.length === 0) {
+      onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
+      return true;
+    }
+    onProgress({
+      phase: "embeddings",
+      message: `Generating embeddings for ${allEntries.length} entr${allEntries.length === 1 ? "y" : "ies"}.`,
+    });
     const texts = allEntries.map((e) => e.searchText);
     const embeddings = await embedBatch(texts, config.embedding);
     // Wrap all embedding upserts in a single transaction so partial
@@ -389,9 +453,17 @@ async function generateEmbeddingsForDb(db: Database, config: import("./config").
         upsertEmbedding(db, allEntries[i].id, embeddings[i]);
       }
     })();
+    onProgress({
+      phase: "embeddings",
+      message: `Stored ${embeddings.length} embedding${embeddings.length === 1 ? "" : "s"}.`,
+    });
     return true;
   } catch (error) {
     warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error));
+    onProgress({
+      phase: "embeddings",
+      message: `Embedding generation failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
     return false;
   }
 }
@@ -413,6 +485,80 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   } catch {
     return entry;
   }
+}
+
+function describeIndexSettings(options: {
+  mode: "full" | "incremental";
+  stashSources: number;
+  semanticSearch: boolean;
+  embeddingProvider: "local" | "remote";
+  llmEnabled: boolean;
+  vecAvailable: boolean;
+}): string {
+  const semanticDetail = options.semanticSearch
+    ? `${options.embeddingProvider} embeddings, ${options.vecAvailable ? "sqlite-vec" : "JS fallback"}`
+    : "disabled";
+  return `Starting ${options.mode} index (${options.stashSources} stash source${options.stashSources === 1 ? "" : "s"}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
+}
+
+function getEmbeddingProvider(embedding?: import("./config").EmbeddingConnectionConfig): "local" | "remote" {
+  return embedding?.endpoint?.startsWith("http://") || embedding?.endpoint?.startsWith("https://") ? "remote" : "local";
+}
+
+function verifyIndexState(db: Database, config: import("./config").AkmConfig, totalEntries: number): IndexVerification {
+  const embeddingCount = getEmbeddingCount(db);
+  const vecAvailable = isVecAvailable(db);
+  const embeddingProvider = getEmbeddingProvider(config.embedding);
+
+  if (totalEntries === 0) {
+    return {
+      ok: true,
+      message: "Index ready. No assets were found yet.",
+      semanticSearchEnabled: config.semanticSearch,
+      embeddingProvider,
+      entryCount: totalEntries,
+      embeddingCount,
+      vecAvailable,
+    };
+  }
+
+  if (!config.semanticSearch) {
+    return {
+      ok: true,
+      message: "Keyword index ready. Semantic search is disabled.",
+      semanticSearchEnabled: false,
+      embeddingProvider,
+      entryCount: totalEntries,
+      embeddingCount,
+      vecAvailable,
+    };
+  }
+
+  if (embeddingCount >= totalEntries) {
+    return {
+      ok: true,
+      message: `Semantic search ready (${embeddingCount}/${totalEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
+      semanticSearchEnabled: true,
+      embeddingProvider,
+      entryCount: totalEntries,
+      embeddingCount,
+      vecAvailable,
+    };
+  }
+
+  return {
+    ok: false,
+    message: `Semantic search verification failed (${embeddingCount}/${totalEntries} embeddings available).`,
+    guidance:
+      embeddingProvider === "remote"
+        ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
+        : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and @huggingface/transformers is installed.",
+    semanticSearchEnabled: true,
+    embeddingProvider,
+    entryCount: totalEntries,
+    embeddingCount,
+    vecAvailable,
+  };
 }
 
 function isDirStale(

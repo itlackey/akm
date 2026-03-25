@@ -141,6 +141,8 @@ test("akmIndex handles empty stash gracefully", async () => {
 
   expect(result.totalEntries).toBe(0);
   expect(result.generatedMetadata).toBe(0);
+  expect(result.verification.ok).toBe(true);
+  expect(result.verification.message).toContain("No assets");
 });
 
 test("akmIndex handles markdown assets", async () => {
@@ -215,6 +217,38 @@ test("akmIndex --full mode returns mode full", async () => {
   // Second index with full flag — should force full reindex
   const result = await akmIndex({ stashDir, full: true });
   expect(result.mode).toBe("full");
+});
+
+test("akmIndex reports progress events and semantic-search verification details", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+
+  const { saveConfig } = await import("../src/config");
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearch: true,
+    embedding: {
+      endpoint: "https://example.test/v1/embeddings",
+      model: "demo-embed",
+    },
+  });
+
+  const messages: string[] = [];
+  const result = await akmIndex({
+    stashDir,
+    onProgress: ({ message }) => {
+      messages.push(message);
+    },
+  });
+
+  expect(messages[0]).toContain("Starting");
+  expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
+  expect(messages.some((message) => message.includes("Embedding generation failed"))).toBe(true);
+  expect(messages.at(-1)).toContain("Semantic search verification failed");
+  expect(result.verification.ok).toBe(false);
+  expect(result.verification.semanticSearchEnabled).toBe(true);
+  expect(result.verification.embeddingProvider).toBe("remote");
+  expect(result.verification.guidance).toContain("akm index --full --verbose");
 });
 
 test("buildSearchText includes TOC heading text for knowledge entries", async () => {
