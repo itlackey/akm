@@ -585,7 +585,7 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
   const obj = value as Record<string, unknown>;
 
   const url = asNonEmptyString(obj.url);
-  if (!url || !url.startsWith("http")) return undefined;
+  if (!url?.startsWith("http")) return undefined;
 
   const entry: RegistryConfigEntry = { url };
   const name = asNonEmptyString(obj.name);

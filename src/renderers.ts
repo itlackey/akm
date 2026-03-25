@@ -461,12 +461,12 @@ export function registerBuiltinRenderers(): void {
 // ── Named exports for testing ────────────────────────────────────────────────
 
 export {
-  skillMdRenderer,
-  commandMdRenderer,
   agentMdRenderer,
+  commandMdRenderer,
+  INTERPRETER_MAP,
   knowledgeMdRenderer,
   memoryMdRenderer,
-  scriptSourceRenderer,
-  INTERPRETER_MAP,
   SETUP_SIGNALS,
+  scriptSourceRenderer,
+  skillMdRenderer,
 };
