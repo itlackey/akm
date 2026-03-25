@@ -22,9 +22,9 @@ For a guided first run, start with:
 akm setup
 ```
 
-`akm setup` walks through stash location, embedding/LLM settings, registries,
-and stash sources, then saves your config, initializes the stash directory, and
-builds the search index.
+`akm setup` walks through stash location, embedding/LLM settings, semantic
+search asset preparation, registries, and stash sources, then saves your
+config, initializes the stash directory, and builds the search index.
 
 ## Initialize Your Working Stash
 
