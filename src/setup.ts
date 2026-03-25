@@ -7,6 +7,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { isHttpUrl } from "./common";
 import type {
   AkmConfig,
   EmbeddingConnectionConfig,
@@ -33,7 +34,10 @@ const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string 
   },
 ];
 
+// Approximate first-download sizes used in the setup note.
+// LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
 const LOCAL_MODEL_APPROX_SIZE_MB = 130;
+// SQLITE_VEC_APPROX_SIZE_MB reflects the optional sqlite-vec install footprint.
 const SQLITE_VEC_APPROX_SIZE_MB = 5;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -92,9 +96,7 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
 }
 
 function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
-  return (
-    !!embedding?.endpoint && (embedding.endpoint.startsWith("http://") || embedding.endpoint.startsWith("https://"))
-  );
+  return isHttpUrl(embedding?.endpoint);
 }
 
 /**
@@ -103,7 +105,7 @@ function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean
 export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConfig): string[] {
   if (isRemoteEmbeddingConfig(embedding)) {
     return [
-      `• Embedding endpoint: ${embedding?.provider ?? "remote"} / ${embedding?.model} (no local model download)`,
+      `• Embedding endpoint: ${embedding?.provider ?? "custom"} / ${embedding?.model} (no local model download)`,
       `• sqlite-vec acceleration: optional native extension (~${SQLITE_VEC_APPROX_SIZE_MB} MB when installed separately)`,
     ];
   }
@@ -170,7 +172,7 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
 
   spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
 
-  let db = undefined as ReturnType<typeof openDatabase> | undefined;
+  let db: ReturnType<typeof openDatabase> | undefined;
   try {
     db = openDatabase();
     if (isVecAvailable(db)) {

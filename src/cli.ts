@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config"
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { akmIndex } from "./indexer";
+import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmList, akmRemove, akmUpdate } from "./installed-kits";
@@ -332,8 +332,9 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       return out;
     }
     case "index": {
-      let out = `Indexed ${r.totalEntries ?? 0} entries from ${r.directoriesScanned ?? 0} directories (mode: ${r.mode ?? "unknown"})`;
-      const verification = r.verification as Record<string, unknown> | undefined;
+      const indexResult = result as Partial<IndexResponse>;
+      let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+      const verification = indexResult.verification;
       if (verification?.ok === false && verification.message) {
         out += `\nVerification: ${String(verification.message)}`;
       }

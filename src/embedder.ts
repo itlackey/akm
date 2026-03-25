@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from "./common";
+import { fetchWithTimeout, isHttpUrl } from "./common";
 import type { EmbeddingConnectionConfig } from "./config";
 import { warn } from "./warn";
 
@@ -139,7 +139,7 @@ async function embedRemote(text: string, config: EmbeddingConnectionConfig): Pro
 
 /** Check whether an EmbeddingConnectionConfig has a valid remote endpoint. */
 function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
-  return !!config.endpoint && (config.endpoint.startsWith("http://") || config.endpoint.startsWith("https://"));
+  return isHttpUrl(config.endpoint);
 }
 
 // ── LRU embedding cache ─────────────────────────────────────────────────────

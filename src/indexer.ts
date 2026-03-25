@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStashDir } from "./common";
+import { isHttpUrl, resolveStashDir } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
@@ -96,7 +96,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     const builtAtMs = isIncremental && prevBuiltAt ? new Date(prevBuiltAt).getTime() : 0;
     onProgress({
       phase: "summary",
-      message: describeIndexSettings({
+      message: buildIndexSummaryMessage({
         mode: isIncremental ? "incremental" : "full",
         stashSources: allStashDirs.length,
         semanticSearch: config.semanticSearch,
@@ -150,7 +150,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     );
     onProgress({
       phase: "scan",
-      message: `Scanned ${scannedDirs} director${scannedDirs === 1 ? "y" : "ies"} and skipped ${skippedDirs}.`,
+      message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
     });
 
     const tWalkEnd = Date.now();
@@ -160,7 +160,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     onProgress({
       phase: "llm",
       message: config.llm
-        ? `LLM enhancement reviewed ${dirsNeedingLlm.length} director${dirsNeedingLlm.length === 1 ? "y" : "ies"}.`
+        ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
         : "LLM enhancement disabled.",
     });
 
@@ -487,7 +487,7 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   }
 }
 
-function describeIndexSettings(options: {
+function buildIndexSummaryMessage(options: {
   mode: "full" | "incremental";
   stashSources: number;
   semanticSearch: boolean;
@@ -495,14 +495,26 @@ function describeIndexSettings(options: {
   llmEnabled: boolean;
   vecAvailable: boolean;
 }): string {
-  const semanticDetail = options.semanticSearch
-    ? `${options.embeddingProvider} embeddings, ${options.vecAvailable ? "sqlite-vec" : "JS fallback"}`
-    : "disabled";
-  return `Starting ${options.mode} index (${options.stashSources} stash source${options.stashSources === 1 ? "" : "s"}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
+  const stashSourceLabel = options.stashSources === 1 ? "stash source" : "stash sources";
+  const semanticDetail = getSemanticSearchLabel(
+    options.semanticSearch,
+    options.embeddingProvider,
+    options.vecAvailable,
+  );
+  return `Starting ${options.mode} index (${options.stashSources} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
 }
 
 function getEmbeddingProvider(embedding?: import("./config").EmbeddingConnectionConfig): "local" | "remote" {
-  return embedding?.endpoint?.startsWith("http://") || embedding?.endpoint?.startsWith("https://") ? "remote" : "local";
+  return isHttpUrl(embedding?.endpoint) ? "remote" : "local";
+}
+
+function getSemanticSearchLabel(
+  semanticSearch: boolean,
+  embeddingProvider: "local" | "remote",
+  vecAvailable: boolean,
+): string {
+  if (!semanticSearch) return "disabled";
+  return `${embeddingProvider} embeddings, ${vecAvailable ? "sqlite-vec" : "JS fallback"}`;
 }
 
 function verifyIndexState(db: Database, config: import("./config").AkmConfig, totalEntries: number): IndexVerification {
@@ -552,7 +564,7 @@ function verifyIndexState(db: Database, config: import("./config").AkmConfig, to
     guidance:
       embeddingProvider === "remote"
         ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
-        : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and @huggingface/transformers is installed.",
+        : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and see docs/configuration.md for local embedding dependency setup.",
     semanticSearchEnabled: true,
     embeddingProvider,
     entryCount: totalEntries,

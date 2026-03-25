@@ -241,14 +241,51 @@ test("akmIndex reports progress events and semantic-search verification details"
     },
   });
 
-  expect(messages[0]).toContain("Starting");
+  expect(messages[0]).toContain("Starting full index");
+  expect(messages[0]).toContain("1 stash source");
+  expect(messages[0]).toContain("semantic search: remote embeddings");
   expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
-  expect(messages.some((message) => message.includes("Embedding generation failed"))).toBe(true);
+  expect(messages.some((message) => message.includes("Embedding generation failed: Unable to connect"))).toBe(true);
   expect(messages.at(-1)).toContain("Semantic search verification failed");
   expect(result.verification.ok).toBe(false);
   expect(result.verification.semanticSearchEnabled).toBe(true);
   expect(result.verification.embeddingProvider).toBe("remote");
   expect(result.verification.guidance).toContain("akm index --full --verbose");
+});
+
+test("akmIndex verifies semantic search when remote embeddings succeed", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
+
+  const { saveConfig } = await import("../src/config");
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearch: true,
+    embedding: {
+      endpoint: "https://example.test/v1/embeddings",
+      model: "demo-embed",
+      dimension: 3,
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+    new Response(
+      JSON.stringify({
+        data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }],
+      }),
+      { status: 200 },
+    )) as typeof globalThis.fetch;
+
+  try {
+    const result = await akmIndex({ stashDir });
+    expect(result.verification.ok).toBe(true);
+    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.embeddingCount).toBe(result.totalEntries);
+    expect(result.verification.message).toContain("Semantic search ready");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("buildSearchText includes TOC heading text for knowledge entries", async () => {

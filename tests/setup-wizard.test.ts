@@ -174,7 +174,7 @@ describe("stepStashSources – recommended GitHub repos", () => {
 describe("semantic search setup", () => {
   beforeEach(reset);
 
-  test("describeSemanticSearchAssets lists local model and sqlite-vec guidance", async () => {
+  test("should list local model and sqlite-vec guidance when describing semantic search assets", async () => {
     const { describeSemanticSearchAssets } = await import("../src/setup");
     const assets = describeSemanticSearchAssets();
 
