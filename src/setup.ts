@@ -182,6 +182,12 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
         "sqlite-vec is not available. Semantic search will use the JS fallback until the optional extension is installed.",
       );
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    p.log.warn(
+      `Could not open the local database or check for sqlite-vec. Semantic search will use the JS fallback. (${message})\n` +
+        "Check file permissions and available disk space in the cache directory, or run `akm index --full --verbose` to diagnose.",
+    );
   } finally {
     if (db) closeDatabase(db);
   }
@@ -703,7 +709,15 @@ export async function runSetupWizard(): Promise<void> {
 
   if (semanticSearch.enabled) {
     if (semanticSearch.prepareAssets) {
-      await prepareSemanticSearchAssets(newConfig);
+      const ready = await prepareSemanticSearchAssets(newConfig);
+      if (!ready) {
+        // Asset preparation failed: disable semantic search and persist the update.
+        newConfig.semanticSearch = false;
+        saveConfig(newConfig);
+        p.log.warn(
+          "Semantic search has been disabled in the saved configuration. Re-run `akm setup` or `akm index --full --verbose` once the issue is resolved.",
+        );
+      }
     } else {
       p.log.info(
         "Semantic search will be enabled, but asset preparation was skipped. Run `akm index --full --verbose` later to verify it.",
