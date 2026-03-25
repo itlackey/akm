@@ -25,7 +25,7 @@ function getLocalModelName(overrideModel?: string): string {
 
 // ── Singleton local embedder ────────────────────────────────────────────────
 // localEmbedder is an intentional module-level singleton. The underlying
-// @xenova/transformers pipeline is expensive to initialise (model download +
+// @huggingface/transformers pipeline is expensive to initialise (model download +
 // WASM compilation) and is safe to share across calls because it is stateless
 // once created. Storing it here avoids re-initialising on every embed() call.
 
@@ -52,11 +52,11 @@ async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline
     localEmbedderPromise = (async () => {
       let pipeline: unknown;
       try {
-        const mod = await import("@xenova/transformers");
+        const mod = await import("@huggingface/transformers");
         pipeline = mod.pipeline as unknown;
       } catch {
         throw new Error(
-          "Semantic search requires @xenova/transformers. Install it with: npm install @xenova/transformers",
+          "Semantic search requires @huggingface/transformers. Install it with: npm install @huggingface/transformers",
         );
       }
       const pipelineFn = pipeline as (task: string, model: string) => Promise<TransformerPipeline>;
@@ -174,7 +174,7 @@ export function clearEmbeddingCache(): void {
 /**
  * Generate an embedding for the given text.
  * If embeddingConfig has a remote endpoint, uses the configured OpenAI-compatible endpoint.
- * Otherwise falls back to local @xenova/transformers using the model from
+ * Otherwise falls back to local @huggingface/transformers using the model from
  * `embeddingConfig.localModel` or `DEFAULT_LOCAL_MODEL`.
  *
  * Results are cached in an LRU cache (max ~100 entries) keyed by query text

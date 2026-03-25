@@ -43,7 +43,7 @@ describe("EmbeddingConnectionConfig localModel field", () => {
 describe("embed model selection", () => {
   test("embed() falls back to local when no config is provided", async () => {
     // We verify indirectly: embed() with no config should attempt local
-    // embedding via the default model. Since @xenova/transformers may not
+    // embedding via the default model. Since @huggingface/transformers may not
     // be installed in the test environment, we accept either a result or
     // an error about the missing dependency — but NOT a fetch error.
     const { embed } = await import("../src/embedder");
@@ -53,8 +53,8 @@ describe("embed model selection", () => {
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeGreaterThan(0);
     } catch (err: unknown) {
-      // Expected when @xenova/transformers is not installed
-      expect(String(err)).toContain("transformers");
+      // Expected when @huggingface/transformers is not installed
+      expect(String(err)).toContain("@huggingface/transformers");
     }
   });
 
@@ -69,8 +69,8 @@ describe("embed model selection", () => {
       const result = await embed("hello", config);
       expect(Array.isArray(result)).toBe(true);
     } catch (err: unknown) {
-      // Expected when @xenova/transformers is not installed
-      expect(String(err)).toContain("transformers");
+      // Expected when @huggingface/transformers is not installed
+      expect(String(err)).toContain("@huggingface/transformers");
     }
   });
 });

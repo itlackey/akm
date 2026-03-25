@@ -68,7 +68,7 @@ export interface AkmConfig {
   stashDir?: string;
   /** Whether semantic search is enabled. Default: true */
   semanticSearch: boolean;
-  /** OpenAI-compatible embedding endpoint config. If not set, uses local @xenova/transformers */
+  /** OpenAI-compatible embedding endpoint config. If not set, uses local @huggingface/transformers */
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
   llm?: LlmConnectionConfig;

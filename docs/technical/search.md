@@ -55,7 +55,7 @@ search automatically retries with prefix matching (appending `*` to tokens of
 ### 2. Semantic (vector)
 
 Cosine similarity between query embedding and stored entry embeddings.
-Requires an embedding model — either local (`@xenova/transformers`, default
+Requires an embedding model — either local (`@huggingface/transformers`, default
 model `bge-small-en-v1.5`) or a remote OpenAI-compatible endpoint.
 
 An LRU cache (100 entries) avoids redundant embedding computation for repeated

@@ -46,8 +46,8 @@ Two backends are supported for generating search embeddings.
 
 ### Local (default)
 
-When `embedding` is not configured (null), akm uses `@xenova/transformers`
-with the `Xenova/all-MiniLM-L6-v2` model. Runs on CPU with no external
+When `embedding` is not configured (null), akm uses `@huggingface/transformers`
+with the `Xenova/bge-small-en-v1.5` model. Runs on CPU with no external
 dependencies. Produces 384-dimensional vectors.
 
 ### Remote
