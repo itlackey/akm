@@ -9,8 +9,8 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Setting Up the Dev Environment
 
 ```bash
-git clone https://github.com/itlackey/agentikit.git
-cd agentikit
+git clone https://github.com/itlackey/akm.git
+cd akm
 bun install
 ```
 

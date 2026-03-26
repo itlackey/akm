@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="itlackey/agentikit"
+REPO="itlackey/akm"
 INSTALL_DIR="${AKM_INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS

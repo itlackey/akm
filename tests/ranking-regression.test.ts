@@ -1,5 +1,5 @@
 /**
- * Ranking regression tests for agentikit search system.
+ * Ranking regression tests for akm search system.
  *
  * Uses the synthetic fixture stash at tests/fixtures/stash/ to validate
  * search ranking invariants: score differentiation, exact name matching,

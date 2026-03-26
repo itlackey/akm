@@ -14,7 +14,7 @@ const DEFAULT_MANUAL_ENTRIES_PATH = path.resolve("manual-entries.json");
 const DEFAULT_OUTPUT_PATH = path.resolve("index.json");
 const REQUIRED_KEYWORDS = ["akm-kit"];
 const GITHUB_TOPICS = ["akm-kit"];
-const EXCLUDED_REPOS = new Set(["itlackey/agentikit"]);
+const EXCLUDED_REPOS = new Set(["itlackey/akm"]);
 const EXCLUDED_NPM_PACKAGES = new Set(["akm-cli"]);
 
 export interface BuildRegistryIndexOptions {

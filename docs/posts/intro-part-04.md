@@ -1,6 +1,6 @@
 ---
 title: Your Agent Doesn't Know What the Community Already Figured Out
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/docs/posts/akm-logo-sized.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
 description: How to connect your agent to curated community knowledge with the Context Hub integration
 tags:
@@ -166,7 +166,7 @@ Here's what the complete setup looks like after four posts:
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 akm init
 
 # Local platform assets
@@ -215,4 +215,4 @@ Context Hub isn't the only way this will happen — community registries, market
 
 If you've written skills or knowledge docs worth sharing, consider contributing them to [Context Hub](https://github.com/andrewyng/context-hub). Structure them with frontmatter, put them in a `content/` directory, and they become searchable for every agent running `akm`.
 
-The repo is at [github.com/itlackey/agentikit](https://github.com/itlackey/agentikit). Context Hub is at [github.com/andrewyng/context-hub](https://github.com/andrewyng/context-hub). If you've got a team knowledge base in a git repo, add it as a git stash source and let me know how it holds up.
+The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). Context Hub is at [github.com/andrewyng/context-hub](https://github.com/andrewyng/context-hub). If you've got a team knowledge base in a git repo, add it as a git stash source and let me know how it holds up.

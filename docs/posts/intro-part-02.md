@@ -1,6 +1,6 @@
 ---
 title: You Already Have Dozens of Agent Skills. You Just Can't Find Them.
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/docs/posts/akm-logo-sized.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 id: 3359719
 series: akm
 description: A quick introduction to managing stashes
@@ -13,7 +13,7 @@ published: true
 date: '2026-03-16T17:26:29Z'
 ---
 
-In the [last post](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about the problem: your agent's skill collection is growing faster than your ability to manage it. Skills scattered across directories, no search, no sharing, no sanity. I introduced [Agent-i-Kit](https://github.com/itlackey/agentikit) as the fix — a CLI called `akm` that gives your agent a searchable, indexed stash of assets.
+In the [last post](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about the problem: your agent's skill collection is growing faster than your ability to manage it. Skills scattered across directories, no search, no sharing, no sanity. I introduced [Agent-i-Kit](https://github.com/itlackey/akm) as the fix — a CLI called `akm` that gives your agent a searchable, indexed stash of assets.
 
 But here's what I glossed over: most of you aren't starting from zero. You've already got skills, commands, agents, and rules spread across multiple platforms. Claude Code has `~/.claude/skills/`. OpenCode has `.opencode/`. Cursor has `.cursor/rules/`. Codex has its `agents.md`. You might be using two or three of these tools in the same week, building up assets in each one, and none of them can see each other.
 
@@ -27,7 +27,7 @@ Pick your poison:
 
 ```bash
 # Standalone binary (no runtime needed)
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
 # Or via Bun
 bun install -g akm-cli
@@ -193,7 +193,7 @@ You can either manage that by hand — maintaining parallel copies, forgetting w
 ## Get Started
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 akm init
 akm stash add ~/.claude/skills
 akm index
@@ -202,4 +202,4 @@ akm search "whatever you need"
 
 Five commands. Every skill you've ever written, searchable in seconds.
 
-The repo is at [github.com/itlackey/agentikit](https://github.com/itlackey/agentikit). If you've got agent assets scattered across platforms, give it a shot and let me know what breaks.
+The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). If you've got agent assets scattered across platforms, give it a shot and let me know what breaks.

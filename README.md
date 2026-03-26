@@ -3,7 +3,7 @@
 > **akm** — Agent Kit Manager
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
-[![CI](https://github.com/itlackey/agentikit/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/agentikit/actions/workflows/ci.yml)
+[![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
 A package manager for AI agent capabilities -- scripts, skills, commands,
@@ -14,7 +14,7 @@ can run shell commands.
 
 ```sh
 # Standalone binary (no runtime dependencies)
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
 # Or via Bun
 bun install -g akm-cli

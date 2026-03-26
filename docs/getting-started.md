@@ -12,7 +12,7 @@ bun install -g akm-cli
 ```
 
 Or download a standalone binary from the
-[GitHub releases](https://github.com/itlackey/agentikit/releases) page.
+[GitHub releases](https://github.com/itlackey/akm/releases) page.
 
 ## First-Time Setup
 

@@ -1,7 +1,7 @@
 ---
 title: Your AI Agent's Skill List Is Getting Out of Hand
 id: 3327252
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/docs/posts/akm-logo-sized.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
 description: A quick introduction to the Agent-i-Kit CLI for managing AI agent extensions
 tags:
@@ -17,7 +17,7 @@ If you've been building with Claude Code or OpenCode for any length of time, you
 
 Before long you've got dozens of files scattered across directories, no good way to find the one you need, and an agent that's either missing context it should have or drowning in context it doesn't need.
 
-That's the problem [Agent-i-Kit](https://github.com/itlackey/agentikit) is built to solve.
+That's the problem [Agent-i-Kit](https://github.com/itlackey/akm) is built to solve.
 
 ## The Real Issue Isn't Storage, It's Discovery
 
@@ -59,6 +59,6 @@ Think of it like the difference between having a folder full of scripts and havi
 
 The project is young — v0.0.9 as of this writing — but the problem it's solving is real and it's only going to get worse as agent workflows get more capable and more complex. A community-maintained registry of high-quality, searchable, versioned skills is genuinely useful infrastructure.
 
-Give it a look at [github.com/itlackey/agentikit](https://github.com/itlackey/agentikit). And if you've built skills worth sharing, this is a good time to think about how to package them so others can benefit.
+Give it a look at [github.com/itlackey/akm](https://github.com/itlackey/akm). And if you've built skills worth sharing, this is a good time to think about how to package them so others can benefit.
 
 Feel free to drop links in the comments to skills or kits you've built that you think others should know about.

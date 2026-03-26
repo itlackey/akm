@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Comprehensive benchmark suite for agentikit search system.
+ * Comprehensive benchmark suite for akm search system.
  *
  * Standalone script (NOT a bun:test suite) that covers:
  *   1. Search Quality (MRR, Recall@5, Recall@10)
@@ -1523,7 +1523,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
 async function runBenchmarkSuite() {
   const { branch, commit } = gitInfo();
 
-  log("=== Agentikit Comprehensive Benchmark Suite ===\n\n");
+  log("=== akm Comprehensive Benchmark Suite ===\n\n");
 
   // 1. Create stash and index
   log("Setting up benchmark stash...\n");

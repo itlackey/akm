@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentikit.dev/schemas/akm-config.schema.json",
+  "$id": "https://akm.dev/schemas/akm-config.schema.json",
   "title": "AKM Configuration",
-  "description": "Configuration file for the akm CLI (Agentikit). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments).",
+  "description": "Configuration file for the akm CLI (Agent Kit Manager). Stored at ~/.config/akm/config.json (Linux/macOS) or %APPDATA%\\akm\\config.json (Windows). Supports JSONC (JavaScript-style comments).",
   "type": "object",
   "properties": {
     "stashDir": {

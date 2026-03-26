@@ -86,7 +86,7 @@ export function isVecAvailable(db: Database): boolean {
   return vecStatus.get(db) ?? false;
 }
 
-const VEC_DOCS_URL = "https://github.com/itlackey/agentikit/blob/main/docs/configuration.md#sqlite-vec-extension";
+const VEC_DOCS_URL = "https://github.com/itlackey/akm/blob/main/docs/configuration.md#sqlite-vec-extension";
 const VEC_FALLBACK_THRESHOLD = 10_000;
 // Per-database warning state: tracks which databases have already emitted the
 // vec-missing warning so we don't spam on every openDatabase() call.

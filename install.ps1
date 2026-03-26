@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Repo = "itlackey/agentikit"
+$Repo = "itlackey/akm"
 $InstallDir = if ($env:AKM_INSTALL_DIR) { $env:AKM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "akm" }
 
 # Detect architecture

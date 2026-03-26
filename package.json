@@ -2,25 +2,33 @@
   "name": "akm-cli",
   "version": "0.2.1",
   "type": "module",
-  "description": "CLI tool to search, open, and run extension assets from an akm stash directory.",
+  "description": "akm (Agent Kit Manager) — A package manager for AI agent skills, commands, tools, and knowledge. Works with Claude Code, OpenCode, Cursor, and any AI coding assistant.",
   "keywords": [
     "akm",
-    "akm-kit",
+    "agent-kit-manager",
+    "akm-cli",
     "ai-agent",
+    "ai-tools",
     "agent-framework",
+    "package-manager",
     "developer-tools",
     "cli",
-    "tools",
     "skills",
-    "commands"
+    "commands",
+    "claude-code",
+    "opencode",
+    "mcp",
+    "ai-coding-assistant",
+    "agent-skills",
+    "skill-management"
   ],
-  "homepage": "https://github.com/itlackey/agentikit#readme",
+  "homepage": "https://github.com/itlackey/akm#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/itlackey/agentikit.git"
+    "url": "git+https://github.com/itlackey/akm.git"
   },
   "bugs": {
-    "url": "https://github.com/itlackey/agentikit/issues"
+    "url": "https://github.com/itlackey/akm/issues"
   },
   "license": "MPL-2.0",
   "files": [
@@ -39,7 +47,8 @@
     "lint": "bunx biome check src/ tests/",
     "lint:fix": "bunx biome check --write src/ tests/",
     "format": "bunx biome format --write src/ tests/",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "cp .github/README.npm.md README.md && bun run build",
+    "postpublish": "git checkout -- README.md"
   },
   "publishConfig": {
     "access": "public"

@@ -1,6 +1,6 @@
 # Architecture
 
-Agentikit (`akm`) is a CLI tool for managing AI agent assets: skills, commands, agents, knowledge, scripts, and memories. This document defines the system's core design decisions. These are final and inviolable.
+akm (Agent Kit Manager) is a CLI tool for managing AI agent assets: skills, commands, agents, knowledge, scripts, and memories. This document defines the system's core design decisions. These are final and inviolable.
 
 ---
 

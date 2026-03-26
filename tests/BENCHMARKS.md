@@ -1,6 +1,6 @@
 # Search Benchmarks & Ranking Regression Tests
 
-This document explains the benchmark and test infrastructure for validating agentikit search quality, performance, and correctness.
+This document explains the benchmark and test infrastructure for validating akm search quality, performance, and correctness.
 
 ## Quick Start
 
@@ -261,7 +261,7 @@ Empty query, non-matching query, single character query.
 
 ## Fixture Stash (`ranking-fixtures/stash/`)
 
-A synthetic stash with 17 carefully designed assets that mirror the structure of a real agentikit stash. Each asset has curated `.stash.json` metadata.
+A synthetic stash with 17 carefully designed assets that mirror the structure of a real akm stash. Each asset has curated `.stash.json` metadata.
 
 ### Design principles
 

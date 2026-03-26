@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Search quality benchmark for agentikit.
+ * Search quality benchmark for akm.
  *
  * Standalone script (NOT a bun:test suite) that:
  *   1. Creates a temp stash with ~20 well-defined assets

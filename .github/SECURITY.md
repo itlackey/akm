@@ -8,7 +8,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it through [GitHub Security Advisories](https://github.com/itlackey/agentikit/security/advisories/new) rather than opening a public issue.
+If you discover a security vulnerability, please report it through [GitHub Security Advisories](https://github.com/itlackey/akm/security/advisories/new) rather than opening a public issue.
 
 We aim to acknowledge reports within 48 hours and provide an initial assessment within 7 days.
 

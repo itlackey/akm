@@ -5,7 +5,7 @@ import { fetchWithRetry, IS_WINDOWS } from "./common";
 import { githubHeaders } from "./github";
 import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
 
-const REPO = "itlackey/agentikit";
+const REPO = "itlackey/akm";
 
 export function detectInstallMethod(): "binary" | "npm" | "unknown" {
   // Bun-compiled binaries: Bun.main equals process.execPath
@@ -93,7 +93,7 @@ export async function performUpgrade(
 
   if (!latestVersion) {
     throw new Error(
-      "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/agentikit/releases",
+      "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
     );
   }
 

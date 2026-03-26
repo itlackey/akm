@@ -1,6 +1,6 @@
 ---
 title: Your Agent's Memory Shouldn't Disappear When the Session Ends
-cover_image: 'https://raw.githubusercontent.com/itlackey/agentikit/main/docs/posts/akm-logo-sized.webp'
+cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 id: 3359720
 series: akm
 description: A quick introduction to using OpenViking with akm
@@ -95,8 +95,8 @@ Text search uses OpenViking's grep endpoint, which deduplicates results by URI a
 If you want to try this locally before pointing at a shared server, the akm repo includes a ready-made Docker Compose setup:
 
 ```bash
-git clone https://github.com/itlackey/agentikit.git
-cd agentikit/tests/fixtures/openviking
+git clone https://github.com/itlackey/akm.git
+cd akm/tests/fixtures/openviking
 
 # Start the server
 docker compose up -d
@@ -153,7 +153,7 @@ After three posts, here's what a fully-wired setup looks like:
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/itlackey/agentikit/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 akm init
 
 # Local platform assets
@@ -186,4 +186,4 @@ knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
 
 Local skills, remote knowledge, team kits, community registries, persistent memories. One search, one interface, every agent.
 
-The repo is at [github.com/itlackey/agentikit](https://github.com/itlackey/agentikit). OpenViking is at [github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking). Both are open source, both are moving fast, and the combination is genuinely useful infrastructure for anyone running agents in production.
+The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). OpenViking is at [github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking). Both are open source, both are moving fast, and the combination is genuinely useful infrastructure for anyone running agents in production.
