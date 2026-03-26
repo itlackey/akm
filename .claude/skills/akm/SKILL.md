@@ -7,7 +7,7 @@ description: Search, install, and manage AI agent skills, commands, tools, knowl
 
 A package manager for AI agent capabilities. Use `akm` to search, install, and
 manage skills, commands, agents, knowledge, scripts, and memories from local
-stashes, registries, and community sources like [skills.sh](https://skills.sh).
+stashes, registries, and community sources.
 
 ## When to use this skill
 
@@ -62,15 +62,13 @@ No plugins, SDKs, or integration code required.
 ## Install
 
 ```sh
-# Standalone binary
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
-
-# Or via Bun
+# via Bun
 bun install -g akm-cli
+
 ```
 
 ## Links
 
-- [GitHub](https://github.com/itlackey/akm)
+- [GitHub](https://github.com/itlackey/akm) - Binary releases, source code, and documentation
 - [npm](https://www.npmjs.com/package/akm-cli)
 - [Documentation](https://github.com/itlackey/akm/blob/main/docs/getting-started.md)

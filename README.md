@@ -18,6 +18,10 @@ curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
 # Or via Bun
 bun install -g akm-cli
+
+# Or via skills
+npx skills add itlackey/akm
+
 ```
 
 Upgrade in place with `akm upgrade`.
