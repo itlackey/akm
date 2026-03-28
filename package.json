@@ -60,7 +60,6 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "@huggingface/transformers": "^3.8.1",
     "sqlite-vec": "0.1.7-alpha.2"
   },
   "engines": {
@@ -69,6 +68,7 @@
   "dependencies": {
     "@clack/prompts": "^1.1.0",
     "citty": "^0.2.1",
+    "@huggingface/transformers": "^3.8.1",
     "yaml": "^2.8.2"
   }
 }

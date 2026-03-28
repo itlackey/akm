@@ -1,0 +1,7 @@
+node_modules
+dist
+.git
+.DS_Store
+.plans
+.dev
+tests/fixtures/openviking/workspace

@@ -1,0 +1,24 @@
+# Fedora 39 — bun install method
+FROM fedora:39
+
+RUN dnf install -y curl unzip git && dnf clean all
+
+# Install bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# Copy project source and build
+WORKDIR /opt/akm
+COPY package.json bun.lock* tsconfig.json biome.json ./
+COPY src/ src/
+RUN bun install && bun run build
+
+# Make akm available globally via bun link
+RUN bun link
+
+# Copy smoke test
+COPY tests/docker/smoke-test.sh /opt/smoke-test.sh
+RUN chmod +x /opt/smoke-test.sh
+
+ENV AKM_INSTALL_METHOD="bun"
+CMD ["/opt/smoke-test.sh"]
