@@ -1,53 +1,29 @@
 /**
- * Installed-kit operations: list, remove, update.
+ * Source operations: list, remove, update.
  *
- * Manages the set of kits that have been added to the local stash via
- * `akm add`. Each installed kit has a cache directory and a stash root that
- * is added to the search path.
- *
- * Not to be confused with:
- *   - registry-factory.ts   — factory map for kit-discovery registry providers
- *   - stash-provider-factory.ts — factory map for runtime stash data sources
+ * Provides unified operations across all source kinds (local, managed, remote).
+ * The CLI's `akm list`, `akm remove`, and `akm update` commands are wired here.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
-import { loadConfig, saveConfig } from "./config";
+import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledKitEntry } from "./registry-types";
+import { removeStash } from "./stash-source-manage";
 import type {
   KitInstallStatus,
-  ListResponse,
   RemoveResponse,
   SourceEntry,
   SourceKind,
   SourceListResponse,
   UpdateResponse,
 } from "./stash-types";
-
-export async function akmList(input?: { stashDir?: string }): Promise<ListResponse> {
-  const stashDir = input?.stashDir ?? resolveStashDir();
-  const config = loadConfig();
-  const installed = config.installed ?? [];
-
-  return {
-    schemaVersion: 1,
-    stashDir,
-    installed: installed.map((entry) => ({
-      ...entry,
-      status: {
-        cacheDirExists: directoryExists(entry.cacheDir),
-        stashRootExists: directoryExists(entry.stashRoot),
-      },
-    })),
-    totalInstalled: installed.length,
-  };
-}
 
 export async function akmListSources(input?: { stashDir?: string; kind?: SourceKind[] }): Promise<SourceListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
@@ -144,11 +120,12 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   }
 
   // Fall through to stashes[] (local/remote sources)
-  const stashResult = removeFromStashes(config, target);
-  if (!stashResult) {
+  const stashResult = removeStash(target);
+  if (!stashResult.removed || !stashResult.entry) {
     throw new NotFoundError(`No matching source for target: ${target}`);
   }
 
+  const removedEntry = stashResult.entry;
   const index = await akmIndex({ stashDir });
   const updatedConfig = loadConfig();
 
@@ -157,11 +134,11 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     stashDir,
     target,
     removed: {
-      id: stashResult.name ?? stashResult.path ?? stashResult.url ?? target,
-      source: stashResult.type as RemoveResponse["removed"]["source"],
-      ref: stashResult.path ?? stashResult.url ?? target,
+      id: removedEntry.name ?? removedEntry.path ?? removedEntry.url ?? target,
+      source: removedEntry.type as RemoveResponse["removed"]["source"],
+      ref: removedEntry.path ?? removedEntry.url ?? target,
       cacheDir: "",
-      stashRoot: stashResult.path ?? "",
+      stashRoot: removedEntry.path ?? "",
     },
     config: {
       stashCount: updatedConfig.stashes?.length ?? 0,
@@ -306,31 +283,6 @@ function tryResolveInstalledTarget(installed: InstalledKitEntry[], target: strin
   }
 
   return undefined;
-}
-
-function removeFromStashes(
-  config: ReturnType<typeof loadConfig>,
-  target: string,
-): import("./config").StashConfigEntry | undefined {
-  const stashes = [...(config.stashes ?? [])];
-  const isUrl = target.startsWith("http://") || target.startsWith("https://");
-  const resolvedPath = !isUrl ? path.resolve(target) : undefined;
-
-  let idx = -1;
-  if (isUrl) {
-    idx = stashes.findIndex((s) => s.url === target);
-  }
-  if (idx === -1 && resolvedPath) {
-    idx = stashes.findIndex((s) => s.path && path.resolve(s.path) === resolvedPath);
-  }
-  if (idx === -1) {
-    idx = stashes.findIndex((s) => s.name === target);
-  }
-  if (idx === -1) return undefined;
-
-  const removed = stashes.splice(idx, 1)[0];
-  saveConfig({ ...config, stashes });
-  return removed;
 }
 
 function toInstalledEntry(status: KitInstallStatus): InstalledKitEntry {

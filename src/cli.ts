@@ -17,11 +17,11 @@ import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { akmAdd, akmKitAdd } from "./stash-add";
+import { akmAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
-import { addStash, listStashes, removeStash } from "./stash-source-manage";
+import { addStash } from "./stash-source-manage";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./stash-types";
 import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
@@ -490,11 +490,11 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
 }
 
 /**
- * Naming Conventions:
- * - stash-*     : Operations on the user's local asset store (stash-show, stash-add, stash-clone)
+ * Module Naming:
+ * - stash-*          : Asset operations (search, show, add, clone)
  * - stash-provider-* : Runtime data source providers (filesystem, openviking)
- * - registry-*  : Kit discovery from remote registries (npm, GitHub)
- * - installed-kits : Management of kits already installed locally
+ * - registry-*       : Discovery from remote registries (npm, GitHub)
+ * - installed-kits   : Unified source operations (list, remove, update)
  */
 
 const setupCommand = defineCommand({
@@ -662,27 +662,10 @@ const updateCommand = defineCommand({
   },
 });
 
-const kitAddCommand = defineCommand({
-  meta: { name: "add", description: "Install a kit from npm, GitHub, or any git host" },
-  args: {
-    ref: {
-      type: "positional",
-      description: "Registry ref (npm package, owner/repo, or git URL)",
-      required: true,
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const result = await akmKitAdd({ ref: args.ref });
-      output("add", result);
-    });
-  },
-});
-
 const kitCommand = defineCommand({
   meta: { name: "kit", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
   subCommands: {
-    add: kitAddCommand,
+    add: addCommand,
     list: listCommand,
     remove: removeCommand,
     update: updateCommand,
@@ -1003,75 +986,52 @@ const registryCommand = defineCommand({
   },
 });
 
-/**
- * Subcommand definitions for managing additional stashes.
- */
-function buildSourceSubCommands(outputPrefix: string) {
-  return {
-    list: defineCommand({
-      meta: { name: "list", description: "List all stashes in search order" },
-      run() {
-        return runWithJsonErrors(() => {
-          output(`${outputPrefix}`, listStashes());
-        });
-      },
-    }),
-    add: defineCommand({
-      meta: { name: "add", description: "Register an additional stash (filesystem path or remote URL)" },
-      args: {
-        target: { type: "positional", description: "Path or URL to add", required: true },
-        name: { type: "string", description: "Human-friendly name for the source" },
-        provider: { type: "string", description: "Provider type (e.g. openviking). Required for URLs." },
-        options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          if (args.target.startsWith("http://")) {
-            warn(
-              "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
-            );
+const stashAddCommand = defineCommand({
+  meta: { name: "add", description: "Register a source (filesystem path or remote URL)" },
+  args: {
+    target: { type: "positional", description: "Path or URL to add", required: true },
+    name: { type: "string", description: "Human-friendly name for the source" },
+    provider: { type: "string", description: "Provider type (e.g. openviking). Required for URLs." },
+    options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (args.target.startsWith("http://")) {
+        warn(
+          "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+        );
+      }
+      let parsedOptions: Record<string, unknown> | undefined;
+      if (args.options) {
+        try {
+          const parsed = JSON.parse(args.options);
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            throw new UsageError("--options must be a JSON object");
           }
-          let parsedOptions: Record<string, unknown> | undefined;
-          if (args.options) {
-            try {
-              const parsed = JSON.parse(args.options);
-              if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-                throw new UsageError("--options must be a JSON object");
-              }
-              parsedOptions = parsed;
-            } catch (err) {
-              if (err instanceof UsageError) throw err;
-              throw new UsageError("--options must be valid JSON");
-            }
-          }
-          const result = addStash({
-            target: args.target,
-            name: args.name,
-            providerType: args.provider,
-            options: parsedOptions,
-          });
-          output(`${outputPrefix}-add`, result);
-        });
-      },
-    }),
-    remove: defineCommand({
-      meta: { name: "remove", description: "Remove an additional stash by URL, path, or name" },
-      args: {
-        target: { type: "positional", description: "Source URL, path, or name to remove", required: true },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const result = removeStash(args.target);
-          output(`${outputPrefix}-remove`, result);
-        });
-      },
-    }),
-  };
-}
+          parsedOptions = parsed;
+        } catch (err) {
+          if (err instanceof UsageError) throw err;
+          throw new UsageError("--options must be valid JSON");
+        }
+      }
+      const result = addStash({
+        target: args.target,
+        name: args.name,
+        providerType: args.provider,
+        options: parsedOptions,
+      });
+      output("stash-add", result);
+    });
+  },
+});
 
 const stashCommand = defineCommand({
   meta: { name: "stash", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
-  subCommands: buildSourceSubCommands("stash"),
+  subCommands: {
+    list: listCommand,
+    add: stashAddCommand,
+    remove: removeCommand,
+  },
 });
 
 const feedbackCommand = defineCommand({
