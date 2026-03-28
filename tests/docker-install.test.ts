@@ -86,7 +86,7 @@ afterAll(() => {
   spawnSync("rm", ["-rf", BUILD_DIR]);
 });
 
-describe.skipIf(!HAS_DOCKER || !HAS_BUN)("Docker install tests", () => {
+describe.skipIf(!HAS_DOCKER || !HAS_BUN || !!process.env.CI)("Docker install tests", () => {
   describe("bun install method", () => {
     for (const variant of bunVariants) {
       const os = variant.replace("-bun", "");

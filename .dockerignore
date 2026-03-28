@@ -4,5 +4,4 @@ dist
 .DS_Store
 .plans
 .dev
-tests/docker/.build
 tests/fixtures/openviking/workspace
