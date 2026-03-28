@@ -1,0 +1,15 @@
+# Fedora 39 — compiled binary install method
+FROM fedora:39
+
+RUN dnf install -y git && dnf clean all
+
+# Copy pre-built binary
+COPY tests/docker/.build/akm /usr/local/bin/akm
+RUN chmod +x /usr/local/bin/akm
+
+# Copy smoke test
+COPY tests/docker/smoke-test.sh /opt/smoke-test.sh
+RUN chmod +x /opt/smoke-test.sh
+
+ENV AKM_INSTALL_METHOD="binary"
+CMD ["/opt/smoke-test.sh"]
