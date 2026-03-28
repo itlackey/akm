@@ -26,9 +26,10 @@ function fakeRelease(tagName: string): Response {
 // ── detectInstallMethod ─────────────────────────────────────────────────────
 
 describe("detectInstallMethod", () => {
-  test("returns 'unknown' when running via bun run (not compiled)", () => {
+  test("returns a valid install method when running via bun run (not compiled)", () => {
     const method = detectInstallMethod();
-    // In test context, Bun.main !== process.execPath, so it won't be "binary".
+    // In test context we're running from source, so expect "unknown" or "npm"
+    // (never "binary" since Bun.main won't start with /$bunfs/).
     expect(["unknown", "npm"]).toContain(method);
   });
 
