@@ -37,8 +37,8 @@ akm config unset llm                # Remove an optional key
 | `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
 | `stashDir` | string | platform default | Path to the working stash directory |
 | `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
-| `stashes` | array | `[]` | Additional stashes — directories and remote providers (managed via `akm stash add/remove`) |
-| `installed` | array | `[]` | Installed kit metadata, cached separately in `~/.cache/akm/` (managed by akm) |
+| `stashes` | array | `[]` | Local and remote sources — directories and providers (managed via `akm add/remove`) |
+| `installed` | array | `[]` | Managed source metadata, cached in `~/.cache/akm/` (managed by akm) |
 
 ## Embedding Configuration
 
