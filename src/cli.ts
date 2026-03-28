@@ -582,17 +582,26 @@ const searchCommand = defineCommand({
 });
 
 const addCommand = defineCommand({
-  meta: { name: "add", description: "Add a source (local directory, npm package, GitHub repo, or git URL)" },
+  meta: {
+    name: "add",
+    description: "Add a source (local directory, npm package, GitHub repo, git URL, or remote provider)",
+  },
   args: {
     ref: {
       type: "positional",
-      description: "Registry ref (npm package, owner/repo, git URL, or local directory)",
+      description: "Path, URL, or registry ref (npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
+    provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
+    options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+    name: { type: "string", description: "Human-friendly name for the source" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (args.ref.trim() === CONTEXT_HUB_ALIAS_REF) {
+      const ref = args.ref.trim();
+
+      // Context-hub convenience alias
+      if (ref === CONTEXT_HUB_ALIAS_REF) {
         const result = addStash({
           target: CONTEXT_HUB_ALIAS_URL,
           providerType: "context-hub",
@@ -601,7 +610,38 @@ const addCommand = defineCommand({
         output("stash-add", result);
         return;
       }
-      const result = await akmAdd({ ref: args.ref });
+
+      // URL with --provider → stash source (remote or git provider)
+      if (args.provider) {
+        if (ref.startsWith("http://")) {
+          warn(
+            "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+          );
+        }
+        let parsedOptions: Record<string, unknown> | undefined;
+        if (args.options) {
+          try {
+            const parsed = JSON.parse(args.options);
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+              throw new UsageError("--options must be a JSON object");
+            }
+            parsedOptions = parsed;
+          } catch (err) {
+            if (err instanceof UsageError) throw err;
+            throw new UsageError("--options must be valid JSON");
+          }
+        }
+        const result = addStash({
+          target: ref,
+          name: args.name,
+          providerType: args.provider,
+          options: parsedOptions,
+        });
+        output("stash-add", result);
+        return;
+      }
+
+      const result = await akmAdd({ ref });
       output("add", result);
     });
   },
@@ -986,50 +1026,11 @@ const registryCommand = defineCommand({
   },
 });
 
-const stashAddCommand = defineCommand({
-  meta: { name: "add", description: "Register a source (filesystem path or remote URL)" },
-  args: {
-    target: { type: "positional", description: "Path or URL to add", required: true },
-    name: { type: "string", description: "Human-friendly name for the source" },
-    provider: { type: "string", description: "Provider type (e.g. openviking). Required for URLs." },
-    options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      if (args.target.startsWith("http://")) {
-        warn(
-          "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
-        );
-      }
-      let parsedOptions: Record<string, unknown> | undefined;
-      if (args.options) {
-        try {
-          const parsed = JSON.parse(args.options);
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            throw new UsageError("--options must be a JSON object");
-          }
-          parsedOptions = parsed;
-        } catch (err) {
-          if (err instanceof UsageError) throw err;
-          throw new UsageError("--options must be valid JSON");
-        }
-      }
-      const result = addStash({
-        target: args.target,
-        name: args.name,
-        providerType: args.provider,
-        options: parsedOptions,
-      });
-      output("stash-add", result);
-    });
-  },
-});
-
 const stashCommand = defineCommand({
   meta: { name: "stash", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
   subCommands: {
     list: listCommand,
-    add: stashAddCommand,
+    add: addCommand,
     remove: removeCommand,
   },
 });
@@ -1314,17 +1315,16 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
 
 const EMBEDDED_HINTS = `# akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
 \`\`\`sh
-akm search "<query>"                          # Search your stashes and installed kits
+akm search "<query>"                          # Search all sources
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Also search registries for installable kits
+akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
-akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
-akm add context-hub                           # Shortcut for adding Context Hub as a stash provider
+akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
 akm registry search "<query>"                 # Search all registries
 \`\`\`
@@ -1344,14 +1344,14 @@ Run \`akm -h\` for the full command reference.
 
 const EMBEDDED_HINTS_FULL = `# akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your stashes first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your sources first before writing something from scratch.
 
 ## Search
 
 \`\`\`sh
-akm search "<query>"                          # Search your stashes and installed kits
+akm search "<query>"                          # Search all sources
 akm search "<query>" --type skill             # Filter by asset type
-akm search "<query>" --source both            # Also search registries for installable kits
+akm search "<query>" --source both            # Also search registries
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -1390,21 +1390,17 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
 | memory | \`content\` (recalled context) |
 
-## Install & Manage Kits
+## Add & Manage Sources
 
 \`\`\`sh
-akm add <ref>                                 # Install a kit (smart router: local dirs become stash adds)
-akm add @scope/kit                            # From npm
-akm add owner/repo                            # From GitHub
-akm add ./path/to/local/kit                   # From local directory (adds as stash)
-akm add context-hub                           # Add the official Context Hub stash
-akm kit add <ref>                             # Install a kit (explicit)
-akm kit list                                  # List installed kits
-akm kit remove <target>                       # Remove a kit
-akm kit update --all                          # Update all kits
-akm list                                      # List installed kits
-akm remove <target>                           # Remove by id or ref
-akm update --all                              # Update all installed kits
+akm add <ref>                                 # Add a source
+akm add @scope/kit                            # From npm (managed)
+akm add owner/repo                            # From GitHub (managed)
+akm add ./path/to/local/kit                   # Local directory
+akm list                                      # List all sources
+akm list --kind managed                       # List managed sources only
+akm remove <target>                           # Remove by id, ref, path, or name
+akm update --all                              # Update all managed sources
 akm update <target> --force                   # Force re-download
 \`\`\`
 
@@ -1452,8 +1448,7 @@ akm config path --all                         # Show all config paths
 akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm stash                                     # List all stashes
-akm kit                                       # Kit management (add, list, remove, update)
+akm list                                      # List all sources
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference
