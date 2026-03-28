@@ -7,15 +7,46 @@ import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
 
 const REPO = "itlackey/akm";
 
-export function detectInstallMethod(): "binary" | "npm" | "unknown" {
-  // Bun-compiled binaries: Bun.main equals process.execPath
-  if (typeof Bun !== "undefined" && Bun.main === process.execPath) {
-    return "binary";
-  }
+/** Signals used by detectInstallMethod; extracted for testability. */
+export interface InstallSignals {
+  bunMain: string | undefined;
+  importMetaDir: string | undefined;
+  hasAkmVersion: boolean;
+}
+
+/** Read live runtime signals. */
+export function getInstallSignals(): InstallSignals {
+  return {
+    bunMain: typeof Bun !== "undefined" ? Bun.main : undefined,
+    importMetaDir: import.meta.dir ?? undefined,
+    hasAkmVersion: typeof AKM_VERSION !== "undefined",
+  };
+}
+
+// AKM_VERSION ambient type is declared in globals.d.ts
+
+export function detectInstallMethod(signals?: InstallSignals): "binary" | "npm" | "unknown" {
+  const s = signals ?? getInstallSignals();
+
   // npm/bun global install: import.meta.dir contains node_modules
-  if (import.meta.dir?.includes("node_modules")) {
+  if (s.importMetaDir?.includes("node_modules")) {
     return "npm";
   }
+
+  // Bun-compiled binaries: Bun.main points to a virtual /$bunfs/ path,
+  // NOT process.execPath. The old check (Bun.main === process.execPath) was
+  // always false for compiled binaries, causing "unknown" for every binary user.
+  if (s.bunMain !== undefined) {
+    // Primary check: compiled binaries embed sources under /$bunfs/
+    if (s.bunMain.startsWith("/$bunfs/")) {
+      return "binary";
+    }
+    // Secondary check: AKM_VERSION is defined only in compiled builds (via --define)
+    if (s.hasAkmVersion) {
+      return "binary";
+    }
+  }
+
   return "unknown";
 }
 

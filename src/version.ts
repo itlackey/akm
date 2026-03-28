@@ -17,5 +17,4 @@ export const pkgVersion: string = (() => {
   return "0.0.0-dev";
 })();
 
-// Declared by `bun build --define` at compile time; unused at dev time.
-declare const AKM_VERSION: string;
+// AKM_VERSION ambient type is declared in globals.d.ts

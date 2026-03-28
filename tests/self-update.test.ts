@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { checkForUpdate, detectInstallMethod, getAkmBinaryName, performUpgrade } from "../src/self-update";
+import {
+  checkForUpdate,
+  detectInstallMethod,
+  getAkmBinaryName,
+  type InstallSignals,
+  performUpgrade,
+} from "../src/self-update";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
 
@@ -26,14 +32,69 @@ function fakeRelease(tagName: string): Response {
 // ── detectInstallMethod ─────────────────────────────────────────────────────
 
 describe("detectInstallMethod", () => {
-  test("returns 'unknown' when running via bun run (not compiled)", () => {
+  test("returns a valid install method when running via bun run (not compiled)", () => {
     const method = detectInstallMethod();
-    // In test context, Bun.main !== process.execPath, so it won't be "binary".
-    expect(["unknown", "npm"]).toContain(method);
+    // In test context we're running from source. May be "binary" if AKM_VERSION
+    // is defined (e.g. compiled test runner), otherwise "unknown" or "npm".
+    expect(["unknown", "npm", "binary"]).toContain(method);
   });
 
   test("does not throw", () => {
     expect(() => detectInstallMethod()).not.toThrow();
+  });
+
+  test("returns 'binary' when Bun.main starts with /$bunfs/", () => {
+    const signals: InstallSignals = {
+      bunMain: "/$bunfs/root/src/cli.ts",
+      importMetaDir: "/some/path",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("binary");
+  });
+
+  test("returns 'binary' when AKM_VERSION is defined (fallback)", () => {
+    const signals: InstallSignals = {
+      bunMain: "/usr/local/bin/akm",
+      importMetaDir: "/some/path",
+      hasAkmVersion: true,
+    };
+    expect(detectInstallMethod(signals)).toBe("binary");
+  });
+
+  test("returns 'npm' when importMetaDir contains node_modules", () => {
+    const signals: InstallSignals = {
+      bunMain: "/usr/local/bin/bun",
+      importMetaDir: "/home/user/.bun/install/global/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("npm");
+  });
+
+  test("npm detection takes priority over binary signals", () => {
+    const signals: InstallSignals = {
+      bunMain: "/$bunfs/root/src/cli.ts",
+      importMetaDir: "/some/node_modules/akm",
+      hasAkmVersion: true,
+    };
+    expect(detectInstallMethod(signals)).toBe("npm");
+  });
+
+  test("returns 'unknown' when no signals match", () => {
+    const signals: InstallSignals = {
+      bunMain: undefined,
+      importMetaDir: "/some/path",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("unknown");
+  });
+
+  test("returns 'unknown' when Bun is present but no binary indicators", () => {
+    const signals: InstallSignals = {
+      bunMain: "/home/user/akm/src/cli.ts",
+      importMetaDir: "/home/user/akm/src",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("unknown");
   });
 });
 
