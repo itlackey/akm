@@ -344,7 +344,7 @@ work as before.
 ```sh
 akm stash add ~/.claude/skills                  # Same as: akm add ~/.claude/skills
 akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
-akm stash list                                  # Same as: akm list --kind local,remote
+akm stash list                                  # Same as: akm list
 akm stash remove ~/.claude/skills               # Same as: akm remove ~/.claude/skills
 ```
 
