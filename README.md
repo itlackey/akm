@@ -96,8 +96,8 @@ Registries are indexes of available kits. The official
 ```sh
 akm registry search "code review"                                        # Search registries
 akm registry add https://example.com/registry/index.json --name team     # Add a registry
-akm stash add http://host:1933 --provider openviking \
-  --options '{"apiKey":"key"}'                                            # Add an OpenViking stash source
+akm add http://host:1933 --provider openviking \
+  --options '{"apiKey":"key"}'                                            # Add an OpenViking source
 akm registry list                                                        # List configured registries
 akm show viking://resources/my-doc                                       # Fetch remote content from OpenViking
 ```
@@ -105,21 +105,21 @@ akm show viking://resources/my-doc                                       # Fetch
 Private access is supported through:
 - **GitHub tokens** -- Set `GITHUB_TOKEN` to access private GitHub repos when installing kits
 - **Provider options** -- `--options` flag accepts JSON for provider-specific configuration (API keys, custom headers)
-- **Pluggable providers** -- Built-in registry providers include `static-index` and `skills-sh`; stash providers include `filesystem` and `openviking`; custom providers can implement their own authentication
+- **Pluggable providers** -- Built-in registry providers include `static-index` and `skills-sh`; source providers include `filesystem` and `openviking`; custom providers can implement their own authentication
 
 See the [Registry docs](docs/registry.md) for hosting your own registry and
 the v2 index format.
 
-### Install Kits from Anywhere
+### Add Sources from Anywhere
 
 ```sh
+akm add ~/.claude/skills                    # Local directory
 akm add @scope/my-kit                       # npm
 akm add github:owner/repo#v1.2.3            # GitHub with tag
 akm add git+https://gitlab.com/org/kit      # Any git repo
-akm add ./path/to/local/kit                 # Local directory
 ```
 
-Manage kits with `akm list`, `akm update --all`, and `akm remove`.
+Manage sources with `akm list`, `akm update --all`, and `akm remove`.
 
 ### Publish Your Own Kit
 
@@ -137,8 +137,8 @@ See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
 | [Getting Started](docs/getting-started.md) | Quick setup guide |
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Configuration](docs/configuration.md) | Settings, providers, and Ollama setup |
-| [Concepts](docs/concepts.md) | Stashes, kits, registries, asset types |
-| [Kit Maker's Guide](docs/kit-makers.md) | Build and share kits |
+| [Concepts](docs/concepts.md) | Sources, registries, asset types |
+| [Kit Maker's Guide](docs/kit-makers.md) | Build and share assets |
 | [Registry](docs/registry.md) | Registries, search, and the v2 index format |
 
 ## License

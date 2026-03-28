@@ -117,6 +117,26 @@ export interface ListResponse {
   totalInstalled: number;
 }
 
+export type SourceKind = "local" | "managed" | "remote";
+
+export interface SourceEntry {
+  name: string;
+  kind: SourceKind;
+  path?: string;
+  ref?: string;
+  provider?: string;
+  version?: string;
+  updatable: boolean;
+  status: { exists: boolean };
+}
+
+export interface SourceListResponse {
+  schemaVersion: number;
+  stashDir: string;
+  sources: SourceEntry[];
+  totalSources: number;
+}
+
 export interface RemoveResponse {
   schemaVersion: number;
   stashDir: string;

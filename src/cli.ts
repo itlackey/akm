@@ -12,7 +12,7 @@ import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
-import { akmList, akmRemove, akmUpdate } from "./installed-kits";
+import { akmListSources, akmRemove, akmUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
@@ -22,7 +22,7 @@ import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash, listStashes, removeStash } from "./stash-source-manage";
-import type { KnowledgeView, ShowDetailLevel } from "./stash-types";
+import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./stash-types";
 import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
@@ -371,6 +371,19 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     case "search": {
       return formatSearchPlain(r, detail);
     }
+    case "list": {
+      const sources = Array.isArray(r.sources) ? (r.sources as Record<string, unknown>[]) : [];
+      if (sources.length === 0) return "No sources configured. Use `akm add` to add a source.";
+      const lines: string[] = [];
+      for (const src of sources) {
+        const kind = src.kind ?? "unknown";
+        const name = src.name ?? "unnamed";
+        const ver = src.version ? ` v${src.version}` : "";
+        const prov = src.provider ? ` (${src.provider})` : "";
+        lines.push(`[${kind}] ${name}${ver}${prov}`);
+      }
+      return lines.join("\n");
+    }
     case "add": {
       const index = r.index as Record<string, unknown> | undefined;
       const scanned = index?.directoriesScanned ?? 0;
@@ -569,7 +582,7 @@ const searchCommand = defineCommand({
 });
 
 const addCommand = defineCommand({
-  meta: { name: "add", description: "Install a kit from npm, GitHub, any git host, or a local directory" },
+  meta: { name: "add", description: "Add a source (local directory, npm package, GitHub repo, or git URL)" },
   args: {
     ref: {
       type: "positional",
@@ -594,20 +607,37 @@ const addCommand = defineCommand({
   },
 });
 
+const VALID_SOURCE_KINDS = new Set<SourceKind>(["local", "managed", "remote"]);
+
+function parseKindFilter(raw: string | undefined): SourceKind[] | undefined {
+  if (!raw) return undefined;
+  const kinds = raw.split(",").map((s) => s.trim()) as SourceKind[];
+  for (const k of kinds) {
+    if (!VALID_SOURCE_KINDS.has(k)) {
+      throw new UsageError(`Invalid --kind value: "${k}". Expected one of: local, managed, remote`);
+    }
+  }
+  return kinds;
+}
+
 const listCommand = defineCommand({
-  meta: { name: "list", description: "List installed kits" },
-  async run() {
+  meta: { name: "list", description: "List all sources (local directories, managed packages, remote providers)" },
+  args: {
+    kind: { type: "string", description: "Filter by source kind (local, managed, remote). Comma-separated." },
+  },
+  async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmList();
+      const kind = parseKindFilter(args.kind);
+      const result = await akmListSources({ kind });
       output("list", result);
     });
   },
 });
 
 const removeCommand = defineCommand({
-  meta: { name: "remove", description: "Remove an installed kit by id or ref" },
+  meta: { name: "remove", description: "Remove a source by id, ref, path, URL, or name" },
   args: {
-    target: { type: "positional", description: "Installed target (id or ref)", required: true },
+    target: { type: "positional", description: "Source to remove (id, ref, path, URL, or name)", required: true },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -618,9 +648,9 @@ const removeCommand = defineCommand({
 });
 
 const updateCommand = defineCommand({
-  meta: { name: "update", description: "Update one or all installed kits" },
+  meta: { name: "update", description: "Update one or all managed sources" },
   args: {
-    target: { type: "positional", description: "Installed target (id or ref)", required: false },
+    target: { type: "positional", description: "Source to update (id or ref)", required: false },
     all: { type: "boolean", description: "Update all installed entries", default: false },
     force: { type: "boolean", description: "Force fresh download even if version is unchanged", default: false },
   },
@@ -650,7 +680,7 @@ const kitAddCommand = defineCommand({
 });
 
 const kitCommand = defineCommand({
-  meta: { name: "kit", description: "Manage installed kits" },
+  meta: { name: "kit", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
   subCommands: {
     add: kitAddCommand,
     list: listCommand,
@@ -1040,7 +1070,7 @@ function buildSourceSubCommands(outputPrefix: string) {
 }
 
 const stashCommand = defineCommand({
-  meta: { name: "stash", description: "Manage additional stashes (local directories and remote providers)" },
+  meta: { name: "stash", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
   subCommands: buildSourceSubCommands("stash"),
 });
 
@@ -1209,8 +1239,8 @@ function buildHint(message: string): string | undefined {
   if (message.includes("Either <target> or --all is required"))
     return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`.";
   if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`.";
-  if (message.includes("No installed kit matched target"))
-    return "Run `akm list` to view installed ids/refs, then retry with one of those values.";
+  if (message.includes("No matching source"))
+    return "Run `akm list` to view your sources, then retry with one of those values.";
   if (message.includes("remote package fetched but asset not found"))
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";

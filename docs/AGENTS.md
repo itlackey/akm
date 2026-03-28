@@ -10,7 +10,7 @@ akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries for installable kits
 akm show <ref>                                # View asset details
 akm show knowledge:my-doc                    # Show a knowledge asset
-akm add <ref>                                 # Install a kit (npm, GitHub, git, local)
+akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
 akm registry search "<query>"                 # Search all registries
 ```

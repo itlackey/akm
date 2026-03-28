@@ -22,9 +22,7 @@ export async function akmKitAdd(input: { ref: string }): Promise<AddResponse> {
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      throw new UsageError(
-        `Local directories should be added as stashes, not kits. Use \`akm stash add ${ref}\` instead.`,
-      );
+      throw new UsageError(`Local directories should be added with \`akm add ${ref}\` instead.`);
     }
   } catch (err) {
     if (err instanceof UsageError) throw err;

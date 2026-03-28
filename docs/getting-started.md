@@ -108,18 +108,18 @@ and `setup`. For agents, a `prompt` payload. For knowledge, navigable
 See [technical/show-response.md](technical/show-response.md) for the full per-type field
 reference.
 
-## Install a Kit
+## Add Sources
 
-Install a kit from npm, GitHub, or any git host:
+Add any source — a local directory, a GitHub repo, or an npm package:
 
 ```sh
-akm add @scope/kit
-akm add github:owner/repo
+akm add ~/.claude/skills              # Your Claude Code skills
+akm add github:owner/repo             # A team's shared kit
+akm add @scope/my-kit                 # An npm package
 ```
 
-Installed kits are cached separately from your stashes (in `~/.cache/akm/`)
-and their assets become searchable immediately. Use `akm list` to see installed kits and `akm update --all`
-to keep them current.
+All become searchable immediately. Use `akm list` to see your sources and
+`akm update --all` to keep managed sources current.
 
 See [registry.md](registry.md) for the full install flow and supported
 ref formats.

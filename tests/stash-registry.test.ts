@@ -155,7 +155,7 @@ describe("akmRemove", () => {
     saveConfig({ semanticSearch: false });
 
     await expect(akmRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
-      "No installed kit matched target",
+      "No matching source for target",
     );
   });
 
