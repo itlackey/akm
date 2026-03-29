@@ -131,11 +131,6 @@ returns guidance to run `akm add <origin>` first.
 | `akm add @scope/kit` | Fetches and caches a managed source from npm |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
-### kit (alias)
-
-Alias for source management. `akm kit add`, `akm kit list`, `akm kit remove`,
-and `akm kit update` work identically to the top-level commands.
-
 ### add
 
 Add a source — a local directory, npm package, GitHub repo, or git URL.
@@ -333,20 +328,6 @@ akm registry search "docker" --limit 5
 | --- | --- |
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v2 registry indexes |
-
-### stash (alias)
-
-Alias for source management. See `akm add`, `akm list`, `akm remove`.
-
-`akm stash add`, `akm stash list`, and `akm stash remove` continue to
-work as before.
-
-```sh
-akm stash add ~/.claude/skills                  # Same as: akm add ~/.claude/skills
-akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
-akm stash list                                  # Same as: akm list
-akm stash remove ~/.claude/skills               # Same as: akm remove ~/.claude/skills
-```
 
 ### config
 

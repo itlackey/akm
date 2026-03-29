@@ -702,16 +702,6 @@ const updateCommand = defineCommand({
   },
 });
 
-const kitCommand = defineCommand({
-  meta: { name: "kit", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
-  subCommands: {
-    add: addCommand,
-    list: listCommand,
-    remove: removeCommand,
-    update: updateCommand,
-  },
-});
-
 const upgradeCommand = defineCommand({
   meta: { name: "upgrade", description: "Upgrade akm to the latest release" },
   args: {
@@ -1026,15 +1016,6 @@ const registryCommand = defineCommand({
   },
 });
 
-const stashCommand = defineCommand({
-  meta: { name: "stash", description: "Alias for source management. See 'akm add', 'akm list', 'akm remove'." },
-  subCommands: {
-    list: listCommand,
-    add: addCommand,
-    remove: removeCommand,
-  },
-});
-
 const feedbackCommand = defineCommand({
   meta: {
     name: "feedback",
@@ -1144,12 +1125,10 @@ const main = defineCommand({
     list: listCommand,
     remove: removeCommand,
     update: updateCommand,
-    kit: kitCommand,
     upgrade: upgradeCommand,
     search: searchCommand,
     show: showCommand,
     clone: cloneCommand,
-    stash: stashCommand,
     registry: registryCommand,
     config: configCommand,
     feedback: feedbackCommand,
