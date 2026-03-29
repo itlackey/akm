@@ -62,3 +62,7 @@ The project is young — v0.0.9 as of this writing — but the problem it's solv
 Give it a look at [github.com/itlackey/akm](https://github.com/itlackey/akm). And if you've built skills worth sharing, this is a good time to think about how to package them so others can benefit.
 
 Feel free to drop links in the comments to skills or kits you've built that you think others should know about.
+
+---
+
+*__Update (March 2026):__ This post is part of a series that has been updated to reflect akm's current CLI. Later posts in the series now use `akm setup` (formerly `akm init`), `akm add` (formerly `akm stash add`), and `akm list` (formerly `akm stash list`). If you're following along with an older version, `akm upgrade` will get you current.*

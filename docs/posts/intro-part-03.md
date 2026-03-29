@@ -19,7 +19,7 @@ Both of those were about files on disk. Local skills, local scripts, local knowl
 
 Think about project architecture docs that live in a shared knowledge base. Team decisions captured during previous sessions. Coding standards that evolve over time and shouldn't be copy-pasted into every developer's stash. Agent memories that accumulate across conversations and need to persist somewhere more durable than a markdown file in a git repo.
 
-That's where [OpenViking](https://github.com/volcengine/OpenViking) comes in, and why `akm` now supports it as a first-class stash provider.
+That's where [OpenViking](https://github.com/volcengine/OpenViking) comes in, and why `akm` now supports it as a first-class provider.
 
 ## What Is OpenViking?
 
@@ -27,22 +27,22 @@ OpenViking is an open-source context database built by ByteDance's Volcano Engin
 
 The part that matters: it stores and retrieves agent context (project docs, team decisions, coding standards) via a REST API. When you connect it to `akm`, its content shows up in search results alongside your local assets — same `type:name` refs, same ranking, same `akm show` workflow.
 
-The part that matters for `akm` is the API. OpenViking exposes REST endpoints for search (semantic and text), content read, and file stat. That's exactly what a stash provider needs: the ability to find things and retrieve them. So we built one.
+The part that matters for `akm` is the API. OpenViking exposes REST endpoints for search (semantic and text), content read, and file stat. That's exactly what a provider needs: the ability to find things and retrieve them. So we built one.
 
-## Adding OpenViking as a Stash Source
+## Adding OpenViking as a Source
 
 If you already have `akm` installed and an OpenViking server running, the setup is one command:
 
 ```bash
-akm stash add http://localhost:1933 --provider openviking
+akm add http://localhost:1933 --provider openviking
 ```
 
-That registers the server as a stash source. From that point on, `akm search` queries your local stash and the OpenViking server in parallel. Results from both show up in the same `hits[]` array, ranked together.
+That registers the server as a source. From that point on, `akm search` queries your local stash and the OpenViking server in parallel. Results from both show up in the same `hits[]` array, ranked together.
 
 If your server requires authentication:
 
 ```bash
-akm stash add http://localhost:1933 \
+akm add http://localhost:1933 \
   --provider openviking \
   --options '{"apiKey":"your-api-key"}'
 ```
@@ -50,7 +50,7 @@ akm stash add http://localhost:1933 \
 Give it a name to keep things tidy:
 
 ```bash
-akm stash add http://localhost:1933 \
+akm add http://localhost:1933 \
   --provider openviking \
   --name "team-context" \
   --options '{"apiKey":"your-api-key"}'
@@ -59,14 +59,14 @@ akm stash add http://localhost:1933 \
 Verify it's registered:
 
 ```bash
-akm stash list
+akm list
 ```
 
 That's the full setup. No config files to hand-edit, no environment variables to set. The provider handles caching, retries, and graceful degradation — if the server goes down, your local stash still works fine and the provider falls back to cached results for up to an hour.
 
 ## Searching Remote and Local Together
 
-Here's what changes in practice. Before OpenViking, an `akm search` hit your local stash — your primary directory, search paths, and installed kits. Now it also hits any OpenViking servers you've registered.
+Here's what changes in practice. Before OpenViking, an `akm search` hit your local stash — your primary directory, search paths, and managed sources. Now it also hits any OpenViking servers you've registered.
 
 ```bash
 akm search "project architecture"
@@ -83,7 +83,7 @@ That fetches the content — from the local index if available, or from the Open
 By default, OpenViking search uses semantic matching (via `POST /api/v1/search/find`). If you prefer text search for exact matching, configure the provider with:
 
 ```bash
-akm stash add http://localhost:1933 \
+akm add http://localhost:1933 \
   --provider openviking \
   --options '{"apiKey":"your-key","searchType":"text"}'
 ```
@@ -110,7 +110,7 @@ The seed script loads a handful of test documents — project architecture notes
 Now register it:
 
 ```bash
-akm stash add http://localhost:1933 \
+akm add http://localhost:1933 \
   --provider openviking \
   --name openviking \
   --options '{"apiKey":"akm-test-key"}'
@@ -139,7 +139,7 @@ docker compose down
 
 ## Why This Matters for Teams
 
-The OpenViking integration solves a class of problems that local-only stash management can't.
+The OpenViking integration solves a class of problems that local-only management can't.
 
 **Shared context without shared files.** Your team can maintain a single OpenViking instance with project documentation, architectural decisions, and coding standards. Every developer's agent can search and retrieve that context without syncing files, mounting network drives, or maintaining parallel copies. Update a document in OpenViking and every agent sees the change immediately.
 
@@ -154,19 +154,19 @@ After three posts, here's what a fully-wired setup looks like:
 ```bash
 # Install
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
-akm init
+akm setup
 
 # Local platform assets
-akm stash add ~/.claude/skills
-akm stash add .opencode/skills
-akm stash add .cursor/rules
+akm add ~/.claude/skills
+akm add .opencode/skills
+akm add .cursor/rules
 
 # Community and team kits
 akm add github:your-org/team-agent-toolkit
 akm add @scope/deploy-skills
 
 # Remote context server
-akm stash add https://your-viking.internal:1933 \
+akm add https://your-viking.internal:1933 \
   --provider openviking \
   --name team-context \
   --options '{"apiKey":"..."}'
@@ -187,3 +187,7 @@ knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
 Local skills, remote knowledge, team kits, community registries, persistent memories. One search, one interface, every agent.
 
 The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). OpenViking is at [github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking). Both are open source, both are moving fast, and the combination is genuinely useful infrastructure for anyone running agents in production.
+
+---
+
+*__Update (March 2026):__ This post was updated to reflect akm's current CLI. `akm add` replaces the earlier `akm stash add` for adding sources (including OpenViking providers), `akm setup` replaces `akm init`, and `akm list` replaces `akm stash list`. Sources (formerly "stash sources") are now managed through a single `akm add` / `akm remove` interface. If you're following along with an older version, `akm upgrade` will get you current.*

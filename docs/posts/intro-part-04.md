@@ -56,14 +56,14 @@ If you already have `akm` installed:
 akm add context-hub
 ```
 
-That's the full setup. Under the hood, this adds the default Context Hub repository as a git stash source. It downloads the repo as an archive, extracts it into a local cache, and on the next `akm index`, every `DOC.md` and `SKILL.md` gets indexed into the same FTS5 search pipeline as your local assets.
+That's the full setup. Under the hood, this adds the default Context Hub repository as a git source. It downloads the repo as an archive, extracts it into a local cache, and on the next `akm index`, every `DOC.md` and `SKILL.md` gets indexed into the same FTS5 search pipeline as your local assets.
 
 The cache refreshes automatically every 12 hours. If the network is down, it falls back to stale cache for up to 7 days. Your local stash still works regardless — the Context Hub provider degrades gracefully without taking anything else down with it.
 
 Verify it's registered:
 
 ```bash
-akm stash list
+akm list
 ```
 
 You should see `context-hub` in the list alongside your local stash directories and any other providers you've configured.
@@ -119,22 +119,22 @@ For large documents, the `toc` and `section` views keep context lean. Your agent
 
 ## Custom Context Hub Repositories
 
-The default `akm add context-hub` points at Andrew Ng's repository, but you're not limited to that. Any GitHub repository works as a git stash source — you don't need to follow a specific directory convention. `akm` walks the repo, classifies files by type, and indexes everything.
+The default `akm add context-hub` points at Andrew Ng's repository, but you're not limited to that. Any GitHub repository works as a git source — you don't need to follow a specific directory convention. `akm` walks the repo, classifies files by type, and indexes everything.
 
 Say your organization maintains an internal knowledge base for agent context — API references, architecture decisions, coding standards:
 
 ```bash
-akm stash add https://github.com/your-org/team-knowledge \
+akm add https://github.com/your-org/team-knowledge \
   --provider git \
   --name "team-knowledge"
 ```
 
-Now `akm search` queries your team's knowledge base alongside the public Context Hub and your local stash. All in one search. You can add as many git stash sources as you want — each gets its own cache and index.
+Now `akm search` queries your team's knowledge base alongside the public Context Hub and your local stash. All in one search. You can add as many git sources as you want — each gets its own cache and index.
 
 Need a specific branch instead of `main`?
 
 ```bash
-akm stash add https://github.com/your-org/team-knowledge/tree/staging \
+akm add https://github.com/your-org/team-knowledge/tree/staging \
   --provider git \
   --name "team-staging"
 ```
@@ -158,7 +158,7 @@ Results might include:
 
 Four different sources. One result set. One `akm show` command to load whichever one the agent needs. Everything else stays out of context.
 
-The agent doesn't need to care about where an asset lives. Local file, installed kit, OpenViking server, git repo — every result uses the same `type:name` ref. The agent searches, picks, loads, and gets to work.
+The agent doesn't need to care about where an asset lives. Local file, managed source, OpenViking server, git repo — every result uses the same `type:name` ref. The agent searches, picks, loads, and gets to work.
 
 ## The Full Stack
 
@@ -167,12 +167,12 @@ Here's what the complete setup looks like after four posts:
 ```bash
 # Install
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
-akm init
+akm setup
 
 # Local platform assets
-akm stash add ~/.claude/skills
-akm stash add .opencode/skills
-akm stash add .cursor/rules
+akm add ~/.claude/skills
+akm add .opencode/skills
+akm add .cursor/rules
 
 # Community and team kits
 akm add github:your-org/team-agent-toolkit
@@ -182,12 +182,12 @@ akm add @scope/deploy-skills
 akm add context-hub
 
 # Team knowledge (any git repo works)
-akm stash add https://github.com/your-org/team-knowledge \
+akm add https://github.com/your-org/team-knowledge \
   --provider git \
   --name team-knowledge
 
 # Remote context server
-akm stash add https://your-viking.internal:1933 \
+akm add https://your-viking.internal:1933 \
   --provider openviking \
   --name team-context \
   --options '{"apiKey":"..."}'
@@ -215,4 +215,8 @@ Context Hub isn't the only way this will happen — community registries, market
 
 If you've written skills or knowledge docs worth sharing, consider contributing them to [Context Hub](https://github.com/andrewyng/context-hub). Structure them with frontmatter, put them in a `content/` directory, and they become searchable for every agent running `akm`.
 
-The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). Context Hub is at [github.com/andrewyng/context-hub](https://github.com/andrewyng/context-hub). If you've got a team knowledge base in a git repo, add it as a git stash source and let me know how it holds up.
+The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). Context Hub is at [github.com/andrewyng/context-hub](https://github.com/andrewyng/context-hub). If you've got a team knowledge base in a git repo, add it as a git source and let me know how it holds up.
+
+---
+
+*__Update (March 2026):__ This post was updated to reflect akm's current CLI. `akm add` replaces the earlier `akm stash add` for adding sources (including git and OpenViking providers), `akm setup` replaces `akm init`, and `akm list` replaces `akm stash list`. Sources (formerly "stash sources") are now managed through a single `akm add` / `akm remove` interface. If you're following along with an older version, `akm upgrade` will get you current.*
