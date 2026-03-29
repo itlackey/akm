@@ -3,7 +3,7 @@ title: You Already Have Dozens of Agent Skills. You Just Can't Find Them.
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 id: 3359719
 series: akm
-description: A quick introduction to managing stashes
+description: A quick introduction to managing sources
 tags:
   - ai
   - agents
@@ -38,39 +38,39 @@ That's it. You now have the `akm` binary on your PATH. And when a new version dr
 ## Initialize Your Stash
 
 ```bash
-akm init
+akm setup
 ```
 
-This creates `~/akm` with subdirectories for each asset type: `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`. If you want to put it somewhere else, set `AKM_STASH_DIR` before you init.
+This creates `~/akm` with subdirectories for each asset type: `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`. If you want to put it somewhere else, set `AKM_STASH_DIR` before you run setup.
 
 But the real power move isn't putting everything in one folder. It's telling `akm` where your stuff already lives.
 
 ## Add Your Existing Platform Directories
 
-Here's what most people's machines actually look like. You've got Claude Code skills in one place, OpenCode assets in another, maybe some Cursor rules in a third. Instead of copying files around or choosing a winner, just add them as stash sources.
+Here's what most people's machines actually look like. You've got Claude Code skills in one place, OpenCode assets in another, maybe some Cursor rules in a third. Instead of copying files around or choosing a winner, just add them as sources.
 
 ```bash
-akm stash add ~/.claude/skills
-akm stash add ./my-project/.opencode/skills
-akm stash add ./.cursor/rules
+akm add ~/.claude/skills
+akm add ./my-project/.opencode/skills
+akm add ./.cursor/rules
 ```
 
-One command per directory. Each `akm stash add` registers the path, and the search index picks it up on the next build. No JSON editing, no manual config files. Your files stay exactly where they are — `akm` just knows about them now.
+One command per directory. Each `akm add` registers the path, and the search index picks it up on the next build. No JSON editing, no manual config files. Your files stay exactly where they are — `akm` just knows about them now.
 
 You can name sources to keep track of what's what:
 
 ```bash
-akm stash add ~/.claude/skills --name "claude-skills"
-akm stash add ./team-shared --name "team"
+akm add ~/.claude/skills --name "claude-skills"
+akm add ./team-shared --name "team"
 ```
 
 And see everything at a glance:
 
 ```bash
-akm stash list
+akm list
 ```
 
-That shows your primary stash, all the directories you've added, and any installed kits — in priority order. Need to remove one? `akm stash remove` takes a path or a name.
+That shows your primary stash, all the directories you've added, and any managed sources — in priority order. Need to remove one? `akm remove` takes a path or a name.
 
 For assets that live in a git repo or an npm package, `akm add` handles installation and makes them searchable immediately:
 
@@ -113,7 +113,7 @@ Doesn't matter.
 akm search "docker container management"
 ```
 
-That searches across every source you've registered — your primary stash, every directory you added with `akm stash add`, and all installed kits. Semantic search means you don't need to remember the exact filename. Describe what you're looking for and `akm` finds it.
+That searches across every source you've registered — your primary stash, every directory you added with `akm add`, and all managed sources. Semantic search means you don't need to remember the exact filename. Describe what you're looking for and `akm` finds it.
 
 Results come back with a `ref` you can pass straight to `akm show`:
 
@@ -170,10 +170,10 @@ Let's say your setup looks something like this:
 After setup:
 
 ```bash
-akm init
-akm stash add ~/.claude/skills
-akm stash add .opencode/skills
-akm stash add .cursor/rules
+akm setup
+akm add ~/.claude/skills
+akm add .opencode/skills
+akm add .cursor/rules
 akm add github:your-org/team-agent-toolkit
 akm index
 ```
@@ -194,8 +194,8 @@ You can either manage that by hand — maintaining parallel copies, forgetting w
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
-akm init
-akm stash add ~/.claude/skills
+akm setup
+akm add ~/.claude/skills
 akm index
 akm search "whatever you need"
 ```
@@ -203,3 +203,7 @@ akm search "whatever you need"
 Five commands. Every skill you've ever written, searchable in seconds.
 
 The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). If you've got agent assets scattered across platforms, give it a shot and let me know what breaks.
+
+---
+
+*__Update (March 2026):__ This post was updated to reflect akm's current CLI. The unified `akm add` command replaces the earlier `akm stash add`, `akm setup` replaces `akm init`, and `akm list` replaces `akm stash list`. Sources (formerly "stash sources") are now managed through a single `akm add` / `akm remove` interface. If you're following along with an older version, `akm upgrade` will get you current.*

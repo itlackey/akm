@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your stashes first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 

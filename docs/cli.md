@@ -73,7 +73,7 @@ search results:
 
 - **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
 - **`name`** -- The asset's filename or identifier
-- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for installed kit assets
+- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for managed source assets
 - **`id`** -- Registry-level kit identifier (registry hits only)
 
 The default brief shape is intentionally small: local hits expose `type`,
@@ -114,7 +114,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | memory | `content` |
 
-Assets from OpenViking stash sources use standard `type:name` refs like
+Assets from OpenViking sources use standard `type:name` refs like
 everything else, and always return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
@@ -239,7 +239,7 @@ Skills (directories) are copied recursively. Other types copy a single file.
 **Remote clone:** When the origin in the ref points to a package that is not
 installed locally (e.g. an npm package or local path not in your stash
 sources), akm fetches it to the cache automatically and extracts the
-requested asset. The package is **not** registered as an installed kit --
+requested asset. The package is **not** registered as a managed source --
 use `akm add` for that.
 
 ```sh
@@ -283,7 +283,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
 
 ```sh
-akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
+akm add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
 ```
 
 Duplicate URLs are rejected.

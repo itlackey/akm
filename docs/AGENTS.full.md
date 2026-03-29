@@ -1,11 +1,11 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your stashes first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
 ```sh
-akm search "<query>"                          # Search your stashes and installed kits
+akm search "<query>"                          # Search your sources
 akm search "<query>" --type skill             # Filter by asset type
 akm search "<query>" --source both            # Also search registries for installable kits
 akm search "<query>" --source registry        # Search registries only

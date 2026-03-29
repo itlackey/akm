@@ -10,6 +10,14 @@ A package manager for AI agent capabilities -- scripts, skills, commands,
 agents, knowledge, and memories -- that works with any AI coding assistant that
 can run shell commands.
 
+## Why akm?
+
+AI agent skills, commands, and knowledge are scattered across different tools --
+Claude Code, OpenCode, Cursor, Windsurf -- with no unified way to manage, share,
+or discover them. Each tool has its own format and its own silo. akm gives you a
+single CLI to manage all your agent assets regardless of which coding assistant
+you use, so you can build a personal library once and take it everywhere.
+
 ## Install
 
 ```sh
@@ -30,6 +38,7 @@ Upgrade in place with `akm upgrade`.
 
 ```sh
 akm setup                         # Guided setup: configure, initialize, and index
+akm add ~/.claude/skills          # Add your existing local skills
 akm add github:owner/repo         # Add a kit from GitHub
 akm search "deploy"               # Find assets
 akm show script:deploy.sh         # View details and run command
@@ -43,7 +52,8 @@ working stash at a custom path.
 ### Works with Any AI Agent
 
 Any model that can run shell commands can use `akm`. Add this to your
-`AGENTS.md`, `CLAUDE.md`, or system prompt:
+`AGENTS.md`, `CLAUDE.md`, or system prompt (see `docs/AGENTS.full.md` for a
+more detailed version with advanced usage):
 
 ~~~markdown
 ## Resources & Capabilities
@@ -71,7 +81,7 @@ akm clone "npm:@scope/pkg//script:deploy.sh" --force    # Clone from a remote pa
 Key behaviors:
 - Type subdirectories are appended automatically (e.g., `--dest ./project/.claude` becomes `./project/.claude/scripts/deploy.sh`)
 - Skills clone as entire directories; scripts/commands clone as single files
-- Remote packages are fetched on-demand without registering as installed kits
+- Remote packages are fetched on-demand without registering as managed sources
 - `--force` overwrites existing assets
 
 ### skills.sh Integration
@@ -140,6 +150,7 @@ See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
 | [Concepts](docs/concepts.md) | Sources, registries, asset types |
 | [Kit Maker's Guide](docs/kit-makers.md) | Build and share assets |
 | [Registry](docs/registry.md) | Registries, search, and the v2 index format |
+| [Blog Posts](docs/posts/) | Articles and posts about akm |
 
 ## License
 
