@@ -212,16 +212,16 @@ Only the listed paths are copied into the install cache. Paths must be
 relative to the package root and cannot escape it. The `.git` directory is
 always excluded.
 
-## Managing Installed Kits
+## Managing Managed Sources
 
 ```bash
-# List all installed kits with their status
+# List all managed sources with their status
 akm list
 
 # Update a specific kit to its latest version
 akm update npm:@scope/my-kit
 
-# Update all installed kits
+# Update all managed sources
 akm update --all
 
 # Force fresh download even if version is unchanged
@@ -234,8 +234,8 @@ akm remove npm:@scope/my-kit
 
 ### Cloning Assets
 
-Installed kits are cache-managed and may be overwritten by `akm update`.
-To edit an asset from an installed kit, clone it into the working stash:
+Managed sources are cache-managed and may be overwritten by `akm update`.
+To edit an asset from a managed source, clone it into the working stash:
 
 ```bash
 akm clone "npm:@scope/my-kit//script:deploy.sh"
@@ -260,7 +260,7 @@ so the example above produces `./project/.claude/scripts/deploy.sh`.
 **Remote clone without install:** If the origin in the ref points to a
 package that is not yet installed, `akm clone` fetches it to the cache
 automatically. Unlike `akm add`, this does **not** register the package as
-an installed kit -- it only extracts the single requested asset.
+a managed source -- it only extracts the single requested asset.
 
 ## Search Priority
 

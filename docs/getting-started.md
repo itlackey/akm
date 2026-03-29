@@ -23,7 +23,7 @@ akm setup
 ```
 
 `akm setup` walks through stash location, embedding/LLM settings, semantic
-search asset preparation, registries, and stash sources, then saves your
+search asset preparation, registries, and sources, then saves your
 config, initializes the stash directory, and builds the search index.
 
 ## Initialize Your Working Stash
@@ -68,7 +68,7 @@ akm index
 ```
 
 **`init` vs `index`:** `akm init` creates your working stash directory (run
-once). `akm index` scans all stashes and installed kits, then builds the
+once). `akm index` scans all sources, then builds the
 search database (run whenever you add or change assets). They are separate
 steps — `init` sets up the folders, `index` makes their contents searchable.
 

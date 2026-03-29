@@ -20,7 +20,7 @@ bun run tests/benchmark-suite.ts      # Scoring benchmarks
 
 ## Architectural Rules
 
-See `ARCHITECTURE.md` for full details. These constraints are inviolable:
+See `docs/technical/architecture.md` for full details. These constraints are inviolable:
 
 ### Provider types
 - Only three stash provider types exist: **filesystem**, **git**, **openviking**
