@@ -1,6 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { EmbeddingConnectionConfig } from "../src/config";
-import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable } from "../src/embedder";
+import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/embedder";
+
+let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
+
+mock.module("@huggingface/transformers", () => ({
+  pipeline: async (task: string, model: string, options?: { dtype?: string }) => {
+    if (!pipelineImpl) {
+      throw new Error("pipelineImpl not configured");
+    }
+    return pipelineImpl(task, model, options);
+  },
+}));
+
+beforeEach(() => {
+  resetLocalEmbedder();
+  pipelineImpl = undefined;
+});
 
 function createMockEmbeddingServer(
   embedding: number[] = [0.1, 0.2, 0.3],
@@ -190,5 +206,48 @@ describe("cosineSimilarity", () => {
   test("returns 0 for orthogonal vectors", () => {
     const sim = cosineSimilarity([1, 0], [0, 1]);
     expect(sim).toBe(0);
+  });
+});
+
+describe("local embedder pipeline setup", () => {
+  test("requests fp32 dtype for local embeddings", async () => {
+    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
+      expect(options?.dtype).toBe("fp32");
+      return async () => ({ data: new Float32Array([0.1, 0.2, 0.3]) });
+    });
+
+    pipelineImpl = pipelineMock;
+
+    const result = await embed("hello local");
+    expect(result[0]).toBeCloseTo(0.1, 6);
+    expect(result[1]).toBeCloseTo(0.2, 6);
+    expect(result[2]).toBeCloseTo(0.3, 6);
+    expect(pipelineMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("falls back to default pipeline options when dtype is rejected", async () => {
+    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
+      if (options?.dtype === "fp32") {
+        throw new Error('Unsupported dtype "fp32"');
+      }
+      return async () => ({ data: new Float32Array([0.4, 0.5, 0.6]) });
+    });
+
+    pipelineImpl = pipelineMock;
+
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await embed("hello fallback");
+      expect(result[0]).toBeCloseTo(0.4, 6);
+      expect(result[1]).toBeCloseTo(0.5, 6);
+      expect(result[2]).toBeCloseTo(0.6, 6);
+      expect(pipelineMock).toHaveBeenCalledTimes(2);
+      expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
+      expect(pipelineMock.mock.calls[1]?.[2]).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

@@ -34,6 +34,14 @@ type TransformerPipeline = (
   options: { pooling: string; normalize: boolean },
 ) => Promise<{ data: Float32Array }>;
 
+type TransformerPipelineFactory = (
+  task: string,
+  model: string,
+  options?: { dtype?: string },
+) => Promise<TransformerPipeline>;
+
+const LOCAL_EMBEDDER_DTYPE = "fp32";
+
 // Cache the promise itself (not the resolved result) so concurrent calls share
 // the same initialisation work and never download the model twice.
 // The cache is keyed by model name so switching models gets a fresh pipeline.
@@ -59,8 +67,8 @@ async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline
           "Semantic search requires @huggingface/transformers. Install it with: npm install @huggingface/transformers",
         );
       }
-      const pipelineFn = pipeline as (task: string, model: string) => Promise<TransformerPipeline>;
-      return pipelineFn("feature-extraction", resolvedModel);
+      const pipelineFn = pipeline as TransformerPipelineFactory;
+      return createLocalPipeline(pipelineFn, resolvedModel);
     })();
     // HI-13: Clear the cached promise on failure so the next call retries
     // instead of permanently rejecting every subsequent call with the same error.
@@ -70,6 +78,31 @@ async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline
     });
   }
   return localEmbedderPromise;
+}
+
+async function createLocalPipeline(
+  pipelineFn: TransformerPipelineFactory,
+  modelName: string,
+): Promise<TransformerPipeline> {
+  try {
+    return await pipelineFn("feature-extraction", modelName, { dtype: LOCAL_EMBEDDER_DTYPE });
+  } catch (error) {
+    if (!shouldRetryWithoutExplicitDtype(error)) {
+      throw error;
+    }
+
+    warn(
+      'Local embedding model "%s" rejected explicit dtype "%s"; retrying with library default.',
+      modelName,
+      LOCAL_EMBEDDER_DTYPE,
+    );
+    return pipelineFn("feature-extraction", modelName);
+  }
+}
+
+function shouldRetryWithoutExplicitDtype(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /dtype|fp32|precision|quant/i.test(message);
 }
 
 export function resetLocalEmbedder(): void {
