@@ -1529,7 +1529,7 @@ async function runBenchmarkSuite() {
   log("Setting up benchmark stash...\n");
   const stashDir = createBenchmarkStash();
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false, registries: [] });
+  saveConfig({ semanticSearchMode: "off", registries: [] });
 
   const { akmIndex } = await import("../src/indexer.js");
   const indexResult = await akmIndex({ stashDir, full: true });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -224,6 +224,7 @@ test("akmIndex reports progress events and semantic-search verification details"
   globalThis.fetch = async () => {
     throw new Error("TEST_EMBEDDING_ERROR");
   };
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
   try {
     const stashDir = tmpStash();
@@ -232,7 +233,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const { saveConfig } = await import("../src/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://example.test/v1/embeddings",
         model: "demo-embed",
@@ -254,12 +255,15 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
     );
+    expect(warnSpy).toHaveBeenCalledWith("Embedding generation failed, continuing without:", "TEST_EMBEDDING_ERROR");
     expect(messages.at(-1)).toContain("Semantic search verification failed");
     expect(result.verification.ok).toBe(false);
-    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.semanticSearchMode).toBe("auto");
+    expect(result.verification.semanticStatus).toBe("blocked");
     expect(result.verification.embeddingProvider).toBe("remote");
     expect(result.verification.guidance).toContain("akm index --full --verbose");
   } finally {
+    warnSpy.mockRestore();
     globalThis.fetch = originalFetch;
   }
 });
@@ -271,7 +275,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
-    semanticSearch: true,
+    semanticSearchMode: "auto",
     embedding: {
       endpoint: "https://example.test/v1/embeddings",
       model: "demo-embed",
@@ -291,7 +295,8 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   try {
     const result = await akmIndex({ stashDir });
     expect(result.verification.ok).toBe(true);
-    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.semanticSearchMode).toBe("auto");
+    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
     expect(result.verification.embeddingCount).toBe(result.totalEntries);
     expect(result.verification.message).toContain("Semantic search ready");
   } finally {
@@ -393,7 +398,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   // Write a config that includes the same directory twice via stashes
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: secondStash }] });
+  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: secondStash }] });
 
   const result = await akmIndex({ stashDir: primaryStash });
 
@@ -421,7 +426,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: stash2 }] });
+  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: stash2 }] });
 
   await akmIndex({ stashDir: stash1, full: true });
 

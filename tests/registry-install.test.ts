@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,7 +19,7 @@ function createEmptyStashDir(prefix: string): string {
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   return stashDir;
 }
 
@@ -384,6 +385,7 @@ describe("local directory installs", () => {
     createTarGz(tarRoot, archivePath);
 
     const tarballBytes = fs.readFileSync(archivePath);
+    const tarballSha1 = createHash("sha1").update(tarballBytes).digest("hex");
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -393,7 +395,7 @@ describe("local directory installs", () => {
             "dist-tags": { latest: "1.0.0" },
             versions: {
               "1.0.0": {
-                dist: { tarball: "https://example.test/nested-kit.tgz", shasum: "abc123" },
+                dist: { tarball: "https://example.test/nested-kit.tgz", shasum: tarballSha1 },
               },
             },
           }),

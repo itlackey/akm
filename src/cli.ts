@@ -162,6 +162,7 @@ function shapeSearchOutput(
       source: result.source,
       hits: shapedHits,
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
+      ...(result.semanticSearch ? { semanticSearch: result.semanticSearch } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(result.warnings ? { warnings: result.warnings } : {}),
       ...(result.timing ? { timing: result.timing } : {}),
@@ -171,8 +172,12 @@ function shapeSearchOutput(
   return {
     hits: shapedHits,
     ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
+    ...(typeof result.semanticSearch === "object" &&
+    result.semanticSearch !== null &&
+    (result.semanticSearch as Record<string, unknown>).status === "blocked"
+      ? { warnings: result.warnings }
+      : {}),
     ...(result.tip ? { tip: result.tip } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
 }
 

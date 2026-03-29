@@ -79,6 +79,10 @@ export function getDbPath(): string {
   return path.join(getCacheDir(), "index.db");
 }
 
+export function getSemanticStatusPath(): string {
+  return path.join(getCacheDir(), "semantic-status.json");
+}
+
 export function getRegistryCacheDir(): string {
   return path.join(getCacheDir(), "registry");
 }

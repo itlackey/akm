@@ -4,7 +4,13 @@ import type { AkmConfig, EmbeddingConnectionConfig } from "../src/config";
 mock.module("@huggingface/transformers", () => ({
   pipeline: async () => {
     return async () => ({
-      data: new Float32Array([0.1, 0.2, 0.3]),
+      data: (() => {
+        const vector = new Float32Array(384);
+        vector[0] = 0.1;
+        vector[1] = 0.2;
+        vector[2] = 0.3;
+        return vector;
+      })(),
     });
   },
 }));
@@ -80,7 +86,7 @@ describe("EmbeddingConnectionConfig type accepts localModel field", () => {
   test("AkmConfig embedding field accepts localModel", () => {
     // Type-system validation: verifies the interface accepts localModel
     const config: AkmConfig = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
         model: "nomic-embed-text",
@@ -92,7 +98,7 @@ describe("EmbeddingConnectionConfig type accepts localModel field", () => {
 
   test("old configs without localModel still work", () => {
     const config: AkmConfig = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
         model: "nomic-embed-text",
@@ -186,11 +192,21 @@ describe("remote endpoint independence", () => {
 describe("dimension consistency on model change", () => {
   test("cosineSimilarity returns 0 for dimension mismatch (different models produce different dims)", async () => {
     const { cosineSimilarity } = await import("../src/embedder");
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
     // Simulate a 384-dim vector (old model) vs 768-dim vector (new model)
     const vec384 = Array(384).fill(1 / Math.sqrt(384));
     const vec768 = Array(768).fill(1 / Math.sqrt(768));
-    const similarity = cosineSimilarity(vec384, vec768);
-    expect(similarity).toBe(0);
+    try {
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      };
+      const similarity = cosineSimilarity(vec384, vec768);
+      expect(similarity).toBe(0);
+      expect(warnings.some((warning) => warning.includes("vector dimension mismatch"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test("db dimension mismatch triggers vec table recreation", async () => {
@@ -244,7 +260,7 @@ describe("config file parsing for localModel", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
         model: "nomic-embed-text",
@@ -287,7 +303,7 @@ describe("config file parsing for localModel", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         localModel: "Xenova/bge-small-en-v1.5",
       },
@@ -328,7 +344,7 @@ describe("parseEmbeddingConfig edge cases", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
         localModel: "Xenova/bge-small-en-v1.5",
@@ -378,7 +394,7 @@ describe("parseEmbeddingConfig edge cases", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
     const configData = {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "http://localhost:11434/v1/embeddings",
         // No model, no localModel

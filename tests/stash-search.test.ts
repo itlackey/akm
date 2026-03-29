@@ -51,7 +51,7 @@ function tmpStash(): string {
 
 /**
  * Build an index for a stash directory from a set of files and their content.
- * Also writes a config with semanticSearch disabled so embedding is not attempted.
+ * Also writes a config with semanticSearchMode disabled so embedding is not attempted.
  */
 async function buildTestIndex(stashDir: string, files: Record<string, string>) {
   for (const [relPath, content] of Object.entries(files)) {
@@ -60,7 +60,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
@@ -405,7 +405,7 @@ describe("Substring fallback", () => {
     // Do NOT call akmIndex — just create files on disk
     writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "deploy", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
@@ -424,7 +424,7 @@ describe("Substring fallback", () => {
 
     writeFile(path.join(stashDir, "scripts", "Deploy", "Deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     // Do NOT call akmIndex
     const result = await akmSearch({ query: "deploy", source: "local" });
@@ -443,7 +443,7 @@ describe("Substring fallback", () => {
       "---\ndescription: Designs agent coordination patterns and context assembly\n---\nYou are an architect.\n",
     );
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "coordination", type: "agent", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
@@ -472,7 +472,7 @@ describe("Substring fallback", () => {
       }),
     );
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "diagnostics", source: "local" });
     const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
@@ -526,7 +526,7 @@ describe("Source filtering", () => {
     // Create a local tool so we know local hits would exist if local were searched
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false, registries: [] });
+    saveConfig({ semanticSearchMode: "off", registries: [] });
 
     const result = await akmSearch({ query: "deploy", source: "registry" });
     // Registry source puts results in registryHits, hits is empty
@@ -543,7 +543,7 @@ describe("Source filtering", () => {
     const stashDir = createTmpDir();
     writeFile(path.join(stashDir, "scripts", "merge-test.sh"), "#!/bin/bash\necho merge\n");
     await buildTestIndex(stashDir, {});
-    saveConfig({ semanticSearch: false, registries: [] });
+    saveConfig({ semanticSearchMode: "off", registries: [] });
 
     const result = await akmSearch({ query: "merge", source: "both" });
     expect(result.source).toBe("both");

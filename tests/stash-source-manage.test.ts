@@ -28,7 +28,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.AKM_STASH_DIR = testStashDir;
   // Write initial config so loadConfig doesn't return defaults with stale caches
-  saveConfig({ semanticSearch: true });
+  saveConfig({ semanticSearchMode: "auto" });
 });
 
 afterEach(() => {

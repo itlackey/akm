@@ -68,7 +68,7 @@ afterEach(() => {
 
 describe("akmListSources", () => {
   test("returns empty list when no sources configured", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmListSources({ stashDir });
 
@@ -82,7 +82,7 @@ describe("akmListSources", () => {
     const stashRoot = createTmpDir("akm-registry-stashroot-");
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [
         {
@@ -123,7 +123,7 @@ describe("akmListSources", () => {
     const nonExistentStashRoot = path.join(os.tmpdir(), `akm-nonexistent-root-${Date.now()}`);
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       installed: [
         {
           id: "missing-pkg",
@@ -149,7 +149,7 @@ describe("akmListSources", () => {
     const cacheDir = createTmpDir("akm-registry-cache-");
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [
         {
@@ -178,19 +178,19 @@ describe("akmListSources", () => {
 
 describe("akmRemove", () => {
   test("throws for empty target", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     await expect(akmRemove({ target: "", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for whitespace-only target", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     await expect(akmRemove({ target: "   ", stashDir })).rejects.toThrow("Target is required.");
   });
 
   test("throws for unknown target", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     await expect(akmRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
       "No matching source for target",
@@ -215,7 +215,7 @@ describe("akmRemove", () => {
     };
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
@@ -247,7 +247,7 @@ describe("akmRemove", () => {
     };
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
@@ -279,7 +279,7 @@ describe("akmRemove", () => {
     };
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
@@ -294,7 +294,7 @@ describe("akmRemove", () => {
 
 describe("selectTargets via akmUpdate", () => {
   test("throws when both target and all are specified", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     await expect(akmUpdate({ target: "some-pkg", all: true, stashDir })).rejects.toThrow(
       "Specify either <target> or --all, not both.",
@@ -302,7 +302,7 @@ describe("selectTargets via akmUpdate", () => {
   });
 
   test("throws when neither target nor all is specified", async () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     await expect(akmUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
   });
@@ -320,7 +320,7 @@ describe("selectTargets via akmUpdate", () => {
     // Store as source: "npm" with local-path refs so they stay in installed[]
     // but parseRegistryRef recognizes the ref as a local path.
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
 
       installed: [
         {
@@ -354,7 +354,7 @@ describe("selectTargets via akmUpdate", () => {
     fs.mkdirSync(path.join(localDir, "scripts"), { recursive: true });
 
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
 
       stashes: [{ type: "filesystem", path: localDir, name: "test-local" }],
       installed: [],

@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 
 const DEFAULT_STASH_DIR = "/tmp/akm-default-stash";
 const DEFAULT_CONFIG_PATH = "/tmp/akm-config/config.json";
+const DEFAULT_CACHE_DIR = "/tmp/akm-cache";
 const DEFAULT_REGISTRY_URLS = [
   "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
   "https://skills.sh",
@@ -20,7 +21,7 @@ const promptState = {
 
 const setupState = {
   currentConfig: {
-    semanticSearch: true,
+    semanticSearchMode: "auto",
     output: { format: "json", detail: "brief" },
   } as Record<string, unknown>,
   savedConfigs: [] as Array<Record<string, unknown>>,
@@ -52,7 +53,7 @@ function resetPromptState(): void {
 
 function resetSetupState(): void {
   setupState.currentConfig = {
-    semanticSearch: true,
+    semanticSearchMode: "auto",
     output: { format: "json", detail: "brief" },
   };
   setupState.savedConfigs.length = 0;
@@ -73,6 +74,10 @@ function resetSetupState(): void {
 beforeEach(() => {
   resetPromptState();
   resetSetupState();
+  mock.restore();
+});
+
+afterEach(() => {
   mock.restore();
 });
 
@@ -121,7 +126,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -138,6 +143,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
@@ -180,13 +187,13 @@ describe("runSetupWizard", () => {
 
     expect(setupState.savedConfigs).toHaveLength(1);
     expect(setupState.savedConfigs[0]?.stashDir).toBe(DEFAULT_STASH_DIR);
-    expect(setupState.savedConfigs[0]?.semanticSearch).toBe(false);
+    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("off");
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR }]);
     expect(promptState.outros[0]).toContain(DEFAULT_CONFIG_PATH);
   });
 
-  test("disables semantic search in saved config when asset preparation fails", async () => {
+  test("keeps semantic search in auto mode when asset preparation fails", async () => {
     mock.module("@clack/prompts", () => ({
       isCancel: () => false,
       cancel: (message: string) => {
@@ -230,7 +237,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -247,6 +254,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
@@ -292,10 +301,11 @@ describe("runSetupWizard", () => {
     const { runSetupWizard } = await import("../src/setup");
     await runSetupWizard();
 
-    expect(setupState.savedConfigs).toHaveLength(2);
-    expect(setupState.savedConfigs[0]?.semanticSearch).toBe(false);
-    expect(setupState.savedConfigs[1]?.semanticSearch).toBe(false);
-    expect(promptState.logs.some((entry) => entry.includes("Semantic search has been disabled"))).toBe(true);
+    expect(setupState.savedConfigs).toHaveLength(1);
+    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
+    expect(promptState.logs.some((entry) => entry.includes("remains set to auto, but is currently blocked"))).toBe(
+      true,
+    );
     expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR }]);
   });
 
@@ -343,7 +353,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -360,6 +370,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
@@ -439,7 +451,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -456,6 +468,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({
@@ -503,7 +517,7 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("remote embedding endpoint is not reachable"))).toBe(true);
-    expect(setupState.savedConfigs.at(-1)?.semanticSearch).toBe(false);
+    expect(setupState.savedConfigs.at(-1)?.semanticSearchMode).toBe("auto");
   });
 
   test("warns specifically when transformers package is missing during setup prep", async () => {
@@ -531,7 +545,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -548,6 +562,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
@@ -592,7 +608,7 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("Install it with: bun add @huggingface/transformers"))).toBe(
       true,
     );
-    expect(setupState.savedConfigs.at(-1)?.semanticSearch).toBe(false);
+    expect(setupState.savedConfigs.at(-1)?.semanticSearchMode).toBe("auto");
   });
 
   test("keeps semantic search enabled and warns when sqlite-vec/db check fails", async () => {
@@ -620,7 +636,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -637,6 +653,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
@@ -677,7 +695,7 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.semanticSearch).toBe(true);
+    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("Semantic search will use the JS fallback"))).toBe(true);
   });
 
@@ -704,7 +722,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -721,6 +739,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
@@ -759,7 +779,7 @@ describe("runSetupWizard", () => {
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
-    expect(setupState.savedConfigs[0]?.semanticSearch).toBe(true);
+    expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("auto");
     expect(promptState.logs.some((entry) => entry.includes("asset preparation was skipped"))).toBe(true);
   });
 
@@ -780,7 +800,7 @@ describe("runSetupWizard", () => {
     let saveCalls = 0;
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -798,6 +818,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
@@ -852,7 +874,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/config", () => ({
       DEFAULT_CONFIG: {
-        semanticSearch: true,
+        semanticSearchMode: "auto",
         registries: [
           { url: DEFAULT_REGISTRY_URLS[0], name: "official" },
           { url: DEFAULT_REGISTRY_URLS[1], name: "skills.sh", provider: "skills-sh" },
@@ -869,6 +891,8 @@ describe("runSetupWizard", () => {
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
+      getCacheDir: () => DEFAULT_CACHE_DIR,
+      getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),

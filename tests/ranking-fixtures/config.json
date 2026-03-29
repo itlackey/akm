@@ -1,5 +1,5 @@
 {
-  "semanticSearch": false,
+  "semanticSearchMode": "off",
   "stashes": [{ "type": "filesystem", "path": "<will be overridden in tests>" }],
   "registries": [],
   "output": {

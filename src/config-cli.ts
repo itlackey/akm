@@ -13,11 +13,11 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
   switch (key) {
     case "stashDir":
       return { stashDir: requireNonEmptyString(value, key) };
-    case "semanticSearch":
-      if (value !== "true" && value !== "false") {
-        throw new UsageError(`Invalid value for semanticSearch: expected "true" or "false"`);
+    case "semanticSearchMode":
+      if (value !== "off" && value !== "auto") {
+        throw new UsageError(`Invalid value for semanticSearchMode: expected "off" or "auto"`);
       }
-      return { semanticSearch: value === "true" };
+      return { semanticSearchMode: value };
     case "embedding":
       return { embedding: parseEmbeddingConnectionValue(value) };
     case "llm":
@@ -39,8 +39,8 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
   switch (key) {
     case "stashDir":
       return config.stashDir ?? null;
-    case "semanticSearch":
-      return config.semanticSearch;
+    case "semanticSearchMode":
+      return config.semanticSearchMode;
     case "embedding":
       return config.embedding ?? null;
     case "llm":
@@ -61,7 +61,7 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
   switch (key) {
     case "stashDir":
-    case "semanticSearch":
+    case "semanticSearchMode":
     case "embedding":
     case "llm":
     case "registries":
@@ -97,7 +97,7 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
   const result: Record<string, unknown> = {
-    semanticSearch: config.semanticSearch,
+    semanticSearchMode: config.semanticSearchMode,
     registries: config.registries ?? DEFAULT_CONFIG.registries ?? [],
     output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
     stashDir: config.stashDir ?? null,
@@ -174,6 +174,18 @@ function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig
     endpoint: "http://localhost:11434/v1/embeddings",
     model: "nomic-embed-text",
   });
+  const localModel = typeof parsed.localModel === "string" && parsed.localModel ? parsed.localModel : undefined;
+  const endpoint = typeof parsed.endpoint === "string" ? parsed.endpoint : "";
+  if (!endpoint) {
+    if (!localModel) {
+      throw new UsageError(
+        `Invalid value for embedding: endpoint/model are required for remote embeddings, or provide localModel`,
+      );
+    }
+    const localOnly: EmbeddingConnectionConfig = { endpoint: "", model: "", localModel };
+    if (typeof parsed.provider === "string" && parsed.provider) localOnly.provider = parsed.provider;
+    return localOnly;
+  }
   const result: EmbeddingConnectionConfig = {
     endpoint: asRequiredString(parsed.endpoint, "embedding", "endpoint"),
     model: asRequiredString(parsed.model, "embedding", "model"),
@@ -182,6 +194,7 @@ function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig
   if (parsed.dimension !== undefined)
     result.dimension = parseUnknownPositiveInteger(parsed.dimension, "embedding.dimension");
   if (typeof parsed.apiKey === "string" && parsed.apiKey) result.apiKey = parsed.apiKey;
+  if (localModel) result.localModel = localModel;
   return result;
 }
 

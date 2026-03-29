@@ -261,6 +261,12 @@ export interface InfoResponse {
   version: string;
   assetTypes: string[];
   searchModes: string[];
+  semanticSearch: {
+    mode: "off" | "auto";
+    status: "disabled" | "pending" | "ready-js" | "ready-vec" | "blocked";
+    reason?: string;
+    message?: string;
+  };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
   stashProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {

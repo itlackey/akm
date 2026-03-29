@@ -47,7 +47,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
@@ -199,7 +199,7 @@ describe("akm manifest", () => {
     fs.writeFileSync(path.join(helloDir, "hello.sh"), "#!/bin/bash\n# Say hello\necho hello");
 
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmManifest({ stashDir });
 
@@ -224,7 +224,7 @@ describe("akm manifest", () => {
   test("empty stash returns empty manifest", async () => {
     const stashDir = tmpStash();
     process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmManifest({ stashDir });
 

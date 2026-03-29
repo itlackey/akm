@@ -30,7 +30,7 @@ akm config unset llm                # Remove an optional key
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `semanticSearch` | boolean | `true` | Enable semantic vector search |
+| `semanticSearchMode` | boolean | `true` | Enable semantic vector search |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |

@@ -37,7 +37,7 @@ beforeEach(() => {
   process.env.AKM_STASH_DIR = stashDir;
 
   saveConfig({
-    semanticSearch: false,
+    semanticSearchMode: "off",
     stashes: [{ type: "filesystem", path: searchPathDir }],
   });
 });

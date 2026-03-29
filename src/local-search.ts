@@ -31,6 +31,7 @@ import { buildSearchText } from "./indexer";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
+import { getEffectiveSemanticStatus, isSemanticRuntimeReady, readSemanticStatus } from "./semantic-status";
 import { makeAssetRef } from "./stash-ref";
 import type { AkmSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
 import { walkStashFlat } from "./walker";
@@ -69,6 +70,18 @@ export async function searchLocal(input: {
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const allStashDirs = sources.map((s) => s.path);
+  const semanticStatus = getEffectiveSemanticStatus(config, readSemanticStatus());
+  const warnings: string[] = [];
+  if (config.semanticSearchMode === "auto" && semanticStatus === "pending") {
+    warnings.push(
+      "Semantic search is pending verification. Using keyword search until `akm index --full --verbose` completes successfully.",
+    );
+  }
+  if (config.semanticSearchMode === "auto" && semanticStatus === "blocked") {
+    warnings.push(
+      "Semantic search is currently blocked. Using keyword search until the semantic backend is healthy again.",
+    );
+  }
 
   // Try to open the database
   const dbPath = getDbPath();
@@ -96,6 +109,7 @@ export async function searchLocal(input: {
               hits.length === 0
                 ? "No matching stash assets were found. Try running 'akm index' to rebuild."
                 : undefined,
+            warnings: warnings.length > 0 ? warnings : undefined,
             embedMs,
             rankMs,
           };
@@ -118,6 +132,7 @@ export async function searchLocal(input: {
   return {
     hits,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
@@ -448,7 +463,8 @@ async function tryVecScores(
   k: number,
   config: AkmConfig,
 ): Promise<Map<number, number> | null> {
-  if (!config.semanticSearch) return null;
+  const semanticStatus = getEffectiveSemanticStatus(config, readSemanticStatus());
+  if (!isSemanticRuntimeReady(semanticStatus)) return null;
   const hasEmbeddings = getMeta(db, "hasEmbeddings");
   if (hasEmbeddings !== "1") return null;
 

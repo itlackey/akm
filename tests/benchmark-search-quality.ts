@@ -546,7 +546,7 @@ async function runBenchmark(): Promise<BenchmarkResults> {
   // 1. Create the stash and index it
   const stashDir = createBenchmarkStash();
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false, registries: [] });
+  saveConfig({ semanticSearchMode: "off", registries: [] });
 
   if (!jsonOnly) {
     process.stderr.write("Indexing benchmark stash...\n");

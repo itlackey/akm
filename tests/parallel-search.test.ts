@@ -86,7 +86,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string>) {
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
@@ -235,7 +235,7 @@ describe("Parallel search: vector unavailable", () => {
     const lintHit = localHits.find((h) => h.name === "lint");
     expect(lintHit).toBeDefined();
     expect(lintHit?.score).toBeGreaterThan(0);
-    // With semanticSearch disabled, should use FTS ranking
+    // With semanticSearchMode disabled, should use FTS ranking
     expect(lintHit?.whyMatched).toContain("fts bm25 relevance");
   });
 });
