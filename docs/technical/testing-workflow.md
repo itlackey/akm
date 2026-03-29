@@ -42,6 +42,8 @@ Relevant coverage:
 - `tests/stash-registry.test.ts` - `list`, `remove`, `update`, cache cleanup
 - `tests/registry-install.test.ts` - install resolution, tar safety, local/git/npm paths
 - `tests/e2e.test.ts` - real CLI workflows and subprocess behavior
+- `tests/setup-run.integration.ts` - full setup wizard orchestration and failure handling
+- `tests/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### 2. End-to-end CLI validation
 
@@ -119,7 +121,7 @@ source management, or Docker assets:
 
 ```sh
 bun test
-bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts
+bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts tests/setup-run.integration.ts tests/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
 bunx biome check --write src/ tests/
 bunx tsc --noEmit
@@ -141,6 +143,9 @@ For a local release gate without Docker, use:
 ```sh
 ./tests/release-check.sh --skip-docker
 ```
+
+That script now runs a dedicated install/setup regression suite before the full
+test run so first-run, installer, and wizard failures surface early.
 
 ## End-To-End Manual Validation
 
