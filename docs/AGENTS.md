@@ -7,7 +7,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ```sh
 akm search "<query>"                          # Search for assets
 akm search "<query>" --type skill             # Filter by type
-akm search "<query>" --source both            # Also search registries for installable kits
+akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm show knowledge:my-doc                    # Show a knowledge asset
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)

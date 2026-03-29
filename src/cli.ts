@@ -376,10 +376,10 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       if (sources.length === 0) return "No sources configured. Use `akm add` to add a source.";
       const lines: string[] = [];
       for (const src of sources) {
-        const kind = src.kind ?? "unknown";
-        const name = src.name ?? "unnamed";
-        const ver = src.version ? ` v${src.version}` : "";
-        const prov = src.provider ? ` (${src.provider})` : "";
+        const kind = typeof src.kind === "string" ? src.kind : "unknown";
+        const name = typeof src.name === "string" ? src.name : "unnamed";
+        const ver = typeof src.version === "string" ? ` v${src.version}` : "";
+        const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
         lines.push(`[${kind}] ${name}${ver}${prov}`);
       }
       return lines.join("\n");

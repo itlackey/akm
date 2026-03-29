@@ -61,7 +61,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       ref: entry.ref,
       version: entry.resolvedVersion,
       updatable: true,
-      status: { exists: directoryExists(entry.cacheDir) },
+      status: { exists: directoryExists(entry.stashRoot) },
     });
   }
 
@@ -135,7 +135,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
     target,
     removed: {
       id: removedEntry.name ?? removedEntry.path ?? removedEntry.url ?? target,
-      source: removedEntry.type as RemoveResponse["removed"]["source"],
+      source: removedEntry.type,
       ref: removedEntry.path ?? removedEntry.url ?? target,
       cacheDir: "",
       stashRoot: removedEntry.path ?? "",

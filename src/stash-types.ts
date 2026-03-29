@@ -120,7 +120,7 @@ export interface RemoveResponse {
   target: string;
   removed: {
     id: string;
-    source: KitSource;
+    source: KitSource | string;
     ref: string;
     cacheDir: string;
     stashRoot: string;
