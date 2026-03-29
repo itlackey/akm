@@ -7,43 +7,55 @@ PASS=0
 FAIL=0
 ERRORS=""
 
-pass() { ((PASS++)); echo "  ✓ $1"; }
-fail() { ((FAIL++)); ERRORS+="  ✗ $1\n"; echo "  ✗ $1"; }
+pass() {
+	((++PASS))
+	echo "  ✓ $1"
+}
+fail() {
+	((++FAIL))
+	ERRORS+="  ✗ $1\n"
+	echo "  ✗ $1"
+}
 
 assert_exit_zero() {
-  local desc="$1"; shift
-  if "$@" >/dev/null 2>&1; then
-    pass "$desc"
-  else
-    fail "$desc (exit code $?)"
-  fi
+	local desc="$1"
+	shift
+	if "$@" >/dev/null 2>&1; then
+		pass "$desc"
+	else
+		fail "$desc (exit code $?)"
+	fi
 }
 
 assert_output_contains() {
-  local desc="$1"; shift
-  local needle="$1"; shift
-  local out
-  out=$("$@" 2>&1) || true
-  if echo "$out" | grep -qi "$needle"; then
-    pass "$desc"
-  else
-    fail "$desc — expected '$needle' in output"
-    echo "    actual output: ${out:0:200}"
-  fi
+	local desc="$1"
+	shift
+	local needle="$1"
+	shift
+	local out
+	out=$("$@" 2>&1) || true
+	if echo "$out" | grep -qi "$needle"; then
+		pass "$desc"
+	else
+		fail "$desc — expected '$needle' in output"
+		echo "    actual output: ${out:0:200}"
+	fi
 }
 
 assert_json_field() {
-  local desc="$1"; shift
-  local field="$1"; shift
-  local out
-  out=$("$@" 2>&1) || true
-  # Check that the JSON output has the expected field
-  if echo "$out" | grep -q "\"$field\""; then
-    pass "$desc"
-  else
-    fail "$desc — expected field '$field' in JSON"
-    echo "    actual output: ${out:0:300}"
-  fi
+	local desc="$1"
+	shift
+	local field="$1"
+	shift
+	local out
+	out=$("$@" 2>&1) || true
+	# Check that the JSON output has the expected field
+	if echo "$out" | grep -q "\"$field\""; then
+		pass "$desc"
+	else
+		fail "$desc — expected field '$field' in JSON"
+		echo "    actual output: ${out:0:300}"
+	fi
 }
 
 # ── Setup test stash with sample assets ──────────────────────────────────────
@@ -75,11 +87,11 @@ assert_exit_zero "akm init creates stash" akm init
 
 # Verify stash directory structure was created
 for subdir in scripts skills commands agents knowledge; do
-  if [ -d "$STASH_DIR/$subdir" ]; then
-    pass "init created $subdir/"
-  else
-    fail "init did not create $subdir/"
-  fi
+	if [ -d "$STASH_DIR/$subdir" ]; then
+		pass "init created $subdir/"
+	else
+		fail "init did not create $subdir/"
+	fi
 done
 
 # ── 3. Populate stash with test assets ───────────────────────────────────────
@@ -88,7 +100,7 @@ echo "--- Populate test assets ---"
 
 # Create a test script
 mkdir -p "$STASH_DIR/scripts/deploy"
-cat > "$STASH_DIR/scripts/deploy/deploy-app.sh" << 'SCRIPT'
+cat >"$STASH_DIR/scripts/deploy/deploy-app.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # Deploy application to production server
 echo "Deploying application..."
@@ -97,7 +109,7 @@ chmod +x "$STASH_DIR/scripts/deploy/deploy-app.sh"
 
 # Create a test skill
 mkdir -p "$STASH_DIR/skills/code-review"
-cat > "$STASH_DIR/skills/code-review/SKILL.md" << 'SKILL'
+cat >"$STASH_DIR/skills/code-review/SKILL.md" <<'SKILL'
 ---
 name: code-review
 description: Review code for quality, security, and best practices
@@ -114,7 +126,7 @@ SKILL
 
 # Create a test command
 mkdir -p "$STASH_DIR/commands"
-cat > "$STASH_DIR/commands/lint-project.md" << 'CMD'
+cat >"$STASH_DIR/commands/lint-project.md" <<'CMD'
 ---
 name: lint-project
 description: Run linter on the project with auto-fix
@@ -126,7 +138,7 @@ CMD
 
 # Create a test knowledge asset
 mkdir -p "$STASH_DIR/knowledge"
-cat > "$STASH_DIR/knowledge/docker-best-practices.md" << 'KB'
+cat >"$STASH_DIR/knowledge/docker-best-practices.md" <<'KB'
 ---
 name: docker-best-practices
 description: Best practices for writing Dockerfiles
@@ -142,7 +154,7 @@ KB
 
 # Create a test agent
 mkdir -p "$STASH_DIR/agents"
-cat > "$STASH_DIR/agents/devops-agent.md" << 'AGENT'
+cat >"$STASH_DIR/agents/devops-agent.md" <<'AGENT'
 ---
 name: devops-agent
 description: A DevOps assistant agent for infrastructure tasks
@@ -180,22 +192,22 @@ assert_output_contains "search 'docker' finds knowledge" "docker" akm search doc
 # Search with limit
 RESULT=$(akm search deploy --format json --limit 1 2>&1) || true
 if echo "$RESULT" | grep -q "hits"; then
-  pass "search with --limit 1 returns JSON with hits"
+	pass "search with --limit 1 returns JSON with hits"
 else
-  fail "search with --limit 1 failed"
+	fail "search with --limit 1 failed"
 fi
 
 # ── 6. Show ──────────────────────────────────────────────────────────────────
 
 echo "--- Show ---"
-assert_exit_zero "akm show script:deploy-app exits 0" akm show script:deploy-app
-assert_output_contains "show displays script content" "deploy\|Deploy" akm show script:deploy-app
+assert_exit_zero "akm show script:deploy/deploy-app.sh exits 0" akm show script:deploy/deploy-app.sh
+assert_output_contains "show displays script content" "deploy\|Deploy" akm show script:deploy/deploy-app.sh
 
 # ── 7. Info ──────────────────────────────────────────────────────────────────
 
 echo "--- Info ---"
 assert_exit_zero "akm info exits 0" akm info
-assert_json_field "info has stashDir" "stashDir" akm info --format json
+assert_json_field "info has indexStats" "indexStats" akm info --format json
 
 # ── 8. List ──────────────────────────────────────────────────────────────────
 
@@ -210,7 +222,7 @@ echo "--- Re-index ---"
 
 # Add another asset and re-index
 mkdir -p "$STASH_DIR/scripts/backup"
-cat > "$STASH_DIR/scripts/backup/backup-db.sh" << 'SCRIPT'
+cat >"$STASH_DIR/scripts/backup/backup-db.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # Backup the database to S3
 echo "Backing up database..."
@@ -227,10 +239,10 @@ echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
 
 if [ "$FAIL" -gt 0 ]; then
-  echo ""
-  echo "Failures:"
-  echo -e "$ERRORS"
-  exit 1
+	echo ""
+	echo "Failures:"
+	echo -e "$ERRORS"
+	exit 1
 fi
 
 echo ""

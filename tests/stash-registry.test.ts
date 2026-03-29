@@ -103,13 +103,19 @@ describe("akmListSources", () => {
     // Local source from stashes[]
     const local = result.sources.find((s) => s.kind === "local");
     expect(local).toBeDefined();
-    expect(local!.path).toBe(stashRoot);
+    if (!local) {
+      throw new Error("Expected local source");
+    }
+    expect(local.path).toBe(stashRoot);
     // Managed source from installed[]
     const managed = result.sources.find((s) => s.kind === "managed");
     expect(managed).toBeDefined();
-    expect(managed!.name).toBe("test-pkg");
-    expect(managed!.ref).toBe("test-pkg");
-    expect(managed!.status.exists).toBe(true);
+    if (!managed) {
+      throw new Error("Expected managed source");
+    }
+    expect(managed.name).toBe("test-pkg");
+    expect(managed.ref).toBe("test-pkg");
+    expect(managed.status.exists).toBe(true);
   });
 
   test("reports missing directories in status", async () => {

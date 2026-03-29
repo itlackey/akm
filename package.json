@@ -44,6 +44,7 @@
     "check": "bun run lint && bunx tsc --noEmit && bun test ./tests",
     "check:changed": "bun test tests/output-baseline.test.ts tests/e2e.test.ts tests/stash-search.test.ts && bun run lint && bunx tsc --noEmit",
     "test": "bun test ./tests",
+    "release:check": "./tests/release-check.sh",
     "lint": "bunx biome check src/ tests/",
     "lint:fix": "bunx biome check --write src/ tests/",
     "format": "bunx biome format --write src/ tests/",

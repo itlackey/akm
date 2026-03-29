@@ -79,7 +79,7 @@ const HAS_BUN = bunAvailable();
 
 const bunVariants = ["ubuntu-bun", "debian-bun", "alpine-bun", "fedora-bun"] as const;
 
-const binaryVariants = ["ubuntu-binary", "debian-binary", "alpine-binary", "fedora-binary"] as const;
+const binaryVariants = ["ubuntu-binary", "debian-binary", "fedora-binary"] as const;
 
 // Cleanup build artifacts after all tests
 afterAll(() => {

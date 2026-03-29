@@ -19,6 +19,7 @@
 - [Indexing](technical/indexing.md) -- How the search index is built
 - [Classification](technical/classification.md) -- Matcher and renderer behavior
 - [Show Response](technical/show-response.md) -- `akm show` output fields by asset type
+- [Testing Workflow](technical/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation
 - [Ref Format](technical/ref.md) -- Wire format for asset references
 - [Test Coverage Guide](technical/test-coverage-guide.md) -- High-value testing areas
 - [Core Principles](technical/akm-core-principles.md) -- Design principles and constraints
