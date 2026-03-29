@@ -10,6 +10,7 @@ tags:
   - skills
 published: true
 id: 3426225
+date: '2026-03-29T16:31:49Z'
 ---
 
 This is part five in a series about wrangling the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I covered why progressive disclosure beats dumping everything into context. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) showed how `akm` unifies your local assets across platforms into one searchable stash. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking for teams. And [part four](https://dev.to/itlackey/your-agent-doesnt-know-what-the-community-already-figured-out) plugged in community knowledge through Context Hub.

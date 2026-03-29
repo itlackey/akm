@@ -1,5 +1,5 @@
 ---
-title: "Your Team's Agent Skills Are a Mess. Here's How to Fix It."
+title: Your Team's Agent Skills Are a Mess. Here's How to Fix It.
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
 description: Every agent skills article is about individual developers. But teams are where skills become valuable and messy simultaneously.
@@ -9,6 +9,7 @@ tags:
   - cli
   - skills
 published: false
+id: 3426246
 ---
 
 This is part seven in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck) introduced progressive disclosure. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) unified your local assets across platforms. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking. [Part four](https://dev.to/itlackey/your-agent-doesnt-know-what-the-community-already-figured-out) connected community knowledge through Context Hub.

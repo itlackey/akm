@@ -1,14 +1,15 @@
 ---
-title: "Your Agent Loads 47 Skills at Startup. It Needs Three."
+title: Your Agent Loads 47 Skills at Startup. It Needs Three.
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: The napkin math behind progressive disclosure, and how akm makes it work across every platform you use.
+description: 'The napkin math behind progressive disclosure, and how akm makes it work across every platform you use.'
 tags:
   - ai
   - agents
   - cli
   - skills
 published: false
+id: 3426244
 ---
 
 Quick recap if you're joining mid-series. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I introduced the problem: your agent's skill list is growing faster than you can manage it, and dumping everything into context makes things worse, not better. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) showed how `akm` unifies your existing Claude Code, Cursor, and Codex assets into one searchable stash. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking. [Part four](https://dev.to/itlackey/your-agent-doesnt-know-what-the-community-already-figured-out) connected your agent to community knowledge through Context Hub.
