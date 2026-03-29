@@ -835,8 +835,8 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(result.exitCode).toBe(0);
 
       const json = parseJson(result.stdout);
-      expect(json.totalInstalled).toBe(0);
-      expect(json.installed).toEqual([]);
+      expect(json.totalSources).toBe(0);
+      expect(json.sources).toEqual([]);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -921,7 +921,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       const result = runCli("update", "npm:@scope/kit");
       expect(result.exitCode).not.toBe(0);
       const output = result.stdout + result.stderr;
-      expect(output).toContain("No installed kit matched target: npm:@scope/kit");
+      expect(output).toContain("No matching source for target: npm:@scope/kit");
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }

@@ -94,27 +94,24 @@ export interface KitInstallStatus extends InstalledKitEntry {
   extractedDir: string;
 }
 
-export interface InstalledKitListEntry {
-  id: string;
-  source: KitSource;
-  ref: string;
-  artifactUrl: string;
-  resolvedVersion?: string;
-  resolvedRevision?: string;
-  stashRoot: string;
-  cacheDir: string;
-  installedAt: string;
-  status: {
-    cacheDirExists: boolean;
-    stashRootExists: boolean;
-  };
+export type SourceKind = "local" | "managed" | "remote";
+
+export interface SourceEntry {
+  name: string;
+  kind: SourceKind;
+  path?: string;
+  ref?: string;
+  provider?: string;
+  version?: string;
+  updatable: boolean;
+  status: { exists: boolean };
 }
 
-export interface ListResponse {
+export interface SourceListResponse {
   schemaVersion: number;
   stashDir: string;
-  installed: InstalledKitListEntry[];
-  totalInstalled: number;
+  sources: SourceEntry[];
+  totalSources: number;
 }
 
 export interface RemoveResponse {
@@ -123,7 +120,7 @@ export interface RemoveResponse {
   target: string;
   removed: {
     id: string;
-    source: KitSource;
+    source: KitSource | string;
     ref: string;
     cacheDir: string;
     stashRoot: string;

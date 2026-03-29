@@ -120,81 +120,68 @@ everything else, and always return `editable: false`.
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
 
-### Understanding "add" Commands
+### How `add` works
 
-akm has three `add` commands, one for each core concept:
+`akm add` infers what to do from the input:
 
-| Command | What it does | What it manages |
-| --- | --- | --- |
-| `akm add <ref>` | Install a kit (package of assets) | Kits — cached in `~/.cache/akm/`, managed by akm |
-| `akm stash add <path>` | Register a directory as an additional stash | Stashes — directories of assets you own |
-| `akm registry add <url>` | Add a registry to discover kits from | Registries — indexes of installable kits |
-
-### kit
-
-Manage installed kits. The `kit` command has four subcommands: `add`, `list`,
-`remove`, `update`. The top-level `akm add`, `akm list`, `akm remove`, and
-`akm update` are convenience aliases for `akm kit add`, `akm kit list`, etc.
-
-#### kit add
-
-Install a kit from npm, GitHub, or any git host. Unlike `akm add`, this
-command does not accept local directory paths — use `akm stash add` for those.
-
-```sh
-akm kit add @scope/kit
-akm kit add github:owner/repo
-```
-
-#### kit list, kit remove, kit update
-
-These work identically to the top-level `akm list`, `akm remove`, and
-`akm update` commands. See their documentation below.
+| Input | What happens |
+| --- | --- |
+| `akm add ~/.claude/skills` | Registers a local directory as a source |
+| `akm add github:owner/repo` | Fetches and caches a managed source |
+| `akm add @scope/kit` | Fetches and caches a managed source from npm |
+| `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
 ### add
 
-Install a kit from npm, GitHub, any git host, or a local directory.
+Add a source — a local directory, npm package, GitHub repo, or git URL.
 
 ```sh
-akm add @scope/kit
-akm add npm:@scope/kit@latest
-akm add github:owner/repo#v1.2.3
+akm add ~/.claude/skills              # Local directory
+akm add @scope/kit                    # npm package
+akm add npm:@scope/kit@latest         # npm with version
+akm add github:owner/repo#v1.2.3     # GitHub with tag
 akm add https://github.com/owner/repo
 akm add git+https://gitlab.com/org/kit
 akm add ./path/to/local/kit
 akm add context-hub
 ```
 
-See [registry.md](registry.md) for the full install flow.
+See [registry.md](registry.md) for the full install flow for managed sources.
 
-`akm add context-hub` is a convenience alias for:
-
-```sh
-akm stash add https://github.com/andrewyng/context-hub --provider git
-```
+`akm add context-hub` is a convenience alias that adds the context-hub
+GitHub repo as a git provider source.
 
 ### list
 
-Show installed kits and their status.
+Show all sources — local directories, managed packages, and remote providers.
 
 ```sh
-akm list
+akm list                            # All sources
+akm list --kind local               # Only local directories
+akm list --kind managed             # Only managed packages
+akm list --kind remote              # Only remote providers
+akm list --kind local,remote        # Multiple kinds
 ```
 
-Each entry includes `status.cacheDirExists` and `status.stashRootExists`.
+| Flag | Description |
+| --- | --- |
+| `--kind` | Filter by source kind: `local`, `managed`, `remote` (comma-separated) |
 
 ### remove
 
-Remove an installed kit by id or ref and reindex.
+Remove a source by id, ref, path, URL, or name and reindex.
 
 ```sh
-akm remove npm:@scope/kit
-akm remove owner/repo
+akm remove npm:@scope/kit           # Managed source by id
+akm remove owner/repo               # Managed source by ref
+akm remove ~/.claude/skills         # Local source by path
+akm remove my-provider              # Any source by name
 ```
 
 ### update
 
-Update one or all installed kits to the latest available version.
+Update one or all managed sources to the latest available version. Local and
+remote sources are not updatable — akm explains why if you target one.
 
 ```sh
 akm update npm:@scope/kit
@@ -204,7 +191,7 @@ akm update --all --force   # Force fresh download even if version is unchanged
 
 | Flag | Description |
 | --- | --- |
-| `--all` | Update all installed entries |
+| `--all` | Update all managed sources |
 | `--force` | Delete cached extraction before re-downloading |
 
 Reports per-entry change flags: `changed.version`, `changed.revision`,
@@ -341,46 +328,6 @@ akm registry search "docker" --limit 5
 | --- | --- |
 | `--limit` | Maximum number of results |
 | `--assets` | Include asset-level results from v2 registry indexes |
-
-### stash
-
-Manage additional stashes — directories and remote providers that akm
-searches alongside your working stash and installed kits. The `stash`
-command has three subcommands.
-
-#### stash list
-
-List all resolved stashes in priority order.
-
-```sh
-akm stash list
-akm stash              # Same as stash list
-```
-
-#### stash add
-
-Register a directory or remote provider as an additional stash.
-
-```sh
-akm stash add ~/.claude/skills
-akm stash add ~/.claude/skills --name claude-skills
-akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
-```
-
-| Flag | Description |
-| --- | --- |
-| `--name` | Human-friendly label for the source |
-| `--provider` | Provider type (e.g. `openviking`). Default: `filesystem` |
-| `--options` | Provider-specific options as JSON |
-
-#### stash remove
-
-Remove an additional stash by path or name.
-
-```sh
-akm stash remove ~/.claude/skills
-akm stash remove claude-skills
-```
 
 ### config
 

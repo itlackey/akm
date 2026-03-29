@@ -2,14 +2,14 @@
 
 ## Getting Started
 
-- [Concepts](concepts.md) -- Stashes, kits, registries, asset types, and refs
+- [Concepts](concepts.md) -- Sources, registries, asset types, and refs
 - [Getting Started](getting-started.md) -- Quick setup guide
 - [Kit Maker's Guide](kit-makers.md) -- Build and share a kit on GitHub, npm, or a network directory
 
 ## Reference
 
 - [CLI](cli.md) -- All `akm` commands and flags
-- [Registry](registry.md) -- Registries, search, hosting, and managing kits
+- [Registry](registry.md) -- Registries, search, hosting, and managing sources
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
 - [Filesystem](technical/filesystem.md) -- Directory layout and `.stash.json` schema
 

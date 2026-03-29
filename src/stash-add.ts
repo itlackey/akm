@@ -10,30 +10,6 @@ import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } fro
 import { parseRegistryRef } from "./registry-resolve";
 import type { AddResponse } from "./stash-types";
 
-export async function akmKitAdd(input: { ref: string }): Promise<AddResponse> {
-  const ref = input.ref.trim();
-  if (!ref)
-    throw new UsageError(
-      "Registry ref is required. " + "Examples: `akm kit add @scope/kit`, `akm kit add github:owner/repo`",
-    );
-
-  const stashDir = resolveStashDir();
-
-  try {
-    const parsed = parseRegistryRef(ref);
-    if (parsed.source === "local") {
-      throw new UsageError(
-        `Local directories should be added as stashes, not kits. Use \`akm stash add ${ref}\` instead.`,
-      );
-    }
-  } catch (err) {
-    if (err instanceof UsageError) throw err;
-    // Not a local ref — fall through to registry install
-  }
-
-  return addRegistryKit(ref, stashDir);
-}
-
 export async function akmAdd(input: { ref: string }): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref)

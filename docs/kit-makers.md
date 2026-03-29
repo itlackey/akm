@@ -158,8 +158,11 @@ description: "Team coding standards for TypeScript projects"
 - Use named exports, not default exports
 ```
 
-Memories are surfaced alongside other assets in search results, giving the
-agent relevant context without requiring explicit prompts.
+The `memories/` directory is primarily used by agent memory systems that
+write markdown files. You generally don't create memories by hand — they're
+populated by tools like OpenViking or file-based memory agents. Memories
+are surfaced alongside other assets in search results, giving the agent
+relevant context without requiring explicit prompts.
 
 ## Step 3: Add Metadata
 
@@ -308,10 +311,10 @@ stashes.
      commands/
    ```
 
-2. Each team member adds it as a stash:
+2. Each team member adds it as a source:
 
    ```sh
-   akm stash add /mnt/shared/team-kit
+   akm add /mnt/shared/team-kit
    ```
 
    Or add it directly to `~/.config/akm/config.json`:

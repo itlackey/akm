@@ -68,12 +68,10 @@ describe("completions command", () => {
       "list",
       "remove",
       "update",
-      "kit",
       "upgrade",
       "search",
       "show",
       "clone",
-      "stash",
       "registry",
       "config",
       "hints",
@@ -96,14 +94,6 @@ describe("completions command", () => {
     for (const sub of ["list", "add", "remove", "search", "build-index"]) {
       expect(script).toContain(sub);
     }
-  });
-
-  test("contains nested kit subcommands", () => {
-    expect(script).toContain('"akm kit"');
-  });
-
-  test("contains nested stash subcommands", () => {
-    expect(script).toContain('"akm stash"');
   });
 
   test("contains flag value completions for --format", () => {

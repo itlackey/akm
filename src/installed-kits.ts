@@ -1,16 +1,12 @@
 /**
- * Installed-kit operations: list, remove, update.
+ * Source operations: list, remove, update.
  *
- * Manages the set of kits that have been added to the local stash via
- * `akm add`. Each installed kit has a cache directory and a stash root that
- * is added to the search path.
- *
- * Not to be confused with:
- *   - registry-factory.ts   — factory map for kit-discovery registry providers
- *   - stash-provider-factory.ts — factory map for runtime stash data sources
+ * Provides unified operations across all source kinds (local, managed, remote).
+ * The CLI's `akm list`, `akm remove`, and `akm update` commands are wired here.
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { resolveStashDir } from "./common";
 import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
@@ -19,24 +15,61 @@ import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledKitEntry } from "./registry-types";
-import type { KitInstallStatus, ListResponse, RemoveResponse, UpdateResponse } from "./stash-types";
+import { removeStash } from "./stash-source-manage";
+import type {
+  KitInstallStatus,
+  RemoveResponse,
+  SourceEntry,
+  SourceKind,
+  SourceListResponse,
+  UpdateResponse,
+} from "./stash-types";
 
-export async function akmList(input?: { stashDir?: string }): Promise<ListResponse> {
+export async function akmListSources(input?: { stashDir?: string; kind?: SourceKind[] }): Promise<SourceListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
   const config = loadConfig();
-  const installed = config.installed ?? [];
+  const kindFilter = input?.kind;
+
+  const sources: SourceEntry[] = [];
+
+  // Stash entries → local or remote sources
+  for (const stash of config.stashes ?? []) {
+    const isRemote = stash.url != null;
+    const kind: SourceKind = isRemote ? "remote" : "local";
+    if (kindFilter && !kindFilter.includes(kind)) continue;
+
+    const name = stash.name ?? stash.path ?? stash.url ?? "unknown";
+    sources.push({
+      name,
+      kind,
+      path: stash.path,
+      provider: isRemote ? stash.type : undefined,
+      updatable: false,
+      status: { exists: stash.path ? directoryExists(stash.path) : true },
+    });
+  }
+
+  // Installed entries → managed sources
+  for (const entry of config.installed ?? []) {
+    const kind: SourceKind = "managed";
+    if (kindFilter && !kindFilter.includes(kind)) continue;
+
+    sources.push({
+      name: entry.id,
+      kind,
+      path: entry.stashRoot,
+      ref: entry.ref,
+      version: entry.resolvedVersion,
+      updatable: true,
+      status: { exists: directoryExists(entry.stashRoot) },
+    });
+  }
 
   return {
     schemaVersion: 1,
     stashDir,
-    installed: installed.map((entry) => ({
-      ...entry,
-      status: {
-        cacheDirExists: directoryExists(entry.cacheDir),
-        stashRootExists: directoryExists(entry.stashRoot),
-      },
-    })),
-    totalInstalled: installed.length,
+    sources,
+    totalSources: sources.length,
   };
 }
 
@@ -44,33 +77,68 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   const target = input.target.trim();
   if (!target)
     throw new UsageError(
-      "Target is required. Provide the kit id or ref (e.g. `akm remove npm:@scope/kit` or `akm remove owner/repo`).",
+      "Target is required. Provide the source id, ref, path, URL, or name (e.g. `akm remove npm:@scope/kit` or `akm remove ~/my-stash`).",
     );
 
   const stashDir = input.stashDir ?? resolveStashDir();
   const config = loadConfig();
   const installed = config.installed ?? [];
-  const entry = resolveInstalledTarget(installed, target);
 
-  const updatedConfig = removeInstalledRegistryEntry(entry.id);
-  await removeLockEntry(entry.id);
-  // Only clean up cache for non-local sources — local sources point to the
-  // user's real directory on disk and must never be deleted.
-  if (entry.source !== "local") {
-    cleanupDirectoryBestEffort(entry.cacheDir);
+  // Try installed[] first (managed sources)
+  const entry = tryResolveInstalledTarget(installed, target);
+
+  if (entry) {
+    const updatedConfig = removeInstalledRegistryEntry(entry.id);
+    await removeLockEntry(entry.id);
+    if (entry.source !== "local") {
+      cleanupDirectoryBestEffort(entry.cacheDir);
+    }
+    const index = await akmIndex({ stashDir });
+
+    return {
+      schemaVersion: 1,
+      stashDir,
+      target,
+      removed: {
+        id: entry.id,
+        source: entry.source,
+        ref: entry.ref,
+        cacheDir: entry.cacheDir,
+        stashRoot: entry.stashRoot,
+      },
+      config: {
+        stashCount: updatedConfig.stashes?.length ?? 0,
+        installedKitCount: updatedConfig.installed?.length ?? 0,
+      },
+      index: {
+        mode: index.mode,
+        totalEntries: index.totalEntries,
+        directoriesScanned: index.directoriesScanned,
+        directoriesSkipped: index.directoriesSkipped,
+      },
+    };
   }
+
+  // Fall through to stashes[] (local/remote sources)
+  const stashResult = removeStash(target);
+  if (!stashResult.removed || !stashResult.entry) {
+    throw new NotFoundError(`No matching source for target: ${target}`);
+  }
+
+  const removedEntry = stashResult.entry;
   const index = await akmIndex({ stashDir });
+  const updatedConfig = loadConfig();
 
   return {
     schemaVersion: 1,
     stashDir,
     target,
     removed: {
-      id: entry.id,
-      source: entry.source,
-      ref: entry.ref,
-      cacheDir: entry.cacheDir,
-      stashRoot: entry.stashRoot,
+      id: removedEntry.name ?? removedEntry.path ?? removedEntry.url ?? target,
+      source: removedEntry.type,
+      ref: removedEntry.path ?? removedEntry.url ?? target,
+      cacheDir: "",
+      stashRoot: removedEntry.path ?? "",
     },
     config: {
       stashCount: updatedConfig.stashes?.length ?? 0,
@@ -168,10 +236,35 @@ function selectTargets(installed: InstalledKitEntry[], target: string | undefine
   if (!target) {
     throw new UsageError("Either <target> or --all is required.");
   }
-  return [resolveInstalledTarget(installed, target)];
+
+  const found = tryResolveInstalledTarget(installed, target);
+  if (found) return [found];
+
+  // Check if target matches a stash source and give a helpful message
+  const config = loadConfig();
+  const stashes = config.stashes ?? [];
+  const isUrl = target.startsWith("http://") || target.startsWith("https://");
+  const resolvedPath = !isUrl ? path.resolve(target) : undefined;
+  const stashMatch = stashes.find((s) => {
+    if (isUrl && s.url === target) return true;
+    if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
+    if (s.name === target) return true;
+    return false;
+  });
+
+  if (stashMatch) {
+    if (stashMatch.url) {
+      throw new UsageError(`"${target}" is a remote provider — it queries live data and has nothing to update.`);
+    }
+    throw new UsageError(
+      `"${target}" is a local directory — it reflects your files in place. To refresh the search index, run: akm index`,
+    );
+  }
+
+  throw new NotFoundError(`No matching source for target: ${target}`);
 }
 
-function resolveInstalledTarget(installed: InstalledKitEntry[], target: string): InstalledKitEntry {
+function tryResolveInstalledTarget(installed: InstalledKitEntry[], target: string): InstalledKitEntry | undefined {
   const byId = installed.find((entry) => entry.id === target);
   if (byId) return byId;
 
@@ -189,7 +282,7 @@ function resolveInstalledTarget(installed: InstalledKitEntry[], target: string):
     if (byParsedId) return byParsedId;
   }
 
-  throw new NotFoundError(`No installed kit matched target: ${target}`);
+  return undefined;
 }
 
 function toInstalledEntry(status: KitInstallStatus): InstalledKitEntry {

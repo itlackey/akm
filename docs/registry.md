@@ -31,8 +31,8 @@ akm registry add https://example.com/registry/index.json --name my-team
 # Add a skills.sh registry
 akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
-# Add an OpenViking stash source
-akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+# Add an OpenViking source
+akm add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 
 # Remove a registry by URL or name
 akm registry remove my-team
@@ -50,7 +50,7 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
   ],
   "stashes": [
-    // OpenViking stash provider (configured via `akm stash add`)
+    // OpenViking source (configured via `akm add`)
     { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
@@ -267,11 +267,12 @@ an installed kit -- it only extracts the single requested asset.
 When multiple sources provide the same asset name, the first match wins:
 
 1. **Working stash** -- Your personal assets in `AKM_STASH_DIR` (`~/akm`)
-2. **Additional stashes** -- Directories and remote providers from `akm stash add`
-3. **Installed kits** -- Packages from `akm add`, cached in `~/.cache/akm/`
+2. **Local sources** -- Directories added via `akm add`
+3. **Managed sources** -- Packages added via `akm add`, cached in `~/.cache/akm/`
+4. **Remote sources** -- Providers queried at search time
 
-This means your stash assets always override installed kit versions. Use
-`akm clone` to copy a kit asset into your working stash for editing.
+This means your local assets always override managed package versions. Use
+`akm clone` to copy an asset into your working stash for editing.
 
 ## Registry Providers
 
@@ -316,17 +317,17 @@ To install a skill found via skills.sh, use the `ref` field (GitHub
 akm add vercel-labs/agent-skills
 ```
 
-#### `openviking` (stash provider)
+#### `openviking` (source provider)
 
 Connects to an [OpenViking](https://github.com/volcengine/openviking) server
 for context management. OpenViking is ByteDance's open-source context file
 system for AI agents.
 
-> **Note:** OpenViking is a *stash provider*, not a registry provider. Configure
-> it via `akm stash add`, not `akm registry add`.
+> **Note:** OpenViking is a *source provider*, not a registry provider. Configure
+> it via `akm add`, not `akm registry add`.
 
 ```bash
-akm stash add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
+akm add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
 ```
 
 Key behaviors:
@@ -338,18 +339,13 @@ Key behaviors:
 - Optional API key authentication via `options.apiKey`
 - Optional `options.searchType`: `"semantic"` (default) or `"text"`
 
-#### `git` (stash provider)
+#### `git` (source provider)
 
 Indexes a git repository locally and exposes its docs/skills directly in
 `akm search` and `akm show`.
 
-> **Why stash, not registry?** Git-hosted entries are immediately searchable
-> knowledge assets, not installable kits. Modeling them as a stash provider
-> gives the best UX because users can search and open docs directly instead of
-> getting `akm add ...` install prompts.
-
 ```bash
-akm stash add https://github.com/andrewyng/context-hub --provider git
+akm add https://github.com/andrewyng/context-hub --provider git
 ```
 
 Key behaviors:

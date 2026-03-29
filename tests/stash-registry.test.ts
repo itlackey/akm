@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { akmList, akmRemove, akmUpdate } from "../src/installed-kits";
+import { akmListSources, akmRemove, akmUpdate } from "../src/installed-kits";
 
 const createdTmpDirs: string[] = [];
 
@@ -64,20 +64,20 @@ afterEach(() => {
   }
 });
 
-// ── akmList ────────────────────────────────────────────────────────────
+// ── akmListSources ────────────────────────────────────────────────────
 
-describe("akmList", () => {
-  test("returns empty list when no registry installed", async () => {
+describe("akmListSources", () => {
+  test("returns empty list when no sources configured", async () => {
     saveConfig({ semanticSearch: false });
 
-    const result = await akmList({ stashDir });
+    const result = await akmListSources({ stashDir });
 
-    expect(result.totalInstalled).toBe(0);
-    expect(result.installed).toEqual([]);
+    expect(result.totalSources).toBe(0);
+    expect(result.sources).toEqual([]);
     expect(result.stashDir).toBe(stashDir);
   });
 
-  test("returns installed entries with status", async () => {
+  test("returns managed and local sources", async () => {
     const cacheDir = createTmpDir("akm-registry-cache-entry-");
     const stashRoot = createTmpDir("akm-registry-stashroot-");
 
@@ -97,15 +97,19 @@ describe("akmList", () => {
       ],
     });
 
-    const result = await akmList({ stashDir });
+    const result = await akmListSources({ stashDir });
 
-    expect(result.totalInstalled).toBe(1);
-    expect(result.installed.length).toBe(1);
-    expect(result.installed[0].id).toBe("test-pkg");
-    expect(result.installed[0].source).toBe("npm");
-    expect(result.installed[0].ref).toBe("test-pkg");
-    expect(result.installed[0].status.cacheDirExists).toBe(true);
-    expect(result.installed[0].status.stashRootExists).toBe(true);
+    expect(result.totalSources).toBe(2);
+    // Local source from stashes[]
+    const local = result.sources.find((s) => s.kind === "local");
+    expect(local).toBeDefined();
+    expect(local!.path).toBe(stashRoot);
+    // Managed source from installed[]
+    const managed = result.sources.find((s) => s.kind === "managed");
+    expect(managed).toBeDefined();
+    expect(managed!.name).toBe("test-pkg");
+    expect(managed!.ref).toBe("test-pkg");
+    expect(managed!.status.exists).toBe(true);
   });
 
   test("reports missing directories in status", async () => {
@@ -114,7 +118,6 @@ describe("akmList", () => {
 
     saveConfig({
       semanticSearch: false,
-
       installed: [
         {
           id: "missing-pkg",
@@ -128,11 +131,40 @@ describe("akmList", () => {
       ],
     });
 
-    const result = await akmList({ stashDir });
+    const result = await akmListSources({ stashDir });
 
-    expect(result.totalInstalled).toBe(1);
-    expect(result.installed[0].status.cacheDirExists).toBe(false);
-    expect(result.installed[0].status.stashRootExists).toBe(false);
+    expect(result.totalSources).toBe(1);
+    expect(result.sources[0].kind).toBe("managed");
+    expect(result.sources[0].status.exists).toBe(false);
+  });
+
+  test("filters by kind", async () => {
+    const stashRoot = createTmpDir("akm-registry-stashroot-");
+    const cacheDir = createTmpDir("akm-registry-cache-");
+
+    saveConfig({
+      semanticSearch: false,
+      stashes: [{ type: "filesystem", path: stashRoot }],
+      installed: [
+        {
+          id: "test-pkg",
+          source: "npm",
+          ref: "test-pkg",
+          artifactUrl: "https://example.com/test-pkg.tgz",
+          stashRoot,
+          cacheDir,
+          installedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const managedOnly = await akmListSources({ stashDir, kind: ["managed"] });
+    expect(managedOnly.totalSources).toBe(1);
+    expect(managedOnly.sources[0].kind).toBe("managed");
+
+    const localOnly = await akmListSources({ stashDir, kind: ["local"] });
+    expect(localOnly.totalSources).toBe(1);
+    expect(localOnly.sources[0].kind).toBe("local");
   });
 });
 
@@ -155,7 +187,7 @@ describe("akmRemove", () => {
     saveConfig({ semanticSearch: false });
 
     await expect(akmRemove({ target: "nonexistent-package", stashDir })).rejects.toThrow(
-      "No installed kit matched target",
+      "No matching source for target",
     );
   });
 

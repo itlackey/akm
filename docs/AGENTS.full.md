@@ -45,16 +45,17 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | memory | `content` (recalled context) |
 
-## Install & Manage Kits
+## Add & Manage Sources
 
 ```sh
-akm add <ref>                                 # Install a kit
-akm add @scope/kit                            # From npm
-akm add owner/repo                            # From GitHub
-akm add ./path/to/local/kit                   # From local directory
-akm list                                      # List installed kits
-akm remove <target>                           # Remove by id or ref
-akm update --all                              # Update all installed kits
+akm add <ref>                                 # Add a source
+akm add @scope/kit                            # From npm (managed)
+akm add owner/repo                            # From GitHub (managed)
+akm add ./path/to/local/kit                   # Local directory
+akm list                                      # List all sources
+akm list --kind managed                       # List managed sources only
+akm remove <target>                           # Remove by id, ref, path, or name
+akm update --all                              # Update all managed sources
 akm update <target> --force                   # Force re-download
 ```
 
@@ -102,7 +103,7 @@ akm init                                      # Initialize working stash
 akm init --dir ~/custom-stash                 # Initialize at a custom path
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
-akm stash                                     # List all stashes
+akm list                                      # List all sources
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
 akm hints                                     # Print this reference

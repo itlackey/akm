@@ -6,30 +6,39 @@ library that any AI coding assistant can use.
 
 ## Mental Model
 
-Three core concepts:
+Two core concepts:
 
 ```text
-registries    → where you discover kits (indexes of what's available)
-kits          → packages you install (cached separately, managed by akm)
-stashes       → directories of assets you own (your working stash + any extras)
+sources       → where assets come from (local dirs, packages, providers)
+registries    → where you discover sources you don't know about yet
 ```
 
-1. **Registries** are indexes of available kits. The official registry ships
-   by default; add third-party registries with `akm registry add`. Registries
-   contain **installable** kits.
-2. **Kits** are installable packages of assets. Install them with `akm add`
-   from npm, GitHub, any git host, or a local directory. Installed kits are
-   cached in a separate directory (`~/.cache/akm/registry/`) managed by akm —
-   you don't edit these files directly.
-3. **Stashes** are directories of assets you own. Your **working stash**
-   (`~/akm`) is created by `akm init`. You can register additional stashes
-   with `akm stash add` — team shared folders, project-specific directories,
-   or remote providers like OpenViking.
-4. **Assets** are the individual capabilities an agent discovers and uses:
+A **source** is anything you add with `akm add`. Each source has a **kind**
+inferred from the input:
+
+| Input | Kind | Behavior |
+| --- | --- | --- |
+| `~/.claude/skills` | `local` | Indexed in place. Not updatable. |
+| `github:owner/repo` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
+| `npm:@scope/kit` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
+| `http://host --provider openviking` | `remote` | Queried at search time. Not cached. |
+
+The user never picks the kind. `akm add` infers it.
+
+1. **Sources** are places assets come from. Add any source with `akm add` —
+   a local directory, an npm package, a GitHub repo, or a remote provider.
+   Use `akm list` to see all your sources and their kinds.
+2. **Registries** are discovery indexes for finding sources you don't know
+   about yet. The official registry ships by default; add third-party
+   registries with `akm registry add`.
+3. **Assets** are the individual capabilities an agent discovers and uses:
    scripts, skills, commands, agents, knowledge documents, and memories.
 
-When you search, akm merges all three sources transparently — your stashes
-and installed kits appear as one unified collection.
+Your **working stash** (`~/akm`) is created by `akm init` — it's the
+primary directory for your personal, editable assets.
+
+When you search, akm merges all sources transparently into one unified
+collection.
 
 ## What's In a Kit?
 
@@ -62,7 +71,7 @@ There are six asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
-| **memory** | A recalled context fragment | Contextual information the agent should consider |
+| **memory** | Context from external systems | Background information the agent should consider |
 
 ### Classification Taxonomy
 
@@ -75,6 +84,26 @@ a `SKILL.md` file.
 
 See [technical/classification.md](technical/classification.md) for the full
 specificity-based matching system.
+
+### Memories
+
+Memories are context fragments managed by external systems — OpenViking
+servers, file-based memory stores, or agent memory frameworks that write
+recalled context as markdown files. akm does not create or manage memories
+directly. It makes them searchable alongside your other assets.
+
+To add a memory source:
+
+```sh
+# File-based memory store
+akm add ~/my-agent/memories
+
+# OpenViking memory server
+akm add http://host:1933 --provider openviking --options '{"apiKey":"key"}'
+```
+
+Memory assets appear in search results with the `memory` type, giving agents
+access to recalled context from previous sessions or external knowledge bases.
 
 ## Refs
 
@@ -106,16 +135,16 @@ Assets from remote stash providers (such as OpenViking) use the same
 
 ## Search Priority
 
-When you search or show an asset, akm checks three layers in order. The
-first match wins:
+When you search or show an asset, akm checks sources in order. The first
+match wins:
 
 1. **Working stash** -- Your personal assets under `AKM_STASH_DIR` (`~/akm`)
-2. **Additional stashes** -- Directories and remote providers added via
-   `akm stash add`
-3. **Installed kits** -- Cache-managed packages added via `akm add`
+2. **Local sources** -- Directories added via `akm add`
+3. **Managed sources** -- Packages added via `akm add` (cached in `~/.cache/akm/`)
+4. **Remote sources** -- Providers queried at search time
 
-This means your local assets always override installed kit versions. Use
-`akm clone` to copy a kit asset into your working stash for editing.
+This means your local assets always override managed package versions. Use
+`akm clone` to copy an asset into your working stash for editing.
 
 ## Metadata
 
@@ -140,15 +169,17 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 
 | Term | Meaning | Example |
 | --- | --- | --- |
+| **source** | A place assets come from — added via `akm add` | A directory, npm package, or remote provider |
+| **local source** | A directory on disk, indexed in place | `~/akm`, `~/.claude/skills` |
+| **managed source** | A package fetched and cached by akm, updatable | An npm package or GitHub repo |
+| **remote source** | An API provider queried at search time | An OpenViking URL |
+| **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm init` |
+| **registry** | A discovery index for finding sources | The official registry, skills.sh |
 | **ref** (asset ref) | A `type:name` handle for an asset | `script:deploy.sh` |
 | **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |
 | **registry ref** | A package identifier passed to `akm add` | `npm:@scope/pkg`, `github:owner/repo` |
 | **git ref** | A branch, tag, or commit (used when installing) | `main`, `v1.0.0` |
-| **stash** | A directory of assets you own | `~/akm`, `~/.claude/skills` |
-| **working stash** | Your primary stash, created by `akm init` | `~/akm` |
-| **additional stash** | An extra directory or remote provider registered via `akm stash add` | A filesystem path or OpenViking URL |
-| **kit** | An installable package of assets, cached separately from stashes | An npm package or GitHub repo |
-| **registry** | An index of available (installable) kits | The official registry, skills.sh |
+| **kit** | A managed source (backward-compatible term) | An npm package or GitHub repo |
 | **search source** | Where to look: `stash` (local), `registry`, or `both` | `--source stash` |
 
 ## Further Reading

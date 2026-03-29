@@ -31,11 +31,10 @@ akm mirrors the Debian apt model with four layers:
 The layers map cleanly:
 
 1. **Registries** are `sources.list` -- indexes of what's available. The official registry ships by default; add third-party ones with `akm registry add`.
-2. **Kits** are packages -- installable bundles of assets. Install with `akm add`, remove with `akm remove`, update with `akm update`. Installed kits are cached separately in `~/.cache/akm/`, managed by akm.
-3. **Stashes** are the local directories you own -- your working stash (`~/akm`) plus any additional stashes registered via `akm stash add`. Think of them like `/usr/local/bin` (your stuff) alongside `/usr/bin` (system packages).
-4. **Assets** are the individual programs/files -- the scripts, skills, commands, agents, and knowledge documents an agent discovers and uses.
+2. **Sources** are where assets come from. Add any source with `akm add` -- a local directory, npm package, GitHub repo, or remote provider. Managed sources (npm, GitHub) are cached in `~/.cache/akm/`; local directories are indexed in place.
+3. **Assets** are the individual programs/files -- the scripts, skills, commands, agents, and knowledge documents an agent discovers and uses.
 
-Search merges stashes and installed kits into one searchable collection, just as `$PATH` merges multiple directories.
+Search merges all sources into one searchable collection, just as `$PATH` merges multiple directories.
 
 ## The Rules
 
