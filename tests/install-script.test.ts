@@ -36,6 +36,9 @@ interface HarnessOptions {
   checksumMode?: "match" | "missing" | "mismatch";
   installDirWritable?: boolean;
   useSudo?: boolean;
+  checksumTool?: "sha256sum" | "shasum" | "none";
+  installDirName?: string;
+  sudoSucceeds?: boolean;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -43,7 +46,7 @@ function createHarness(options: HarnessOptions = {}) {
   tempRoots.push(root);
 
   const fakeBin = path.join(root, "fakebin");
-  const installDir = path.join(root, "install-dir");
+  const installDir = path.join(root, options.installDirName ?? "install-dir");
   const logFile = path.join(root, "requests.log");
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(installDir, { recursive: true });
@@ -54,7 +57,13 @@ function createHarness(options: HarnessOptions = {}) {
   addProxy(fakeBin, "mv");
   addProxy(fakeBin, "rm");
 
-  addProxy(fakeBin, "sha256sum");
+  const checksumTool = options.checksumTool ?? "sha256sum";
+  if (checksumTool === "sha256sum") {
+    addProxy(fakeBin, "sha256sum");
+  }
+  if (checksumTool === "shasum") {
+    addProxy(fakeBin, "shasum");
+  }
 
   const osName = options.osName ?? "Linux";
   const archName = options.archName ?? "x86_64";
@@ -131,6 +140,9 @@ fi
       `#!${BASH_PATH}
 set -euo pipefail
 printf 'sudo %s\n' "$*" >> "${logFile}"
+if [ "${options.sudoSucceeds === false ? "0" : "1"}" = "0" ]; then
+  exit 127
+fi
 if [ "$1" = "mv" ]; then
   dest="${installDir}"
   ${CHMOD_PATH} u+w "$dest"
@@ -244,6 +256,46 @@ describe("install.sh", () => {
     const log = fs.readFileSync(harness.logFile, "utf8");
     expect(log).toContain("sudo mv");
     expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
+  });
+
+  test("falls back to shasum when sha256sum is unavailable", () => {
+    const harness = createHarness({ checksumTool: "shasum" });
+    const result = harness.run();
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
+  });
+
+  test("fails when no checksum tool is available", () => {
+    const harness = createHarness({ checksumTool: "none" });
+    const result = harness.run();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("sha256sum or shasum is required");
+  });
+
+  test("fails clearly on unsupported architecture", () => {
+    const harness = createHarness({ archName: "riscv64" });
+    const result = harness.run();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unsupported architecture");
+  });
+
+  test("installs successfully when install dir contains spaces", () => {
+    const harness = createHarness({ installDirName: "install dir with spaces" });
+    const result = harness.run();
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
+  });
+
+  test("fails clearly when sudo is required but unavailable", () => {
+    const harness = createHarness({ installDirWritable: false, useSudo: true, sudoSucceeds: false });
+    const result = harness.run();
+
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(false);
   });
 
   test("prints the Windows install.ps1 guidance on MINGW", () => {

@@ -41,6 +41,7 @@ type TransformerPipelineFactory = (
 ) => Promise<TransformerPipeline>;
 
 const LOCAL_EMBEDDER_DTYPE = "fp32";
+const LOCAL_EMBEDDER_FALLBACK_DTYPE = "auto";
 
 // Cache the promise itself (not the resolved result) so concurrent calls share
 // the same initialisation work and never download the model twice.
@@ -92,11 +93,12 @@ async function createLocalPipeline(
     }
 
     warn(
-      'Local embedding model "%s" rejected explicit dtype "%s"; retrying with library default.',
+      'Local embedding model "%s" rejected explicit dtype "%s"; retrying with explicit fallback dtype "%s".',
       modelName,
       LOCAL_EMBEDDER_DTYPE,
+      LOCAL_EMBEDDER_FALLBACK_DTYPE,
     );
-    return pipelineFn("feature-extraction", modelName);
+    return pipelineFn("feature-extraction", modelName, { dtype: LOCAL_EMBEDDER_FALLBACK_DTYPE });
   }
 }
 

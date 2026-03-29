@@ -230,6 +230,7 @@ describe("local embedder pipeline setup", () => {
       if (options?.dtype === "fp32") {
         throw new Error('Unsupported dtype "fp32"');
       }
+      expect(options?.dtype).toBe("auto");
       return async () => ({ data: new Float32Array([0.4, 0.5, 0.6]) });
     });
 
@@ -244,10 +245,32 @@ describe("local embedder pipeline setup", () => {
       expect(result[2]).toBeCloseTo(0.6, 6);
       expect(pipelineMock).toHaveBeenCalledTimes(2);
       expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
-      expect(pipelineMock.mock.calls[1]?.[2]).toBeUndefined();
+      expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  test("never retries without a dtype option after fp32 rejection", async () => {
+    const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
+      if (options?.dtype === "fp32") {
+        throw new Error('Unsupported dtype "fp32"');
+      }
+      if (!options || options.dtype === undefined) {
+        throw new Error("pipeline retried without dtype");
+      }
+      return async () => ({ data: new Float32Array([0.7, 0.8, 0.9]) });
+    });
+
+    pipelineImpl = pipelineMock;
+
+    const result = await embed("hello fallback auto");
+    expect(result[0]).toBeCloseTo(0.7, 6);
+    expect(result[1]).toBeCloseTo(0.8, 6);
+    expect(result[2]).toBeCloseTo(0.9, 6);
+    expect(pipelineMock).toHaveBeenCalledTimes(2);
+    expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
+    expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
   });
 });

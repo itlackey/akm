@@ -34,7 +34,7 @@ run_step "Lint" bunx biome check --write src/ tests/
 run_step "Type Check" bunx tsc --noEmit
 run_step \
 	"Install and Setup Regression Suite" \
-	bun test tests/setup-run.integration.ts tests/install-script.test.ts tests/setup-wizard.test.ts tests/setup.test.ts
+	bun test tests/setup-run.integration.test.ts tests/install-script.test.ts tests/setup-wizard.test.ts tests/setup.test.ts
 run_step "Full Test Suite" bun test
 
 if [ "$SKIP_DOCKER" = false ]; then

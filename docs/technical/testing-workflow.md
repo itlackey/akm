@@ -42,7 +42,7 @@ Relevant coverage:
 - `tests/stash-registry.test.ts` - `list`, `remove`, `update`, cache cleanup
 - `tests/registry-install.test.ts` - install resolution, tar safety, local/git/npm paths
 - `tests/e2e.test.ts` - real CLI workflows and subprocess behavior
-- `tests/setup-run.integration.ts` - full setup wizard orchestration and failure handling
+- `tests/setup-run.integration.test.ts` - full setup wizard orchestration and failure handling
 - `tests/install-script.test.ts` - repeatable `install.sh` edge cases and permission paths
 
 ### 2. End-to-end CLI validation
@@ -64,6 +64,50 @@ This suite exercises real flows, including:
 - progressive indexing and re-indexing
 - update and upgrade command error paths
 - knowledge view modes and mixed asset discovery
+
+## Semantic Search States
+
+Semantic search does not behave as a simple on/off feature at runtime. Testing
+should distinguish between saved-config state and actual readiness.
+
+### Disabled in config
+
+Semantic search is saved as disabled when:
+
+- the user opts out during setup
+- the user enables it and chooses to prepare assets immediately, but setup cannot
+  prepare them
+- local asset preparation fails because the model cannot be downloaded
+- `@huggingface/transformers` is missing and automatic install fails
+- remote embedding verification fails because the endpoint is unreachable
+
+These cases are covered by `tests/setup-run.integration.test.ts`.
+
+### Enabled but not yet verified
+
+Semantic search stays enabled when:
+
+- the user enables it but skips asset preparation during setup
+
+In that state, the saved config is optimistic. Functionality is expected to be
+verified later by `akm index --full --verbose`.
+
+### Enabled with degraded runtime
+
+Semantic search stays enabled, but may run in a degraded mode, when:
+
+- the embedding model or endpoint is available, but `sqlite-vec` is not present
+- the local database opens poorly enough that sqlite-vec capability cannot be checked
+
+In those cases, akm warns and falls back to the JS vector path instead of
+disabling semantic search entirely.
+
+### What to test explicitly
+
+- config ends up disabled when asset preparation fails before first successful index
+- config stays enabled when preparation is skipped intentionally
+- config stays enabled when only sqlite-vec/native acceleration is unavailable
+- index verification messages match the actual readiness state instead of silently succeeding
 
 ### 3. Docker deployment validation
 
@@ -121,7 +165,7 @@ source management, or Docker assets:
 
 ```sh
 bun test
-bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts tests/setup-run.integration.ts tests/install-script.test.ts
+bun test tests/e2e.test.ts tests/self-update.test.ts tests/stash-registry.test.ts tests/registry-install.test.ts tests/setup-run.integration.test.ts tests/install-script.test.ts
 ./tests/docker/run-docker-tests.sh
 bunx biome check --write src/ tests/
 bunx tsc --noEmit
