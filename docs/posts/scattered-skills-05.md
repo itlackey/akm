@@ -1,5 +1,5 @@
 ---
-title: Stop Copying Skills Between Claude Code, Cursor, and Codex
+title: 'Stop Copying Skills Between Claude Code, Cursor, and Codex'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
 description: Your agent skills are scattered across three tools. Here's why indexing in place beats copying or syncing.
@@ -9,6 +9,7 @@ tags:
   - cli
   - skills
 published: false
+id: 3426225
 ---
 
 This is part five in a series about wrangling the growing pile of skills, scripts, and context that AI coding agents depend on. In [part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I covered why progressive disclosure beats dumping everything into context. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) showed how `akm` unifies your local assets across platforms into one searchable stash. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking for teams. And [part four](https://dev.to/itlackey/your-agent-doesnt-know-what-the-community-already-figured-out) plugged in community knowledge through Context Hub.
