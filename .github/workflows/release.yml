@@ -75,7 +75,15 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: bun install
       - run: npm install -g npm@latest
-      - run: npm publish --provenance --access public
+      - name: Publish to npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if echo "$VERSION" | grep -qE '[-]'; then
+            echo "Prerelease detected ($VERSION) — publishing with --tag next"
+            npm publish --provenance --access public --tag next
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
