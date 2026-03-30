@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/*"]
   pull_request:
     branches: [main]
 
@@ -18,3 +18,45 @@ jobs:
 
       - name: Full project check
         run: bun run check
+
+  semantic-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ runner.os }}-v1
+
+      - name: Run semantic search e2e tests
+        run: AKM_SEMANTIC_TESTS=1 bun test tests/semantic-search-e2e.test.ts
+        env:
+          HF_HOME: ~/.cache/huggingface
+
+  docker-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install
+
+      - name: Run Docker install tests
+        run: AKM_DOCKER_TESTS=1 bun test tests/docker-install.test.ts
+        env:
+          HF_HOME: ~/.cache/huggingface
+          DOCKER_BUILDKIT: "1"

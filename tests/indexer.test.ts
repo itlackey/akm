@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/db";
 import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
@@ -536,7 +536,10 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   const fp1 = getMeta(db, "embeddingFingerprint");
   expect(fp1).toContain("local:");
 
-  // Fake some embeddings to verify they get purged
+  // Verify embeddings were generated during first index
+  const embeddingsAfterFirst = getEmbeddingCount(db);
+  expect(embeddingsAfterFirst).toBeGreaterThan(0);
+
   const entryCount = db.prepare("SELECT COUNT(*) as c FROM entries").get() as { c: number };
   expect(entryCount.c).toBeGreaterThan(0);
   closeDatabase(db);
@@ -560,6 +563,15 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
   // Fingerprint should be back to local (since we used default config)
   expect(fp2).toContain("local:");
   expect(fp2).not.toBe("remote:http://localhost:11434/v1/embeddings|nomic-embed-text|768");
+
+  // After reindex, embeddings should still exist (purged then regenerated)
+  const embeddingsAfterReindex = getEmbeddingCount(db3);
+  expect(embeddingsAfterReindex).toBeGreaterThan(0);
+
+  // hasEmbeddings meta should be "1" after reindex
+  const hasEmbeddings = getMeta(db3, "hasEmbeddings");
+  expect(hasEmbeddings).toBe("1");
+
   closeDatabase(db3);
 
   fs.rmSync(stashDir, { recursive: true, force: true });

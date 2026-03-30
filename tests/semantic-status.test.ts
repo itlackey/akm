@@ -257,6 +257,46 @@ describe("getEffectiveSemanticStatus", () => {
     const status = makeStatus({ status: "blocked", lastCheckedAt: "not-a-date" });
     expect(getEffectiveSemanticStatus(autoConfig(), status)).toBe("pending");
   });
+
+  // ── File-round-trip auto-recovery tests (exercise readSemanticStatus path) ──
+
+  test("returns 'pending' for blocked status older than BLOCKED_TTL_MS (file round-trip)", () => {
+    const AUTO_CONFIG = autoConfig();
+    const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    writeSemanticStatus({
+      status: "blocked",
+      reason: "missing-package",
+      providerFingerprint: deriveSemanticProviderFingerprint(AUTO_CONFIG.embedding),
+      lastCheckedAt: oldDate,
+    });
+    const result = getEffectiveSemanticStatus(AUTO_CONFIG);
+    expect(result).toBe("pending"); // auto-recovered
+  });
+
+  test("returns 'blocked' for blocked status newer than BLOCKED_TTL_MS (file round-trip)", () => {
+    const AUTO_CONFIG = autoConfig();
+    const recentDate = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    writeSemanticStatus({
+      status: "blocked",
+      reason: "missing-package",
+      providerFingerprint: deriveSemanticProviderFingerprint(AUTO_CONFIG.embedding),
+      lastCheckedAt: recentDate,
+    });
+    const result = getEffectiveSemanticStatus(AUTO_CONFIG);
+    expect(result).toBe("blocked"); // not yet recovered
+  });
+
+  test("returns 'pending' for blocked status with invalid lastCheckedAt (file round-trip)", () => {
+    const AUTO_CONFIG = autoConfig();
+    writeSemanticStatus({
+      status: "blocked",
+      reason: "unknown",
+      providerFingerprint: deriveSemanticProviderFingerprint(AUTO_CONFIG.embedding),
+      lastCheckedAt: "not-a-date",
+    });
+    const result = getEffectiveSemanticStatus(AUTO_CONFIG);
+    expect(result).toBe("pending"); // NaN check triggers recovery
+  });
 });
 
 // ── isSemanticRuntimeReady ────────────────────────────────────────────────────
@@ -433,6 +473,24 @@ describe("classifySemanticFailure", () => {
 
   test("mixed-case Auth → remote-auth", () => {
     expect(classifySemanticFailure("Auth token expired")).toBe("remote-auth");
+  });
+
+  // ── Alpine / musl real-world error messages ────────────────────────────────
+
+  test("Alpine musl linker error → native-lib-missing", () => {
+    expect(
+      classifySemanticFailure(
+        "Error: Dynamic Linking Error: /opt/akm/node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node: Error loading shared library ld-linux-x86-64.so.2: No such file or directory",
+      ),
+    ).toBe("native-lib-missing");
+  });
+
+  test("GLIBC version not found → native-lib-missing", () => {
+    expect(
+      classifySemanticFailure(
+        "/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.28' not found (required by /opt/akm/node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node)",
+      ),
+    ).toBe("native-lib-missing");
   });
 });
 

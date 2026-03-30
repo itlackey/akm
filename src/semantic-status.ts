@@ -130,9 +130,9 @@ export function classifySemanticFailure(message: string): SemanticSearchReason {
   if (lower.includes("eacces") || lower.includes("permission denied")) {
     return "permission-denied";
   }
-  if (lower.includes("onnx") || lower.includes("onnxruntime")) {
-    return "onnx-runtime-failed";
-  }
+  // Native library / linker errors must be checked before the generic ONNX
+  // match because Alpine/musl linker errors often contain "onnxruntime" in
+  // the library path (e.g. onnxruntime_binding.node).
   if (
     lower.includes("shared library") ||
     lower.includes("glibc") ||
@@ -140,6 +140,9 @@ export function classifySemanticFailure(message: string): SemanticSearchReason {
     lower.includes("libc.so")
   ) {
     return "native-lib-missing";
+  }
+  if (lower.includes("onnx") || lower.includes("onnxruntime")) {
+    return "onnx-runtime-failed";
   }
   if (lower.includes("404") || lower.includes("model not found") || lower.includes("bad request")) {
     return "remote-model";
