@@ -182,12 +182,13 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
     // Re-link detached usage_events to their new entry_ids via entry_ref.
     // entry_ref is "type:name" (e.g., "skill:code-review"), entry_key is "stashDir:type:name".
-    // Match by checking if entry_key ends with the entry_ref pattern.
+    // Use substr to extract the "type:name" suffix from entry_key for exact comparison
+    // (avoids LIKE which would require escaping % and _ in user-facing names).
     try {
       db.exec(`
         UPDATE usage_events SET entry_id = (
           SELECT e.id FROM entries e
-          WHERE e.entry_key LIKE '%:' || usage_events.entry_ref
+          WHERE substr(e.entry_key, length(e.entry_key) - length(usage_events.entry_ref)) = ':' || usage_events.entry_ref
           LIMIT 1
         )
         WHERE entry_id IS NULL AND entry_ref IS NOT NULL

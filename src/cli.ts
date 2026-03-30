@@ -172,11 +172,7 @@ function shapeSearchOutput(
   return {
     hits: shapedHits,
     ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-    ...(typeof result.semanticSearch === "object" &&
-    result.semanticSearch !== null &&
-    (result.semanticSearch as Record<string, unknown>).status === "blocked"
-      ? { warnings: result.warnings }
-      : {}),
+    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
   };
 }

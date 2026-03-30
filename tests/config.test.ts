@@ -184,6 +184,21 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
+  test("migrates legacy semanticSearch: true to semanticSearchMode: 'auto'", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: true }));
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
+  test("migrates legacy semanticSearch: false to semanticSearchMode: 'off'", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("semanticSearchMode takes precedence over legacy semanticSearch", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", semanticSearch: true }));
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
   test("ignores stash-root config.json files", () => {
     const stashDir = makeTmpDir();
     try {

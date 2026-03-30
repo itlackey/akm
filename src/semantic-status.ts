@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig, EmbeddingConnectionConfig } from "./config";
+import { DEFAULT_LOCAL_MODEL } from "./embedder";
 import { getCacheDir, getSemanticStatusPath } from "./paths";
 
 export type SemanticSearchRuntimeStatus = "pending" | "ready-js" | "ready-vec" | "blocked";
@@ -36,7 +37,7 @@ export function deriveSemanticProviderFingerprint(embedding?: EmbeddingConnectio
   if (embedding?.endpoint) {
     return `remote:${embedding.endpoint}|${embedding.model}|${embedding.dimension ?? "default"}`;
   }
-  return `local:${embedding?.localModel ?? "Xenova/bge-small-en-v1.5"}`;
+  return `local:${embedding?.localModel ?? DEFAULT_LOCAL_MODEL}`;
 }
 
 export function readSemanticStatus(): SemanticSearchStatus | undefined {

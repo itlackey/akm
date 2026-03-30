@@ -233,6 +233,10 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
     config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
   } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
     config.semanticSearchMode = raw.semanticSearchMode;
+  } else if (typeof (raw as { semanticSearch?: unknown }).semanticSearch === "boolean") {
+    // Legacy config: older versions used `semanticSearch` (boolean) instead of `semanticSearchMode`
+    const legacySemanticSearch = (raw as { semanticSearch: boolean }).semanticSearch;
+    config.semanticSearchMode = legacySemanticSearch ? "auto" : "off";
   }
 
   // Migrate legacy searchPaths into stashes
