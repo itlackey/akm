@@ -66,8 +66,8 @@ export interface StashConfigEntry {
 export interface AkmConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
-  /** Whether semantic search is enabled. Default: true */
-  semanticSearch: boolean;
+  /** User preference for semantic search. "auto" means use semantic search whenever runtime prerequisites are healthy. */
+  semanticSearchMode: "off" | "auto";
   /** OpenAI-compatible embedding endpoint config. If not set, uses local @huggingface/transformers */
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
@@ -95,7 +95,7 @@ export interface OutputConfig {
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CONFIG: AkmConfig = {
-  semanticSearch: true,
+  semanticSearchMode: "auto",
   registries: [
     { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" },
     { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh" },
@@ -228,8 +228,15 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
     config.stashDir = raw.stashDir.trim();
   }
 
-  if (typeof raw.semanticSearch === "boolean") {
-    config.semanticSearch = raw.semanticSearch;
+  // Backward compatibility: coerce legacy boolean values to string
+  if (typeof raw.semanticSearchMode === "boolean") {
+    config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
+  } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
+    config.semanticSearchMode = raw.semanticSearchMode;
+  } else if (typeof (raw as { semanticSearch?: unknown }).semanticSearch === "boolean") {
+    // Legacy config: older versions used `semanticSearch` (boolean) instead of `semanticSearchMode`
+    const legacySemanticSearch = (raw as { semanticSearch: boolean }).semanticSearch;
+    config.semanticSearchMode = legacySemanticSearch ? "auto" : "off";
   }
 
   // Migrate legacy searchPaths into stashes

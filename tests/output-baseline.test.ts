@@ -96,7 +96,8 @@ describe("output baseline", () => {
     const output = runCli(stashDir, ["search", "architect", "--format=json"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
-    expect(Object.keys(json)).toEqual(["hits"]);
+    // hits is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("hits");
     expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "type"]);
   });
 
@@ -203,7 +204,8 @@ describe("output baseline", () => {
 
     const overridden = runCli(stashDir, ["search", "deploy", "--format=json", "--detail=brief"], config);
     const json = JSON.parse(overridden) as { hits: Array<Record<string, unknown>> };
-    expect(Object.keys(json)).toEqual(["hits"]);
+    // hits is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("hits");
     expect(Object.keys(json.hits[0] ?? {})).not.toContain("origin");
   });
 

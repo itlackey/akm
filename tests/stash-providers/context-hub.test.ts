@@ -182,7 +182,7 @@ describe("GitStashProvider", () => {
 
     try {
       saveConfig({
-        semanticSearch: false,
+        semanticSearchMode: "off",
         stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
       });
       resetConfigCache();

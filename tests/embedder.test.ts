@@ -4,6 +4,14 @@ import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEm
 
 let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
 
+function createLocalVector(values: number[] = [0.1, 0.2, 0.3], dimension = 384): Float32Array {
+  const vector = new Float32Array(dimension);
+  values.forEach((value, index) => {
+    vector[index] = value;
+  });
+  return vector;
+}
+
 mock.module("@huggingface/transformers", () => ({
   pipeline: async (task: string, model: string, options?: { dtype?: string }) => {
     if (!pipelineImpl) {
@@ -213,7 +221,7 @@ describe("local embedder pipeline setup", () => {
   test("requests fp32 dtype for local embeddings", async () => {
     const pipelineMock = mock(async (_task: string, _model: string, options?: { dtype?: string }) => {
       expect(options?.dtype).toBe("fp32");
-      return async () => ({ data: new Float32Array([0.1, 0.2, 0.3]) });
+      return async () => ({ data: createLocalVector([0.1, 0.2, 0.3]) });
     });
 
     pipelineImpl = pipelineMock;
@@ -231,7 +239,7 @@ describe("local embedder pipeline setup", () => {
         throw new Error('Unsupported dtype "fp32"');
       }
       expect(options?.dtype).toBe("auto");
-      return async () => ({ data: new Float32Array([0.4, 0.5, 0.6]) });
+      return async () => ({ data: createLocalVector([0.4, 0.5, 0.6]) });
     });
 
     pipelineImpl = pipelineMock;
@@ -260,17 +268,24 @@ describe("local embedder pipeline setup", () => {
       if (!options || options.dtype === undefined) {
         throw new Error("pipeline retried without dtype");
       }
-      return async () => ({ data: new Float32Array([0.7, 0.8, 0.9]) });
+      return async () => ({ data: createLocalVector([0.7, 0.8, 0.9]) });
     });
 
     pipelineImpl = pipelineMock;
 
-    const result = await embed("hello fallback auto");
-    expect(result[0]).toBeCloseTo(0.7, 6);
-    expect(result[1]).toBeCloseTo(0.8, 6);
-    expect(result[2]).toBeCloseTo(0.9, 6);
-    expect(pipelineMock).toHaveBeenCalledTimes(2);
-    expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
-    expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await embed("hello fallback auto");
+      expect(result[0]).toBeCloseTo(0.7, 6);
+      expect(result[1]).toBeCloseTo(0.8, 6);
+      expect(result[2]).toBeCloseTo(0.9, 6);
+      expect(pipelineMock).toHaveBeenCalledTimes(2);
+      expect(pipelineMock.mock.calls[0]?.[2]).toEqual({ dtype: "fp32" });
+      expect(pipelineMock.mock.calls[1]?.[2]).toEqual({ dtype: "auto" });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

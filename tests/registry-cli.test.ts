@@ -299,7 +299,7 @@ describe("config roundtrip", () => {
       { url: "https://a.com/index.json", name: "alpha" },
       { url: "https://b.com/index.json", name: "beta", enabled: false },
     ];
-    saveConfig({ semanticSearch: true, registries });
+    saveConfig({ semanticSearchMode: "auto", registries });
 
     const loaded = loadConfig();
     expect(loaded.registries?.length).toBe(2);
@@ -310,7 +310,7 @@ describe("config roundtrip", () => {
   test("invalid registry entries are filtered during load", () => {
     const configPath = getConfigPath();
     writeConfig(configPath, {
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       registries: [
         { url: "https://valid.com/index.json", name: "valid" },
         { url: "", name: "empty-url" },

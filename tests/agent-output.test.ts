@@ -148,7 +148,8 @@ describe("--for-agent output mode", () => {
     // Default brief search still has same shape
     const searchOutput = runCli(stashDir, ["search", "architect", "--format=json"]);
     const searchJson = JSON.parse(searchOutput) as { hits: Array<Record<string, unknown>> };
-    expect(Object.keys(searchJson)).toEqual(["hits"]);
+    // hits is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(searchJson)).toContain("hits");
     // Standard brief output includes at least name, type, action (may also include estimatedTokens etc.)
     const hit = searchJson.hits[0] ?? {};
     expect(hit).toHaveProperty("name");

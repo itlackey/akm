@@ -4,6 +4,7 @@ import { getAssetTypes } from "./asset-spec";
 import { loadConfig } from "./config";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openDatabase } from "./db";
 import { getDbPath } from "./paths";
+import { getEffectiveSemanticStatus, readSemanticStatus } from "./semantic-status";
 import type { InfoResponse } from "./stash-types";
 import { pkgVersion } from "./version";
 
@@ -19,9 +20,12 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   // Asset types
   const assetTypes = getAssetTypes();
 
+  const semanticRuntime = readSemanticStatus();
+  const semanticStatus = getEffectiveSemanticStatus(config, semanticRuntime);
+
   // Search modes
   const searchModes: string[] = ["fts"];
-  if (config.semanticSearch) {
+  if (semanticStatus === "ready-js" || semanticStatus === "ready-vec") {
     searchModes.push("semantic", "hybrid");
   }
 
@@ -50,6 +54,12 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     version: pkgVersion,
     assetTypes,
     searchModes,
+    semanticSearch: {
+      mode: config.semanticSearchMode,
+      status: semanticStatus,
+      ...(semanticRuntime?.reason ? { reason: semanticRuntime.reason } : {}),
+      ...(semanticRuntime?.message ? { message: semanticRuntime.message } : {}),
+    },
     registries,
     stashProviders,
     indexStats,

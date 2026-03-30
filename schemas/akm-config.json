@@ -10,10 +10,11 @@
       "description": "Path to the working stash directory. Resolved from AKM_STASH_DIR env var → this config value → platform default (~/akm or ~/Documents/akm on Windows). Supports ${VAR} and ${VAR:-default} environment variable expansion.",
       "minLength": 1
     },
-    "semanticSearch": {
-      "type": "boolean",
-      "description": "Whether semantic vector search is enabled. When true, the indexer builds vector embeddings for FTS5 + vector search. When false, only text-based search is available.",
-      "default": true
+    "semanticSearchMode": {
+      "type": "string",
+      "enum": ["off", "auto"],
+      "description": "Semantic vector search mode. \"auto\" enables embedding generation and hybrid FTS5 + vector search. \"off\" disables embeddings and uses text-only search. Legacy boolean values (true/false) are accepted for backward compatibility.",
+      "default": "auto"
     },
     "embedding": {
       "$ref": "#/$defs/EmbeddingConnectionConfig"
@@ -288,7 +289,7 @@
   },
   "examples": [
     {
-      "semanticSearch": true,
+      "semanticSearchMode": "auto",
       "registries": [
         {
           "url": "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
@@ -306,7 +307,7 @@
       }
     },
     {
-      "semanticSearch": true,
+      "semanticSearchMode": "auto",
       "stashDir": "/home/user/my-stash",
       "embedding": {
         "provider": "ollama",

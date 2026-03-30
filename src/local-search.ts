@@ -31,6 +31,12 @@ import { buildSearchText } from "./indexer";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
+import {
+  deriveSemanticProviderFingerprint,
+  getEffectiveSemanticStatus,
+  isSemanticRuntimeReady,
+  readSemanticStatus,
+} from "./semantic-status";
 import { makeAssetRef } from "./stash-ref";
 import type { AkmSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
 import { walkStashFlat } from "./walker";
@@ -69,6 +75,27 @@ export async function searchLocal(input: {
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const allStashDirs = sources.map((s) => s.path);
+  const rawStatus = readSemanticStatus();
+  const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
+  const warnings: string[] = [];
+  if (config.semanticSearchMode === "auto" && semanticStatus === "pending") {
+    // Distinguish between fingerprint mismatch (config changed) and never-set-up.
+    const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
+    if (rawStatus && rawStatus.providerFingerprint !== currentFingerprint) {
+      warnings.push(
+        "Embedding config changed. Run 'akm index --full' to rebuild the semantic index with the new provider.",
+      );
+    } else {
+      warnings.push(
+        "Semantic search is pending verification. Run 'akm setup' or 'akm index --full' to enable semantic search.",
+      );
+    }
+  }
+  if (config.semanticSearchMode === "auto" && semanticStatus === "blocked") {
+    warnings.push(
+      "Semantic search is currently blocked. Using keyword search until the semantic backend is healthy again.",
+    );
+  }
 
   // Try to open the database
   const dbPath = getDbPath();
@@ -79,7 +106,19 @@ export async function searchLocal(input: {
       try {
         const entryCount = getEntryCount(db);
         const storedStashDir = getMeta(db, "stashDir");
-        if (entryCount > 0 && storedStashDir === stashDir) {
+        // Accept the index if the incoming stashDir matches the primary OR
+        // appears anywhere in the stored stashDirs array. This prevents
+        // unnecessary substring fallback when only the primary dir changes.
+        let stashDirMatch = storedStashDir === stashDir;
+        if (!stashDirMatch) {
+          try {
+            const storedDirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
+            stashDirMatch = storedDirs.includes(stashDir);
+          } catch {
+            /* ignore malformed stashDirs */
+          }
+        }
+        if (entryCount > 0 && stashDirMatch) {
           const { hits, embedMs, rankMs } = await searchDatabase(
             db,
             query,
@@ -96,6 +135,7 @@ export async function searchLocal(input: {
               hits.length === 0
                 ? "No matching stash assets were found. Try running 'akm index' to rebuild."
                 : undefined,
+            warnings: warnings.length > 0 ? warnings : undefined,
             embedMs,
             rankMs,
           };
@@ -118,6 +158,7 @@ export async function searchLocal(input: {
   return {
     hits,
     tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
@@ -448,7 +489,8 @@ async function tryVecScores(
   k: number,
   config: AkmConfig,
 ): Promise<Map<number, number> | null> {
-  if (!config.semanticSearch) return null;
+  const semanticStatus = getEffectiveSemanticStatus(config, readSemanticStatus());
+  if (!isSemanticRuntimeReady(semanticStatus)) return null;
   const hasEmbeddings = getMeta(db, "hasEmbeddings");
   if (hasEmbeddings !== "1") return null;
 

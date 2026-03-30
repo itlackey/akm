@@ -56,7 +56,7 @@ beforeAll(async () => {
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
 
   saveConfig({
-    semanticSearch: false,
+    semanticSearchMode: "off",
     stashes: [{ type: "filesystem", path: FIXTURE_STASH }],
     registries: [],
   });

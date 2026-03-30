@@ -127,9 +127,19 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
-  // Check stored version — if it differs from DB_VERSION, drop and recreate all tables
+  // Check stored version — if it differs from DB_VERSION, drop and recreate all tables.
+  // Usage events are preserved across version upgrades so that utility score
+  // history is not silently lost.
   const storedVersion = getMeta(db, "version");
   if (storedVersion && storedVersion !== String(DB_VERSION)) {
+    // Back up usage_events before dropping tables
+    let usageBackup: Array<Record<string, unknown>> = [];
+    try {
+      usageBackup = db.prepare("SELECT * FROM usage_events").all() as typeof usageBackup;
+    } catch {
+      /* table may not exist in older versions */
+    }
+
     db.exec("DROP TABLE IF EXISTS utility_scores");
     db.exec("DROP TABLE IF EXISTS usage_events");
     db.exec("DROP TABLE IF EXISTS embeddings");
@@ -139,6 +149,10 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     db.exec("DROP INDEX IF EXISTS idx_entries_type");
     db.exec("DROP TABLE IF EXISTS entries");
     db.exec("DELETE FROM index_meta");
+
+    // Store backup for restoration after ensureUsageEventsSchema runs
+    (db as unknown as Record<string, unknown>).__usageBackup = usageBackup;
+    console.warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
   }
 
   db.exec(`
@@ -222,6 +236,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       } catch {
         /* ignore */
       }
+      setMeta(db, "hasEmbeddings", "0");
     }
 
     const vecExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries_vec'").get();
@@ -237,10 +252,50 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       `);
     }
     setMeta(db, "embeddingDim", String(embeddingDim));
+  } else {
+    // Also purge BLOB embeddings on dimension change (JS fallback path).
+    // When sqlite-vec is unavailable, entries_vec doesn't exist but the BLOB
+    // embeddings table still stores vectors. If the configured dimension
+    // changes, those stored BLOBs become silently incompatible.
+    const storedDim = getMeta(db, "embeddingDim");
+    if (storedDim && storedDim !== String(embeddingDim)) {
+      try {
+        db.exec("DELETE FROM embeddings");
+      } catch {
+        /* ignore */
+      }
+      setMeta(db, "hasEmbeddings", "0");
+    }
+    setMeta(db, "embeddingDim", String(embeddingDim));
   }
 
   // Usage telemetry table
   ensureUsageEventsSchema(db);
+
+  // Restore usage_events that were backed up during a version upgrade.
+  // Wrapped in outer try/catch because schema changes across versions may
+  // make the backup incompatible with the new table definition.
+  const dbAny = db as unknown as Record<string, unknown>;
+  const backup = dbAny.__usageBackup as Array<Record<string, unknown>> | undefined;
+  if (backup && backup.length > 0) {
+    try {
+      db.transaction(() => {
+        const cols = Object.keys(backup[0]);
+        const placeholders = cols.map(() => "?").join(", ");
+        const insert = db.prepare(`INSERT INTO usage_events (${cols.join(", ")}) VALUES (${placeholders})`);
+        for (const row of backup) {
+          try {
+            insert.run(...cols.map((c) => row[c] as string | number | null));
+          } catch {
+            /* skip rows that fail */
+          }
+        }
+      })();
+    } catch {
+      /* schema changed too much — discard backup gracefully */
+    }
+    delete dbAny.__usageBackup;
+  }
 }
 
 // ── Meta helpers ────────────────────────────────────────────────────────────

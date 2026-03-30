@@ -39,7 +39,7 @@ afterEach(() => {
 
 describe("resolveStashSources", () => {
   test("returns primary stash as first source", () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
     const sources = resolveStashSources();
     expect(sources.length).toBeGreaterThanOrEqual(1);
     expect(sources[0].path).toBe(stashDir);
@@ -49,7 +49,7 @@ describe("resolveStashSources", () => {
   test("includes valid stash paths", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: extraDir }] });
+      saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: extraDir }] });
       const sources = resolveStashSources();
       expect(sources.length).toBe(2);
       expect(sources[1].path).toBe(extraDir);
@@ -60,7 +60,7 @@ describe("resolveStashSources", () => {
 
   test("skips non-existent stash paths", () => {
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: "/nonexistent/path/should/not/exist" }],
     });
     const sources = resolveStashSources();
@@ -71,7 +71,7 @@ describe("resolveStashSources", () => {
     const installedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installed-"));
     try {
       saveConfig({
-        semanticSearch: false,
+        semanticSearchMode: "off",
         installed: [
           {
             id: "npm:test-pkg",
@@ -98,7 +98,7 @@ describe("resolveStashSources", () => {
     const installedDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-installed-"));
     try {
       saveConfig({
-        semanticSearch: false,
+        semanticSearchMode: "off",
         stashes: [{ type: "filesystem", path: extraDir }],
         installed: [
           {
@@ -128,7 +128,7 @@ describe("resolveStashSources", () => {
   test("accepts overrideStashDir parameter", () => {
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-override-"));
     try {
-      saveConfig({ semanticSearch: false });
+      saveConfig({ semanticSearchMode: "off" });
       const sources = resolveStashSources(overrideDir);
       expect(sources[0].path).toBe(overrideDir);
     } finally {
@@ -139,7 +139,7 @@ describe("resolveStashSources", () => {
 
 describe("resolveAllStashDirs", () => {
   test("returns just paths in correct order", () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
     const dirs = resolveAllStashDirs();
     expect(dirs[0]).toBe(stashDir);
   });
@@ -189,7 +189,7 @@ describe("findSourceForPath", () => {
 
 describe("isEditable", () => {
   test("files in primary stash are editable", () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
     const filePath = path.join(stashDir, "scripts", "deploy.sh");
     expect(isEditable(filePath)).toBe(true);
   });
@@ -197,7 +197,7 @@ describe("isEditable", () => {
   test("files in stash paths are editable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: extraDir }] });
+      saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: extraDir }] });
       const filePath = path.join(extraDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(true);
     } finally {
@@ -209,7 +209,7 @@ describe("isEditable", () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-cache-"));
     try {
       saveConfig({
-        semanticSearch: false,
+        semanticSearchMode: "off",
         installed: [
           {
             id: "npm:test-pkg",
@@ -230,7 +230,7 @@ describe("isEditable", () => {
   });
 
   test("files outside any known path are editable", () => {
-    saveConfig({ semanticSearch: false });
+    saveConfig({ semanticSearchMode: "off" });
     expect(isEditable("/some/random/path/file.sh")).toBe(true);
   });
 });

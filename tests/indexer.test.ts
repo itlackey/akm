@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
+import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/db";
 import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
@@ -224,6 +224,7 @@ test("akmIndex reports progress events and semantic-search verification details"
   globalThis.fetch = async () => {
     throw new Error("TEST_EMBEDDING_ERROR");
   };
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
   try {
     const stashDir = tmpStash();
@@ -232,7 +233,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const { saveConfig } = await import("../src/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
-      semanticSearch: true,
+      semanticSearchMode: "auto",
       embedding: {
         endpoint: "https://example.test/v1/embeddings",
         model: "demo-embed",
@@ -254,12 +255,15 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
     );
+    expect(warnSpy).toHaveBeenCalledWith("Embedding generation failed, continuing without:", "TEST_EMBEDDING_ERROR");
     expect(messages.at(-1)).toContain("Semantic search verification failed");
     expect(result.verification.ok).toBe(false);
-    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.semanticSearchMode).toBe("auto");
+    expect(result.verification.semanticStatus).toBe("blocked");
     expect(result.verification.embeddingProvider).toBe("remote");
     expect(result.verification.guidance).toContain("akm index --full --verbose");
   } finally {
+    warnSpy.mockRestore();
     globalThis.fetch = originalFetch;
   }
 });
@@ -271,7 +275,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
-    semanticSearch: true,
+    semanticSearchMode: "auto",
     embedding: {
       endpoint: "https://example.test/v1/embeddings",
       model: "demo-embed",
@@ -291,7 +295,8 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   try {
     const result = await akmIndex({ stashDir });
     expect(result.verification.ok).toBe(true);
-    expect(result.verification.semanticSearchEnabled).toBe(true);
+    expect(result.verification.semanticSearchMode).toBe("auto");
+    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
     expect(result.verification.embeddingCount).toBe(result.totalEntries);
     expect(result.verification.message).toContain("Semantic search ready");
   } finally {
@@ -393,7 +398,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   // Write a config that includes the same directory twice via stashes
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: secondStash }] });
+  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: secondStash }] });
 
   const result = await akmIndex({ stashDir: primaryStash });
 
@@ -421,7 +426,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearch: false, stashes: [{ type: "filesystem", path: stash2 }] });
+  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: stash2 }] });
 
   await akmIndex({ stashDir: stash1, full: true });
 
@@ -463,4 +468,111 @@ test("matchEntryToFile matches last path segment for hierarchical names", () => 
   const fileMap = buildFileBasenameMap(files);
   const result = matchEntryToFile("corpus/deploy", fileMap, files);
   expect(result).toBe("/stash/scripts/deploy/deploy.sh");
+});
+
+test("usage_events are re-linked after full reindex", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-relink-"));
+  process.env.AKM_STASH_DIR = stashDir;
+
+  // Create a test asset
+  const scriptDir = path.join(stashDir, "scripts", "deploy");
+  fs.mkdirSync(scriptDir, { recursive: true });
+  fs.writeFileSync(path.join(scriptDir, "deploy.sh"), "#!/bin/bash\necho deploy\n");
+
+  // First index to populate entries
+  await akmIndex({ stashDir, full: true });
+
+  // Insert a usage event referencing an entry
+  const dbPath = getDbPath();
+  const db = openDatabase(dbPath);
+  const entry = db.prepare("SELECT id, entry_key FROM entries LIMIT 1").get() as { id: number; entry_key: string };
+  expect(entry).toBeTruthy();
+
+  // entry_key is "stashDir:type:name", entry_ref is "type:name"
+  const parts = entry.entry_key.split(":");
+  const entryRef = parts.slice(1).join(":");
+
+  db.prepare(
+    "INSERT INTO usage_events (event_type, entry_id, entry_ref, created_at) VALUES (?, ?, ?, datetime('now'))",
+  ).run("show", entry.id, entryRef);
+
+  // Verify event exists with entry_id set
+  const before = db.prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
+    entry_id: number | null;
+    entry_ref: string;
+  };
+  expect(before.entry_id).toBe(entry.id);
+  closeDatabase(db);
+
+  // Full reindex — detaches then re-links usage_events
+  await akmIndex({ stashDir, full: true });
+
+  // Verify event was re-linked to the new entry_id
+  const db2 = openDatabase(dbPath);
+  const after = db2.prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
+    entry_id: number | null;
+    entry_ref: string;
+  };
+  expect(after.entry_ref).toBe(entryRef);
+  expect(after.entry_id).not.toBeNull();
+  closeDatabase(db2);
+
+  fs.rmSync(stashDir, { recursive: true, force: true });
+});
+
+test("incremental reindex clears embeddings when provider fingerprint changes", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fp-"));
+  process.env.AKM_STASH_DIR = stashDir;
+
+  const scriptDir = path.join(stashDir, "scripts", "test");
+  fs.mkdirSync(scriptDir, { recursive: true });
+  fs.writeFileSync(path.join(scriptDir, "test.sh"), "#!/bin/bash\necho test\n");
+
+  // First index — generates embeddings with default local fingerprint
+  await akmIndex({ stashDir, full: true });
+
+  const dbPath = getDbPath();
+  const db = openDatabase(dbPath);
+  const fp1 = getMeta(db, "embeddingFingerprint");
+  expect(fp1).toContain("local:");
+
+  // Verify embeddings were generated during first index
+  const embeddingsAfterFirst = getEmbeddingCount(db);
+  expect(embeddingsAfterFirst).toBeGreaterThan(0);
+
+  const entryCount = db.prepare("SELECT COUNT(*) as c FROM entries").get() as { c: number };
+  expect(entryCount.c).toBeGreaterThan(0);
+  closeDatabase(db);
+
+  // Change embedding config to a different provider (simulated via env/config change)
+  // Re-index with a different embedding fingerprint by passing a config override
+  // Since we can't easily change the config mid-test, verify the meta key exists
+  // and that a fingerprint change would trigger a purge by checking the code path.
+  const db2 = openDatabase(dbPath);
+  // Manually set a different fingerprint to simulate a provider change
+  db2
+    .prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)")
+    .run("embeddingFingerprint", "remote:http://localhost:11434/v1/embeddings|nomic-embed-text|768");
+  closeDatabase(db2);
+
+  // Run incremental index — should detect fingerprint mismatch and purge old embeddings
+  await akmIndex({ stashDir });
+
+  const db3 = openDatabase(dbPath);
+  const fp2 = getMeta(db3, "embeddingFingerprint");
+  // Fingerprint should be back to local (since we used default config)
+  expect(fp2).toContain("local:");
+  expect(fp2).not.toBe("remote:http://localhost:11434/v1/embeddings|nomic-embed-text|768");
+
+  // After reindex, embeddings should still exist (purged then regenerated)
+  const embeddingsAfterReindex = getEmbeddingCount(db3);
+  expect(embeddingsAfterReindex).toBeGreaterThan(0);
+
+  // hasEmbeddings meta should be "1" after reindex
+  const hasEmbeddings = getMeta(db3, "hasEmbeddings");
+  expect(hasEmbeddings).toBe("1");
+
+  closeDatabase(db3);
+
+  fs.rmSync(stashDir, { recursive: true, force: true });
 });

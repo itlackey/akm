@@ -171,16 +171,17 @@ describe("assembleInfo", () => {
     expect(parsed.indexStats).toEqual(info.indexStats);
   });
 
-  test("includes semantic and hybrid modes when semanticSearch is enabled", () => {
+  test("reports pending semantic search status by default", () => {
     const stashDir = makeStashDir();
     process.env.AKM_STASH_DIR = stashDir;
 
-    // Default config has semanticSearch: true
     const info = assembleInfo();
 
     expect(info.searchModes).toContain("fts");
-    expect(info.searchModes).toContain("semantic");
-    expect(info.searchModes).toContain("hybrid");
+    expect(info.searchModes).not.toContain("semantic");
+    expect(info.searchModes).not.toContain("hybrid");
+    expect(info.semanticSearch.mode).toBe("auto");
+    expect(info.semanticSearch.status).toBe("pending");
   });
 
   test("does not leak apiKey from registry options", () => {

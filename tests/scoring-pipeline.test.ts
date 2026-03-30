@@ -53,7 +53,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 
@@ -202,7 +202,7 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
       defaultStashDir: stashDir,
       allStashDirs: [stashDir],
       sources: [{ path: stashDir, type: "filesystem" }],
-      config: { semanticSearch: false },
+      config: { semanticSearchMode: "off" },
     });
 
     // After fix: buildDbHit should NOT multiply by quality/confidence.
@@ -217,7 +217,7 @@ describe("Issue #3: NaN guard on vector distance", () => {
   test("search with indexed entries does not produce NaN scores", async () => {
     // This integration test verifies the general pipeline does not produce NaN.
     // The actual NaN guard is in tryVecScores which is called only when
-    // semanticSearch is enabled. We test the code path indirectly.
+    // semanticSearchMode is enabled. We test the code path indirectly.
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "vec-safe", "vec-safe.sh"), "#!/bin/bash\necho safe\n");
@@ -697,7 +697,7 @@ describe("Issue #15: Hybrid ranking mode label", () => {
       defaultStashDir: stashDir,
       allStashDirs: [stashDir],
       sources: [{ path: stashDir, type: "filesystem" }],
-      config: { semanticSearch: false },
+      config: { semanticSearchMode: "off" },
     });
 
     expect(hit.whyMatched).toBeDefined();
@@ -734,7 +734,7 @@ describe("Cross-stash deduplication at index time", () => {
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });
@@ -791,7 +791,7 @@ describe("Cross-stash deduplication at index time", () => {
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });
@@ -828,7 +828,7 @@ describe("Cross-stash deduplication at index time", () => {
 
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
-      semanticSearch: false,
+      semanticSearchMode: "off",
       stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });

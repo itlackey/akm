@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "./common";
-import type { LlmConnectionConfig } from "./config";
+import type { AkmConfig, LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
   type DbIndexedEntry,
@@ -24,6 +24,13 @@ import {
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchText } from "./search-fields";
+import {
+  classifySemanticFailure,
+  clearSemanticStatus,
+  deriveSemanticProviderFingerprint,
+  type SemanticSearchRuntimeStatus,
+  writeSemanticStatus,
+} from "./semantic-status";
 import { ensureUsageEventsSchema, purgeOldUsageEvents } from "./usage-events";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
@@ -48,6 +55,8 @@ export interface IndexVerification {
   message: string;
   guidance?: string;
   semanticSearchEnabled: boolean;
+  semanticSearchMode: "off" | "auto";
+  semanticStatus: "disabled" | SemanticSearchRuntimeStatus;
   embeddingProvider: "local" | "remote";
   entryCount: number;
   embeddingCount: number;
@@ -99,7 +108,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       message: buildIndexSummaryMessage({
         mode: isIncremental ? "incremental" : "full",
         stashSources: allStashDirs.length,
-        semanticSearch: config.semanticSearch,
+        semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
         llmEnabled: !!config.llm,
         vecAvailable: isVecAvailable(db),
@@ -171,11 +180,28 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     onProgress({ phase: "fts", message: "Rebuilt full-text search index." });
     const tFtsEnd = Date.now();
 
+    // Re-link detached usage_events to their new entry_ids via entry_ref.
+    // entry_ref is "type:name" (e.g., "skill:code-review"), entry_key is "stashDir:type:name".
+    // Use substr to extract the "type:name" suffix from entry_key for exact comparison
+    // (avoids LIKE which would require escaping % and _ in user-facing names).
+    try {
+      db.exec(`
+        UPDATE usage_events SET entry_id = (
+          SELECT e.id FROM entries e
+          WHERE substr(e.entry_key, length(e.entry_key) - length(usage_events.entry_ref)) = ':' || usage_events.entry_ref
+          LIMIT 1
+        )
+        WHERE entry_id IS NULL AND entry_ref IS NOT NULL
+      `);
+    } catch {
+      /* ignore if table doesn't exist yet */
+    }
+
     // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
 
     // Generate embeddings if semantic search is enabled
-    const hasEmbeddings = await generateEmbeddingsForDb(db, config, onProgress);
+    const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
 
     const tEmbedEnd = Date.now();
 
@@ -183,7 +209,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDir", stashDir);
     setMeta(db, "stashDirs", JSON.stringify(allStashDirs));
-    setMeta(db, "hasEmbeddings", hasEmbeddings ? "1" : "0");
+    setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
 
     const totalEntries = getEntryCount(db);
 
@@ -191,7 +217,20 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     warnIfVecMissing(db);
 
     const tEnd = Date.now();
-    const verification = verifyIndexState(db, config, totalEntries);
+    const verification = verifyIndexState(db, config, totalEntries, embeddingResult);
+    if (config.semanticSearchMode === "off") {
+      clearSemanticStatus();
+    } else {
+      writeSemanticStatus({
+        status: verification.semanticStatus === "disabled" ? "pending" : verification.semanticStatus,
+        ...(embeddingResult.reason ? { reason: embeddingResult.reason } : {}),
+        ...(embeddingResult.message ? { message: embeddingResult.message } : {}),
+        providerFingerprint: deriveSemanticProviderFingerprint(config.embedding),
+        lastCheckedAt: new Date().toISOString(),
+        entryCount: verification.entryCount,
+        embeddingCount: verification.embeddingCount,
+      });
+    }
     onProgress({ phase: "verify", message: verification.message });
 
     return {
@@ -346,7 +385,13 @@ async function indexEntries(
       }
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM utility_scores");
-      db.exec("DELETE FROM usage_events");
+      // Detach usage_events from entries about to be deleted — null out entry_id
+      // but keep entry_ref so events can be re-linked after entries are rebuilt.
+      try {
+        db.exec("UPDATE usage_events SET entry_id = NULL WHERE entry_id IS NOT NULL");
+      } catch {
+        /* ignore if table doesn't exist */
+      }
       db.exec("DELETE FROM entries");
     }
 
@@ -425,12 +470,32 @@ async function enhanceDirsWithLlm(
 
 async function generateEmbeddingsForDb(
   db: Database,
-  config: import("./config").AkmConfig,
+  config: AkmConfig,
   onProgress: (event: IndexProgressEvent) => void,
-): Promise<boolean> {
-  if (!config.semanticSearch) {
+): Promise<EmbeddingGenerationResult> {
+  if (config.semanticSearchMode === "off") {
     onProgress({ phase: "embeddings", message: "Semantic search disabled; skipping embeddings." });
-    return false;
+    return { success: false, reason: "index-missing", message: "Semantic search is disabled." };
+  }
+
+  // Detect embedding model/provider changes and purge stale embeddings
+  // so that incremental reindex regenerates all vectors with the new model.
+  const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
+  const storedFingerprint = getMeta(db, "embeddingFingerprint");
+  if (storedFingerprint && storedFingerprint !== currentFingerprint) {
+    try {
+      db.exec("DELETE FROM embeddings");
+    } catch {
+      /* ignore */
+    }
+    if (isVecAvailable(db)) {
+      try {
+        db.exec("DELETE FROM entries_vec");
+      } catch {
+        /* ignore */
+      }
+    }
+    setMeta(db, "hasEmbeddings", "0");
   }
 
   try {
@@ -438,7 +503,8 @@ async function generateEmbeddingsForDb(
     const allEntries = getAllEntriesForEmbedding(db);
     if (allEntries.length === 0) {
       onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
-      return true;
+      setMeta(db, "embeddingFingerprint", currentFingerprint);
+      return { success: true };
     }
     onProgress({
       phase: "embeddings",
@@ -457,15 +523,27 @@ async function generateEmbeddingsForDb(
       phase: "embeddings",
       message: `Stored ${embeddings.length} embedding${embeddings.length === 1 ? "" : "s"}.`,
     });
-    return true;
+    setMeta(db, "embeddingFingerprint", currentFingerprint);
+    return { success: true };
   } catch (error) {
-    warn("Embedding generation failed, continuing without:", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    warn("Embedding generation failed, continuing without:", message);
     onProgress({
       phase: "embeddings",
-      message: `Embedding generation failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Embedding generation failed: ${message}`,
     });
-    return false;
+    return {
+      success: false,
+      reason: classifySemanticFailure(message),
+      message: `Semantic search verification failed: ${message}`,
+    };
   }
+}
+
+interface EmbeddingGenerationResult {
+  success: boolean;
+  reason?: import("./semantic-status").SemanticSearchReason;
+  message?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -490,14 +568,14 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
 function buildIndexSummaryMessage(options: {
   mode: "full" | "incremental";
   stashSources: number;
-  semanticSearch: boolean;
+  semanticSearchMode: AkmConfig["semanticSearchMode"];
   embeddingProvider: "local" | "remote";
   llmEnabled: boolean;
   vecAvailable: boolean;
 }): string {
   const stashSourceLabel = options.stashSources === 1 ? "stash source" : "stash sources";
   const semanticDetail = getSemanticSearchLabel(
-    options.semanticSearch,
+    options.semanticSearchMode,
     options.embeddingProvider,
     options.vecAvailable,
   );
@@ -509,15 +587,20 @@ function getEmbeddingProvider(embedding?: import("./config").EmbeddingConnection
 }
 
 function getSemanticSearchLabel(
-  semanticSearch: boolean,
+  semanticSearchMode: AkmConfig["semanticSearchMode"],
   embeddingProvider: "local" | "remote",
   vecAvailable: boolean,
 ): string {
-  if (!semanticSearch) return "disabled";
+  if (semanticSearchMode === "off") return "disabled";
   return `${embeddingProvider} embeddings, ${vecAvailable ? "sqlite-vec" : "JS fallback"}`;
 }
 
-function verifyIndexState(db: Database, config: import("./config").AkmConfig, totalEntries: number): IndexVerification {
+function verifyIndexState(
+  db: Database,
+  config: AkmConfig,
+  totalEntries: number,
+  embeddingResult: EmbeddingGenerationResult,
+): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
   const vecAvailable = isVecAvailable(db);
   const embeddingProvider = getEmbeddingProvider(config.embedding);
@@ -526,7 +609,9 @@ function verifyIndexState(db: Database, config: import("./config").AkmConfig, to
     return {
       ok: true,
       message: "Index ready. No assets were found yet.",
-      semanticSearchEnabled: config.semanticSearch,
+      semanticSearchEnabled: config.semanticSearchMode === "auto",
+      semanticSearchMode: config.semanticSearchMode,
+      semanticStatus: config.semanticSearchMode === "off" ? "disabled" : "pending",
       embeddingProvider,
       entryCount: totalEntries,
       embeddingCount,
@@ -534,11 +619,13 @@ function verifyIndexState(db: Database, config: import("./config").AkmConfig, to
     };
   }
 
-  if (!config.semanticSearch) {
+  if (config.semanticSearchMode === "off") {
     return {
       ok: true,
       message: "Keyword index ready. Semantic search is disabled.",
       semanticSearchEnabled: false,
+      semanticSearchMode: config.semanticSearchMode,
+      semanticStatus: "disabled",
       embeddingProvider,
       entryCount: totalEntries,
       embeddingCount,
@@ -551,6 +638,8 @@ function verifyIndexState(db: Database, config: import("./config").AkmConfig, to
       ok: true,
       message: `Semantic search ready (${embeddingCount}/${totalEntries} embeddings, ${vecAvailable ? "sqlite-vec active" : "JS fallback active"}).`,
       semanticSearchEnabled: true,
+      semanticSearchMode: config.semanticSearchMode,
+      semanticStatus: vecAvailable ? "ready-vec" : "ready-js",
       embeddingProvider,
       entryCount: totalEntries,
       embeddingCount,
@@ -560,12 +649,16 @@ function verifyIndexState(db: Database, config: import("./config").AkmConfig, to
 
   return {
     ok: false,
-    message: `Semantic search verification failed (${embeddingCount}/${totalEntries} embeddings available).`,
+    message:
+      embeddingResult.message ??
+      `Semantic search verification failed (${embeddingCount}/${totalEntries} embeddings available).`,
     guidance:
       embeddingProvider === "remote"
         ? "Check your embedding endpoint and credentials, then retry `akm index --full --verbose`."
         : "Retry `akm index --full --verbose`. If it still fails, confirm local model downloads are permitted and see docs/configuration.md for local embedding dependency setup.",
     semanticSearchEnabled: true,
+    semanticSearchMode: config.semanticSearchMode,
+    semanticStatus: "blocked",
     embeddingProvider,
     entryCount: totalEntries,
     embeddingCount,

@@ -6,6 +6,7 @@
  * Collects all choices and writes config once at the end.
  */
 
+import path from "node:path";
 import * as p from "@clack/prompts";
 import { isHttpUrl } from "./common";
 import type {
@@ -22,6 +23,7 @@ import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailabl
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
 import { getDefaultStashDir } from "./paths";
+import { clearSemanticStatus, deriveSemanticProviderFingerprint, writeSemanticStatus } from "./semantic-status";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -95,6 +97,22 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
   return result as T;
 }
 
+/**
+ * Quick connectivity check. Returns true if we can reach a public
+ * endpoint within 3 seconds, false otherwise. Used to skip network-
+ * dependent setup steps gracefully when offline.
+ *
+ * @internal Exported for testing only.
+ */
+export async function isOnline(): Promise<boolean> {
+  try {
+    await fetch("https://dns.google", { signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(embedding?.endpoint);
 }
@@ -117,7 +135,7 @@ export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConf
 }
 
 interface SemanticSearchChoice {
-  enabled: boolean;
+  mode: "off" | "auto";
   prepareAssets: boolean;
 }
 
@@ -128,12 +146,12 @@ export async function stepSemanticSearch(
   const enabled = await prompt(() =>
     p.confirm({
       message: "Enable semantic search?",
-      initialValue: current.semanticSearch,
+      initialValue: current.semanticSearchMode !== "off",
     }),
   );
 
   if (!enabled) {
-    return { enabled: false, prepareAssets: false };
+    return { mode: "off", prepareAssets: false };
   }
 
   p.note(describeSemanticSearchAssets(embedding).join("\n"), "Semantic Search Assets");
@@ -147,10 +165,12 @@ export async function stepSemanticSearch(
     }),
   );
 
-  return { enabled: true, prepareAssets };
+  return { mode: "auto", prepareAssets };
 }
 
-async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> {
+async function prepareSemanticSearchAssets(
+  config: AkmConfig,
+): Promise<{ ok: true } | { ok: false; message: string; reason: string }> {
   const remote = isRemoteEmbeddingConfig(config.embedding);
 
   // For local embeddings, ensure the required package is installed first.
@@ -159,7 +179,9 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
+        const pkgRoot = path.resolve(import.meta.dir, "..");
         const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+          cwd: pkgRoot,
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -177,7 +199,7 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
             "Install it manually with: bun add @huggingface/transformers\n" +
             "Then re-run `akm setup` or `akm index --full --verbose`.",
         );
-        return false;
+        return { ok: false, reason: "missing-package", message: `Automatic install failed: ${msg}` };
       }
     }
   }
@@ -196,18 +218,20 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
       p.log.warn(
         "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`.",
       );
+      return { ok: false, reason: "remote-network", message: "The remote embedding endpoint is not reachable." };
     } else if (result.reason === "missing-package") {
       p.log.warn(
         "@huggingface/transformers is not installed. Install it with: bun add @huggingface/transformers\n" +
           "Then re-run `akm setup` or `akm index --full --verbose`.",
       );
+      return { ok: false, reason: "missing-package", message: "@huggingface/transformers is not installed." };
     } else {
       p.log.warn(
         `The local embedding model could not be downloaded: ${result.message}\n` +
           "Retry `akm index --full --verbose` after confirming local model downloads are permitted.",
       );
+      return { ok: false, reason: "local-model-download", message: result.message };
     }
-    return false;
   }
 
   spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
@@ -232,7 +256,7 @@ async function prepareSemanticSearchAssets(config: AkmConfig): Promise<boolean> 
     if (db) closeDatabase(db);
   }
 
-  return true;
+  return { ok: true };
 }
 
 // ── Steps ───────────────────────────────────────────────────────────────────
@@ -329,12 +353,21 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
   if (embChoice === "keep") {
     embedding = current.embedding;
   } else if (embChoice !== "local") {
-    // Ask for dimension — different models produce different sizes
+    // Ask for dimension — different models produce different sizes.
+    // Common dimensions: nomic-embed-text=768, mxbai-embed-large=1024,
+    // all-minilm/bge-small=384. Default based on selected model.
+    const knownDims: Record<string, number> = {
+      nomic: 768,
+      mxbai: 1024,
+      minilm: 384,
+      bge: 384,
+    };
+    const guessedDim = Object.entries(knownDims).find(([k]) => embChoice.includes(k))?.[1] ?? 384;
     const dimChoice = await prompt(() =>
       p.text({
-        message: "Embedding dimension (must match your index; 384 is common for MiniLM/nomic):",
-        placeholder: "384",
-        defaultValue: "384",
+        message: `Embedding dimension for ${embChoice}:`,
+        placeholder: String(guessedDim),
+        defaultValue: String(guessedDim),
         validate: (v) => {
           const n = Number(v);
           if (!Number.isInteger(n) || n <= 0) return "Must be a positive integer";
@@ -677,13 +710,22 @@ export async function runSetupWizard(): Promise<void> {
   p.log.step("Step 1: Stash Directory");
   const stashDir = await stepStashDir(current);
 
+  // Quick connectivity check — skip network-dependent steps when offline
+  const online = await isOnline();
+  if (!online) {
+    p.log.warn(
+      "No network connectivity detected. Skipping Ollama detection and remote embedding checks.\n" +
+        "Local-only setup will continue. Re-run `akm setup` when online for full configuration.",
+    );
+  }
+
   // Step 2: Ollama / Embedding / LLM
   p.log.step("Step 2: Embedding & LLM");
-  const { embedding, llm } = await stepOllama(current);
+  const { embedding, llm } = online ? await stepOllama(current) : { embedding: current.embedding, llm: current.llm };
 
   // Step 3: Semantic search assets
   p.log.step("Step 3: Semantic Search");
-  const semanticSearch = await stepSemanticSearch(current, embedding);
+  const semanticSearchMode = await stepSemanticSearch(current, embedding);
 
   // Step 4: Registries
   p.log.step("Step 4: Registries");
@@ -714,7 +756,7 @@ export async function runSetupWizard(): Promise<void> {
     registries,
     stashes: allStashes.length > 0 ? allStashes : undefined,
     // Preserve existing fields
-    semanticSearch: semanticSearch.enabled,
+    semanticSearchMode: semanticSearchMode.mode,
     installed: current.installed,
     output: current.output,
   };
@@ -726,7 +768,7 @@ export async function runSetupWizard(): Promise<void> {
       `Stash directory:  ${stashDir}`,
       `Embedding:        ${embedding ? `${embedding.provider ?? "remote"} / ${embedding.model}` : "built-in local"}`,
       `LLM:              ${llm ? `${llm.provider ?? "remote"} / ${llm.model}` : "disabled"}`,
-      `Semantic search:  ${semanticSearch.enabled ? "enabled" : "disabled"}`,
+      `Semantic search:  ${semanticSearchMode.mode}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
     ].join("\n"),
@@ -747,20 +789,41 @@ export async function runSetupWizard(): Promise<void> {
   // Initialize stash directory
   await akmInit({ dir: stashDir });
 
-  if (semanticSearch.enabled) {
-    if (semanticSearch.prepareAssets) {
+  if (semanticSearchMode.mode === "off") {
+    clearSemanticStatus();
+  }
+
+  if (semanticSearchMode.mode === "auto") {
+    if (semanticSearchMode.prepareAssets) {
       const ready = await prepareSemanticSearchAssets(newConfig);
-      if (!ready) {
-        // Asset preparation failed: disable semantic search and persist the update.
-        newConfig.semanticSearch = false;
-        saveConfig(newConfig);
+      if (!ready.ok) {
+        writeSemanticStatus({
+          status: "blocked",
+          reason: ready.reason as never,
+          message: ready.message,
+          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          lastCheckedAt: new Date().toISOString(),
+        });
         p.log.warn(
-          "Semantic search has been disabled in the saved configuration. Re-run `akm setup` or `akm index --full --verbose` once the issue is resolved.",
+          "Semantic search remains set to auto, but is currently blocked. Re-run `akm index --full --verbose` once the issue is resolved.",
         );
+      } else {
+        writeSemanticStatus({
+          status: "pending",
+          message: "Semantic prerequisites verified. Building the index to finish activation.",
+          providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+          lastCheckedAt: new Date().toISOString(),
+        });
       }
     } else {
+      writeSemanticStatus({
+        status: "pending",
+        message: "Semantic search is enabled, but asset preparation was skipped.",
+        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        lastCheckedAt: new Date().toISOString(),
+      });
       p.log.info(
-        "Semantic search will be enabled, but asset preparation was skipped. Run `akm index --full --verbose` later to verify it.",
+        "Semantic search is set to auto, but asset preparation was skipped. Run `akm index --full --verbose` later to verify it.",
       );
     }
   }
@@ -772,7 +835,7 @@ export async function runSetupWizard(): Promise<void> {
   try {
     const indexResult = await akmIndex({ stashDir });
     spin.stop(`Indexed ${indexResult.totalEntries} assets.`);
-    if (newConfig.semanticSearch) {
+    if (newConfig.semanticSearchMode === "auto") {
       if (indexResult.verification.ok) {
         p.log.success(indexResult.verification.message);
       } else {
@@ -785,6 +848,15 @@ export async function runSetupWizard(): Promise<void> {
   } catch (err) {
     spin.stop("Indexing failed — you can run `akm index` manually later.");
     p.log.warn(String(err));
+    if (newConfig.semanticSearchMode === "auto") {
+      writeSemanticStatus({
+        status: "blocked",
+        reason: "index-failed",
+        message: String(err),
+        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        lastCheckedAt: new Date().toISOString(),
+      });
+    }
   }
 
   // API key reminder

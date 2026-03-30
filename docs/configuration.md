@@ -30,7 +30,7 @@ akm config unset llm                # Remove an optional key
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `semanticSearch` | boolean | `true` | Enable semantic vector search |
+| `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. Legacy boolean values accepted. |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
 | `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
@@ -131,16 +131,17 @@ npm install sqlite-vec
 bun add sqlite-vec
 ```
 
-On macOS, Apple's built-in SQLite disables extension loading. If you installed
-akm as a compiled binary, you may need to install a full SQLite build
-(e.g. via Homebrew) and point Bun to it:
+On macOS, the sqlite-vec native extension may not load if the platform binary
+is unavailable. Bun uses its own embedded SQLite (not the system one), so
+`brew install sqlite` will **not** help. When sqlite-vec cannot load, akm
+automatically falls back to a pure-JS cosine similarity search. This fallback
+is functionally correct but slower for large indexes (10,000+ entries).
+
+To check whether sqlite-vec is active, run:
 
 ```sh
-brew install sqlite
+akm info
 ```
 
-After installing, rebuild your index to verify:
-
-```sh
-akm index --full
-```
+If `searchModes` includes `"semantic"` with `"ready-vec"`, the native extension
+is working. If it shows `"ready-js"`, the JS fallback is in use.

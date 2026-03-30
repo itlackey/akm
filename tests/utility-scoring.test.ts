@@ -56,7 +56,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.writeFileSync(fullPath, content);
   }
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearch: false });
+  saveConfig({ semanticSearchMode: "off" });
   await akmIndex({ stashDir, full: true });
 }
 

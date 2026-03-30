@@ -187,16 +187,16 @@ describe("semantic search setup", () => {
     const { stepSemanticSearch } = await import("../src/setup");
     q.confirms.push(false);
 
-    const result = await stepSemanticSearch({ semanticSearch: true } as never);
-    expect(result).toEqual({ enabled: false, prepareAssets: false });
+    const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
+    expect(result).toEqual({ mode: "off", prepareAssets: false });
   });
 
   test("stepSemanticSearch shows assets and allows asset preparation", async () => {
     const { stepSemanticSearch } = await import("../src/setup");
     q.confirms.push(true, true);
 
-    const result = await stepSemanticSearch({ semanticSearch: true } as never);
-    expect(result).toEqual({ enabled: true, prepareAssets: true });
+    const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
+    expect(result).toEqual({ mode: "auto", prepareAssets: true });
     expect(q.logged.some((entry) => entry.includes("Semantic Search Assets"))).toBe(true);
   });
 });

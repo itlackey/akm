@@ -52,10 +52,15 @@ function buildBinary(): boolean {
 function dockerBuild(variant: string): { ok: boolean; output: string } {
   const dockerfile = path.join(DOCKER_DIR, `Dockerfile.${variant}`);
   const tag = `akm-test-${variant}`;
-  const r = spawnSync("docker", ["build", "-f", dockerfile, "-t", tag, PROJECT_ROOT], {
-    encoding: "utf8",
-    timeout: TIMEOUT,
-  });
+  const r = spawnSync(
+    "docker",
+    ["build", "-f", dockerfile, "-t", tag, "--build-arg", "BUILDKIT_INLINE_CACHE=1", PROJECT_ROOT],
+    {
+      encoding: "utf8",
+      timeout: TIMEOUT,
+      env: { ...process.env, DOCKER_BUILDKIT: "1" },
+    },
+  );
   return {
     ok: r.status === 0,
     output: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
@@ -86,7 +91,12 @@ afterAll(() => {
   spawnSync("rm", ["-rf", BUILD_DIR]);
 });
 
-describe.skipIf(!HAS_DOCKER || !HAS_BUN || !!process.env.CI)("Docker install tests", () => {
+// Docker install tests are heavyweight (build images + download deps per container).
+// They only run when explicitly requested via AKM_DOCKER_TESTS=1 to avoid
+// hammering the network on every `bun test` invocation.
+const DOCKER_TESTS_ENABLED = !!process.env.AKM_DOCKER_TESTS;
+
+describe.skipIf(!HAS_DOCKER || !HAS_BUN || !DOCKER_TESTS_ENABLED)("Docker install tests", () => {
   describe("bun install method", () => {
     for (const variant of bunVariants) {
       const os = variant.replace("-bun", "");
