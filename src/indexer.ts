@@ -180,6 +180,22 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     onProgress({ phase: "fts", message: "Rebuilt full-text search index." });
     const tFtsEnd = Date.now();
 
+    // Re-link detached usage_events to their new entry_ids via entry_ref.
+    // entry_ref is "type:name" (e.g., "skill:code-review"), entry_key is "stashDir:type:name".
+    // Match by checking if entry_key ends with the entry_ref pattern.
+    try {
+      db.exec(`
+        UPDATE usage_events SET entry_id = (
+          SELECT e.id FROM entries e
+          WHERE e.entry_key LIKE '%:' || usage_events.entry_ref
+          LIMIT 1
+        )
+        WHERE entry_id IS NULL AND entry_ref IS NOT NULL
+      `);
+    } catch {
+      /* ignore if table doesn't exist yet */
+    }
+
     // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
 
@@ -368,7 +384,13 @@ async function indexEntries(
       }
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM utility_scores");
-      db.exec("DELETE FROM usage_events");
+      // Detach usage_events from entries about to be deleted — null out entry_id
+      // but keep entry_ref so events can be re-linked after entries are rebuilt.
+      try {
+        db.exec("UPDATE usage_events SET entry_id = NULL WHERE entry_id IS NOT NULL");
+      } catch {
+        /* ignore if table doesn't exist */
+      }
       db.exec("DELETE FROM entries");
     }
 

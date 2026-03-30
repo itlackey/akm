@@ -300,7 +300,8 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
     expect(topHit.description).toBeTruthy();
   });
 
-  test.skipIf(!!process.env.CI)("search ranks semantically relevant results higher", async () => {
+  test.skipIf(!!process.env.CI)("search ranks keyword-relevant results higher (FTS-only)", async () => {
+    // NOTE: This test uses FTS keyword matching (BM25), not semantic/vector search.
     const result = await akmSearch({ query: "summarize commit changes", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);

@@ -159,6 +159,31 @@ describe("loadConfig", () => {
     expect(config.stashes).toBeUndefined();
   });
 
+  test("coerces boolean true to 'auto' for semanticSearchMode", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: true }));
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
+  test("coerces boolean false to 'off' for semanticSearchMode", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: false }));
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("passes through string 'auto' for semanticSearchMode", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "auto" }));
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
+  test("passes through string 'off' for semanticSearchMode", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("falls back to 'auto' for invalid semanticSearchMode values", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: 42 }));
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
   test("ignores stash-root config.json files", () => {
     const stashDir = makeTmpDir();
     try {

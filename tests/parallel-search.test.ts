@@ -302,11 +302,11 @@ describe("Parallel search: FTS empty", () => {
 
 // ── Test 5: Promise.all structure verification ──────────────────────────────
 
-describe("Parallel search: hybrid result ordering", () => {
-  test("hybrid search returns results sorted by score descending", async () => {
-    // We verify the parallelization indirectly by checking that the search
-    // works correctly with both FTS and vector data present, and that
-    // results are properly merged (normalized BM25 + weighted combination)
+describe("Parallel search: FTS result ordering", () => {
+  test("FTS search returns results sorted by score descending (semanticSearchMode off)", async () => {
+    // NOTE: Despite the original "hybrid" naming, this test runs with
+    // semanticSearchMode: "off", so only FTS scoring is exercised. True hybrid
+    // (FTS + vector) coverage lives in tests/vector-search.test.ts.
     const stashDir = tmpStash();
 
     writeFile(path.join(stashDir, "scripts", "build", "build.sh"), "#!/bin/bash\necho build\n");

@@ -469,3 +469,53 @@ test("matchEntryToFile matches last path segment for hierarchical names", () => 
   const result = matchEntryToFile("corpus/deploy", fileMap, files);
   expect(result).toBe("/stash/scripts/deploy/deploy.sh");
 });
+
+test("usage_events are re-linked after full reindex", async () => {
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-relink-"));
+  process.env.AKM_STASH_DIR = stashDir;
+
+  // Create a test asset
+  const scriptDir = path.join(stashDir, "scripts", "deploy");
+  fs.mkdirSync(scriptDir, { recursive: true });
+  fs.writeFileSync(path.join(scriptDir, "deploy.sh"), "#!/bin/bash\necho deploy\n");
+
+  // First index to populate entries
+  await akmIndex({ stashDir, full: true });
+
+  // Insert a usage event referencing an entry
+  const dbPath = getDbPath();
+  const db = openDatabase(dbPath);
+  const entry = db.prepare("SELECT id, entry_key FROM entries LIMIT 1").get() as { id: number; entry_key: string };
+  expect(entry).toBeTruthy();
+
+  // entry_key is "stashDir:type:name", entry_ref is "type:name"
+  const parts = entry.entry_key.split(":");
+  const entryRef = parts.slice(1).join(":");
+
+  db.prepare(
+    "INSERT INTO usage_events (event_type, entry_id, entry_ref, created_at) VALUES (?, ?, ?, datetime('now'))",
+  ).run("show", entry.id, entryRef);
+
+  // Verify event exists with entry_id set
+  const before = db.prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
+    entry_id: number | null;
+    entry_ref: string;
+  };
+  expect(before.entry_id).toBe(entry.id);
+  closeDatabase(db);
+
+  // Full reindex — detaches then re-links usage_events
+  await akmIndex({ stashDir, full: true });
+
+  // Verify event was re-linked to the new entry_id
+  const db2 = openDatabase(dbPath);
+  const after = db2.prepare("SELECT entry_id, entry_ref FROM usage_events WHERE entry_ref = ?").get(entryRef) as {
+    entry_id: number | null;
+    entry_ref: string;
+  };
+  expect(after.entry_ref).toBe(entryRef);
+  expect(after.entry_id).not.toBeNull();
+  closeDatabase(db2);
+
+  fs.rmSync(stashDir, { recursive: true, force: true });
+});

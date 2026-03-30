@@ -16,6 +16,10 @@ export type SemanticSearchReason =
   | "db-locked"
   | "index-missing"
   | "dimension-mismatch"
+  | "onnx-runtime-failed"
+  | "native-lib-missing"
+  | "permission-denied"
+  | "index-failed"
   | "unknown";
 
 export interface SemanticSearchStatus {
@@ -69,7 +73,16 @@ export function writeSemanticStatus(status: SemanticSearchStatus): void {
   const filePath = getSemanticStatusPath();
   const tmpPath = path.join(dir, `semantic-status.json.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`);
   fs.writeFileSync(tmpPath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore cleanup failure */
+    }
+    throw err;
+  }
 }
 
 export function clearSemanticStatus(): void {
@@ -80,6 +93,9 @@ export function clearSemanticStatus(): void {
   }
 }
 
+/** How long a "blocked" status is retained before the system retries. 24 hours. */
+export const BLOCKED_TTL_MS = 24 * 60 * 60 * 1000;
+
 export function getEffectiveSemanticStatus(
   config: AkmConfig,
   status = readSemanticStatus(),
@@ -88,6 +104,14 @@ export function getEffectiveSemanticStatus(
   if (!status) return "pending";
   const fingerprint = deriveSemanticProviderFingerprint(config.embedding);
   if (status.providerFingerprint !== fingerprint) return "pending";
+  // Auto-recovery: if blocked status is older than BLOCKED_TTL_MS, treat as pending
+  // so the next index run will re-attempt semantic setup.
+  if (status.status === "blocked") {
+    const checkedAt = new Date(status.lastCheckedAt).getTime();
+    if (Number.isNaN(checkedAt) || Date.now() - checkedAt > BLOCKED_TTL_MS) {
+      return "pending";
+    }
+  }
   return status.status;
 }
 
@@ -103,7 +127,21 @@ export function classifySemanticFailure(message: string): SemanticSearchReason {
   if (lower.includes("429") || lower.includes("rate limit") || lower.includes("quota")) {
     return "remote-rate-limit";
   }
-  if (lower.includes("404") || lower.includes("model") || lower.includes("bad request")) {
+  if (lower.includes("eacces") || lower.includes("permission denied")) {
+    return "permission-denied";
+  }
+  if (lower.includes("onnx") || lower.includes("onnxruntime")) {
+    return "onnx-runtime-failed";
+  }
+  if (
+    lower.includes("shared library") ||
+    lower.includes("glibc") ||
+    lower.includes("musl") ||
+    lower.includes("libc.so")
+  ) {
+    return "native-lib-missing";
+  }
+  if (lower.includes("404") || lower.includes("model not found") || lower.includes("bad request")) {
     return "remote-model";
   }
   if (lower.includes("transformers") || lower.includes("missing-package")) {
@@ -115,7 +153,7 @@ export function classifySemanticFailure(message: string): SemanticSearchReason {
   if (lower.includes("dimension mismatch")) {
     return "dimension-mismatch";
   }
-  if (lower.includes("db") || lower.includes("sqlite") || lower.includes("cache")) {
+  if (lower.includes("db") || lower.includes("sqlite") || lower.includes("cache dir")) {
     return "db-open";
   }
   if (

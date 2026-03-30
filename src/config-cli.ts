@@ -14,6 +14,9 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
     case "stashDir":
       return { stashDir: requireNonEmptyString(value, key) };
     case "semanticSearchMode":
+      // Accept legacy boolean-style strings from CLI
+      if (value === "true") return { semanticSearchMode: "auto" };
+      if (value === "false") return { semanticSearchMode: "off" };
       if (value !== "off" && value !== "auto") {
         throw new UsageError(`Invalid value for semanticSearchMode: expected "off" or "auto"`);
       }

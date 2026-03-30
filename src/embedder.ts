@@ -1,5 +1,7 @@
+import path from "node:path";
 import { fetchWithTimeout, isHttpUrl } from "./common";
 import type { EmbeddingConnectionConfig } from "./config";
+import { getCacheDir } from "./paths";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -59,14 +61,24 @@ async function getLocalEmbedder(modelName?: string): Promise<TransformerPipeline
   if (!localEmbedderPromise) {
     localEmbedderModelName = resolvedModel;
     localEmbedderPromise = (async () => {
+      // Ensure HuggingFace model cache lives in a stable location outside
+      // node_modules so it survives package reinstalls.
+      if (!process.env.HF_HOME) {
+        process.env.HF_HOME = path.join(getCacheDir(), "models");
+      }
+
       let pipeline: unknown;
       try {
         const mod = await import("@huggingface/transformers");
         pipeline = mod.pipeline as unknown;
-      } catch {
-        throw new Error(
-          "Semantic search requires @huggingface/transformers. Install it with: npm install @huggingface/transformers",
-        );
+      } catch (importError) {
+        const msg = importError instanceof Error ? importError.message : String(importError);
+        if (/Cannot find module|MODULE_NOT_FOUND|Cannot resolve/i.test(msg)) {
+          throw new Error(
+            "Semantic search requires @huggingface/transformers. Install it with: bun add @huggingface/transformers",
+          );
+        }
+        throw new Error(`Failed to load embedding runtime: ${msg}. Check platform compatibility.`);
       }
       const pipelineFn = pipeline as TransformerPipelineFactory;
       return createLocalPipeline(pipelineFn, resolvedModel);

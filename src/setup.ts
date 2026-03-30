@@ -6,6 +6,7 @@
  * Collects all choices and writes config once at the end.
  */
 
+import path from "node:path";
 import * as p from "@clack/prompts";
 import { isHttpUrl } from "./common";
 import type {
@@ -96,6 +97,22 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
   return result as T;
 }
 
+/**
+ * Quick connectivity check. Returns true if we can reach a public
+ * endpoint within 3 seconds, false otherwise. Used to skip network-
+ * dependent setup steps gracefully when offline.
+ *
+ * @internal Exported for testing only.
+ */
+export async function isOnline(): Promise<boolean> {
+  try {
+    await fetch("https://dns.google", { signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(embedding?.endpoint);
 }
@@ -162,7 +179,9 @@ async function prepareSemanticSearchAssets(
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
+        const pkgRoot = path.resolve(import.meta.dir, "..");
         const proc = Bun.spawn(["bun", "add", "@huggingface/transformers"], {
+          cwd: pkgRoot,
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -334,12 +353,21 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
   if (embChoice === "keep") {
     embedding = current.embedding;
   } else if (embChoice !== "local") {
-    // Ask for dimension — different models produce different sizes
+    // Ask for dimension — different models produce different sizes.
+    // Common dimensions: nomic-embed-text=768, mxbai-embed-large=1024,
+    // all-minilm/bge-small=384. Default based on selected model.
+    const knownDims: Record<string, number> = {
+      nomic: 768,
+      mxbai: 1024,
+      minilm: 384,
+      bge: 384,
+    };
+    const guessedDim = Object.entries(knownDims).find(([k]) => embChoice.includes(k))?.[1] ?? 384;
     const dimChoice = await prompt(() =>
       p.text({
-        message: "Embedding dimension (must match your index; 384 is common for MiniLM/nomic):",
-        placeholder: "384",
-        defaultValue: "384",
+        message: `Embedding dimension for ${embChoice}:`,
+        placeholder: String(guessedDim),
+        defaultValue: String(guessedDim),
         validate: (v) => {
           const n = Number(v);
           if (!Number.isInteger(n) || n <= 0) return "Must be a positive integer";
@@ -682,9 +710,18 @@ export async function runSetupWizard(): Promise<void> {
   p.log.step("Step 1: Stash Directory");
   const stashDir = await stepStashDir(current);
 
+  // Quick connectivity check — skip network-dependent steps when offline
+  const online = await isOnline();
+  if (!online) {
+    p.log.warn(
+      "No network connectivity detected. Skipping Ollama detection and remote embedding checks.\n" +
+        "Local-only setup will continue. Re-run `akm setup` when online for full configuration.",
+    );
+  }
+
   // Step 2: Ollama / Embedding / LLM
   p.log.step("Step 2: Embedding & LLM");
-  const { embedding, llm } = await stepOllama(current);
+  const { embedding, llm } = online ? await stepOllama(current) : { embedding: current.embedding, llm: current.llm };
 
   // Step 3: Semantic search assets
   p.log.step("Step 3: Semantic Search");
@@ -811,6 +848,15 @@ export async function runSetupWizard(): Promise<void> {
   } catch (err) {
     spin.stop("Indexing failed — you can run `akm index` manually later.");
     p.log.warn(String(err));
+    if (newConfig.semanticSearchMode === "auto") {
+      writeSemanticStatus({
+        status: "blocked",
+        reason: "index-failed",
+        message: String(err),
+        providerFingerprint: deriveSemanticProviderFingerprint(newConfig.embedding),
+        lastCheckedAt: new Date().toISOString(),
+      });
+    }
   }
 
   // API key reminder

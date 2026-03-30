@@ -228,7 +228,10 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
     config.stashDir = raw.stashDir.trim();
   }
 
-  if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
+  // Backward compatibility: coerce legacy boolean values to string
+  if (typeof raw.semanticSearchMode === "boolean") {
+    config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
+  } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
     config.semanticSearchMode = raw.semanticSearchMode;
   }
 

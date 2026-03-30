@@ -11,9 +11,10 @@
       "minLength": 1
     },
     "semanticSearchMode": {
-      "type": "boolean",
-      "description": "Whether semantic vector search is enabled. When true, the indexer builds vector embeddings for FTS5 + vector search. When false, only text-based search is available.",
-      "default": true
+      "type": "string",
+      "enum": ["off", "auto"],
+      "description": "Semantic vector search mode. \"auto\" enables embedding generation and hybrid FTS5 + vector search. \"off\" disables embeddings and uses text-only search. Legacy boolean values (true/false) are accepted for backward compatibility.",
+      "default": "auto"
     },
     "embedding": {
       "$ref": "#/$defs/EmbeddingConnectionConfig"
