@@ -160,4 +160,28 @@ describe("config CLI helpers", () => {
     expect(() => parseConfigValue("output.format", "xml")).toThrow("expected one of json|yaml|text");
     expect(() => parseConfigValue("output.detail", "max")).toThrow("expected one of brief|normal|full");
   });
+
+  test("parseConfigValue coerces 'true' to 'auto' for semanticSearchMode", () => {
+    const result = parseConfigValue("semanticSearchMode", "true");
+    expect(result).toEqual({ semanticSearchMode: "auto" });
+  });
+
+  test("parseConfigValue coerces 'false' to 'off' for semanticSearchMode", () => {
+    const result = parseConfigValue("semanticSearchMode", "false");
+    expect(result).toEqual({ semanticSearchMode: "off" });
+  });
+
+  test("parseConfigValue accepts 'auto' for semanticSearchMode", () => {
+    const result = parseConfigValue("semanticSearchMode", "auto");
+    expect(result).toEqual({ semanticSearchMode: "auto" });
+  });
+
+  test("parseConfigValue accepts 'off' for semanticSearchMode", () => {
+    const result = parseConfigValue("semanticSearchMode", "off");
+    expect(result).toEqual({ semanticSearchMode: "off" });
+  });
+
+  test("parseConfigValue rejects invalid semanticSearchMode", () => {
+    expect(() => parseConfigValue("semanticSearchMode", "yes")).toThrow("Invalid value for semanticSearchMode");
+  });
 });

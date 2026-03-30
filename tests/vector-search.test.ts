@@ -213,7 +213,7 @@ describe("tryVecScores activation", () => {
       const farResult = results.find((r) => r.id === id2);
       expect(closeResult).toBeDefined();
       expect(farResult).toBeDefined();
-      expect(closeResult!.distance).toBeLessThan(farResult!.distance);
+      expect(closeResult?.distance).toBeLessThan(farResult?.distance ?? Number.POSITIVE_INFINITY);
     } finally {
       closeDatabase(db);
     }
@@ -544,13 +544,13 @@ describe("JS fallback path (BLOB cosine similarity, no sqlite-vec)", () => {
       expect(noMatchResult).toBeDefined();
 
       // exact match should have smallest distance
-      expect(exactResult!.distance).toBeLessThan(partialResult!.distance);
-      expect(partialResult!.distance).toBeLessThan(noMatchResult!.distance);
+      expect(exactResult?.distance).toBeLessThan(partialResult?.distance ?? Number.POSITIVE_INFINITY);
+      expect(partialResult?.distance).toBeLessThan(noMatchResult?.distance ?? Number.POSITIVE_INFINITY);
 
       // exact match distance should be ~0
-      expect(exactResult!.distance).toBeCloseTo(0, 2);
+      expect(exactResult?.distance).toBeCloseTo(0, 2);
       // no-match distance should be ~sqrt(2) ~ 1.414
-      expect(noMatchResult!.distance).toBeCloseTo(Math.sqrt(2), 1);
+      expect(noMatchResult?.distance).toBeCloseTo(Math.sqrt(2), 1);
     } finally {
       closeDatabase(db);
     }

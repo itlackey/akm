@@ -477,11 +477,32 @@ async function generateEmbeddingsForDb(
     return { success: false, reason: "index-missing", message: "Semantic search is disabled." };
   }
 
+  // Detect embedding model/provider changes and purge stale embeddings
+  // so that incremental reindex regenerates all vectors with the new model.
+  const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
+  const storedFingerprint = getMeta(db, "embeddingFingerprint");
+  if (storedFingerprint && storedFingerprint !== currentFingerprint) {
+    try {
+      db.exec("DELETE FROM embeddings");
+    } catch {
+      /* ignore */
+    }
+    if (isVecAvailable(db)) {
+      try {
+        db.exec("DELETE FROM entries_vec");
+      } catch {
+        /* ignore */
+      }
+    }
+    setMeta(db, "hasEmbeddings", "0");
+  }
+
   try {
     const { embedBatch } = await import("./embedder.js");
     const allEntries = getAllEntriesForEmbedding(db);
     if (allEntries.length === 0) {
       onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
+      setMeta(db, "embeddingFingerprint", currentFingerprint);
       return { success: true };
     }
     onProgress({
@@ -501,6 +522,7 @@ async function generateEmbeddingsForDb(
       phase: "embeddings",
       message: `Stored ${embeddings.length} embedding${embeddings.length === 1 ? "" : "s"}.`,
     });
+    setMeta(db, "embeddingFingerprint", currentFingerprint);
     return { success: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
