@@ -199,7 +199,7 @@ const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
  * `resolveStashSources()` so the content directories pass the
  * `isValidDirectory()` check.
  */
-export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
+export async function ensureStashCaches(config?: AkmConfig): Promise<void> {
   const cfg = config ?? loadConfig();
   for (const entry of cfg.stashes ?? []) {
     if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
@@ -225,5 +225,7 @@ export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
   }
 }
 
-/** @deprecated Use ensureGitCaches instead. */
-export const ensureContextHubCaches = ensureGitCaches;
+/** @deprecated Use ensureStashCaches instead. */
+export const ensureGitCaches = ensureStashCaches;
+/** @deprecated Use ensureStashCaches instead. */
+export const ensureContextHubCaches = ensureStashCaches;

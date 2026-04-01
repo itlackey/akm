@@ -7,6 +7,8 @@ import path from "node:path";
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
 const servers: Array<{ stop: (force: boolean) => void }> = [];
+const CLI_TIMEOUT_MS = 30_000;
+const TEST_TIMEOUT_MS = 60_000;
 
 function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -100,7 +102,7 @@ describe("akm add website", () => {
         const timer = setTimeout(() => {
           child.kill("SIGKILL");
           reject(new Error("CLI website add timed out"));
-        }, 30_000);
+        }, CLI_TIMEOUT_MS);
         child.on("error", (err) => {
           clearTimeout(timer);
           reject(err);
@@ -143,6 +145,6 @@ describe("akm add website", () => {
       );
       expect(homeDoc).toContain("Example Docs");
     },
-    { timeout: 60_000 },
+    { timeout: TEST_TIMEOUT_MS },
   );
 });

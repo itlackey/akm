@@ -53,8 +53,8 @@ describe("WebsiteStashProvider", () => {
   test("search() returns empty hits because content is indexed locally", async () => {
     const factory = resolveStashProviderFactory("website");
     expect(factory).toBeTruthy();
-    // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
-    const provider = factory!({
+    if (!factory) throw new Error("expected website factory to be registered");
+    const provider = factory({
       type: "website",
       url: "https://example.com/docs",
       name: "example",

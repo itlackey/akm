@@ -10,11 +10,12 @@ import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
 import { isExpired, sanitizeString } from "./provider-utils";
 
-/** Cache TTL before refreshing website content (12 hours). */
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+/** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
+const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
-/** Maximum stale age allowed when refresh fails (7 days). */
+/** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const QUEUE_EXPANSION_FACTOR = 3;
 
 const MAX_PAGES_DEFAULT = 10;
 const MAX_DEPTH_DEFAULT = 1;
@@ -82,7 +83,11 @@ async function ensureWebsiteMirror(
     /* no cached manifest */
   }
 
-  if (mtime && !isExpired(mtime, CACHE_TTL_MS) && (!requireStashDir || hasExtractedSite(cachePaths.stashDir))) {
+  if (
+    mtime &&
+    !isExpired(mtime, CACHE_REFRESH_INTERVAL_MS) &&
+    (!requireStashDir || hasExtractedSite(cachePaths.stashDir))
+  ) {
     return cachePaths;
   }
 
@@ -161,7 +166,7 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
 
     if (next.depth >= options.maxDepth) continue;
     for (const link of fetched.links) {
-      if (queue.length + pages.length >= options.maxPages * 3) break;
+      if (queue.length + pages.length >= options.maxPages * QUEUE_EXPANSION_FACTOR) break;
       if (link.origin !== allowedOrigin) continue;
       const candidate = normalizeCrawlUrl(link.toString());
       if (!candidate || visited.has(candidate) || isAssetLikePath(link.pathname)) continue;
@@ -354,9 +359,11 @@ function extractSameDocumentLinks(html: string, pageUrl: string): URL[] {
   const hrefPattern = /<a\b[^>]*href\s*=\s*(['"])(.*?)\1[^>]*>/gi;
   for (const match of html.matchAll(hrefPattern)) {
     const href = match[2]?.trim();
-    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:")) continue;
+    if (!href || href.startsWith("#")) continue;
     try {
-      links.push(new URL(href, pageUrl));
+      const resolved = new URL(href, pageUrl);
+      if (!isSafeLinkUrl(resolved)) continue;
+      links.push(resolved);
     } catch {
       /* ignore malformed links */
     }
@@ -366,10 +373,10 @@ function extractSameDocumentLinks(html: string, pageUrl: string): URL[] {
 
 function htmlToMarkdown(html: string, pageUrl: string): string {
   let text = html;
-  text = text.replace(/<script\b[\s\S]*?<\/script>/gi, "");
-  text = text.replace(/<style\b[\s\S]*?<\/style>/gi, "");
-  text = text.replace(/<noscript\b[\s\S]*?<\/noscript>/gi, "");
-  text = text.replace(/<template\b[\s\S]*?<\/template>/gi, "");
+  text = stripDangerousBlockTag(text, "script");
+  text = stripDangerousBlockTag(text, "style");
+  text = stripDangerousBlockTag(text, "noscript");
+  text = stripDangerousBlockTag(text, "template");
 
   text = text.replace(/<pre\b[^>]*><code\b[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_match, code) => {
     const decoded = decodeHtmlEntities(stripTags(code)).trim();
@@ -383,7 +390,8 @@ function htmlToMarkdown(html: string, pageUrl: string): string {
     const label = decodeHtmlEntities(stripTags(body)).trim();
     if (!label) return "";
     try {
-      const resolved = new URL(href, pageUrl).toString();
+      const resolved = new URL(href, pageUrl);
+      if (!isSafeLinkUrl(resolved)) return label;
       return `[${label}](${resolved})`;
     } catch {
       return label;
@@ -415,19 +423,47 @@ function stripTags(value: string): string {
 }
 
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_match, digits) => String.fromCodePoint(Number(digits)))
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)));
+  const namedEntities: Record<string, string> = {
+    nbsp: " ",
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+  };
+
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity) => {
+    const normalized = String(entity).toLowerCase();
+    if (normalized.startsWith("#x")) {
+      return safeCodePointToString(Number.parseInt(normalized.slice(2), 16)) ?? match;
+    }
+    if (normalized.startsWith("#")) {
+      return safeCodePointToString(Number.parseInt(normalized.slice(1), 10)) ?? match;
+    }
+    return namedEntities[normalized] ?? match;
+  });
 }
 
 function isAssetLikePath(pathname: string): boolean {
   return /\.(css|js|json|png|jpe?g|gif|svg|ico|webp|pdf|zip|tar|gz|mp4|mp3|woff2?)$/i.test(pathname);
+}
+
+function isSafeLinkUrl(url: URL): boolean {
+  return url.protocol === "http:" || url.protocol === "https:";
+}
+
+function stripDangerousBlockTag(value: string, tagName: string): string {
+  const pattern = new RegExp(`<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}\\s*>`, "gi");
+  return value.replace(pattern, "");
+}
+
+function safeCodePointToString(value: number): string | undefined {
+  if (!Number.isFinite(value) || value < 0 || value > 0x10ffff) return undefined;
+  try {
+    return String.fromCodePoint(value);
+  } catch {
+    return undefined;
+  }
 }
 
 export { ensureWebsiteMirror, getCachePaths, validateWebsiteUrl, WebsiteStashProvider };

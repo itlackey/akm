@@ -21,7 +21,7 @@ export async function akmAdd(input: { ref: string; name?: string }): Promise<Add
 
   const stashDir = resolveStashDir();
 
-  if (isHttpUrl(ref) && !isGithubRepositoryUrl(ref)) {
+  if (isHttpUrl(ref) && !isGitHubRepositoryUrl(ref)) {
     return addWebsiteStashSource(ref, stashDir, input.name);
   }
 
@@ -206,7 +206,7 @@ function toReadableId(resolvedPath: string): string {
   return resolvedPath;
 }
 
-function isGithubRepositoryUrl(ref: string): boolean {
+function isGitHubRepositoryUrl(ref: string): boolean {
   try {
     const parsed = new URL(ref);
     return parsed.hostname === "github.com";
