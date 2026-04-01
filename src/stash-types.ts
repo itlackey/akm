@@ -73,8 +73,9 @@ export interface AddResponse {
   };
   /** Present for local directory adds (routed to stashes config) */
   stashSource?: {
-    type: "filesystem";
-    path: string;
+    type: "filesystem" | "website";
+    path?: string;
+    url?: string;
     name?: string;
     stashRoot: string;
   };

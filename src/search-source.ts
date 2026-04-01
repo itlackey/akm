@@ -4,6 +4,7 @@ import { resolveStashDir } from "./common";
 import type { AkmConfig } from "./config";
 import { loadConfig } from "./config";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-providers/git";
+import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./stash-providers/website";
 import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -65,6 +66,21 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
       } catch (err) {
         warn(
           `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  // Website stash entries: resolve cache directory so the indexer can walk
+  // the scraped markdown snapshots.
+  for (const entry of config.stashes ?? []) {
+    if (entry.type === "website" && entry.url && entry.enabled !== false) {
+      try {
+        const cachePaths = getWebsiteCachePaths(entry.url);
+        addSource(cachePaths.stashDir, entry.name ?? entry.url);
+      } catch (err) {
+        warn(
+          `Warning: failed to resolve website stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -178,9 +194,10 @@ function isValidDirectory(dir: string): boolean {
 const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
 
 /**
- * Ensure all git stash mirrors are refreshed so their cache directories
- * exist on disk. Must be called (async) before `resolveStashSources()` so
- * the content directories pass the `isValidDirectory()` check.
+ * Ensure all cache-backed stash providers are refreshed so their cache
+ * directories exist on disk. Must be called (async) before
+ * `resolveStashSources()` so the content directories pass the
+ * `isValidDirectory()` check.
  */
 export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
   const cfg = config ?? loadConfig();
@@ -193,6 +210,16 @@ export async function ensureGitCaches(config?: AkmConfig): Promise<void> {
     } catch (err) {
       warn(
         `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  for (const entry of cfg.stashes ?? []) {
+    if (entry.type !== "website" || !entry.url || entry.enabled === false) continue;
+    try {
+      await ensureWebsiteMirror(entry, { requireStashDir: true });
+    } catch (err) {
+      warn(
+        `Warning: failed to refresh website stash for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

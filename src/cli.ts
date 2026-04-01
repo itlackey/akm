@@ -585,12 +585,12 @@ const searchCommand = defineCommand({
 const addCommand = defineCommand({
   meta: {
     name: "add",
-    description: "Add a source (local directory, npm package, GitHub repo, git URL, or remote provider)",
+    description: "Add a source (local directory, website, npm package, GitHub repo, git URL, or remote provider)",
   },
   args: {
     ref: {
       type: "positional",
-      description: "Path, URL, or registry ref (npm package, owner/repo, git URL, or local directory)",
+      description: "Path, URL, or registry ref (website URL, npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
     provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
@@ -642,7 +642,7 @@ const addCommand = defineCommand({
         return;
       }
 
-      const result = await akmAdd({ ref });
+      const result = await akmAdd({ ref, name: args.name });
       output("add", result);
     });
   },
