@@ -11,7 +11,11 @@ import { parseRegistryRef } from "./registry-resolve";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
 
-export async function akmAdd(input: { ref: string; name?: string }): Promise<AddResponse> {
+export async function akmAdd(input: {
+  ref: string;
+  name?: string;
+  options?: Record<string, unknown>;
+}): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref)
     throw new UsageError(
@@ -22,7 +26,7 @@ export async function akmAdd(input: { ref: string; name?: string }): Promise<Add
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteStashSource(ref, stashDir, input.name);
+    return addWebsiteStashSource(ref, stashDir, input.name, input.options);
   }
 
   // Detect local directory refs and route them to stashes[] instead of installed[]
@@ -86,7 +90,12 @@ async function addLocalStashSource(ref: string, sourcePath: string, stashDir: st
   };
 }
 
-async function addWebsiteStashSource(ref: string, stashDir: string, name?: string): Promise<AddResponse> {
+async function addWebsiteStashSource(
+  ref: string,
+  stashDir: string,
+  name?: string,
+  options?: Record<string, unknown>,
+): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadConfig();
   const stashes = [...(config.stashes ?? [])];
@@ -99,8 +108,12 @@ async function addWebsiteStashSource(ref: string, stashDir: string, name?: strin
       type: "website",
       url: normalizedUrl,
       name: name ?? toWebsiteName(normalizedUrl),
+      ...(options && Object.keys(options).length > 0 ? { options } : {}),
     };
     stashes.push(entry);
+    saveConfig({ ...config, stashes });
+  } else if (options && Object.keys(options).length > 0) {
+    entry.options = { ...entry.options, ...options };
     saveConfig({ ...config, stashes });
   }
 

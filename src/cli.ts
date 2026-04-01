@@ -596,6 +596,8 @@ const addCommand = defineCommand({
     provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
     options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
     name: { type: "string", description: "Human-friendly name for the source" },
+    "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
+    "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -647,7 +649,15 @@ const addCommand = defineCommand({
           "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
         );
       }
-      const result = await akmAdd({ ref, name: args.name });
+      const websiteOptions: Record<string, unknown> = {};
+      if (args["max-pages"]) websiteOptions.maxPages = args["max-pages"];
+      if (args["max-depth"]) websiteOptions.maxDepth = args["max-depth"];
+
+      const result = await akmAdd({
+        ref,
+        name: args.name,
+        options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
+      });
       output("add", result);
     });
   },

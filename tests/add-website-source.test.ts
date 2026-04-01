@@ -138,9 +138,9 @@ describe("akm add website", () => {
 
       expect(parsed.stashSource?.stashRoot).toBeDefined();
       const knowledgeFiles = fs.readdirSync(path.join(parsed.stashSource?.stashRoot as string, "knowledge")).sort();
-      expect(knowledgeFiles).toHaveLength(2);
+      expect(knowledgeFiles).toEqual(["getting-started.md", "index.md"]);
       const homeDoc = fs.readFileSync(
-        path.join(parsed.stashSource?.stashRoot as string, "knowledge", knowledgeFiles[0]),
+        path.join(parsed.stashSource?.stashRoot as string, "knowledge", "index.md"),
         "utf8",
       );
       expect(homeDoc).toContain("Example Docs");

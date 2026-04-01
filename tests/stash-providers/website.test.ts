@@ -96,18 +96,15 @@ describe("WebsiteStashProvider", () => {
     try {
       const entry = { type: "website", url: "https://docs.example.test/" } as const;
       const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
-      const files = fs.readdirSync(path.join(cachePaths.stashDir, "knowledge")).sort();
-      expect(files).toEqual(["docs.example.test.md", "docs.example.test__guide.md"]);
+      const topFiles = fs.readdirSync(path.join(cachePaths.stashDir, "knowledge")).sort();
+      expect(topFiles).toEqual(["guide.md", "index.md"]);
 
-      const homeDoc = fs.readFileSync(path.join(cachePaths.stashDir, "knowledge", "docs.example.test.md"), "utf8");
+      const homeDoc = fs.readFileSync(path.join(cachePaths.stashDir, "knowledge", "index.md"), "utf8");
       expect(homeDoc).toContain("# Docs Home");
       expect(homeDoc).toContain("Source: https://docs.example.test/");
       expect(homeDoc).toContain("[Guide](https://docs.example.test/guide)");
 
-      const guideDoc = fs.readFileSync(
-        path.join(cachePaths.stashDir, "knowledge", "docs.example.test__guide.md"),
-        "utf8",
-      );
+      const guideDoc = fs.readFileSync(path.join(cachePaths.stashDir, "knowledge", "guide.md"), "utf8");
       expect(guideDoc).toContain("# Guide");
       expect(guideDoc).toContain("Install the tool safely.");
     } finally {

@@ -16,10 +16,10 @@ const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 /** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Allow limited breadth-first expansion without letting the crawl queue grow unbounded. */
-const QUEUE_EXPANSION_FACTOR = 3;
+const QUEUE_EXPANSION_FACTOR = 5;
 
-const MAX_PAGES_DEFAULT = 10;
-const MAX_DEPTH_DEFAULT = 1;
+const MAX_PAGES_DEFAULT = 50;
+const MAX_DEPTH_DEFAULT = 3;
 
 interface WebsitePage {
   url: string;
@@ -115,11 +115,16 @@ async function ensureWebsiteMirror(
 function hasExtractedSite(stashDir: string): boolean {
   try {
     const knowledgeDir = path.join(stashDir, "knowledge");
-    return (
-      fs.statSync(stashDir).isDirectory() &&
-      fs.statSync(knowledgeDir).isDirectory() &&
-      fs.readdirSync(knowledgeDir).some((entry) => entry.endsWith(".md"))
-    );
+    if (!fs.statSync(stashDir).isDirectory() || !fs.statSync(knowledgeDir).isDirectory()) return false;
+    // Check top-level and one level of subdirectories for .md files
+    for (const entry of fs.readdirSync(knowledgeDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".md")) return true;
+      if (entry.isDirectory()) {
+        const subEntries = fs.readdirSync(path.join(knowledgeDir, entry.name));
+        if (subEntries.some((e) => e.endsWith(".md"))) return true;
+      }
+    }
+    return false;
   } catch {
     return false;
   }
@@ -139,10 +144,14 @@ async function scrapeWebsiteToStash(
   const knowledgeDir = path.join(stashDir, "knowledge");
   fs.mkdirSync(knowledgeDir, { recursive: true });
 
-  const usedSlugs = new Set<string>();
+  const usedPaths = new Set<string>();
   for (const page of pages) {
-    const slug = uniqueSlug(slugifyUrl(page.url), usedSlugs);
-    const filePath = path.join(knowledgeDir, `${slug}.md`);
+    const relPath = urlToRelativePath(page.url);
+    const uniquePath = uniqueSlug(relPath, usedPaths);
+    const filePath = path.join(knowledgeDir, `${uniquePath}.md`);
+    const dir = path.dirname(filePath);
+    if (dir !== knowledgeDir) fs.mkdirSync(dir, { recursive: true });
+    const slug = uniquePath.split("/").pop() ?? "index";
     fs.writeFileSync(filePath, buildMarkdownSnapshot(page, slug), "utf8");
   }
 }
@@ -301,17 +310,24 @@ function normalizeCrawlUrl(rawUrl: string): string | null {
   }
 }
 
-function slugifyUrl(rawUrl: string): string {
+/** Convert a page URL into a relative file path preserving the URL hierarchy.
+ *  e.g. https://example.com/docs/guide → docs/guide
+ *       https://example.com/           → index
+ */
+function urlToRelativePath(rawUrl: string): string {
   const parsed = new URL(rawUrl);
-  const host = slugifySegment(parsed.hostname);
-  const pathSegments = parsed.pathname
+  const segments = parsed.pathname
     .split("/")
     .filter(Boolean)
     .map((segment) => slugifySegment(segment))
     .filter(Boolean);
-  const query = parsed.search ? slugifySegment(parsed.search.slice(1)) : "";
-  const slugParts = [host, ...pathSegments, ...(query ? [query] : [])].filter(Boolean);
-  return slugParts.join("__") || host || "website";
+  if (parsed.search) {
+    const querySuffix = slugifySegment(parsed.search.slice(1));
+    if (querySuffix && segments.length > 0) {
+      segments[segments.length - 1] = `${segments[segments.length - 1]}_${querySuffix}`;
+    }
+  }
+  return segments.length > 0 ? segments.join("/") : "index";
 }
 
 function slugifySegment(value: string): string {
