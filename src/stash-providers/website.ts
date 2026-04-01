@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry } from "../common";
 import type { StashConfigEntry } from "../config";
-import { ConfigError } from "../errors";
+import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
@@ -15,6 +15,7 @@ const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
 /** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Allow limited breadth-first expansion without letting the crawl queue grow unbounded. */
 const QUEUE_EXPANSION_FACTOR = 3;
 
 const MAX_PAGES_DEFAULT = 10;
@@ -198,7 +199,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
   const body = await response.text();
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
 
-  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeHtml(body)) {
+  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {
     const title = extractHtmlTitle(body) || new URL(finalUrl).hostname;
     return {
       page: {
@@ -247,22 +248,30 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string): string {
 }
 
 function validateWebsiteUrl(rawUrl: string): string {
+  return validateWebsiteUrlWithError(rawUrl, ConfigError);
+}
+
+function validateWebsiteInputUrl(rawUrl: string): string {
+  return validateWebsiteUrlWithError(rawUrl, UsageError);
+}
+
+function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigError | typeof UsageError): string {
   if (!rawUrl) {
-    throw new ConfigError("Website provider requires a URL");
+    throw new ErrorType("Website provider requires a URL");
   }
 
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new ConfigError(`Website URL is not valid: "${rawUrl}"`);
+    throw new ErrorType(`Website URL is not valid: "${rawUrl}"`);
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ConfigError(`Website URL must use http:// or https://, got "${parsed.protocol}" in "${rawUrl}"`);
+    throw new ErrorType(`Website URL must use http:// or https://, got "${parsed.protocol}" in "${rawUrl}"`);
   }
   if (parsed.username || parsed.password) {
-    throw new ConfigError("Website URL must not contain embedded credentials");
+    throw new ErrorType("Website URL must not contain embedded credentials");
   }
 
   parsed.hash = "";
@@ -313,10 +322,11 @@ function slugifySegment(value: string): string {
 }
 
 function uniqueSlug(base: string, used: Set<string>): string {
-  let candidate = base || "website";
+  const seed = base || "website";
+  let candidate = seed;
   let i = 2;
   while (used.has(candidate)) {
-    candidate = `${base}-${i}`;
+    candidate = `${seed}-${i}`;
     i += 1;
   }
   used.add(candidate);
@@ -332,7 +342,7 @@ function coercePositiveInt(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function looksLikeHtml(body: string): boolean {
+function looksLikeMarkup(body: string): boolean {
   return /<html[\s>]|<body[\s>]|<\/[a-z][\w:-]*>/i.test(body);
 }
 
@@ -445,6 +455,8 @@ function decodeHtmlEntities(value: string): string {
 }
 
 function isAssetLikePath(pathname: string): boolean {
+  // Keep this list intentionally conservative so docs paths are still crawled
+  // unless they clearly point at static assets/binaries.
   return /\.(css|js|json|png|jpe?g|gif|svg|ico|webp|pdf|zip|tar|gz|mp4|mp3|woff2?)$/i.test(pathname);
 }
 
@@ -466,4 +478,4 @@ function safeCodePointToString(value: number): string | undefined {
   }
 }
 
-export { ensureWebsiteMirror, getCachePaths, validateWebsiteUrl, WebsiteStashProvider };
+export { ensureWebsiteMirror, getCachePaths, validateWebsiteInputUrl, validateWebsiteUrl, WebsiteStashProvider };

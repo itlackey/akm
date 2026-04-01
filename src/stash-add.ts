@@ -8,7 +8,7 @@ import { akmIndex } from "./indexer";
 import { upsertLockEntry } from "./lockfile";
 import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
-import { ensureWebsiteMirror, validateWebsiteUrl } from "./stash-providers/website";
+import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
 
 export async function akmAdd(input: { ref: string; name?: string }): Promise<AddResponse> {
@@ -21,7 +21,7 @@ export async function akmAdd(input: { ref: string; name?: string }): Promise<Add
 
   const stashDir = resolveStashDir();
 
-  if (isHttpUrl(ref) && !isGitHubRepositoryUrl(ref)) {
+  if (shouldAddAsWebsiteUrl(ref)) {
     return addWebsiteStashSource(ref, stashDir, input.name);
   }
 
@@ -87,7 +87,7 @@ async function addLocalStashSource(ref: string, sourcePath: string, stashDir: st
 }
 
 async function addWebsiteStashSource(ref: string, stashDir: string, name?: string): Promise<AddResponse> {
-  const normalizedUrl = validateWebsiteUrl(ref);
+  const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadConfig();
   const stashes = [...(config.stashes ?? [])];
   let entry = stashes.find(
@@ -206,10 +206,18 @@ function toReadableId(resolvedPath: string): string {
   return resolvedPath;
 }
 
-function isGitHubRepositoryUrl(ref: string): boolean {
+// Keep this list limited to widely-used git hosts for the non-breaking
+// "repo-like URL" fast-path; everything else continues to default to website snapshots.
+const KNOWN_GIT_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"]);
+
+export function shouldAddAsWebsiteUrl(ref: string): boolean {
+  return isHttpUrl(ref) && !isLikelyGitRepositoryUrl(ref);
+}
+
+function isLikelyGitRepositoryUrl(ref: string): boolean {
   try {
     const parsed = new URL(ref);
-    return parsed.hostname === "github.com";
+    return KNOWN_GIT_HOSTS.has(parsed.hostname.toLowerCase()) || parsed.pathname.endsWith(".git");
   } catch {
     return false;
   }
