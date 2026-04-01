@@ -15,6 +15,7 @@ const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
 /** Allow up to 7 days of stale snapshots when refresh fails so search remains available during outages. */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Allow limited breadth-first expansion without letting the crawl queue grow unbounded. */
 const QUEUE_EXPANSION_FACTOR = 3;
 
 const MAX_PAGES_DEFAULT = 10;
@@ -453,6 +454,8 @@ function decodeHtmlEntities(value: string): string {
 }
 
 function isAssetLikePath(pathname: string): boolean {
+  // Keep this list intentionally conservative so docs paths are still crawled
+  // unless they clearly point at static assets/binaries.
   return /\.(css|js|json|png|jpe?g|gif|svg|ico|webp|pdf|zip|tar|gz|mp4|mp3|woff2?)$/i.test(pathname);
 }
 
