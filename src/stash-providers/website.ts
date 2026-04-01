@@ -199,7 +199,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
   const body = await response.text();
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
 
-  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeHtml(body)) {
+  if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {
     const title = extractHtmlTitle(body) || new URL(finalUrl).hostname;
     return {
       page: {
@@ -322,10 +322,11 @@ function slugifySegment(value: string): string {
 }
 
 function uniqueSlug(base: string, used: Set<string>): string {
-  let candidate = base || "website";
+  const seed = base || "website";
+  let candidate = seed;
   let i = 2;
   while (used.has(candidate)) {
-    candidate = `${base}-${i}`;
+    candidate = `${seed}-${i}`;
     i += 1;
   }
   used.add(candidate);
@@ -341,7 +342,7 @@ function coercePositiveInt(value: unknown, fallback: number): number {
   return fallback;
 }
 
-function looksLikeHtml(body: string): boolean {
+function looksLikeMarkup(body: string): boolean {
   return /<html[\s>]|<body[\s>]|<\/[a-z][\w:-]*>/i.test(body);
 }
 

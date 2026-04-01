@@ -206,8 +206,8 @@ function toReadableId(resolvedPath: string): string {
   return resolvedPath;
 }
 
-// Keep this list to widely-used hosted git for the non-breaking "repo-like URL"
-// fast-path; everything else continues to default to website snapshots.
+// Keep this list limited to widely-used git hosts for the non-breaking
+// "repo-like URL" fast-path; everything else continues to default to website snapshots.
 const KNOWN_GIT_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org", "codeberg.org", "git.sr.ht"]);
 
 export function shouldAddAsWebsiteUrl(ref: string): boolean {
