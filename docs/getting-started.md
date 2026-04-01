@@ -110,16 +110,24 @@ reference.
 
 ## Add Sources
 
-Add any source — a local directory, a GitHub repo, or an npm package:
+Add any source — a local directory, a GitHub repo, an npm package, or a website:
 
 ```sh
 akm add ~/.claude/skills              # Your Claude Code skills
 akm add github:owner/repo             # A team's shared kit
 akm add @scope/my-kit                 # An npm package
+akm add https://docs.example.com --name docs  # A documentation site
 ```
 
 All become searchable immediately. Use `akm list` to see your sources and
 `akm update --all` to keep managed sources current.
+
+Website sources are crawled and converted to markdown knowledge assets. Control
+the crawl with `--max-pages` and `--max-depth`:
+
+```sh
+akm add https://www.agentic-patterns.com/ --name agent-patterns --max-pages 100
+```
 
 See [registry.md](registry.md) for the full install flow and supported
 ref formats.

@@ -72,12 +72,19 @@ export interface AddResponse {
     installedAt: string;
   };
   /** Present for local directory adds (routed to stashes config) */
-  stashSource?: {
-    type: "filesystem";
-    path: string;
-    name?: string;
-    stashRoot: string;
-  };
+  stashSource?:
+    | {
+        type: "filesystem";
+        path: string;
+        name?: string;
+        stashRoot: string;
+      }
+    | {
+        type: "website";
+        url: string;
+        name?: string;
+        stashRoot: string;
+      };
   config: {
     stashCount: number;
     installedKitCount: number;

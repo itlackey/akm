@@ -585,17 +585,19 @@ const searchCommand = defineCommand({
 const addCommand = defineCommand({
   meta: {
     name: "add",
-    description: "Add a source (local directory, npm package, GitHub repo, git URL, or remote provider)",
+    description: "Add a source (local directory, website, npm package, GitHub repo, git URL, or remote provider)",
   },
   args: {
     ref: {
       type: "positional",
-      description: "Path, URL, or registry ref (npm package, owner/repo, git URL, or local directory)",
+      description: "Path, URL, or registry ref (website URL, npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
     provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
     options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
     name: { type: "string", description: "Human-friendly name for the source" },
+    "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
+    "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -614,7 +616,7 @@ const addCommand = defineCommand({
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
-        if (ref.startsWith("http://")) {
+        if (shouldWarnOnPlainHttp(ref)) {
           warn(
             "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
           );
@@ -642,7 +644,20 @@ const addCommand = defineCommand({
         return;
       }
 
-      const result = await akmAdd({ ref });
+      if (shouldWarnOnPlainHttp(ref)) {
+        warn(
+          "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+        );
+      }
+      const websiteOptions: Record<string, unknown> = {};
+      if (args["max-pages"]) websiteOptions.maxPages = args["max-pages"];
+      if (args["max-depth"]) websiteOptions.maxDepth = args["max-depth"];
+
+      const result = await akmAdd({
+        ref,
+        name: args.name,
+        options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
+      });
       output("add", result);
     });
   },
@@ -659,6 +674,23 @@ function parseKindFilter(raw: string | undefined): SourceKind[] | undefined {
     }
   }
   return kinds;
+}
+
+function shouldWarnOnPlainHttp(ref: string): boolean {
+  if (!ref.startsWith("http://")) return false;
+  try {
+    const hostname = new URL(ref).hostname.toLowerCase();
+    return (
+      hostname !== "localhost" &&
+      hostname !== "127.0.0.1" &&
+      hostname !== "0.0.0.0" &&
+      hostname !== "::1" &&
+      hostname !== "[::1]" &&
+      !hostname.endsWith(".localhost")
+    );
+  } catch {
+    return true;
+  }
 }
 
 const listCommand = defineCommand({
