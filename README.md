@@ -118,7 +118,7 @@ Private access is supported through:
 - **Pluggable providers** -- Built-in registry providers include `static-index` and `skills-sh`; source providers include `filesystem` and `openviking`; custom providers can implement their own authentication
 
 See the [Registry docs](docs/registry.md) for hosting your own registry and
-the v2 index format.
+the index format.
 
 ### Add Sources from Anywhere
 
@@ -127,9 +127,21 @@ akm add ~/.claude/skills                    # Local directory
 akm add @scope/my-kit                       # npm
 akm add github:owner/repo#v1.2.3            # GitHub with tag
 akm add git+https://gitlab.com/org/kit      # Any git repo
+akm add https://docs.example.com --name docs  # Website as knowledge
 ```
 
 Manage sources with `akm list`, `akm update --all`, and `akm remove`.
+
+### Website Sources
+
+Add any site as a searchable knowledge source. Pages are crawled,
+converted to markdown, and indexed:
+
+```sh
+akm add https://docs.example.com --name my-docs
+akm add https://www.agentic-patterns.com/ --name agent-patterns
+akm add https://docs.example.com --name docs --max-pages 100 --max-depth 5
+```
 
 ### Publish Your Own Kit
 

@@ -129,11 +129,16 @@ returns guidance to run `akm add <origin>` first.
 | `akm add ~/.claude/skills` | Registers a local directory as a source |
 | `akm add github:owner/repo` | Fetches and caches a managed source |
 | `akm add @scope/kit` | Fetches and caches a managed source from npm |
+| `akm add https://docs.example.com` | Crawls and caches a website as knowledge |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
+
+HTTP(S) URLs pointing to known git hosts (GitHub, GitLab, Bitbucket, Codeberg,
+SourceHut) or ending in `.git` are treated as git sources. All other HTTP(S)
+URLs are treated as website sources.
 
 ### add
 
-Add a source — a local directory, npm package, GitHub repo, or git URL.
+Add a source — a local directory, npm package, GitHub repo, git URL, or website.
 
 ```sh
 akm add ~/.claude/skills              # Local directory
@@ -144,7 +149,36 @@ akm add https://github.com/owner/repo
 akm add git+https://gitlab.com/org/kit
 akm add ./path/to/local/kit
 akm add context-hub
+akm add https://docs.example.com --name docs              # Website
+akm add https://docs.example.com --max-pages 100 --max-depth 5
 ```
+
+| Flag | Description |
+| --- | --- |
+| `--name` | Human-friendly name for the source |
+| `--provider` | Provider type (e.g. `openviking`). Required for remote provider sources |
+| `--options` | Provider options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
+| `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+
+#### Website sources
+
+When the input is an HTTP(S) URL that isn't a known git host, akm treats it as
+a website source. It crawls the site breadth-first from the given URL, converts
+each page to markdown, and stores the results as knowledge assets with the URL
+path hierarchy preserved.
+
+```sh
+akm add https://www.agentic-patterns.com/ --name agent-patterns
+akm add https://docs.example.com/guide --name guide --max-pages 200
+```
+
+Pages are cached locally and refreshed every 12 hours. The crawl stays within
+the same origin (hostname) and skips static assets (images, CSS, JS, etc.).
+
+Use `--max-pages` and `--max-depth` to control how many pages are fetched and
+how many link levels deep the crawler goes. These values are persisted in your
+config so subsequent re-indexes use the same limits.
 
 See [registry.md](registry.md) for the full install flow for managed sources.
 

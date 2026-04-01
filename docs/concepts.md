@@ -21,6 +21,7 @@ inferred from the input:
 | `~/.claude/skills` | `local` | Indexed in place. Not updatable. |
 | `github:owner/repo` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
 | `npm:@scope/kit` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
+| `https://docs.example.com` | `website` | Crawled, converted to markdown, cached. Refreshed every 12 hours. |
 | `http://host --provider openviking` | `remote` | Queried at search time. Not cached. |
 
 The user never picks the kind. `akm add` infers it.
@@ -172,6 +173,7 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **source** | A place assets come from — added via `akm add` | A directory, npm package, or remote provider |
 | **local source** | A directory on disk, indexed in place | `~/akm`, `~/.claude/skills` |
 | **managed source** | A package fetched and cached by akm, updatable | An npm package or GitHub repo |
+| **website source** | A crawled website stored as knowledge | `https://docs.example.com` |
 | **remote source** | An API provider queried at search time | An OpenViking URL |
 | **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm init` |
 | **registry** | A discovery index for finding sources | The official registry, skills.sh |
