@@ -669,8 +669,15 @@ function parseKindFilter(raw: string | undefined): SourceKind[] | undefined {
 function shouldWarnOnPlainHttp(ref: string): boolean {
   if (!ref.startsWith("http://")) return false;
   try {
-    const hostname = new URL(ref).hostname;
-    return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
+    const hostname = new URL(ref).hostname.toLowerCase();
+    return (
+      hostname !== "localhost" &&
+      hostname !== "127.0.0.1" &&
+      hostname !== "0.0.0.0" &&
+      hostname !== "::1" &&
+      hostname !== "[::1]" &&
+      !hostname.endsWith(".localhost")
+    );
   } catch {
     return true;
   }
