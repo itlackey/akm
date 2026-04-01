@@ -3,8 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../../src/config";
+import { ConfigError, UsageError } from "../../src/errors";
 import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
-import { ensureWebsiteMirror, getCachePaths, validateWebsiteUrl } from "../../src/stash-providers/website";
+import {
+  ensureWebsiteMirror,
+  getCachePaths,
+  validateWebsiteInputUrl,
+  validateWebsiteUrl,
+} from "../../src/stash-providers/website";
 
 // Trigger self-registration
 import "../../src/stash-providers/website";
@@ -111,6 +117,11 @@ describe("WebsiteStashProvider", () => {
 
   test("validateWebsiteUrl rejects embedded credentials", () => {
     expect(() => validateWebsiteUrl("https://user:pass@example.com")).toThrow("embedded credentials");
+  });
+
+  test("CLI input validation throws UsageError while config validation throws ConfigError", () => {
+    expect(() => validateWebsiteInputUrl("not a url")).toThrow(UsageError);
+    expect(() => validateWebsiteUrl("not a url")).toThrow(ConfigError);
   });
 
   test("getCachePaths is stable for normalized URLs", () => {

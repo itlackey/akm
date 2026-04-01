@@ -614,7 +614,7 @@ const addCommand = defineCommand({
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
-        if (ref.startsWith("http://")) {
+        if (shouldWarnOnPlainHttp(ref)) {
           warn(
             "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
           );
@@ -642,6 +642,11 @@ const addCommand = defineCommand({
         return;
       }
 
+      if (shouldWarnOnPlainHttp(ref)) {
+        warn(
+          "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+        );
+      }
       const result = await akmAdd({ ref, name: args.name });
       output("add", result);
     });
@@ -659,6 +664,16 @@ function parseKindFilter(raw: string | undefined): SourceKind[] | undefined {
     }
   }
   return kinds;
+}
+
+function shouldWarnOnPlainHttp(ref: string): boolean {
+  if (!ref.startsWith("http://")) return false;
+  try {
+    const hostname = new URL(ref).hostname;
+    return hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1";
+  } catch {
+    return true;
+  }
 }
 
 const listCommand = defineCommand({

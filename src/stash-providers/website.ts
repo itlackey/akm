@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry } from "../common";
 import type { StashConfigEntry } from "../config";
-import { ConfigError } from "../errors";
+import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
@@ -247,22 +247,30 @@ function buildMarkdownSnapshot(page: WebsitePage, slug: string): string {
 }
 
 function validateWebsiteUrl(rawUrl: string): string {
+  return validateWebsiteUrlWithError(rawUrl, ConfigError);
+}
+
+function validateWebsiteInputUrl(rawUrl: string): string {
+  return validateWebsiteUrlWithError(rawUrl, UsageError);
+}
+
+function validateWebsiteUrlWithError(rawUrl: string, ErrorType: typeof ConfigError | typeof UsageError): string {
   if (!rawUrl) {
-    throw new ConfigError("Website provider requires a URL");
+    throw new ErrorType("Website provider requires a URL");
   }
 
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new ConfigError(`Website URL is not valid: "${rawUrl}"`);
+    throw new ErrorType(`Website URL is not valid: "${rawUrl}"`);
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ConfigError(`Website URL must use http:// or https://, got "${parsed.protocol}" in "${rawUrl}"`);
+    throw new ErrorType(`Website URL must use http:// or https://, got "${parsed.protocol}" in "${rawUrl}"`);
   }
   if (parsed.username || parsed.password) {
-    throw new ConfigError("Website URL must not contain embedded credentials");
+    throw new ErrorType("Website URL must not contain embedded credentials");
   }
 
   parsed.hash = "";
@@ -466,4 +474,4 @@ function safeCodePointToString(value: number): string | undefined {
   }
 }
 
-export { ensureWebsiteMirror, getCachePaths, validateWebsiteUrl, WebsiteStashProvider };
+export { ensureWebsiteMirror, getCachePaths, validateWebsiteInputUrl, validateWebsiteUrl, WebsiteStashProvider };
