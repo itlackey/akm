@@ -287,6 +287,8 @@ describe("loadConfig", () => {
       process.chdir(firstProject);
       expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
 
+      // Intentionally do not reset the cache here; loadConfig() should notice
+      // the cwd change because the discovered project config path set changes.
       process.chdir(secondProject);
       expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
     } finally {

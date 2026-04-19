@@ -246,6 +246,11 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Normalize a raw config object into a sparse config layer containing only
+ * recognized keys that were valid in the source object. Defaults are layered
+ * separately by the caller so project config files only override what they set.
+ */
 function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const config: Partial<AkmConfig> = {};
 
@@ -700,8 +705,8 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
   }
-  if (override.stashes !== undefined) {
-    merged.stashes = override.stashes.length > 0 ? [...(base.stashes ?? []), ...override.stashes] : [];
+  if (override.stashes && override.stashes.length > 0) {
+    merged.stashes = [...(base.stashes ?? []), ...override.stashes];
   }
 
   return merged;
@@ -753,7 +758,7 @@ function discoverProjectConfigPaths(startDir = process.cwd()): string[] {
 
 function getConfigSignature(configPaths: string[]): string {
   if (configPaths.length === 0) return "defaults";
-  return configPaths.map((configPath) => `${configPath}:${fs.statSync(configPath).mtimeMs}`).join("|");
+  return configPaths.map((configPath) => `${configPath}:${getFileSignatureToken(configPath)}`).join("|");
 }
 
 function isFile(filePath: string): boolean {
@@ -761,5 +766,13 @@ function isFile(filePath: string): boolean {
     return fs.statSync(filePath).isFile();
   } catch {
     return false;
+  }
+}
+
+function getFileSignatureToken(filePath: string): string {
+  try {
+    return String(fs.statSync(filePath).mtimeMs);
+  } catch {
+    return "missing";
   }
 }
