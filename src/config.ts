@@ -748,7 +748,7 @@ function getEffectiveConfigPaths(): string[] {
   if (isFile(configPath)) {
     paths.push(configPath);
   }
-  return [...paths, ...discoverProjectConfigPaths()];
+  return [...paths, ...discoverProjectConfigPaths(process.cwd())];
 }
 
 /**
@@ -756,7 +756,7 @@ function getEffectiveConfigPaths(): string[] {
  * files. Paths are returned from outermost parent to innermost directory so
  * nearer project directories override broader project settings.
  */
-function discoverProjectConfigPaths(startDir = process.cwd()): string[] {
+function discoverProjectConfigPaths(startDir: string): string[] {
   const paths: string[] = [];
   let currentDir = path.resolve(startDir);
 
