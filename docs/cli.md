@@ -92,14 +92,14 @@ compact, follow-up-friendly summary.
 akm curate "plan a release"
 akm curate "deploy a Bun app" --limit 3
 akm curate "review an architecture proposal" --type skill
-akm curate "learn the release workflow" --source stash --format text
+akm curate "learn the release workflow" --source both --format text
 ```
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
-| `--source` | `stash`, `registry`, `both` | `both` | Where to search before curating |
+| `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
 `akm curate` selects high-signal results, prefers one strong match per asset
 type by default, and includes direct follow-up commands such as `akm show <ref>`

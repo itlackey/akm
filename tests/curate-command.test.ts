@@ -99,7 +99,7 @@ describe("curate command", () => {
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
-    expect(output).toContain("ref: command:release.md");
-    expect(output).toContain("show: akm show command:release.md");
+    expect(output).toContain("ref: command:release");
+    expect(output).toContain("show: akm show command:release");
   });
 });

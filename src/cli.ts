@@ -576,6 +576,8 @@ type CuratedRegistryItem = {
 
 type CuratedItem = CuratedStashItem | CuratedRegistryItem;
 
+const CURATE_STOP_WORDS = new Set(["a", "an", "and", "for", "how", "i", "in", "of", "or", "the", "to", "with"]);
+
 async function curateSearchResults(
   query: string,
   result: SearchResponse,
@@ -600,7 +602,9 @@ async function curateSearchResults(
       if (!bestByType.has(hit.type)) bestByType.set(hit.type, hit);
     }
     const orderedTypes = orderCuratedTypes(query, Array.from(bestByType.keys()));
-    selectedStashHits = orderedTypes.map((type) => bestByType.get(type)).filter((hit): hit is StashSearchHit => Boolean(hit));
+    selectedStashHits = orderedTypes
+      .map((type) => bestByType.get(type))
+      .filter((hit): hit is StashSearchHit => Boolean(hit));
   }
 
   const selectedRegistryHits =
@@ -727,6 +731,89 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   return `Selected ${items.length} high-signal result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
 }
 
+function hasSearchResults(result: SearchResponse): boolean {
+  return result.hits.length > 0 || (result.registryHits?.length ?? 0) > 0;
+}
+
+function deriveCurateFallbackQueries(query: string): string[] {
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/i)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 3 && !CURATE_STOP_WORDS.has(token)),
+    ),
+  ).slice(0, 6);
+}
+
+function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
+  const hitsByRef = new Map<string, StashSearchHit>();
+  for (const hit of base.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
+    hitsByRef.set(hit.ref, hit);
+  }
+  for (const result of extras) {
+    for (const hit of result.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
+      const existing = hitsByRef.get(hit.ref);
+      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
+        hitsByRef.set(hit.ref, hit);
+      }
+    }
+  }
+
+  const registryById = new Map<string, RegistrySearchResultHit>();
+  for (const hit of base.registryHits ?? []) {
+    registryById.set(hit.id, hit);
+  }
+  for (const result of extras) {
+    for (const hit of result.registryHits ?? []) {
+      const existing = registryById.get(hit.id);
+      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
+        registryById.set(hit.id, hit);
+      }
+    }
+  }
+
+  const warnings = Array.from(
+    new Set([...(base.warnings ?? []), ...extras.flatMap((result) => result.warnings ?? [])]),
+  );
+  const mergedHits = [...hitsByRef.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const mergedRegistryHits = [...registryById.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+  return {
+    ...base,
+    hits: mergedHits,
+    ...(mergedRegistryHits.length > 0 ? { registryHits: mergedRegistryHits } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    ...(mergedHits.length > 0 || mergedRegistryHits.length > 0 ? { tip: undefined } : {}),
+  };
+}
+
+async function searchForCuration(input: {
+  query: string;
+  type?: string;
+  limit: number;
+  source: ReturnType<typeof parseSearchSource>;
+}): Promise<SearchResponse> {
+  const initial = await akmSearch(input);
+  if (hasSearchResults(initial)) return initial;
+
+  const fallbackQueries = deriveCurateFallbackQueries(input.query);
+  if (fallbackQueries.length <= 1) return initial;
+
+  const fallbackResults = await Promise.all(
+    fallbackQueries.map((token) =>
+      akmSearch({
+        query: token,
+        type: input.type,
+        limit: input.limit,
+        source: input.source,
+      }),
+    ),
+  );
+  return mergeCurateSearchResponses(initial, fallbackResults);
+}
+
 /**
  * Module Naming:
  * - stash-*          : Asset operations (search, show, add, clone)
@@ -828,7 +915,7 @@ const curateCommand = defineCommand({
       description: "Asset type filter (e.g. skill, command, agent, knowledge, script, memory, or any).",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
-    source: { type: "string", description: "Search source (stash|registry|both)", default: "both" },
+    source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -838,8 +925,8 @@ const curateCommand = defineCommand({
         throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
       }
       const limit = limitRaw && limitRaw > 0 ? limitRaw : 4;
-      const source = parseSearchSource(args.source ?? "both");
-      const searchResult = await akmSearch({
+      const source = parseSearchSource(args.source ?? "stash");
+      const searchResult = await searchForCuration({
         query: args.query,
         type,
         limit: Math.max(limit * 4, 12),
