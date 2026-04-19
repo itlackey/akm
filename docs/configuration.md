@@ -42,8 +42,8 @@ akm config unset llm                # Remove an optional key
 | `installed` | array | `[]` | Managed source metadata, cached in `~/.cache/akm/` (managed by akm) |
 | `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing |
 | `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
-| `security.installAudit.registryWhitelist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
-| `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the whitelist |
+| `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
+| `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
 
 ## Embedding Configuration
 
@@ -106,7 +106,7 @@ injection attempts, remote shell pipes, and risky lifecycle hooks.
 ```sh
 akm config set security.installAudit.enabled true
 akm config set security.installAudit.blockOnCritical true
-akm config set security.installAudit.registryWhitelist '["npm","github.com"]'
+akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
 akm config set security.installAudit.blockUnlistedRegistries true
 ```
 

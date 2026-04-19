@@ -224,18 +224,18 @@ Install-time auditing is enabled by default. You can configure it in
 ```sh
 akm config set security.installAudit.enabled false
 akm config set security.installAudit.blockOnCritical false
-akm config set security.installAudit.registryWhitelist '["npm","github.com"]'
+akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
 akm config set security.installAudit.blockUnlistedRegistries true
 ```
 
 - `security.installAudit.enabled` disables auditing entirely.
 - `security.installAudit.blockOnCritical` reports critical findings without
   blocking the install when set to `false`.
-- `security.installAudit.registryWhitelist` allows only named registries or
+- `security.installAudit.registryAllowlist` allows only named registries or
   hosts (for example `npm`, `github.com`, `gitlab.com`) when allowlisting is
   enabled.
 - `security.installAudit.blockUnlistedRegistries` blocks installs whose source
-  does not match the whitelist.
+  does not match the allowlist.
 
 ## Managing Managed Sources
 

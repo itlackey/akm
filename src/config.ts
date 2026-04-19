@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { filterNonEmptyStrings } from "./common";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
@@ -67,6 +68,7 @@ export interface InstallAuditConfig {
   enabled?: boolean;
   blockOnCritical?: boolean;
   blockUnlistedRegistries?: boolean;
+  registryAllowlist?: string[];
   registryWhitelist?: string[];
 }
 
@@ -600,11 +602,9 @@ function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined
   if (typeof obj.enabled === "boolean") config.enabled = obj.enabled;
   if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
   if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
-  if (Array.isArray(obj.registryWhitelist)) {
-    const whitelist = obj.registryWhitelist.filter(
-      (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
-    );
-    config.registryWhitelist = whitelist;
+  const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
+  if (rawAllowlist) {
+    config.registryAllowlist = rawAllowlist;
   }
   return Object.keys(config).length > 0 ? config : undefined;
 }

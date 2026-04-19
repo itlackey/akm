@@ -41,8 +41,10 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { security: { installAudit: { blockOnCritical: parseBooleanValue(value, key) } } };
     case "security.installAudit.blockUnlistedRegistries":
       return { security: { installAudit: { blockUnlistedRegistries: parseBooleanValue(value, key) } } };
+    case "security.installAudit.registryAllowlist":
+      return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
     case "security.installAudit.registryWhitelist":
-      return { security: { installAudit: { registryWhitelist: parseStringArrayValue(value, key) } } };
+      return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -74,8 +76,10 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return config.security?.installAudit?.blockOnCritical ?? null;
     case "security.installAudit.blockUnlistedRegistries":
       return config.security?.installAudit?.blockUnlistedRegistries ?? null;
+    case "security.installAudit.registryAllowlist":
+      return getInstallAuditAllowlist(config);
     case "security.installAudit.registryWhitelist":
-      return config.security?.installAudit?.registryWhitelist ?? [];
+      return getInstallAuditAllowlist(config);
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -94,6 +98,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     case "security.installAudit.enabled":
     case "security.installAudit.blockOnCritical":
     case "security.installAudit.blockUnlistedRegistries":
+    case "security.installAudit.registryAllowlist":
     case "security.installAudit.registryWhitelist":
       return mergeConfigValue(config, parseConfigValue(key, rawValue));
     default:
@@ -131,10 +136,13 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
         ...config,
         security: mergeSecurityConfig(config.security, { installAudit: { blockUnlistedRegistries: undefined } }),
       };
+    case "security.installAudit.registryAllowlist":
     case "security.installAudit.registryWhitelist":
       return {
         ...config,
-        security: mergeSecurityConfig(config.security, { installAudit: { registryWhitelist: undefined } }),
+        security: mergeSecurityConfig(config.security, {
+          installAudit: { registryAllowlist: undefined, registryWhitelist: undefined },
+        }),
       };
     default:
       throw new UsageError(`Unknown or unsupported unset key: ${key}`);
@@ -217,6 +225,10 @@ function parseStringArrayValue(value: string, key: string): string[] {
     throw new UsageError(`Invalid value for ${key}: expected a JSON array of strings`);
   }
   return parsed;
+}
+
+function getInstallAuditAllowlist(config: AkmConfig): string[] | null {
+  return config.security?.installAudit?.registryAllowlist ?? config.security?.installAudit?.registryWhitelist ?? null;
 }
 
 function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined {

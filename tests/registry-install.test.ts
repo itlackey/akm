@@ -454,11 +454,11 @@ describe("local directory installs", () => {
     createTarGz(tarRoot, archivePath);
 
     try {
-      await expect(
-        withMockedNpmPackage("audit-blocked-kit", archivePath, () =>
-          withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("audit-blocked-kit")),
-        ),
-      ).rejects.toThrow(/Security audit failed|Lifecycle script "postinstall" is suspicious/);
+      const install = withMockedNpmPackage("audit-blocked-kit", archivePath, () =>
+        withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("audit-blocked-kit")),
+      );
+      await expect(install).rejects.toThrow("Security audit failed for audit-blocked-kit.");
+      await expect(install).rejects.toThrow('Lifecycle script "postinstall" is suspicious');
     } finally {
       fs.rmSync(cacheHome, { recursive: true, force: true });
       fs.rmSync(packageDir, { recursive: true, force: true });
@@ -479,11 +479,11 @@ describe("local directory installs", () => {
     createTarGz(tarRoot, archivePath);
 
     try {
-      await expect(
-        withMockedNpmPackage("prompt-audit-kit", archivePath, () =>
-          withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("prompt-audit-kit")),
-        ),
-      ).rejects.toThrow(/Security audit failed|reveal hidden prompts or secrets/i);
+      const install = withMockedNpmPackage("prompt-audit-kit", archivePath, () =>
+        withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("prompt-audit-kit")),
+      );
+      await expect(install).rejects.toThrow("Security audit failed for prompt-audit-kit.");
+      await expect(install).rejects.toThrow("Contains instructions to reveal hidden prompts or secrets.");
     } finally {
       fs.rmSync(cacheHome, { recursive: true, force: true });
       fs.rmSync(packageDir, { recursive: true, force: true });

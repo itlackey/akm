@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { filterNonEmptyStrings } from "./common";
 import type { AkmConfig } from "./config";
 import type { KitSource } from "./registry-types";
 
@@ -38,7 +39,7 @@ export interface ResolvedInstallAuditConfig {
   enabled: boolean;
   blockOnCritical: boolean;
   blockUnlistedRegistries: boolean;
-  registryWhitelist: string[];
+  registryAllowlist: string[];
 }
 
 interface InstallAuditRule {
@@ -53,7 +54,7 @@ const DEFAULT_INSTALL_AUDIT_CONFIG: ResolvedInstallAuditConfig = {
   enabled: true,
   blockOnCritical: true,
   blockUnlistedRegistries: false,
-  registryWhitelist: [],
+  registryAllowlist: [],
 };
 
 const MAX_SCANNED_FILE_BYTES = 256 * 1024;
@@ -143,17 +144,13 @@ const CONTENT_RULES: InstallAuditRule[] = [
 
 export function resolveInstallAuditConfig(config: AkmConfig | undefined): ResolvedInstallAuditConfig {
   const installAudit = config?.security?.installAudit;
-  const whitelist = Array.isArray(installAudit?.registryWhitelist)
-    ? installAudit.registryWhitelist.filter(
-        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
-      )
-    : [];
+  const allowlist = filterNonEmptyStrings(installAudit?.registryAllowlist) ?? filterNonEmptyStrings(installAudit?.registryWhitelist) ?? [];
   return {
     enabled: installAudit?.enabled ?? DEFAULT_INSTALL_AUDIT_CONFIG.enabled,
     blockOnCritical: installAudit?.blockOnCritical ?? DEFAULT_INSTALL_AUDIT_CONFIG.blockOnCritical,
     blockUnlistedRegistries:
       installAudit?.blockUnlistedRegistries ?? DEFAULT_INSTALL_AUDIT_CONFIG.blockUnlistedRegistries,
-    registryWhitelist: whitelist.map((entry) => entry.trim().toLowerCase()),
+    registryAllowlist: allowlist.map((entry) => entry.trim().toLowerCase()),
   };
 }
 
@@ -164,15 +161,15 @@ export function enforceRegistryInstallPolicy(
 ): void {
   const resolved = resolveInstallAuditConfig(config);
   if (!resolved.blockUnlistedRegistries) return;
-  if (resolved.registryWhitelist.length === 0) {
+  if (resolved.registryAllowlist.length === 0) {
     throw new Error(
-      `Install blocked for ${ref}: no registries are whitelisted. Configure security.installAudit.registryWhitelist or disable security.installAudit.blockUnlistedRegistries.`,
+      `Install blocked for ${ref}: no registries are allowlisted. Configure security.installAudit.registryAllowlist or disable security.installAudit.blockUnlistedRegistries.`,
     );
   }
-  const matched = registryLabels.some((label) => resolved.registryWhitelist.includes(label.toLowerCase()));
+  const matched = registryLabels.some((label) => resolved.registryAllowlist.includes(label.toLowerCase()));
   if (matched) return;
   throw new Error(
-    `Install blocked for ${ref}: registry is not whitelisted. Allowed: ${resolved.registryWhitelist.join(", ")}. Seen: ${registryLabels.join(", ")}.`,
+    `Install blocked for ${ref}: registry is not allowlisted. Allowed: ${resolved.registryAllowlist.join(", ")}. Seen: ${registryLabels.join(", ")}.`,
   );
 }
 
