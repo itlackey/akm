@@ -113,23 +113,26 @@ function createTarGz(sourceDir: string, archivePath: string): void {
 async function withMockedNpmPackage<T>(packageName: string, archivePath: string, run: () => Promise<T>): Promise<T> {
   const tarballBytes = fs.readFileSync(archivePath);
   const tarballSha1 = createHash("sha1").update(tarballBytes).digest("hex");
+  const encodedPackageName = encodeURIComponent(packageName);
+  const registryUrl = `https://registry.npmjs.org/${encodedPackageName}`;
+  const tarballUrl = `https://example.test/${encodedPackageName}.tgz`;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === `https://registry.npmjs.org/${packageName}`) {
+    if (url === registryUrl) {
       return new Response(
         JSON.stringify({
           "dist-tags": { latest: "1.0.0" },
           versions: {
             "1.0.0": {
-              dist: { tarball: `https://example.test/${packageName}.tgz`, shasum: tarballSha1 },
+              dist: { tarball: tarballUrl, shasum: tarballSha1 },
             },
           },
         }),
         { status: 200 },
       );
     }
-    if (url === `https://example.test/${packageName}.tgz`) {
+    if (url === tarballUrl) {
       return new Response(tarballBytes, { status: 200 });
     }
     return new Response("not found", { status: 404 });

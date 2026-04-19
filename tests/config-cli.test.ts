@@ -114,11 +114,7 @@ describe("config CLI helpers", () => {
   test("set/get/unset support install audit config keys", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
     const configured = setConfigValue(base, "security.installAudit.enabled", "true");
-    const withWhitelist = setConfigValue(
-      configured,
-      "security.installAudit.registryAllowlist",
-      '["npm","github.com"]',
-    );
+    const withWhitelist = setConfigValue(configured, "security.installAudit.registryAllowlist", '["npm","github.com"]');
 
     expect(getConfigValue(withWhitelist, "security.installAudit.enabled")).toBe(true);
     expect(getConfigValue(withWhitelist, "security.installAudit.registryAllowlist")).toEqual(["npm", "github.com"]);

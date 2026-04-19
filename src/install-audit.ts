@@ -144,7 +144,10 @@ const CONTENT_RULES: InstallAuditRule[] = [
 
 export function resolveInstallAuditConfig(config: AkmConfig | undefined): ResolvedInstallAuditConfig {
   const installAudit = config?.security?.installAudit;
-  const allowlist = filterNonEmptyStrings(installAudit?.registryAllowlist) ?? filterNonEmptyStrings(installAudit?.registryWhitelist) ?? [];
+  const allowlist =
+    filterNonEmptyStrings(installAudit?.registryAllowlist) ??
+    filterNonEmptyStrings(installAudit?.registryWhitelist) ??
+    [];
   return {
     enabled: installAudit?.enabled ?? DEFAULT_INSTALL_AUDIT_CONFIG.enabled,
     blockOnCritical: installAudit?.blockOnCritical ?? DEFAULT_INSTALL_AUDIT_CONFIG.blockOnCritical,
@@ -303,9 +306,10 @@ function scanFile(
 
   const content = bytes.subarray(0, MAX_SCANNED_FILE_BYTES).toString("utf8");
   const relativePath = path.relative(rootDir, filePath) || path.basename(filePath);
+  const genericContent = basename === "package.json" ? stripPackageJsonScripts(content) : content;
 
   for (const rule of CONTENT_RULES) {
-    const match = content.match(rule.pattern);
+    const match = genericContent.match(rule.pattern);
     if (!match) continue;
     findings.push({
       id: rule.id,
@@ -320,6 +324,20 @@ function scanFile(
   if (basename === "package.json") {
     scanPackageJson(content, relativePath, findings);
   }
+}
+
+function stripPackageJsonScripts(content: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return content;
+
+  const packageJson = { ...(parsed as Record<string, unknown>) };
+  delete packageJson.scripts;
+  return JSON.stringify(packageJson, null, 2);
 }
 
 function scanPackageJson(content: string, relativePath: string, findings: InstallAuditFinding[]): void {

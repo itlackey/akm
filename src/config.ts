@@ -664,5 +664,5 @@ function mergeInstallAuditConfig(
     ...(base ?? {}),
     ...(override ?? {}),
   };
-  return Object.keys(merged).length > 0 ? merged : undefined;
+  return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
 }
