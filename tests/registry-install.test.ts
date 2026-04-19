@@ -113,10 +113,11 @@ function createTarGz(sourceDir: string, archivePath: string): void {
 async function withMockedNpmPackage<T>(packageName: string, archivePath: string, run: () => Promise<T>): Promise<T> {
   const tarballBytes = fs.readFileSync(archivePath);
   const tarballSha1 = createHash("sha1").update(tarballBytes).digest("hex");
+  const encodedPackageName = encodeURIComponent(packageName);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url === `https://registry.npmjs.org/${packageName}`) {
+    if (url === `https://registry.npmjs.org/${encodedPackageName}`) {
       return new Response(
         JSON.stringify({
           "dist-tags": { latest: "1.0.0" },
