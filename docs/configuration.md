@@ -9,6 +9,13 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
+When akm runs inside a project, it also looks for project config files named
+`.akm/config.json` in the current directory and each parent directory, then
+merges them on top of the user config. Closer project directories win for
+scalar/object settings, while project `stashes` are appended after user-level
+stashes. This makes it easy to add project-specific stash sources without
+changing your global config.
+
 For a guided first-run experience, use `akm setup` to choose a stash directory,
 configure embeddings/LLM settings, review registries, and add sources.
 The wizard saves this file for you, initializes the stash, and builds the
@@ -26,6 +33,9 @@ akm config set output.detail full   # Set one scalar key
 akm config set security.installAudit.enabled false
 akm config unset llm                # Remove an optional key
 ```
+
+`akm config set` / `unset` still write the user config in your platform config
+directory. Project config files are meant to be edited directly in the project.
 
 ## Config Reference
 

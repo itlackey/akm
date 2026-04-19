@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
-import { getConfigPath, loadConfig, saveConfig } from "./config";
+import { getConfigPath, loadUserConfig, saveConfig } from "./config";
 import { getBinDir, getDefaultStashDir } from "./paths";
 import { ensureRg } from "./ripgrep-install";
 
@@ -41,7 +41,7 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
 
   // Persist stashDir in config.json
   const configPath = getConfigPath();
-  const existing = loadConfig();
+  const existing = loadUserConfig();
   if (!existing.stashDir || existing.stashDir !== stashDir) {
     saveConfig({ ...existing, stashDir });
   }

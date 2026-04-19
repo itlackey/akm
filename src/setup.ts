@@ -16,7 +16,7 @@ import type {
   RegistryConfigEntry,
   StashConfigEntry,
 } from "./config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
+import { DEFAULT_CONFIG, getConfigPath, loadUserConfig, saveConfig } from "./config";
 import { closeDatabase, isVecAvailable, openDatabase } from "./db";
 import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedder";
@@ -703,7 +703,7 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[
 export async function runSetupWizard(): Promise<void> {
   p.intro("akm setup");
 
-  const current = loadConfig();
+  const current = loadUserConfig();
   const configPath = getConfigPath();
 
   // Step 1: Stash directory
