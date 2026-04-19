@@ -248,8 +248,10 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 
 /**
  * Normalize a raw config object into a sparse config layer containing only
- * recognized keys that were valid in the source object. Defaults are layered
- * separately by the caller so project config files only override what they set.
+ * recognized keys that were valid in the source object. This function does not
+ * merge with DEFAULT_CONFIG; callers are responsible for layering defaults and
+ * combining multiple config sources so project config files only override what
+ * they set.
  */
 function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const config: Partial<AkmConfig> = {};
@@ -685,6 +687,14 @@ function mergeInstallAuditConfig(
   return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
 }
 
+/**
+ * Merge a normalized config layer into an accumulated config.
+ *
+ * Scalar fields follow normal override semantics. Known nested objects are
+ * deep-merged so project config files can override individual fields without
+ * clobbering sibling settings. `stashes` are additive: project config stashes
+ * are appended after inherited stashes so global/user sources remain available.
+ */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
 
@@ -727,6 +737,11 @@ function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
   return next;
 }
 
+/**
+ * Return config file paths in merge order: user config first, then project
+ * config files from the outermost parent directory down to the current working
+ * directory. Later entries have higher precedence when merged.
+ */
 function getEffectiveConfigPaths(): string[] {
   const configPath = getConfigPath();
   const paths: string[] = [];
@@ -736,6 +751,11 @@ function getEffectiveConfigPaths(): string[] {
   return [...paths, ...discoverProjectConfigPaths()];
 }
 
+/**
+ * Walk from `startDir` up to the filesystem root and collect `.akm/config.json`
+ * files. Paths are returned from outermost parent to innermost directory so
+ * nearer project directories override broader project settings.
+ */
 function discoverProjectConfigPaths(startDir = process.cwd()): string[] {
   const paths: string[] = [];
   let currentDir = path.resolve(startDir);
