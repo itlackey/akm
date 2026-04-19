@@ -70,6 +70,7 @@ describe("completions command", () => {
       "update",
       "upgrade",
       "search",
+      "curate",
       "show",
       "clone",
       "registry",

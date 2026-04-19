@@ -23,7 +23,15 @@ import { akmClone } from "./stash-clone";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash } from "./stash-source-manage";
-import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./stash-types";
+import type {
+  KnowledgeView,
+  RegistrySearchResultHit,
+  SearchResponse,
+  ShowDetailLevel,
+  ShowResponse,
+  SourceKind,
+  StashSearchHit,
+} from "./stash-types";
 import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
@@ -373,6 +381,9 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     case "search": {
       return formatSearchPlain(r, detail);
     }
+    case "curate": {
+      return formatCuratePlain(r, detail);
+    }
     case "list": {
       const sources = Array.isArray(r.sources) ? (r.sources as Record<string, unknown>[]) : [];
       if (sources.length === 0) return "No sources configured. Use `akm add` to add a source.";
@@ -497,6 +508,225 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
   return lines.join("\n").trimEnd();
 }
 
+function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
+  const query = typeof r.query === "string" ? r.query : "";
+  const summary = typeof r.summary === "string" ? r.summary : "";
+  const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+
+  const lines: string[] = [`Curated results for "${query}"`];
+  if (summary) lines.push(summary);
+  if (items.length === 0) {
+    if (r.tip) lines.push(String(r.tip));
+    return lines.join("\n");
+  }
+
+  for (const item of items) {
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    const name = typeof item.name === "string" ? item.name : "unnamed";
+    lines.push("");
+    lines.push(`[${type}] ${name}`);
+    if (item.description) lines.push(`  ${String(item.description)}`);
+    if (item.preview) lines.push(`  preview: ${String(item.preview)}`);
+    if (item.ref) lines.push(`  ref: ${String(item.ref)}`);
+    if (item.id) lines.push(`  id: ${String(item.id)}`);
+    if (Array.isArray(item.parameters) && item.parameters.length > 0) {
+      lines.push(`  parameters: ${item.parameters.join(", ")}`);
+    }
+    if (item.run) lines.push(`  run: ${String(item.run)}`);
+    if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
+    if (detail !== "brief" && item.reason) lines.push(`  why: ${String(item.reason)}`);
+  }
+
+  const warnings = Array.isArray(r.warnings) ? r.warnings : [];
+  if (warnings.length > 0) {
+    lines.push("");
+    lines.push("Warnings:");
+    for (const warning of warnings) {
+      lines.push(`- ${String(warning)}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+type CuratedStashItem = {
+  source: "stash";
+  type: string;
+  name: string;
+  ref: string;
+  description?: string;
+  preview?: string;
+  parameters?: string[];
+  run?: string;
+  followUp: string;
+  reason: string;
+  score?: number;
+};
+
+type CuratedRegistryItem = {
+  source: "registry";
+  type: "registry";
+  name: string;
+  id: string;
+  description?: string;
+  followUp: string;
+  reason: string;
+  score?: number;
+};
+
+type CuratedItem = CuratedStashItem | CuratedRegistryItem;
+
+async function curateSearchResults(
+  query: string,
+  result: SearchResponse,
+  limit: number,
+  selectedType?: string,
+): Promise<{
+  query: string;
+  summary: string;
+  items: CuratedItem[];
+  warnings?: string[];
+  tip?: string;
+}> {
+  const stashHits = result.hits.filter((hit): hit is StashSearchHit => hit.type !== "registry");
+  const registryHits = result.registryHits ?? [];
+
+  let selectedStashHits: StashSearchHit[];
+  if (selectedType && selectedType !== "any") {
+    selectedStashHits = stashHits.slice(0, limit);
+  } else {
+    const bestByType = new Map<string, StashSearchHit>();
+    for (const hit of stashHits) {
+      if (!bestByType.has(hit.type)) bestByType.set(hit.type, hit);
+    }
+    const orderedTypes = orderCuratedTypes(query, Array.from(bestByType.keys()));
+    selectedStashHits = orderedTypes.map((type) => bestByType.get(type)).filter((hit): hit is StashSearchHit => Boolean(hit));
+  }
+
+  const selectedRegistryHits =
+    selectedStashHits.length >= limit ? [] : registryHits.slice(0, Math.min(2, limit - selectedStashHits.length));
+
+  const items = [
+    ...(await Promise.all(selectedStashHits.slice(0, limit).map((hit) => enrichCuratedStashHit(query, hit)))),
+    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
+  ].slice(0, limit);
+
+  return {
+    query,
+    summary: buildCurateSummary(query, items),
+    items,
+    ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+    ...(result.tip ? { tip: result.tip } : {}),
+  };
+}
+
+function orderCuratedTypes(query: string, types: string[]): string[] {
+  const lower = query.toLowerCase();
+  const boosts = new Map<string, number>();
+  const addBoost = (type: string, amount: number) => boosts.set(type, (boosts.get(type) ?? 0) + amount);
+
+  if (/(run|script|bash|shell|cli|execute|automation|deploy|build|test|lint)/.test(lower)) {
+    addBoost("script", 6);
+    addBoost("command", 4);
+  }
+  if (/(guide|docs?|readme|reference|how|explain|learn|why)/.test(lower)) {
+    addBoost("knowledge", 6);
+    addBoost("skill", 4);
+  }
+  if (/(agent|assistant|planner|review|analy[sz]e|architect|prompt)/.test(lower)) {
+    addBoost("agent", 6);
+    addBoost("skill", 3);
+  }
+  if (/(config|template|release|generate|command)/.test(lower)) {
+    addBoost("command", 5);
+  }
+  if (/(memory|context|recall|remember)/.test(lower)) {
+    addBoost("memory", 6);
+  }
+
+  const fallbackOrder = ["skill", "command", "script", "knowledge", "agent", "memory"];
+  const fallbackIndex = new Map(fallbackOrder.map((type, index) => [type, index]));
+  return [...types].sort((a, b) => {
+    const boostDiff = (boosts.get(b) ?? 0) - (boosts.get(a) ?? 0);
+    if (boostDiff !== 0) return boostDiff;
+    return (fallbackIndex.get(a) ?? Number.MAX_SAFE_INTEGER) - (fallbackIndex.get(b) ?? Number.MAX_SAFE_INTEGER);
+  });
+}
+
+async function enrichCuratedStashHit(query: string, hit: StashSearchHit): Promise<CuratedStashItem> {
+  let shown: ShowResponse | undefined;
+  try {
+    shown = await akmShowUnified({ ref: hit.ref });
+  } catch {
+    shown = undefined;
+  }
+
+  const description = shown?.description ?? hit.description;
+  const preview = buildCuratedPreview(shown, hit);
+  return {
+    source: "stash",
+    type: shown?.type ?? hit.type,
+    name: shown?.name ?? hit.name,
+    ref: hit.ref,
+    ...(description ? { description } : {}),
+    ...(preview ? { preview } : {}),
+    ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
+    ...(shown?.run ? { run: shown.run } : {}),
+    followUp: `akm show ${hit.ref}`,
+    reason: buildCuratedReason(query, shown?.type ?? hit.type),
+    ...(hit.score !== undefined ? { score: hit.score } : {}),
+  };
+}
+
+function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {
+  return {
+    source: "registry",
+    type: "registry",
+    name: hit.name,
+    id: hit.id,
+    ...(hit.description ? { description: hit.description } : {}),
+    followUp: hit.action ?? `akm add ${hit.id}`,
+    reason: `Useful external source to explore for ${query}.`,
+    ...(hit.score !== undefined ? { score: hit.score } : {}),
+  };
+}
+
+function buildCuratedPreview(shown: ShowResponse | undefined, hit: StashSearchHit): string | undefined {
+  if (shown?.run) return truncateDescription(`run ${shown.run}`, 160);
+  const payload = [shown?.template, shown?.prompt, shown?.content, hit.description]
+    .find((value) => typeof value === "string" && value.trim().length > 0)
+    ?.replace(/\s+/g, " ")
+    .trim();
+  return payload ? truncateDescription(payload, 160) : undefined;
+}
+
+function buildCuratedReason(query: string, type: string): string {
+  switch (type) {
+    case "script":
+      return `Best runnable script match for "${query}".`;
+    case "command":
+      return `Best reusable command/template match for "${query}".`;
+    case "knowledge":
+      return `Best reference document match for "${query}".`;
+    case "skill":
+      return `Best instructions/workflow match for "${query}".`;
+    case "agent":
+      return `Best specialized agent prompt match for "${query}".`;
+    case "memory":
+      return `Best saved context match for "${query}".`;
+    default:
+      return `Best ${type} match for "${query}".`;
+  }
+}
+
+function buildCurateSummary(query: string, items: CuratedItem[]): string {
+  if (items.length === 0) {
+    return `No curated assets were selected for "${query}".`;
+  }
+  const labels = items.map((item) => `${item.type}:${item.name}`);
+  return `Selected ${items.length} high-signal result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
+}
+
 /**
  * Module Naming:
  * - stash-*          : Asset operations (search, show, add, clone)
@@ -585,6 +815,38 @@ const searchCommand = defineCommand({
       const source = parseSearchSource(args.source);
       const result = await akmSearch({ query: args.query, type, limit, source });
       output("search", result);
+    });
+  },
+});
+
+const curateCommand = defineCommand({
+  meta: { name: "curate", description: "Curate the best matching assets for a task or prompt" },
+  args: {
+    query: { type: "positional", description: "Task or prompt to curate assets for", required: true },
+    type: {
+      type: "string",
+      description: "Asset type filter (e.g. skill, command, agent, knowledge, script, memory, or any).",
+    },
+    limit: { type: "string", description: "Maximum number of curated results", default: "4" },
+    source: { type: "string", description: "Search source (stash|registry|both)", default: "both" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const type = args.type as string | undefined;
+      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
+      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
+        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
+      }
+      const limit = limitRaw && limitRaw > 0 ? limitRaw : 4;
+      const source = parseSearchSource(args.source ?? "both");
+      const searchResult = await akmSearch({
+        query: args.query,
+        type,
+        limit: Math.max(limit * 4, 12),
+        source,
+      });
+      const curated = await curateSearchResults(args.query, searchResult, limit, type);
+      output("curate", curated);
     });
   },
 });
@@ -1167,6 +1429,7 @@ const main = defineCommand({
     update: updateCommand,
     upgrade: upgradeCommand,
     search: searchCommand,
+    curate: curateCommand,
     show: showCommand,
     clone: cloneCommand,
     registry: registryCommand,
@@ -1340,6 +1603,7 @@ You have access to a searchable library of scripts, skills, commands, agents, an
 
 \`\`\`sh
 akm search "<query>"                          # Search all sources
+akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
@@ -1369,6 +1633,7 @@ You have access to a searchable library of scripts, skills, commands, agents, an
 
 \`\`\`sh
 akm search "<query>"                          # Search all sources
+akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type skill             # Filter by asset type
 akm search "<query>" --source both            # Also search registries
 akm search "<query>" --source registry        # Search registries only
@@ -1384,6 +1649,16 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
 | \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
 | \`--for-agent\` | boolean | \`false\` |
+
+## Curate
+
+Combine search + follow-up hints into a dense summary for a task or prompt.
+
+\`\`\`sh
+akm curate "plan a release"                   # Pick top matches across asset types
+akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
+akm curate "review architecture" --type skill # Restrict to one asset type
+\`\`\`
 
 ## Show
 
