@@ -94,6 +94,11 @@ export interface AkmConfig {
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
    */
   registries?: RegistryConfigEntry[];
+  /**
+   * When true on a later config layer (typically project config), discard
+   * inherited stashes from earlier layers before applying `stashes`.
+   */
+  disableGlobalStashes?: boolean;
   /** Additional stash sources (filesystem paths and remote providers) */
   stashes?: StashConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
@@ -296,6 +301,10 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
+
+  if (typeof raw.disableGlobalStashes === "boolean") {
+    config.disableGlobalStashes = raw.disableGlobalStashes;
+  }
 
   const stashes = parseStashesConfig(raw.stashes);
   if (stashes) config.stashes = stashes;
@@ -692,8 +701,8 @@ function mergeInstallAuditConfig(
  *
  * Scalar fields follow normal override semantics. Known nested objects are
  * deep-merged so project config files can override individual fields without
- * clobbering sibling settings. `stashes` are additive: project config stashes
- * are appended after inherited stashes so global/user sources remain available.
+ * clobbering sibling settings. `stashes` are additive by default, but a later
+ * layer can set `disableGlobalStashes: true` to drop inherited stashes first.
  */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
@@ -715,7 +724,9 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
   }
-  if (override.stashes && override.stashes.length > 0) {
+  if (override.disableGlobalStashes) {
+    merged.stashes = [...(override.stashes ?? [])];
+  } else if (override.stashes) {
     merged.stashes = [...(base.stashes ?? []), ...override.stashes];
   }
 

@@ -271,6 +271,57 @@ describe("loadConfig", () => {
     }
   });
 
+  test("project config can disable inherited stashes while keeping project stashes", () => {
+    const projectDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          semanticSearchMode: "auto",
+          stashes: [{ type: "filesystem", path: "/user-stash" }],
+        }),
+      );
+      writeRawConfig(
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({
+          disableGlobalStashes: true,
+          stashes: [{ type: "filesystem", path: "/project-stash" }],
+        }),
+      );
+
+      process.chdir(projectDir);
+
+      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+    } finally {
+      cleanup(projectDir);
+    }
+  });
+
+  test("project config can disable inherited stashes without defining replacements", () => {
+    const projectDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          semanticSearchMode: "auto",
+          stashes: [{ type: "filesystem", path: "/user-stash" }],
+        }),
+      );
+      writeRawConfig(
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({
+          disableGlobalStashes: true,
+        }),
+      );
+
+      process.chdir(projectDir);
+
+      expect(loadConfig().stashes).toEqual([]);
+    } finally {
+      cleanup(projectDir);
+    }
+  });
+
   test("recomputes merged config when cwd changes", () => {
     const firstProject = makeTmpDir();
     const secondProject = makeTmpDir();
