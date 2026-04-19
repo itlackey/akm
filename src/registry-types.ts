@@ -1,3 +1,5 @@
+import type { InstallAuditReport } from "./install-audit";
+
 export type KitSource = "npm" | "github" | "git" | "local";
 
 export interface RegistryRefBase {
@@ -57,6 +59,7 @@ export interface InstalledKitEntry {
 export interface KitInstallResult extends InstalledKitEntry {
   extractedDir: string;
   integrity?: string;
+  audit?: InstallAuditReport;
 }
 
 export interface RegistryAssetEntry {

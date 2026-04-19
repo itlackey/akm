@@ -15,6 +15,15 @@ describe("config CLI helpers", () => {
     expect(parseConfigValue("output.detail", "full")).toEqual({ output: { detail: "full" } });
   });
 
+  test("parseConfigValue supports install audit config keys", () => {
+    expect(parseConfigValue("security.installAudit.enabled", "false")).toEqual({
+      security: { installAudit: { enabled: false } },
+    });
+    expect(parseConfigValue("security.installAudit.registryWhitelist", '["npm","github.com"]')).toEqual({
+      security: { installAudit: { registryWhitelist: ["npm", "github.com"] } },
+    });
+  });
+
   test("parseConfigValue supports embedding JSON with dimensions", () => {
     expect(
       parseConfigValue(
@@ -96,6 +105,18 @@ describe("config CLI helpers", () => {
     expect(getConfigValue(base, "llm")).toEqual(base.llm);
   });
 
+  test("set/get/unset support install audit config keys", () => {
+    const base: AkmConfig = { semanticSearchMode: "auto" };
+    const configured = setConfigValue(base, "security.installAudit.enabled", "true");
+    const withWhitelist = setConfigValue(configured, "security.installAudit.registryWhitelist", '["npm","github.com"]');
+
+    expect(getConfigValue(withWhitelist, "security.installAudit.enabled")).toBe(true);
+    expect(getConfigValue(withWhitelist, "security.installAudit.registryWhitelist")).toEqual(["npm", "github.com"]);
+    expect(unsetConfigValue(withWhitelist, "security.installAudit.registryWhitelist").security).toEqual({
+      installAudit: { enabled: true },
+    });
+  });
+
   test("unsetConfigValue clears embedding and llm", () => {
     const base: AkmConfig = {
       semanticSearchMode: "auto",
@@ -159,6 +180,13 @@ describe("config CLI helpers", () => {
   test("parseConfigValue rejects invalid output values", () => {
     expect(() => parseConfigValue("output.format", "xml")).toThrow("expected one of json|yaml|text");
     expect(() => parseConfigValue("output.detail", "max")).toThrow("expected one of brief|normal|full");
+  });
+
+  test("parseConfigValue rejects invalid install audit values", () => {
+    expect(() => parseConfigValue("security.installAudit.enabled", "yes")).toThrow("expected true or false");
+    expect(() => parseConfigValue("security.installAudit.registryWhitelist", '{"npm":true}')).toThrow(
+      "expected a JSON array of strings",
+    );
   });
 
   test("parseConfigValue coerces 'true' to 'auto' for semanticSearchMode", () => {

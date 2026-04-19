@@ -197,6 +197,7 @@ async function addRegistryKit(ref: string, stashDir: string): Promise<AddRespons
       cacheDir: installed.cacheDir,
       extractedDir: installed.extractedDir,
       installedAt: installed.installedAt,
+      audit: installed.audit,
     },
     config: {
       stashCount: config.stashes?.length ?? 0,

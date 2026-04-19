@@ -286,8 +286,8 @@ function tryResolveInstalledTarget(installed: InstalledKitEntry[], target: strin
 }
 
 function toInstalledEntry(status: KitInstallStatus): InstalledKitEntry {
-  // KitInstallStatus extends InstalledKitEntry; omit the extra extractedDir field.
-  const { extractedDir: _extractedDir, ...base } = status;
+  // KitInstallStatus extends InstalledKitEntry; omit transient install-only fields.
+  const { extractedDir: _extractedDir, audit: _audit, ...base } = status;
   return base;
 }
 
