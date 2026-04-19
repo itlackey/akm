@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { fetchWithRetry, isWithin } from "./common";
-import { type AkmConfig, loadConfig, saveConfig } from "./config";
+import { type AkmConfig, loadConfig, loadUserConfig, saveConfig } from "./config";
 import {
   auditInstallCandidate,
   deriveRegistryLabels,
@@ -263,7 +263,7 @@ async function installGitRegistryRef(
 }
 
 export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AkmConfig {
-  const current = loadConfig();
+  const current = loadUserConfig();
   const currentInstalled = current.installed ?? [];
   const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
   const nextInstalled = [...withoutExisting, normalizeInstalledEntry(entry)];
@@ -277,7 +277,7 @@ export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AkmConfi
 }
 
 export function removeInstalledRegistryEntry(id: string): AkmConfig {
-  const current = loadConfig();
+  const current = loadUserConfig();
   const currentInstalled = current.installed ?? [];
   const nextInstalled = currentInstalled.filter((item) => item.id !== id);
 

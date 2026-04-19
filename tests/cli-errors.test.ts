@@ -24,18 +24,24 @@ afterAll(() => {
 const xdgCache = makeTempDir();
 const xdgConfig = makeTempDir();
 const isolatedHome = makeTempDir();
+const repoRoot = path.resolve(import.meta.dir, "..");
+const cliPath = path.join(repoRoot, "src", "cli.ts");
 
-function runCli(...args: string[]): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", ["./src/cli.ts", ...args], {
+function runCliWithOptions(
+  args: string[],
+  options?: { cwd?: string; env?: Record<string, string | undefined> },
+): { stdout: string; stderr: string; status: number } {
+  const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 10_000,
-    cwd: path.resolve(import.meta.dir, ".."),
+    cwd: options?.cwd ?? repoRoot,
     env: {
       ...process.env,
       AKM_STASH_DIR: undefined,
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      ...options?.env,
     },
   });
   return {
@@ -43,6 +49,10 @@ function runCli(...args: string[]): { stdout: string; stderr: string; status: nu
     stderr: result.stderr ?? "",
     status: result.status ?? 1,
   };
+}
+
+function runCli(...args: string[]): { stdout: string; stderr: string; status: number } {
+  return runCliWithOptions(args);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -126,5 +136,50 @@ describe("config path subcommand", () => {
     expect(parsed).toHaveProperty("stash");
     expect(parsed).toHaveProperty("cache");
     expect(parsed).toHaveProperty("index");
+  });
+});
+
+describe("registry remove", () => {
+  test("does not persist project registries into user config", () => {
+    const projectDir = makeTempDir();
+    const userConfigPath = path.join(xdgConfig, "akm", "config.json");
+    const projectConfigPath = path.join(projectDir, ".akm", "config.json");
+
+    fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    fs.writeFileSync(
+      userConfigPath,
+      `${JSON.stringify(
+        {
+          registries: [{ url: "https://user.example/index.json", name: "user" }],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    fs.mkdirSync(path.dirname(projectConfigPath), { recursive: true });
+    fs.writeFileSync(
+      projectConfigPath,
+      `${JSON.stringify(
+        {
+          registries: [{ url: "https://project.example/index.json", name: "project" }],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { status } = runCliWithOptions(["registry", "remove", "user", "--format=json"], {
+      cwd: projectDir,
+    });
+
+    expect(status).toBe(0);
+
+    const savedUserConfig = JSON.parse(fs.readFileSync(userConfigPath, "utf8"));
+    expect(savedUserConfig.registries).toEqual([]);
+    expect(savedUserConfig.registries).not.toContainEqual({
+      url: "https://project.example/index.json",
+      name: "project",
+    });
   });
 });

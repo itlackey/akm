@@ -2,7 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_CONFIG, getConfigDir, getConfigPath, loadConfig, saveConfig, updateConfig } from "../src/config";
+import {
+  DEFAULT_CONFIG,
+  getConfigDir,
+  getConfigPath,
+  loadConfig,
+  loadUserConfig,
+  resetConfigCache,
+  saveConfig,
+  updateConfig,
+} from "../src/config";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -20,11 +29,14 @@ function writeRawConfig(configPath: string, content: string): void {
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalHome = process.env.HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
+const originalCwd = process.cwd();
 let testConfigHome = "";
 
 beforeEach(() => {
   testConfigHome = makeTmpDir();
   process.env.XDG_CONFIG_HOME = testConfigHome;
+  process.chdir(originalCwd);
+  resetConfigCache();
 });
 
 afterEach(() => {
@@ -50,6 +62,9 @@ afterEach(() => {
     cleanup(testConfigHome);
     testConfigHome = "";
   }
+
+  process.chdir(originalCwd);
+  resetConfigCache();
 });
 
 // ── getConfigPath ───────────────────────────────────────────────────────────
@@ -210,6 +225,77 @@ describe("loadConfig", () => {
       cleanup(stashDir);
     }
   });
+
+  test("merges ancestor project config files on top of user config", () => {
+    const workspaceRoot = makeTmpDir();
+    const nestedProjectDir = path.join(workspaceRoot, "apps", "demo");
+    try {
+      fs.mkdirSync(nestedProjectDir, { recursive: true });
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          semanticSearchMode: "auto",
+          output: { format: "text" },
+          stashes: [{ type: "filesystem", path: "/user-stash" }],
+        }),
+      );
+      writeRawConfig(
+        path.join(workspaceRoot, ".akm", "config.json"),
+        JSON.stringify({
+          output: { detail: "full" },
+          stashes: [{ type: "filesystem", path: "/workspace-stash" }],
+        }),
+      );
+      writeRawConfig(
+        path.join(workspaceRoot, "apps", ".akm", "config.json"),
+        JSON.stringify({
+          semanticSearchMode: "off",
+          stashes: [{ type: "filesystem", path: "/apps-stash" }],
+        }),
+      );
+
+      process.chdir(nestedProjectDir);
+
+      expect(loadConfig()).toEqual({
+        ...DEFAULT_CONFIG,
+        semanticSearchMode: "off",
+        output: { format: "text", detail: "full" },
+        stashes: [
+          { type: "filesystem", path: "/user-stash" },
+          { type: "filesystem", path: "/workspace-stash" },
+          { type: "filesystem", path: "/apps-stash" },
+        ],
+      });
+    } finally {
+      cleanup(workspaceRoot);
+    }
+  });
+
+  test("recomputes merged config when cwd changes", () => {
+    const firstProject = makeTmpDir();
+    const secondProject = makeTmpDir();
+    try {
+      writeRawConfig(
+        path.join(firstProject, ".akm", "config.json"),
+        JSON.stringify({ stashes: [{ type: "filesystem", path: "/first-project-stash" }] }),
+      );
+      writeRawConfig(
+        path.join(secondProject, ".akm", "config.json"),
+        JSON.stringify({ stashes: [{ type: "filesystem", path: "/second-project-stash" }] }),
+      );
+
+      process.chdir(firstProject);
+      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
+
+      // Intentionally do not reset the cache here; loadConfig() should notice
+      // the cwd change because the discovered project config path set changes.
+      process.chdir(secondProject);
+      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
+    } finally {
+      cleanup(firstProject);
+      cleanup(secondProject);
+    }
+  });
 });
 
 // ── saveConfig ──────────────────────────────────────────────────────────────
@@ -270,6 +356,26 @@ describe("updateConfig", () => {
     expect(updated.stashes).toBeUndefined();
     expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
+  });
+
+  test("writes only user config when project config is present", () => {
+    const projectDir = makeTmpDir();
+    try {
+      writeRawConfig(
+        path.join(projectDir, ".akm", "config.json"),
+        JSON.stringify({ stashes: [{ type: "filesystem", path: "/project-stash" }] }),
+      );
+
+      process.chdir(projectDir);
+      updateConfig({ semanticSearchMode: "off" });
+
+      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      expect(loadUserConfig().stashes).toBeUndefined();
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
+      expect(loadUserConfig().semanticSearchMode).toBe("off");
+    } finally {
+      cleanup(projectDir);
+    }
   });
 });
 

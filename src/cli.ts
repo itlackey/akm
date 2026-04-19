@@ -5,7 +5,7 @@ import { defineCommand, runMain } from "citty";
 import { resolveStashDir } from "./common";
 import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from "./config";
+import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
 import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
@@ -878,7 +878,7 @@ const configCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const updated = setConfigValue(loadConfig(), args.key, args.value);
+          const updated = setConfigValue(loadUserConfig(), args.key, args.value);
           saveConfig(updated);
           output("config", listConfig(updated));
         });
@@ -891,7 +891,7 @@ const configCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const updated = unsetConfigValue(loadConfig(), args.key);
+          const updated = unsetConfigValue(loadUserConfig(), args.key);
           saveConfig(updated);
           output("config", listConfig(updated));
         });
@@ -941,7 +941,7 @@ const registryCommand = defineCommand({
       meta: { name: "list", description: "List configured registries" },
       run() {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
+          const config = loadUserConfig();
           const registries = config.registries ?? DEFAULT_CONFIG.registries;
           output("registry-list", { registries });
         });
@@ -965,7 +965,7 @@ const registryCommand = defineCommand({
               "Warning: registry URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
             );
           }
-          const config = loadConfig();
+          const config = loadUserConfig();
           const registries = [...(config.registries ?? [])];
           // Deduplicate by URL
           if (registries.some((r) => r.url === args.url)) {
@@ -995,7 +995,7 @@ const registryCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
+          const config = loadUserConfig();
           const registries = [...(config.registries ?? [])];
           const idx = registries.findIndex((r) => r.url === args.target || r.name === args.target);
           if (idx === -1) {
