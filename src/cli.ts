@@ -576,7 +576,26 @@ type CuratedRegistryItem = {
 
 type CuratedItem = CuratedStashItem | CuratedRegistryItem;
 
-const CURATE_STOP_WORDS = new Set(["a", "an", "and", "for", "how", "i", "in", "of", "or", "the", "to", "with"]);
+const CURATE_FALLBACK_FILTER_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "how",
+  "i",
+  "in",
+  "of",
+  "or",
+  "the",
+  "to",
+  "with",
+]);
+const CURATED_TYPE_FALLBACK_ORDER = ["skill", "command", "script", "knowledge", "agent", "memory"];
+const CURATED_TYPE_FALLBACK_INDEX = new Map(CURATED_TYPE_FALLBACK_ORDER.map((type, index) => [type, index]));
+const MIN_CURATE_FALLBACK_TOKEN_LENGTH = 3;
+const MAX_CURATE_FALLBACK_KEYWORDS = 6;
+const CURATE_SEARCH_LIMIT_MULTIPLIER = 4;
+const MIN_CURATE_SEARCH_LIMIT = 12;
 
 async function curateSearchResults(
   query: string,
@@ -648,12 +667,13 @@ function orderCuratedTypes(query: string, types: string[]): string[] {
     addBoost("memory", 6);
   }
 
-  const fallbackOrder = ["skill", "command", "script", "knowledge", "agent", "memory"];
-  const fallbackIndex = new Map(fallbackOrder.map((type, index) => [type, index]));
   return [...types].sort((a, b) => {
     const boostDiff = (boosts.get(b) ?? 0) - (boosts.get(a) ?? 0);
     if (boostDiff !== 0) return boostDiff;
-    return (fallbackIndex.get(a) ?? Number.MAX_SAFE_INTEGER) - (fallbackIndex.get(b) ?? Number.MAX_SAFE_INTEGER);
+    return (
+      (CURATED_TYPE_FALLBACK_INDEX.get(a) ?? Number.MAX_SAFE_INTEGER) -
+      (CURATED_TYPE_FALLBACK_INDEX.get(b) ?? Number.MAX_SAFE_INTEGER)
+    );
   });
 }
 
@@ -695,10 +715,13 @@ function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): 
   };
 }
 
+function firstNonEmpty(values: Array<string | undefined>): string | undefined {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0);
+}
+
 function buildCuratedPreview(shown: ShowResponse | undefined, hit: StashSearchHit): string | undefined {
   if (shown?.run) return truncateDescription(`run ${shown.run}`, 160);
-  const payload = [shown?.template, shown?.prompt, shown?.content, hit.description]
-    .find((value) => typeof value === "string" && value.trim().length > 0)
+  const payload = firstNonEmpty([shown?.template, shown?.prompt, shown?.content, hit.description])
     ?.replace(/\s+/g, " ")
     .trim();
   return payload ? truncateDescription(payload, 160) : undefined;
@@ -735,16 +758,28 @@ function hasSearchResults(result: SearchResponse): boolean {
   return result.hits.length > 0 || (result.registryHits?.length ?? 0) > 0;
 }
 
+/**
+ * Extract a small set of fallback keywords when a prompt-style curate query
+ * returns no hits as a whole phrase.
+ *
+ * We keep up to MAX_CURATE_FALLBACK_KEYWORDS distinct keywords and drop short
+ * or common filler words so follow-up searches stay inexpensive while focusing
+ * on higher-signal terms.
+ */
 function deriveCurateFallbackQueries(query: string): string[] {
   return Array.from(
     new Set(
       query
         .toLowerCase()
-        .split(/[^a-z0-9]+/i)
+        .split(/[^a-z0-9]+/)
         .map((token) => token.trim())
-        .filter((token) => token.length >= 3 && !CURATE_STOP_WORDS.has(token)),
+        // Keep longer tokens so fallback stays focused on higher-signal terms
+        // and avoids broad one- and two-letter matches that overwhelm curation.
+        .filter(
+          (token) => token.length >= MIN_CURATE_FALLBACK_TOKEN_LENGTH && !CURATE_FALLBACK_FILTER_WORDS.has(token),
+        ),
     ),
-  ).slice(0, 6);
+  ).slice(0, MAX_CURATE_FALLBACK_KEYWORDS);
 }
 
 function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
@@ -929,7 +964,9 @@ const curateCommand = defineCommand({
       const searchResult = await searchForCuration({
         query: args.query,
         type,
-        limit: Math.max(limit * 4, 12),
+        // Search deeper than the final curated count so we can pick one strong
+        // match per type and still have room for fallback retries.
+        limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
         source,
       });
       const curated = await curateSearchResults(args.query, searchResult, limit, type);

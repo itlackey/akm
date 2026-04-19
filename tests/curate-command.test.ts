@@ -102,4 +102,14 @@ describe("curate command", () => {
     expect(output).toContain("ref: command:release");
     expect(output).toContain("show: akm show command:release");
   });
+
+  test("returns a tip when no curated results are found", () => {
+    const stashDir = makeTempDir("akm-curate-empty-stash-");
+    const output = runCli(stashDir, ["curate", "totally unmatched request", "--format=json"]);
+    const json = JSON.parse(output) as { items: Array<Record<string, unknown>>; tip?: string; summary: string };
+
+    expect(json.items).toEqual([]);
+    expect(json.summary).toContain("No curated assets were selected");
+    expect(json.tip).toContain("No matching");
+  });
 });
