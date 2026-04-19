@@ -6,6 +6,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 
 ```sh
 akm search "<query>"                          # Search for assets
+akm curate "<task>"                          # Curate the best matches for a task
 akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details

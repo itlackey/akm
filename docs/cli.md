@@ -83,6 +83,28 @@ useful fields like `ref`, `origin`, `size`, and `tags`. `--detail full`
 includes debug-oriented fields such as scores, match explanations, timings,
 and stash metadata.
 
+### curate
+
+Curate the best matching assets for a task or prompt by combining search with a
+compact, follow-up-friendly summary.
+
+```sh
+akm curate "plan a release"
+akm curate "deploy a Bun app" --limit 3
+akm curate "review an architecture proposal" --type skill
+akm curate "learn the release workflow" --source both --format text
+```
+
+| Flag | Values | Default | Description |
+| --- | --- | --- | --- |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter curated results by asset type |
+| `--limit` | number | `4` | Maximum curated results |
+| `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
+
+`akm curate` selects high-signal results, prefers one strong match per asset
+type by default, and includes direct follow-up commands such as `akm show <ref>`
+or `akm add <kit>` so you can immediately inspect or install what it found.
+
 ### show
 
 Display an asset by ref. Knowledge assets support view modes as positional
