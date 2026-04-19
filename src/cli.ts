@@ -995,7 +995,7 @@ const registryCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          const config = loadConfig();
+          const config = loadUserConfig();
           const registries = [...(config.registries ?? [])];
           const idx = registries.findIndex((r) => r.url === args.target || r.name === args.target);
           if (idx === -1) {
