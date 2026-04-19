@@ -271,6 +271,28 @@ describe("updateConfig", () => {
     expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
+
+  test("drops empty merged installAudit config", () => {
+    saveConfig({
+      semanticSearchMode: "auto",
+      security: {
+        installAudit: {
+          enabled: true,
+        },
+      },
+    });
+
+    const updated = updateConfig({
+      security: {
+        installAudit: {
+          enabled: undefined,
+        },
+      },
+    });
+
+    expect(updated.security).toBeUndefined();
+    expect(loadConfig().security).toBeUndefined();
+  });
 });
 
 describe("output config", () => {

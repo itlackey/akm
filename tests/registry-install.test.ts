@@ -459,6 +459,7 @@ describe("local directory installs", () => {
         withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("audit-blocked-kit")),
       );
       await expect(install).rejects.toThrow("Security audit failed for audit-blocked-kit.");
+      await expect(install).rejects.toThrow("Audit: blocked (1 critical");
       await expect(install).rejects.toThrow('Lifecycle script "postinstall" is suspicious');
     } finally {
       fs.rmSync(cacheHome, { recursive: true, force: true });

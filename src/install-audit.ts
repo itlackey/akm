@@ -304,22 +304,12 @@ function scanFile(
   const content = bytes.subarray(0, MAX_SCANNED_FILE_BYTES).toString("utf8");
   const relativePath = path.relative(rootDir, filePath) || path.basename(filePath);
 
-  for (const rule of CONTENT_RULES) {
-    const match = content.match(rule.pattern);
-    if (!match) continue;
-    findings.push({
-      id: rule.id,
-      severity: rule.severity,
-      category: rule.category,
-      message: rule.message,
-      file: relativePath,
-      snippet: clipSnippet(match[0]),
-    });
-  }
-
   if (basename === "package.json") {
     scanPackageJson(content, relativePath, findings);
+    return;
   }
+
+  scanContentRules(content, relativePath, findings);
 }
 
 function scanPackageJson(content: string, relativePath: string, findings: InstallAuditFinding[]): void {
@@ -347,6 +337,21 @@ function scanPackageJson(content: string, relativePath: string, findings: Instal
         snippet: clipSnippet(command),
       });
     }
+  }
+}
+
+function scanContentRules(content: string, relativePath: string, findings: InstallAuditFinding[]): void {
+  for (const rule of CONTENT_RULES) {
+    const match = content.match(rule.pattern);
+    if (!match) continue;
+    findings.push({
+      id: rule.id,
+      severity: rule.severity,
+      category: rule.category,
+      message: rule.message,
+      file: relativePath,
+      snippet: clipSnippet(match[0]),
+    });
   }
 }
 
