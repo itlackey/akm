@@ -339,14 +339,20 @@ describe("FTS-only entries survive in hybrid mode", () => {
 
     // Entry 1: hybrid score
     const entry1Embed = embedScoreMap.get(1);
-    const entry1Score =
-      entry1Embed !== undefined ? ftsScoreMap.get(1)! * FTS_WEIGHT + entry1Embed * VEC_WEIGHT : ftsScoreMap.get(1)!;
+    const entry1Fts = ftsScoreMap.get(1);
+    if (entry1Fts === undefined) {
+      throw new Error("Expected FTS score for entry 1");
+    }
+    const entry1Score = entry1Embed !== undefined ? entry1Fts * FTS_WEIGHT + entry1Embed * VEC_WEIGHT : entry1Fts;
     expect(entry1Score).toBeCloseTo(0.8 * 0.7 + 0.9 * 0.3, 4);
 
     // Entry 2: FTS-only score (no vec component)
     const entry2Embed = embedScoreMap.get(2);
-    const entry2Score =
-      entry2Embed !== undefined ? ftsScoreMap.get(2)! * FTS_WEIGHT + entry2Embed * VEC_WEIGHT : ftsScoreMap.get(2)!;
+    const entry2Fts = ftsScoreMap.get(2);
+    if (entry2Fts === undefined) {
+      throw new Error("Expected FTS score for entry 2");
+    }
+    const entry2Score = entry2Embed !== undefined ? entry2Fts * FTS_WEIGHT + entry2Embed * VEC_WEIGHT : entry2Fts;
     expect(entry2Score).toBe(0.6); // Pure FTS score, no weighting
   });
 });

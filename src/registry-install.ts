@@ -5,6 +5,12 @@ import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { fetchWithRetry, isWithin } from "./common";
 import { type AkmConfig, loadConfig, saveConfig } from "./config";
+import {
+  auditInstallCandidate,
+  deriveRegistryLabels,
+  enforceRegistryInstallPolicy,
+  formatInstallAuditFailure,
+} from "./install-audit";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
@@ -20,13 +26,20 @@ export interface InstallRegistryRefOptions {
 
 export async function installRegistryRef(ref: string, options?: InstallRegistryRefOptions): Promise<KitInstallResult> {
   const parsed = parseRegistryRef(ref);
+  const config = loadConfig();
   if (parsed.source === "local") {
-    return installLocalRegistryRef(parsed, options);
+    return installLocalRegistryRef(parsed, config, options);
   }
   if (parsed.source === "git") {
-    return installGitRegistryRef(parsed, options);
+    return installGitRegistryRef(parsed, config, options);
   }
   const resolved = await resolveRegistryArtifact(parsed);
+  const registryLabels = deriveRegistryLabels({
+    source: resolved.source,
+    ref: resolved.ref,
+    artifactUrl: resolved.artifactUrl,
+  });
+  enforceRegistryInstallPolicy(registryLabels, config, ref);
 
   const installedAt = (options?.now ?? new Date()).toISOString();
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheRootDir();
@@ -45,6 +58,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
       const cachedStashRoot = detectStashRoot(extractedDir);
       if (cachedStashRoot) {
         const integrity = fs.existsSync(archivePath) ? await computeFileHash(archivePath) : undefined;
+        const audit = runInstallAuditOrThrow(extractedDir, resolved.source, resolved.ref, registryLabels, config);
         return {
           id: resolved.id,
           source: resolved.source,
@@ -57,6 +71,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
           extractedDir,
           stashRoot: cachedStashRoot,
           integrity,
+          audit,
         };
       }
     } catch {
@@ -70,11 +85,13 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
   let provisionalKitRoot: string;
   let installRoot: string;
   let stashRoot: string;
+  let audit: KitInstallResult["audit"];
   try {
     await downloadArchive(resolved.artifactUrl, archivePath);
     verifyArchiveIntegrity(archivePath, resolved.resolvedRevision, resolved.source);
     integrity = await computeFileHash(archivePath);
     extractTarGzSecure(archivePath, extractedDir);
+    audit = runInstallAuditOrThrow(extractedDir, resolved.source, resolved.ref, registryLabels, config);
 
     provisionalKitRoot = detectStashRoot(extractedDir);
     installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
@@ -102,15 +119,23 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
     extractedDir,
     stashRoot,
     integrity,
+    audit,
   };
 }
 
 async function installLocalRegistryRef(
   parsed: ParsedLocalRef,
+  config: AkmConfig,
   options?: InstallRegistryRefOptions,
 ): Promise<KitInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed);
   const installedAt = (options?.now ?? new Date()).toISOString();
+  const registryLabels = deriveRegistryLabels({
+    source: resolved.source,
+    ref: resolved.ref,
+    artifactUrl: resolved.artifactUrl,
+  });
+  const audit = runInstallAuditOrThrow(parsed.sourcePath, resolved.source, resolved.ref, registryLabels, config);
 
   // For local directories, detect the stash root within the source path.
   // If no nested stash is found, the source path itself is used.
@@ -127,14 +152,23 @@ async function installLocalRegistryRef(
     cacheDir: parsed.sourcePath,
     extractedDir: parsed.sourcePath,
     stashRoot,
+    audit,
   };
 }
 
 async function installGitRegistryRef(
   parsed: ParsedGitRef,
+  config: AkmConfig,
   options?: InstallRegistryRefOptions,
 ): Promise<KitInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed);
+  const registryLabels = deriveRegistryLabels({
+    source: resolved.source,
+    ref: resolved.ref,
+    artifactUrl: resolved.artifactUrl,
+    gitUrl: parsed.url,
+  });
+  enforceRegistryInstallPolicy(registryLabels, config, parsed.ref);
   const installedAt = (options?.now ?? new Date()).toISOString();
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheRootDir();
   const cacheDir = buildInstallCacheDir(cacheRootDir, parsed.source, parsed.id, resolved.resolvedRevision);
@@ -148,6 +182,7 @@ async function installGitRegistryRef(
       const installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
       const stashRoot = detectStashRoot(installRoot);
       if (stashRoot) {
+        const audit = runInstallAuditOrThrow(extractedDir, resolved.source, resolved.ref, registryLabels, config);
         return {
           id: resolved.id,
           source: resolved.source,
@@ -159,6 +194,7 @@ async function installGitRegistryRef(
           cacheDir,
           extractedDir,
           stashRoot,
+          audit,
         };
       }
     } catch {
@@ -175,6 +211,7 @@ async function installGitRegistryRef(
   let provisionalKitRoot: string;
   let installRoot: string;
   let stashRoot: string;
+  let audit: KitInstallResult["audit"];
   try {
     const cloneArgs = ["clone", "--depth", "1"];
     if (parsed.requestedRef) {
@@ -195,6 +232,7 @@ async function installGitRegistryRef(
     // Clean up the clone dir
     fs.rmSync(cloneDir, { recursive: true, force: true });
 
+    audit = runInstallAuditOrThrow(extractedDir, resolved.source, resolved.ref, registryLabels, config);
     provisionalKitRoot = detectStashRoot(extractedDir);
     installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
     stashRoot = detectStashRoot(installRoot);
@@ -220,6 +258,7 @@ async function installGitRegistryRef(
     cacheDir,
     extractedDir,
     stashRoot,
+    audit,
   };
 }
 
@@ -526,4 +565,18 @@ async function computeFileHash(filePath: string): Promise<string> {
   const data = fs.readFileSync(filePath);
   const hash = createHash("sha256").update(data).digest("hex");
   return `sha256:${hash}`;
+}
+
+function runInstallAuditOrThrow(
+  rootDir: string,
+  source: KitSource,
+  ref: string,
+  registryLabels: string[],
+  config: AkmConfig,
+) {
+  const audit = auditInstallCandidate({ rootDir, source, ref, registryLabels, config });
+  if (audit.blocked) {
+    throw new Error(formatInstallAuditFailure(ref, audit));
+  }
+  return audit;
 }

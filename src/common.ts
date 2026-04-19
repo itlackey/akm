@@ -16,6 +16,11 @@ export function isHttpUrl(value: string | undefined): boolean {
   return !!value && /^https?:\/\//.test(value);
 }
 
+export function filterNonEmptyStrings(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
 // ── Validators ──────────────────────────────────────────────────────────────
 
 export function isAssetType(type: string): type is AkmAssetType {

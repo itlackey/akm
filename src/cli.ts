@@ -12,6 +12,7 @@ import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
+import { formatInstallAuditSummary } from "./install-audit";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-kits";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
@@ -389,7 +390,13 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       const index = r.index as Record<string, unknown> | undefined;
       const scanned = index?.directoriesScanned ?? 0;
       const total = index?.totalEntries ?? 0;
-      return `Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`;
+      const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
+      const installed = r.installed as Record<string, unknown> | undefined;
+      const audit = installed?.audit;
+      if (audit && typeof audit === "object") {
+        lines.push(formatInstallAuditSummary(audit as Parameters<typeof formatInstallAuditSummary>[0]));
+      }
+      return lines.join("\n");
     }
     case "remove": {
       const target = r.target ?? r.ref ?? "";

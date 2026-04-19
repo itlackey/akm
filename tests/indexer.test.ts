@@ -1,15 +1,27 @@
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { EmbeddingConnectionConfig } from "../src/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/db";
+import * as embedderModule from "../src/embedder";
 import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
 
 let testConfigDir = "";
 let testCacheDir = "";
+let embedBatchImpl:
+  | ((texts: string[], embeddingConfig?: EmbeddingConnectionConfig) => Promise<Float32Array[]>)
+  | undefined;
+const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+
+mock.module("../src/embedder.js", () => ({
+  ...embedderModule,
+  embedBatch: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) =>
+    embedBatchImpl ? embedBatchImpl(texts, embeddingConfig) : actualEmbedBatch(texts, embeddingConfig),
+}));
 
 // Each test gets a fresh database and isolated config/cache
 beforeEach(() => {
@@ -17,6 +29,7 @@ beforeEach(() => {
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-cache-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  embedBatchImpl = undefined;
 
   const dbPath = getDbPath();
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -29,6 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  embedBatchImpl = undefined;
   if (originalXdgConfigHome === undefined) {
     delete process.env.XDG_CONFIG_HOME;
   } else {
@@ -523,6 +537,12 @@ test("usage_events are re-linked after full reindex", async () => {
 test("incremental reindex clears embeddings when provider fingerprint changes", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fp-"));
   process.env.AKM_STASH_DIR = stashDir;
+  embedBatchImpl = async (texts) =>
+    texts.map((_text, index) => {
+      const embedding = new Float32Array(384);
+      embedding[0] = index + 1;
+      return embedding;
+    });
 
   const scriptDir = path.join(stashDir, "scripts", "test");
   fs.mkdirSync(scriptDir, { recursive: true });

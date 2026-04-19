@@ -1,3 +1,4 @@
+import type { InstallAuditReport } from "./install-audit";
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
 export type AkmSearchType = string;
@@ -70,6 +71,7 @@ export interface AddResponse {
     cacheDir: string;
     extractedDir: string;
     installedAt: string;
+    audit?: InstallAuditReport;
   };
   /** Present for local directory adds (routed to stashes config) */
   stashSource?:
@@ -99,6 +101,7 @@ export interface AddResponse {
 
 export interface KitInstallStatus extends InstalledKitEntry {
   extractedDir: string;
+  audit?: InstallAuditReport;
 }
 
 export type SourceKind = "local" | "managed" | "remote";

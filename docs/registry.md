@@ -179,17 +179,21 @@ akm add file:///absolute/path/to/kit
 3. **Download and extract** -- The tarball is downloaded (or repo cloned) to a
    cache directory under `~/.cache/akm/registry/` and extracted securely
    (path traversal is rejected).
-4. **Stash root detection** -- The extracted contents are scanned for asset
+4. **Security audit** -- The extracted kit is audited before install completes.
+   akm scans source files, metadata, prompts, and install scripts for suspicious
+   patterns such as prompt-injection phrases, remote shell pipes, and risky
+   lifecycle hooks. Critical findings block the install by default.
+5. **Stash root detection** -- The extracted contents are scanned for asset
    type directories (`scripts/`, `skills/`, etc.) or a `.stash/` marker. If the
    kit nests its stash under an `opencode/` subdirectory, that is detected
    automatically.
-5. **Selective include** -- If the package's `package.json` contains an
+6. **Selective include** -- If the package's `package.json` contains an
    `akm.include` array, only the listed paths are copied into the
    install cache. This lets a kit ship a subset of its repo as the stash.
-6. **Config registration** -- The installed entry is saved to
+7. **Config registration** -- The installed entry is saved to
    `config.installed` with its id, source, ref, resolved version,
    cache path, and install timestamp.
-7. **Re-index** -- `akm index` runs automatically so the new assets appear in
+8. **Re-index** -- `akm index` runs automatically so the new assets appear in
    search immediately.
 
 ### Selective Include
@@ -211,6 +215,27 @@ A kit can declare which paths to include via `package.json`:
 Only the listed paths are copied into the install cache. Paths must be
 relative to the package root and cannot escape it. The `.git` directory is
 always excluded.
+
+### Install Audit Controls
+
+Install-time auditing is enabled by default. You can configure it in
+`config.json` or via `akm config`:
+
+```sh
+akm config set security.installAudit.enabled false
+akm config set security.installAudit.blockOnCritical false
+akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
+akm config set security.installAudit.blockUnlistedRegistries true
+```
+
+- `security.installAudit.enabled` disables auditing entirely.
+- `security.installAudit.blockOnCritical` reports critical findings without
+  blocking the install when set to `false`.
+- `security.installAudit.registryAllowlist` allows only named registries or
+  hosts (for example `npm`, `github.com`, `gitlab.com`) when allowlisting is
+  enabled.
+- `security.installAudit.blockUnlistedRegistries` blocks installs whose source
+  does not match the allowlist.
 
 ## Managing Managed Sources
 

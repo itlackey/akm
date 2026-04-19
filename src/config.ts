@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { filterNonEmptyStrings } from "./common";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
@@ -63,6 +64,18 @@ export interface StashConfigEntry {
   options?: Record<string, unknown>;
 }
 
+export interface InstallAuditConfig {
+  enabled?: boolean;
+  blockOnCritical?: boolean;
+  blockUnlistedRegistries?: boolean;
+  registryAllowlist?: string[];
+  registryWhitelist?: string[];
+}
+
+export interface SecurityConfig {
+  installAudit?: InstallAuditConfig;
+}
+
 export interface AkmConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
@@ -83,6 +96,8 @@ export interface AkmConfig {
   registries?: RegistryConfigEntry[];
   /** Additional stash sources (filesystem paths and remote providers) */
   stashes?: StashConfigEntry[];
+  /** Security controls for install-time auditing and registry allowlists */
+  security?: SecurityConfig;
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
 }
@@ -215,6 +230,9 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   if (current.llm && partial.llm && partial.llm !== current.llm) {
     merged.llm = { ...current.llm, ...partial.llm };
   }
+  if (current.security && partial.security && partial.security !== current.security) {
+    merged.security = mergeSecurityConfig(current.security, partial.security);
+  }
   saveConfig(merged);
   return merged;
 }
@@ -267,6 +285,9 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
 
   const stashes = parseStashesConfig(raw.stashes);
   if (stashes) config.stashes = stashes;
+
+  const security = parseSecurityConfig(raw.security);
+  if (security) config.security = security;
 
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;
@@ -566,6 +587,28 @@ function parseStashesConfig(value: unknown): StashConfigEntry[] | undefined {
   return entries;
 }
 
+function parseSecurityConfig(value: unknown): SecurityConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const installAudit = parseInstallAuditConfig(obj.installAudit);
+  if (!installAudit) return undefined;
+  return { installAudit };
+}
+
+function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const config: InstallAuditConfig = {};
+  if (typeof obj.enabled === "boolean") config.enabled = obj.enabled;
+  if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
+  if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
+  const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
+  if (rawAllowlist) {
+    config.registryAllowlist = rawAllowlist;
+  }
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
 function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
@@ -604,4 +647,22 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
     entry.options = obj.options as Record<string, unknown>;
   }
   return entry;
+}
+
+function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
+  if (!base && !override) return undefined;
+  const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
+  return installAudit ? { installAudit } : undefined;
+}
+
+function mergeInstallAuditConfig(
+  base?: InstallAuditConfig,
+  override?: InstallAuditConfig,
+): InstallAuditConfig | undefined {
+  if (!base && !override) return undefined;
+  const merged: InstallAuditConfig = {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+  return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
 }
