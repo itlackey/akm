@@ -8,7 +8,7 @@ tags:
   - agents
   - cli
   - skills
-published: false
+published: true
 id: 3426246
 ---
 
