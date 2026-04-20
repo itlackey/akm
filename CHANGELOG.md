@@ -6,17 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-19
+
 ### Added
-- **Extensible asset type system**: `AkmAssetType` (formerly `AgentIKitAssetType`) is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
-- **Memory asset type**: `memory` is a built-in asset type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
-- **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via their REST API; add with `akm stash add <url> --provider openviking`
-- **Remote show for `viking://` URIs**: `akm show viking://resources/my-doc` fetches content directly from an OpenViking server (returns `editable: false`)
-- **`--options` flag for `akm registry add` and `akm stash add`**: pass provider-specific JSON config (e.g., `--options '{"apiKey":"key"}'`)
-- **`akm registry build-index` command**: generates a v2 registry index JSON from npm/GitHub discovery with `--out`, `--manual`, `--npmRegistry`, `--githubApi`, and `--format` flags
-- Test fixture for OpenViking manual testing (`tests/fixtures/openviking/`)
+- **Install security audit**: new pre-install scanner inspects kit contents for dangerous patterns and executable scripts before install; configurable via `config` CLI
+- **Project-level config stash merging**: `.akm.json` in a project directory merges its stash/registry entries with user config during CLI runs
+- **Disable inherited project stashes**: project config can disable stashes inherited from parent/user scopes
+- **`akm curate` command**: new subcommand for curating assets from the stash (initial skeleton)
 
 ### Fixed
-- Prevented `akm remove` and `akm update --force` from deleting user-owned local source directories installed via path refs.
+- Index nested agent markdown files as agents so `akm search agent:...` finds them
+- `install-audit` now reads at most `MAX_SCANNED_FILE_BYTES` per file using `Buffer.alloc`, with the file descriptor always closed via `try/finally`, and corrects the `scannedBytes` counter
+
+## [0.3.1] - 2026-04-01
+
+### Added
+- **Website stash provider**: add a URL directly as a stash source with `akm stash add <url>`; crawls the site and indexes pages as knowledge assets
+- Website provider options: `--max-pages` and `--depth` flags to bound crawling
+
+### Fixed
+- Relaxed HTTP warnings for localhost website sources
+- Addressed review feedback around website provider routing and security heuristics
+
+## [0.3.0] - 2026-03-30
+
+### Added
+- Regression tests for vector/semantic search readiness, install, and setup flows
+- `CONTRIBUTING.md` and "Why akm" section in documentation
+- Three draft SEO blog posts
+
+### Changed
+- **Unified source model**: replaced the `kit` vs `stash` split with a single source concept; `akm add` works for all source types
+- Removed `stash` and `kit` subcommand groups; their behaviors fold into the top-level CLI (`akm list`, `akm add`, etc.)
+- Refactored semantic search readiness tracking for clearer state transitions
+- Aligned documentation voice and updated older posts for the current CLI surface
+
+### Fixed
+- Embedding fingerprint is purged on model change and `usage_events` are re-linked correctly
+- Local embedder dtype selection
+- Release validation workflow
+- Prereleases (versions with suffixes) are marked as such on GitHub releases and published to npm with `--tag next`
+
+## [0.2.2] - 2026-03-28
+
+### Fixed
+- Binary install detection in `akm upgrade` self-update; centralized `AKM_VERSION` declaration with binary detection tests
+
+## [0.2.1] - 2026-03-25
+
+### Added
+- Docker-based install tests covering multiple OS configurations (skipped in CI)
+- Detailed error reporting in embedding availability checks
+- Actionable guidance when `sqlite-vec` fails to open the DB
+
+### Changed
+- **Rename**: project renamed from `Agent-i-Kit` to `akm` across docs and links
+- Local embeddings switched to `@huggingface/transformers`
+- `@huggingface/transformers` moved to `optionalDependencies`, then promoted to a runtime dependency
+- Improved semantic search setup and index UX
+
+## [0.2.0] - 2026-03-18
+
+### Added
+- **Extensible asset type system**: `AkmAssetType` (formerly `AgentIKitAssetType`) is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
+- **Memory asset type**: built-in `memory` type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
+- **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via REST; add with `akm stash add <url> --provider openviking`
+- **Remote show for `viking://` URIs**: `akm show viking://resources/my-doc` fetches content directly from an OpenViking server (returns `editable: false`)
+- **`--options` flag** for `akm registry add` and `akm stash add`: pass provider-specific JSON config (e.g., `--options '{"apiKey":"key"}'`)
+- **`akm registry build-index` command**: generates a v2 registry index JSON from npm/GitHub discovery with `--out`, `--manual`, `--npmRegistry`, `--githubApi`, and `--format` flags
+- Exact-name match, type-relevance, and alias boosts in the search scoring pipeline
+- Ranking regression tests with a synthetic fixture stash and a 41-case benchmark suite (MRR / Recall@5)
+- `estimatedTokens` on context-hub provider search results and in `--for-agent` output
+- Architecture docs and test fixture for OpenViking manual testing (`tests/fixtures/openviking/`)
+
+### Changed
+- Unified context-hub indexing and fair provider scoring: local FTS scores are preserved everywhere and remote provider scores compete on equal footing
+- Replaced RRF with normalized BM25 scoring across all merge paths
+- EMA utility decay is now time-proportional instead of tied to index frequency
+- Replaced the `(Bun as any).YAML` hack with a proper `yaml` package dependency
+- YAML output format fixed; local registry refs now use a `file:` prefix
+
+### Removed
+- `manifest` subcommand (adds no value over `search`)
+- URI schemes (`viking://`, `context-hub://`) from user-facing refs — assets are addressed as `type:name`; sources use URLs
+- Stale audit/ergonomics markdown from the repo
+
+### Fixed
+- `skills.sh` install refs now produce valid `akm add` commands (#82)
+- Prevented `akm remove` and `akm update --force` from deleting user-owned local source directories installed via path refs
+- `usage_events` reverted to `DELETE` on full reindex
 
 ## [0.1.0] - 2026-03-10
 
