@@ -453,6 +453,32 @@ describe("Substring fallback", () => {
     expect(localHits[0]?.description).toContain("agent coordination patterns");
   });
 
+  test("nested markdown files under agents/ are indexed as agent assets", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(
+      path.join(stashDir, "agent-stash", "agents", "blog", "topic-discovery.md"),
+      [
+        "---",
+        "type: agent",
+        "mode: subagent",
+        "description: Discovers blog topics from source material",
+        "---",
+        "You are a blog topic discovery agent.",
+      ].join("\n"),
+    );
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmSearch({ query: "blog topics", type: "agent", source: "local" });
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+
+    expect(localHits).toHaveLength(1);
+    expect(localHits[0]?.type).toBe("agent");
+    expect(localHits[0]?.name).toBe("agent-stash/agents/blog/topic-discovery");
+    expect(localHits[0]?.ref).toContain("agent:agent-stash/agents/blog/topic-discovery");
+  });
+
   test("substring fallback honors curated .stash.json metadata", async () => {
     const stashDir = tmpStash();
 
