@@ -476,6 +476,7 @@ describe("Substring fallback", () => {
     expect(localHits).toHaveLength(1);
     expect(localHits[0]?.type).toBe("agent");
     expect(localHits[0]?.name).toBe("agent-stash/agents/blog/topic-discovery");
+    expect(localHits[0]?.description).toContain("blog topics");
     expect(localHits[0]?.ref).toContain("agent:agent-stash/agents/blog/topic-discovery");
   });
 

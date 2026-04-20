@@ -211,6 +211,7 @@ describe("runMatchers", () => {
     expect(result).not.toBeNull();
     expect(result?.type).toBe("agent");
     expect(result?.specificity).toBe(10);
+    expect(result?.renderer).toBe("agent-md");
   });
 
   test("directoryMatcher matches .md under knowledge/ as 'knowledge'", () => {
