@@ -301,21 +301,19 @@ function scanFile(
   }
 
   const readSize = Math.min(fileSize, MAX_SCANNED_FILE_BYTES);
-  const buf = Buffer.allocUnsafe(readSize);
-  let fd: number;
-  try {
-    fd = fs.openSync(filePath, "r");
-  } catch {
-    return;
-  }
+  const buf = Buffer.alloc(readSize);
   let bytesRead: number;
   try {
-    bytesRead = fs.readSync(fd, buf, 0, readSize, 0);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      bytesRead = fs.readSync(fd, buf, 0, readSize, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
-    fs.closeSync(fd);
     return;
   }
-  fs.closeSync(fd);
+  if (bytesRead === 0) return;
 
   const bytes = buf.subarray(0, bytesRead);
   if (bytes.includes(0)) return;
