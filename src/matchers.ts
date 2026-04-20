@@ -7,7 +7,7 @@
  *
  * - `extensionMatcher` (3) -- classifies any file by extension alone.
  *   Ensures every known file type is discoverable regardless of directory.
- * - `directoryMatcher` (10) -- boosts specificity when the first ancestor
+ * - `directoryMatcher` (10) -- boosts specificity when an ancestor
  *   directory matches a known type name (e.g. `scripts/`, `agents/`).
  * - `parentDirHintMatcher` (15) -- boosts specificity based on the
  *   immediate parent directory name.
@@ -51,37 +51,40 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
 // ── directoryMatcher (specificity: 10) ──────────────────────────────────────
 
 /**
- * Directory-based matcher that boosts specificity when the first ancestor
+ * Directory-based matcher that boosts specificity when an ancestor
  * directory segment from the stash root matches a known type name.
+ *
+ * The first matching type-like ancestor wins. This preserves intuitive
+ * behavior for nested kit layouts such as `agent-stash/agents/blog/foo.md`
+ * while still honoring earlier type roots like `commands/agents/foo.md`.
  */
 export function directoryMatcher(ctx: FileContext): MatchResult | null {
-  const topDir = ctx.ancestorDirs[0];
-  if (!topDir) return null;
-
   const ext = ctx.ext;
 
-  if (topDir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
-    return { type: "script", specificity: 10, renderer: "script-source" };
-  }
+  for (const dir of ctx.ancestorDirs) {
+    if (dir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
+      return { type: "script", specificity: 10, renderer: "script-source" };
+    }
 
-  if (topDir === "skills" && ctx.fileName === "SKILL.md") {
-    return { type: "skill", specificity: 10, renderer: "skill-md" };
-  }
+    if (dir === "skills" && ctx.fileName === "SKILL.md") {
+      return { type: "skill", specificity: 10, renderer: "skill-md" };
+    }
 
-  if (topDir === "commands" && ext === ".md") {
-    return { type: "command", specificity: 10, renderer: "command-md" };
-  }
+    if (dir === "commands" && ext === ".md") {
+      return { type: "command", specificity: 10, renderer: "command-md" };
+    }
 
-  if (topDir === "agents" && ext === ".md") {
-    return { type: "agent", specificity: 10, renderer: "agent-md" };
-  }
+    if (dir === "agents" && ext === ".md") {
+      return { type: "agent", specificity: 10, renderer: "agent-md" };
+    }
 
-  if (topDir === "knowledge" && ext === ".md") {
-    return { type: "knowledge", specificity: 10, renderer: "knowledge-md" };
-  }
+    if (dir === "knowledge" && ext === ".md") {
+      return { type: "knowledge", specificity: 10, renderer: "knowledge-md" };
+    }
 
-  if (topDir === "memories" && ext === ".md") {
-    return { type: "memory", specificity: 10, renderer: "memory-md" };
+    if (dir === "memories" && ext === ".md") {
+      return { type: "memory", specificity: 10, renderer: "memory-md" };
+    }
   }
 
   return null;

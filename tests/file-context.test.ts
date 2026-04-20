@@ -200,6 +200,20 @@ describe("runMatchers", () => {
     expect(result?.type).toBe("agent");
   });
 
+  test("directoryMatcher matches .md under nested agents/ path as 'agent'", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "agent-stash", "agents", "blog", "topic-discovery.md");
+    writeFile(filePath, "You are a topic discovery agent.");
+
+    const ctx = buildFileContext(root, filePath);
+    const result = directoryMatcher(ctx);
+
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("agent");
+    expect(result?.specificity).toBe(10);
+    expect(result?.renderer).toBe("agent-md");
+  });
+
   test("directoryMatcher matches .md under knowledge/ as 'knowledge'", () => {
     const root = tmpDir();
     const filePath = path.join(root, "knowledge", "guide.md");
