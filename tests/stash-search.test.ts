@@ -477,7 +477,7 @@ describe("Substring fallback", () => {
     expect(localHits[0]?.type).toBe("agent");
     expect(localHits[0]?.name).toBe("agent-stash/agents/blog/topic-discovery");
     expect(localHits[0]?.description).toContain("blog topics");
-    expect(localHits[0]?.ref).toContain("agent:agent-stash/agents/blog/topic-discovery");
+    expect(localHits[0]?.ref).toBe("agent:agent-stash/agents/blog/topic-discovery");
   });
 
   test("substring fallback honors curated .stash.json metadata", async () => {
