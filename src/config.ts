@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { filterNonEmptyStrings } from "./common";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import type { InstalledKitEntry, KitSource } from "./registry-types";
 
@@ -63,6 +64,18 @@ export interface StashConfigEntry {
   options?: Record<string, unknown>;
 }
 
+export interface InstallAuditConfig {
+  enabled?: boolean;
+  blockOnCritical?: boolean;
+  blockUnlistedRegistries?: boolean;
+  registryAllowlist?: string[];
+  registryWhitelist?: string[];
+}
+
+export interface SecurityConfig {
+  installAudit?: InstallAuditConfig;
+}
+
 export interface AkmConfig {
   /** Path to the working stash directory. Resolved from env → config → default. */
   stashDir?: string;
@@ -81,8 +94,15 @@ export interface AkmConfig {
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
    */
   registries?: RegistryConfigEntry[];
+  /**
+   * When true on a later config layer (typically project config), discard
+   * inherited stashes from earlier layers before applying `stashes`.
+   */
+  disableGlobalStashes?: boolean;
   /** Additional stash sources (filesystem paths and remote providers) */
   stashes?: StashConfigEntry[];
+  /** Security controls for install-time auditing and registry allowlists */
+  security?: SecurityConfig;
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
 }
@@ -118,46 +138,53 @@ export function getConfigPath(): string {
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
-let cachedConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
+const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
+
+let cachedConfig: { config: AkmConfig; signature: string } | undefined;
+let cachedUserConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
 
 export function resetConfigCache(): void {
   cachedConfig = undefined;
+  cachedUserConfig = undefined;
 }
 
-export function loadConfig(): AkmConfig {
+export function loadUserConfig(): AkmConfig {
   const configPath = getConfigPath();
 
   let stat: fs.Stats;
   try {
     stat = fs.statSync(configPath);
-    if (cachedConfig && cachedConfig.path === configPath && cachedConfig.mtime === stat.mtimeMs) {
-      return cachedConfig.config;
+    if (cachedUserConfig && cachedUserConfig.path === configPath && cachedUserConfig.mtime === stat.mtimeMs) {
+      return cachedUserConfig.config;
     }
   } catch {
-    // File doesn't exist — return defaults below
-    cachedConfig = undefined;
-    return { ...DEFAULT_CONFIG };
+    cachedUserConfig = undefined;
+    return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
 
-  const raw = readConfigObject(configPath);
-  const expanded = raw ? expandEnvVars(raw) : undefined;
-  const config = expanded ? pickKnownKeys(expanded) : { ...DEFAULT_CONFIG };
+  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfig(configPath));
+  const finalConfig = applyRuntimeEnvApiKeys(config);
+  cachedUserConfig = { config: finalConfig, path: configPath, mtime: stat.mtimeMs };
+  return finalConfig;
+}
 
-  // Legacy: inject API keys from well-known env vars when not set via ${} substitution
-  if (config.embedding && !config.embedding.apiKey) {
-    const envKey = process.env.AKM_EMBED_API_KEY?.trim();
-    if (envKey) config.embedding.apiKey = envKey;
+export function loadConfig(): AkmConfig {
+  const configPaths = getEffectiveConfigPaths();
+  const signature = getConfigSignature(configPaths);
+  if (cachedConfig && cachedConfig.signature === signature) {
+    return cachedConfig.config;
   }
-  if (config.llm && !config.llm.apiKey) {
-    const envKey = process.env.AKM_LLM_API_KEY?.trim();
-    if (envKey) config.llm.apiKey = envKey;
+
+  let config = loadUserConfig();
+  const userConfigPath = getConfigPath();
+  for (const configPath of configPaths) {
+    if (configPath === userConfigPath) continue;
+    config = mergeLoadedConfig(config, readNormalizedConfig(configPath));
   }
 
-  // Cache the parsed config with its path and mtime for subsequent calls.
-  // Reuse the stat already obtained above (avoids a second syscall + TOCTOU gap).
-  cachedConfig = { config, path: configPath, mtime: stat.mtimeMs };
-
-  return config;
+  const finalConfig = applyRuntimeEnvApiKeys(config);
+  cachedConfig = { config: finalConfig, signature };
+  return finalConfig;
 }
 
 export function saveConfig(config: AkmConfig): void {
@@ -200,7 +227,7 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
-  const current = loadConfig();
+  const current = loadUserConfig();
   // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
   const merged: AkmConfig = { ...current, ...partial };
   // Deep-merge output — partial update should not wipe sibling keys
@@ -215,14 +242,24 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   if (current.llm && partial.llm && partial.llm !== current.llm) {
     merged.llm = { ...current.llm, ...partial.llm };
   }
+  if (current.security && partial.security && partial.security !== current.security) {
+    merged.security = mergeSecurityConfig(current.security, partial.security);
+  }
   saveConfig(merged);
   return merged;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
-  const config: AkmConfig = { ...DEFAULT_CONFIG };
+/**
+ * Normalize a raw config object into a sparse config layer containing only
+ * recognized keys that were valid in the source object. This function does not
+ * merge with DEFAULT_CONFIG; callers are responsible for layering defaults and
+ * combining multiple config sources so project config files only override what
+ * they set.
+ */
+function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
+  const config: Partial<AkmConfig> = {};
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
@@ -265,13 +302,26 @@ function pickKnownKeys(raw: Record<string, unknown>): AkmConfig {
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
 
+  if (typeof raw.disableGlobalStashes === "boolean") {
+    config.disableGlobalStashes = raw.disableGlobalStashes;
+  }
+
   const stashes = parseStashesConfig(raw.stashes);
   if (stashes) config.stashes = stashes;
+
+  const security = parseSecurityConfig(raw.security);
+  if (security) config.security = security;
 
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;
 
   return config;
+}
+
+function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
+  const raw = readConfigObject(configPath);
+  const expanded = raw ? expandEnvVars(raw) : undefined;
+  return expanded ? pickKnownKeys(expanded) : undefined;
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {
@@ -566,6 +616,28 @@ function parseStashesConfig(value: unknown): StashConfigEntry[] | undefined {
   return entries;
 }
 
+function parseSecurityConfig(value: unknown): SecurityConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const installAudit = parseInstallAuditConfig(obj.installAudit);
+  if (!installAudit) return undefined;
+  return { installAudit };
+}
+
+function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const config: InstallAuditConfig = {};
+  if (typeof obj.enabled === "boolean") config.enabled = obj.enabled;
+  if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
+  if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
+  const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
+  if (rawAllowlist) {
+    config.registryAllowlist = rawAllowlist;
+  }
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
 function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
@@ -604,4 +676,134 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
     entry.options = obj.options as Record<string, unknown>;
   }
   return entry;
+}
+
+function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
+  if (!base && !override) return undefined;
+  const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
+  return installAudit ? { installAudit } : undefined;
+}
+
+function mergeInstallAuditConfig(
+  base?: InstallAuditConfig,
+  override?: InstallAuditConfig,
+): InstallAuditConfig | undefined {
+  if (!base && !override) return undefined;
+  const merged: InstallAuditConfig = {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+  return Object.values(merged).some((value) => value !== undefined) ? merged : undefined;
+}
+
+/**
+ * Merge a normalized config layer into an accumulated config.
+ *
+ * Scalar fields follow normal override semantics. Known nested objects are
+ * deep-merged so project config files can override individual fields without
+ * clobbering sibling settings. `stashes` are additive by default, but a later
+ * layer can set `disableGlobalStashes: true` to drop inherited stashes first.
+ */
+function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
+  if (!override) return { ...base };
+
+  const merged: AkmConfig = {
+    ...base,
+    ...override,
+  };
+
+  if (base.output && override.output) {
+    merged.output = { ...base.output, ...override.output };
+  }
+  if (base.embedding && override.embedding) {
+    merged.embedding = { ...base.embedding, ...override.embedding };
+  }
+  if (base.llm && override.llm) {
+    merged.llm = { ...base.llm, ...override.llm };
+  }
+  if (base.security && override.security) {
+    merged.security = mergeSecurityConfig(base.security, override.security);
+  }
+  if (override.disableGlobalStashes) {
+    merged.stashes = [...(override.stashes ?? [])];
+  } else if (override.stashes) {
+    merged.stashes = [...(base.stashes ?? []), ...override.stashes];
+  }
+
+  return merged;
+}
+
+function applyRuntimeEnvApiKeys(config: AkmConfig): AkmConfig {
+  const next = { ...config };
+
+  if (next.embedding && !next.embedding.apiKey) {
+    const envKey = process.env.AKM_EMBED_API_KEY?.trim();
+    if (envKey) next.embedding = { ...next.embedding, apiKey: envKey };
+  }
+  if (next.llm && !next.llm.apiKey) {
+    const envKey = process.env.AKM_LLM_API_KEY?.trim();
+    if (envKey) next.llm = { ...next.llm, apiKey: envKey };
+  }
+
+  return next;
+}
+
+/**
+ * Return config file paths in merge order: user config first, then project
+ * config files from the outermost parent directory down to the current working
+ * directory. Later entries have higher precedence when merged.
+ */
+function getEffectiveConfigPaths(): string[] {
+  const configPath = getConfigPath();
+  const paths: string[] = [];
+  if (isFile(configPath)) {
+    paths.push(configPath);
+  }
+  return [...paths, ...discoverProjectConfigPaths(process.cwd())];
+}
+
+/**
+ * Walk from `startDir` up to the filesystem root and collect `.akm/config.json`
+ * files. Paths are returned from outermost parent to innermost directory so
+ * nearer project directories override broader project settings.
+ */
+function discoverProjectConfigPaths(startDir: string): string[] {
+  const paths: string[] = [];
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const configPath = path.join(currentDir, PROJECT_CONFIG_RELATIVE_PATH);
+    if (isFile(configPath)) {
+      paths.unshift(configPath);
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  return paths;
+}
+
+function getConfigSignature(configPaths: string[]): string {
+  if (configPaths.length === 0) return "defaults";
+  return configPaths.map((configPath) => `${configPath}:${getFileSignatureToken(configPath)}`).join("|");
+}
+
+function isFile(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function getFileSignatureToken(filePath: string): string {
+  try {
+    return String(fs.statSync(filePath).mtimeMs);
+  } catch {
+    return "missing";
+  }
 }

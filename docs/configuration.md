@@ -9,6 +9,13 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
+When akm runs inside a project, it also looks for project config files named
+`.akm/config.json` in the current directory and each parent directory, then
+merges them on top of the user config. Closer project directories win for
+scalar/object settings, while project `stashes` are appended after user-level
+stashes. This makes it easy to add project-specific stash sources without
+changing your global config.
+
 For a guided first-run experience, use `akm setup` to choose a stash directory,
 configure embeddings/LLM settings, review registries, and add sources.
 The wizard saves this file for you, initializes the stash, and builds the
@@ -23,8 +30,12 @@ akm config get embedding            # Read a single key
 akm config get output.format        # Read one nested key
 akm config set llm '{"endpoint":"...","model":"llama3.2"}'  # Set a key
 akm config set output.detail full   # Set one scalar key
+akm config set security.installAudit.enabled false
 akm config unset llm                # Remove an optional key
 ```
+
+`akm config set` / `unset` still write the user config in your platform config
+directory. Project config files are meant to be edited directly in the project.
 
 ## Config Reference
 
@@ -39,6 +50,10 @@ akm config unset llm                # Remove an optional key
 | `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
 | `stashes` | array | `[]` | Local and remote sources — directories and providers (managed via `akm add/remove`) |
 | `installed` | array | `[]` | Managed source metadata, cached in `~/.cache/akm/` (managed by akm) |
+| `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing |
+| `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
+| `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
+| `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
 
 ## Embedding Configuration
 
@@ -91,6 +106,23 @@ akm config unset llm
 Both `embedding` and `llm` accept an optional `apiKey` field, but API keys
 should preferably be provided via environment variables `AKM_EMBED_API_KEY`
 and `AKM_LLM_API_KEY` rather than stored in the config file.
+
+## Install Security Audit
+
+akm audits managed installs before they are registered. The audit scans code,
+metadata, prompts, and install scripts for suspicious patterns such as prompt
+injection attempts, remote shell pipes, and risky lifecycle hooks.
+
+```sh
+akm config set security.installAudit.enabled true
+akm config set security.installAudit.blockOnCritical true
+akm config set security.installAudit.registryAllowlist '["npm","github.com"]'
+akm config set security.installAudit.blockUnlistedRegistries true
+```
+
+Use `security.installAudit.enabled false` to disable the feature completely, or
+`security.installAudit.blockOnCritical false` to keep reporting findings without
+blocking the install.
 
 ## Using Ollama
 

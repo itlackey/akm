@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { StashConfigEntry } from "./config";
-import { loadConfig, saveConfig } from "./config";
+import { loadConfig, loadUserConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
 import { resolveStashSources } from "./search-source";
 
@@ -41,7 +41,7 @@ export function addStash(opts: {
   options?: Record<string, unknown>;
 }): SourceAddResult {
   const { target, name, providerType, options: providerOptions } = opts;
-  const config = loadConfig();
+  const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
 
@@ -79,7 +79,7 @@ export function addStash(opts: {
  * Match priority: URL > path > name (most specific first).
  */
 export function removeStash(target: string): SourceRemoveResult {
-  const config = loadConfig();
+  const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
   const resolvedPath = !isUrl ? path.resolve(target) : undefined;

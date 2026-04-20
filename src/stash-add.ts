@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "./common";
 import type { StashConfigEntry } from "./config";
-import { loadConfig, saveConfig } from "./config";
+import { loadConfig, loadUserConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
 import { akmIndex } from "./indexer";
 import { upsertLockEntry } from "./lockfile";
@@ -49,7 +49,7 @@ export async function akmAdd(input: {
 async function addLocalStashSource(ref: string, sourcePath: string, stashDir: string): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
-  const config = loadConfig();
+  const config = loadUserConfig();
 
   // Check for duplicates in stashes[]
   const stashes = [...(config.stashes ?? [])];
@@ -97,7 +97,7 @@ async function addWebsiteStashSource(
   options?: Record<string, unknown>,
 ): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
-  const config = loadConfig();
+  const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
   let entry = stashes.find(
     (stash): stash is StashConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
@@ -197,6 +197,7 @@ async function addRegistryKit(ref: string, stashDir: string): Promise<AddRespons
       cacheDir: installed.cacheDir,
       extractedDir: installed.extractedDir,
       installedAt: installed.installedAt,
+      audit: installed.audit,
     },
     config: {
       stashCount: config.stashes?.length ?? 0,
