@@ -293,18 +293,37 @@ function scanFile(
   const basename = path.basename(filePath).toLowerCase();
   if (basename !== "package.json" && !TEXT_FILE_EXTENSIONS.has(ext)) return;
 
-  let bytes: Buffer;
+  let fileSize: number;
   try {
-    bytes = fs.readFileSync(filePath);
+    fileSize = fs.statSync(filePath).size;
   } catch {
     return;
   }
+
+  const readSize = Math.min(fileSize, MAX_SCANNED_FILE_BYTES);
+  const buf = Buffer.allocUnsafe(readSize);
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, "r");
+  } catch {
+    return;
+  }
+  let bytesRead: number;
+  try {
+    bytesRead = fs.readSync(fd, buf, 0, readSize, 0);
+  } catch {
+    fs.closeSync(fd);
+    return;
+  }
+  fs.closeSync(fd);
+
+  const bytes = buf.subarray(0, bytesRead);
   if (bytes.includes(0)) return;
 
   counters.scannedFiles += 1;
-  counters.scannedBytes += bytes.length;
+  counters.scannedBytes += bytesRead;
 
-  const content = bytes.subarray(0, MAX_SCANNED_FILE_BYTES).toString("utf8");
+  const content = bytes.toString("utf8");
   const relativePath = path.relative(rootDir, filePath) || path.basename(filePath);
   const genericContent = basename === "package.json" ? stripPackageJsonScripts(content) : content;
 
