@@ -1558,7 +1558,7 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
   }
 
   if (!enabled) {
-    // Materialize default registries explicitly if the skills.sh entry is absent.
+    // Materialize the skills.sh registry explicitly if absent.
     registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
     saveConfig({ ...config, registries });
     return { changed: true, component: SKILLS_SH_NAME, enabled: false };
