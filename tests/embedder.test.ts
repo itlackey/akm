@@ -70,6 +70,35 @@ describe("remote embed", () => {
     }
   });
 
+  test("appends /embeddings when remote endpoint is configured as a base URL", async () => {
+    let requestedPath = "";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestedPath = new URL(request.url).pathname;
+        return new Response(
+          JSON.stringify({
+            data: [{ embedding: [0.5, 0.6, 0.7] }],
+            model: "test",
+            usage: { prompt_tokens: 5, total_tokens: 5 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+
+    try {
+      const config: EmbeddingConnectionConfig = {
+        endpoint: `http://localhost:${server.port}/v1`,
+        model: "test-model",
+      };
+      await embed("hello world", config);
+      expect(requestedPath).toBe("/v1/embeddings");
+    } finally {
+      server.stop();
+    }
+  });
+
   test("sends configured embedding dimensions when provided", async () => {
     let requestBody: Record<string, unknown> | undefined;
     const { url, server } = createMockEmbeddingServer([0.5, 0.6, 0.7], 200, (body) => {
@@ -198,6 +227,60 @@ describe("remote embed", () => {
       expect(results[0][1]).toBeCloseTo(0.0, 5);
       expect(results[1][0]).toBeCloseTo(0.0, 5); // second result is [0, 1]
       expect(results[1][1]).toBeCloseTo(1.0, 5);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("remote embedBatch appends /embeddings when endpoint is configured without the full path", async () => {
+    let requestedPath = "";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requestedPath = new URL(request.url).pathname;
+        return new Response(
+          JSON.stringify({
+            data: [
+              { embedding: [1, 0], index: 0 },
+              { embedding: [0, 1], index: 1 },
+            ],
+            model: "test",
+            usage: { prompt_tokens: 10, total_tokens: 10 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const config: EmbeddingConnectionConfig = {
+        endpoint: `http://localhost:${server.port}/v1`,
+        model: "test-model",
+      };
+      await embedBatch(["hello", "world"], config);
+      expect(requestedPath).toBe("/v1/embeddings");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("remote embedBatch error mentions the full embeddings endpoint path when response is empty", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ data: [] }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    try {
+      const port = server.port;
+      const config: EmbeddingConnectionConfig = {
+        endpoint: `http://localhost:${port}/v1`,
+        model: "test-model",
+      };
+      await expect(embedBatch(["hello"], config)).rejects.toThrow(
+        `Unexpected embedding batch response: expected 1 embeddings, got 0. Check that your endpoint includes the full embeddings path (for example "http://localhost:${port}/v1/embeddings", not just "http://localhost:${port}/v1").`,
+      );
     } finally {
       server.stop();
     }
