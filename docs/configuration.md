@@ -65,6 +65,16 @@ When `embedding` is not configured (null), akm uses `@huggingface/transformers`
 with the `Xenova/bge-small-en-v1.5` model. Runs on CPU with no external
 dependencies. Produces 384-dimensional vectors.
 
+To use a different local model, set `embedding.localModel`:
+
+```sh
+akm config set embedding '{"localModel":"Xenova/all-MiniLM-L6-v2"}'
+```
+
+The model must be compatible with `@huggingface/transformers` and produce
+embeddings at the configured dimension (default 384). Changing the model
+requires a full reindex: `akm index --full`.
+
 ### Remote
 
 Any OpenAI-compatible embedding endpoint. Configure with a JSON object:
