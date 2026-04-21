@@ -50,6 +50,9 @@ const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
 const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
+const SKILLS_SH_NAME = "skills.sh";
+const SKILLS_SH_URL = "https://skills.sh";
+const SKILLS_SH_PROVIDER = "skills-sh";
 
 import { stringify as yamlStringify } from "yaml";
 
@@ -1531,6 +1534,98 @@ const completionsCommand = defineCommand({
   },
 });
 
+function normalizeToggleTarget(target: string): "skills.sh" | "context-hub" {
+  const normalized = target.trim().toLowerCase();
+  if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
+  if (normalized === "context-hub") return "context-hub";
+  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh, context-hub`);
+}
+
+function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
+  const config = loadUserConfig();
+  const registries = (config.registries ?? DEFAULT_CONFIG.registries ?? []).map((registry) => ({ ...registry }));
+  const idx = registries.findIndex(
+    (registry) =>
+      registry.provider === SKILLS_SH_PROVIDER || registry.name === SKILLS_SH_NAME || registry.url === SKILLS_SH_URL,
+  );
+
+  if (idx >= 0) {
+    const existing = registries[idx];
+    const wasEnabled = existing.enabled !== false;
+    existing.enabled = enabled;
+    saveConfig({ ...config, registries });
+    return { changed: wasEnabled !== enabled, component: SKILLS_SH_NAME, enabled };
+  }
+
+  if (!enabled) {
+    // Materialize the skills.sh registry explicitly if absent.
+    registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: false });
+    saveConfig({ ...config, registries });
+    return { changed: true, component: SKILLS_SH_NAME, enabled: false };
+  }
+
+  registries.push({ url: SKILLS_SH_URL, name: SKILLS_SH_NAME, provider: SKILLS_SH_PROVIDER, enabled: true });
+  saveConfig({ ...config, registries });
+  return { changed: true, component: SKILLS_SH_NAME, enabled: true };
+}
+
+function toggleContextHubStash(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
+  const config = loadUserConfig();
+  const stashes = [...(config.stashes ?? [])];
+  const idx = stashes.findIndex((stash) => stash.name === CONTEXT_HUB_ALIAS_REF || stash.url === CONTEXT_HUB_ALIAS_URL);
+
+  if (idx >= 0) {
+    const existing = stashes[idx];
+    const wasEnabled = existing.enabled !== false;
+    existing.enabled = enabled;
+    saveConfig({ ...config, stashes });
+    return { changed: wasEnabled !== enabled, component: CONTEXT_HUB_ALIAS_REF, enabled };
+  }
+
+  if (!enabled) {
+    return { changed: false, component: CONTEXT_HUB_ALIAS_REF, enabled: false };
+  }
+
+  stashes.push({ type: "git", url: CONTEXT_HUB_ALIAS_URL, name: CONTEXT_HUB_ALIAS_REF, enabled: true });
+  saveConfig({ ...config, stashes });
+  return { changed: true, component: CONTEXT_HUB_ALIAS_REF, enabled: true };
+}
+
+function toggleComponent(
+  targetRaw: string,
+  enabled: boolean,
+): { changed: boolean; component: string; enabled: boolean } {
+  const target = normalizeToggleTarget(targetRaw);
+  if (target === "skills.sh") return toggleSkillsShRegistry(enabled);
+  return toggleContextHubStash(enabled);
+}
+
+const enableCommand = defineCommand({
+  meta: { name: "enable", description: "Enable an optional component (skills.sh or context-hub)" },
+  args: {
+    target: { type: "positional", description: "Component to enable (skills.sh|context-hub)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = toggleComponent(args.target, true);
+      output("enable", result);
+    });
+  },
+});
+
+const disableCommand = defineCommand({
+  meta: { name: "disable", description: "Disable an optional component (skills.sh or context-hub)" },
+  args: {
+    target: { type: "positional", description: "Component to disable (skills.sh|context-hub)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = toggleComponent(args.target, false);
+      output("disable", result);
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -1558,6 +1653,8 @@ const main = defineCommand({
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,
+    enable: enableCommand,
+    disable: disableCommand,
     feedback: feedbackCommand,
     hints: hintsCommand,
     completions: completionsCommand,
@@ -1815,6 +1912,10 @@ akm add <ref>                                 # Add a source
 akm add @scope/kit                            # From npm (managed)
 akm add owner/repo                            # From GitHub (managed)
 akm add ./path/to/local/kit                   # Local directory
+akm enable skills.sh                          # Enable the skills.sh registry
+akm disable skills.sh                         # Disable the skills.sh registry
+akm enable context-hub                        # Add/enable the context-hub source
+akm disable context-hub                       # Disable the context-hub source
 akm list                                      # List all sources
 akm list --kind managed                       # List managed sources only
 akm remove <target>                           # Remove by id, ref, path, or name
