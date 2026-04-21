@@ -168,7 +168,7 @@ function embeddingEndpointPathHint(endpoint: string): string {
   if (normalizedEndpoint !== endpoint) {
     return ` Check that your endpoint includes the full embeddings path (for example "${normalizedEndpoint}", not just "${endpoint}").`;
   }
-  return ' Check that your endpoint includes the full embeddings path (for example ".../v1/embeddings", not just ".../v1").';
+  return "";
 }
 
 async function embedRemote(text: string, config: EmbeddingConnectionConfig): Promise<EmbeddingVector> {

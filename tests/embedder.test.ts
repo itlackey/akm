@@ -273,12 +273,13 @@ describe("remote embed", () => {
       },
     });
     try {
+      const port = server.port;
       const config: EmbeddingConnectionConfig = {
-        endpoint: `http://localhost:${server.port}/v1`,
+        endpoint: `http://localhost:${port}/v1`,
         model: "test-model",
       };
       await expect(embedBatch(["hello"], config)).rejects.toThrow(
-        `Unexpected embedding batch response: expected 1 embeddings, got 0. Check that your endpoint includes the full embeddings path (for example "http://localhost:${server.port}/v1/embeddings", not just "http://localhost:${server.port}/v1").`,
+        `Unexpected embedding batch response: expected 1 embeddings, got 0. Check that your endpoint includes the full embeddings path (for example "http://localhost:${port}/v1/embeddings", not just "http://localhost:${port}/v1").`,
       );
     } finally {
       server.stop();
