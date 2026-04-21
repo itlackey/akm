@@ -5,6 +5,40 @@ JSON at `--detail brief`. Use `--format json|text|yaml` and `--detail
 brief|normal|full` when you want a different presentation. Errors include
 `error` and `hint` fields.
 
+## Global Flags
+
+These flags are accepted by all commands:
+
+| Flag | Values | Default | Description |
+| --- | --- | --- | --- |
+| `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
+| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level |
+| `--for-agent` | boolean | `false` | Agent-optimized output: strips non-actionable fields, overrides `--detail` |
+| `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
+
+### `--format jsonl`
+
+Outputs one JSON object per line. For `search` and `registry search`, each hit
+is a separate line. For other commands, the entire result is a single line.
+Useful for streaming consumption by scripts or agents.
+
+### `--for-agent`
+
+Strips output to only action-relevant fields:
+
+- **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
+- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`
+
+Takes precedence over `--detail`.
+
+### `--detail summary`
+
+Available for `show` and `search`. Returns a compact view suitable for
+capability discovery:
+
+- **show**: `type`, `name`, `description`, `tags`, `parameters`, `action`, `run`, `origin`
+- **search**: metadata-only view (no full content), under 200 tokens
+
 ## Commands
 
 ### init
@@ -49,6 +83,35 @@ Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
 Use `--verbose` to print the indexing mode, semantic-search settings, and
 phase-by-phase progress to stderr while the index is being built.
 
+### info
+
+Show system capabilities, configuration, and index state.
+
+```sh
+akm info
+```
+
+Returns a JSON object with:
+
+| Field | Description |
+| --- | --- |
+| `version` | Current akm version |
+| `assetTypes` | List of recognized asset types |
+| `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
+| `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
+| `registries` | Configured registries |
+| `stashProviders` | Configured stash sources |
+| `indexStats` | Index stats: `entryCount`, `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
+
+`semanticSearch.status` values:
+- `"ready-vec"` — native sqlite-vec extension active (fastest)
+- `"ready-js"` — pure JS fallback active (correct but slower at scale)
+- `"pending"` — not yet initialized (run `akm index` to set up)
+- `"blocked"` — setup failed (see `reason` and `message` fields)
+- `"disabled"` — semantic search is turned off in config
+
+Use `akm info` to verify that semantic search is working after setup.
+
 ### search
 
 Search stash assets, registry kits, or both.
@@ -65,8 +128,8 @@ akm search "docker" --source both --detail full
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
-| `--format` | `json`, `text`, `yaml` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full` | `brief` | Output detail level |
+| `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
+| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level (`summary` returns metadata-only, under 200 tokens) |
 
 Local hits include a `ref` handle for use with `akm show`. Key fields in
 search results:
@@ -123,7 +186,9 @@ akm show knowledge:guide frontmatter
 
 The default JSON shape includes only action-relevant fields. For `show`,
 `--detail normal` currently matches `brief`; `--detail full` adds verbose
-metadata such as `schemaVersion`, `path`, `editable`, and `editHint`.
+metadata such as `schemaVersion`, `path`, `editable`, and `editHint`;
+`--detail summary` returns a compact view with only `type`, `name`,
+`description`, `tags`, `parameters`, `action`, `run`, and `origin`.
 
 Returns type-specific payloads:
 
@@ -309,6 +374,26 @@ akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm init` first.
+
+### feedback
+
+Record positive or negative feedback for a stash asset. Feedback influences
+utility scores during the next index run, causing highly-rated assets to rank
+higher in search results over time.
+
+```sh
+akm feedback script:deploy.sh --positive
+akm feedback agent:reviewer --negative
+akm feedback skill:code-review --positive --note "Worked perfectly for PR reviews"
+```
+
+| Flag | Description |
+| --- | --- |
+| `--positive` | Record positive feedback (use when an asset was helpful) |
+| `--negative` | Record negative feedback (use when an asset was not useful) |
+| `--note` | Optional text note to attach to the feedback event |
+
+Specify exactly one of `--positive` or `--negative`.
 
 ### registry
 

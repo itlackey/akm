@@ -109,7 +109,7 @@ akm registry add https://example.com/registry/index.json --name team     # Add a
 akm add http://host:1933 --provider openviking \
   --options '{"apiKey":"key"}'                                            # Add an OpenViking source
 akm registry list                                                        # List configured registries
-akm show viking://resources/my-doc                                       # Fetch remote content from OpenViking
+akm show knowledge:my-doc                                                # Show content from any source (local or remote)
 ```
 
 Private access is supported through:

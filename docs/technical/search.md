@@ -221,9 +221,10 @@ By default (`--format json`, `--detail brief`), search emits minimal fields:
 
 ### Manifest
 
-`akm manifest` returns a compact listing of all assets (name, type, ref,
-description) — typically under 200 bytes per asset, enabling cheap capability
-discovery without loading full content.
+The manifest API (`akmManifest()`) returns a compact listing of all assets
+(name, type, ref, description) — typically under 200 bytes per asset, enabling
+cheap capability discovery without loading full content or running a search
+query.
 
 ## Explainability
 
