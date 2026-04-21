@@ -1517,7 +1517,7 @@ function slugifyAssetName(value: string, fallbackPrefix: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, MAX_CAPTURED_ASSET_SLUG_LENGTH);
-  return slug || `${fallbackPrefix}-${Date.now()}`;
+  return slug || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function inferAssetName(content: string, fallbackPrefix: string, preferred?: string): string {
