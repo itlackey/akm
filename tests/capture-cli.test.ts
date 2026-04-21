@@ -60,6 +60,14 @@ describe("capture commands", () => {
     expect(json.error).toContain("Memory content is required");
   });
 
+  test("remember rejects names with parent-directory traversal", () => {
+    const { result } = runCli(["remember", "Sensitive note", "--name", "../../etc/passwd"]);
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("relative path without '.' or '..' segments");
+  });
+
   test("import stores a knowledge document using the source filename by default", () => {
     const sourceDir = makeTempDir("akm-capture-source-");
     const sourcePath = path.join(sourceDir, "release-notes.md");
@@ -87,5 +95,17 @@ describe("capture commands", () => {
     const json = JSON.parse(result.stdout) as { ref: string };
     expect(json.ref).toBe("knowledge:scratch-notes");
     expect(fs.existsSync(path.join(stashDir, "knowledge", "scratch-notes.md"))).toBe(true);
+  });
+
+  test("import rejects an empty normalized knowledge name", () => {
+    const sourceDir = makeTempDir("akm-capture-source-");
+    const sourcePath = path.join(sourceDir, "notes.md");
+    fs.writeFileSync(sourcePath, "# Notes\n", "utf8");
+
+    const { result } = runCli(["import", sourcePath, "--name", ".md"]);
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("Asset name cannot be empty");
   });
 });

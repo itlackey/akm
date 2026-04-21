@@ -49,6 +49,7 @@ interface OutputMode {
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
+const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
 const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 const SKILLS_SH_NAME = "skills.sh";
@@ -1489,7 +1490,7 @@ const feedbackCommand = defineCommand({
   },
 });
 
-function readStdinText(): string | undefined {
+function tryReadStdinText(): string | undefined {
   if (process.stdin.isTTY) return undefined;
   const input = fs.readFileSync(0, "utf8");
   return input.length > 0 ? input : undefined;
@@ -1515,7 +1516,7 @@ function slugifyAssetName(value: string, fallbackPrefix: string): string {
     .replace(/^[#>\-\s]+/, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+    .slice(0, MAX_CAPTURED_ASSET_SLUG_LENGTH);
   return slug || `${fallbackPrefix}-${Date.now()}`;
 }
 
@@ -1529,7 +1530,7 @@ function inferAssetName(content: string, fallbackPrefix: string, preferred?: str
 }
 
 function readMemoryContent(contentArg: string | undefined): string {
-  const content = contentArg ?? readStdinText();
+  const content = contentArg ?? tryReadStdinText();
   if (!content?.trim()) {
     throw new UsageError("Memory content is required. Pass quoted text or pipe markdown into stdin.");
   }
@@ -1538,7 +1539,7 @@ function readMemoryContent(contentArg: string | undefined): string {
 
 function readKnowledgeContent(source: string): { content: string; preferredName?: string } {
   if (source === "-") {
-    const content = readStdinText();
+    const content = tryReadStdinText();
     if (!content?.trim()) {
       throw new UsageError("No stdin content received. Pipe a document into stdin or pass a file path.");
     }
