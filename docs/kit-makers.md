@@ -160,9 +160,10 @@ description: "Team coding standards for TypeScript projects"
 
 The `memories/` directory is primarily used by agent memory systems that
 write markdown files. You generally don't create memories by hand — they're
-populated by tools like OpenViking or file-based memory agents. Memories
-are surfaced alongside other assets in search results, giving the agent
-relevant context without requiring explicit prompts.
+populated by tools like OpenViking or file-based memory agents. You can also
+add one directly with `akm remember`. Memories are surfaced alongside other
+assets in search results, giving the agent relevant context without requiring
+explicit prompts.
 
 ## Step 3: Add Metadata
 

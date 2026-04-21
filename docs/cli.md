@@ -375,6 +375,44 @@ When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm init` first.
 
+### remember
+
+Record a memory in the default stash. This writes a markdown file into
+`memories/` and returns the resulting ref.
+
+```sh
+akm remember "Deployment needs VPN access"
+akm remember --name release-retro < notes.md
+akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secrets
+```
+
+| Flag | Description |
+| --- | --- |
+| `--name` | Optional memory name. Defaults to a slug derived from the content |
+| `--force` | Overwrite an existing memory with the same name |
+
+Pass the content as a quoted positional argument for short notes, or pipe
+markdown into stdin for longer memories.
+
+### import
+
+Import a knowledge document into the default stash. This writes a markdown file
+into `knowledge/` and returns the resulting ref.
+
+```sh
+akm import ./docs/auth-flow.md
+akm import ./notes/release.txt --name release-checklist
+akm import - --name scratch-notes < notes.md
+```
+
+| Flag | Description |
+| --- | --- |
+| `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
+| `--force` | Overwrite an existing knowledge document with the same name |
+
+The source must be a readable file path, or `-` to read the document from
+stdin.
+
 ### feedback
 
 Record positive or negative feedback for a stash asset. Feedback influences

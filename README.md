@@ -42,6 +42,9 @@ akm add ~/.claude/skills          # Add your existing local skills
 akm add github:owner/repo         # Add a kit from GitHub
 akm search "deploy"               # Find assets
 akm show script:deploy.sh         # View details and run command
+akm remember "Deployment needs VPN access"
+akm import ./notes/release.md
+akm feedback skill:deploy --positive
 ```
 
 If you want to skip the wizard, `akm init --dir ~/custom-stash` initializes the
@@ -65,6 +68,13 @@ knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
 No plugins, SDKs, or integration code required. Platform-specific plugins
 (e.g., [OpenCode](https://github.com/itlackey/akm-plugins?tab=readme-ov-file#opencode))
 are available for tighter integration but purely optional.
+
+When your agent uses an asset, have it record whether that asset helped:
+
+```sh
+akm feedback <ref> --positive
+akm feedback <ref> --negative --note "Outdated for the current repo layout"
+```
 
 ### Clone Assets Anywhere
 

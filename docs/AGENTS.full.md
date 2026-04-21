@@ -45,6 +45,20 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
 | memory | `content` (recalled context) |
 
+## Capture Knowledge While You Work
+
+```sh
+akm remember "Deployment needs VPN access"     # Record a memory in your stash
+akm remember --name release-retro < notes.md   # Save multiline memory from stdin
+akm import ./docs/auth-flow.md                 # Import a file as knowledge
+akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
+akm feedback skill:code-review --positive      # Record that an asset helped
+akm feedback agent:reviewer --negative         # Record that an asset missed the mark
+```
+
+Use `akm feedback` whenever an asset materially helps or fails so future search
+ranking can learn from actual usage.
+
 ## Add & Manage Sources
 
 ```sh

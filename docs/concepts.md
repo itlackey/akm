@@ -90,8 +90,9 @@ specificity-based matching system.
 
 Memories are context fragments managed by external systems — OpenViking
 servers, file-based memory stores, or agent memory frameworks that write
-recalled context as markdown files. akm does not create or manage memories
-directly. It makes them searchable alongside your other assets.
+recalled context as markdown files. You can also capture a memory directly in
+your default stash with `akm remember "..."`. akm makes those memories
+searchable alongside your other assets.
 
 To add a memory source:
 
