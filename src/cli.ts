@@ -1572,10 +1572,7 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
 function toggleContextHubStash(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
   const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
-  const idx = stashes.findIndex(
-    (stash) =>
-      stash.type === "context-hub" || stash.name === CONTEXT_HUB_ALIAS_REF || stash.url === CONTEXT_HUB_ALIAS_URL,
-  );
+  const idx = stashes.findIndex((stash) => stash.name === CONTEXT_HUB_ALIAS_REF || stash.url === CONTEXT_HUB_ALIAS_URL);
 
   if (idx >= 0) {
     const existing = stashes[idx];
@@ -1589,7 +1586,7 @@ function toggleContextHubStash(enabled: boolean): { changed: boolean; component:
     return { changed: false, component: CONTEXT_HUB_ALIAS_REF, enabled: false };
   }
 
-  stashes.push({ type: "context-hub", url: CONTEXT_HUB_ALIAS_URL, name: CONTEXT_HUB_ALIAS_REF, enabled: true });
+  stashes.push({ type: "git", url: CONTEXT_HUB_ALIAS_URL, name: CONTEXT_HUB_ALIAS_REF, enabled: true });
   saveConfig({ ...config, stashes });
   return { changed: true, component: CONTEXT_HUB_ALIAS_REF, enabled: true };
 }
