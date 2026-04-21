@@ -146,6 +146,31 @@ function l2Normalize(vec: number[]): number[] {
 
 // ── OpenAI-compatible remote embedder ───────────────────────────────────────
 
+function normalizeEmbeddingEndpoint(endpoint: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return endpoint;
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+  if (normalizedPath.endsWith("/embeddings")) {
+    return parsed.toString();
+  }
+
+  parsed.pathname = normalizedPath ? `${normalizedPath}/embeddings` : "/embeddings";
+  return parsed.toString();
+}
+
+function embeddingEndpointPathHint(endpoint: string): string {
+  const normalizedEndpoint = normalizeEmbeddingEndpoint(endpoint);
+  if (normalizedEndpoint !== endpoint) {
+    return ` Check that your endpoint includes the full embeddings path (for example "${normalizedEndpoint}", not just "${endpoint}").`;
+  }
+  return ' Check that your endpoint includes the full embeddings path (for example ".../v1/embeddings", not just ".../v1").';
+}
+
 async function embedRemote(text: string, config: EmbeddingConnectionConfig): Promise<EmbeddingVector> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (config.apiKey) {
@@ -160,7 +185,7 @@ async function embedRemote(text: string, config: EmbeddingConnectionConfig): Pro
     body.dimensions = config.dimension;
   }
 
-  const response = await fetchWithTimeout(config.endpoint, {
+  const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(config.endpoint), {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -176,7 +201,9 @@ async function embedRemote(text: string, config: EmbeddingConnectionConfig): Pro
   };
 
   if (!json.data?.[0]?.embedding) {
-    throw new Error("Unexpected embedding response format: missing data[0].embedding");
+    throw new Error(
+      `Unexpected embedding response format: missing data[0].embedding.${embeddingEndpointPathHint(config.endpoint)}`,
+    );
   }
 
   return l2Normalize(json.data[0].embedding);
@@ -301,7 +328,7 @@ async function embedRemoteBatch(texts: string[], config: EmbeddingConnectionConf
       body.dimensions = config.dimension;
     }
 
-    const response = await fetchWithTimeout(config.endpoint, {
+    const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(config.endpoint), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -318,7 +345,7 @@ async function embedRemoteBatch(texts: string[], config: EmbeddingConnectionConf
 
     if (!json.data || json.data.length !== batch.length) {
       throw new Error(
-        `Unexpected embedding batch response: expected ${batch.length} embeddings, got ${json.data?.length ?? 0}`,
+        `Unexpected embedding batch response: expected ${batch.length} embeddings, got ${json.data?.length ?? 0}.${embeddingEndpointPathHint(config.endpoint)}`,
       );
     }
 

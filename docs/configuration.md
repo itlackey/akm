@@ -83,6 +83,9 @@ Any OpenAI-compatible embedding endpoint. Configure with a JSON object:
 akm config set embedding '{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text","dimension":384}'
 ```
 
+If you provide a base URL such as `http://localhost:11434/v1`, akm will
+normalize it to `.../v1/embeddings` automatically.
+
 For an OpenAI endpoint:
 
 ```sh
