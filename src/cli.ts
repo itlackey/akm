@@ -2,7 +2,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
-import { resolveStashDir } from "./common";
+import { resolveAssetPathFromName } from "./asset-spec";
+import { isWithin, resolveStashDir } from "./common";
 import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
@@ -48,6 +49,7 @@ interface OutputMode {
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
+const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const CONTEXT_HUB_ALIAS_REF = "context-hub";
 const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 const SKILLS_SH_NAME = "skills.sh";
@@ -1488,6 +1490,185 @@ const feedbackCommand = defineCommand({
   },
 });
 
+function tryReadStdinText(): string | undefined {
+  if (process.stdin.isTTY) return undefined;
+  const input = fs.readFileSync(0, "utf8");
+  return input.length > 0 ? input : undefined;
+}
+
+function normalizeMarkdownAssetName(name: string | undefined, fallback: string): string {
+  const trimmed = (name ?? fallback)
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.md$/i, "");
+  if (!trimmed) throw new UsageError("Asset name cannot be empty.");
+  const segments = trimmed.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new UsageError("Asset name must be a relative path without '.' or '..' segments.");
+  }
+  return trimmed;
+}
+
+function slugifyAssetName(value: string, fallbackPrefix: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/^[#>\-\s]+/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_CAPTURED_ASSET_SLUG_LENGTH);
+  return slug || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function inferAssetName(content: string, fallbackPrefix: string, preferred?: string): string {
+  const firstNonEmptyLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  const basis = preferred?.trim() || firstNonEmptyLine || fallbackPrefix;
+  return slugifyAssetName(basis, fallbackPrefix);
+}
+
+function readMemoryContent(contentArg: string | undefined): string {
+  const content = contentArg ?? tryReadStdinText();
+  if (!content?.trim()) {
+    throw new UsageError("Memory content is required. Pass quoted text or pipe markdown into stdin.");
+  }
+  return content;
+}
+
+function readKnowledgeContent(source: string): { content: string; preferredName?: string } {
+  if (source === "-") {
+    const content = tryReadStdinText();
+    if (!content?.trim()) {
+      throw new UsageError("No stdin content received. Pipe a document into stdin or pass a file path.");
+    }
+    return { content };
+  }
+
+  const resolvedSource = path.resolve(source);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(resolvedSource);
+  } catch {
+    throw new UsageError(`Knowledge source not found: "${source}". Pass a readable file path or "-" for stdin.`);
+  }
+  if (!stat.isFile()) {
+    throw new UsageError(`Knowledge source must be a file: "${source}".`);
+  }
+  return {
+    content: fs.readFileSync(resolvedSource, "utf8"),
+    preferredName: path.basename(resolvedSource, path.extname(resolvedSource)),
+  };
+}
+
+function writeMarkdownAsset(options: {
+  type: "knowledge" | "memory";
+  content: string;
+  name?: string;
+  fallbackPrefix: string;
+  preferredName?: string;
+  force?: boolean;
+}): { ref: string; path: string; stashDir: string } {
+  const stashDir = resolveStashDir();
+  const typeRoot = path.join(stashDir, options.type === "knowledge" ? "knowledge" : "memories");
+  fs.mkdirSync(typeRoot, { recursive: true });
+
+  const normalizedName = normalizeMarkdownAssetName(
+    options.name,
+    inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
+  );
+  const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
+  if (!isWithin(assetPath, typeRoot)) {
+    throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
+  }
+  if (fs.existsSync(assetPath) && !options.force) {
+    throw new UsageError(
+      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+    );
+  }
+
+  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+  fs.writeFileSync(assetPath, options.content.endsWith("\n") ? options.content : `${options.content}\n`, "utf8");
+  return {
+    ref: `${options.type}:${normalizedName}`,
+    path: assetPath,
+    stashDir,
+  };
+}
+
+const rememberCommand = defineCommand({
+  meta: {
+    name: "remember",
+    description: "Record a memory in the default stash",
+  },
+  args: {
+    content: {
+      type: "positional",
+      description: "Memory content. Omit to read markdown from stdin.",
+      required: false,
+    },
+    name: {
+      type: "string",
+      description: "Memory name (defaults to a slug from the content)",
+    },
+    force: {
+      type: "boolean",
+      description: "Overwrite an existing memory with the same name",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = writeMarkdownAsset({
+        type: "memory",
+        content: readMemoryContent(args.content),
+        name: args.name,
+        fallbackPrefix: "memory",
+        force: args.force,
+      });
+      output("remember", { ok: true, ...result });
+    });
+  },
+});
+
+const importKnowledgeCommand = defineCommand({
+  meta: {
+    name: "import",
+    description: "Import a knowledge document into the default stash",
+  },
+  args: {
+    source: {
+      type: "positional",
+      description: 'Source file path, or "-" to read from stdin',
+      required: true,
+    },
+    name: {
+      type: "string",
+      description: "Knowledge name (defaults to the source filename or content slug)",
+    },
+    force: {
+      type: "boolean",
+      description: "Overwrite an existing knowledge document with the same name",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const { content, preferredName } = readKnowledgeContent(args.source);
+      const result = writeMarkdownAsset({
+        type: "knowledge",
+        content,
+        name: args.name,
+        fallbackPrefix: "knowledge",
+        preferredName,
+        force: args.force,
+      });
+      output("import", { ok: true, source: args.source, ...result });
+    });
+  },
+});
+
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -1650,6 +1831,8 @@ const main = defineCommand({
     search: searchCommand,
     curate: curateCommand,
     show: showCommand,
+    remember: rememberCommand,
+    import: importKnowledgeCommand,
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,
@@ -1828,6 +2011,9 @@ akm curate "<task>"                          # Curate the best matches for a tas
 akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
+akm remember "Deployment needs VPN access"    # Record a memory in your stash
+akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
+akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
 akm registry search "<query>"                 # Search all registries
@@ -1842,6 +2028,10 @@ akm registry search "<query>"                 # Search all registries
 | command | A prompt template with placeholders to fill in |
 | agent | A system prompt with model and tool hints |
 | knowledge | A reference doc (use \`toc\` or \`section "..."\` to navigate) |
+| memory | Recalled context (read the content for background information) |
+
+When an asset meaningfully helps or fails, record that with \`akm feedback\` so
+future search ranking can learn from real usage.
 
 Run \`akm -h\` for the full command reference.
 `;
@@ -1904,6 +2094,20 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | agent | \`prompt\`, \`description\`, \`modelHint\`, \`toolPolicy\` |
 | knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
 | memory | \`content\` (recalled context) |
+
+## Capture Knowledge While You Work
+
+\`\`\`sh
+akm remember "Deployment needs VPN access"     # Record a memory in your stash
+akm remember --name release-retro < notes.md   # Save multiline memory from stdin
+akm import ./docs/auth-flow.md                 # Import a file as knowledge
+akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
+akm feedback skill:code-review --positive      # Record that an asset helped
+akm feedback agent:reviewer --negative         # Record that an asset missed the mark
+\`\`\`
+
+Use \`akm feedback\` whenever an asset materially helps or fails so future search
+ranking can learn from actual usage.
 
 ## Add & Manage Sources
 
