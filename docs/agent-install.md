@@ -3,6 +3,35 @@
 Step-by-step instructions for automated installation and configuration of
 `akm`. Designed for agents performing headless setup on behalf of a user.
 
+
+## Quick Automation Script
+
+The following sequence performs a complete headless setup with local
+embeddings:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. Install (standalone binary)
+curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
+
+# 2. Initialize stash
+akm init
+
+# 3. Local embeddings are on by default — nothing to configure
+
+# 4. Add sources (adjust paths as needed)
+# akm add ~/.claude/skills
+
+# 5. Build index (downloads embedding model on first run)
+akm index
+
+# 6. Verify
+akm info
+echo "akm setup complete"
+```
+
 ## 1. Install the Binary
 
 Choose one method based on what runtime is available on the host:
@@ -159,34 +188,6 @@ knowledge, and memories via the `akm` CLI.
 
 Use `akm search "<query>"` to find assets and `akm show <ref>` to inspect them.
 Run `akm -h` for the full command reference.
-```
-
-## Quick Automation Script
-
-The following sequence performs a complete headless setup with local
-embeddings:
-
-```sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-# 1. Install (standalone binary)
-curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
-
-# 2. Initialize stash
-akm init
-
-# 3. Local embeddings are on by default — nothing to configure
-
-# 4. Add sources (adjust paths as needed)
-# akm add ~/.claude/skills
-
-# 5. Build index (downloads embedding model on first run)
-akm index
-
-# 6. Verify
-akm info
-echo "akm setup complete"
 ```
 
 ## Troubleshooting
