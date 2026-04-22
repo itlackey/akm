@@ -136,6 +136,7 @@ the index format.
 akm add ~/.claude/skills                    # Local directory
 akm add @scope/my-kit                       # npm
 akm add github:owner/repo#v1.2.3            # GitHub with tag
+akm add github:owner/private-kit --trust    # One-off trusted install
 akm add git+https://gitlab.com/org/kit      # Any git repo
 akm add https://docs.example.com --name docs  # Website as knowledge
 ```

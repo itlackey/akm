@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings } from "./common";
-import type { AkmConfig } from "./config";
+import type { AkmConfig, InstallAuditAllowedFinding } from "./config";
 import type { KitSource } from "./registry-types";
 
 export type InstallAuditSeverity = "low" | "moderate" | "high" | "critical";
-export type InstallAuditCategory = "prompt-injection" | "install-script" | "malicious-code";
+export type InstallAuditCategory = "prompt-injection" | "install-script" | "malicious-code" | "vendored-dependency";
 
 export interface InstallAuditFinding {
   id: string;
@@ -28,11 +28,13 @@ export interface InstallAuditReport {
   enabled: boolean;
   passed: boolean;
   blocked: boolean;
+  trusted: boolean;
   registryLabels: string[];
   findings: InstallAuditFinding[];
   scannedFiles: number;
   scannedBytes: number;
   summary: InstallAuditSummary;
+  waivedFindings?: InstallAuditFinding[];
 }
 
 export interface ResolvedInstallAuditConfig {
@@ -40,6 +42,7 @@ export interface ResolvedInstallAuditConfig {
   blockOnCritical: boolean;
   blockUnlistedRegistries: boolean;
   registryAllowlist: string[];
+  allowedFindings: InstallAuditAllowedFinding[];
 }
 
 interface InstallAuditRule {
@@ -55,6 +58,7 @@ const DEFAULT_INSTALL_AUDIT_CONFIG: ResolvedInstallAuditConfig = {
   blockOnCritical: true,
   blockUnlistedRegistries: false,
   registryAllowlist: [],
+  allowedFindings: [],
 };
 
 const MAX_SCANNED_FILE_BYTES = 256 * 1024;
@@ -86,6 +90,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".yaml",
   ".yml",
 ]);
+const BLOCKED_PACKAGE_DIRECTORIES = new Set(["node_modules", "venv", ".venv", "site-packages"]);
 
 const CONTENT_RULES: InstallAuditRule[] = [
   {
@@ -102,7 +107,7 @@ const CONTENT_RULES: InstallAuditRule[] = [
     category: "prompt-injection",
     message: "Contains instructions to reveal hidden prompts or secrets.",
     pattern:
-      /\b(reveal|print|dump|show|exfiltrat(?:e|ion))\b[^.\n]{0,120}\b(system prompt|hidden instructions?|developer message|api key|token|secret|password)\b/i,
+      /\b(?:reveal|print|dump|show|output|return|exfiltrat(?:e|ion))\b[^.\n]{0,60}\b(?:your|the)\b[^.\n]{0,40}\b(system prompt|hidden instructions?|developer message|api key|token|secret|password)\b/i,
   },
   {
     id: "prompt-bypass-guardrails",
@@ -154,6 +159,7 @@ export function resolveInstallAuditConfig(config: AkmConfig | undefined): Resolv
     blockUnlistedRegistries:
       installAudit?.blockUnlistedRegistries ?? DEFAULT_INSTALL_AUDIT_CONFIG.blockUnlistedRegistries,
     registryAllowlist: allowlist.map((entry) => entry.trim().toLowerCase()),
+    allowedFindings: installAudit?.allowedFindings ?? DEFAULT_INSTALL_AUDIT_CONFIG.allowedFindings,
   };
 }
 
@@ -182,6 +188,7 @@ export function auditInstallCandidate(input: {
   ref: string;
   registryLabels: string[];
   config: AkmConfig | undefined;
+  trustThisInstall?: boolean;
 }): InstallAuditReport {
   const resolved = resolveInstallAuditConfig(input.config);
   if (!resolved.enabled) {
@@ -189,6 +196,7 @@ export function auditInstallCandidate(input: {
       enabled: false,
       passed: true,
       blocked: false,
+      trusted: false,
       registryLabels: [...input.registryLabels],
       findings: [],
       scannedFiles: 0,
@@ -200,18 +208,25 @@ export function auditInstallCandidate(input: {
   const findings: InstallAuditFinding[] = [];
   const counters = { scannedFiles: 0, scannedBytes: 0 };
   scanDirectory(input.rootDir, input.rootDir, findings, counters);
-  const summary = buildSummary(findings);
-  const blocked = resolved.blockOnCritical && summary.critical > 0;
+  const { findings: activeFindings, waivedFindings } = splitAllowedFindings(
+    findings,
+    input.ref,
+    resolved.allowedFindings,
+  );
+  const summary = buildSummary(activeFindings);
+  const blocked = !input.trustThisInstall && resolved.blockOnCritical && summary.critical > 0;
 
   return {
     enabled: true,
-    passed: findings.length === 0,
+    passed: activeFindings.length === 0,
     blocked,
+    trusted: Boolean(input.trustThisInstall),
     registryLabels: [...input.registryLabels],
-    findings,
+    findings: activeFindings,
     scannedFiles: counters.scannedFiles,
     scannedBytes: counters.scannedBytes,
     summary,
+    ...(waivedFindings.length > 0 ? { waivedFindings } : {}),
   };
 }
 
@@ -237,7 +252,9 @@ export function formatInstallAuditSummary(report: InstallAuditReport): string {
   if (report.summary.moderate > 0) severitySummary.push(`${report.summary.moderate} moderate`);
   if (report.summary.low > 0) severitySummary.push(`${report.summary.low} low`);
   const detail = severitySummary.length > 0 ? severitySummary.join(", ") : "no findings";
-  return `Audit: ${report.blocked ? "blocked" : report.passed ? "passed" : "warnings"} (${detail}; scanned ${report.scannedFiles} file${report.scannedFiles === 1 ? "" : "s"})`;
+  const status = report.blocked ? "blocked" : report.passed ? "passed" : report.trusted ? "trusted" : "warnings";
+  const waived = report.waivedFindings?.length ? `; waived ${report.waivedFindings.length}` : "";
+  return `Audit: ${status} (${detail}; scanned ${report.scannedFiles} file${report.scannedFiles === 1 ? "" : "s"}${waived})`;
 }
 
 export function deriveRegistryLabels(input: {
@@ -272,9 +289,21 @@ function scanDirectory(
   }
 
   for (const entry of entries) {
-    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    if (entry.name === ".git") continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (BLOCKED_PACKAGE_DIRECTORIES.has(entry.name)) {
+        const relativePath = path.relative(rootDir, fullPath) || entry.name;
+        findings.push({
+          id: "bundled-package-directory",
+          severity: "critical",
+          category: "vendored-dependency",
+          message: `Contains bundled dependency directory "${entry.name}".`,
+          file: relativePath,
+          snippet: relativePath,
+        });
+        continue;
+      }
       scanDirectory(fullPath, rootDir, findings, counters);
       continue;
     }
@@ -396,6 +425,36 @@ function buildSummary(findings: InstallAuditFinding[]): InstallAuditSummary {
     summary[finding.severity] += 1;
   }
   return summary;
+}
+
+function splitAllowedFindings(
+  findings: InstallAuditFinding[],
+  ref: string,
+  allowedFindings: InstallAuditAllowedFinding[],
+): { findings: InstallAuditFinding[]; waivedFindings: InstallAuditFinding[] } {
+  const active: InstallAuditFinding[] = [];
+  const waived: InstallAuditFinding[] = [];
+  for (const finding of findings) {
+    if (matchesAllowedFinding(finding, ref, allowedFindings)) {
+      waived.push(finding);
+      continue;
+    }
+    active.push(finding);
+  }
+  return { findings: active, waivedFindings: waived };
+}
+
+function matchesAllowedFinding(
+  finding: InstallAuditFinding,
+  ref: string,
+  allowedFindings: InstallAuditAllowedFinding[],
+): boolean {
+  return allowedFindings.some((allowed) => {
+    if (allowed.id !== finding.id) return false;
+    if (allowed.ref && allowed.ref !== ref) return false;
+    if (allowed.path && allowed.path !== finding.file) return false;
+    return true;
+  });
 }
 
 function addUrlLabels(labels: Set<string>, rawUrl: string | undefined): void {

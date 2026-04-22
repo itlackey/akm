@@ -22,6 +22,25 @@ describe("config CLI helpers", () => {
     expect(parseConfigValue("security.installAudit.registryAllowlist", '["npm","github.com"]')).toEqual({
       security: { installAudit: { registryAllowlist: ["npm", "github.com"] } },
     });
+    expect(
+      parseConfigValue(
+        "security.installAudit.allowedFindings",
+        '[{"id":"prompt-reveal-hidden-secrets","ref":"github:owner/repo","path":"skills/review/SKILL.md","reason":"false positive"}]',
+      ),
+    ).toEqual({
+      security: {
+        installAudit: {
+          allowedFindings: [
+            {
+              id: "prompt-reveal-hidden-secrets",
+              ref: "github:owner/repo",
+              path: "skills/review/SKILL.md",
+              reason: "false positive",
+            },
+          ],
+        },
+      },
+    });
   });
 
   test("parseConfigValue still accepts registryWhitelist as a legacy alias", () => {
@@ -115,11 +134,25 @@ describe("config CLI helpers", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
     const configured = setConfigValue(base, "security.installAudit.enabled", "true");
     const withWhitelist = setConfigValue(configured, "security.installAudit.registryAllowlist", '["npm","github.com"]');
+    const withAllowedFindings = setConfigValue(
+      withWhitelist,
+      "security.installAudit.allowedFindings",
+      '[{"id":"bundled-package-directory","path":"venv"}]',
+    );
 
-    expect(getConfigValue(withWhitelist, "security.installAudit.enabled")).toBe(true);
-    expect(getConfigValue(withWhitelist, "security.installAudit.registryAllowlist")).toEqual(["npm", "github.com"]);
-    expect(unsetConfigValue(withWhitelist, "security.installAudit.registryAllowlist").security).toEqual({
-      installAudit: { enabled: true },
+    expect(getConfigValue(withAllowedFindings, "security.installAudit.enabled")).toBe(true);
+    expect(getConfigValue(withAllowedFindings, "security.installAudit.registryAllowlist")).toEqual([
+      "npm",
+      "github.com",
+    ]);
+    expect(getConfigValue(withAllowedFindings, "security.installAudit.allowedFindings")).toEqual([
+      { id: "bundled-package-directory", path: "venv" },
+    ]);
+    expect(unsetConfigValue(withAllowedFindings, "security.installAudit.registryAllowlist").security).toEqual({
+      installAudit: { enabled: true, allowedFindings: [{ id: "bundled-package-directory", path: "venv" }] },
+    });
+    expect(unsetConfigValue(withAllowedFindings, "security.installAudit.allowedFindings").security).toEqual({
+      installAudit: { enabled: true, registryAllowlist: ["npm", "github.com"] },
     });
   });
 
@@ -192,6 +225,9 @@ describe("config CLI helpers", () => {
     expect(() => parseConfigValue("security.installAudit.enabled", "yes")).toThrow("expected true or false");
     expect(() => parseConfigValue("security.installAudit.registryAllowlist", '{"npm":true}')).toThrow(
       "expected a JSON array of strings",
+    );
+    expect(() => parseConfigValue("security.installAudit.allowedFindings", '{"id":"x"}')).toThrow(
+      "expected a JSON array",
     );
   });
 

@@ -1,15 +1,25 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../src/github";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
 
 const originalGithubToken = process.env.GITHUB_TOKEN;
+const originalGhToken = process.env.GH_TOKEN;
 
 afterEach(() => {
+  mock.restore();
+
   if (originalGithubToken === undefined) {
     delete process.env.GITHUB_TOKEN;
   } else {
     process.env.GITHUB_TOKEN = originalGithubToken;
+  }
+
+  if (originalGhToken === undefined) {
+    delete process.env.GH_TOKEN;
+  } else {
+    process.env.GH_TOKEN = originalGhToken;
   }
 });
 
@@ -33,6 +43,8 @@ describe("githubHeaders", () => {
 
   test("does not include Authorization when GITHUB_TOKEN is unset", () => {
     delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    spyOn(childProcess, "spawnSync").mockReturnValue({ status: 1, stdout: "" } as never);
     const headers = githubHeaders() as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
@@ -45,19 +57,60 @@ describe("githubHeaders", () => {
 
   test("trims whitespace from GITHUB_TOKEN", () => {
     process.env.GITHUB_TOKEN = "  ghp_trimmed  ";
+    delete process.env.GH_TOKEN;
     const headers = githubHeaders() as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer ghp_trimmed");
   });
 
   test("does not include Authorization when GITHUB_TOKEN is empty", () => {
     process.env.GITHUB_TOKEN = "";
+    delete process.env.GH_TOKEN;
     const headers = githubHeaders() as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
 
   test("does not include Authorization when GITHUB_TOKEN is whitespace-only", () => {
     process.env.GITHUB_TOKEN = "   ";
+    delete process.env.GH_TOKEN;
     const headers = githubHeaders() as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  test("uses GH_TOKEN when GITHUB_TOKEN is unset", () => {
+    delete process.env.GITHUB_TOKEN;
+    process.env.GH_TOKEN = "ghs_from_gh_token";
+    const headers = githubHeaders() as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer ghs_from_gh_token");
+  });
+
+  test("prefers GITHUB_TOKEN over GH_TOKEN", () => {
+    process.env.GITHUB_TOKEN = "ghp_preferred";
+    process.env.GH_TOKEN = "ghs_fallback";
+    const headers = githubHeaders() as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer ghp_preferred");
+  });
+
+  test("falls back to gh auth token when env vars are unset", () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "gho_cli_token\n",
+    } as never);
+    const headers = githubHeaders() as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer gho_cli_token");
+    expect(spawnSyncSpy).toHaveBeenCalledWith("gh", ["auth", "token"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  });
+
+  test("does not include gh auth token for non-GitHub URLs", () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    spyOn(childProcess, "spawnSync").mockReturnValue({ status: 0, stdout: "gho_cli_token\n" } as never);
+    const headers = githubHeaders("https://example.com/file.tgz") as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
 });

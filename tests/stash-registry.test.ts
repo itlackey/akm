@@ -83,7 +83,7 @@ describe("akmListSources", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot }],
+      stashes: [{ type: "filesystem", path: stashRoot, writable: true }],
       installed: [
         {
           id: "test-pkg",
@@ -107,6 +107,8 @@ describe("akmListSources", () => {
       throw new Error("Expected local source");
     }
     expect(local.path).toBe(stashRoot);
+    expect(local.writable).toBe(true);
+    expect(local.updatable).toBe(false);
     // Managed source from installed[]
     const managed = result.sources.find((s) => s.kind === "managed");
     expect(managed).toBeDefined();
@@ -116,6 +118,8 @@ describe("akmListSources", () => {
     expect(managed.name).toBe("test-pkg");
     expect(managed.ref).toBe("test-pkg");
     expect(managed.status.exists).toBe(true);
+    expect(managed.writable).toBe(false);
+    expect(managed.updatable).toBe(true);
   });
 
   test("reports missing directories in status", async () => {
@@ -142,6 +146,35 @@ describe("akmListSources", () => {
     expect(result.totalSources).toBe(1);
     expect(result.sources[0].kind).toBe("managed");
     expect(result.sources[0].status.exists).toBe(false);
+    expect(result.sources[0].writable).toBe(false);
+  });
+
+  test("reports writable managed sources from installed metadata", async () => {
+    const cacheDir = createTmpDir("akm-registry-cache-entry-");
+    const stashRoot = createTmpDir("akm-registry-stashroot-");
+
+    saveConfig({
+      semanticSearchMode: "off",
+      installed: [
+        {
+          id: "github:owner/repo",
+          source: "github",
+          ref: "github:owner/repo",
+          artifactUrl: "https://github.com/owner/repo.git",
+          stashRoot,
+          cacheDir,
+          installedAt: new Date().toISOString(),
+          writable: true,
+        },
+      ],
+    });
+
+    const result = await akmListSources({ stashDir, kind: ["managed"] });
+
+    expect(result.totalSources).toBe(1);
+    expect(result.sources[0].kind).toBe("managed");
+    expect(result.sources[0].updatable).toBe(true);
+    expect(result.sources[0].writable).toBe(true);
   });
 
   test("filters by kind", async () => {

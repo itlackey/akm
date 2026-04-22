@@ -318,6 +318,22 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
 }
 
 async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedRegistryArtifact> {
+  const gitUrl = `https://github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}.git`;
+
+  // Prefer git-backed installs so private GitHub repos work with the user's
+  // normal git credential helper rather than requiring API-specific auth.
+  const gitResolvedRevision = resolveGitRevisionFromRemote(gitUrl, parsed.requestedRef);
+  if (gitResolvedRevision) {
+    return {
+      id: parsed.id,
+      source: parsed.source,
+      ref: parsed.ref,
+      artifactUrl: gitUrl,
+      resolvedVersion: parsed.requestedRef,
+      resolvedRevision: gitResolvedRevision,
+    };
+  }
+
   const headers = githubHeaders();
 
   if (parsed.requestedRef) {
@@ -376,6 +392,16 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     resolvedVersion: defaultBranch,
     resolvedRevision: asString(commit?.sha) ?? defaultBranch,
   };
+}
+
+function resolveGitRevisionFromRemote(url: string, requestedRef?: string): string | undefined {
+  validateGitUrl(url);
+  const ref = requestedRef ?? "HEAD";
+  if (requestedRef) validateGitRef(requestedRef);
+  const result = spawnSync("git", ["ls-remote", url, ref], { encoding: "utf8", timeout: 30_000 });
+  if (result.status !== 0) return undefined;
+  const firstLine = result.stdout.trim().split(/\r?\n/)[0];
+  return firstLine?.split(/\s/)[0] || undefined;
 }
 
 async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {

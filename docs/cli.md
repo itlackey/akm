@@ -219,6 +219,16 @@ returns guidance to run `akm add <origin>` first.
 | `akm add https://docs.example.com` | Crawls and caches a website as knowledge |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
+`akm add` also supports a per-install audit bypass when you intentionally trust
+the source:
+
+```sh
+akm add github:owner/private-kit --trust
+```
+
+Use `--trust` only for one-off installs you have manually reviewed. It does not
+persist trust in config.
+
 HTTP(S) URLs pointing to known git hosts (GitHub, GitLab, Bitbucket, Codeberg,
 SourceHut) or ending in `.git` are treated as git sources. All other HTTP(S)
 URLs are treated as website sources.

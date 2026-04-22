@@ -45,6 +45,8 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
     case "security.installAudit.registryWhitelist":
       return { security: { installAudit: { registryAllowlist: parseStringArrayValue(value, key) } } };
+    case "security.installAudit.allowedFindings":
+      return { security: { installAudit: { allowedFindings: parseAllowedFindingsValue(value, key) } } };
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -80,6 +82,8 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return getInstallAuditAllowlist(config);
     case "security.installAudit.registryWhitelist":
       return getInstallAuditAllowlist(config);
+    case "security.installAudit.allowedFindings":
+      return config.security?.installAudit?.allowedFindings ?? null;
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -100,6 +104,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     case "security.installAudit.blockUnlistedRegistries":
     case "security.installAudit.registryAllowlist":
     case "security.installAudit.registryWhitelist":
+    case "security.installAudit.allowedFindings":
       return mergeConfigValue(config, parseConfigValue(key, rawValue));
     default:
       throw new UsageError(`Unknown config key: ${key}`);
@@ -142,6 +147,13 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
         ...config,
         security: mergeSecurityConfig(config.security, {
           installAudit: { registryAllowlist: undefined, registryWhitelist: undefined },
+        }),
+      };
+    case "security.installAudit.allowedFindings":
+      return {
+        ...config,
+        security: mergeSecurityConfig(config.security, {
+          installAudit: { allowedFindings: undefined },
         }),
       };
     default:
@@ -229,6 +241,32 @@ function parseStringArrayValue(value: string, key: string): string[] {
 
 function getInstallAuditAllowlist(config: AkmConfig): string[] | null {
   return config.security?.installAudit?.registryAllowlist ?? config.security?.installAudit?.registryWhitelist ?? null;
+}
+
+function parseAllowedFindingsValue(value: string, key: string): InstallAuditConfig["allowedFindings"] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new UsageError(`Invalid value for ${key}: expected a JSON array of {id, ref?, path?, reason?} objects`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new UsageError(`Invalid value for ${key}: expected a JSON array`);
+  }
+  return parsed.map((entry, i) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new UsageError(`Invalid value for ${key}[${i}]: expected an object with an "id" field`);
+    }
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.id !== "string" || !obj.id) {
+      throw new UsageError(`Invalid value for ${key}[${i}]: "id" is required`);
+    }
+    const result: NonNullable<InstallAuditConfig["allowedFindings"]>[number] = { id: obj.id };
+    if (typeof obj.ref === "string" && obj.ref) result.ref = obj.ref;
+    if (typeof obj.path === "string" && obj.path) result.path = obj.path;
+    if (typeof obj.reason === "string" && obj.reason) result.reason = obj.reason;
+    return result;
+  });
 }
 
 function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined {

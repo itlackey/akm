@@ -95,6 +95,14 @@ export interface InstallAuditConfig {
   blockUnlistedRegistries?: boolean;
   registryAllowlist?: string[];
   registryWhitelist?: string[];
+  allowedFindings?: InstallAuditAllowedFinding[];
+}
+
+export interface InstallAuditAllowedFinding {
+  id: string;
+  ref?: string;
+  path?: string;
+  reason?: string;
 }
 
 export interface SecurityConfig {
@@ -637,6 +645,7 @@ function parseInstalledKitEntry(value: unknown): InstalledKitEntry | undefined {
     cacheDir,
     installedAt,
   };
+  if (typeof obj.writable === "boolean") entry.writable = obj.writable;
   const resolvedVersion = asNonEmptyString(obj.resolvedVersion);
   if (resolvedVersion) entry.resolvedVersion = resolvedVersion;
   const resolvedRevision = asNonEmptyString(obj.resolvedRevision);
@@ -694,7 +703,34 @@ function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined
   if (rawAllowlist) {
     config.registryAllowlist = rawAllowlist;
   }
+  const allowedFindings = parseInstallAuditAllowedFindings(obj.allowedFindings);
+  if (allowedFindings) {
+    config.allowedFindings = allowedFindings;
+  }
   return Object.keys(config).length > 0 ? config : undefined;
+}
+
+function parseInstallAuditAllowedFindings(value: unknown): InstallAuditAllowedFinding[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const findings = value
+    .map((entry) => parseInstallAuditAllowedFinding(entry))
+    .filter((entry): entry is InstallAuditAllowedFinding => entry !== undefined);
+  return findings.length > 0 ? findings : undefined;
+}
+
+function parseInstallAuditAllowedFinding(value: unknown): InstallAuditAllowedFinding | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const id = asNonEmptyString(obj.id);
+  if (!id) return undefined;
+  const finding: InstallAuditAllowedFinding = { id };
+  const ref = asNonEmptyString(obj.ref);
+  if (ref) finding.ref = ref;
+  const entryPath = asNonEmptyString(obj.path);
+  if (entryPath) finding.path = entryPath;
+  const reason = asNonEmptyString(obj.reason);
+  if (reason) finding.reason = reason;
+  return finding;
 }
 
 function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
@@ -712,6 +748,7 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   const name = asNonEmptyString(obj.name);
   if (name) entry.name = name;
   if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
+  if (typeof obj.writable === "boolean") entry.writable = obj.writable;
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
     entry.options = obj.options as Record<string, unknown>;
   }

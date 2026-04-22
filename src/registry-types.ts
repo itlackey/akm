@@ -54,6 +54,7 @@ export interface InstalledKitEntry {
   stashRoot: string;
   cacheDir: string;
   installedAt: string;
+  writable?: boolean;
 }
 
 export interface KitInstallResult extends InstalledKitEntry {

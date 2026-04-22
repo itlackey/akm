@@ -138,6 +138,36 @@ Use `security.installAudit.enabled false` to disable the feature completely, or
 `security.installAudit.blockOnCritical false` to keep reporting findings without
 blocking the install.
 
+To allow a known false positive in user config without disabling the audit,
+add an exact finding waiver:
+
+```json
+{
+  "security": {
+    "installAudit": {
+      "allowedFindings": [
+        {
+          "id": "prompt-reveal-hidden-secrets",
+          "ref": "github:owner/repo",
+          "path": "skills/review/SKILL.md",
+          "reason": "Reviewed manually; benign system prompt reference"
+        }
+      ]
+    }
+  }
+}
+```
+
+`allowedFindings` uses exact matching on `id`, and optionally `ref` and `path`,
+so waivers stay narrowly scoped.
+
+For one-off installs you trust after manual review, use the CLI flag instead of
+persisting a waiver:
+
+```sh
+akm add github:owner/private-kit --trust
+```
+
 ## Using Ollama
 
 [Ollama](https://ollama.com) provides local models with an OpenAI-compatible

@@ -45,6 +45,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       path: stash.path,
       provider: isRemote ? stash.type : undefined,
       updatable: false,
+      writable: stash.writable === true,
       status: { exists: stash.path ? directoryExists(stash.path) : true },
     });
   }
@@ -61,6 +62,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       ref: entry.ref,
       version: entry.resolvedVersion,
       updatable: true,
+      writable: entry.writable === true,
       status: { exists: directoryExists(entry.stashRoot) },
     });
   }

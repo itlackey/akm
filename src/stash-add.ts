@@ -15,6 +15,8 @@ export async function akmAdd(input: {
   ref: string;
   name?: string;
   options?: Record<string, unknown>;
+  trustThisInstall?: boolean;
+  writable?: boolean;
 }): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref)
@@ -39,7 +41,7 @@ export async function akmAdd(input: {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryKit(ref, stashDir);
+  return addRegistryKit(ref, stashDir, input.trustThisInstall, input.writable);
 }
 
 /**
@@ -147,8 +149,13 @@ async function addWebsiteStashSource(
 /**
  * Install a kit from a registry (npm, github, git).
  */
-async function addRegistryKit(ref: string, stashDir: string): Promise<AddResponse> {
-  const installed = await installRegistryRef(ref);
+async function addRegistryKit(
+  ref: string,
+  stashDir: string,
+  trustThisInstall?: boolean,
+  writable?: boolean,
+): Promise<AddResponse> {
+  const installed = await installRegistryRef(ref, { trustThisInstall, writable });
   const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === installed.id);
   const config = upsertInstalledRegistryEntry({
     id: installed.id,
@@ -160,6 +167,7 @@ async function addRegistryKit(ref: string, stashDir: string): Promise<AddRespons
     stashRoot: installed.stashRoot,
     cacheDir: installed.cacheDir,
     installedAt: installed.installedAt,
+    writable: installed.writable,
   });
 
   await upsertLockEntry({

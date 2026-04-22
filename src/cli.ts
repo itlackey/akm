@@ -399,7 +399,11 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
         const name = typeof src.name === "string" ? src.name : "unnamed";
         const ver = typeof src.version === "string" ? ` v${src.version}` : "";
         const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
-        lines.push(`[${kind}] ${name}${ver}${prov}`);
+        const flags: string[] = [];
+        if (src.updatable === true) flags.push("updatable");
+        if (src.writable === true) flags.push("writable");
+        const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+        lines.push(`[${kind}] ${name}${ver}${prov}${flagText}`);
       }
       return lines.join("\n");
     }
@@ -1000,6 +1004,11 @@ const addCommand = defineCommand({
       description: "Mark a git stash as writable so changes can be pushed back",
       default: false,
     },
+    trust: {
+      type: "boolean",
+      description: "Bypass install-audit blocking for this add invocation only",
+      default: false,
+    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
@@ -1062,6 +1071,8 @@ const addCommand = defineCommand({
         ref,
         name: args.name,
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
+        trustThisInstall: args.trust,
+        writable: args.writable,
       });
       output("add", result);
     });

@@ -114,6 +114,7 @@ export interface SourceEntry {
   provider?: string;
   version?: string;
   updatable: boolean;
+  writable: boolean;
   status: { exists: boolean };
 }
 
