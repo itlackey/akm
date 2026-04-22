@@ -21,6 +21,7 @@ import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
+import { pushGitStash } from "./stash-providers/git";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash } from "./stash-source-manage";
@@ -1301,6 +1302,31 @@ const configCommand = defineCommand({
   },
 });
 
+const pushCommand = defineCommand({
+  meta: {
+    name: "push",
+    description: "Commit and push local changes in a writable git stash back to the remote",
+  },
+  args: {
+    name: {
+      type: "positional",
+      description: "Name of the writable git stash to push",
+      required: true,
+    },
+    message: {
+      type: "string",
+      alias: "m",
+      description: 'Commit message (default: "Update stash assets")',
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = pushGitStash(args.name, args.message);
+      output("push", result);
+    });
+  },
+});
+
 const cloneCommand = defineCommand({
   meta: {
     name: "clone",
@@ -1913,6 +1939,7 @@ const main = defineCommand({
     remember: rememberCommand,
     import: importKnowledgeCommand,
     lint: lintCommand,
+    push: pushCommand,
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,

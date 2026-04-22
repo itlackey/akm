@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { StashConfigEntry } from "../config";
-import { ConfigError } from "../errors";
+import { loadConfig } from "../config";
+import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import { validateGitUrl } from "../registry-resolve";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
@@ -17,10 +18,18 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 /** Maximum stale age allowed when refresh fails (7 days). */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
+const GIT_STASH_TYPES = new Set(["git", "context-hub", "github"]);
+
 interface ParsedRepoUrl {
   cloneUrl: string;
   ref: string | null;
   canonicalUrl: string;
+}
+
+export interface PushGitStashResult {
+  committed: boolean;
+  pushed: boolean;
+  output: string;
 }
 
 class GitStashProvider implements StashProvider {
@@ -72,9 +81,10 @@ function getCachePaths(repoUrl: string): {
 async function ensureGitMirror(
   repo: ParsedRepoUrl,
   cachePaths: ReturnType<typeof getCachePaths>,
-  options?: { requireRepoDir?: boolean },
+  options?: { requireRepoDir?: boolean; writable?: boolean },
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
+  const writable = options?.writable === true;
 
   // Check if cache is fresh
   let mtime = 0;
@@ -90,7 +100,12 @@ async function ensureGitMirror(
 
   try {
     fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir);
+    if (writable && fs.existsSync(path.join(cachePaths.repoDir, ".git"))) {
+      // Writable repo already cloned — pull instead of re-clone to preserve local changes
+      pullRepo(cachePaths.repoDir);
+    } else {
+      cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir, writable);
+    }
     // Touch index file to track freshness
     fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
   } catch (err) {
@@ -101,7 +116,7 @@ async function ensureGitMirror(
   }
 }
 
-function cloneRepo(cloneUrl: string, ref: string | null, destDir: string): void {
+function cloneRepo(cloneUrl: string, ref: string | null, destDir: string, writable = false): void {
   if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
 
   const args = ["clone", "--depth", "1"];
@@ -114,9 +129,22 @@ function cloneRepo(cloneUrl: string, ref: string | null, destDir: string): void 
     throw new Error(`Failed to clone ${cloneUrl}: ${err}`);
   }
 
-  // Remove .git directory — we only need the working tree
-  const gitDir = path.join(destDir, ".git");
-  if (fs.existsSync(gitDir)) fs.rmSync(gitDir, { recursive: true, force: true });
+  if (!writable) {
+    // Remove .git directory — we only need the working tree for read-only stashes
+    const gitDir = path.join(destDir, ".git");
+    if (fs.existsSync(gitDir)) fs.rmSync(gitDir, { recursive: true, force: true });
+  }
+}
+
+function pullRepo(repoDir: string): void {
+  const result = spawnSync("git", ["-C", repoDir, "pull", "--ff-only"], {
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  if (result.status !== 0) {
+    const err = result.stderr?.trim() || result.error?.message || "unknown error";
+    throw new Error(`Failed to pull ${repoDir}: ${err}`);
+  }
 }
 
 function hasExtractedRepo(repoDir: string): boolean {
@@ -176,6 +204,68 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
 
   // Any other valid git URL: use as-is, rely on system git credentials
   return { cloneUrl: rawUrl, ref: null, canonicalUrl: rawUrl };
+}
+
+// ── Push support ─────────────────────────────────────────────────────────────
+
+export function pushGitStash(name: string, message = "Update stash assets"): PushGitStashResult {
+  const config = loadConfig();
+  const stash = config.stashes?.find((s) => s.name === name || s.url === name);
+
+  if (!stash) {
+    throw new UsageError(`No git stash found with name "${name}"`);
+  }
+  if (!GIT_STASH_TYPES.has(stash.type)) {
+    throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
+  }
+  if (!stash.writable) {
+    throw new UsageError(
+      `Stash "${name}" is not marked as writable. Add writable: true to its config entry to enable push.`,
+    );
+  }
+  if (!stash.url) {
+    throw new UsageError(`Stash "${name}" has no URL configured`);
+  }
+
+  const repo = parseGitRepoUrl(stash.url);
+  const cachePaths = getCachePaths(repo.canonicalUrl);
+  const repoDir = cachePaths.repoDir;
+
+  if (!fs.existsSync(path.join(repoDir, ".git"))) {
+    throw new UsageError(
+      `Stash "${name}" has not been initialised as a writable repo. Run "akm index" to clone it first.`,
+    );
+  }
+
+  // Check for changes
+  const statusResult = spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" });
+  if (!statusResult.stdout.trim()) {
+    return { committed: false, pushed: false, output: "Nothing to commit, working tree clean" };
+  }
+
+  // Stage all changes
+  const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
+  if (addResult.status !== 0) {
+    throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
+  }
+
+  // Commit
+  const commitResult = spawnSync("git", ["-C", repoDir, "commit", "-m", message], { encoding: "utf8" });
+  if (commitResult.status !== 0) {
+    throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
+  }
+
+  // Push
+  const pushResult = spawnSync("git", ["-C", repoDir, "push"], { encoding: "utf8", timeout: 120_000 });
+  if (pushResult.status !== 0) {
+    throw new Error(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`);
+  }
+
+  return {
+    committed: true,
+    pushed: true,
+    output: (commitResult.stdout + pushResult.stdout).trim() || "Changes committed and pushed",
+  };
 }
 
 // ── Exports ─────────────────────────────────────────────────────────────────

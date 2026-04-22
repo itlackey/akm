@@ -206,7 +206,7 @@ export async function ensureStashCaches(config?: AkmConfig): Promise<void> {
     try {
       const repo = parseGitRepoUrl(entry.url);
       const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true, writable: entry.writable === true });
     } catch (err) {
       warn(
         `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,

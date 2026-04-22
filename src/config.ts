@@ -83,6 +83,8 @@ export interface StashConfigEntry {
   name?: string;
   /** Whether this stash is active. Default: true */
   enabled?: boolean;
+  /** If true, the stash is a git repo the user can commit and push changes back to. */
+  writable?: boolean;
   /** Arbitrary provider-specific options */
   options?: Record<string, unknown>;
 }
