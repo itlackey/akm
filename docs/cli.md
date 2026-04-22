@@ -243,7 +243,8 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | Flag | Description |
 | --- | --- |
 | `--name` | Human-friendly name for the source |
-| `--provider` | Provider type (e.g. `openviking`). Required for remote provider sources |
+| `--provider` | Provider type (e.g. `git`, `openviking`). Required for remote provider sources |
+| `--writable` | Mark a git stash as writable so `akm save` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"apiKey":"key"}'`) |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
@@ -374,6 +375,43 @@ akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
 running `akm init` first.
+
+### save
+
+Stage and commit local changes in a git-backed stash. If the stash has a
+remote configured and is marked `writable: true`, the commit is also pushed.
+
+```sh
+akm save                            # Save primary stash (auto timestamp message)
+akm save -m "Add deploy skill"     # Save with custom message
+akm save my-skills                  # Save a named writable git stash
+akm save my-skills -m "Update"     # Save named stash with message
+```
+
+| Argument / Flag | Description |
+| --- | --- |
+| `[name]` | Optional stash name. Defaults to the primary stash |
+| `-m`, `--message` | Commit message. Defaults to `akm save <timestamp>` |
+
+**Behaviour by repo state:**
+
+| State | Result |
+| --- | --- |
+| Not a git repo | Exit 0, `skipped: true` in JSON output — no error |
+| Git repo, no remote | Stage and commit only |
+| Git repo, has remote, not writable | Stage and commit only |
+| Git repo, has remote, `writable: true` | Stage, commit, and push |
+
+When `akm init` successfully initializes the default stash as a local git repo
+(requires `git` to be installed), `akm save` will commit there safely without
+pushing. If git is unavailable, the stash will not be a git repo and save will
+return a skipped result.
+
+To make a remote git stash writable, pass `--writable` when adding it:
+
+```sh
+akm add git@github.com:org/skills.git --provider git --name my-skills --writable
+```
 
 ### remember
 

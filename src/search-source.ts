@@ -53,7 +53,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   }
 
   // Git stash entries: resolve cache directory so the indexer can walk it.
-  // "context-hub", "github", and "git" provider types are handled.
+  // "git" provider type (and its legacy aliases "context-hub", "github") are handled.
   for (const entry of config.stashes ?? []) {
     if (GIT_STASH_TYPES.has(entry.type) && entry.url && entry.enabled !== false) {
       try {
@@ -206,7 +206,7 @@ export async function ensureStashCaches(config?: AkmConfig): Promise<void> {
     try {
       const repo = parseGitRepoUrl(entry.url);
       const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true, writable: entry.writable === true });
     } catch (err) {
       warn(
         `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,

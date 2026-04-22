@@ -16,6 +16,8 @@ akm import ./notes/release-checklist.md       # Import a knowledge doc into your
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
+akm save                                      # Commit (and push if writable) the primary git stash
+akm save my-skills -m "Update"               # Save a named writable git stash
 akm registry search "<query>"                 # Search all registries
 ```
 

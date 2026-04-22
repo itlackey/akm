@@ -5,6 +5,7 @@
  * in config.json, and ensures ripgrep is available.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
@@ -39,6 +40,9 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
     }
   }
 
+  // Ensure the default stash is a local git repo (no remote required)
+  ensureGitRepo(stashDir);
+
   // Persist stashDir in config.json
   const configPath = getConfigPath();
   const existing = loadUserConfig();
@@ -57,4 +61,12 @@ export async function akmInit(options?: { dir?: string }): Promise<InitResponse>
   }
 
   return { stashDir, created, configPath, ripgrep };
+}
+
+/** Initialise `dir` as a git repository if it is not already one. */
+function ensureGitRepo(dir: string): void {
+  const gitDir = path.join(dir, ".git");
+  if (fs.existsSync(gitDir)) return;
+  // Non-fatal: git may not be available in all environments
+  spawnSync("git", ["init", dir], { encoding: "utf8", timeout: 15_000 });
 }

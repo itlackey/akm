@@ -665,7 +665,7 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
   for (const url of selectedRepos) {
     if (!existingUrls.has(url)) {
       const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
-      stashes.push({ type: "github", url, name: rec?.name });
+      stashes.push({ type: "git", url, name: rec?.name });
       existingUrls.add(url);
     }
   }
@@ -762,7 +762,7 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
       );
       if (name === null) continue;
 
-      const entry: StashConfigEntry = { type: "github", url: url.trim() };
+      const entry: StashConfigEntry = { type: "git", url: url.trim() };
       if (name.trim()) entry.name = name.trim();
       if (!stashes.some((s) => s.url === entry.url)) {
         stashes.push(entry);

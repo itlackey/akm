@@ -75,6 +75,7 @@ describe("completions command", () => {
       "remember",
       "import",
       "clone",
+      "save",
       "feedback",
       "registry",
       "config",

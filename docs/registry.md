@@ -374,7 +374,7 @@ akm add https://github.com/andrewyng/context-hub --provider git
 ```
 
 Key behaviors:
-- Downloads and securely mirrors the GitHub repo archive into akm's cache
+- Clones the repository using `git clone --depth 1` into akm's cache
 - Discovers `content/**/DOC.md` and `content/**/SKILL.md` entries
 - Maps Context Hub docs to `knowledge` hits and skills to `skill` hits
 - Returns direct `akm show ...` actions for matched entries

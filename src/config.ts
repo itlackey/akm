@@ -73,7 +73,7 @@ export interface RegistryConfigEntry {
 }
 
 export interface StashConfigEntry {
-  /** Provider type (e.g. "filesystem", "openviking", "context-hub") */
+  /** Provider type (e.g. "filesystem", "git", "openviking") */
   type: string;
   /** Filesystem path (for type: "filesystem") */
   path?: string;
@@ -83,6 +83,8 @@ export interface StashConfigEntry {
   name?: string;
   /** Whether this stash is active. Default: true */
   enabled?: boolean;
+  /** If true, the stash is a git repo the user can commit and push changes back to. */
+  writable?: boolean;
   /** Arbitrary provider-specific options */
   options?: Record<string, unknown>;
 }

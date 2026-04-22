@@ -87,6 +87,28 @@ akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 
 When `--dest` is provided, `akm init` is not required first.
 
+## Save
+
+Commit local changes in a git-backed stash. Behaviour adapts automatically:
+
+- **Not a git repo** — no-op (silent skip)
+- **Git repo, no remote** — stage and commit only (the default stash always falls here)
+- **Git repo, has remote, not writable** — stage and commit only
+- **Git repo, has remote, `writable: true`** — stage, commit, and push
+
+```sh
+akm save                                      # Save primary stash (timestamp message)
+akm save -m "Add deploy skill"               # Save with explicit message
+akm save my-skills                            # Save a named writable git stash
+akm save my-skills -m "Update patterns"      # Save named stash with message
+```
+
+The `--writable` flag on `akm add` opts a remote git stash into push-on-save:
+
+```sh
+akm add git@github.com:org/skills.git --provider git --name my-skills --writable
+```
+
 ## Registries
 
 ```sh
