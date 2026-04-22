@@ -197,8 +197,12 @@ export interface WikiPageEdit {
 export interface WikiPageCreate {
   /** Slug for the new page (no extension), e.g. "passkey-rollout-2026". */
   name: string;
-  /** Page archetype; defaults to "note" if missing. */
-  pageKind?: "entity" | "concept" | "question" | "note";
+  /**
+   * Page archetype. Defaults to "note" if missing. Any non-empty string is
+   * accepted so users can introduce new categories without code changes;
+   * see `DEFAULT_PAGE_KINDS` for the built-in set.
+   */
+  pageKind?: string;
   /** Markdown body for the new page (frontmatter is added by the caller). */
   body: string;
   /** Other knowledge refs this page links to. Must come from the candidate set. */
@@ -232,6 +236,12 @@ export async function ingestKnowledgeSource(
     sourceName: string;
     sourceContent: string;
     candidates: WikiCandidatePage[];
+    /**
+     * The currently active page-kind taxonomy (built-in defaults + any
+     * user-declared extras + any kinds observed on existing pages).
+     * The model is told to prefer these but may coin a new one when nothing fits.
+     */
+    pageKinds?: string[];
   },
 ): Promise<WikiIngestPlan | undefined> {
   const truncatedSource =
@@ -248,6 +258,9 @@ export async function ingestKnowledgeSource(
           })
           .join("\n");
 
+  const pageKinds = input.pageKinds?.length ? input.pageKinds : ["entity", "concept", "question", "note"];
+  const kindsList = pageKinds.join(" | ");
+
   const userPrompt = `New raw source: ${input.sourceName}
 ---
 ${truncatedSource}
@@ -256,11 +269,14 @@ ${truncatedSource}
 Candidate existing pages (you may xref these by ref):
 ${candidateBlock}
 
+Known page kinds (prefer one of these; coin a new lowercase-hyphenated kind only if none fits):
+${pageKinds.map((k) => `- ${k}`).join("\n")}
+
 Return JSON shaped exactly like:
 {
   "summary": "one sentence on what the source contributes",
   "newPages": [
-    { "name": "slug-here", "pageKind": "entity|concept|question|note", "body": "# Title\\n\\n...markdown...", "xrefs": ["knowledge:other-page"] }
+    { "name": "slug-here", "pageKind": "${kindsList}", "body": "# Title\\n\\n...markdown...", "xrefs": ["knowledge:other-page"] }
   ],
   "edits": [
     { "ref": "knowledge:existing-page", "patch": "## New section\\n\\n...markdown...", "reason": "captures the X angle from this source" }
@@ -295,13 +311,8 @@ Rules: every xref must appear in the candidate list. newPages and edits may be e
       const body = typeof rec.body === "string" ? rec.body : "";
       if (!name || !body) continue;
       const page: WikiPageCreate = { name, body };
-      if (
-        rec.pageKind === "entity" ||
-        rec.pageKind === "concept" ||
-        rec.pageKind === "question" ||
-        rec.pageKind === "note"
-      ) {
-        page.pageKind = rec.pageKind;
+      if (typeof rec.pageKind === "string" && rec.pageKind.trim().length > 0) {
+        page.pageKind = rec.pageKind.trim();
       }
       if (Array.isArray(rec.xrefs)) {
         const refs = rec.xrefs.filter((x): x is string => typeof x === "string" && candidateRefs.has(x));

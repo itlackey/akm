@@ -9,8 +9,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "./common";
-import type { LlmConnectionConfig } from "./config";
+import type { AkmConfig, LlmConnectionConfig } from "./config";
 import { parseFrontmatter } from "./frontmatter";
+import { resolvePageKinds } from "./knowledge-page-kinds";
 import {
   ingestKnowledgeSource,
   lintKnowledge,
@@ -21,7 +22,7 @@ import {
 import { parseAssetRef } from "./stash-ref";
 import { akmSearch } from "./stash-search";
 import {
-  INDEX_MD,
+  buildIndexMd,
   LOG_MD,
   SCHEMA_MD,
   SKILL_INGEST_MD,
@@ -39,15 +40,6 @@ const MAX_INGEST_CANDIDATES = 15;
 const MAX_QUERY_TERMS = 8;
 const SLUG_MAX_LENGTH = 64;
 
-const BOOTSTRAP_FILES: Array<{ relPath: string; content: string }> = [
-  { relPath: path.join(KNOWLEDGE_SUBDIR, "schema.md"), content: SCHEMA_MD },
-  { relPath: path.join(KNOWLEDGE_SUBDIR, "index.md"), content: INDEX_MD },
-  { relPath: path.join(KNOWLEDGE_SUBDIR, "log.md"), content: LOG_MD },
-  { relPath: path.join(SKILLS_SUBDIR, "knowledge-ingest", "SKILL.md"), content: SKILL_INGEST_MD },
-  { relPath: path.join(SKILLS_SUBDIR, "knowledge-query", "SKILL.md"), content: SKILL_QUERY_MD },
-  { relPath: path.join(SKILLS_SUBDIR, "knowledge-lint", "SKILL.md"), content: SKILL_LINT_MD },
-];
-
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 export interface BootstrapResult {
@@ -58,12 +50,26 @@ export interface BootstrapResult {
 /**
  * Idempotently write the schema, index, log, and three knowledge skills into
  * the stash. Files that already exist are left alone.
+ *
+ * The generated `index.md` uses `resolvePageKinds(config)` so users who have
+ * declared extra kinds under `knowledge.pageKinds` see those categories as
+ * first-class sections in the scaffolded index.
  */
-export function bootstrapKnowledgeWiki(stashDir: string): BootstrapResult {
+export function bootstrapKnowledgeWiki(stashDir: string, config?: AkmConfig): BootstrapResult {
+  const pageKinds = resolvePageKinds(config);
+  const files: Array<{ relPath: string; content: string }> = [
+    { relPath: path.join(KNOWLEDGE_SUBDIR, "schema.md"), content: SCHEMA_MD },
+    { relPath: path.join(KNOWLEDGE_SUBDIR, "index.md"), content: buildIndexMd(pageKinds) },
+    { relPath: path.join(KNOWLEDGE_SUBDIR, "log.md"), content: LOG_MD },
+    { relPath: path.join(SKILLS_SUBDIR, "knowledge-ingest", "SKILL.md"), content: SKILL_INGEST_MD },
+    { relPath: path.join(SKILLS_SUBDIR, "knowledge-query", "SKILL.md"), content: SKILL_QUERY_MD },
+    { relPath: path.join(SKILLS_SUBDIR, "knowledge-lint", "SKILL.md"), content: SKILL_LINT_MD },
+  ];
+
   const created: string[] = [];
   const skipped: string[] = [];
 
-  for (const { relPath, content } of BOOTSTRAP_FILES) {
+  for (const { relPath, content } of files) {
     const absPath = path.join(stashDir, relPath);
     if (fs.existsSync(absPath)) {
       skipped.push(absPath);
@@ -123,14 +129,20 @@ export interface IngestOptions {
   content: string;
   /** Suggested filename (defaults to a slug from the first heading/line). */
   preferredName?: string;
-  /** Apply the plan; without this, returns a dry-run plan. */
-  apply?: boolean;
+  /**
+   * When true, only return the LLM's plan — raw source is still copied into
+   * `knowledge/raw/<slug>.md` (non-destructive), but no pages are written or
+   * logged. Defaults to false: `ingestSource` saves by default.
+   */
+  dryRun?: boolean;
   /** Override candidate gathering — used by tests to skip the search round-trip. */
   candidates?: WikiCandidatePage[];
   /** Stash directory; defaults to caller's resolved stashDir. */
   stashDir: string;
   /** LLM config to drive the ingest. */
   llm: LlmConnectionConfig;
+  /** Full akm config — used to read `knowledge.pageKinds` for the taxonomy. */
+  config?: AkmConfig;
 }
 
 export interface IngestResult {
@@ -166,14 +178,23 @@ export async function ingestSource(opts: IngestOptions): Promise<IngestResult> {
   // Collect candidate pages by searching the existing knowledge stash.
   const candidates = opts.candidates ?? (await collectCandidates(opts.content, opts.stashDir));
 
+  // Observed + configured page kinds drive the taxonomy the LLM is told about.
+  // Any kind already in use on an existing page is carried forward so the LLM
+  // stays consistent with whatever convention the user has adopted.
+  const observedKinds = collectKnowledgePages(knowledgeDir)
+    .map((p) => p.pageKind)
+    .filter((k): k is string => typeof k === "string" && k.length > 0);
+  const pageKinds = resolvePageKinds(opts.config, observedKinds);
+
   // Ask the LLM for a plan.
   const plan = await ingestKnowledgeSource(opts.llm, {
     sourceName: rawSlug,
     sourceContent: opts.content,
     candidates,
+    pageKinds,
   });
 
-  if (!opts.apply || !plan) {
+  if (opts.dryRun || !plan) {
     return { rawPath, rawSlug, candidates, plan };
   }
 
@@ -333,7 +354,7 @@ function firstLineDescription(body: string): string | undefined {
 }
 
 function buildPageFrontmatter(opts: {
-  pageKind: "entity" | "concept" | "question" | "note";
+  pageKind: string;
   xrefs?: string[];
   sources?: string[];
   description?: string;
@@ -468,13 +489,8 @@ function collectKnowledgePages(knowledgeDir: string): KnowledgePage[] {
         filePath: file,
       };
       if (typeof fm.description === "string" && fm.description) page.description = fm.description;
-      if (
-        fm.pageKind === "entity" ||
-        fm.pageKind === "concept" ||
-        fm.pageKind === "question" ||
-        fm.pageKind === "note"
-      ) {
-        page.pageKind = fm.pageKind;
+      if (typeof fm.pageKind === "string" && fm.pageKind.trim().length > 0) {
+        page.pageKind = fm.pageKind.trim();
       }
       if (Array.isArray(fm.xrefs)) {
         page.xrefs = fm.xrefs.filter((x): x is string => typeof x === "string");

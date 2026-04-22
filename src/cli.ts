@@ -1657,9 +1657,9 @@ const importKnowledgeCommand = defineCommand({
       description: "Run the LLM-driven wiki ingest: copy source to raw/, update related pages, log the change",
       default: false,
     },
-    apply: {
+    "dry-run": {
       type: "boolean",
-      description: "With --llm, apply the plan instead of just printing it (no-op without --llm)",
+      description: "With --llm, print the plan without writing pages or log entries (raw source is still copied)",
       default: false,
     },
   },
@@ -1687,21 +1687,23 @@ const importKnowledgeCommand = defineCommand({
         );
       }
       const stashDir = resolveStashDir();
-      bootstrapKnowledgeWiki(stashDir);
+      bootstrapKnowledgeWiki(stashDir, config);
       const { content, preferredName } = readKnowledgeContent(args.source);
+      const dryRun = Boolean((args as Record<string, unknown>)["dry-run"]);
       const result = await ingestSource({
         content,
         preferredName: args.name ?? preferredName,
-        apply: args.apply,
+        dryRun,
         stashDir,
         llm: config.llm,
+        config,
       });
-      if (args.apply && result.applied) {
+      if (!dryRun && result.applied) {
         await akmIndex({ stashDir });
       }
       output("import", {
         ok: true,
-        mode: args.apply ? "applied" : "dry-run",
+        mode: dryRun ? "dry-run" : "applied",
         source: args.source,
         rawPath: result.rawPath,
         rawSlug: result.rawSlug,
@@ -1733,7 +1735,7 @@ const lintCommand = defineCommand({
         throw new UsageError("No LLM configured. Run `akm setup` to add one.");
       }
       const stashDir = resolveStashDir();
-      bootstrapKnowledgeWiki(stashDir);
+      bootstrapKnowledgeWiki(stashDir, config);
       const result = await lintWiki({ stashDir, llm: config.llm, fix: args.fix });
       output("lint", {
         ok: true,

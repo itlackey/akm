@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { LlmConnectionConfig } from "../src/config";
+import type { AkmConfig, LlmConnectionConfig } from "../src/config";
+import { DEFAULT_PAGE_KINDS, pageKindHeading, resolvePageKinds } from "../src/knowledge-page-kinds";
 import {
   bootstrapKnowledgeWiki,
   deriveQueryFromSource,
@@ -117,7 +118,7 @@ describe("ingestSource", () => {
     fs.rmSync(stashDir, { recursive: true, force: true });
   });
 
-  test("dry-run copies raw and returns the LLM plan without writing pages", async () => {
+  test("dryRun=true copies raw and returns the LLM plan without writing pages", async () => {
     const planBody = JSON.stringify({
       summary: "Adds passkey rollout notes",
       newPages: [
@@ -138,6 +139,7 @@ describe("ingestSource", () => {
         content: "# Passkey rollout 2026\n\nWe shipped X.",
         stashDir,
         llm,
+        dryRun: true,
         candidates: [{ ref: "knowledge:auth-design", name: "auth-design" }],
       });
       // raw is always written, even on dry-run
@@ -152,7 +154,7 @@ describe("ingestSource", () => {
     }
   });
 
-  test("apply mode writes new pages, appends edits, and logs the run", async () => {
+  test("default (no dryRun flag) writes new pages, appends edits, and logs the run", async () => {
     // Pre-existing page that the LLM will append to.
     fs.writeFileSync(
       path.join(stashDir, "knowledge", "auth-design.md"),
@@ -186,7 +188,6 @@ describe("ingestSource", () => {
         content: "# Passkey rollout 2026\n\nWe shipped X.",
         stashDir,
         llm,
-        apply: true,
         candidates: [{ ref: "knowledge:auth-design", name: "auth-design" }],
       });
 
@@ -426,10 +427,149 @@ describe("ingest slug collisions", () => {
         content: "# Z",
         stashDir,
         llm,
-        apply: true,
         candidates: [],
       });
       expect(result.applied?.pagesCreated[0]).toMatch(/already-here-1\.md$/);
+    } finally {
+      handle.server.stop();
+    }
+  });
+});
+
+// ── expandable page kinds / topics ──────────────────────────────────────────
+
+describe("page-kind taxonomy", () => {
+  test("defaults cover entity/concept/question/note", () => {
+    expect(resolvePageKinds()).toEqual(["entity", "concept", "question", "note"]);
+    expect(DEFAULT_PAGE_KINDS).toContain("entity");
+    expect(DEFAULT_PAGE_KINDS).toContain("note");
+  });
+
+  test("config.knowledge.pageKinds adds new categories without duplicating defaults", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      knowledge: { pageKinds: ["decision-record", "retrospective", "note"] },
+    };
+    const resolved = resolvePageKinds(config);
+    expect(resolved).toEqual(["entity", "concept", "question", "note", "decision-record", "retrospective"]);
+  });
+
+  test("observed kinds passed alongside config are merged in", () => {
+    const config: AkmConfig = { semanticSearchMode: "off", knowledge: { pageKinds: ["glossary"] } };
+    const resolved = resolvePageKinds(config, ["glossary", "review"]);
+    expect(resolved).toEqual(["entity", "concept", "question", "note", "glossary", "review"]);
+  });
+
+  test("pageKindHeading pluralizes common English cases", () => {
+    expect(pageKindHeading("entity")).toBe("Entities");
+    expect(pageKindHeading("note")).toBe("Notes");
+    expect(pageKindHeading("decision-record")).toBe("Decision Records");
+    expect(pageKindHeading("glossaries")).toBe("Glossaries");
+  });
+});
+
+describe("bootstrap honors extended page kinds", () => {
+  let stashDir: string;
+
+  beforeEach(() => {
+    stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-kinds-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(stashDir, { recursive: true, force: true });
+  });
+
+  test("index.md includes sections for every resolved kind", () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      knowledge: { pageKinds: ["decision-record"] },
+    };
+    bootstrapKnowledgeWiki(stashDir, config);
+    const index = fs.readFileSync(path.join(stashDir, "knowledge", "index.md"), "utf8");
+    expect(index).toContain("## Entities");
+    expect(index).toContain("## Notes");
+    expect(index).toContain("## Decision Records");
+  });
+});
+
+describe("ingest accepts custom pageKind end to end", () => {
+  let stashDir: string;
+
+  beforeEach(() => {
+    stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-custom-"));
+    fs.mkdirSync(path.join(stashDir, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "knowledge", "log.md"), "# Log\n", "utf8");
+  });
+
+  afterEach(() => {
+    fs.rmSync(stashDir, { recursive: true, force: true });
+  });
+
+  test("persists a non-default pageKind verbatim in page frontmatter", async () => {
+    const planBody = JSON.stringify({
+      summary: "records a decision",
+      newPages: [
+        {
+          name: "adopt-passkeys",
+          pageKind: "decision-record",
+          body: "# Adopt passkeys\n\nContext and decision.",
+        },
+      ],
+      edits: [],
+    });
+    const handle = createMockLlmServer(planBody);
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "test-model" };
+      const config: AkmConfig = {
+        semanticSearchMode: "off",
+        knowledge: { pageKinds: ["decision-record"] },
+      };
+      const result = await ingestSource({
+        content: "# Adopt passkeys\n\nRollout plan.",
+        stashDir,
+        llm,
+        config,
+        candidates: [],
+      });
+      expect(result.applied?.pagesCreated[0]).toMatch(/adopt-passkeys\.md$/);
+      const page = fs.readFileSync(path.join(stashDir, "knowledge", "adopt-passkeys.md"), "utf8");
+      expect(page).toContain("pageKind: decision-record");
+    } finally {
+      handle.server.stop();
+    }
+  });
+
+  test("ingest prompt advertises the resolved taxonomy to the LLM", async () => {
+    // A pre-existing page uses a kind the user invented ad-hoc.
+    fs.writeFileSync(
+      path.join(stashDir, "knowledge", "sprint-4.md"),
+      "---\ndescription: retro notes\npageKind: retrospective\n---\n\n# Sprint 4\n",
+      "utf8",
+    );
+
+    const handle = createMockLlmServer(JSON.stringify({ summary: "x", newPages: [], edits: [] }));
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "test-model" };
+      const config: AkmConfig = {
+        semanticSearchMode: "off",
+        knowledge: { pageKinds: ["decision-record"] },
+      };
+      await ingestSource({
+        content: "# Something\n\nbody",
+        stashDir,
+        llm,
+        config,
+        dryRun: true,
+        candidates: [],
+      });
+      const lastBody = handle.requests.at(-1);
+      const userPrompt = ((lastBody?.messages as Array<{ content: string }>) ?? []).find((m) =>
+        m.content?.includes("Known page kinds"),
+      );
+      // Defaults + config kind + observed kind must all appear in the prompt.
+      expect(userPrompt?.content).toContain("entity");
+      expect(userPrompt?.content).toContain("decision-record");
+      expect(userPrompt?.content).toContain("retrospective");
     } finally {
       handle.server.stop();
     }

@@ -54,8 +54,13 @@ export interface StashEntry {
    * `raw` marks immutable ingested sources; `page` (default) is an LLM-authored page.
    */
   wikiRole?: "schema" | "index" | "log" | "raw" | "page";
-  /** Page archetype for wiki pages (entity, concept, question, note). */
-  pageKind?: "entity" | "concept" | "question" | "note";
+  /**
+   * Page archetype for wiki pages. Defaults shipped by akm are `entity`,
+   * `concept`, `question`, `note` (see `DEFAULT_PAGE_KINDS` in
+   * `src/knowledge-page-kinds.ts`), but any non-empty string is accepted so
+   * users can introduce new categories without code changes.
+   */
+  pageKind?: string;
   /** Cross-references to other knowledge entries by ref (e.g. "knowledge:auth-design"). */
   xrefs?: string[];
   /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
@@ -186,8 +191,8 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   ) {
     result.wikiRole = e.wikiRole;
   }
-  if (e.pageKind === "entity" || e.pageKind === "concept" || e.pageKind === "question" || e.pageKind === "note") {
-    result.pageKind = e.pageKind;
+  if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
+    result.pageKind = e.pageKind.trim();
   }
   if (Array.isArray(e.xrefs)) {
     const filtered = e.xrefs
@@ -276,8 +281,8 @@ export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, u
     entry.wikiRole = role;
   }
   const pageKind = fmData.pageKind;
-  if (pageKind === "entity" || pageKind === "concept" || pageKind === "question" || pageKind === "note") {
-    entry.pageKind = pageKind;
+  if (typeof pageKind === "string" && pageKind.trim().length > 0) {
+    entry.pageKind = pageKind.trim();
   }
   const xrefs = fmData.xrefs;
   if (Array.isArray(xrefs)) {
