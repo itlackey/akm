@@ -1652,19 +1652,98 @@ const importKnowledgeCommand = defineCommand({
       description: "Overwrite an existing knowledge document with the same name",
       default: false,
     },
+    llm: {
+      type: "boolean",
+      description: "Run the LLM-driven wiki ingest: copy source to raw/, update related pages, log the change",
+      default: false,
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "With --llm, print the plan without writing pages or log entries (raw source is still copied)",
+      default: false,
+    },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (!args.llm) {
+        const { content, preferredName } = readKnowledgeContent(args.source);
+        const result = writeMarkdownAsset({
+          type: "knowledge",
+          content,
+          name: args.name,
+          fallbackPrefix: "knowledge",
+          preferredName,
+          force: args.force,
+        });
+        output("import", { ok: true, source: args.source, ...result });
+        return;
+      }
+
+      const { ingestSource, bootstrapKnowledgeWiki } = await import("./knowledge-wiki");
+      const config = loadConfig();
+      if (!config.llm) {
+        throw new UsageError(
+          "No LLM configured. Run `akm setup` to add an LLM (Anthropic, OpenAI, Gemini, Ollama, or custom).",
+        );
+      }
+      const stashDir = resolveStashDir();
+      bootstrapKnowledgeWiki(stashDir, config);
       const { content, preferredName } = readKnowledgeContent(args.source);
-      const result = writeMarkdownAsset({
-        type: "knowledge",
+      const dryRun = Boolean((args as Record<string, unknown>)["dry-run"]);
+      const result = await ingestSource({
         content,
-        name: args.name,
-        fallbackPrefix: "knowledge",
-        preferredName,
-        force: args.force,
+        preferredName: args.name ?? preferredName,
+        dryRun,
+        stashDir,
+        llm: config.llm,
+        config,
       });
-      output("import", { ok: true, source: args.source, ...result });
+      if (!dryRun && result.applied) {
+        await akmIndex({ stashDir });
+      }
+      output("import", {
+        ok: true,
+        mode: dryRun ? "dry-run" : "applied",
+        source: args.source,
+        rawPath: result.rawPath,
+        rawSlug: result.rawSlug,
+        candidates: result.candidates.map((c) => c.ref),
+        plan: result.plan ?? null,
+        applied: result.applied ?? null,
+      });
+    });
+  },
+});
+
+const lintCommand = defineCommand({
+  meta: {
+    name: "lint",
+    description: "Audit the knowledge wiki for contradictions, orphans, stale claims, and missing cross-references",
+  },
+  args: {
+    fix: {
+      type: "boolean",
+      description: "Apply low-risk suggested fixes (currently: missing-xref additions). Logs each change.",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { bootstrapKnowledgeWiki, lintWiki } = await import("./knowledge-wiki");
+      const config = loadConfig();
+      if (!config.llm) {
+        throw new UsageError("No LLM configured. Run `akm setup` to add one.");
+      }
+      const stashDir = resolveStashDir();
+      bootstrapKnowledgeWiki(stashDir, config);
+      const result = await lintWiki({ stashDir, llm: config.llm, fix: args.fix });
+      output("lint", {
+        ok: true,
+        mode: args.fix ? "fix" : "report",
+        pagesScanned: result.pagesScanned,
+        report: result.report ?? null,
+        applied: result.applied ?? null,
+      });
     });
   },
 });
@@ -1833,6 +1912,7 @@ const main = defineCommand({
     show: showCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
+    lint: lintCommand,
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,

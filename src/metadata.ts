@@ -48,6 +48,23 @@ export interface StashEntry {
   fileSize?: number;
   /** Structured parameter definitions extracted from the asset content */
   parameters?: AssetParameter[];
+  /**
+   * Wiki role for knowledge pages following the LLM Wiki pattern.
+   * `schema` / `index` / `log` are the special files at the top of the wiki;
+   * `raw` marks immutable ingested sources; `page` (default) is an LLM-authored page.
+   */
+  wikiRole?: "schema" | "index" | "log" | "raw" | "page";
+  /**
+   * Page archetype for wiki pages. Defaults shipped by akm are `entity`,
+   * `concept`, `question`, `note` (see `DEFAULT_PAGE_KINDS` in
+   * `src/knowledge-page-kinds.ts`), but any non-empty string is accepted so
+   * users can introduce new categories without code changes.
+   */
+  pageKind?: string;
+  /** Cross-references to other knowledge entries by ref (e.g. "knowledge:auth-design"). */
+  xrefs?: string[];
+  /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
+  sources?: string[];
 }
 
 export interface StashFile {
@@ -165,6 +182,30 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.setup === "string" && e.setup.trim()) result.setup = e.setup.trim();
   if (typeof e.cwd === "string" && e.cwd.trim()) result.cwd = e.cwd.trim();
   if (typeof e.fileSize === "number" && Number.isFinite(e.fileSize) && e.fileSize >= 0) result.fileSize = e.fileSize;
+  if (
+    e.wikiRole === "schema" ||
+    e.wikiRole === "index" ||
+    e.wikiRole === "log" ||
+    e.wikiRole === "raw" ||
+    e.wikiRole === "page"
+  ) {
+    result.wikiRole = e.wikiRole;
+  }
+  if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
+    result.pageKind = e.pageKind.trim();
+  }
+  if (Array.isArray(e.xrefs)) {
+    const filtered = e.xrefs
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim());
+    if (filtered.length > 0) result.xrefs = filtered;
+  }
+  if (Array.isArray(e.sources)) {
+    const filtered = e.sources
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (filtered.length > 0) result.sources = filtered;
+  }
   if (Array.isArray(e.parameters)) {
     const validated = e.parameters
       .filter((p: unknown): p is AssetParameter => {
@@ -228,6 +269,35 @@ export function extractCommandParameters(template: string): AssetParameter[] | u
   }
 
   return params.length > 0 ? params : undefined;
+}
+
+/**
+ * Extract wiki frontmatter fields (wikiRole, pageKind, xrefs, sources) from a parsed
+ * frontmatter block and apply them to the entry. Tolerates missing or malformed values.
+ */
+export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+  const role = fmData.wikiRole;
+  if (role === "schema" || role === "index" || role === "log" || role === "raw" || role === "page") {
+    entry.wikiRole = role;
+  }
+  const pageKind = fmData.pageKind;
+  if (typeof pageKind === "string" && pageKind.trim().length > 0) {
+    entry.pageKind = pageKind.trim();
+  }
+  const xrefs = fmData.xrefs;
+  if (Array.isArray(xrefs)) {
+    const filtered = xrefs
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim());
+    if (filtered.length > 0) entry.xrefs = filtered;
+  }
+  const sources = fmData.sources;
+  if (Array.isArray(sources)) {
+    const filtered = sources
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (filtered.length > 0) entry.sources = filtered;
+  }
 }
 
 /**
@@ -367,6 +437,8 @@ export async function generateMetadata(
       // Extract parameters from frontmatter params: key
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
+      // Pass wiki-pattern frontmatter through onto the entry
+      applyWikiFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);
@@ -478,6 +550,8 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
       // Extract parameters from frontmatter params: key
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
+      // Pass wiki-pattern frontmatter through onto the entry
+      applyWikiFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);
