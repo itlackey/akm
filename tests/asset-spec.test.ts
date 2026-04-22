@@ -149,6 +149,26 @@ describe("deriveCanonicalAssetName", () => {
     const file = path.join(root, "utils", "cleanup.py");
     expect(deriveCanonicalAssetName("script", root, file)).toBe("utils/cleanup.py");
   });
+
+  test("vault: top-level <name>.env → <name>", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "prod.env"))).toBe("prod");
+  });
+
+  test("vault: top-level `.env` → `default`", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, ".env"))).toBe("default");
+  });
+
+  test("vault: nested <dir>/<name>.env → <dir>/<name>", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", "prod.env"))).toBe("team/prod");
+  });
+
+  test("vault: nested <dir>/.env → <dir>/default", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", ".env"))).toBe("team/default");
+  });
 });
 
 // ── resolveAssetPathFromName ────────────────────────────────────────────────

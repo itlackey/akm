@@ -5,7 +5,7 @@ import path from "node:path";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { getDbPath } from "../src/paths";
-import { createVault, injectIntoEnv, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
+import { buildShellExportScript, createVault, injectIntoEnv, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -244,6 +244,126 @@ describe("injectIntoEnv", () => {
     const target: Record<string, string | undefined> = {};
     expect(injectIntoEnv(path.join(tmpDir(), "missing.env"), target)).toEqual([]);
     expect(target).toEqual({});
+  });
+});
+
+// ── quoteValue hardening (shell-metachar defence-in-depth) ──────────────────
+//
+// Even though `vault load` no longer `source`s the raw vault file (it
+// parses with dotenv and sources a safely-escaped temp file), the on-disk
+// vault format itself must be robust to direct `source` by any future
+// caller. These tests lock in that every non-trivial value is quoted.
+
+describe("setKey: shell-metachar hardening", () => {
+  test("values containing $, backticks, or $(...) are quoted on disk", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    setKey(fp, "DOLLAR", "abc$DEF");
+    setKey(fp, "BACKTICK", "pre`whoami`post");
+    setKey(fp, "CMDSUB", "pre$(id)post");
+    const raw = fs.readFileSync(fp, "utf8");
+    // None of these should appear as an unquoted assignment that a shell
+    // would expand on `source`. Our impl single-quotes them.
+    expect(raw).toMatch(/^DOLLAR='abc\$DEF'$/m);
+    expect(raw).toMatch(/^BACKTICK='pre`whoami`post'$/m);
+    expect(raw).toMatch(/^CMDSUB='pre\$\(id\)post'$/m);
+  });
+
+  test("values with shell-special chars ; & | * ? ( ) { } [ ] > < ~ ! are quoted", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    for (const [k, v] of Object.entries({
+      SEMI: "a;b",
+      AMP: "a&b",
+      PIPE: "a|b",
+      GLOB: "abc*",
+      QMARK: "abc?",
+      PAREN: "a(b)c",
+      BRACE: "a{b}c",
+      BRACK: "a[b]c",
+      REDIR: "a>b",
+      REDIR2: "a<b",
+      TILDE: "~/foo",
+      BANG: "a!b",
+    })) {
+      setKey(fp, k, v);
+    }
+    const raw = fs.readFileSync(fp, "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.includes("=")) continue;
+      const [, val] = line.match(/^[A-Z_]+=(.*)$/) ?? [];
+      if (!val) continue;
+      // Any non-empty value must be quoted (either '...' or "...").
+      expect(val[0] === "'" || val[0] === '"').toBe(true);
+    }
+  });
+
+  test("round-trip preserves exact values through dotenv.parse", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    const payloads = {
+      DOLLAR: "abc$HOME",
+      BACKTICK: "pre`whoami`",
+      CMDSUB: "pre$(rm -rf /tmp/shouldnothappen)post",
+      GLOB: "*.env",
+      TILDE: "~/root",
+      SEMI: "a;b",
+      BANG: "echo!123",
+      AMPERSAND: "x && y",
+      NESTED: 'it has "double" quotes only',
+    };
+    for (const [k, v] of Object.entries(payloads)) setKey(fp, k, v);
+    const env = loadEnv(fp);
+    for (const [k, v] of Object.entries(payloads)) {
+      expect(env[k]).toBe(v);
+    }
+  });
+});
+
+// ── buildShellExportScript (vault load safety) ──────────────────────────────
+
+describe("buildShellExportScript", () => {
+  test("emits export lines with `'\\''` escaping; no expansion-triggering syntax", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    setKey(fp, "PLAIN", "hello");
+    setKey(fp, "DOLLAR", "abc$HOME");
+    setKey(fp, "APOS", "it's fine");
+    const script = buildShellExportScript(fp);
+    // Every line must be a single-quoted export assignment.
+    for (const line of script.split("\n").filter(Boolean)) {
+      expect(line).toMatch(/^export [A-Za-z_][A-Za-z0-9_]*='.*'$/);
+    }
+    expect(script).toContain("export PLAIN='hello'");
+    expect(script).toContain("export DOLLAR='abc$HOME'");
+    // Single quote inside value must be encoded as '\''
+    expect(script).toContain("export APOS='it'\\''s fine'");
+  });
+
+  test("sourcing the emitted script populates env without executing payloads", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    // The "value" is designed to execute `touch evidence` if it ever
+    // reaches a shell without quoting; a safe implementation must keep it
+    // literal.
+    const evidence = path.join(dir, "evidence");
+    setKey(fp, "EVIL", `$(touch ${evidence})`);
+    setKey(fp, "OK", "ok-value");
+    const script = buildShellExportScript(fp);
+    const scriptPath = path.join(dir, "source-me.sh");
+    fs.writeFileSync(scriptPath, script);
+
+    const { spawnSync } = require("node:child_process");
+    const result = spawnSync("bash", ["-c", `set -eu; . '${scriptPath}'; printf '%s\\n' "$EVIL" "$OK"`], {
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    const [evilOut, okOut] = (result.stdout ?? "").split("\n");
+    // EVIL must come back as the literal string — not executed.
+    expect(evilOut).toBe(`$(touch ${evidence})`);
+    expect(okOut).toBe("ok-value");
+    // The command substitution must NOT have run.
+    expect(fs.existsSync(evidence)).toBe(false);
   });
 });
 

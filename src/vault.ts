@@ -5,9 +5,11 @@
  * the indexer, the `akm show` renderer, or any structured output channel.
  * The supported load paths are:
  *
- *   - `eval "$(akm vault load vault:<name>)"` — the shell `source`s the .env
- *     file directly; akm's stdout carries only the file path and `source`
- *     syntax, never values.
+ *   - `eval "$(akm vault load vault:<name>)"` — `vault load` parses the vault
+ *     with dotenv (no shell expansion, no code execution), writes a safely
+ *     single-quote-escaped `export KEY='value'` script to a mode-0600 temp
+ *     file, and emits `. <tmp>; rm -f <tmp>` on stdout. Values reach bash
+ *     only via the temp file, never via akm's stdout.
  *   - `injectIntoEnv(vaultPath, target)` — programmatic API for modules that
  *     need values in a process environment.
  *
@@ -55,7 +57,11 @@ function scanComments(text: string): string[] {
 
 /**
  * Read and return ONLY non-secret metadata (keys + start-of-line comments).
- * Values are never read from the file.
+ *
+ * The function reads the whole file into memory (same as any dotenv parser)
+ * but deliberately does not parse values — the LHS-only regex scanners above
+ * ensure no value content is retained or returned. The guarantee is that
+ * values never leave this function.
  */
 export function listKeys(vaultPath: string): { keys: string[]; comments: string[] } {
   if (!fs.existsSync(vaultPath)) return { keys: [], comments: [] };
@@ -96,12 +102,38 @@ export function injectIntoEnv(
 }
 
 /**
+ * Serialise a vault's values as a POSIX shell script of `export KEY='value'`
+ * lines, with single-quote escaping (`'\''`). Every line is an assignment of
+ * a literal string — there is no expansion, command substitution, or
+ * non-assignment content, so sourcing the output is safe regardless of what
+ * the vault file contains.
+ *
+ * Intended for use by `akm vault load`, which writes this to a mode-0600
+ * temp file and emits only the path (never values) on stdout.
+ */
+export function buildShellExportScript(vaultPath: string): string {
+  const env = loadEnv(vaultPath);
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    // Defence in depth: dotenv already validates key shape, but reject any
+    // key we wouldn't be able to export safely.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    const escaped = value.replace(/'/g, "'\\''");
+    lines.push(`export ${key}='${escaped}'`);
+  }
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+/**
  * Set a key in the vault file, preserving line order and comments. Creates
  * the file (and parent directory) if it does not exist.
  *
- * Values containing whitespace, quotes, `#`, `=`, backslashes, or newlines
- * are double-quoted with a small set of escape sequences understood by
- * dotenv. Round-trip safety is enforced by the test suite.
+ * `quoteValue` picks the safest representation that dotenv round-trips:
+ * single-quoted when the value has no `'`, double-quoted when it has `'` but
+ * no `"` and no literal `\n`/`\r` escape sequences, and unquoted only for
+ * values that contain no characters requiring escaping (see quoteValue for
+ * the full rule set). Values containing newlines or both quote types are
+ * rejected outright. Round-trip safety is enforced by the test suite.
  */
 export function setKey(vaultPath: string, key: string, value: string): void {
   validateKeyName(key);
@@ -166,14 +198,26 @@ export function createVault(vaultPath: string): void {
 }
 
 /**
+ * Characters that are safe in an UNquoted dotenv value AND are not
+ * metacharacters in POSIX shells. Anything outside this set forces quoting,
+ * which is defense-in-depth for any caller that might ever `source` the
+ * vault file directly instead of going through `akm vault load`.
+ */
+const UNQUOTED_SAFE_RE = /^[A-Za-z0-9_.:/@%+,-]+$/;
+
+/**
  * Quote a value for safe storage in a .env file that round-trips through
- * `dotenv.parse`. Strategy:
+ * `dotenv.parse` AND is safe if the file is ever `source`d by a POSIX shell.
+ *
+ * Strategy:
  *   - empty → empty
- *   - no special chars → unquoted
- *   - no `'`            → single-quote (dotenv reads single-quoted content
- *                         literally, no escape processing)
- *   - no `"` and no `\n`/`\r` literal sequence → double-quote (dotenv would
- *                         otherwise interpret `\n`/`\r` as newlines)
+ *   - all-safe chars (alnum + `_.:/@%+,-`) → unquoted
+ *   - no `'` → single-quote (dotenv and shell both treat single-quoted
+ *                            content literally: no expansion, no escapes)
+ *   - no `"` and no literal `\n`/`\r` escape sequence → double-quote
+ *                            (dotenv unescapes `\n`/`\r` on read, so we
+ *                            can't double-quote a value that contains
+ *                            those literal sequences)
  *   - newlines or both quote types → reject
  *
  * dotenv intentionally does NOT support `\"` inside double-quoted values, so
@@ -184,7 +228,7 @@ function quoteValue(value: string): string {
   if (/[\n\r]/.test(value)) {
     throw new Error("Vault values cannot contain literal newlines.");
   }
-  if (!/[\s"'#=\\]/.test(value)) return value;
+  if (UNQUOTED_SAFE_RE.test(value)) return value;
   if (!value.includes("'")) return `'${value}'`;
   if (!value.includes('"') && !/\\[nr]/.test(value)) return `"${value}"`;
   throw new Error("Vault value contains both single and double quote characters; not supported.");
