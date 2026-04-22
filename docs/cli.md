@@ -397,13 +397,15 @@ akm save my-skills -m "Update"     # Save named stash with message
 
 | State | Result |
 | --- | --- |
-| Not a git repo | Silent no-op |
+| Not a git repo | Exit 0, `skipped: true` in JSON output — no error |
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
 
-The default stash is always a local git repo without a remote (initialized by
-`akm init`), so `akm save` will always commit there safely without pushing.
+When `akm init` successfully initializes the default stash as a local git repo
+(requires `git` to be installed), `akm save` will commit there safely without
+pushing. If git is unavailable, the stash will not be a git repo and save will
+return a skipped result.
 
 To make a remote git stash writable, pass `--writable` when adding it:
 

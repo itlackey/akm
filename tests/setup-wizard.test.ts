@@ -111,7 +111,7 @@ const CTX_HUB_URL = "https://github.com/andrewyng/context-hub";
 describe("stepStashSources – recommended GitHub repos", () => {
   beforeEach(reset);
 
-  test("selecting a recommended repo adds it with type 'github'", async () => {
+  test("selecting a recommended repo adds it with type 'git'", async () => {
     const { stepStashSources } = await import("../src/setup");
 
     // multiselect recommended repos → select context-hub
@@ -122,14 +122,14 @@ describe("stepStashSources – recommended GitHub repos", () => {
     const result = await stepStashSources({ stashes: [] } as never);
     const hub = result.find((s) => s.url === CTX_HUB_URL);
     expect(hub).toBeDefined();
-    expect(hub?.type).toBe("github");
+    expect(hub?.type).toBe("git");
     expect(hub?.name).toBe("context-hub");
   });
 
   test("deselecting a previously added recommended repo removes it", async () => {
     const { stepStashSources } = await import("../src/setup");
     const cfg = {
-      stashes: [{ type: "github", url: CTX_HUB_URL, name: "context-hub" }],
+      stashes: [{ type: "git", url: CTX_HUB_URL, name: "context-hub" }],
     };
 
     // multiselect recommended repos → deselect all (empty array)
@@ -145,7 +145,7 @@ describe("stepStashSources – recommended GitHub repos", () => {
   test("keeping a recommended repo that is already configured", async () => {
     const { stepStashSources } = await import("../src/setup");
     const cfg = {
-      stashes: [{ type: "github", url: CTX_HUB_URL, name: "context-hub" }],
+      stashes: [{ type: "git", url: CTX_HUB_URL, name: "context-hub" }],
     };
 
     // multiselect → keep it selected
@@ -204,7 +204,7 @@ describe("semantic search setup", () => {
 describe("stepStashSources – custom GitHub repo", () => {
   beforeEach(reset);
 
-  test("adds a custom GitHub repo with type 'github'", async () => {
+  test("adds a custom GitHub repo with type 'git'", async () => {
     const { stepStashSources } = await import("../src/setup");
 
     // multiselect recommended repos → none
@@ -221,7 +221,7 @@ describe("stepStashSources – custom GitHub repo", () => {
     const result = await stepStashSources({ stashes: [] } as never);
     const repo = result.find((s) => s.url === "https://github.com/owner/repo");
     expect(repo).toBeDefined();
-    expect(repo?.type).toBe("github");
+    expect(repo?.type).toBe("git");
     expect(repo?.name).toBe("my-repo");
   });
 });

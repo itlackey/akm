@@ -161,7 +161,12 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
   }
 
   // Validate URL scheme is safe before parsing
-  validateGitUrl(rawUrl);
+  try {
+    validateGitUrl(rawUrl);
+  } catch (err) {
+    if (err instanceof UsageError) throw new ConfigError(err.message);
+    throw err;
+  }
 
   let parsed: URL;
   try {
@@ -197,8 +202,20 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
     return { cloneUrl, ref, canonicalUrl };
   }
 
-  // Any other valid git URL: use as-is, rely on system git credentials
-  return { cloneUrl: rawUrl, ref: null, canonicalUrl: rawUrl };
+  // Any other valid git URL: use as-is for cloning, but strip embedded credentials
+  // from canonicalUrl so secrets don't leak into cache keys or warning messages.
+  let canonicalUrl = rawUrl;
+  try {
+    const u = new URL(rawUrl);
+    u.username = "";
+    u.password = "";
+    u.search = "";
+    u.hash = "";
+    canonicalUrl = u.toString();
+  } catch {
+    // URL failed to parse — fall back to raw (validateGitUrl already accepted it)
+  }
+  return { cloneUrl: rawUrl, ref: null, canonicalUrl };
 }
 
 // ── Save support ─────────────────────────────────────────────────────────────
@@ -252,22 +269,35 @@ export function saveGitStash(name?: string, message?: string): SaveGitStashResul
 
   // Nothing to commit?
   const statusResult = spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" });
+  if (statusResult.error || statusResult.status !== 0) {
+    throw new Error(
+      `git status failed: ${statusResult.error?.message || statusResult.stderr?.trim() || "unknown error"}`,
+    );
+  }
   if (!statusResult.stdout.trim()) {
     return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
   }
 
-  // Stage and commit
+  // Stage and commit — supply fallback identity so fresh environments without
+  // user.name/user.email configured can always commit to the default stash.
   const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
   if (addResult.status !== 0) {
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
   }
-  const commitResult = spawnSync("git", ["-C", repoDir, "commit", "-m", commitMessage], { encoding: "utf8" });
+  const commitResult = spawnSync(
+    "git",
+    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", commitMessage],
+    { encoding: "utf8" },
+  );
   if (commitResult.status !== 0) {
     throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
   }
 
   // Push only when there is a remote AND the stash is marked writable
   const remoteResult = spawnSync("git", ["-C", repoDir, "remote"], { encoding: "utf8" });
+  if (remoteResult.status !== 0) {
+    throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
+  }
   const hasRemote = remoteResult.stdout.trim().length > 0;
 
   if (!hasRemote || !writable) {

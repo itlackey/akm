@@ -51,7 +51,7 @@ describe("akm add context-hub alias", () => {
     };
     expect(parsed.added).toBe(true);
     expect(parsed.entry).toEqual({
-      type: "context-hub",
+      type: "git",
       url: "https://github.com/andrewyng/context-hub",
       name: "context-hub",
     });
@@ -61,7 +61,7 @@ describe("akm add context-hub alias", () => {
       stashes?: Array<{ type?: string; url?: string; name?: string }>;
     };
     expect(config.stashes).toContainEqual({
-      type: "context-hub",
+      type: "git",
       url: "https://github.com/andrewyng/context-hub",
       name: "context-hub",
     });

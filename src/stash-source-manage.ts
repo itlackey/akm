@@ -88,7 +88,12 @@ export function addStash(opts: {
 export function removeStash(target: string): SourceRemoveResult {
   const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
-  const isUrl = target.startsWith("http://") || target.startsWith("https://");
+  const isUrl =
+    target.startsWith("http://") ||
+    target.startsWith("https://") ||
+    target.startsWith("git@") ||
+    target.startsWith("ssh://") ||
+    target.startsWith("git://");
   const resolvedPath = !isUrl ? path.resolve(target) : undefined;
 
   // Try URL match first, then path, then name (most specific → least specific)
