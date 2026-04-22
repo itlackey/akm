@@ -155,7 +155,7 @@ export async function showLocal(input: {
     throw new UsageError(`Renderer "${match.renderer}" not found for asset: ${displayType}:${parsed.name}`);
   }
 
-  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs);
+  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
   const fullResponse: ShowResponse = {

@@ -572,6 +572,34 @@ describe("Renderer", () => {
   test("getRenderer returns undefined for unknown renderer name", async () => {
     expect(await getRenderer("nonexistent")).toBeUndefined();
   });
+
+  test("workflow renderer builds origin-aware shell-quoted action text", async () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "workflows", "release flow.md");
+    writeFile(
+      filePath,
+      [
+        "---",
+        "description: Ship a release safely",
+        "---",
+        "# Workflow: Release Flow",
+        "",
+        "## Step: Validate",
+        "Step ID: validate",
+        "",
+        "### Instructions",
+        "Check inputs.",
+      ].join("\n"),
+    );
+
+    const renderer = expectDefined(await getRenderer("workflow-md"));
+    const ctx = buildFileContext(root, filePath);
+    const match = { type: "workflow", specificity: 10, renderer: "workflow-md", meta: { name: "release flow" } };
+    const renderCtx = buildRenderContext(ctx, match, [root], "npm:@scope/pkg");
+    const response = renderer.buildShowResponse(renderCtx);
+
+    expect(response.action).toContain("akm workflow next 'npm:@scope/pkg//workflow:release flow'");
+  });
 });
 
 // ── 4. walkStashFlat tests ──────────────────────────────────────────────────

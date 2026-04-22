@@ -1,9 +1,9 @@
 # CLI Reference
 
 The CLI is called `akm` (Agent Kit Manager). Commands default to structured
-JSON at `--detail brief`. Use `--format json|text|yaml` and `--detail
-brief|normal|full` when you want a different presentation. Errors include
-`error` and `hint` fields.
+JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
+brief|normal|full|summary` when you want a different presentation. Errors
+include `error` and `hint` fields.
 
 ## Global Flags
 
@@ -125,7 +125,7 @@ akm search "docker" --source both --detail full
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
@@ -160,13 +160,15 @@ akm curate "learn the release workflow" --source both --format text
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
 `akm curate` selects high-signal results, prefers one strong match per asset
 type by default, and includes direct follow-up commands such as `akm show <ref>`
 or `akm add <kit>` so you can immediately inspect or install what it found.
+Use `--type workflow` when you want curated step-by-step procedures instead of
+individual scripts, skills, or docs.
 
 ### show
 
@@ -189,7 +191,8 @@ The default JSON shape includes only action-relevant fields. For `show`,
 `--detail normal` currently matches `brief`; `--detail full` adds verbose
 metadata such as `schemaVersion`, `path`, `editable`, and `editHint`;
 `--detail summary` returns a compact view with only `type`, `name`,
-`description`, `tags`, `parameters`, `action`, `run`, and `origin`.
+`description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`,
+`origin`, `keys`, and `comments`.
 
 Returns type-specific payloads:
 
@@ -202,6 +205,7 @@ Returns type-specific payloads:
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
+| vault | `keys`, `comments` |
 
 Assets from OpenViking sources use standard `type:name` refs like
 everything else, and always return `editable: false`.
@@ -219,7 +223,7 @@ akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
-akm workflow complete <run-id> --step validate --notes "Inputs verified"
+akm workflow complete <run-id> --step validate --state completed --notes "Inputs verified"
 akm workflow status <run-id>
 akm workflow list --active
 ```
@@ -231,10 +235,22 @@ Subcommands:
 | `template` | Print a valid starter workflow markdown document |
 | `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
 | `start <ref>` | Create a new persisted workflow run |
-| `next <run-id\|ref>` | Return the current actionable step; auto-starts when passed a ref with no active run |
-| `complete <run-id>` | Persist step status, notes, and evidence |
+| `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
+| `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |
 | `status <run-id>` | Show the full run state, including all step statuses |
 | `list` | List workflow runs (optionally filtered by `--ref` and `--active`) |
+
+Workflow markdown contract:
+
+- Optional frontmatter only supports `description`, `tags`, and `params`.
+- `tags` may be a string or an array of non-empty strings.
+- `params` must be a mapping of parameter names to non-empty string descriptions.
+- The document must contain exactly one `# Workflow: <title>` heading.
+- Each step must be a `## Step: <title>` section.
+- Each step must include exactly one `Step ID: <id>` line. IDs must start with a letter or number and then use only letters, numbers, `.`, `_`, or `-`.
+- Each step must include exactly one `### Instructions` section with non-empty text.
+- `### Completion Criteria` is optional, but when present it must contain at least one non-empty item. Each non-empty line is treated as one criterion, with an optional leading `-` or `*` removed.
+- No other frontmatter keys, top-level headings, or step subsections are accepted.
 
 ### How `add` works
 

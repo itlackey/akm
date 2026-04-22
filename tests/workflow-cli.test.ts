@@ -26,6 +26,12 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
+  const configDir = path.join(String(env.XDG_CONFIG_HOME), "akm");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
 function runCli(args: string[], env: NodeJS.ProcessEnv) {
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -214,7 +220,7 @@ describe("workflow CLI", () => {
       hits: Array<{ ref: string; action: string }>;
     };
     expect(searchJson.hits[0]?.ref).toBe("workflow:release");
-    expect(searchJson.hits[0]?.action).toContain("akm workflow next workflow:release");
+    expect(searchJson.hits[0]?.action).toContain("akm workflow next 'workflow:release'");
 
     const next = runCli(["workflow", "next", "workflow:release"], env);
     expect(next.status).toBe(0);
@@ -231,5 +237,82 @@ describe("workflow CLI", () => {
     expect(statusJson.run.id).toBe(nextJson.run.id);
     expect(statusJson.run.status).toBe("active");
     expect(statusJson.run.currentStepId).toBe("validate");
+  });
+
+  test("complete rejects non-current and finalized step updates", () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "release.md");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
+
+    expect(runCli(["workflow", "create", "release", "--from", sourcePath], env).status).toBe(0);
+
+    const started = runCli(["workflow", "start", "workflow:release"], env);
+    expect(started.status).toBe(0);
+    const startJson = JSON.parse(started.stdout) as { run: { id: string } };
+
+    const wrongStep = runCli(["workflow", "complete", startJson.run.id, "--step", "deploy"], env);
+    expect(wrongStep.status).toBe(2);
+    expect(JSON.parse(wrongStep.stderr).error).toContain("is not the current step");
+
+    expect(runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env).status).toBe(0);
+
+    const repeated = runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env);
+    expect(repeated.status).toBe(2);
+    expect(JSON.parse(repeated.stderr).error).toContain("already completed");
+
+    expect(
+      runCli(["workflow", "complete", startJson.run.id, "--step", "deploy", "--state", "blocked"], env).status,
+    ).toBe(0);
+
+    const blockedRun = runCli(["workflow", "complete", startJson.run.id, "--step", "deploy"], env);
+    expect(blockedRun.status).toBe(2);
+    expect(JSON.parse(blockedRun.stderr).error).toContain("is blocked and cannot be updated");
+  });
+
+  test("next on a blocked run starts a new run for workflow refs", () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "release.md");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
+
+    expect(runCli(["workflow", "create", "release", "--from", sourcePath], env).status).toBe(0);
+
+    const started = runCli(["workflow", "start", "workflow:release"], env);
+    expect(started.status).toBe(0);
+    const startJson = JSON.parse(started.stdout) as { run: { id: string } };
+
+    expect(runCli(["workflow", "complete", startJson.run.id, "--step", "validate"], env).status).toBe(0);
+    expect(
+      runCli(["workflow", "complete", startJson.run.id, "--step", "deploy", "--state", "blocked"], env).status,
+    ).toBe(0);
+
+    const next = runCli(["workflow", "next", "workflow:release"], env);
+    expect(next.status).toBe(0);
+    const nextJson = JSON.parse(next.stdout) as { run: { id: string; status: string }; step: { id: string } };
+    expect(nextJson.run.id).not.toBe(startJson.run.id);
+    expect(nextJson.run.status).toBe("active");
+    expect(nextJson.step.id).toBe("validate");
+  });
+
+  test("start links workflow_entry_id for workflows from an additional stash source", () => {
+    const env = createWorkflowEnv();
+    const extraStash = makeTempDir("akm-workflow-extra-stash-");
+    const workflowPath = path.join(extraStash, "workflows", "shared-release.md");
+    fs.mkdirSync(path.dirname(workflowPath), { recursive: true });
+    fs.writeFileSync(workflowPath, RELEASE_WORKFLOW, "utf8");
+
+    writeConfig(env, {
+      semanticSearchMode: "off",
+      stashes: [{ type: "filesystem", path: extraStash, name: "extra" }],
+    });
+
+    expect(runCli(["index", "--full"], env).status).toBe(0);
+
+    const started = runCli(["workflow", "start", "extra//workflow:shared-release"], env);
+    expect(started.status).toBe(0);
+    const startJson = JSON.parse(started.stdout) as { run: { workflowEntryId?: number | null; workflowRef: string } };
+    expect(startJson.run.workflowRef).toBe("extra//workflow:shared-release");
+    expect(typeof startJson.run.workflowEntryId).toBe("number");
   });
 });

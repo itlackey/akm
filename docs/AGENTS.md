@@ -1,16 +1,17 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
 ```sh
 akm search "<query>"                          # Search for assets
 akm curate "<task>"                          # Curate the best matches for a task
-akm search "<query>" --type skill             # Filter by type
+akm search "<query>" --type workflow          # Filter to workflow assets
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm show knowledge:my-doc                    # Show a knowledge asset
+akm workflow next workflow:ship-release       # Resume the active run or start a new one
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
@@ -30,7 +31,9 @@ akm registry search "<query>"                 # Search all registries
 | command | A prompt template with placeholders to fill in |
 | agent | A system prompt with model and tool hints |
 | knowledge | A reference doc (use `toc` or `section "..."` to navigate) |
+| workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
+| vault | Keys and comments only; values stay on disk and load via `akm vault load` |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.

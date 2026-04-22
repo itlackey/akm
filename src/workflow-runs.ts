@@ -22,6 +22,7 @@ import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markd
 type WorkflowAsset = {
   ref: string;
   path: string;
+  sourcePath: string;
   title: string;
   parameters?: WorkflowParameter[];
   steps: WorkflowStepDefinition[];
@@ -88,7 +89,7 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
     const now = new Date().toISOString();
     const runId = randomUUID();
     const currentStepId = asset.steps[0]?.id ?? null;
-    const workflowEntryId = resolveWorkflowEntryId(`workflow:${parseAssetRef(ref).name}`);
+    const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
 
     workflowDb
       .prepare(
@@ -183,11 +184,22 @@ export function completeWorkflowStep(input: CompleteWorkflowStepInput): Workflow
   const workflowDb = openWorkflowDatabase();
   try {
     const run = readWorkflowRun(workflowDb, input.runId);
+    if (run.status !== "active") {
+      throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
+    }
     const existing = workflowDb
       .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
       .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
     if (!existing) {
       throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
+    }
+    if (existing.status !== "pending") {
+      throw new UsageError(`Step "${input.stepId}" is already ${existing.status} in workflow run ${run.id}.`);
+    }
+    if (run.current_step_id !== existing.step_id) {
+      throw new UsageError(
+        `Step "${input.stepId}" is not the current step for workflow run ${run.id}. Complete "${run.current_step_id}" first.`,
+      );
     }
 
     const completedAt = new Date().toISOString();
@@ -244,7 +256,7 @@ async function resolveRunSpecifier(db: import("bun:sqlite").Database, specifier:
   const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
   const active = db
     .prepare(
-      "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND status != 'completed' ORDER BY updated_at DESC LIMIT 1",
+      "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
     )
     .get(ref) as WorkflowRunRow | undefined;
   if (active) return active;
@@ -263,10 +275,12 @@ async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   const allSources = resolveStashSources(undefined, config);
   const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
   let assetPath: string | undefined;
+  let sourcePath: string | undefined;
 
   for (const source of searchSources) {
     try {
       assetPath = await resolveAssetPath(source.path, "workflow", parsed.name);
+      sourcePath = source.path;
       break;
     } catch {
       /* continue */
@@ -282,27 +296,31 @@ async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   return {
     ref: `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`,
     path: assetPath,
+    sourcePath: sourcePath ?? loadConfig().stashDir ?? assetPath,
     title: workflow.title,
     ...(workflow.parameters ? { parameters: workflow.parameters } : {}),
     steps: workflow.steps,
   };
 }
 
-function resolveWorkflowEntryId(ref: string): number | null {
+function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null {
   const dbPath = getDbPath();
   if (!fs.existsSync(dbPath)) return null;
 
   const db = openDatabase(dbPath);
   try {
+    const parsed = parseAssetRef(ref);
+    const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
+
     const row = db
       .prepare(
         `SELECT id
          FROM entries
          WHERE entry_type = 'workflow'
-            AND substr(entry_key, -length(?)) = ?
+            AND entry_key = ?
           LIMIT 1`,
       )
-      .get(ref, ref) as { id: number } | undefined;
+      .get(entryKey) as { id: number } | undefined;
     return row?.id ?? null;
   } finally {
     closeDatabase(db);

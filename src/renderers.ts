@@ -17,6 +17,7 @@ import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import { extractFrontmatterOnly, extractLineRange, extractSection, formatToc, parseMarkdownToc } from "./markdown";
 import type { StashEntry } from "./metadata";
 import { extractDescriptionFromComments, loadStashFile } from "./metadata";
+import { makeAssetRef } from "./stash-ref";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "./stash-types";
 import { listKeys as listVaultKeys } from "./vault";
 import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
@@ -181,6 +182,14 @@ function deriveName(ctx: RenderContext): string {
   // Strip the extension from the relPath for a reasonable fallback.
   const ext = path.extname(ctx.relPath);
   return ext ? ctx.relPath.slice(0, -ext.length) : ctx.relPath;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function buildWorkflowAction(ref: string): string {
+  return `Resume the active run or start a new run with \`akm workflow next ${shellQuote(ref)}\`.`;
 }
 
 /**
@@ -385,11 +394,12 @@ const workflowMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const workflow = parseWorkflowForRendering(ctx.content());
+    const ref = makeAssetRef("workflow", name, ctx.origin);
     return {
       type: "workflow",
       name,
       path: ctx.absPath,
-      action: `Start or resume this workflow with \`akm workflow next workflow:${name}\`.`,
+      action: buildWorkflowAction(ref),
       description: workflow.description,
       workflowTitle: workflow.title,
       parameters: workflow.parameters?.map((parameter) => parameter.name),

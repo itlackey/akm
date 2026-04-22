@@ -1082,7 +1082,8 @@ const searchCommand = defineCommand({
     query: { type: "positional", description: "Search query (omit to list all assets)", required: false, default: "" },
     type: {
       type: "string",
-      description: "Asset type filter (e.g. skill, command, agent, knowledge, script, memory, or any).",
+      description:
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, or any). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -1110,7 +1111,8 @@ const curateCommand = defineCommand({
     query: { type: "positional", description: "Task or prompt to curate assets for", required: true },
     type: {
       type: "string",
-      description: "Asset type filter (e.g. skill, command, agent, knowledge, script, memory, or any).",
+      description:
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, or any). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -2429,8 +2431,8 @@ const main = defineCommand({
     description: "Agent Kit Manager — search, show, and manage assets from your stash.",
   },
   args: {
-    format: { type: "string", description: "Output format (json|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
@@ -2626,14 +2628,14 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
 
 const EMBEDDED_HINTS = `# akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via \`akm\`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
 \`\`\`sh
 akm search "<query>"                          # Search all sources
 akm curate "<task>"                          # Curate the best matches for a task
-akm search "<query>" --type skill             # Filter by type
+akm search "<query>" --type workflow          # Filter to workflow assets
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow
@@ -2657,6 +2659,7 @@ akm registry search "<query>"                 # Search all registries
 | knowledge | A reference doc (use \`toc\` or \`section "..."\` to navigate) |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
+| vault | Key names only; use vault commands to inspect or load values safely |
 
 When an asset meaningfully helps or fails, record that with \`akm feedback\` so
 future search ranking can learn from real usage.
@@ -2666,14 +2669,14 @@ Run \`akm -h\` for the full command reference.
 
 const EMBEDDED_HINTS_FULL = `# akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, and knowledge documents via \`akm\`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via \`akm\`. Search your sources first before writing something from scratch.
 
 ## Search
 
 \`\`\`sh
 akm search "<query>"                          # Search all sources
 akm curate "<task>"                          # Curate the best matches for a task
-akm search "<query>" --type skill             # Filter by asset type
+akm search "<query>" --type workflow          # Filter by asset type
 akm search "<query>" --source both            # Also search registries
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
@@ -2682,7 +2685,7 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`workflow\`, \`script\`, \`memory\`, \`any\` | \`any\` |
+| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`workflow\`, \`script\`, \`memory\`, \`vault\`, \`any\` | \`any\` |
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
 | \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
@@ -2696,7 +2699,7 @@ Combine search + follow-up hints into a dense summary for a task or prompt.
 \`\`\`sh
 akm curate "plan a release"                   # Pick top matches across asset types
 akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
-akm curate "review architecture" --type skill # Restrict to one asset type
+akm curate "review architecture" --type workflow # Restrict to one asset type
 \`\`\`
 
 ## Show
@@ -2724,6 +2727,7 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
 | workflow | \`workflowTitle\`, \`workflowParameters\`, \`steps\` |
 | memory | \`content\` (recalled context) |
+| vault | \`keys\`, \`comments\` |
 
 ## Capture Knowledge While You Work
 

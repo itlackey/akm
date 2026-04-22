@@ -11,6 +11,8 @@
  * entirely.
  */
 
+import { buildWorkflowAction } from "./renderers";
+
 /** Map asset types to their primary renderer names. */
 export const TYPE_TO_RENDERER: Record<string, string> = {
   script: "script-source",
@@ -31,7 +33,7 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
   knowledge: (ref) => `akm show ${ref} -> read reference material`,
   memory: (ref) => `akm show ${ref} -> recall context`,
-  workflow: (ref) => `akm workflow next ${ref} -> start or resume the next step`,
+  workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>
     `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
 };
