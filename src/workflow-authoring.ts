@@ -5,31 +5,11 @@ import { isWithin, resolveStashDir } from "./common";
 import { UsageError } from "./errors";
 import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
 
-const DEFAULT_WORKFLOW_TEMPLATE = `---
-description: Describe what this workflow accomplishes
-tags:
-  - example
-params:
-  example_param: Explain this parameter
----
-
-# Workflow: Example Workflow
-
-## Step: First Step
-Step ID: first-step
-
-### Instructions
-Describe what to do in this step.
-
-### Completion Criteria
-- Confirm the first step is complete
-
-## Step: Second Step
-Step ID: second-step
-
-### Instructions
-Describe what happens next.
-`;
+const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
+  title: "Example Workflow",
+  firstStepTitle: "First Step",
+  firstStepId: "first-step",
+});
 
 export function getWorkflowTemplate(): string {
   return DEFAULT_WORKFLOW_TEMPLATE;
@@ -40,9 +20,11 @@ export function buildWorkflowTemplate(name?: string): string {
 
   const title = humanizeWorkflowName(name);
   const stepId = slugifyWorkflowStepId(name);
-  const customized = DEFAULT_WORKFLOW_TEMPLATE.replaceAll("Example Workflow", title)
-    .replaceAll("First Step", `${title} Setup`)
-    .replaceAll("first-step", `${stepId}-setup`);
+  const customized = renderWorkflowTemplate({
+    title,
+    firstStepTitle: `${title} Setup`,
+    firstStepId: `${stepId}-setup`,
+  });
   parseWorkflowMarkdown(customized);
   return customized;
 }
@@ -137,4 +119,32 @@ function slugifyWorkflowStepId(name: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "workflow"
   );
+}
+
+function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {
+  return `---
+description: Describe what this workflow accomplishes
+tags:
+  - example
+params:
+  example_param: Explain this parameter
+---
+
+# Workflow: ${input.title}
+
+## Step: ${input.firstStepTitle}
+Step ID: ${input.firstStepId}
+
+### Instructions
+Describe what to do in this step.
+
+### Completion Criteria
+- Confirm the first step is complete
+
+## Step: Second Step
+Step ID: second-step
+
+### Instructions
+Describe what happens next.
+`;
 }

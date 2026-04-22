@@ -2,7 +2,7 @@ import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import type { WorkflowParameter, WorkflowStepDefinition } from "./stash-types";
 
 const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params"]);
-const STEP_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const STEP_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export interface ParsedWorkflowDocument {
   title: string;
@@ -171,7 +171,7 @@ function extractWorkflowSteps(body: string): WorkflowStepDefinition[] {
           throw new WorkflowValidationError(`Step "${stepTitle}" must contain exactly one "Step ID: <id>" line.`);
         }
         stepId = stepIdMatch[1].trim();
-        if (!STEP_ID_RE.test(stepId)) {
+        if (!STEP_ID_REGEX.test(stepId)) {
           throw new WorkflowValidationError(
             `Step "${stepTitle}" has invalid Step ID "${stepId}". Use letters, numbers, ".", "_" or "-".`,
           );
@@ -253,7 +253,7 @@ function extractWorkflowSteps(body: string): WorkflowStepDefinition[] {
 }
 
 function normalizeLines(body: string): string[] {
-  return body.replace(/\r\n/g, "\n").split("\n");
+  return body.replace(/\r\n|\r/g, "\n").split("\n");
 }
 
 function collectSectionBlock(

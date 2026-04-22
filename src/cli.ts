@@ -39,7 +39,12 @@ import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
 import { createWorkflowAsset, getWorkflowTemplate } from "./workflow-authoring";
-import { hasWorkflowSubcommand, parseWorkflowJsonObject, parseWorkflowStepState } from "./workflow-cli";
+import {
+  hasWorkflowSubcommand,
+  parseWorkflowJsonObject,
+  parseWorkflowStepState,
+  WORKFLOW_STEP_STATES,
+} from "./workflow-cli";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -1830,7 +1835,7 @@ const workflowCompleteCommand = defineCommand({
   args: {
     runId: { type: "positional", description: "Workflow run id", required: true },
     step: { type: "string", description: "Workflow step id", required: true },
-    state: { type: "string", description: "Step state (completed|blocked|failed|skipped)" },
+    state: { type: "string", description: `Step state (${WORKFLOW_STEP_STATES.join("|")})` },
     notes: { type: "string", description: "Notes for the completed step" },
     evidence: { type: "string", description: "Evidence JSON object for the step" },
   },
