@@ -70,6 +70,7 @@
   "dependencies": {
     "@clack/prompts": "^1.1.0",
     "citty": "^0.2.1",
+    "dotenv": "^17.4.2",
     "yaml": "^2.8.2"
   }
 }

@@ -19,6 +19,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   agent: "agent-md",
   knowledge: "knowledge-md",
   memory: "memory-md",
+  vault: "vault-env",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -29,6 +30,8 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
   knowledge: (ref) => `akm show ${ref} -> read reference material`,
   memory: (ref) => `akm show ${ref} -> recall context`,
+  vault: (ref) =>
+    `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
 };
 
 /**

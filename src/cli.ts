@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
-import { resolveAssetPathFromName } from "./asset-spec";
+import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./asset-spec";
 import { isWithin, resolveStashDir } from "./common";
 import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
@@ -22,6 +22,7 @@ import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
 import { saveGitStash } from "./stash-providers/git";
+import { parseAssetRef } from "./stash-ref";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash } from "./stash-source-manage";
@@ -288,10 +289,23 @@ function shapeShowOutput(
       "modelHint",
       "agent",
       "parameters",
+      "keys",
+      "comments",
     ]);
   }
   if (detail === "summary") {
-    return pickFields(result, ["type", "name", "description", "tags", "parameters", "action", "run", "origin"]);
+    return pickFields(result, [
+      "type",
+      "name",
+      "description",
+      "tags",
+      "parameters",
+      "action",
+      "run",
+      "origin",
+      "keys",
+      "comments",
+    ]);
   }
 
   const base = pickFields(result, [
@@ -311,6 +325,8 @@ function shapeShowOutput(
     "run",
     "setup",
     "cwd",
+    "keys",
+    "comments",
   ]);
 
   if (detail !== "full") {
@@ -1930,6 +1946,199 @@ const disableCommand = defineCommand({
   },
 });
 
+// ── vault ───────────────────────────────────────────────────────────────────
+//
+// `akm vault` manages secrets stored in `.env` files under the vaults/
+// asset directory. Values are NEVER written to stdout. `vault load` is
+// the only value-emitting path: it parses the vault with dotenv, writes
+// a safely-escaped shell script to a mode-0600 temp file, and emits only
+// `. <temp>; rm -f <temp>` on stdout for `eval`. The shell reads values
+// from the temp file — they never transit through akm's stdout.
+
+function resolveVaultPath(ref: string): { name: string; absPath: string } {
+  const stashDir = resolveStashDir({ readOnly: true });
+  const parsed = parseAssetRef(ref.includes(":") ? ref : `vault:${ref}`);
+  if (parsed.type !== "vault") {
+    throw new UsageError(`Expected a vault ref (vault:<name>); got "${ref}".`);
+  }
+  const typeRoot = path.join(stashDir, "vaults");
+  const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
+  return { name: parsed.name, absPath };
+}
+
+/**
+ * Walk `vaults/` recursively and return one entry per `.env` file, using the
+ * vault asset spec's canonical-name logic so listing matches what the
+ * matcher/asset-spec actually resolves (e.g. `vaults/team/prod.env` →
+ * `vault:team/prod`, `vaults/team/.env` → `vault:team/default`).
+ */
+function listVaultsRecursive(
+  listKeysFn: (vaultPath: string) => { keys: string[] },
+): Array<{ ref: string; path: string; keyCount: number }> {
+  const stashDir = resolveStashDir({ readOnly: true });
+  const vaultsDir = path.join(stashDir, "vaults");
+  const result: Array<{ ref: string; path: string; keyCount: number }> = [];
+  if (!fs.existsSync(vaultsDir)) return result;
+
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
+      const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
+      if (!canonical) continue;
+      const { keys } = listKeysFn(full);
+      result.push({ ref: `vault:${canonical}`, path: full, keyCount: keys.length });
+    }
+  };
+  walk(vaultsDir);
+  return result;
+}
+
+const vaultListCommand = defineCommand({
+  meta: { name: "list", description: "List vaults, or list keys (no values) inside one vault" },
+  args: {
+    ref: { type: "positional", description: "Optional vault ref (e.g. vault:prod or just prod)", required: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { listKeys } = await import("./vault.js");
+      if (args.ref) {
+        const { name, absPath } = resolveVaultPath(args.ref);
+        if (!fs.existsSync(absPath)) {
+          throw new NotFoundError(`Vault not found: vault:${name}`);
+        }
+        const { keys, comments } = listKeys(absPath);
+        output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+        return;
+      }
+      const vaults = listVaultsRecursive(listKeys);
+      output("vault-list", { vaults });
+    });
+  },
+});
+
+const vaultCreateCommand = defineCommand({
+  meta: { name: "create", description: "Create an empty vault file (no-op if it already exists)" },
+  args: {
+    name: { type: "positional", description: "Vault name (e.g. prod) — file becomes <name>.env", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { createVault } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.name);
+      createVault(absPath);
+      output("vault-create", { ref: `vault:${name}`, path: absPath });
+    });
+  },
+});
+
+const vaultSetCommand = defineCommand({
+  meta: { name: "set", description: "Set a key in a vault. Value is written to disk and never echoed back." },
+  args: {
+    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
+    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
+    value: { type: "positional", description: "Value to store", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { setKey } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      setKey(absPath, args.key, args.value);
+      output("vault-set", { ref: `vault:${name}`, key: args.key, path: absPath });
+    });
+  },
+});
+
+const vaultUnsetCommand = defineCommand({
+  meta: { name: "unset", description: "Remove a key from a vault" },
+  args: {
+    ref: { type: "positional", description: "Vault ref", required: true },
+    key: { type: "positional", description: "Key name to remove", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { unsetKey } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const removed = unsetKey(absPath, args.key);
+      output("vault-unset", { ref: `vault:${name}`, key: args.key, removed, path: absPath });
+    });
+  },
+});
+
+const vaultLoadCommand = defineCommand({
+  meta: {
+    name: "load",
+    description:
+      'Emit a shell snippet that loads vault values into the current shell. Use: eval "$(akm vault load vault:<name>)". Values are parsed by dotenv, written to a mode-0600 temp file with safe single-quote escaping, then sourced and removed. No values appear on akm\'s stdout, and no shell expansion happens on raw vault content.',
+  },
+  args: {
+    ref: { type: "positional", description: "Vault ref", required: true },
+  },
+  async run({ args }) {
+    // This command deliberately bypasses output()/JSON shaping. Its stdout
+    // is a shell snippet intended for `eval`, not structured output.
+    const { name, absPath } = resolveVaultPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Vault not found: vault:${name}`);
+    }
+
+    const { buildShellExportScript } = await import("./vault.js");
+    const crypto = await import("node:crypto");
+    const os = await import("node:os");
+
+    // Parse via dotenv (no expansion, no code execution) and build a
+    // script of literal `export KEY='value'` lines with `'\''` escaping.
+    // Sourcing this is safe even if the raw vault file contained shell
+    // metacharacters like $, backticks, or $(...).
+    const script = buildShellExportScript(absPath);
+
+    // Write to a mode-0600 temp file the shell can source.
+    const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
+    fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
+    try {
+      fs.chmodSync(tmpPath, 0o600);
+    } catch {
+      /* best-effort on platforms without chmod */
+    }
+
+    const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
+    // Emit: source the temp file, then remove it — values reach bash only
+    // via the temp file (mode 0600), never via akm's stdout.
+    process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+  },
+});
+
+const vaultCommand = defineCommand({
+  meta: {
+    name: "vault",
+    description:
+      "Manage secret vaults (.env files). Lists keys + comments only — values never returned in structured output.",
+  },
+  subCommands: {
+    list: vaultListCommand,
+    create: vaultCreateCommand,
+    set: vaultSetCommand,
+    unset: vaultUnsetCommand,
+    load: vaultLoadCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (hasVaultSubcommand(args)) return;
+      // Default action: list all vaults
+      const { listKeys } = await import("./vault.js");
+      output("vault-list", { vaults: listVaultsRecursive(listKeys) });
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -1966,10 +2175,12 @@ const main = defineCommand({
     feedback: feedbackCommand,
     hints: hintsCommand,
     completions: completionsCommand,
+    vault: vaultCommand,
   },
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "load"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
 // citty reads process.argv directly and does not accept a custom argv array,
@@ -2027,6 +2238,11 @@ function buildHint(message: string): string | undefined {
 function hasConfigSubcommand(args: Record<string, unknown>): boolean {
   const command = Array.isArray(args._) ? args._[0] : undefined;
   return typeof command === "string" && CONFIG_SUBCOMMAND_SET.has(command);
+}
+
+function hasVaultSubcommand(args: Record<string, unknown>): boolean {
+  const command = Array.isArray(args._) ? args._[0] : undefined;
+  return typeof command === "string" && VAULT_SUBCOMMAND_SET.has(command);
 }
 
 /**

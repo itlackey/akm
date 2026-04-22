@@ -17,6 +17,7 @@ import { extractFrontmatterOnly, extractLineRange, extractSection, formatToc, pa
 import type { StashEntry } from "./metadata";
 import { extractDescriptionFromComments, loadStashFile } from "./metadata";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "./stash-types";
+import { listKeys as listVaultKeys } from "./vault";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -436,6 +437,48 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 };
 
+// ── 7. vault-env ─────────────────────────────────────────────────────────────
+
+/**
+ * Vault renderer. Returns ONLY key names and start-of-line comments — never
+ * values. Deliberately omits content/template/prompt so vault values cannot
+ * leak through `akm show`.
+ */
+const vaultEnvRenderer: AssetRenderer = {
+  name: "vault-env",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const { keys, comments } = listVaultKeys(ctx.absPath);
+    return {
+      type: "vault",
+      name,
+      path: ctx.absPath,
+      action:
+        'Vault — keys + comments only. Use `eval "$(akm vault load <ref>)"` to load values into the current shell. Values stay on disk and are never written to akm\'s stdout.',
+      description: comments.length > 0 ? comments.join("\n") : undefined,
+      keys,
+      comments,
+    };
+  },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    // Re-derive from the file directly to guarantee no value ever transits
+    // through any other code path. Caller already short-circuits in
+    // generateMetadata{,Flat}, but this is defense in depth.
+    const { keys, comments } = listVaultKeys(ctx.absPath);
+    if (comments.length > 0 && !entry.description) {
+      entry.description = comments.join(" ").slice(0, 500);
+      entry.source = "comments";
+      entry.confidence = 0.7;
+    }
+    if (keys.length > 0) {
+      entry.searchHints = keys;
+    }
+    entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
+  },
+};
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 /** All built-in renderers. */
@@ -446,6 +489,7 @@ const builtinRenderers: AssetRenderer[] = [
   knowledgeMdRenderer,
   memoryMdRenderer,
   scriptSourceRenderer,
+  vaultEnvRenderer,
 ];
 
 /**
@@ -469,4 +513,5 @@ export {
   SETUP_SIGNALS,
   scriptSourceRenderer,
   skillMdRenderer,
+  vaultEnvRenderer,
 };

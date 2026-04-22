@@ -552,12 +552,20 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 6 renderers", async () => {
+  test("getAllRenderers() returns all 7 renderers", async () => {
     const all = await getAllRenderers();
-    expect(all).toHaveLength(6);
+    expect(all).toHaveLength(7);
 
     const names = all.map((r) => r.name).sort();
-    expect(names).toEqual(["agent-md", "command-md", "knowledge-md", "memory-md", "script-source", "skill-md"]);
+    expect(names).toEqual([
+      "agent-md",
+      "command-md",
+      "knowledge-md",
+      "memory-md",
+      "script-source",
+      "skill-md",
+      "vault-env",
+    ]);
   });
 
   test("getRenderer returns undefined for unknown renderer name", async () => {

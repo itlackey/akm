@@ -36,7 +36,8 @@ describe("ASSET_TYPES", () => {
     expect(ASSET_TYPES).toContain("knowledge");
     expect(ASSET_TYPES).toContain("script");
     expect(ASSET_TYPES).toContain("memory");
-    expect(ASSET_TYPES).toHaveLength(6);
+    expect(ASSET_TYPES).toContain("vault");
+    expect(ASSET_TYPES).toHaveLength(7);
   });
 });
 
@@ -48,6 +49,7 @@ describe("TYPE_DIRS", () => {
     expect(TYPE_DIRS.knowledge).toBe("knowledge");
     expect(TYPE_DIRS.script).toBe("scripts");
     expect(TYPE_DIRS.memory).toBe("memories");
+    expect(TYPE_DIRS.vault).toBe("vaults");
   });
 });
 
@@ -146,6 +148,26 @@ describe("deriveCanonicalAssetName", () => {
     const root = "/stash/scripts";
     const file = path.join(root, "utils", "cleanup.py");
     expect(deriveCanonicalAssetName("script", root, file)).toBe("utils/cleanup.py");
+  });
+
+  test("vault: top-level <name>.env → <name>", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "prod.env"))).toBe("prod");
+  });
+
+  test("vault: top-level `.env` → `default`", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, ".env"))).toBe("default");
+  });
+
+  test("vault: nested <dir>/<name>.env → <dir>/<name>", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", "prod.env"))).toBe("team/prod");
+  });
+
+  test("vault: nested <dir>/.env → <dir>/default", () => {
+    const root = "/stash/vaults";
+    expect(deriveCanonicalAssetName("vault", root, path.join(root, "team", ".env"))).toBe("team/default");
   });
 });
 

@@ -80,7 +80,11 @@ afterEach(() => {
 });
 
 function initGitRepo(repoDir: string): void {
-  runGit(["init"], repoDir);
+  // Pin the initial branch name so the test doesn't depend on the host's
+  // `init.defaultBranch` setting (which may be `master` on older hosts and
+  // `main` on newer ones). We push `HEAD:main` below; the bare remote's
+  // HEAD symbolic-ref only lines up if the worktree branch is also `main`.
+  runGit(["init", "--initial-branch=main"], repoDir);
   runGit(["config", "user.name", "AKM Tests"], repoDir);
   runGit(["config", "user.email", "akm@example.test"], repoDir);
   runGit(["config", "commit.gpgsign", "false"], repoDir);
@@ -427,7 +431,10 @@ describe("local directory installs", () => {
     fs.mkdirSync(worktree, { recursive: true });
     writeFile(path.join(worktree, "scripts", "hello.sh"), "#!/usr/bin/env bash\necho hello\n");
     initGitRepo(worktree);
-    runGit(["init", "--bare", remoteRepo], remoteRoot);
+    // Pin the bare repo's default branch so its HEAD symbolic-ref matches
+    // the branch we push to. Without this, the bare repo's HEAD may point
+    // at `master` (host default) and `git clone` checks out an empty tree.
+    runGit(["init", "--bare", "--initial-branch=main", remoteRepo], remoteRoot);
     runGit(["remote", "add", "origin", remoteRepo], worktree);
     runGit(["push", "origin", "HEAD:main"], worktree);
 
