@@ -409,10 +409,10 @@ interface LlmPreset {
 const LLM_PRESETS: LlmPreset[] = [
   {
     value: "anthropic",
-    label: "Anthropic (Claude)",
+    label: "Anthropic Claude (OpenAI SDK compat beta)",
     endpoint: "https://api.anthropic.com/v1/chat/completions",
-    defaultModel: "claude-sonnet-4-6",
-    hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
+    defaultModel: "claude-sonnet-4-5",
+    hint: "beta OpenAI-compat layer; set AKM_LLM_API_KEY; override the model if the default is unavailable",
     contextWindow: 200_000,
   },
   {
@@ -425,7 +425,7 @@ const LLM_PRESETS: LlmPreset[] = [
   },
   {
     value: "google",
-    label: "Google Gemini",
+    label: "Google Gemini (OpenAI-compat)",
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     defaultModel: "gemini-2.0-flash",
     hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
@@ -549,31 +549,14 @@ export async function stepLlm(
     };
   }
 
-  // Optional: prompt for an API key inline. Storing in config is best-effort —
-  // we recommend the env var path because config files may be world-readable.
+  // Remind the user about API key placement. We do not offer a "store in config"
+  // option because saveConfig() strips apiKey fields before writing — persisting
+  // secrets would need an encrypted/secure store that we don't ship.
   const needsKey = llm.provider !== "ollama" && !llm.endpoint.includes("localhost");
   if (needsKey && !process.env.AKM_LLM_API_KEY) {
-    const action = await prompt(() =>
-      p.select({
-        message: "How should the API key be provided?",
-        options: [
-          { value: "env", label: "Set AKM_LLM_API_KEY in your shell", hint: "recommended" },
-          { value: "config", label: "Store it in akm config now", hint: "stored in plain text" },
-        ],
-        initialValue: "env",
-      }),
+    p.log.info(
+      "This provider requires an API key. Set AKM_LLM_API_KEY in your shell (e.g. `export AKM_LLM_API_KEY=...`) before running `akm import --llm` or `akm lint`.",
     );
-    if (action === "config") {
-      const key = await prompt(() =>
-        p.password({
-          message: "Paste API key:",
-          validate: (v) => {
-            if (!v?.trim()) return "API key cannot be empty";
-          },
-        }),
-      );
-      llm.apiKey = key.trim();
-    }
   }
 
   // Capability probe — best-effort, never blocks setup.

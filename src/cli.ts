@@ -1727,12 +1727,13 @@ const lintCommand = defineCommand({
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
-      const { lintWiki } = await import("./knowledge-wiki");
+      const { bootstrapKnowledgeWiki, lintWiki } = await import("./knowledge-wiki");
       const config = loadConfig();
       if (!config.llm) {
         throw new UsageError("No LLM configured. Run `akm setup` to add one.");
       }
       const stashDir = resolveStashDir();
+      bootstrapKnowledgeWiki(stashDir);
       const result = await lintWiki({ stashDir, llm: config.llm, fix: args.fix });
       output("lint", {
         ok: true,

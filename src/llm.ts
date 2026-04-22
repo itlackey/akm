@@ -53,6 +53,7 @@ export async function chatCompletion(
 /** Strip leading/trailing markdown code fences from an LLM response. */
 function stripJsonFences(raw: string): string {
   return raw
+    .trim()
     .replace(/^```(?:json)?\s*\n?/i, "")
     .replace(/\n?```\s*$/i, "")
     .trim();

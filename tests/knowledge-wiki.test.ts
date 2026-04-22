@@ -362,4 +362,137 @@ describe("lintKnowledge response parsing", () => {
       handle.server.stop();
     }
   });
+
+  test("tolerates leading whitespace before a fenced JSON response", async () => {
+    const handle = createMockLlmServer('\n\n  ```json\n{"findings": [], "summary": "ok"}\n```\n\n');
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "x" };
+      const report = await lintKnowledge(llm, { pages: [] });
+      expect(report?.summary).toBe("ok");
+    } finally {
+      handle.server.stop();
+    }
+  });
+});
+
+// ── hardening: off-by-one slug + path traversal ─────────────────────────────
+
+describe("ingest slug collisions", () => {
+  let stashDir: string;
+
+  beforeEach(() => {
+    stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-slug-"));
+    fs.mkdirSync(path.join(stashDir, "knowledge", "raw"), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(stashDir, { recursive: true, force: true });
+  });
+
+  test("first raw collision produces slug-1 (not slug-2)", async () => {
+    // A raw file with the base slug already exists.
+    fs.writeFileSync(path.join(stashDir, "knowledge", "raw", "foo.md"), "prior\n", "utf8");
+
+    const handle = createMockLlmServer(JSON.stringify({ summary: "s", newPages: [], edits: [] }));
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "x" };
+      const result = await ingestSource({
+        content: "# Foo\n\nbody",
+        stashDir,
+        llm,
+        candidates: [],
+      });
+      expect(result.rawSlug).toBe("foo-1");
+    } finally {
+      handle.server.stop();
+    }
+  });
+
+  test("first page collision produces slug-1 (not slug-2)", async () => {
+    // A page with the LLM-proposed slug already exists.
+    fs.writeFileSync(path.join(stashDir, "knowledge", "already-here.md"), "existing\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "knowledge", "log.md"), "# Log\n", "utf8");
+
+    const handle = createMockLlmServer(
+      JSON.stringify({
+        summary: "adds note",
+        newPages: [{ name: "already-here", pageKind: "note", body: "# X\n\ny" }],
+        edits: [],
+      }),
+    );
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "x" };
+      const result = await ingestSource({
+        content: "# Z",
+        stashDir,
+        llm,
+        apply: true,
+        candidates: [],
+      });
+      expect(result.applied?.pagesCreated[0]).toMatch(/already-here-1\.md$/);
+    } finally {
+      handle.server.stop();
+    }
+  });
+});
+
+describe("path-traversal safety", () => {
+  let stashDir: string;
+
+  beforeEach(() => {
+    stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-trav-"));
+    fs.mkdirSync(path.join(stashDir, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "knowledge", "log.md"), "# Log\n", "utf8");
+  });
+
+  afterEach(() => {
+    fs.rmSync(stashDir, { recursive: true, force: true });
+  });
+
+  test("lint --fix rejects refs with path-traversal segments", async () => {
+    // A sibling file we must NOT be able to overwrite.
+    const sibling = path.join(stashDir, "secret.md");
+    fs.writeFileSync(sibling, "DO NOT TOUCH", "utf8");
+
+    const handle = createMockLlmServer(
+      JSON.stringify({
+        summary: "adversarial",
+        findings: [
+          {
+            kind: "missing-xref",
+            refs: ["knowledge:../secret"],
+            message: "should link",
+            suggestedFix: "evil",
+          },
+        ],
+      }),
+    );
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "x" };
+      const result = await lintWiki({ stashDir, llm, fix: true });
+      // The traversing ref must be skipped, not applied.
+      expect(result.applied?.fixesApplied).toBe(0);
+      expect(result.applied?.fixesSkipped).toBe(1);
+      expect(fs.readFileSync(sibling, "utf8")).toBe("DO NOT TOUCH");
+    } finally {
+      handle.server.stop();
+    }
+  });
+
+  test("lint --fix rejects refs that point at schema/index/log/raw", async () => {
+    const findings = JSON.stringify({
+      findings: [
+        { kind: "missing-xref", refs: ["knowledge:schema"], message: "x", suggestedFix: "y" },
+        { kind: "missing-xref", refs: ["knowledge:raw/some"], message: "x", suggestedFix: "y" },
+      ],
+    });
+    const handle = createMockLlmServer(findings);
+    try {
+      const llm: LlmConnectionConfig = { endpoint: handle.url, model: "x" };
+      const result = await lintWiki({ stashDir, llm, fix: true });
+      expect(result.applied?.fixesApplied).toBe(0);
+    } finally {
+      handle.server.stop();
+    }
+  });
 });

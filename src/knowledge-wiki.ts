@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isWithin } from "./common";
 import type { LlmConnectionConfig } from "./config";
 import { parseFrontmatter } from "./frontmatter";
 import {
@@ -17,6 +18,7 @@ import {
   type WikiIngestPlan,
   type WikiLintReport,
 } from "./llm";
+import { parseAssetRef } from "./stash-ref";
 import { akmSearch } from "./stash-search";
 import {
   INDEX_MD,
@@ -162,7 +164,7 @@ export async function ingestSource(opts: IngestOptions): Promise<IngestResult> {
   fs.writeFileSync(rawPath, ensureTrailingNewline(withRawFrontmatter(opts.content, rawSlug)), "utf8");
 
   // Collect candidate pages by searching the existing knowledge stash.
-  const candidates = opts.candidates ?? (await collectCandidates(opts.content));
+  const candidates = opts.candidates ?? (await collectCandidates(opts.content, opts.stashDir));
 
   // Ask the LLM for a plan.
   const plan = await ingestKnowledgeSource(opts.llm, {
@@ -183,8 +185,13 @@ export async function ingestSource(opts: IngestOptions): Promise<IngestResult> {
  * Search the local stash for pages related to the source. Returns an empty
  * array if the index is unbuilt or the search fails — ingest still proceeds
  * with no candidates so the source is at least filed under raw/.
+ *
+ * Only hits from the primary stash are kept. Non-local hits (refs with an
+ * `origin//…` prefix), non-editable cache-managed assets, and the special
+ * wiki files (raw/<slug>, schema, index, log) are all dropped so the LLM
+ * cannot propose xrefs or edits into places applyPlan() can't safely touch.
  */
-async function collectCandidates(sourceContent: string): Promise<WikiCandidatePage[]> {
+async function collectCandidates(sourceContent: string, stashDir: string): Promise<WikiCandidatePage[]> {
   const query = deriveQueryFromSource(sourceContent);
   if (!query) return [];
 
@@ -195,22 +202,58 @@ async function collectCandidates(sourceContent: string): Promise<WikiCandidatePa
       limit: MAX_INGEST_CANDIDATES,
       source: "stash",
     });
-    return response.hits
-      .filter((h): h is import("./stash-types").StashSearchHit => h.type === "knowledge")
-      .filter((h) => !h.ref.includes("/raw/")) // never xref into raw/
-      .map((h) => ({
-        ref: h.ref,
-        name: h.name,
-        description: h.description,
-      }));
+    const candidates: WikiCandidatePage[] = [];
+    for (const hit of response.hits) {
+      if (hit.type !== "knowledge") continue;
+      // Keep only local, editable, primary-stash hits.
+      if (hit.editable === false) continue;
+      const parsed = tryParseAssetRef(hit.ref);
+      if (!parsed || parsed.origin) continue;
+      const name = parsed.name;
+      if (name.startsWith(`${RAW_SUBDIR}/`)) continue;
+      if (name === "schema" || name === "index" || name === "log") continue;
+      if (hit.path && !isWithin(hit.path, stashDir)) continue;
+      candidates.push({ ref: hit.ref, name: hit.name, description: hit.description });
+    }
+    return candidates;
   } catch {
     return [];
   }
 }
 
+function tryParseAssetRef(ref: string): ReturnType<typeof parseAssetRef> | undefined {
+  try {
+    return parseAssetRef(ref);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve a `knowledge:<name>` ref to a filesystem path under `knowledgeDir`,
+ * or undefined if the ref is malformed, non-local, refers to a protected file
+ * (raw/schema/index/log), or escapes the directory via `..`.
+ *
+ * `parseAssetRef` already rejects absolute paths, null bytes, and `..`-prefixed
+ * names, but we still call `isWithin` as belt-and-braces in case parsing
+ * semantics change.
+ */
+function resolveKnowledgeRefPath(knowledgeDir: string, ref: string): string | undefined {
+  const parsed = tryParseAssetRef(ref);
+  if (!parsed || parsed.type !== "knowledge" || parsed.origin) return undefined;
+  const name = parsed.name;
+  if (!name) return undefined;
+  if (name.startsWith(`${RAW_SUBDIR}/`) || name === "schema" || name === "index" || name === "log") {
+    return undefined;
+  }
+  const candidate = path.join(knowledgeDir, `${name}.md`);
+  if (!isWithin(candidate, knowledgeDir)) return undefined;
+  return candidate;
+}
+
 function pickUniqueRawSlug(rawDir: string, baseSlug: string): string {
   let candidate = baseSlug;
-  let n = 1;
+  let n = 0;
   while (fs.existsSync(path.join(rawDir, `${candidate}.md`))) {
     n += 1;
     candidate = `${baseSlug}-${n}`;
@@ -249,12 +292,11 @@ function applyPlan(
   }
 
   for (const edit of plan.edits) {
-    const ref = edit.ref;
-    const refSlug = ref.replace(/^knowledge:/, "");
-    const targetPath = path.join(knowledgeDir, `${refSlug}.md`);
+    const targetPath = resolveKnowledgeRefPath(knowledgeDir, edit.ref);
+    if (!targetPath) continue;
     if (!fs.existsSync(targetPath)) continue;
     const existing = fs.readFileSync(targetPath, "utf8");
-    const appended = `${existing.replace(/\s+$/, "")}\n\n${edit.patch.trim()}\n\n_added from ${ref ? "" : ""}raw/${rawSlug}.md: ${edit.reason}_\n`;
+    const appended = `${existing.replace(/\s+$/, "")}\n\n${edit.patch.trim()}\n\n_added to ${edit.ref} from raw/${rawSlug}.md: ${edit.reason}_\n`;
     fs.writeFileSync(targetPath, appended, "utf8");
     pagesEdited.push(targetPath);
   }
@@ -272,7 +314,7 @@ function applyPlan(
 
 function pickUniquePagePath(knowledgeDir: string, slug: string): string {
   let candidate = slug;
-  let n = 1;
+  let n = 0;
   while (fs.existsSync(path.join(knowledgeDir, `${candidate}.md`))) {
     n += 1;
     candidate = `${slug}-${n}`;
@@ -365,12 +407,12 @@ export async function lintWiki(opts: LintOptions): Promise<LintResult> {
       continue;
     }
     const ref = finding.refs[0];
-    if (!ref?.startsWith("knowledge:")) {
+    if (!ref) {
       fixesSkipped += 1;
       continue;
     }
-    const targetPath = path.join(knowledgeDir, `${ref.replace(/^knowledge:/, "")}.md`);
-    if (!fs.existsSync(targetPath)) {
+    const targetPath = resolveKnowledgeRefPath(knowledgeDir, ref);
+    if (!targetPath || !fs.existsSync(targetPath)) {
       fixesSkipped += 1;
       continue;
     }
@@ -379,7 +421,10 @@ export async function lintWiki(opts: LintOptions): Promise<LintResult> {
     fixesApplied += 1;
   }
 
-  // Log the lint run.
+  // Log the lint run. Ensure the knowledge directory exists so a fresh stash
+  // doesn't crash here; the caller is expected to bootstrap, but defending
+  // belt-and-braces keeps `--fix` from blowing up on a pristine setup.
+  fs.mkdirSync(knowledgeDir, { recursive: true });
   const logPath = path.join(knowledgeDir, "log.md");
   const date = new Date().toISOString().slice(0, 19).replace("T", " ");
   fs.appendFileSync(
