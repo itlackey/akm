@@ -2051,43 +2051,6 @@ const vaultUnsetCommand = defineCommand({
   },
 });
 
-const vaultGetCommand = defineCommand({
-  meta: {
-    name: "get",
-    description:
-      "Get a single value. Refuses by default to avoid agent context leakage; pass --stdout to print the raw value.",
-  },
-  args: {
-    ref: { type: "positional", description: "Vault ref", required: true },
-    key: { type: "positional", description: "Key name to read", required: true },
-    stdout: {
-      type: "boolean",
-      description: "Print the raw value to stdout (for shell pipelines). Output is NOT JSON.",
-      default: false,
-    },
-  },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { getKey } = await import("./vault.js");
-      const { name, absPath } = resolveVaultPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: vault:${name}`);
-      }
-      const value = getKey(absPath, args.key);
-      if (value === undefined) {
-        throw new NotFoundError(`Key "${args.key}" not found in vault:${name}`);
-      }
-      if (!args.stdout) {
-        throw new UsageError(
-          `Refusing to return a vault value through structured output. Use \`akm vault get vault:${name} ${args.key} --stdout\` for shell pipelines, or \`akm vault load vault:${name}\` to inject into an env.`,
-        );
-      }
-      // Direct stdout write — bypasses output() / json shaping by design.
-      process.stdout.write(value);
-    });
-  },
-});
-
 const vaultLoadCommand = defineCommand({
   meta: {
     name: "load",
@@ -2145,7 +2108,6 @@ const vaultCommand = defineCommand({
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
-    get: vaultGetCommand,
     load: vaultLoadCommand,
   },
   run() {

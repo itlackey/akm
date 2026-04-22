@@ -5,7 +5,7 @@ import path from "node:path";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { getDbPath } from "../src/paths";
-import { createVault, formatAsExport, getKey, listKeys, loadEnv, parseEnvFile, setKey, unsetKey } from "../src/vault";
+import { createVault, formatAsExport, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -21,70 +21,6 @@ afterAll(() => {
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
-
-// ── parseEnvFile ────────────────────────────────────────────────────────────
-
-describe("parseEnvFile", () => {
-  test("parses simple KEY=value lines", () => {
-    const result = parseEnvFile("FOO=bar\nBAZ=qux\n");
-    expect(result.keys).toEqual(["FOO", "BAZ"]);
-    expect(result.entries.get("FOO")).toBe("bar");
-    expect(result.entries.get("BAZ")).toBe("qux");
-  });
-
-  test("strips double quotes and decodes escapes", () => {
-    const result = parseEnvFile('FOO="hello world"\nMULTI="line1\\nline2"\n');
-    expect(result.entries.get("FOO")).toBe("hello world");
-    expect(result.entries.get("MULTI")).toBe("line1\nline2");
-  });
-
-  test("strips single quotes literally (no escape processing)", () => {
-    const result = parseEnvFile("FOO='hello \\n world'\n");
-    expect(result.entries.get("FOO")).toBe("hello \\n world");
-  });
-
-  test("captures only start-of-line comments", () => {
-    const result = parseEnvFile(
-      [
-        "# header comment",
-        "  # indented comment",
-        "FOO=bar # trailing-comment-not-extracted",
-        "BAZ=qux",
-        "# footer comment",
-      ].join("\n"),
-    );
-    expect(result.comments).toEqual(["header comment", "indented comment", "footer comment"]);
-  });
-
-  test("inline # after whitespace strips trailing comment from unquoted value", () => {
-    const result = parseEnvFile("FOO=value # trailing\n");
-    expect(result.entries.get("FOO")).toBe("value");
-    // Critically: the trailing portion is NOT in comments
-    expect(result.comments).toEqual([]);
-  });
-
-  test("inline # inside quoted value is preserved", () => {
-    const result = parseEnvFile('FOO="value # not a comment"\n');
-    expect(result.entries.get("FOO")).toBe("value # not a comment");
-  });
-
-  test("supports `export KEY=value`", () => {
-    const result = parseEnvFile("export FOO=bar\n");
-    expect(result.keys).toEqual(["FOO"]);
-    expect(result.entries.get("FOO")).toBe("bar");
-  });
-
-  test("ignores blank lines and malformed lines", () => {
-    const result = parseEnvFile("\n\nFOO=bar\nthis is not a valid line\nBAZ=qux\n");
-    expect(result.keys).toEqual(["FOO", "BAZ"]);
-  });
-
-  test("later assignment overwrites earlier value but key order is preserved", () => {
-    const result = parseEnvFile("FOO=first\nBAR=middle\nFOO=second\n");
-    expect(result.keys).toEqual(["FOO", "BAR"]);
-    expect(result.entries.get("FOO")).toBe("second");
-  });
 });
 
 // ── listKeys ────────────────────────────────────────────────────────────────
@@ -106,13 +42,64 @@ describe("listKeys", () => {
     expect(Object.keys(result).sort()).toEqual(["comments", "keys"]);
   });
 
+  test("captures only start-of-line comments, never trailing/inline", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(
+      fp,
+      [
+        "# header comment",
+        "  # indented comment",
+        "FOO=bar # trailing-comment-not-extracted",
+        "BAZ=qux",
+        "# footer comment",
+      ].join("\n"),
+    );
+    const result = listKeys(fp);
+    expect(result.comments).toEqual(["header comment", "indented comment", "footer comment"]);
+    // The trailing-comment text must not leak in via comments
+    expect(result.comments.join(" ")).not.toContain("trailing-comment-not-extracted");
+  });
+
+  test("preserves key order and de-duplicates", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "FOO=first\nBAR=middle\nFOO=second\n");
+    expect(listKeys(fp).keys).toEqual(["FOO", "BAR"]);
+  });
+
+  test("recognises `export KEY=value`", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "export FOO=bar\n");
+    expect(listKeys(fp).keys).toEqual(["FOO"]);
+  });
+
   test("returns empty result for missing file", () => {
     const result = listKeys(path.join(tmpDir(), "missing.env"));
     expect(result).toEqual({ keys: [], comments: [] });
   });
 });
 
-// ── setKey / unsetKey / getKey ──────────────────────────────────────────────
+// ── loadEnv (delegates to dotenv) ───────────────────────────────────────────
+
+describe("loadEnv", () => {
+  test("returns parsed key/value pairs via dotenv", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, 'FOO=bar\nQUOTED="hello world"\nMULTI="line1\\nline2"\n');
+    const env = loadEnv(fp);
+    expect(env.FOO).toBe("bar");
+    expect(env.QUOTED).toBe("hello world");
+    expect(env.MULTI).toBe("line1\nline2");
+  });
+
+  test("returns empty object for missing file", () => {
+    expect(loadEnv(path.join(tmpDir(), "missing.env"))).toEqual({});
+  });
+});
+
+// ── setKey / unsetKey ───────────────────────────────────────────────────────
 
 describe("setKey", () => {
   test("creates the file and parent directory if missing", () => {
@@ -149,14 +136,34 @@ describe("setKey", () => {
     expect(loadEnv(fp).BAR).toBe("keep");
   });
 
-  test("quotes values that contain whitespace or special characters", () => {
+  test("round-trips values containing whitespace, quotes, and special characters", () => {
     const dir = tmpDir();
     const fp = path.join(dir, "v.env");
     setKey(fp, "FOO", "hello world");
     setKey(fp, "BAR", 'has"quote');
+    setKey(fp, "BAZ", "trailing # not a comment");
+    setKey(fp, "EQ", "a=b=c");
+    setKey(fp, "BACK", "C:\\path\\to\\file");
+    setKey(fp, "APOS", "it's fine");
     const env = loadEnv(fp);
     expect(env.FOO).toBe("hello world");
     expect(env.BAR).toBe('has"quote');
+    expect(env.BAZ).toBe("trailing # not a comment");
+    expect(env.EQ).toBe("a=b=c");
+    expect(env.BACK).toBe("C:\\path\\to\\file");
+    expect(env.APOS).toBe("it's fine");
+  });
+
+  test("rejects values containing newlines", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    expect(() => setKey(fp, "FOO", "line1\nline2")).toThrow();
+  });
+
+  test("rejects values containing both single and double quotes", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    expect(() => setKey(fp, "FOO", 'it\'s "complicated"')).toThrow();
   });
 
   test("rejects invalid key names", () => {
@@ -195,22 +202,6 @@ describe("unsetKey", () => {
 
   test("returns false when the file does not exist", () => {
     expect(unsetKey(path.join(tmpDir(), "missing.env"), "FOO")).toBe(false);
-  });
-});
-
-describe("getKey", () => {
-  test("returns the value for a present key", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=bar\n");
-    expect(getKey(fp, "FOO")).toBe("bar");
-  });
-
-  test("returns undefined for a missing key", () => {
-    const dir = tmpDir();
-    const fp = path.join(dir, "v.env");
-    fs.writeFileSync(fp, "FOO=bar\n");
-    expect(getKey(fp, "NOPE")).toBeUndefined();
   });
 });
 
