@@ -77,6 +77,28 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   knowledge: { stashDir: "knowledge", ...markdownSpec },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
+  vault: {
+    stashDir: "vaults",
+    isRelevantFile: (fileName) => fileName === ".env" || fileName.endsWith(".env"),
+    toCanonicalName: (typeRoot, filePath) => {
+      const rel = toPosix(path.relative(typeRoot, filePath));
+      const fileName = path.basename(rel);
+      // Treat ".env" as the "default" vault; "<name>.env" → "<name>"
+      if (fileName === ".env") {
+        const dir = path.dirname(rel);
+        return dir === "." || dir === "" ? "default" : `${dir}/default`;
+      }
+      const stripped = rel.endsWith(".env") ? rel.slice(0, -4) : rel;
+      return stripped;
+    },
+    toAssetPath: (typeRoot, name) => {
+      if (name === "default") return path.join(typeRoot, ".env");
+      return path.join(typeRoot, name.endsWith(".env") ? name : `${name}.env`);
+    },
+    rendererName: "vault-env",
+    actionBuilder: (ref) =>
+      `akm vault list ${ref} -> see key names; akm vault load ${ref} -> export to env (values never shown)`,
+  },
 };
 
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;

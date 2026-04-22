@@ -225,6 +225,16 @@ export interface ShowResponse {
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */
   editHint?: string;
+  /**
+   * Vault-only: list of KEY names defined in the vault (no values).
+   * Populated by the `vault-env` renderer; never set for any other type.
+   */
+  keys?: string[];
+  /**
+   * Vault-only: start-of-line `#` comment lines from the vault file (with the
+   * leading `#` stripped). Inline/trailing comments are deliberately omitted.
+   */
+  comments?: string[];
 }
 
 export type KnowledgeView =

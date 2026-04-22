@@ -36,7 +36,8 @@ describe("ASSET_TYPES", () => {
     expect(ASSET_TYPES).toContain("knowledge");
     expect(ASSET_TYPES).toContain("script");
     expect(ASSET_TYPES).toContain("memory");
-    expect(ASSET_TYPES).toHaveLength(6);
+    expect(ASSET_TYPES).toContain("vault");
+    expect(ASSET_TYPES).toHaveLength(7);
   });
 });
 
@@ -48,6 +49,7 @@ describe("TYPE_DIRS", () => {
     expect(TYPE_DIRS.knowledge).toBe("knowledge");
     expect(TYPE_DIRS.script).toBe("scripts");
     expect(TYPE_DIRS.memory).toBe("memories");
+    expect(TYPE_DIRS.vault).toBe("vaults");
   });
 });
 

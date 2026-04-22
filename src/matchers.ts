@@ -85,6 +85,10 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
     if (dir === "memories" && ext === ".md") {
       return { type: "memory", specificity: 10, renderer: "memory-md" };
     }
+
+    if (dir === "vaults" && (ctx.fileName === ".env" || ctx.fileName.endsWith(".env"))) {
+      return { type: "vault", specificity: 10, renderer: "vault-env" };
+    }
   }
 
   return null;
@@ -123,6 +127,10 @@ export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
 
   if (parentDir === "memories" && ext === ".md") {
     return { type: "memory", specificity: 15, renderer: "memory-md" };
+  }
+
+  if (parentDir === "vaults" && (fileName === ".env" || fileName.endsWith(".env"))) {
+    return { type: "vault", specificity: 15, renderer: "vault-env" };
   }
 
   return null;

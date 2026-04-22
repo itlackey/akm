@@ -448,8 +448,11 @@ export async function generateMetadata(
       }
     }
 
-    // Extract @param from script files
-    if (ext !== ".md") {
+    // Extract @param from script files.
+    // Vault files (.env) are deliberately excluded — their contents are secrets
+    // and must never be parsed for @param or any other metadata that could
+    // embed a value into the entry.
+    if (ext !== ".md" && assetType !== "vault") {
       const scriptParams = extractScriptParameters(file);
       if (scriptParams) entry.parameters = scriptParams;
     }
@@ -561,8 +564,11 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
       }
     }
 
-    // Extract @param from script files
-    if (ext !== ".md") {
+    // Extract @param from script files.
+    // Vault files (.env) are deliberately excluded — their contents are secrets
+    // and must never be parsed for @param or any other metadata that could
+    // embed a value into the entry.
+    if (ext !== ".md" && assetType !== "vault") {
       const scriptParams = extractScriptParameters(file, ctx.content());
       if (scriptParams) entry.parameters = scriptParams;
     }

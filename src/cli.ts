@@ -22,6 +22,7 @@ import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
 import { saveGitStash } from "./stash-providers/git";
+import { parseAssetRef } from "./stash-ref";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash } from "./stash-source-manage";
@@ -288,10 +289,23 @@ function shapeShowOutput(
       "modelHint",
       "agent",
       "parameters",
+      "keys",
+      "comments",
     ]);
   }
   if (detail === "summary") {
-    return pickFields(result, ["type", "name", "description", "tags", "parameters", "action", "run", "origin"]);
+    return pickFields(result, [
+      "type",
+      "name",
+      "description",
+      "tags",
+      "parameters",
+      "action",
+      "run",
+      "origin",
+      "keys",
+      "comments",
+    ]);
   }
 
   const base = pickFields(result, [
@@ -311,6 +325,8 @@ function shapeShowOutput(
     "run",
     "setup",
     "cwd",
+    "keys",
+    "comments",
   ]);
 
   if (detail !== "full") {
@@ -1930,6 +1946,230 @@ const disableCommand = defineCommand({
   },
 });
 
+// ── vault ───────────────────────────────────────────────────────────────────
+//
+// `akm vault` manages secrets stored in `.env` files under the vaults/
+// asset directory. Values are NEVER returned through the structured
+// output() channel — only `vault get --stdout` and `vault load` ever
+// emit a value, and they print directly to stdout for explicit operator
+// pipelines (eval, env injection).
+
+function resolveVaultPath(ref: string): { name: string; absPath: string } {
+  const stashDir = resolveStashDir({ readOnly: true });
+  const parsed = parseAssetRef(ref.includes(":") ? ref : `vault:${ref}`);
+  if (parsed.type !== "vault") {
+    throw new UsageError(`Expected a vault ref (vault:<name>); got "${ref}".`);
+  }
+  const typeRoot = path.join(stashDir, "vaults");
+  const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
+  return { name: parsed.name, absPath };
+}
+
+const vaultListCommand = defineCommand({
+  meta: { name: "list", description: "List vaults, or list keys (no values) inside one vault" },
+  args: {
+    ref: { type: "positional", description: "Optional vault ref (e.g. vault:prod or just prod)", required: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { listKeys } = await import("./vault.js");
+      if (args.ref) {
+        const { name, absPath } = resolveVaultPath(args.ref);
+        if (!fs.existsSync(absPath)) {
+          throw new NotFoundError(`Vault not found: vault:${name}`);
+        }
+        const { keys, comments } = listKeys(absPath);
+        output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+        return;
+      }
+      const stashDir = resolveStashDir({ readOnly: true });
+      const vaultsDir = path.join(stashDir, "vaults");
+      const vaults: Array<{ ref: string; path: string; keyCount: number }> = [];
+      if (fs.existsSync(vaultsDir)) {
+        for (const entry of fs.readdirSync(vaultsDir, { withFileTypes: true })) {
+          if (!entry.isFile()) continue;
+          if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
+          const fp = path.join(vaultsDir, entry.name);
+          const name = entry.name === ".env" ? "default" : entry.name.slice(0, -4);
+          const { keys } = listKeys(fp);
+          vaults.push({ ref: `vault:${name}`, path: fp, keyCount: keys.length });
+        }
+      }
+      output("vault-list", { vaults });
+    });
+  },
+});
+
+const vaultCreateCommand = defineCommand({
+  meta: { name: "create", description: "Create an empty vault file (no-op if it already exists)" },
+  args: {
+    name: { type: "positional", description: "Vault name (e.g. prod) — file becomes <name>.env", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { createVault } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.name);
+      createVault(absPath);
+      output("vault-create", { ref: `vault:${name}`, path: absPath });
+    });
+  },
+});
+
+const vaultSetCommand = defineCommand({
+  meta: { name: "set", description: "Set a key in a vault. Value is written to disk and never echoed back." },
+  args: {
+    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
+    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
+    value: { type: "positional", description: "Value to store", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { setKey } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      setKey(absPath, args.key, args.value);
+      output("vault-set", { ref: `vault:${name}`, key: args.key, path: absPath });
+    });
+  },
+});
+
+const vaultUnsetCommand = defineCommand({
+  meta: { name: "unset", description: "Remove a key from a vault" },
+  args: {
+    ref: { type: "positional", description: "Vault ref", required: true },
+    key: { type: "positional", description: "Key name to remove", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { unsetKey } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const removed = unsetKey(absPath, args.key);
+      output("vault-unset", { ref: `vault:${name}`, key: args.key, removed, path: absPath });
+    });
+  },
+});
+
+const vaultGetCommand = defineCommand({
+  meta: {
+    name: "get",
+    description:
+      "Get a single value. Refuses by default to avoid agent context leakage; pass --stdout to print the raw value.",
+  },
+  args: {
+    ref: { type: "positional", description: "Vault ref", required: true },
+    key: { type: "positional", description: "Key name to read", required: true },
+    stdout: {
+      type: "boolean",
+      description: "Print the raw value to stdout (for shell pipelines). Output is NOT JSON.",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { getKey } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const value = getKey(absPath, args.key);
+      if (value === undefined) {
+        throw new NotFoundError(`Key "${args.key}" not found in vault:${name}`);
+      }
+      if (!args.stdout) {
+        throw new UsageError(
+          `Refusing to return a vault value through structured output. Use \`akm vault get vault:${name} ${args.key} --stdout\` for shell pipelines, or \`akm vault load vault:${name}\` to inject into an env.`,
+        );
+      }
+      // Direct stdout write — bypasses output() / json shaping by design.
+      process.stdout.write(value);
+    });
+  },
+});
+
+const vaultLoadCommand = defineCommand({
+  meta: {
+    name: "load",
+    description:
+      "Print env-export statements for `eval`, or JSON / dotenv. Output goes to stdout; do not capture into agent context.",
+  },
+  args: {
+    ref: { type: "positional", description: "Vault ref", required: true },
+    format: {
+      type: "string",
+      description: "Output format: export (default, for `eval`), dotenv, json",
+      default: "export",
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { loadEnv, formatAsExport } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const env = loadEnv(absPath);
+      const format = String(args.format ?? "export").toLowerCase();
+      if (format === "export") {
+        process.stdout.write(`${formatAsExport(env)}\n`);
+        warn(`Loaded ${Object.keys(env).length} key(s) from vault:${name}. Use \`eval\` to apply to current shell.`);
+        return;
+      }
+      if (format === "json") {
+        process.stdout.write(`${JSON.stringify(env)}\n`);
+        return;
+      }
+      if (format === "dotenv") {
+        const lines: string[] = [];
+        for (const [k, v] of Object.entries(env)) {
+          const escaped = v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          lines.push(`${k}="${escaped}"`);
+        }
+        process.stdout.write(`${lines.join("\n")}\n`);
+        return;
+      }
+      throw new UsageError(`Unknown --format "${args.format}". Choose one of: export, dotenv, json.`);
+    });
+  },
+});
+
+const vaultCommand = defineCommand({
+  meta: {
+    name: "vault",
+    description:
+      "Manage secret vaults (.env files). Lists keys + comments only — values never returned in structured output.",
+  },
+  subCommands: {
+    list: vaultListCommand,
+    create: vaultCreateCommand,
+    set: vaultSetCommand,
+    unset: vaultUnsetCommand,
+    get: vaultGetCommand,
+    load: vaultLoadCommand,
+  },
+  run() {
+    return runWithJsonErrors(async () => {
+      // Default action: list all vaults
+      const { listKeys } = await import("./vault.js");
+      const stashDir = resolveStashDir({ readOnly: true });
+      const vaultsDir = path.join(stashDir, "vaults");
+      const vaults: Array<{ ref: string; path: string; keyCount: number }> = [];
+      if (fs.existsSync(vaultsDir)) {
+        for (const entry of fs.readdirSync(vaultsDir, { withFileTypes: true })) {
+          if (!entry.isFile()) continue;
+          if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
+          const fp = path.join(vaultsDir, entry.name);
+          const name = entry.name === ".env" ? "default" : entry.name.slice(0, -4);
+          const { keys } = listKeys(fp);
+          vaults.push({ ref: `vault:${name}`, path: fp, keyCount: keys.length });
+        }
+      }
+      output("vault-list", { vaults });
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -1966,6 +2206,7 @@ const main = defineCommand({
     feedback: feedbackCommand,
     hints: hintsCommand,
     completions: completionsCommand,
+    vault: vaultCommand,
   },
 });
 
