@@ -21,7 +21,7 @@ import { searchRegistry } from "./registry-search";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmAdd } from "./stash-add";
 import { akmClone } from "./stash-clone";
-import { pushGitStash } from "./stash-providers/git";
+import { saveGitStash } from "./stash-providers/git";
 import { akmSearch, parseSearchSource } from "./stash-search";
 import { akmShowUnified } from "./stash-show";
 import { addStash } from "./stash-source-manage";
@@ -1308,27 +1308,28 @@ const configCommand = defineCommand({
   },
 });
 
-const pushCommand = defineCommand({
+const saveCommand = defineCommand({
   meta: {
-    name: "push",
-    description: "Commit and push local changes in a writable git stash back to the remote",
+    name: "save",
+    description:
+      "Save changes in a git-backed stash: commits (and pushes when writable + remote is configured). No-op for non-git stashes.",
   },
   args: {
     name: {
       type: "positional",
-      description: "Name of the writable git stash to push",
-      required: true,
+      description: "Name of the git stash to save (default: primary stash directory)",
+      required: false,
     },
     message: {
       type: "string",
       alias: "m",
-      description: 'Commit message (default: "Update stash assets")',
+      description: "Commit message (default: timestamp)",
     },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = pushGitStash(args.name, args.message);
-      output("push", result);
+      const result = saveGitStash(args.name, args.message);
+      output("save", result);
     });
   },
 });
@@ -1945,7 +1946,7 @@ const main = defineCommand({
     remember: rememberCommand,
     import: importKnowledgeCommand,
     lint: lintCommand,
-    push: pushCommand,
+    save: saveCommand,
     clone: cloneCommand,
     registry: registryCommand,
     config: configCommand,
@@ -2129,6 +2130,7 @@ akm import ./notes/release-checklist.md       # Import a knowledge doc into your
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
+akm save                                      # Commit (and push if writable remote) changes in the primary stash
 akm registry search "<query>"                 # Search all registries
 \`\`\`
 
@@ -2222,24 +2224,6 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 Use \`akm feedback\` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
 
-## Add & Manage Sources
-
-\`\`\`sh
-akm add <ref>                                 # Add a source
-akm add @scope/kit                            # From npm (managed)
-akm add owner/repo                            # From GitHub (managed)
-akm add ./path/to/local/kit                   # Local directory
-akm enable skills.sh                          # Enable the skills.sh registry
-akm disable skills.sh                         # Disable the skills.sh registry
-akm enable context-hub                        # Add/enable the context-hub source
-akm disable context-hub                       # Disable the context-hub source
-akm list                                      # List all sources
-akm list --kind managed                       # List managed sources only
-akm remove <target>                           # Remove by id, ref, path, or name
-akm update --all                              # Update all managed sources
-akm update <target> --force                   # Force re-download
-\`\`\`
-
 ## Clone
 
 Copy an asset to the working stash or a custom destination for editing.
@@ -2253,6 +2237,47 @@ akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 \`\`\`
 
 When \`--dest\` is provided, \`akm init\` is not required first.
+
+## Save
+
+Commit local changes in a git-backed stash. Behaviour adapts automatically:
+
+- **Not a git repo** — no-op (silent skip)
+- **Git repo, no remote** — stage and commit only (the default stash always falls here)
+- **Git repo, has remote, not writable** — stage and commit only
+- **Git repo, has remote, \`writable: true\`** — stage, commit, and push
+
+\`\`\`sh
+akm save                                      # Save primary stash (timestamp message)
+akm save -m "Add deploy skill"               # Save with explicit message
+akm save my-skills                            # Save a named writable git stash
+akm save my-skills -m "Update patterns"      # Save named stash with message
+\`\`\`
+
+The \`--writable\` flag on \`akm add\` opts a remote git stash into push-on-save:
+
+\`\`\`sh
+akm add git@github.com:org/skills.git --provider git --name my-skills --writable
+\`\`\`
+
+## Add & Manage Sources
+
+\`\`\`sh
+akm add <ref>                                 # Add a source
+akm add @scope/kit                            # From npm (managed)
+akm add owner/repo                            # From GitHub (managed)
+akm add ./path/to/local/kit                   # Local directory
+akm add git@github.com:org/repo.git --provider git --name my-skills --writable
+akm enable skills.sh                          # Enable the skills.sh registry
+akm disable skills.sh                         # Disable the skills.sh registry
+akm enable context-hub                        # Add/enable the context-hub source
+akm disable context-hub                       # Disable the context-hub source
+akm list                                      # List all sources
+akm list --kind managed                       # List managed sources only
+akm remove <target>                           # Remove by id, ref, path, or name
+akm update --all                              # Update all managed sources
+akm update <target> --force                   # Force re-download
+\`\`\`
 
 ## Registries
 

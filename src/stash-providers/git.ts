@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveStashDir } from "../common";
 import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { ConfigError, UsageError } from "../errors";
@@ -24,12 +25,6 @@ interface ParsedRepoUrl {
   cloneUrl: string;
   ref: string | null;
   canonicalUrl: string;
-}
-
-export interface PushGitStashResult {
-  committed: boolean;
-  pushed: boolean;
-  output: string;
 }
 
 class GitStashProvider implements StashProvider {
@@ -206,56 +201,79 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
   return { cloneUrl: rawUrl, ref: null, canonicalUrl: rawUrl };
 }
 
-// ── Push support ─────────────────────────────────────────────────────────────
+// ── Save support ─────────────────────────────────────────────────────────────
 
-export function pushGitStash(name: string, message = "Update stash assets"): PushGitStashResult {
-  const config = loadConfig();
-  const stash = config.stashes?.find((s) => s.name === name || s.url === name);
+export interface SaveGitStashResult {
+  committed: boolean;
+  pushed: boolean;
+  skipped: boolean;
+  reason?: string;
+  output: string;
+}
 
-  if (!stash) {
-    throw new UsageError(`No git stash found with name "${name}"`);
-  }
-  if (!GIT_STASH_TYPES.has(stash.type)) {
-    throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
-  }
-  if (!stash.writable) {
-    throw new UsageError(
-      `Stash "${name}" is not marked as writable. Add writable: true to its config entry to enable push.`,
-    );
-  }
-  if (!stash.url) {
-    throw new UsageError(`Stash "${name}" has no URL configured`);
+/**
+ * Commit (and optionally push) local changes in a git-backed stash.
+ *
+ * Behaviour:
+ *   - Not a git repo → skipped (no-op)
+ *   - Git repo, no remote → commit only
+ *   - Git repo, has remote, but stash is not writable → commit only
+ *   - Git repo, has remote, stash is writable → commit + push
+ *
+ * When `name` is omitted the primary stash directory is used.
+ * When `message` is omitted a timestamp is used.
+ */
+export function saveGitStash(name?: string, message?: string): SaveGitStashResult {
+  const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const commitMessage = message?.trim() || `akm save ${timestamp}`;
+
+  let repoDir: string;
+  let writable = false;
+
+  if (name) {
+    const config = loadConfig();
+    const stash = config.stashes?.find((s) => s.name === name || s.url === name);
+    if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
+    if (!GIT_STASH_TYPES.has(stash.type)) {
+      throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
+    }
+    if (!stash.url) throw new UsageError(`Stash "${name}" has no URL configured`);
+    const repo = parseGitRepoUrl(stash.url);
+    repoDir = getCachePaths(repo.canonicalUrl).repoDir;
+    writable = stash.writable === true;
+  } else {
+    repoDir = resolveStashDir({ readOnly: true });
   }
 
-  const repo = parseGitRepoUrl(stash.url);
-  const cachePaths = getCachePaths(repo.canonicalUrl);
-  const repoDir = cachePaths.repoDir;
-
+  // No-op: not a git repo
   if (!fs.existsSync(path.join(repoDir, ".git"))) {
-    throw new UsageError(
-      `Stash "${name}" has not been initialised as a writable repo. Run "akm index" to clone it first.`,
-    );
+    return { committed: false, pushed: false, skipped: true, reason: "not a git repository", output: "" };
   }
 
-  // Check for changes
+  // Nothing to commit?
   const statusResult = spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" });
   if (!statusResult.stdout.trim()) {
-    return { committed: false, pushed: false, output: "Nothing to commit, working tree clean" };
+    return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
   }
 
-  // Stage all changes
+  // Stage and commit
   const addResult = spawnSync("git", ["-C", repoDir, "add", "-A"], { encoding: "utf8" });
   if (addResult.status !== 0) {
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
   }
-
-  // Commit
-  const commitResult = spawnSync("git", ["-C", repoDir, "commit", "-m", message], { encoding: "utf8" });
+  const commitResult = spawnSync("git", ["-C", repoDir, "commit", "-m", commitMessage], { encoding: "utf8" });
   if (commitResult.status !== 0) {
     throw new Error(`git commit failed: ${commitResult.stderr?.trim() || "unknown error"}`);
   }
 
-  // Push
+  // Push only when there is a remote AND the stash is marked writable
+  const remoteResult = spawnSync("git", ["-C", repoDir, "remote"], { encoding: "utf8" });
+  const hasRemote = remoteResult.stdout.trim().length > 0;
+
+  if (!hasRemote || !writable) {
+    return { committed: true, pushed: false, skipped: false, output: commitResult.stdout.trim() };
+  }
+
   const pushResult = spawnSync("git", ["-C", repoDir, "push"], { encoding: "utf8", timeout: 120_000 });
   if (pushResult.status !== 0) {
     throw new Error(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`);
@@ -264,7 +282,8 @@ export function pushGitStash(name: string, message = "Update stash assets"): Pus
   return {
     committed: true,
     pushed: true,
-    output: (commitResult.stdout + pushResult.stdout).trim() || "Changes committed and pushed",
+    skipped: false,
+    output: (commitResult.stdout + pushResult.stdout).trim() || "changes committed and pushed",
   };
 }
 
