@@ -299,8 +299,8 @@ function resolveWorkflowEntryId(ref: string): number | null {
         `SELECT id
          FROM entries
          WHERE entry_type = 'workflow'
-           AND substr(entry_key, length(entry_key) - length(?)) = ':' || ?
-         LIMIT 1`,
+            AND substr(entry_key, -length(?)) = ?
+          LIMIT 1`,
       )
       .get(ref, ref) as { id: number } | undefined;
     return row?.id ?? null;
@@ -389,7 +389,12 @@ function deriveRunState(steps: WorkflowRunStepRow[]): {
     return { status: "active", currentStepId: pending.step_id, completedAt: null };
   }
 
-  return { status: "completed", currentStepId: null, completedAt: new Date().toISOString() };
+  const completedAt = steps
+    .map((step) => step.completed_at)
+    .filter((value): value is string => typeof value === "string")
+    .sort()
+    .at(-1);
+  return { status: "completed", currentStepId: null, completedAt: completedAt ?? null };
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | undefined {

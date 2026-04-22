@@ -55,7 +55,12 @@ function extractWorkflowTitle(body: string): string {
     throw new WorkflowValidationError('Workflow markdown must contain exactly one "# Workflow: <title>" heading.');
   }
 
-  return matches[0]?.[1]?.trim() ?? "";
+  const title = matches[0]?.[1]?.trim() ?? "";
+  if (!title) {
+    throw new WorkflowValidationError('Workflow markdown must contain a non-empty "# Workflow: <title>" heading.');
+  }
+
+  return title;
 }
 
 function extractWorkflowTags(data: Record<string, unknown>, frontmatter: string | null): string[] | undefined {
@@ -272,7 +277,7 @@ function collectSectionBlock(
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean)
-        .map((line) => line.replace(/^[-*]\s+/, "").trim())
+        .map((line) => line.replace(/^[-*]\s*/, "").trim())
         .filter(Boolean)
     : undefined;
 
@@ -297,9 +302,19 @@ function extractTagListFromFrontmatter(frontmatter: string): string[] | undefine
         "Workflow frontmatter `tags` must contain only dash-prefixed list items when declared as a block list.",
       );
     }
-    const tag = match[1]?.trim().replace(/^['"]|['"]$/g, "");
+    const tag = stripMatchingQuotes(match[1]?.trim() ?? "");
     if (tag) tags.push(tag);
   }
 
   return tags.length > 0 ? tags : undefined;
+}
+
+function stripMatchingQuotes(value: string): string {
+  if (value.length >= 2) {
+    const quote = value[0];
+    if ((quote === '"' || quote === "'") && value[value.length - 1] === quote) {
+      return value.slice(1, -1).trim();
+    }
+  }
+  return value;
 }

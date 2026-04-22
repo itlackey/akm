@@ -40,9 +40,9 @@ export function buildWorkflowTemplate(name?: string): string {
 
   const title = humanizeWorkflowName(name);
   const stepId = slugifyWorkflowStepId(name);
-  const customized = DEFAULT_WORKFLOW_TEMPLATE.replace("Example Workflow", title)
-    .replace("First Step", `${title} Setup`)
-    .replace("first-step", `${stepId}-setup`);
+  const customized = DEFAULT_WORKFLOW_TEMPLATE.replaceAll("Example Workflow", title)
+    .replaceAll("First Step", `${title} Setup`)
+    .replaceAll("first-step", `${stepId}-setup`);
   parseWorkflowMarkdown(customized);
   return customized;
 }

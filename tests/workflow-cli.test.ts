@@ -111,6 +111,19 @@ describe("workflow CLI", () => {
     expect(error.error).toContain('must contain a "### Instructions" section');
   });
 
+  test("create --from rejects duplicate step ids", () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "duplicate.md");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW.replace("Step ID: deploy", "Step ID: validate"), "utf8");
+
+    const result = runCli(["workflow", "create", "duplicate", "--from", sourcePath], env);
+    expect(result.status).toBe(2);
+
+    const error = JSON.parse(result.stderr) as { error: string };
+    expect(error.error).toContain('Duplicate Step ID: "validate"');
+  });
+
   test("start, next, complete, list, and status manage persisted workflow runs", () => {
     const env = createWorkflowEnv();
     const sourceDir = makeTempDir("akm-workflow-source-");
