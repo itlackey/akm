@@ -2051,42 +2051,29 @@ const vaultUnsetCommand = defineCommand({
   },
 });
 
-const vaultRunCommand = defineCommand({
+const vaultLoadCommand = defineCommand({
   meta: {
-    name: "run",
+    name: "load",
     description:
-      "Spawn a child process with the vault's values injected into its environment. Values never touch stdout.",
+      'Emit a shell snippet that sources the vault file into the current shell. Use: eval "$(akm vault load vault:<name>)". Only the path is written to stdout; values stay on disk and are read by `source`.',
   },
   args: {
     ref: { type: "positional", description: "Vault ref", required: true },
-    command: {
-      type: "positional",
-      description: "Command to execute (use -- to separate from akm flags). Arguments follow.",
-      required: true,
-    },
   },
-  async run({ args, rawArgs }) {
-    const { loadEnv } = await import("./vault.js");
-    const { spawnSync } = await import("node:child_process");
+  async run({ args }) {
+    // This command deliberately bypasses output()/JSON shaping. Its stdout is
+    // a shell snippet intended for `eval`/`source`, not structured output.
     const { name, absPath } = resolveVaultPath(args.ref);
     if (!fs.existsSync(absPath)) {
       throw new NotFoundError(`Vault not found: vault:${name}`);
     }
-
-    // rawArgs carries every positional after the ref, so forward them unchanged.
-    const all = (rawArgs ?? []).slice();
-    const refIdx = all.indexOf(String(args.ref));
-    const after = refIdx >= 0 ? all.slice(refIdx + 1) : all.slice(1);
-    // citty passes `--` through in rawArgs; drop it if present.
-    const cmdParts = after[0] === "--" ? after.slice(1) : after;
-    if (cmdParts.length === 0) {
-      throw new UsageError(`Usage: akm vault run vault:${name} -- <command> [args...]`);
-    }
-
-    const env: NodeJS.ProcessEnv = { ...process.env, ...loadEnv(absPath) };
-    const result = spawnSync(cmdParts[0], cmdParts.slice(1), { stdio: "inherit", env });
-    if (result.error) throw result.error;
-    process.exit(result.status ?? 0);
+    // Single-quote the path for safe shell inclusion; `'\''` is the standard
+    // escape sequence for a literal single quote inside a single-quoted string.
+    const quotedPath = `'${absPath.replace(/'/g, "'\\''")}'`;
+    // `set -a` makes every subsequent assignment auto-exported; `source` reads
+    // the vault file. Values never transit through akm's stdout — the shell
+    // reads them straight from disk.
+    process.stdout.write(`set -a; . ${quotedPath}; set +a\n`);
   },
 });
 
@@ -2101,7 +2088,7 @@ const vaultCommand = defineCommand({
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
-    run: vaultRunCommand,
+    load: vaultLoadCommand,
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -2167,7 +2154,7 @@ const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
-const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "run"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "load"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
 // citty reads process.argv directly and does not accept a custom argv array,

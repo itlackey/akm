@@ -31,7 +31,7 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   knowledge: (ref) => `akm show ${ref} -> read reference material`,
   memory: (ref) => `akm show ${ref} -> recall context`,
   vault: (ref) =>
-    `akm vault list ${ref} -> see key names; akm vault run ${ref} -- <cmd> -> run with values injected into env (never echoed)`,
+    `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
 };
 
 /**

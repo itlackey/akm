@@ -3,8 +3,13 @@
  *
  * Invariant: vault values must never be written to stdout, returned through
  * the indexer, the `akm show` renderer, or any structured output channel.
- * Values may ONLY be loaded into a process environment — either this process
- * (via `injectIntoEnv`) or a spawned child (via `akm vault run`).
+ * The supported load paths are:
+ *
+ *   - `eval "$(akm vault load vault:<name>)"` — the shell `source`s the .env
+ *     file directly; akm's stdout carries only the file path and `source`
+ *     syntax, never values.
+ *   - `injectIntoEnv(vaultPath, target)` — programmatic API for modules that
+ *     need values in a process environment.
  *
  * Value parsing is delegated to the `dotenv` package — we deliberately do not
  * implement our own quoting/escaping rules for security-sensitive content.
