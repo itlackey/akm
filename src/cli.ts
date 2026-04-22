@@ -2051,49 +2051,42 @@ const vaultUnsetCommand = defineCommand({
   },
 });
 
-const vaultLoadCommand = defineCommand({
+const vaultRunCommand = defineCommand({
   meta: {
-    name: "load",
+    name: "run",
     description:
-      "Print env-export statements for `eval`, or JSON / dotenv. Output goes to stdout; do not capture into agent context.",
+      "Spawn a child process with the vault's values injected into its environment. Values never touch stdout.",
   },
   args: {
     ref: { type: "positional", description: "Vault ref", required: true },
-    format: {
-      type: "string",
-      description: "Output format: export (default, for `eval`), dotenv, json",
-      default: "export",
+    command: {
+      type: "positional",
+      description: "Command to execute (use -- to separate from akm flags). Arguments follow.",
+      required: true,
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { loadEnv, formatAsExport } = await import("./vault.js");
-      const { name, absPath } = resolveVaultPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: vault:${name}`);
-      }
-      const env = loadEnv(absPath);
-      const format = String(args.format ?? "export").toLowerCase();
-      if (format === "export") {
-        process.stdout.write(`${formatAsExport(env)}\n`);
-        warn(`Loaded ${Object.keys(env).length} key(s) from vault:${name}. Use \`eval\` to apply to current shell.`);
-        return;
-      }
-      if (format === "json") {
-        process.stdout.write(`${JSON.stringify(env)}\n`);
-        return;
-      }
-      if (format === "dotenv") {
-        const lines: string[] = [];
-        for (const [k, v] of Object.entries(env)) {
-          const escaped = v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          lines.push(`${k}="${escaped}"`);
-        }
-        process.stdout.write(`${lines.join("\n")}\n`);
-        return;
-      }
-      throw new UsageError(`Unknown --format "${args.format}". Choose one of: export, dotenv, json.`);
-    });
+  async run({ args, rawArgs }) {
+    const { loadEnv } = await import("./vault.js");
+    const { spawnSync } = await import("node:child_process");
+    const { name, absPath } = resolveVaultPath(args.ref);
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Vault not found: vault:${name}`);
+    }
+
+    // rawArgs carries every positional after the ref, so forward them unchanged.
+    const all = (rawArgs ?? []).slice();
+    const refIdx = all.indexOf(String(args.ref));
+    const after = refIdx >= 0 ? all.slice(refIdx + 1) : all.slice(1);
+    // citty passes `--` through in rawArgs; drop it if present.
+    const cmdParts = after[0] === "--" ? after.slice(1) : after;
+    if (cmdParts.length === 0) {
+      throw new UsageError(`Usage: akm vault run vault:${name} -- <command> [args...]`);
+    }
+
+    const env: NodeJS.ProcessEnv = { ...process.env, ...loadEnv(absPath) };
+    const result = spawnSync(cmdParts[0], cmdParts.slice(1), { stdio: "inherit", env });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 0);
   },
 });
 
@@ -2108,10 +2101,11 @@ const vaultCommand = defineCommand({
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
-    load: vaultLoadCommand,
+    run: vaultRunCommand,
   },
-  run() {
+  run({ args }) {
     return runWithJsonErrors(async () => {
+      if (hasVaultSubcommand(args)) return;
       // Default action: list all vaults
       const { listKeys } = await import("./vault.js");
       const stashDir = resolveStashDir({ readOnly: true });
@@ -2173,6 +2167,7 @@ const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "run"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
 // citty reads process.argv directly and does not accept a custom argv array,
@@ -2230,6 +2225,11 @@ function buildHint(message: string): string | undefined {
 function hasConfigSubcommand(args: Record<string, unknown>): boolean {
   const command = Array.isArray(args._) ? args._[0] : undefined;
   return typeof command === "string" && CONFIG_SUBCOMMAND_SET.has(command);
+}
+
+function hasVaultSubcommand(args: Record<string, unknown>): boolean {
+  const command = Array.isArray(args._) ? args._[0] : undefined;
+  return typeof command === "string" && VAULT_SUBCOMMAND_SET.has(command);
 }
 
 /**

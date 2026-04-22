@@ -5,7 +5,7 @@ import path from "node:path";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { getDbPath } from "../src/paths";
-import { createVault, formatAsExport, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
+import { createVault, injectIntoEnv, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -225,13 +225,25 @@ describe("createVault", () => {
   });
 });
 
-// ── formatAsExport ──────────────────────────────────────────────────────────
+// ── injectIntoEnv ───────────────────────────────────────────────────────────
 
-describe("formatAsExport", () => {
-  test("emits eval-safe export lines with single-quote escaping", () => {
-    const out = formatAsExport({ FOO: "bar", QUOTED: "it's fine" });
-    expect(out).toContain("export FOO='bar'");
-    expect(out).toContain("export QUOTED='it'\\''s fine'");
+describe("injectIntoEnv", () => {
+  test("assigns values into the supplied target and returns the list of keys set", () => {
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "ALPHA=one\nBETA=two\n");
+    const target: Record<string, string | undefined> = { PRE_EXISTING: "kept" };
+    const keys = injectIntoEnv(fp, target);
+    expect(keys.sort()).toEqual(["ALPHA", "BETA"]);
+    expect(target.ALPHA).toBe("one");
+    expect(target.BETA).toBe("two");
+    expect(target.PRE_EXISTING).toBe("kept");
+  });
+
+  test("returns empty list when the file is missing", () => {
+    const target: Record<string, string | undefined> = {};
+    expect(injectIntoEnv(path.join(tmpDir(), "missing.env"), target)).toEqual([]);
+    expect(target).toEqual({});
   });
 });
 

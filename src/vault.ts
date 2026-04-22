@@ -1,10 +1,10 @@
 /**
  * Vault asset type — secret storage backed by `.env` files.
  *
- * Invariant: vault values must never be returned through the indexer, the
- * `akm show` renderer, or the structured `output()` channel. The only path
- * that may surface a value is `vault load`, which writes directly to stdout
- * for shell `eval` / pipelines.
+ * Invariant: vault values must never be written to stdout, returned through
+ * the indexer, the `akm show` renderer, or any structured output channel.
+ * Values may ONLY be loaded into a process environment — either this process
+ * (via `injectIntoEnv`) or a spawned child (via `akm vault run`).
  *
  * Value parsing is delegated to the `dotenv` package — we deliberately do not
  * implement our own quoting/escaping rules for security-sensitive content.
@@ -59,8 +59,9 @@ export function listKeys(vaultPath: string): { keys: string[]; comments: string[
 }
 
 /**
- * Read all KEY=value pairs from a vault file. Caller is responsible for
- * keeping the returned values out of agent-visible output.
+ * Read all KEY=value pairs from a vault file. Intended for programmatic
+ * callers that need to inject values into a process environment. Callers
+ * MUST NOT write the returned values to stdout or any logged output.
  *
  * Value parsing (quoting, escapes, multi-line, etc.) is delegated to dotenv.
  */
@@ -68,6 +69,25 @@ export function loadEnv(vaultPath: string): Record<string, string> {
   if (!fs.existsSync(vaultPath)) return {};
   const buf = fs.readFileSync(vaultPath);
   return dotenv.parse(buf);
+}
+
+/**
+ * Load a vault and assign its values into `target` (defaults to `process.env`).
+ * Returns the list of keys that were set so the caller can log/observe without
+ * touching values.
+ *
+ * Existing keys in `target` are overwritten — callers who want to preserve
+ * pre-existing environment variables should filter before calling.
+ */
+export function injectIntoEnv(
+  vaultPath: string,
+  target: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+): string[] {
+  const env = loadEnv(vaultPath);
+  for (const [key, value] of Object.entries(env)) {
+    target[key] = value;
+  }
+  return Object.keys(env);
 }
 
 /**
@@ -194,17 +214,4 @@ function writeFileAtomic(filePath: string, content: string): void {
     }
     throw err;
   }
-}
-
-/**
- * Format a load result as `export KEY='value'` lines for shell `eval`.
- * Single-quotes the value with `'\''` escapes for safety.
- */
-export function formatAsExport(env: Record<string, string>): string {
-  const out: string[] = [];
-  for (const [key, value] of Object.entries(env)) {
-    const escaped = value.replace(/'/g, "'\\''");
-    out.push(`export ${key}='${escaped}'`);
-  }
-  return out.join("\n");
 }

@@ -455,7 +455,7 @@ const vaultEnvRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action:
-        "Vault — keys + comments only. Use `akm vault load <ref>` to inject values into a child process's env; values are never shown.",
+        "Vault — keys + comments only. Use `akm vault run <ref> -- <cmd>` to execute a command with values injected into its env; values are never shown or written to stdout.",
       description: comments.length > 0 ? comments.join("\n") : undefined,
       keys,
       comments,

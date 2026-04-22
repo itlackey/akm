@@ -97,7 +97,7 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     },
     rendererName: "vault-env",
     actionBuilder: (ref) =>
-      `akm vault list ${ref} -> see key names; akm vault load ${ref} -> export to env (values never shown)`,
+      `akm vault list ${ref} -> see key names; akm vault run ${ref} -- <cmd> -> run with values injected into env (never echoed)`,
   },
 };
 
