@@ -243,7 +243,8 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | Flag | Description |
 | --- | --- |
 | `--name` | Human-friendly name for the source |
-| `--provider` | Provider type (e.g. `openviking`). Required for remote provider sources |
+| `--provider` | Provider type (e.g. `git`, `openviking`). Required for remote provider sources |
+| `--writable` | Mark a git stash as writable so `akm save` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"apiKey":"key"}'`) |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |

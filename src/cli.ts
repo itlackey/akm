@@ -1011,7 +1011,7 @@ const addCommand = defineCommand({
       if (ref === CONTEXT_HUB_ALIAS_REF) {
         const result = addStash({
           target: CONTEXT_HUB_ALIAS_URL,
-          providerType: "context-hub",
+          providerType: "git",
           name: "context-hub",
         });
         output("stash-add", result);
