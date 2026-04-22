@@ -9,6 +9,7 @@ import {
   getDefaultStashDir,
   getRegistryCacheDir,
   getRegistryIndexCacheDir,
+  getWorkflowDbPath,
 } from "../src/paths";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
@@ -169,6 +170,13 @@ describe("getDbPath", () => {
   test("returns index.db under cache dir", () => {
     process.env.XDG_CACHE_HOME = "/cache";
     expect(getDbPath()).toBe(path.join("/cache", "akm", "index.db"));
+  });
+});
+
+describe("getWorkflowDbPath", () => {
+  test("returns workflow.db under cache dir", () => {
+    process.env.XDG_CACHE_HOME = "/cache";
+    expect(getWorkflowDbPath()).toBe(path.join("/cache", "akm", "workflow.db"));
   });
 });
 

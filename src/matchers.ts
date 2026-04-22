@@ -82,6 +82,10 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
       return { type: "knowledge", specificity: 10, renderer: "knowledge-md" };
     }
 
+    if (dir === "workflows" && ext === ".md") {
+      return { type: "workflow", specificity: 10, renderer: "workflow-md" };
+    }
+
     if (dir === "memories" && ext === ".md") {
       return { type: "memory", specificity: 10, renderer: "memory-md" };
     }
@@ -125,6 +129,10 @@ export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
     return { type: "knowledge", specificity: 15, renderer: "knowledge-md" };
   }
 
+  if (parentDir === "workflows" && ext === ".md") {
+    return { type: "workflow", specificity: 15, renderer: "workflow-md" };
+  }
+
   if (parentDir === "memories" && ext === ".md") {
     return { type: "memory", specificity: 15, renderer: "memory-md" };
   }
@@ -158,6 +166,16 @@ const COMMAND_PLACEHOLDER_RE = /\$ARGUMENTS|\$[123]\b/;
 export function smartMdMatcher(ctx: FileContext): MatchResult | null {
   if (ctx.ext !== ".md") return null;
 
+  const body = ctx.content();
+  const hasWorkflowSignals =
+    /^#\s+Workflow:\s+/m.test(body) &&
+    /^##\s+Step:\s+/m.test(body) &&
+    /^Step ID:\s+/m.test(body) &&
+    /^###\s+Instructions\s*$/m.test(body);
+  if (hasWorkflowSignals) {
+    return { type: "workflow", specificity: 19, renderer: "workflow-md" };
+  }
+
   const fm = ctx.frontmatter();
 
   if (fm) {
@@ -176,7 +194,6 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
 
   // Command signal: body contains $ARGUMENTS or $1/$2/$3 placeholders.
   // These are definitively command template patterns (OpenCode convention).
-  const body = ctx.content();
   if (COMMAND_PLACEHOLDER_RE.test(body)) {
     return { type: "command", specificity: 18, renderer: "command-md" };
   }

@@ -34,10 +34,11 @@ describe("ASSET_TYPES", () => {
     expect(ASSET_TYPES).toContain("command");
     expect(ASSET_TYPES).toContain("agent");
     expect(ASSET_TYPES).toContain("knowledge");
+    expect(ASSET_TYPES).toContain("workflow");
     expect(ASSET_TYPES).toContain("script");
     expect(ASSET_TYPES).toContain("memory");
     expect(ASSET_TYPES).toContain("vault");
-    expect(ASSET_TYPES).toHaveLength(7);
+    expect(ASSET_TYPES).toHaveLength(8);
   });
 });
 
@@ -47,6 +48,7 @@ describe("TYPE_DIRS", () => {
     expect(TYPE_DIRS.command).toBe("commands");
     expect(TYPE_DIRS.agent).toBe("agents");
     expect(TYPE_DIRS.knowledge).toBe("knowledge");
+    expect(TYPE_DIRS.workflow).toBe("workflows");
     expect(TYPE_DIRS.script).toBe("scripts");
     expect(TYPE_DIRS.memory).toBe("memories");
     expect(TYPE_DIRS.vault).toBe("vaults");
@@ -97,6 +99,11 @@ describe("isRelevantAssetFile", () => {
     expect(isRelevantAssetFile("knowledge", "guide.md")).toBe(true);
     expect(isRelevantAssetFile("knowledge", "data.json")).toBe(false);
   });
+
+  test("workflow: accepts .md files", () => {
+    expect(isRelevantAssetFile("workflow", "release.md")).toBe(true);
+    expect(isRelevantAssetFile("workflow", "release.txt")).toBe(false);
+  });
 });
 
 // ── deriveCanonicalAssetName ────────────────────────────────────────────────
@@ -144,6 +151,12 @@ describe("deriveCanonicalAssetName", () => {
     expect(deriveCanonicalAssetName("knowledge", root, file)).toBe("guide");
   });
 
+  test("workflow: returns relative path without .md extension", () => {
+    const root = "/stash/workflows";
+    const file = path.join(root, "release", "ship.md");
+    expect(deriveCanonicalAssetName("workflow", root, file)).toBe("release/ship");
+  });
+
   test("script: returns relative path including subdirectory", () => {
     const root = "/stash/scripts";
     const file = path.join(root, "utils", "cleanup.py");
@@ -189,6 +202,12 @@ describe("resolveAssetPathFromName", () => {
   test("command: joins type root with name", () => {
     expect(resolveAssetPathFromName("command", "/stash/commands", "release.md")).toBe(
       path.join("/stash/commands", "release.md"),
+    );
+  });
+
+  test("workflow: joins type root with name", () => {
+    expect(resolveAssetPathFromName("workflow", "/stash/workflows", "release/ship")).toBe(
+      path.join("/stash/workflows", "release/ship.md"),
     );
   });
 });

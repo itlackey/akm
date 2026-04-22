@@ -222,6 +222,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     ...(description ? { description } : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
     ...(full.parameters ? { parameters: full.parameters } : {}),
+    ...(full.workflowTitle ? { workflowTitle: full.workflowTitle } : {}),
     ...(full.action ? { action: full.action } : {}),
     ...(full.run ? { run: full.run } : {}),
     ...(full.origin !== undefined ? { origin: full.origin } : {}),

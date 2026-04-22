@@ -58,12 +58,13 @@ my-kit/
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
+  workflows/      # Step-by-step workflow documents (.md)
   memories/       # Recalled context fragments (.md)
 ```
 
 ## Asset Types
 
-There are six asset types:
+There are seven asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -72,6 +73,7 @@ There are six asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
+| **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **memory** | Context from external systems | Background information the agent should consider |
 
 ### Classification Taxonomy
@@ -80,8 +82,9 @@ Scripts and knowledge are classified by **what they are**: a `.sh` file is a
 script; a plain `.md` file is knowledge. Commands and agents are classified by
 **how an LLM should use them**: a `.md` file with `$ARGUMENTS` placeholders is
 a command template; one with `tools` or `toolPolicy` in its frontmatter is an
-agent definition. Skills are a **packaging convention**: a directory containing
-a `SKILL.md` file.
+agent definition. Workflows are classified by their markdown structure (`#
+Workflow:`, `## Step:`, `Step ID:`, `### Instructions`). Skills are a
+**packaging convention**: a directory containing a `SKILL.md` file.
 
 See [technical/classification.md](technical/classification.md) for the full
 specificity-based matching system.
@@ -116,7 +119,8 @@ Assets are identified by a **ref** -- a compact handle returned by
 type:name
 ```
 
-For example: `script:deploy.sh`, `agent:reviewer`, `knowledge:api-guide`.
+For example: `script:deploy.sh`, `agent:reviewer`, `knowledge:api-guide`,
+`workflow:ship-release`.
 
 When an asset comes from an installed kit, refs can include an **origin**
 prefix to narrow lookup to that specific source:

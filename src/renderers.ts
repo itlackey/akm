@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { hasErrnoCode } from "./common";
+import { UsageError } from "./errors";
 import type { AssetRenderer, RenderContext } from "./file-context";
 import { registerRenderer } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
@@ -18,6 +19,7 @@ import type { StashEntry } from "./metadata";
 import { extractDescriptionFromComments, loadStashFile } from "./metadata";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "./stash-types";
 import { listKeys as listVaultKeys } from "./vault";
+import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -375,7 +377,61 @@ const memoryMdRenderer: AssetRenderer = {
   },
 };
 
-// ── 6. script-source ─────────────────────────────────────────────────────────
+// ── 6. workflow-md ───────────────────────────────────────────────────────────
+
+const workflowMdRenderer: AssetRenderer = {
+  name: "workflow-md",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const workflow = parseWorkflowForRendering(ctx.content());
+    return {
+      type: "workflow",
+      name,
+      path: ctx.absPath,
+      action: `Start or resume this workflow with \`akm workflow next workflow:${name}\`.`,
+      description: workflow.description,
+      workflowTitle: workflow.title,
+      parameters: workflow.parameters?.map((parameter) => parameter.name),
+      workflowParameters: workflow.parameters,
+      steps: workflow.steps,
+    };
+  },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    const workflow = parseWorkflowForRendering(ctx.content());
+    const hints = new Set<string>(entry.searchHints ?? []);
+    hints.add(workflow.title);
+    for (const step of workflow.steps) {
+      hints.add(step.title);
+      hints.add(step.id);
+      hints.add(step.instructions);
+      for (const criterion of step.completionCriteria ?? []) {
+        hints.add(criterion);
+      }
+    }
+    entry.searchHints = Array.from(hints).filter(Boolean);
+    if (workflow.parameters?.length) {
+      entry.parameters = workflow.parameters.map((parameter) => ({
+        name: parameter.name,
+        ...(parameter.description ? { description: parameter.description } : {}),
+      }));
+    }
+  },
+};
+
+function parseWorkflowForRendering(content: string) {
+  try {
+    return parseWorkflowMarkdown(content);
+  } catch (error) {
+    if (error instanceof WorkflowValidationError) {
+      throw new UsageError(error.message);
+    }
+    throw error;
+  }
+}
+
+// ── 7. script-source ─────────────────────────────────────────────────────────
 
 const scriptSourceRenderer: AssetRenderer = {
   name: "script-source",
@@ -437,7 +493,7 @@ const scriptSourceRenderer: AssetRenderer = {
   },
 };
 
-// ── 7. vault-env ─────────────────────────────────────────────────────────────
+// ── 8. vault-env ─────────────────────────────────────────────────────────────
 
 /**
  * Vault renderer. Returns ONLY key names and start-of-line comments — never
@@ -488,6 +544,7 @@ const builtinRenderers: AssetRenderer[] = [
   agentMdRenderer,
   knowledgeMdRenderer,
   memoryMdRenderer,
+  workflowMdRenderer,
   scriptSourceRenderer,
   vaultEnvRenderer,
 ];
@@ -514,4 +571,5 @@ export {
   scriptSourceRenderer,
   skillMdRenderer,
   vaultEnvRenderer,
+  workflowMdRenderer,
 };

@@ -27,7 +27,7 @@ Useful for streaming consumption by scripts or agents.
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
-- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`
+- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`
 
 Takes precedence over `--detail`.
 
@@ -36,7 +36,7 @@ Takes precedence over `--detail`.
 Available for `show` and `search`. Returns a compact view suitable for
 capability discovery:
 
-- **show**: `type`, `name`, `description`, `tags`, `parameters`, `action`, `run`, `origin`
+- **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`
 - **search**: metadata-only view (no full content), under 200 tokens
 
 ## Commands
@@ -51,7 +51,7 @@ akm init                         # Initialize at the default location
 akm init --dir ~/custom-stash    # Initialize at a custom location
 ```
 
-Creates `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, and `memories/`
+Creates `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, and `memories/`
 subdirectories under the stash path. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
@@ -125,7 +125,7 @@ akm search "docker" --source both --detail full
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `memory`, `script`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
@@ -178,6 +178,7 @@ akm show script:deploy.sh
 akm show skill:code-review
 akm show agent:architect
 akm show command:release
+akm show workflow:ship-release
 akm show knowledge:guide toc
 akm show knowledge:guide section "Authentication"
 akm show knowledge:guide lines 10 30
@@ -199,6 +200,7 @@ Returns type-specific payloads:
 | command | `template`, `description` |
 | agent | `prompt`, `description`, `modelHint` |
 | knowledge | `content` with view modes: `full`, `toc`, `frontmatter`, `section`, `lines` |
+| workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
 
 Assets from OpenViking sources use standard `type:name` refs like
@@ -206,6 +208,33 @@ everything else, and always return `editable: false`.
 
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
+
+### workflow
+
+Author, inspect, and execute structured workflow assets.
+
+```sh
+akm workflow template
+akm workflow create ship-release
+akm workflow create ship-release --from ./ship-release.md
+akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
+akm workflow next workflow:ship-release
+akm workflow complete <run-id> --step validate --notes "Inputs verified"
+akm workflow status <run-id>
+akm workflow list --active
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `template` | Print a valid starter workflow markdown document |
+| `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
+| `start <ref>` | Create a new persisted workflow run |
+| `next <run-id\|ref>` | Return the current actionable step; auto-starts when passed a ref with no active run |
+| `complete <run-id>` | Persist step status, notes, and evidence |
+| `status <run-id>` | Show the full run state, including all step statuses |
+| `list` | List workflow runs (optionally filtered by `--ref` and `--active`) |
 
 ### How `add` works
 

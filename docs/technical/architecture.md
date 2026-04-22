@@ -1,6 +1,6 @@
 # Architecture
 
-akm (Agent Kit Manager) is a CLI tool for managing AI agent assets: skills, commands, agents, knowledge, scripts, and memories. This document defines the system's core design decisions. These are final and inviolable.
+akm (Agent Kit Manager) is a CLI tool for managing AI agent assets: skills, commands, agents, knowledge, workflows, scripts, and memories. This document defines the system's core design decisions. These are final and inviolable.
 
 ---
 
@@ -45,6 +45,18 @@ Source locators are NOT refs. They identify where to fetch a kit, not how to add
 
 - **MUST NOT** use URI schemes in user-facing refs. No `viking://`, no `context-hub://`. Provider routing is internal, based on which stash the asset came from, not on a prefix in the ref.
 - **MUST NOT** invent new ref formats. `type:name` is the only asset addressing scheme.
+
+---
+
+## Workflow Runtime State
+
+Workflow assets are markdown documents stored under `workflows/`, but workflow
+run state is **runtime state**, not derived index data.
+
+- Workflow runs live in a **separate local workflow database**
+- Workflow run state **must survive** index rebuilds and index schema resets
+- Workflow search/show still uses the same local asset indexing pipeline as all
+  other indexed asset types
 
 ---
 

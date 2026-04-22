@@ -38,6 +38,15 @@ import type {
 import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
+import { createWorkflowAsset, getWorkflowTemplate } from "./workflow-authoring";
+import { hasWorkflowSubcommand, parseWorkflowJsonObject, parseWorkflowStepState } from "./workflow-cli";
+import {
+  completeWorkflowStep,
+  getNextWorkflowStep,
+  getWorkflowStatus,
+  listWorkflowRuns,
+  startWorkflowRun,
+} from "./workflow-runs";
 
 type OutputFormat = "json" | "yaml" | "text" | "jsonl";
 type DetailLevel = "brief" | "normal" | "full" | "summary";
@@ -289,6 +298,9 @@ function shapeShowOutput(
       "modelHint",
       "agent",
       "parameters",
+      "workflowTitle",
+      "workflowParameters",
+      "steps",
       "keys",
       "comments",
     ]);
@@ -300,6 +312,7 @@ function shapeShowOutput(
       "description",
       "tags",
       "parameters",
+      "workflowTitle",
       "action",
       "run",
       "origin",
@@ -322,6 +335,9 @@ function shapeShowOutput(
     "modelHint",
     "agent",
     "parameters",
+    "workflowTitle",
+    "workflowParameters",
+    "steps",
     "run",
     "setup",
     "cwd",
@@ -380,8 +396,20 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       if (r.origin !== undefined) lines.push(`# origin: ${String(r.origin)}`);
       if (r.action) lines.push(`# ${String(r.action)}`);
       if (r.description) lines.push(`description: ${String(r.description)}`);
+      if (r.workflowTitle) lines.push(`workflowTitle: ${String(r.workflowTitle)}`);
       if (r.agent) lines.push(`agent: ${String(r.agent)}`);
       if (Array.isArray(r.parameters) && r.parameters.length > 0) lines.push(`parameters: ${r.parameters.join(", ")}`);
+      if (Array.isArray(r.workflowParameters) && r.workflowParameters.length > 0) {
+        lines.push("workflowParameters:");
+        for (const parameter of r.workflowParameters as Array<Record<string, unknown>>) {
+          const name = typeof parameter.name === "string" ? parameter.name : "unknown";
+          const description =
+            typeof parameter.description === "string" && parameter.description.trim()
+              ? `: ${parameter.description}`
+              : "";
+          lines.push(`  - ${name}${description}`);
+        }
+      }
       if (r.modelHint != null) lines.push(`modelHint: ${String(r.modelHint)}`);
       if (r.toolPolicy != null) lines.push(`toolPolicy: ${JSON.stringify(r.toolPolicy)}`);
       if (r.run) lines.push(`run: ${String(r.run)}`);
@@ -394,6 +422,24 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
         if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
       }
       const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
+      if (Array.isArray(r.steps) && r.steps.length > 0) {
+        if (lines.length > 0) lines.push("");
+        lines.push("steps:");
+        for (const [index, step] of (r.steps as Array<Record<string, unknown>>).entries()) {
+          const title = typeof step.title === "string" ? step.title : "Untitled step";
+          const id = typeof step.id === "string" ? step.id : "unknown";
+          lines.push(`  ${index + 1}. ${title} [${id}]`);
+          if (typeof step.instructions === "string" && step.instructions.trim()) {
+            lines.push(`     instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
+          }
+          if (Array.isArray(step.completionCriteria) && step.completionCriteria.length > 0) {
+            lines.push("     completion:");
+            for (const criterion of step.completionCriteria) {
+              lines.push(`       - ${String(criterion)}`);
+            }
+          }
+        }
+      }
       if (payloads.length > 0) {
         if (lines.length > 0) lines.push("");
         lines.push(...payloads);
@@ -405,6 +451,23 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     }
     case "curate": {
       return formatCuratePlain(r, detail);
+    }
+    case "workflow-start":
+    case "workflow-status":
+    case "workflow-complete": {
+      return formatWorkflowStatusPlain(r);
+    }
+    case "workflow-next": {
+      return formatWorkflowNextPlain(r);
+    }
+    case "workflow-list": {
+      return formatWorkflowListPlain(r);
+    }
+    case "workflow-create": {
+      if (r.ref && r.path) {
+        return `Created ${String(r.ref)} at ${String(r.path)}`;
+      }
+      return null;
     }
     case "list": {
       const sources = Array.isArray(r.sources) ? (r.sources as Record<string, unknown>[]) : [];
@@ -478,6 +541,75 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     default:
       return null; // fall through to YAML
   }
+}
+
+function formatWorkflowListPlain(result: Record<string, unknown>): string {
+  const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
+  if (runs.length === 0) return "No workflow runs found.";
+
+  return runs
+    .map((run) => {
+      const id = typeof run.id === "string" ? run.id : "unknown";
+      const ref = typeof run.workflowRef === "string" ? run.workflowRef : "workflow:unknown";
+      const status = typeof run.status === "string" ? run.status : "unknown";
+      const currentStep = typeof run.currentStepId === "string" ? ` (current: ${run.currentStepId})` : "";
+      return `${id} ${ref} [${status}]${currentStep}`;
+    })
+    .join("\n");
+}
+
+function formatWorkflowStatusPlain(result: Record<string, unknown>): string | null {
+  const run =
+    typeof result.run === "object" && result.run !== null ? (result.run as Record<string, unknown>) : undefined;
+  const workflow =
+    typeof result.workflow === "object" && result.workflow !== null
+      ? (result.workflow as Record<string, unknown>)
+      : undefined;
+  if (!run || !workflow) return null;
+
+  const lines = [
+    `workflow: ${String(workflow.ref ?? "workflow:unknown")}`,
+    `run: ${String(run.id ?? "unknown")}`,
+    `title: ${String(run.workflowTitle ?? workflow.title ?? "Workflow")}`,
+    `status: ${String(run.status ?? "unknown")}`,
+  ];
+  if (run.currentStepId) lines.push(`currentStep: ${String(run.currentStepId)}`);
+
+  const steps = Array.isArray(workflow.steps) ? (workflow.steps as Array<Record<string, unknown>>) : [];
+  if (steps.length > 0) {
+    lines.push("steps:");
+    for (const step of steps) {
+      const title = typeof step.title === "string" ? step.title : "Untitled step";
+      const id = typeof step.id === "string" ? step.id : "unknown";
+      const status = typeof step.status === "string" ? step.status : "unknown";
+      lines.push(`  - ${title} [${id}] (${status})`);
+      if (typeof step.notes === "string" && step.notes.trim()) {
+        lines.push(`    notes: ${step.notes}`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatWorkflowNextPlain(result: Record<string, unknown>): string | null {
+  const base = formatWorkflowStatusPlain(result);
+  const step =
+    typeof result.step === "object" && result.step !== null ? (result.step as Record<string, unknown>) : undefined;
+  if (!step) return base;
+
+  const lines = base ? [base, "", "next:"] : ["next:"];
+  lines.push(`  ${String(step.title ?? "Untitled step")} [${String(step.id ?? "unknown")}]`);
+  if (typeof step.instructions === "string" && step.instructions.trim()) {
+    lines.push(`  instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
+  }
+  const completion = Array.isArray(step.completionCriteria) ? step.completionCriteria : [];
+  if (completion.length > 0) {
+    lines.push("  completion:");
+    for (const criterion of completion) {
+      lines.push(`    - ${String(criterion)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
@@ -1657,6 +1789,152 @@ function writeMarkdownAsset(options: {
   };
 }
 
+const workflowStartCommand = defineCommand({
+  meta: {
+    name: "start",
+    description: "Start a new workflow run",
+  },
+  args: {
+    ref: { type: "positional", description: "Workflow ref (workflow:<name>)", required: true },
+    params: { type: "string", description: "Workflow parameters as a JSON object" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await startWorkflowRun(args.ref, parseWorkflowJsonObject(args.params, "--params"));
+      output("workflow-start", result);
+    });
+  },
+});
+
+const workflowNextCommand = defineCommand({
+  meta: {
+    name: "next",
+    description: "Show the next actionable workflow step, auto-starting a run when passed a workflow ref",
+  },
+  args: {
+    target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await getNextWorkflowStep(args.target);
+      output("workflow-next", result);
+    });
+  },
+});
+
+const workflowCompleteCommand = defineCommand({
+  meta: {
+    name: "complete",
+    description: "Update a workflow step state and persist notes/evidence",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+    step: { type: "string", description: "Workflow step id", required: true },
+    state: { type: "string", description: "Step state (completed|blocked|failed|skipped)" },
+    notes: { type: "string", description: "Notes for the completed step" },
+    evidence: { type: "string", description: "Evidence JSON object for the step" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = completeWorkflowStep({
+        runId: args.runId,
+        stepId: args.step,
+        status: parseWorkflowStepState(args.state),
+        notes: args.notes,
+        evidence: args.evidence ? parseWorkflowJsonObject(args.evidence, "--evidence") : undefined,
+      });
+      output("workflow-complete", result);
+    });
+  },
+});
+
+const workflowStatusCommand = defineCommand({
+  meta: {
+    name: "status",
+    description: "Show full workflow run state for review or resume",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = getWorkflowStatus(args.runId);
+      output("workflow-status", result);
+    });
+  },
+});
+
+const workflowListCommand = defineCommand({
+  meta: {
+    name: "list",
+    description: "List workflow runs",
+  },
+  args: {
+    ref: { type: "string", description: "Filter to one workflow ref" },
+    active: { type: "boolean", description: "Only show active runs", default: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = listWorkflowRuns({ workflowRef: args.ref, activeOnly: args.active });
+      output("workflow-list", result);
+    });
+  },
+});
+
+const workflowCreateCommand = defineCommand({
+  meta: {
+    name: "create",
+    description: "Create a workflow markdown document in the working stash",
+  },
+  args: {
+    name: { type: "positional", description: "Workflow name", required: true },
+    from: { type: "string", description: "Import and validate markdown from an existing file" },
+    force: { type: "boolean", description: "Overwrite an existing workflow", default: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = createWorkflowAsset({
+        name: args.name,
+        from: args.from,
+        force: args.force,
+      });
+      output("workflow-create", { ok: true, ...result });
+    });
+  },
+});
+
+const workflowTemplateCommand = defineCommand({
+  meta: {
+    name: "template",
+    description: "Print a valid workflow markdown template",
+  },
+  run() {
+    process.stdout.write(getWorkflowTemplate());
+  },
+});
+
+const workflowCommand = defineCommand({
+  meta: {
+    name: "workflow",
+    description: "Author, inspect, and execute step-by-step workflow assets",
+  },
+  subCommands: {
+    start: workflowStartCommand,
+    next: workflowNextCommand,
+    complete: workflowCompleteCommand,
+    status: workflowStatusCommand,
+    list: workflowListCommand,
+    create: workflowCreateCommand,
+    template: workflowTemplateCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (hasWorkflowSubcommand(args)) return;
+      output("workflow-list", listWorkflowRuns({ activeOnly: true }));
+    });
+  },
+});
+
 const rememberCommand = defineCommand({
   meta: {
     name: "remember",
@@ -2163,6 +2441,7 @@ const main = defineCommand({
     search: searchCommand,
     curate: curateCommand,
     show: showCommand,
+    workflow: workflowCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
     lint: lintCommand,
@@ -2352,6 +2631,7 @@ akm curate "<task>"                          # Curate the best matches for a tas
 akm search "<query>" --type skill             # Filter by type
 akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
+akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
@@ -2370,6 +2650,7 @@ akm registry search "<query>"                 # Search all registries
 | command | A prompt template with placeholders to fill in |
 | agent | A system prompt with model and tool hints |
 | knowledge | A reference doc (use \`toc\` or \`section "..."\` to navigate) |
+| workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
 
 When an asset meaningfully helps or fails, record that with \`akm feedback\` so
@@ -2396,7 +2677,7 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`script\`, \`memory\`, \`any\` | \`any\` |
+| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`workflow\`, \`script\`, \`memory\`, \`any\` | \`any\` |
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
 | \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
@@ -2422,6 +2703,7 @@ akm show script:deploy.sh                     # Show script (returns run command
 akm show skill:code-review                    # Show skill (returns full content)
 akm show command:release                      # Show command (returns template)
 akm show agent:architect                      # Show agent (returns system prompt)
+akm show workflow:ship-release                # Show parsed workflow steps
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
@@ -2435,6 +2717,7 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 | command | \`template\`, \`description\`, \`parameters\` |
 | agent | \`prompt\`, \`description\`, \`modelHint\`, \`toolPolicy\` |
 | knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
+| workflow | \`workflowTitle\`, \`workflowParameters\`, \`steps\` |
 | memory | \`content\` (recalled context) |
 
 ## Capture Knowledge While You Work
@@ -2444,6 +2727,8 @@ akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
+akm workflow create ship-release               # Create a workflow asset in the stash
+akm workflow next workflow:ship-release        # Start or resume the next workflow step
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
 \`\`\`

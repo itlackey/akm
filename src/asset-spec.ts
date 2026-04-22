@@ -75,6 +75,12 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
+  workflow: {
+    stashDir: "workflows",
+    ...markdownSpec,
+    rendererName: "workflow-md",
+    actionBuilder: (ref) => `akm workflow next ${ref} -> start or resume the next step`,
+  },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
   vault: {
