@@ -1,11 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry } from "../common";
 import type { StashConfigEntry } from "../config";
 import { ConfigError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
-import { extractTarGzSecure } from "../registry-install";
+import { validateGitUrl } from "../registry-resolve";
 import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
@@ -18,9 +18,8 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface ParsedRepoUrl {
-  owner: string;
-  repo: string;
-  ref: string;
+  cloneUrl: string;
+  ref: string | null;
   canonicalUrl: string;
 }
 
@@ -58,7 +57,6 @@ registerStashProvider("github", (config) => new GitStashProvider(config));
 
 function getCachePaths(repoUrl: string): {
   rootDir: string;
-  archivePath: string;
   repoDir: string;
   indexPath: string;
 } {
@@ -66,7 +64,6 @@ function getCachePaths(repoUrl: string): {
   const rootDir = path.join(getRegistryIndexCacheDir(), `context-hub-${key}`);
   return {
     rootDir,
-    archivePath: path.join(rootDir, "repo.tar.gz"),
     repoDir: path.join(rootDir, "repo"),
     indexPath: path.join(rootDir, "index.json"),
   };
@@ -93,8 +90,7 @@ async function ensureGitMirror(
 
   try {
     fs.mkdirSync(cachePaths.rootDir, { recursive: true });
-    await downloadArchive(buildTarballUrl(repo), cachePaths.archivePath);
-    extractTarGzSecure(cachePaths.archivePath, cachePaths.repoDir);
+    cloneRepo(repo.cloneUrl, repo.ref, cachePaths.repoDir);
     // Touch index file to track freshness
     fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
   } catch (err) {
@@ -105,6 +101,24 @@ async function ensureGitMirror(
   }
 }
 
+function cloneRepo(cloneUrl: string, ref: string | null, destDir: string): void {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+
+  const args = ["clone", "--depth", "1"];
+  if (ref) args.push("--branch", ref);
+  args.push(cloneUrl, destDir);
+
+  const result = spawnSync("git", args, { encoding: "utf8", timeout: 120_000 });
+  if (result.status !== 0) {
+    const err = result.stderr?.trim() || result.error?.message || "unknown error";
+    throw new Error(`Failed to clone ${cloneUrl}: ${err}`);
+  }
+
+  // Remove .git directory — we only need the working tree
+  const gitDir = path.join(destDir, ".git");
+  if (fs.existsSync(gitDir)) fs.rmSync(gitDir, { recursive: true, force: true });
+}
+
 function hasExtractedRepo(repoDir: string): boolean {
   try {
     return fs.statSync(repoDir).isDirectory() && fs.statSync(path.join(repoDir, "content")).isDirectory();
@@ -113,32 +127,18 @@ function hasExtractedRepo(repoDir: string): boolean {
   }
 }
 
-async function downloadArchive(url: string, destination: string): Promise<void> {
-  const response = await fetchWithRetry(url, undefined, { timeout: 120_000, retries: 1 });
-  if (!response.ok) {
-    throw new Error(`Failed to download archive (${response.status}) from ${url}`);
-  }
-
-  const BunRuntime = (globalThis as Record<string, unknown>).Bun as {
-    write?: (path: string, body: Response) => Promise<number>;
-  };
-  if (BunRuntime?.write) {
-    await BunRuntime.write(destination, response);
-    return;
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  fs.writeFileSync(destination, Buffer.from(arrayBuffer));
-}
-
-function buildTarballUrl(repo: ParsedRepoUrl): string {
-  return `https://github.com/${repo.owner}/${repo.repo}/archive/refs/heads/${repo.ref}.tar.gz`;
-}
-
 function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
   if (!rawUrl) {
-    throw new ConfigError("Git provider requires a GitHub repository URL");
+    throw new ConfigError("Git provider requires a repository URL");
   }
+
+  // SSH shorthand: git@host:path — valid as-is, delegated to system git credentials
+  if (/^git@[^:]+:.+$/.test(rawUrl)) {
+    return { cloneUrl: rawUrl, ref: null, canonicalUrl: rawUrl };
+  }
+
+  // Validate URL scheme is safe before parsing
+  validateGitUrl(rawUrl);
 
   let parsed: URL;
   try {
@@ -147,38 +147,35 @@ function parseGitRepoUrl(rawUrl: string): ParsedRepoUrl {
     throw new ConfigError(`Git provider URL is not valid: "${rawUrl}"`);
   }
 
-  if (parsed.protocol !== "https:") {
-    throw new ConfigError(`Git provider URL must use https://, got "${parsed.protocol}"`);
-  }
-  if (parsed.hostname !== "github.com") {
-    throw new ConfigError(`Git provider only supports github.com URLs, got "${parsed.hostname}"`);
+  // GitHub web URLs: extract a clean clone URL and optional branch from /tree/<ref>
+  if (parsed.hostname === "github.com" && parsed.protocol === "https:") {
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) {
+      throw new ConfigError(`Git provider URL must point to a repository, got "${rawUrl}"`);
+    }
+
+    const owner = sanitizeString(segments[0]);
+    const repo = sanitizeString(segments[1].replace(/\.git$/i, ""));
+
+    if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+      throw new ConfigError(`Unsupported repository URL: "${rawUrl}"`);
+    }
+
+    let ref: string | null = null;
+    if (segments[2] === "tree" && segments.length >= 4) {
+      const rawRef = sanitizeString(segments.slice(3).join("/"), 255);
+      if (rawRef && !rawRef.includes("..") && /^[A-Za-z0-9._/-]+$/.test(rawRef)) {
+        ref = rawRef;
+      }
+    }
+
+    const cloneUrl = `https://github.com/${owner}/${repo}`;
+    const canonicalUrl = ref ? `${cloneUrl}/tree/${ref}` : cloneUrl;
+    return { cloneUrl, ref, canonicalUrl };
   }
 
-  const segments = parsed.pathname.split("/").filter(Boolean);
-  if (segments.length < 2) {
-    throw new ConfigError(`Git provider URL must point to a GitHub repository, got "${rawUrl}"`);
-  }
-
-  const owner = sanitizeString(segments[0]);
-  const repo = sanitizeString(segments[1].replace(/\.git$/i, ""));
-  let ref = "main";
-  if (segments[2] === "tree" && segments.length >= 4) {
-    ref = sanitizeString(segments.slice(3).join("/"), 255) || "main";
-  }
-
-  if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
-    throw new ConfigError(`Unsupported repository URL: "${rawUrl}"`);
-  }
-  if (!ref || ref.includes("..") || !/^[A-Za-z0-9._/-]+$/.test(ref)) {
-    throw new ConfigError(`Unsupported branch/ref in URL: "${rawUrl}"`);
-  }
-
-  return {
-    owner,
-    repo,
-    ref,
-    canonicalUrl: `https://github.com/${owner}/${repo}/tree/${ref}`,
-  };
+  // Any other valid git URL: use as-is, rely on system git credentials
+  return { cloneUrl: rawUrl, ref: null, canonicalUrl: rawUrl };
 }
 
 // ── Exports ─────────────────────────────────────────────────────────────────

@@ -23,16 +23,9 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function createTarball(sourceDir: string, archivePath: string): void {
-  const result = spawnSync("tar", ["czf", archivePath, "-C", path.dirname(sourceDir), path.basename(sourceDir)], {
-    encoding: "utf8",
-    timeout: 30_000,
-  });
-  expect(result.status).toBe(0);
-}
-
-function buildContextHubArchive(): string {
-  const repoDir = path.join(createTmpDir("akm-git-repo-"), "context-hub-main");
+/** Create a local git repo with akm-style content for use as a clone source in tests. */
+function createLocalGitRepo(): string {
+  const repoDir = createTmpDir("akm-git-repo-");
 
   writeFile(
     path.join(repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md"),
@@ -66,27 +59,23 @@ Chain multiple prompts together.
 `,
   );
 
-  const archivePath = path.join(createTmpDir("akm-git-archive-"), "context-hub-main.tar.gz");
-  createTarball(repoDir, archivePath);
-  return archivePath;
-}
-
-function mockArchiveFetch(archivePath: string): () => void {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "https://github.com/andrewyng/context-hub/archive/refs/heads/main.tar.gz") {
-      return new Response(Bun.file(archivePath), {
-        status: 200,
-        headers: { "Content-Type": "application/gzip" },
-      });
+  // Initialise a real git repo so git clone works from local path
+  for (const args of [
+    ["init"],
+    ["checkout", "-b", "main"],
+    ["config", "user.email", "test@test.com"],
+    ["config", "user.name", "Test"],
+    ["config", "commit.gpgsign", "false"],
+    ["add", "."],
+    ["commit", "-m", "init"],
+  ] as string[][]) {
+    const result = spawnSync("git", args, { cwd: repoDir, encoding: "utf8", timeout: 30_000 });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
     }
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
+  }
 
-  return () => {
-    globalThis.fetch = originalFetch;
-  };
+  return repoDir;
 }
 
 function createWorkingStash(): string {
@@ -157,48 +146,64 @@ describe("GitStashProvider", () => {
     expect(provider.canShow("skill:foo")).toBe(false);
   });
 
-  test("cache mirror extracts content to disk", async () => {
-    const archivePath = buildContextHubArchive();
-    const restoreFetch = mockArchiveFetch(archivePath);
+  test("cache mirror clones content to disk via git", async () => {
+    const localRepoPath = createLocalGitRepo();
+    // Construct ParsedRepoUrl directly to point at the local repo
+    const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
+    const cachePaths = getCachePaths(repo.canonicalUrl);
 
-    try {
-      const repo = parseGitRepoUrl("https://github.com/andrewyng/context-hub");
-      const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
 
-      // Verify extracted content exists
-      const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
-      expect(fs.existsSync(docPath)).toBe(true);
-      const content = fs.readFileSync(docPath, "utf8");
-      expect(content).toContain("# Chat API");
-    } finally {
-      restoreFetch();
-    }
+    // Verify cloned content exists at the expected path
+    const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
+    expect(fs.existsSync(docPath)).toBe(true);
+    const content = fs.readFileSync(docPath, "utf8");
+    expect(content).toContain("# Chat API");
+  });
+
+  test("cache mirror respects TTL and skips re-clone when fresh", async () => {
+    const localRepoPath = createLocalGitRepo();
+    const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+
+    // Prime the cache
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+
+    // Remove the content to verify it is NOT re-cloned (cache is still fresh)
+    const docPath = path.join(cachePaths.repoDir, "content", "openai", "docs", "chat-api", "python", "DOC.md");
+    fs.rmSync(docPath);
+
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: false });
+
+    // File should still be absent — clone was skipped due to fresh cache
+    expect(fs.existsSync(docPath)).toBe(false);
   });
 
   test("integrates with stash sources via ensureGitCaches", async () => {
-    const archivePath = buildContextHubArchive();
-    const restoreFetch = mockArchiveFetch(archivePath);
+    // Pre-populate the cache so ensureGitMirror returns early without cloning
+    const stashUrl = "https://github.com/andrewyng/context-hub";
+    const repo = parseGitRepoUrl(stashUrl);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
 
-    try {
-      saveConfig({
-        semanticSearchMode: "off",
-        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
-      });
-      resetConfigCache();
+    fs.mkdirSync(cachePaths.rootDir, { recursive: true });
+    fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
+    fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
 
-      const { ensureGitCaches } = await import("../../src/search-source");
-      const { loadConfig } = await import("../../src/config");
-      const config = loadConfig();
-      await ensureGitCaches(config);
+    saveConfig({
+      semanticSearchMode: "off",
+      stashes: [{ type: "context-hub", url: stashUrl, name: "context-hub" }],
+    });
+    resetConfigCache();
 
-      // Verify context-hub content dir appears in stash sources
-      const { resolveStashSources } = await import("../../src/search-source");
-      const sources = resolveStashSources(undefined, config);
-      const gitSource = sources.find((s) => s.path.includes("context-hub-"));
-      expect(gitSource).toBeDefined();
-    } finally {
-      restoreFetch();
-    }
+    const { ensureGitCaches } = await import("../../src/search-source");
+    const { loadConfig } = await import("../../src/config");
+    const config = loadConfig();
+    await ensureGitCaches(config);
+
+    // Verify context-hub content dir appears in stash sources
+    const { resolveStashSources } = await import("../../src/search-source");
+    const sources = resolveStashSources(undefined, config);
+    const gitSource = sources.find((s) => s.path.includes("context-hub-"));
+    expect(gitSource).toBeDefined();
   });
 });
