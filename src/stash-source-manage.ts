@@ -39,15 +39,21 @@ export function addStash(opts: {
   name?: string;
   providerType?: string;
   options?: Record<string, unknown>;
+  writable?: boolean;
 }): SourceAddResult {
-  const { target, name, providerType, options: providerOptions } = opts;
+  const { target, name, providerType, options: providerOptions, writable } = opts;
   const config = loadUserConfig();
   const stashes = [...(config.stashes ?? [])];
-  const isUrl = target.startsWith("http://") || target.startsWith("https://");
+  const isRemoteUrl =
+    target.startsWith("http://") ||
+    target.startsWith("https://") ||
+    target.startsWith("git@") ||
+    target.startsWith("ssh://") ||
+    target.startsWith("git://");
 
   let entry: StashConfigEntry;
 
-  if (isUrl) {
+  if (isRemoteUrl) {
     if (!providerType) {
       throw new UsageError("--provider is required for URL sources (e.g. --provider openviking)");
     }
@@ -57,6 +63,7 @@ export function addStash(opts: {
     }
     entry = { type: providerType, url: target };
     if (name) entry.name = name;
+    if (writable) entry.writable = true;
     if (providerOptions) entry.options = providerOptions;
   } else {
     // Filesystem path

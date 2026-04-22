@@ -995,6 +995,11 @@ const addCommand = defineCommand({
     provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
     options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
     name: { type: "string", description: "Human-friendly name for the source" },
+    writable: {
+      type: "boolean",
+      description: "Mark a git stash as writable so changes can be pushed back",
+      default: false,
+    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
@@ -1038,6 +1043,7 @@ const addCommand = defineCommand({
           name: args.name,
           providerType: args.provider,
           options: parsedOptions,
+          writable: args.writable,
         });
         output("stash-add", result);
         return;
