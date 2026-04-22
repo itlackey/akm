@@ -22,6 +22,7 @@ import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedder";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
+import { probeLlmCapabilities } from "./llm";
 import { getDefaultStashDir } from "./paths";
 import { clearSemanticStatus, deriveSemanticProviderFingerprint, writeSemanticStatus } from "./semantic-status";
 
@@ -291,7 +292,10 @@ async function stepStashDir(current: AkmConfig): Promise<string> {
 
 interface OllamaChoices {
   embedding?: EmbeddingConnectionConfig;
-  llm?: LlmConnectionConfig;
+  /** Detected Ollama endpoint, surfaced to the LLM step so it can offer Ollama as a preset. */
+  ollamaEndpoint?: string;
+  /** Detected Ollama chat-capable model names. */
+  ollamaChatModels?: string[];
 }
 
 async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
@@ -306,8 +310,8 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       "Ollama is not running. Embeddings will use the built-in local model.\n" +
         "To use Ollama later, install it from https://ollama.com and re-run `akm setup`.",
     );
-    // Preserve existing embedding/LLM config when Ollama is not available
-    return { embedding: current.embedding, llm: current.llm };
+    // Preserve existing embedding config when Ollama is not available
+    return { embedding: current.embedding };
   }
 
   spin.stop(`Ollama detected at ${ollama.endpoint}`);
@@ -384,51 +388,215 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
   }
   // else: undefined → use built-in local
 
-  // LLM model selection
-  const chatModels = ollama.models.filter((m) => !embeddingModels.includes(m));
-  const allLlmCandidates = chatModels.length > 0 ? chatModels : ollama.models;
+  // Surface Ollama details to the LLM step so it can offer Ollama as a preset.
+  const ollamaChatModels = ollama.models.filter((m) => !embeddingModels.includes(m));
 
-  let llm: LlmConnectionConfig | undefined;
+  return { embedding, ollamaEndpoint: ollama.endpoint, ollamaChatModels };
+}
 
-  const llmOptions: Array<{ value: string; label: string; hint?: string }> = [];
-  for (const m of allLlmCandidates) {
-    llmOptions.push({ value: m, label: m, hint: "Ollama" });
+// ── LLM provider step ──────────────────────────────────────────────────────
+
+interface LlmPreset {
+  value: string;
+  label: string;
+  endpoint: string;
+  defaultModel: string;
+  hint?: string;
+  /** Default context window for the preset's recommended model. */
+  contextWindow?: number;
+}
+
+const LLM_PRESETS: LlmPreset[] = [
+  {
+    value: "anthropic",
+    label: "Anthropic (Claude)",
+    endpoint: "https://api.anthropic.com/v1/chat/completions",
+    defaultModel: "claude-sonnet-4-6",
+    hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
+    contextWindow: 200_000,
+  },
+  {
+    value: "openai",
+    label: "OpenAI",
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    defaultModel: "gpt-4o-mini",
+    hint: "AKM_LLM_API_KEY required",
+    contextWindow: 128_000,
+  },
+  {
+    value: "google",
+    label: "Google Gemini",
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    defaultModel: "gemini-2.0-flash",
+    hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
+    contextWindow: 1_000_000,
+  },
+];
+
+/**
+ * Step 3a: pick an LLM provider. Used both for indexing-time metadata
+ * enhancement and for the knowledge-wiki ingest/lint workflow.
+ *
+ * @internal Exported for testing only.
+ */
+export async function stepLlm(
+  current: AkmConfig,
+  ollamaEndpoint?: string,
+  ollamaChatModels?: string[],
+): Promise<LlmConnectionConfig | undefined> {
+  const options: Array<{ value: string; label: string; hint?: string }> = LLM_PRESETS.map((preset) => ({
+    value: preset.value,
+    label: preset.label,
+    hint: preset.hint,
+  }));
+
+  const ollamaAvailable = Boolean(ollamaEndpoint && ollamaChatModels && ollamaChatModels.length > 0);
+  if (ollamaAvailable) {
+    options.push({
+      value: "ollama",
+      label: "Ollama (local)",
+      hint: ollamaChatModels?.[0] ?? "local",
+    });
   }
-  llmOptions.push({
-    value: "none",
-    label: "Skip LLM enhancement",
-    hint: "use heuristic metadata",
-  });
-
+  options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
+  options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement, wiki ingest disabled" });
   if (current.llm) {
-    llmOptions.push({
+    options.push({
       value: "keep",
       label: `Keep current: ${current.llm.provider ?? current.llm.endpoint}`,
       hint: current.llm.model,
     });
   }
 
-  const llmChoice = await prompt(() =>
+  const initialValue = current.llm ? "keep" : ollamaAvailable ? "ollama" : (LLM_PRESETS[0]?.value ?? "none");
+
+  const choice = await prompt(() =>
     p.select({
-      message: "Use an LLM for richer metadata during indexing?",
-      options: llmOptions,
-      initialValue: allLlmCandidates.length > 0 ? allLlmCandidates[0] : "none",
+      message: "Configure an LLM for richer metadata and the knowledge-wiki workflow:",
+      options,
+      initialValue,
     }),
   );
 
-  if (llmChoice === "keep") {
-    llm = current.llm;
-  } else if (llmChoice !== "none") {
+  if (choice === "keep") return current.llm;
+  if (choice === "none") return undefined;
+
+  let llm: LlmConnectionConfig;
+
+  if (choice === "ollama") {
+    const modelChoice = await prompt(() =>
+      p.select({
+        message: "Which Ollama model?",
+        options: (ollamaChatModels ?? []).map((m) => ({ value: m, label: m })),
+        initialValue: ollamaChatModels?.[0],
+      }),
+    );
     llm = {
       provider: "ollama",
-      endpoint: `${ollama.endpoint}/v1/chat/completions`,
-      model: llmChoice,
+      endpoint: `${ollamaEndpoint}/v1/chat/completions`,
+      model: modelChoice,
       temperature: 0.3,
-      maxTokens: 512,
+      maxTokens: 1024,
+    };
+  } else if (choice === "custom") {
+    const endpoint = await prompt(() =>
+      p.text({
+        message: "OpenAI-compatible chat completions endpoint:",
+        placeholder: "https://your-host/v1/chat/completions",
+        validate: (v) => {
+          if (!v?.trim()) return "Endpoint cannot be empty";
+          if (!v.startsWith("http://") && !v.startsWith("https://"))
+            return "Endpoint must start with http:// or https://";
+        },
+      }),
+    );
+    const model = await prompt(() =>
+      p.text({
+        message: "Model name:",
+        placeholder: "gpt-4o-mini",
+        validate: (v) => {
+          if (!v?.trim()) return "Model name cannot be empty";
+        },
+      }),
+    );
+    llm = {
+      provider: "custom",
+      endpoint: endpoint.trim(),
+      model: model.trim(),
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+  } else {
+    const preset = LLM_PRESETS.find((p) => p.value === choice);
+    if (!preset) return undefined;
+    const model = await prompt(() =>
+      p.text({
+        message: `Model for ${preset.label}:`,
+        placeholder: preset.defaultModel,
+        defaultValue: preset.defaultModel,
+        validate: (v) => {
+          if (!v?.trim()) return "Model name cannot be empty";
+        },
+      }),
+    );
+    llm = {
+      provider: preset.value,
+      endpoint: preset.endpoint,
+      model: model.trim() || preset.defaultModel,
+      temperature: 0.3,
+      maxTokens: 1024,
+      contextWindow: preset.contextWindow,
     };
   }
 
-  return { embedding, llm };
+  // Optional: prompt for an API key inline. Storing in config is best-effort —
+  // we recommend the env var path because config files may be world-readable.
+  const needsKey = llm.provider !== "ollama" && !llm.endpoint.includes("localhost");
+  if (needsKey && !process.env.AKM_LLM_API_KEY) {
+    const action = await prompt(() =>
+      p.select({
+        message: "How should the API key be provided?",
+        options: [
+          { value: "env", label: "Set AKM_LLM_API_KEY in your shell", hint: "recommended" },
+          { value: "config", label: "Store it in akm config now", hint: "stored in plain text" },
+        ],
+        initialValue: "env",
+      }),
+    );
+    if (action === "config") {
+      const key = await prompt(() =>
+        p.password({
+          message: "Paste API key:",
+          validate: (v) => {
+            if (!v?.trim()) return "API key cannot be empty";
+          },
+        }),
+      );
+      llm.apiKey = key.trim();
+    }
+  }
+
+  // Capability probe — best-effort, never blocks setup.
+  const probeSpin = p.spinner();
+  probeSpin.start("Probing LLM (structured-output round-trip)...");
+  const probe = await probeLlmCapabilities(llm);
+  if (probe.reachable && probe.structuredOutput) {
+    probeSpin.stop("LLM reachable; structured output verified.");
+    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: true };
+  } else if (probe.reachable) {
+    probeSpin.stop("LLM reachable but structured-output probe failed.");
+    p.log.warn(
+      "Knowledge-wiki ingest/lint requires strict JSON. The selected model may produce loose JSON; try `akm import --llm` and watch for empty plans.",
+    );
+    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: false };
+  } else {
+    probeSpin.stop("LLM not reachable.");
+    p.log.warn(
+      `Could not reach the LLM endpoint${probe.error ? ` (${probe.error})` : ""}. Configuration was saved; verify your endpoint and API key, then retry.`,
+    );
+  }
+
+  return llm;
 }
 
 async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[] | undefined> {
@@ -719,9 +887,16 @@ export async function runSetupWizard(): Promise<void> {
     );
   }
 
-  // Step 2: Ollama / Embedding / LLM
-  p.log.step("Step 2: Embedding & LLM");
-  const { embedding, llm } = online ? await stepOllama(current) : { embedding: current.embedding, llm: current.llm };
+  // Step 2: Embedding (Ollama detection drives the embedding choice + surfaces
+  // the Ollama endpoint to the LLM step that follows).
+  p.log.step("Step 2: Embedding");
+  const { embedding, ollamaEndpoint, ollamaChatModels } = online
+    ? await stepOllama(current)
+    : { embedding: current.embedding };
+
+  // Step 2b: LLM provider — Anthropic / OpenAI / Gemini / Ollama / custom.
+  p.log.step("Step 2b: LLM Provider");
+  const llm = online ? await stepLlm(current, ollamaEndpoint, ollamaChatModels) : current.llm;
 
   // Step 3: Semantic search assets
   p.log.step("Step 3: Semantic Search");

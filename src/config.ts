@@ -21,8 +21,17 @@ export interface EmbeddingConnectionConfig {
   localModel?: string;
 }
 
+export interface LlmCapabilities {
+  /** Model emits strict JSON reliably (probed during setup). */
+  structuredOutput?: boolean;
+  /** Model handles long-context inputs (>32k tokens). */
+  longContext?: boolean;
+  /** Model supports tool/function calling. */
+  toolUse?: boolean;
+}
+
 export interface LlmConnectionConfig {
-  /** Provider name for display (e.g. "openai", "ollama") */
+  /** Provider name for display (e.g. "openai", "anthropic", "google", "ollama") */
   provider?: string;
   /** OpenAI-compatible chat completions endpoint (e.g. "http://localhost:11434/v1/chat/completions") */
   endpoint: string;
@@ -34,6 +43,10 @@ export interface LlmConnectionConfig {
   maxTokens?: number;
   /** Optional API key for authenticated endpoints */
   apiKey?: string;
+  /** Approximate context window in tokens. Used to size ingest/lint chunks. */
+  contextWindow?: number;
+  /** Capability flags learned at setup time; consumed by knowledge-wiki ingest/lint. */
+  capabilities?: LlmCapabilities;
 }
 
 export interface RegistryConfigEntry {
@@ -542,6 +555,22 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
+  }
+  if (
+    typeof obj.contextWindow === "number" &&
+    Number.isFinite(obj.contextWindow) &&
+    Number.isInteger(obj.contextWindow) &&
+    obj.contextWindow > 0
+  ) {
+    result.contextWindow = obj.contextWindow;
+  }
+  if (typeof obj.capabilities === "object" && obj.capabilities !== null && !Array.isArray(obj.capabilities)) {
+    const capsRaw = obj.capabilities as Record<string, unknown>;
+    const caps: LlmConnectionConfig["capabilities"] = {};
+    if (typeof capsRaw.structuredOutput === "boolean") caps.structuredOutput = capsRaw.structuredOutput;
+    if (typeof capsRaw.longContext === "boolean") caps.longContext = capsRaw.longContext;
+    if (typeof capsRaw.toolUse === "boolean") caps.toolUse = capsRaw.toolUse;
+    if (Object.keys(caps).length > 0) result.capabilities = caps;
   }
   return result;
 }
