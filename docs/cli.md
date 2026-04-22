@@ -409,9 +409,28 @@ akm import - --name scratch-notes < notes.md
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
+| `--llm` | Run LLM-driven wiki ingest: copy source to `raw/`, update related pages, and log the change |
+| `--dry-run` | With `--llm`, print the plan without writing pages or log entries (raw source is still copied) |
 
 The source must be a readable file path, or `-` to read the document from
-stdin.
+stdin. Use `--llm` to trigger the full knowledge-wiki ingest workflow — see
+[Knowledge Wiki](knowledge-wiki.md) for details.
+
+### lint
+
+Audit the knowledge wiki for contradictions, orphaned pages, stale claims, and
+missing cross-references. Requires an LLM to be configured.
+
+```sh
+akm lint               # Report findings only
+akm lint --fix         # Apply low-risk suggested fixes (missing-xref additions)
+```
+
+| Flag | Description |
+| --- | --- |
+| `--fix` | Apply low-risk suggested fixes and log each change |
+
+See [Knowledge Wiki](knowledge-wiki.md) for the full lint workflow.
 
 ### feedback
 
