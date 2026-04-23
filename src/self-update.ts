@@ -9,8 +9,8 @@ import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
-const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/.+\/node_modules\//;
-const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:\.pnpm(?:-global)?|pnpm(?:-global)?)(\/|$)/;
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/[^/]+)*\/node_modules\//;
 
 export type InstallMethod = UpgradeCheckResponse["installMethod"];
 
@@ -34,7 +34,7 @@ export function getInstallSignals(): InstallSignals {
 
 export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   const s = signals ?? getInstallSignals();
-  const normalizedImportMetaDir = normalizeInstallPath(s.importMetaDir);
+  const normalizedImportMetaDir = normalizePathSeparators(s.importMetaDir);
 
   if (normalizedImportMetaDir.includes(NODE_MODULES_SEGMENT)) {
     if (BUN_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
@@ -343,7 +343,7 @@ function parseChecksumForFile(checksumsText: string, filename: string): string |
   return undefined;
 }
 
-function normalizeInstallPath(value: string | undefined): string {
+function normalizePathSeparators(value: string | undefined): string {
   return (value ?? "").replaceAll("\\", "/");
 }
 
