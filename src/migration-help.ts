@@ -40,7 +40,7 @@ const EMBEDDED_MIGRATION_GUIDES: Record<string, string> = {
 
 function loadChangelog(): string | undefined {
   try {
-    const changelogPath = path.resolve(import.meta.dir ?? __dirname, "../CHANGELOG.md");
+    const changelogPath = path.resolve(import.meta.dir, "../CHANGELOG.md");
     if (fs.existsSync(changelogPath)) {
       return fs.readFileSync(changelogPath, "utf8");
     }
@@ -48,6 +48,10 @@ function loadChangelog(): string | undefined {
     // fall through to embedded notes
   }
   return undefined;
+}
+
+function escapeRegexString(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeRequestedVersion(input: string): string {
@@ -74,10 +78,7 @@ function resolveLatestVersion(changelog: string): string | undefined {
 }
 
 function extractChangelogSection(changelog: string, version: string): string | undefined {
-  const pattern = new RegExp(
-    `^## \\[${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|\\Z)`,
-    "m",
-  );
+  const pattern = new RegExp(`^## \\[${escapeRegexString(version)}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|\\Z)`, "m");
   const match = changelog.match(pattern);
   if (!match) return undefined;
   return `## [${version}]\n${match[1].trim()}\n`;
