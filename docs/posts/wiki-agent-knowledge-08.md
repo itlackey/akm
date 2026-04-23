@@ -1,8 +1,8 @@
 ---
-title: "Building Agent Knowledge Bases That Actually Scale"
+title: Building Agent Knowledge Bases That Actually Scale
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: "akm 0.5.0 ships multi-wiki support modeled on Karpathy's LLM Wiki pattern — a searchable, maintainable knowledge base an agent and human build together."
+description: 'akm 0.5.0 ships multi-wiki support modeled on Karpathy''s LLM Wiki pattern — a searchable, maintainable knowledge base an agent and human build together.'
 tags:
   - ai
   - agents
@@ -10,6 +10,7 @@ tags:
   - knowledge
 published: false
 date: '2026-04-22T00:00:00Z'
+id: 3538936
 ---
 
 This is part eight in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck) introduced progressive disclosure. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) unified your local assets across platforms. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added persistent memory. Previous parts addressed teams, distributed stashes, and community knowledge.
