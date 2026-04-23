@@ -46,6 +46,7 @@ export interface IndexResponse {
   mode: "full" | "incremental";
   directoriesScanned: number;
   directoriesSkipped: number;
+  warnings?: string[];
   verification: IndexVerification;
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
@@ -152,7 +153,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // doFullDelete=true merges the wipe into the same transaction as the
     // inserts so readers never see an empty database mid-rebuild.
     const doFullDelete = options?.full || !isIncremental;
-    const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = await indexEntries(
+    const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm, warnings } = await indexEntries(
       db,
       allStashSources,
       isIncremental,
@@ -255,6 +256,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       mode: isIncremental ? "incremental" : "full",
       directoriesScanned: scannedDirs,
       directoriesSkipped: skippedDirs,
+      ...(warnings.length > 0 ? { warnings } : {}),
       verification,
       timing: {
         totalMs: tEnd - t0,
@@ -281,6 +283,7 @@ async function indexEntries(
   scannedDirs: number;
   skippedDirs: number;
   generatedCount: number;
+  warnings: string[];
   dirsNeedingLlm: Array<{
     dirPath: string;
     files: string[];
@@ -302,6 +305,7 @@ async function indexEntries(
   let scannedDirs = 0;
   let skippedDirs = 0;
   let generatedCount = 0;
+  const warnings: string[] = [];
   const seenPaths = new Set<string>();
   const dirsNeedingLlm: Array<{
     dirPath: string;
@@ -389,6 +393,7 @@ async function indexEntries(
         const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
         if (uncoveredFiles.length > 0) {
           const generated = await generateMetadataFlat(currentStashDir, uncoveredFiles);
+          if (generated.warnings?.length) warnings.push(...generated.warnings);
           if (generated.entries.length > 0) {
             stash = { entries: [...stash.entries, ...generated.entries] };
             generatedCount += generated.entries.length;
@@ -398,6 +403,7 @@ async function indexEntries(
 
       if (!stash) {
         const generated = await generateMetadataFlat(currentStashDir, files);
+        if (generated.warnings?.length) warnings.push(...generated.warnings);
         if (generated.entries.length > 0) {
           stash = { entries: generated.entries };
           generatedCount += generated.entries.length;
@@ -485,7 +491,7 @@ async function indexEntries(
 
   insertTransaction();
 
-  return { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm };
+  return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
 }
 
 async function enhanceDirsWithLlm(

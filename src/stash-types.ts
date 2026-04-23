@@ -145,6 +145,7 @@ export type SourceKind = "local" | "managed" | "remote";
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
+  wiki?: string;
   path?: string;
   ref?: string;
   provider?: string;

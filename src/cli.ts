@@ -510,6 +510,7 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
         const ver = typeof src.version === "string" ? ` v${src.version}` : "";
         const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
         const flags: string[] = [];
+        if (typeof src.wiki === "string") flags.push(`wiki:${src.wiki}`);
         if (src.updatable === true) flags.push("updatable");
         if (src.writable === true) flags.push("writable");
         const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
@@ -2703,7 +2704,8 @@ const wikiCreateCommand = defineCommand({
 const wikiRegisterCommand = defineCommand({
   meta: {
     name: "register",
-    description: "Register an existing directory or repo as a first-class wiki without copying or mutating it",
+    description:
+      "Register an existing directory or repo as a first-class wiki without copying or mutating it; refreshes source and wiki search state immediately",
   },
   args: {
     name: { type: "positional", description: "Wiki name (lowercase, digits, hyphens)", required: true },
@@ -2766,7 +2768,8 @@ const wikiShowCommand = defineCommand({
 const wikiRemoveCommand = defineCommand({
   meta: {
     name: "remove",
-    description: "Remove a wiki. Preserves raw/ by default; pass --with-sources to also delete raw/",
+    description:
+      "Remove a wiki and refresh the index. Preserves raw/ by default; pass --with-sources to also delete raw/",
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
@@ -2788,8 +2791,10 @@ const wikiRemoveCommand = defineCommand({
       }
       const withSources = Boolean((args as Record<string, unknown>)["with-sources"]);
       const { removeWiki } = await import("./wiki.js");
+      const { akmIndex } = await import("./indexer");
       const stashDir = resolveStashDir();
       const result = removeWiki(stashDir, args.name, { withSources });
+      await akmIndex({ stashDir });
       output("wiki-remove", result);
     });
   },
@@ -2817,7 +2822,7 @@ const wikiSearchCommand = defineCommand({
   meta: {
     name: "search",
     description:
-      "Search wiki pages within a single wiki (scoped wrapper over `akm search --type wiki`; excludes raw/schema/index/log)",
+      "Search wiki pages within a single wiki (scoped wrapper over `akm search --type wiki`; excludes raw/schema/index/log and returns canonical wiki refs)",
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },

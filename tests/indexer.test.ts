@@ -229,6 +229,57 @@ test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash so
   }
 });
 
+test("akmIndex skips malformed workflow assets and reports warnings", async () => {
+  const stashDir = tmpStash();
+  writeFile(
+    path.join(stashDir, "workflows", "good.md"),
+    [
+      "---",
+      "description: Good workflow",
+      "---",
+      "",
+      "# Workflow: Good",
+      "",
+      "## Step: First",
+      "Step ID: first",
+      "### Instructions",
+      "Do it.",
+      "",
+    ].join("\n"),
+  );
+  writeFile(
+    path.join(stashDir, "workflows", "bad.md"),
+    [
+      "---",
+      "description: Bad workflow",
+      "---",
+      "",
+      "# Workflow: Bad",
+      "",
+      "This prose breaks the parser.",
+      "",
+      "## Step: First",
+      "Step ID: first",
+      "### Instructions",
+      "Do it.",
+      "",
+    ].join("\n"),
+  );
+
+  const result = await akmIndex({ stashDir, full: true });
+
+  expect(result.totalEntries).toBe(1);
+  expect(result.warnings).toBeDefined();
+  expect(result.warnings?.some((warning) => warning.includes(path.join(stashDir, "workflows", "bad.md")))).toBe(true);
+
+  const db = openDatabase();
+  const workflowEntries = getAllEntries(db, "workflow")
+    .map((row) => row.entry.name)
+    .sort();
+  expect(workflowEntries).toEqual(["good"]);
+  closeDatabase(db);
+});
+
 test("akmIndex generates TOC in database for knowledge entries", async () => {
   const stashDir = tmpStash();
   writeFile(

@@ -108,6 +108,36 @@ afterEach(() => {
 // ── 2.1 Database search path (FTS scoring) ──────────────────────────────────
 
 describe("Database search path (FTS scoring)", () => {
+  test("registered external wiki hits use canonical wiki refs and actions", async () => {
+    const stashDir = tmpStash();
+    const externalWiki = createTmpDir("akm-search-ext-wiki-");
+
+    writeFile(
+      path.join(externalWiki, "tools", "documentation", "how-to", "001-get-started-with-ics-documentation.md"),
+      "---\ndescription: Documentation getting started guide\n---\n# Start\n",
+    );
+
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({
+      semanticSearchMode: "off",
+      stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+    });
+    await akmIndex({ stashDir, full: true });
+
+    const result = await akmSearch({ query: "documentation", type: "wiki", source: "stash" });
+    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const wikiHit = expectDefined(
+      localHits.find(
+        (hit) => hit.ref === "wiki:ics-docs/tools/documentation/how-to/001-get-started-with-ics-documentation",
+      ),
+    );
+
+    expect(wikiHit.origin).toBeNull();
+    expect(wikiHit.action).toBe(
+      "akm show wiki:ics-docs/tools/documentation/how-to/001-get-started-with-ics-documentation -> read the wiki page",
+    );
+  });
+
   test("FTS search returns scored results for matching query", async () => {
     const stashDir = tmpStash();
 

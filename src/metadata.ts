@@ -68,6 +68,7 @@ export interface StashEntry {
 
 export interface StashFile {
   entries: StashEntry[];
+  warnings?: string[];
 }
 
 // ── Load / Write ────────────────────────────────────────────────────────────
@@ -429,6 +430,7 @@ export async function generateMetadata(
   typeRoot = dirPath,
 ): Promise<StashFile> {
   const entries: StashEntry[] = [];
+  const warnings: string[] = [];
   const pkgMeta = extractPackageMetadata(dirPath);
 
   for (const file of files) {
@@ -499,7 +501,12 @@ export async function generateMetadata(
       const renderer = await getRenderer(match.renderer);
       if (renderer?.extractMetadata) {
         const renderCtx = buildRenderContext(fileCtx, match, [typeRoot]);
-        renderer.extractMetadata(entry, renderCtx);
+        try {
+          renderer.extractMetadata(entry, renderCtx);
+        } catch (error) {
+          warnings.push(buildMetadataSkipWarning(file, assetType, error));
+          continue;
+        }
       }
     }
 
@@ -523,7 +530,7 @@ export async function generateMetadata(
     entries.push(entry);
   }
 
-  return { entries };
+  return warnings.length > 0 ? { entries, warnings } : { entries };
 }
 
 /**
@@ -535,6 +542,7 @@ export async function generateMetadata(
  */
 export async function generateMetadataFlat(stashRoot: string, files: string[]): Promise<StashFile> {
   const entries: StashEntry[] = [];
+  const warnings: string[] = [];
   const pkgMetaCache = new Map<string, ReturnType<typeof extractPackageMetadata>>();
 
   for (const file of files) {
@@ -613,7 +621,12 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     const renderer = await getRenderer(match.renderer);
     if (renderer?.extractMetadata) {
       const renderCtx = buildRenderContext(ctx, match, [stashRoot]);
-      renderer.extractMetadata(entry, renderCtx);
+      try {
+        renderer.extractMetadata(entry, renderCtx);
+      } catch (error) {
+        warnings.push(buildMetadataSkipWarning(file, assetType, error));
+        continue;
+      }
     }
 
     // Filename heuristics fallback
@@ -632,7 +645,14 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     entries.push(entry);
   }
 
-  return { entries };
+  return warnings.length > 0 ? { entries, warnings } : { entries };
+}
+
+function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const warning = `Skipped malformed ${assetType} asset at ${filePath}: ${detail}`;
+  warn(warning);
+  return warning;
 }
 
 function normalizeTerms(values: string[]): string[] {

@@ -73,7 +73,8 @@ search database (run whenever you add or change assets). They are separate
 steps — `init` sets up the folders, `index` makes their contents searchable.
 
 Run `akm index --full` to force a complete rebuild instead of an incremental
-update.
+update. If a workflow file is malformed, akm now skips that asset, continues
+indexing the rest of the stash, and reports the skipped file in `warnings`.
 
 ## Search
 
