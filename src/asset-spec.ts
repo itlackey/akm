@@ -106,6 +106,12 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     actionBuilder: (ref) =>
       `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
   },
+  wiki: {
+    stashDir: "wikis",
+    ...markdownSpec,
+    rendererName: "wiki-md",
+    actionBuilder: (ref) => `akm show ${ref} -> read the wiki page`,
+  },
 };
 
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;

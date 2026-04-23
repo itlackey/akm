@@ -54,7 +54,6 @@ directory. Project config files are meant to be edited directly in the project.
 | `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
 | `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
-| `knowledge.pageKinds` | array | `[]` | Extra page kinds for the knowledge wiki (beyond the defaults: entity, concept, question, note) |
 
 ## Embedding Configuration
 
@@ -222,15 +221,3 @@ akm info
 If `searchModes` includes `"semantic"` with `"ready-vec"`, the native extension
 is working. If it shows `"ready-js"`, the JS fallback is in use.
 
-## Knowledge Wiki
-
-The `knowledge.pageKinds` setting extends the built-in wiki taxonomy. When set,
-the LLM is told about the extra categories during `akm import --llm` and
-`index.md` gets matching sections.
-
-```sh
-akm config set knowledge '{"pageKinds":["decision-record","glossary"]}'
-```
-
-For a full guide to wiki setup, page frontmatter, operations, and use-case
-examples see [Knowledge Wiki](knowledge-wiki.md).

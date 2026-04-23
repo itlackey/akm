@@ -200,6 +200,18 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
 
+    // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort
+    // — errors are caught inside regenerateAllWikiIndexes and never block the
+    // index run. The primary stash is the only target: additional sources
+    // are read-only caches, and regenerating their indexes would mutate
+    // cache content.
+    try {
+      const { regenerateAllWikiIndexes } = await import("./wiki.js");
+      regenerateAllWikiIndexes(stashDir);
+    } catch {
+      /* best-effort */
+    }
+
     // Generate embeddings if semantic search is enabled
     const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
 

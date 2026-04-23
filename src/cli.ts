@@ -457,6 +457,30 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     case "curate": {
       return formatCuratePlain(r, detail);
     }
+    case "wiki-list": {
+      return formatWikiListPlain(r);
+    }
+    case "wiki-show": {
+      return formatWikiShowPlain(r);
+    }
+    case "wiki-create": {
+      return formatWikiCreatePlain(r);
+    }
+    case "wiki-remove": {
+      return formatWikiRemovePlain(r);
+    }
+    case "wiki-pages": {
+      return formatWikiPagesPlain(r);
+    }
+    case "wiki-stash": {
+      return formatWikiStashPlain(r);
+    }
+    case "wiki-lint": {
+      return formatWikiLintPlain(r);
+    }
+    case "wiki-ingest": {
+      return formatWikiIngestPlain(r);
+    }
     case "workflow-start":
     case "workflow-status":
     case "workflow-complete": {
@@ -669,6 +693,94 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
   }
 
   return lines.join("\n").trimEnd();
+}
+
+function formatWikiListPlain(r: Record<string, unknown>): string {
+  const wikis = Array.isArray(r.wikis) ? (r.wikis as Array<Record<string, unknown>>) : [];
+  if (wikis.length === 0) return "No wikis. Create one with `akm wiki create <name>`.";
+  const lines = ["NAME\tPAGES\tRAWS\tLAST-MODIFIED"];
+  for (const w of wikis) {
+    const name = typeof w.name === "string" ? w.name : "?";
+    const pages = typeof w.pages === "number" ? w.pages : 0;
+    const raws = typeof w.raws === "number" ? w.raws : 0;
+    const modified = typeof w.lastModified === "string" ? w.lastModified : "-";
+    lines.push(`${name}\t${pages}\t${raws}\t${modified}`);
+  }
+  return lines.join("\n");
+}
+
+function formatWikiShowPlain(r: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (r.name) lines.push(`# wiki: ${String(r.name)}`);
+  if (r.path) lines.push(`path: ${String(r.path)}`);
+  if (r.description) lines.push(`description: ${String(r.description)}`);
+  if (typeof r.pages === "number") lines.push(`pages: ${r.pages}`);
+  if (typeof r.raws === "number") lines.push(`raws: ${r.raws}`);
+  if (r.lastModified) lines.push(`lastModified: ${String(r.lastModified)}`);
+  const recentLog = Array.isArray(r.recentLog) ? (r.recentLog as string[]) : [];
+  if (recentLog.length > 0) {
+    lines.push("", "recent log:");
+    for (const entry of recentLog) {
+      lines.push(entry);
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function formatWikiCreatePlain(r: Record<string, unknown>): string {
+  const created = Array.isArray(r.created) ? (r.created as string[]) : [];
+  const skipped = Array.isArray(r.skipped) ? (r.skipped as string[]) : [];
+  const lines = [`Created wiki ${String(r.ref ?? r.name)} at ${String(r.path ?? "?")}`];
+  if (created.length > 0) lines.push(`  created: ${created.length} file(s)`);
+  if (skipped.length > 0) lines.push(`  skipped: ${skipped.length} existing file(s)`);
+  return lines.join("\n");
+}
+
+function formatWikiRemovePlain(r: Record<string, unknown>): string {
+  const preserved = r.preservedRaw === true;
+  const removed = Array.isArray(r.removed) ? (r.removed as string[]).length : 0;
+  const base = `Removed wiki ${String(r.name ?? "?")} (${removed} path(s))`;
+  return preserved ? `${base}; preserved ${String(r.rawPath ?? "raw/")}` : base;
+}
+
+function formatWikiPagesPlain(r: Record<string, unknown>): string {
+  const pages = Array.isArray(r.pages) ? (r.pages as Array<Record<string, unknown>>) : [];
+  if (pages.length === 0) return `No pages in wiki:${String(r.wiki ?? "?")}.`;
+  const lines: string[] = [];
+  for (const p of pages) {
+    const ref = String(p.ref ?? "?");
+    const kind = typeof p.pageKind === "string" ? ` [${p.pageKind}]` : "";
+    const desc = typeof p.description === "string" && p.description ? ` — ${p.description}` : "";
+    lines.push(`${ref}${kind}${desc}`);
+  }
+  return lines.join("\n");
+}
+
+function formatWikiStashPlain(r: Record<string, unknown>): string {
+  const slug = String(r.slug ?? "?");
+  const pathValue = String(r.path ?? "?");
+  return `Stashed ${slug} → ${pathValue}`;
+}
+
+function formatWikiLintPlain(r: Record<string, unknown>): string {
+  const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
+  const pagesScanned = typeof r.pagesScanned === "number" ? r.pagesScanned : 0;
+  const rawsScanned = typeof r.rawsScanned === "number" ? r.rawsScanned : 0;
+  const header = `${findings.length} finding(s) in wiki:${String(r.wiki ?? "?")} (${pagesScanned} page(s), ${rawsScanned} raw(s))`;
+  if (findings.length === 0) return `${header} — clean.`;
+  const lines = [header];
+  for (const f of findings) {
+    const kind = String(f.kind ?? "?");
+    const message = String(f.message ?? "");
+    lines.push(`- [${kind}] ${message}`);
+  }
+  return lines.join("\n");
+}
+
+function formatWikiIngestPlain(r: Record<string, unknown>): string {
+  if (typeof r.workflow === "string") return r.workflow;
+  return JSON.stringify(r, null, 2);
 }
 
 function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
@@ -1997,98 +2109,19 @@ const importKnowledgeCommand = defineCommand({
       description: "Overwrite an existing knowledge document with the same name",
       default: false,
     },
-    llm: {
-      type: "boolean",
-      description: "Run the LLM-driven wiki ingest: copy source to raw/, update related pages, log the change",
-      default: false,
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "With --llm, print the plan without writing pages or log entries (raw source is still copied)",
-      default: false,
-    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
-      if (!args.llm) {
-        const { content, preferredName } = readKnowledgeContent(args.source);
-        const result = writeMarkdownAsset({
-          type: "knowledge",
-          content,
-          name: args.name,
-          fallbackPrefix: "knowledge",
-          preferredName,
-          force: args.force,
-        });
-        output("import", { ok: true, source: args.source, ...result });
-        return;
-      }
-
-      const { ingestSource, bootstrapKnowledgeWiki } = await import("./knowledge-wiki");
-      const config = loadConfig();
-      if (!config.llm) {
-        throw new UsageError(
-          "No LLM configured. Run `akm setup` to add an LLM (Anthropic, OpenAI, Gemini, Ollama, or custom).",
-        );
-      }
-      const stashDir = resolveStashDir();
-      bootstrapKnowledgeWiki(stashDir, config);
       const { content, preferredName } = readKnowledgeContent(args.source);
-      const dryRun = Boolean((args as Record<string, unknown>)["dry-run"]);
-      const result = await ingestSource({
+      const result = writeMarkdownAsset({
+        type: "knowledge",
         content,
-        preferredName: args.name ?? preferredName,
-        dryRun,
-        stashDir,
-        llm: config.llm,
-        config,
+        name: args.name,
+        fallbackPrefix: "knowledge",
+        preferredName,
+        force: args.force,
       });
-      if (!dryRun && result.applied) {
-        await akmIndex({ stashDir });
-      }
-      output("import", {
-        ok: true,
-        mode: dryRun ? "dry-run" : "applied",
-        source: args.source,
-        rawPath: result.rawPath,
-        rawSlug: result.rawSlug,
-        candidates: result.candidates.map((c) => c.ref),
-        plan: result.plan ?? null,
-        applied: result.applied ?? null,
-      });
-    });
-  },
-});
-
-const lintCommand = defineCommand({
-  meta: {
-    name: "lint",
-    description: "Audit the knowledge wiki for contradictions, orphans, stale claims, and missing cross-references",
-  },
-  args: {
-    fix: {
-      type: "boolean",
-      description: "Apply low-risk suggested fixes (currently: missing-xref additions). Logs each change.",
-      default: false,
-    },
-  },
-  async run({ args }) {
-    return runWithJsonErrors(async () => {
-      const { bootstrapKnowledgeWiki, lintWiki } = await import("./knowledge-wiki");
-      const config = loadConfig();
-      if (!config.llm) {
-        throw new UsageError("No LLM configured. Run `akm setup` to add one.");
-      }
-      const stashDir = resolveStashDir();
-      bootstrapKnowledgeWiki(stashDir, config);
-      const result = await lintWiki({ stashDir, llm: config.llm, fix: args.fix });
-      output("lint", {
-        ok: true,
-        mode: args.fix ? "fix" : "report",
-        pagesScanned: result.pagesScanned,
-        report: result.report ?? null,
-        applied: result.applied ?? null,
-      });
+      output("import", { ok: true, source: args.source, ...result });
     });
   },
 });
@@ -2424,6 +2457,210 @@ const vaultCommand = defineCommand({
   },
 });
 
+// ── Wiki subcommands ─────────────────────────────────────────────────────────
+
+const wikiCreateCommand = defineCommand({
+  meta: { name: "create", description: "Scaffold a new wiki under <stashDir>/wikis/<name>/" },
+  args: {
+    name: { type: "positional", description: "Wiki name (lowercase, digits, hyphens)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { createWiki } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const result = createWiki(stashDir, args.name);
+      output("wiki-create", result);
+    });
+  },
+});
+
+const wikiListCommand = defineCommand({
+  meta: { name: "list", description: "List wikis with page/raw counts and last-modified timestamps" },
+  run() {
+    return runWithJsonErrors(async () => {
+      const { listWikis } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const wikis = listWikis(stashDir);
+      output("wiki-list", { wikis });
+    });
+  },
+});
+
+const wikiShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a wiki's path, description, counts, and last 3 log entries" },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { showWiki } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const result = showWiki(stashDir, args.name);
+      output("wiki-show", result);
+    });
+  },
+});
+
+const wikiRemoveCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a wiki. Preserves raw/ by default; pass --with-sources to also delete raw/",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+    force: {
+      type: "boolean",
+      description: "Remove without prompting (required in non-interactive shells)",
+      default: false,
+    },
+    "with-sources": {
+      type: "boolean",
+      description: "Also delete the raw/ directory (immutable ingested sources)",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (!args.force) {
+        throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
+      }
+      const withSources = Boolean((args as Record<string, unknown>)["with-sources"]);
+      const { removeWiki } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const result = removeWiki(stashDir, args.name, { withSources });
+      output("wiki-remove", result);
+    });
+  },
+});
+
+const wikiPagesCommand = defineCommand({
+  meta: {
+    name: "pages",
+    description: "List wiki pages (ref + frontmatter description), excluding schema/index/log/raw",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { listPages } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const pages = listPages(stashDir, args.name);
+      output("wiki-pages", { wiki: args.name, pages });
+    });
+  },
+});
+
+const wikiSearchCommand = defineCommand({
+  meta: { name: "search", description: "Search within a single wiki (scoped wrapper over `akm search --type wiki`)" },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+    query: { type: "positional", description: "Search query", required: true },
+    limit: { type: "string", description: "Max hits (default 20)", required: false },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { searchInWiki } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const parsedLimit = args.limit ? Number(args.limit) : undefined;
+      const limit =
+        typeof parsedLimit === "number" && Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
+      const response = await searchInWiki({ stashDir, wikiName: args.name, query: args.query, limit });
+      output("search", response);
+    });
+  },
+});
+
+const wikiStashCommand = defineCommand({
+  meta: {
+    name: "stash",
+    description:
+      "Copy a source into wikis/<name>/raw/<slug>.md with frontmatter. Source may be a file path or '-' for stdin.",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+    source: { type: "positional", description: "Source file path, or '-' to read from stdin", required: true },
+    as: { type: "string", description: "Preferred slug base (defaults to source filename or first-line slug)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { stashRaw } = await import("./wiki.js");
+      const { content, preferredName } = readKnowledgeContent(args.source);
+      const stashDir = resolveStashDir();
+      const result = stashRaw({
+        stashDir,
+        wikiName: args.name,
+        content,
+        preferredName: args.as ?? preferredName,
+      });
+      output("wiki-stash", { ok: true, wiki: args.name, source: args.source, ...result });
+    });
+  },
+});
+
+const wikiLintCommand = defineCommand({
+  meta: {
+    name: "lint",
+    description: "Structural lint for a wiki: orphans, broken xrefs, missing descriptions, uncited raws, stale index",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { lintWiki } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const report = lintWiki(stashDir, args.name);
+      output("wiki-lint", report);
+    });
+  },
+});
+
+const wikiIngestCommand = defineCommand({
+  meta: {
+    name: "ingest",
+    description: "Print the ingest workflow for this wiki. Does not perform the ingest; instructs the agent to.",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { buildIngestWorkflow } = await import("./wiki.js");
+      const stashDir = resolveStashDir();
+      const result = buildIngestWorkflow(stashDir, args.name);
+      output("wiki-ingest", result);
+    });
+  },
+});
+
+const wikiCommand = defineCommand({
+  meta: {
+    name: "wiki",
+    description:
+      "Manage multiple markdown wikis (Karpathy-style). akm surfaces (lifecycle, raw/, lint, index); the agent writes pages.",
+  },
+  subCommands: {
+    create: wikiCreateCommand,
+    list: wikiListCommand,
+    show: wikiShowCommand,
+    remove: wikiRemoveCommand,
+    pages: wikiPagesCommand,
+    search: wikiSearchCommand,
+    stash: wikiStashCommand,
+    lint: wikiLintCommand,
+    ingest: wikiIngestCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (hasWikiSubcommand(args)) return;
+      // Default action: list wikis
+      const { listWikis } = await import("./wiki.js");
+      output("wiki-list", { wikis: listWikis(resolveStashDir()) });
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -2451,7 +2688,6 @@ const main = defineCommand({
     workflow: workflowCommand,
     remember: rememberCommand,
     import: importKnowledgeCommand,
-    lint: lintCommand,
     save: saveCommand,
     clone: cloneCommand,
     registry: registryCommand,
@@ -2462,11 +2698,13 @@ const main = defineCommand({
     hints: hintsCommand,
     completions: completionsCommand,
     vault: vaultCommand,
+    wiki: wikiCommand,
   },
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "load"]);
+const WIKI_SUBCOMMAND_SET = new Set(["create", "list", "show", "remove", "pages", "search", "stash", "lint", "ingest"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
 // citty reads process.argv directly and does not accept a custom argv array,
@@ -2529,6 +2767,11 @@ function hasConfigSubcommand(args: Record<string, unknown>): boolean {
 function hasVaultSubcommand(args: Record<string, unknown>): boolean {
   const command = Array.isArray(args._) ? args._[0] : undefined;
   return typeof command === "string" && VAULT_SUBCOMMAND_SET.has(command);
+}
+
+function hasWikiSubcommand(args: Record<string, unknown>): boolean {
+  const command = Array.isArray(args._) ? args._[0] : undefined;
+  return typeof command === "string" && WIKI_SUBCOMMAND_SET.has(command);
 }
 
 /**

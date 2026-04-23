@@ -55,10 +55,9 @@ export interface StashEntry {
    */
   wikiRole?: "schema" | "index" | "log" | "raw" | "page";
   /**
-   * Page archetype for wiki pages. Defaults shipped by akm are `entity`,
-   * `concept`, `question`, `note` (see `DEFAULT_PAGE_KINDS` in
-   * `src/knowledge-page-kinds.ts`), but any non-empty string is accepted so
-   * users can introduce new categories without code changes.
+   * Page archetype for wiki pages. Any non-empty string is accepted so users
+   * can introduce categories freely (e.g. `entity`, `concept`, `question`,
+   * `note`, `decision-record`). Wiki conventions live in `schema.md`.
    */
   pageKind?: string;
   /** Cross-references to other knowledge entries by ref (e.g. "knowledge:auth-design"). */

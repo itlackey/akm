@@ -30,16 +30,6 @@ export interface LlmCapabilities {
   toolUse?: boolean;
 }
 
-export interface KnowledgeConfig {
-  /**
-   * Additional page kinds beyond the built-in defaults
-   * (entity, concept, question, note). Empty/missing means "defaults only".
-   * Custom kinds are always accepted in frontmatter; this field exists so
-   * the LLM prompt and `index.md` include them as first-class categories.
-   */
-  pageKinds?: string[];
-}
-
 export interface LlmConnectionConfig {
   /** Provider name for display (e.g. "openai", "anthropic", "google", "ollama") */
   provider?: string;
@@ -55,7 +45,7 @@ export interface LlmConnectionConfig {
   apiKey?: string;
   /** Approximate context window in tokens. Used to size ingest/lint chunks. */
   contextWindow?: number;
-  /** Capability flags learned at setup time; consumed by knowledge-wiki ingest/lint. */
+  /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
 }
 
@@ -136,8 +126,6 @@ export interface AkmConfig {
   stashes?: StashConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
   security?: SecurityConfig;
-  /** Knowledge-wiki behaviour overrides (page taxonomy etc.) */
-  knowledge?: KnowledgeConfig;
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
 }
@@ -347,9 +335,6 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const security = parseSecurityConfig(raw.security);
   if (security) config.security = security;
 
-  const knowledge = parseKnowledgeConfig(raw.knowledge);
-  if (knowledge) config.knowledge = knowledge;
-
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;
 
@@ -360,19 +345,6 @@ function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefine
   const raw = readConfigObject(configPath);
   const expanded = raw ? expandEnvVars(raw) : undefined;
   return expanded ? pickKnownKeys(expanded) : undefined;
-}
-
-function parseKnowledgeConfig(value: unknown): KnowledgeConfig | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  const config: KnowledgeConfig = {};
-  if (Array.isArray(obj.pageKinds)) {
-    const kinds = obj.pageKinds
-      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
-      .map((v) => v.trim());
-    if (kinds.length > 0) config.pageKinds = kinds;
-  }
-  return Object.keys(config).length > 0 ? config : undefined;
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {

@@ -198,7 +198,6 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 - [CLI Reference](cli.md)
 - [Kit Maker's Guide](kit-makers.md) -- How to build and share a kit
 - [Registry](registry.md) -- Finding and installing kits
-- [Knowledge Wiki](knowledge-wiki.md) -- Configuring and using the LLM-driven knowledge wiki
 - [Search Architecture](technical/search.md) -- Hybrid search details
 - [Indexing](technical/indexing.md) -- How the search index is built
 - [Filesystem Layout](technical/filesystem.md) -- Directory structure and metadata schema

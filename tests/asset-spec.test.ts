@@ -38,7 +38,8 @@ describe("ASSET_TYPES", () => {
     expect(ASSET_TYPES).toContain("script");
     expect(ASSET_TYPES).toContain("memory");
     expect(ASSET_TYPES).toContain("vault");
-    expect(ASSET_TYPES).toHaveLength(8);
+    expect(ASSET_TYPES).toContain("wiki");
+    expect(ASSET_TYPES).toHaveLength(9);
   });
 });
 

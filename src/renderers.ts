@@ -369,6 +369,89 @@ const knowledgeMdRenderer: AssetRenderer = {
   },
 };
 
+// ── 4b. wiki-md ──────────────────────────────────────────────────────────────
+
+const WIKI_PAGE_ACTION = "Wiki page — read below. Use 'toc' to scan, 'section <heading>' for depth.";
+
+const wikiMdRenderer: AssetRenderer = {
+  name: "wiki-md",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const v = (ctx.matchResult.meta?.view as KnowledgeView) ?? { mode: "full" };
+    const content = ctx.content();
+
+    switch (v.mode) {
+      case "toc": {
+        const toc = parseMarkdownToc(content);
+        return {
+          type: "wiki",
+          name,
+          path: ctx.absPath,
+          action: WIKI_PAGE_ACTION,
+          content: formatToc(toc),
+        };
+      }
+      case "frontmatter": {
+        const fm = extractFrontmatterOnly(content);
+        return {
+          type: "wiki",
+          name,
+          path: ctx.absPath,
+          action: WIKI_PAGE_ACTION,
+          content: fm ?? "(no frontmatter)",
+        };
+      }
+      case "section": {
+        const section = extractSection(content, v.heading);
+        if (!section) {
+          return {
+            type: "wiki",
+            name,
+            path: ctx.absPath,
+            action: WIKI_PAGE_ACTION,
+            content: `Section "${v.heading}" not found in ${name}. Try \`akm show wiki:${name} toc\` to discover available headings.`,
+          };
+        }
+        return {
+          type: "wiki",
+          name,
+          path: ctx.absPath,
+          action: WIKI_PAGE_ACTION,
+          content: section.content,
+        };
+      }
+      case "lines": {
+        return {
+          type: "wiki",
+          name,
+          path: ctx.absPath,
+          action: WIKI_PAGE_ACTION,
+          content: extractLineRange(content, v.start, v.end),
+        };
+      }
+      default: {
+        return {
+          type: "wiki",
+          name,
+          path: ctx.absPath,
+          action: WIKI_PAGE_ACTION,
+          content,
+        };
+      }
+    }
+  },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    try {
+      const toc = parseMarkdownToc(ctx.content());
+      if (toc.headings.length > 0) entry.toc = toc.headings;
+    } catch {
+      // Non-fatal: skip TOC if file can't be read
+    }
+  },
+};
+
 // ── 5. memory-md ─────────────────────────────────────────────────────────────
 
 const memoryMdRenderer: AssetRenderer = {
@@ -553,6 +636,7 @@ const builtinRenderers: AssetRenderer[] = [
   commandMdRenderer,
   agentMdRenderer,
   knowledgeMdRenderer,
+  wikiMdRenderer,
   memoryMdRenderer,
   workflowMdRenderer,
   scriptSourceRenderer,
@@ -581,5 +665,6 @@ export {
   scriptSourceRenderer,
   skillMdRenderer,
   vaultEnvRenderer,
+  wikiMdRenderer,
   workflowMdRenderer,
 };
