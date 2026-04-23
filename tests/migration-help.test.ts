@@ -23,7 +23,7 @@ describe("migration help", () => {
     expect(result).toContain("## [0.5.0]");
   });
 
-  test("static package files required for published runtime help exist in the repo", () => {
+  test("ensures published static files exist in the repo", () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8")) as {
       files?: string[];
     };
