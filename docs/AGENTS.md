@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
@@ -14,6 +14,8 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 akm workflow next workflow:ship-release       # Resume the active run or start a new one
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
+akm wiki list                                 # List wikis (multi-wiki knowledge bases)
+akm wiki ingest <name>                        # Print the ingest workflow for a wiki
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
@@ -34,6 +36,7 @@ akm registry search "<query>"                 # Search all registries
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
 | vault | Keys and comments only; values stay on disk and load via `akm vault load` |
+| wiki | A page in a multi-wiki knowledge base. For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. `akm wiki -h` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.

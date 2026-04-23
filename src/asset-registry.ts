@@ -23,6 +23,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   memory: "memory-md",
   workflow: "workflow-md",
   vault: "vault-env",
+  wiki: "wiki-md",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -36,6 +37,7 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>
     `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
+  wiki: (ref) => `akm show ${ref} -> read the wiki page`,
 };
 
 /**

@@ -51,8 +51,9 @@ akm init                         # Initialize at the default location
 akm init --dir ~/custom-stash    # Initialize at a custom location
 ```
 
-Creates `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, and `memories/`
-subdirectories under the stash path. See
+Creates one subdirectory per asset type under the stash path — currently
+`scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
+`memories/`, `vaults/`, and `wikis/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ### setup
@@ -502,28 +503,9 @@ akm import - --name scratch-notes < notes.md
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
-| `--llm` | Run LLM-driven wiki ingest: copy source to `raw/`, update related pages, and log the change |
-| `--dry-run` | With `--llm`, print the plan without writing pages or log entries (raw source is still copied) |
 
 The source must be a readable file path, or `-` to read the document from
-stdin. Use `--llm` to trigger the full knowledge-wiki ingest workflow — see
-[Knowledge Wiki](knowledge-wiki.md) for details.
-
-### lint
-
-Audit the knowledge wiki for contradictions, orphaned pages, stale claims, and
-missing cross-references. Requires an LLM to be configured.
-
-```sh
-akm lint               # Report findings only
-akm lint --fix         # Apply low-risk suggested fixes (missing-xref additions)
-```
-
-| Flag | Description |
-| --- | --- |
-| `--fix` | Apply low-risk suggested fixes and log each change |
-
-See [Knowledge Wiki](knowledge-wiki.md) for the full lint workflow.
+stdin.
 
 ### feedback
 
@@ -645,6 +627,58 @@ the CLI.
 ```sh
 akm hints
 ```
+
+### wiki
+
+Manage multiple markdown wikis following the Karpathy LLM-wiki pattern.
+Each wiki lives at `<stashDir>/wikis/<name>/` and contains `schema.md`
+(the per-wiki rulebook), `index.md` (a regenerable catalog), `log.md`
+(append-only activity log), a `raw/` directory of immutable ingested
+sources, and any number of agent-authored pages. See
+[wikis.md](wikis.md) for the full guide.
+
+Design principle: **akm surfaces, the agent writes.** akm owns lifecycle,
+raw-slug generation, structural lint, and index regeneration. Page edits
+use the agent's native `Read` / `Write` / `Edit` tools. No LLM calls are
+made anywhere in the wiki surface.
+
+```sh
+akm wiki create research
+akm wiki list
+akm wiki show research
+echo "# Attention Is All You Need" | akm wiki stash research - --as attention
+akm wiki pages research
+akm wiki search research "attention"
+akm wiki lint research
+akm wiki ingest research               # prints the workflow; does nothing else
+akm wiki remove research --force       # preserves raw/ by default
+akm wiki remove research --force --with-sources
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `create <name>` | Scaffold `wikis/<name>/` with empty `schema.md`, `index.md`, `log.md`, and `raw/` |
+| `list` | List wikis with page and raw counts plus last-modified timestamps |
+| `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
+| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force` |
+| `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
+| `search <name> <query>` | Scope-filtered search — equivalent to `akm search <query> --type wiki` filtered to one wiki |
+| `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
+| `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index |
+| `ingest <name>` | Print the step-by-step ingest workflow for the named wiki. Does not perform any ingest |
+
+Wiki names must match `^[a-z0-9][a-z0-9-]*$`. Wiki pages are also
+first-class in stash-wide `akm search` (`--type wiki`), so consumers who
+don't care about scoping never need to use `akm wiki search` at all.
+
+**Side effect:** `akm index` regenerates each wiki's `index.md` as part of
+its normal stash walk — there is no separate `reindex` verb.
+
+**Not provided:** no `page-create`, `page-append`, `xref`, `log-append`,
+`reindex`, or `migrate` verb. Those are the agent's job using its native
+file tools against paths surfaced by `show` and `pages`.
 
 ### completions
 

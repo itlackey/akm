@@ -1,7 +1,7 @@
 /**
  * Built-in asset matchers for the akm file classification system.
  *
- * Four matchers are registered at module load time, each at a different
+ * Five matchers are registered at module load time, each at a different
  * specificity level. Extension and content determine type; directories are
  * optional specificity boosts, not requirements.
  *
@@ -15,6 +15,8 @@
  *   and body content for agent/command signals; falls back to "knowledge"
  *   at specificity 5 when no signals are found. Command signals (`agent`
  *   frontmatter, `$ARGUMENTS`/`$1`-`$3` placeholders) return 18.
+ * - `wikiMatcher` (20) -- classifies any `.md` under `wikis/<name>/…` as
+ *   `wiki`. Registered last so the later-wins tiebreaker beats agent at 20.
  */
 
 import { SCRIPT_EXTENSIONS } from "./asset-spec";
@@ -36,7 +38,9 @@ import { registerMatcher } from "./file-context";
 export function extensionMatcher(ctx: FileContext): MatchResult | null {
   // SKILL.md is a skill regardless of location — high specificity beats
   // smartMdMatcher's knowledge fallback and all directory-based matchers.
-  if (ctx.fileName === "SKILL.md") {
+  // Exception: files under wikis/<name>/… are always wiki pages; the wiki
+  // directory is an authoritative signal that outranks the filename.
+  if (ctx.fileName === "SKILL.md" && !ctx.ancestorDirs.includes("wikis")) {
     return { type: "skill", specificity: 25, renderer: "skill-md" };
   }
 
@@ -212,10 +216,38 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
   return { type: "knowledge", specificity: 5, renderer: "knowledge-md" };
 }
 
+// ── wikiMatcher (specificity: 20) ──────────────────────────────────────────
+
+/**
+ * Classify any `.md` file that lives under `wikis/<name>/…` as `wiki`.
+ *
+ * Registered AFTER `smartMdMatcher` so the registered-later-wins tiebreaker
+ * puts wiki ahead of agent at specificity 20. That means a wiki page with
+ * agent-style frontmatter (e.g. `tools:`) still classifies as a wiki page,
+ * not an agent. That's intentional — the directory is the authoritative
+ * signal: files under `wikis/` are wiki content.
+ *
+ * Requires at least one path segment after `wikis/` (the wiki name) — a
+ * stray `.md` at the bare `wikis/` root is not a wiki page.
+ */
+export function wikiMatcher(ctx: FileContext): MatchResult | null {
+  if (ctx.ext !== ".md") return null;
+  const idx = ctx.ancestorDirs.indexOf("wikis");
+  if (idx < 0) return null;
+  if (idx + 1 >= ctx.ancestorDirs.length) return null;
+  return { type: "wiki", specificity: 20, renderer: "wiki-md" };
+}
+
 // ── Registration ────────────────────────────────────────────────────────────
 
 /** All built-in matchers in registration order (later wins ties). */
-const builtinMatchers: AssetMatcher[] = [extensionMatcher, directoryMatcher, parentDirHintMatcher, smartMdMatcher];
+const builtinMatchers: AssetMatcher[] = [
+  extensionMatcher,
+  directoryMatcher,
+  parentDirHintMatcher,
+  smartMdMatcher,
+  wikiMatcher,
+];
 
 /**
  * Register all built-in matchers with the file-context registry.

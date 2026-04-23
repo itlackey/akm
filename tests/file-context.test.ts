@@ -552,9 +552,9 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 8 renderers", async () => {
+  test("getAllRenderers() returns all 9 renderers", async () => {
     const all = await getAllRenderers();
-    expect(all).toHaveLength(8);
+    expect(all).toHaveLength(9);
 
     const names = all.map((r) => r.name).sort();
     expect(names).toEqual([
@@ -565,6 +565,7 @@ describe("Renderer", () => {
       "script-source",
       "skill-md",
       "vault-env",
+      "wiki-md",
       "workflow-md",
     ]);
   });

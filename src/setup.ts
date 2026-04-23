@@ -434,8 +434,7 @@ const LLM_PRESETS: LlmPreset[] = [
 ];
 
 /**
- * Step 3a: pick an LLM provider. Used both for indexing-time metadata
- * enhancement and for the knowledge-wiki ingest/lint workflow.
+ * Step 3a: pick an LLM provider. Used for indexing-time metadata enhancement.
  *
  * @internal Exported for testing only.
  */
@@ -459,7 +458,7 @@ export async function stepLlm(
     });
   }
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
-  options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement, wiki ingest disabled" });
+  options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
   if (current.llm) {
     options.push({
       value: "keep",
@@ -472,7 +471,7 @@ export async function stepLlm(
 
   const choice = await prompt(() =>
     p.select({
-      message: "Configure an LLM for richer metadata and the knowledge-wiki workflow:",
+      message: "Configure an LLM for richer metadata during indexing:",
       options,
       initialValue,
     }),
@@ -555,7 +554,7 @@ export async function stepLlm(
   const needsKey = llm.provider !== "ollama" && !llm.endpoint.includes("localhost");
   if (needsKey && !process.env.AKM_LLM_API_KEY) {
     p.log.info(
-      "This provider requires an API key. Set AKM_LLM_API_KEY in your shell (e.g. `export AKM_LLM_API_KEY=...`) before running `akm import --llm` or `akm lint`.",
+      "This provider requires an API key. Set AKM_LLM_API_KEY in your shell (e.g. `export AKM_LLM_API_KEY=...`) before running `akm index`.",
     );
   }
 
@@ -568,9 +567,6 @@ export async function stepLlm(
     llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: true };
   } else if (probe.reachable) {
     probeSpin.stop("LLM reachable but structured-output probe failed.");
-    p.log.warn(
-      "Knowledge-wiki ingest/lint requires strict JSON. The selected model may produce loose JSON; try `akm import --llm` and watch for empty plans.",
-    );
     llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: false };
   } else {
     probeSpin.stop("LLM not reachable.");

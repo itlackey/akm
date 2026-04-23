@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-akm (Agent Kit Manager) -- CLI tool for managing AI agent assets (skills, commands, agents, knowledge, scripts, memories).
+akm (Agent Kit Manager) -- CLI tool for managing AI agent assets (skills, commands, agents, knowledge, scripts, memories, workflows, vaults, wikis).
 
 ## Build & Test
 

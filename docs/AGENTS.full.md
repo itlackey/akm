@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
@@ -16,7 +16,7 @@ akm curate "<task>"                          # Curate the best matches for a tas
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `any` | `any` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `wiki`, `any` | `any` |
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
@@ -48,6 +48,7 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
 | vault | `keys`, `comments` (values are never returned) |
+| wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. |
 
 ## Capture Knowledge While You Work
 
@@ -64,6 +65,34 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
+
+## Wikis
+
+Multi-wiki knowledge bases (Karpathy-style). Each wiki is a directory at
+`<stashDir>/wikis/<name>/` with `schema.md`, `index.md`, `log.md`, `raw/`,
+and agent-authored pages. akm owns lifecycle + raw-slug + lint + index
+regeneration; page edits use your native Read/Write/Edit tools.
+
+```sh
+akm wiki list                                  # List wikis (name, pages, raws, last-modified)
+akm wiki create research                       # Scaffold a new wiki
+akm wiki show research                         # Path, description, counts, last 3 log entries
+akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log/raw)
+akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
+akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
+echo "..." | akm wiki stash research -         # stdin form
+akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
+akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
+akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
+akm wiki remove research --force --with-sources # Full nuke, including raw/
+```
+
+**For any wiki task, start with `akm wiki list`, then `akm wiki ingest <name>`
+to get the step-by-step workflow.** Wiki pages are also addressable as
+`wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
+`type: wiki`. No `--llm` anywhere — akm never reasons about page content.
+
+See [wikis.md](wikis.md) for the full guide.
 
 ## Add & Manage Sources
 
