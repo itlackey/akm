@@ -1607,7 +1607,22 @@ const saveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = saveGitStash(args.name, args.message);
+      // Fix: citty can consume `--format json` (space-separated) as the
+      // positional `name` argument (e.g. `akm save --format json` parses
+      // name="json"). Detect this by checking whether the positional value
+      // equals the value of the --format flag as seen in process.argv.
+      const parsedFormat = parseFlagValue("--format");
+      const effectiveName =
+        args.name !== undefined && parsedFormat !== undefined && args.name === parsedFormat ? undefined : args.name;
+
+      let writable: boolean | undefined;
+      if (!effectiveName) {
+        // Primary stash — honour the root-level writable flag from config.
+        const cfg = loadConfig();
+        writable = cfg.writable === true ? true : undefined;
+      }
+
+      const result = saveGitStash(effectiveName, args.message, writable);
       output("save", result);
     });
   },
@@ -3132,6 +3147,36 @@ akm wiki remove research --force --with-sources # Full nuke, including raw/
 to get the step-by-step workflow.** Wiki pages are also addressable as
 \`wiki:<name>/<page-path>\` and show up in stash-wide \`akm search\` as
 \`type: wiki\`. No \`--llm\` anywhere — akm never reasons about page content.
+
+## Vaults
+
+Encrypted-at-rest key/value stores for secrets. Each vault is a \`.env\`-format
+file at \`<stashDir>/vaults/<name>.env\`.
+
+\`\`\`sh
+akm vault create prod                         # Create a new vault
+akm vault set prod DB_URL postgres://...      # Set a key (or KEY=VALUE combined form)
+akm vault set prod DB_URL=postgres://...      # Combined KEY=VALUE form also works
+akm vault unset prod DB_URL                   # Remove a key
+akm vault list vault:prod                     # List key names (no values)
+akm vault show vault:prod                     # Same as list (alias)
+akm vault load vault:prod                     # Print export statements to source
+\`\`\`
+
+## Workflows
+
+Step-based workflows stored as \`<stashDir>/workflows/<name>.md\`.
+
+\`\`\`sh
+akm workflow template                         # Print a starter workflow template
+akm workflow create ship-release             # Scaffold a new workflow asset
+akm workflow start workflow:ship-release     # Start a new run
+akm workflow next workflow:ship-release      # Advance to the next step (or auto-start)
+akm workflow complete <run-id>               # Mark a step complete and advance
+akm workflow status <run-id>                 # Show current run status
+akm workflow resume <run-id>                 # Resume a blocked or failed run
+akm workflow list                            # List all workflow runs
+\`\`\`
 
 ## Clone
 

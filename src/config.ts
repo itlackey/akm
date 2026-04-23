@@ -128,6 +128,11 @@ export interface AkmConfig {
   security?: SecurityConfig;
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
+  /**
+   * When true, the primary stash is treated as a writable git repo and
+   * `akm save` will push after committing (if a remote is configured).
+   */
+  writable?: boolean;
 }
 
 export interface OutputConfig {
@@ -337,6 +342,10 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;
+
+  if (typeof raw.writable === "boolean") {
+    config.writable = raw.writable;
+  }
 
   return config;
 }

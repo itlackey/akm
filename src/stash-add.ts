@@ -10,6 +10,7 @@ import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } fro
 import { parseRegistryRef } from "./registry-resolve";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
+import { warn } from "./warn";
 
 export async function akmAdd(input: {
   ref: string;
@@ -35,6 +36,9 @@ export async function akmAdd(input: {
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
+      if (input.trustThisInstall) {
+        warn("--trust has no effect on local directory sources; the install audit is not run for local paths.");
+      }
       return addLocalStashSource(ref, parsed.sourcePath, stashDir);
     }
   } catch {

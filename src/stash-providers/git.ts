@@ -255,7 +255,7 @@ export interface SaveGitStashResult {
  * When `name` is omitted the primary stash directory is used.
  * When `message` is omitted a timestamp is used.
  */
-export function saveGitStash(name?: string, message?: string): SaveGitStashResult {
+export function saveGitStash(name?: string, message?: string, writableOverride?: boolean): SaveGitStashResult {
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
   const commitMessage = message?.trim() || `akm save ${timestamp}`;
 
@@ -275,6 +275,10 @@ export function saveGitStash(name?: string, message?: string): SaveGitStashResul
     writable = stash.writable === true;
   } else {
     repoDir = resolveStashDir({ readOnly: true });
+    // Allow caller to override writable for the primary stash (e.g. from root config.writable)
+    if (writableOverride !== undefined) {
+      writable = writableOverride;
+    }
   }
 
   // No-op: not a git repo
