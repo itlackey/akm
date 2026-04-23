@@ -50,6 +50,7 @@ import {
   getNextWorkflowStep,
   getWorkflowStatus,
   listWorkflowRuns,
+  resumeWorkflowRun,
   startWorkflowRun,
 } from "./workflow-runs";
 
@@ -1932,10 +1933,12 @@ const workflowNextCommand = defineCommand({
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
+    params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await getNextWorkflowStep(args.target);
+      const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
+      const result = await getNextWorkflowStep(args.target, parsedParams);
       output("workflow-next", result);
     });
   },
@@ -1949,7 +1952,10 @@ const workflowCompleteCommand = defineCommand({
   args: {
     runId: { type: "positional", description: "Workflow run id", required: true },
     step: { type: "string", description: "Workflow step id", required: true },
-    state: { type: "string", description: `Step state (${WORKFLOW_STEP_STATES.join("|")})` },
+    state: {
+      type: "string",
+      description: `Step state (default: completed). One of: ${WORKFLOW_STEP_STATES.join(", ")}.`,
+    },
     notes: { type: "string", description: "Notes for the completed step" },
     evidence: { type: "string", description: "Evidence JSON object for the step" },
   },
@@ -1973,12 +1979,33 @@ const workflowStatusCommand = defineCommand({
     description: "Show full workflow run state for review or resume",
   },
   args: {
-    runId: { type: "positional", description: "Workflow run id", required: true },
+    target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      const result = getWorkflowStatus(args.runId);
-      output("workflow-status", result);
+      const target = args.target;
+      // Check if target looks like a workflow ref
+      const parsed = (() => {
+        try {
+          return parseAssetRef(target);
+        } catch {
+          return null;
+        }
+      })();
+      if (parsed?.type === "workflow") {
+        const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+        const { runs } = listWorkflowRuns({ workflowRef: ref });
+        if (runs.length === 0) {
+          throw new NotFoundError(`No workflow runs found for ${ref}`);
+        }
+        const mostRecent = runs[0];
+        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`);
+        const result = getWorkflowStatus(mostRecent.id);
+        output("workflow-status", result);
+      } else {
+        const result = getWorkflowStatus(target);
+        output("workflow-status", result);
+      }
     });
   },
 });
@@ -2008,10 +2035,30 @@ const workflowCreateCommand = defineCommand({
   args: {
     name: { type: "positional", description: "Workflow name", required: true },
     from: { type: "string", description: "Import and validate markdown from an existing file" },
-    force: { type: "boolean", description: "Overwrite an existing workflow", default: false },
+    force: {
+      type: "boolean",
+      description: "Overwrite an existing workflow (requires --from or --reset)",
+      default: false,
+    },
+    reset: {
+      type: "boolean",
+      description: "Explicitly replace an existing workflow with a fresh template (use with --force)",
+      default: false,
+    },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
+      if (!namePattern.test(args.name)) {
+        throw new UsageError(
+          "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, and underscores.",
+        );
+      }
+      if (args.force && !args.from && !args.reset) {
+        throw new UsageError(
+          "Refusing to overwrite with template: pass --from <file> to replace content, or --reset to explicitly replace with a fresh template.",
+        );
+      }
       const result = createWorkflowAsset({
         name: args.name,
         from: args.from,
@@ -2032,6 +2079,22 @@ const workflowTemplateCommand = defineCommand({
   },
 });
 
+const workflowResumeCommand = defineCommand({
+  meta: {
+    name: "resume",
+    description: "Resume a blocked or failed workflow run, flipping it back to active",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = resumeWorkflowRun(args.runId);
+      output("workflow-run", result);
+    });
+  },
+});
+
 const workflowCommand = defineCommand({
   meta: {
     name: "workflow",
@@ -2045,6 +2108,7 @@ const workflowCommand = defineCommand({
     list: workflowListCommand,
     create: workflowCreateCommand,
     template: workflowTemplateCommand,
+    resume: workflowResumeCommand,
   },
   run({ args }) {
     return runWithJsonErrors(() => {
