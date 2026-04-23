@@ -21,7 +21,7 @@ import {
   upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
-import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
+import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile, shouldIndexStashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchText } from "./search-fields";
 import type { SearchSource } from "./search-source";
@@ -322,6 +322,7 @@ async function indexEntries(
       const wikiDirGroups = new Map<string, { files: string[]; entries: StashEntry[] }>();
       for (const ctx of fileContexts) {
         if (ctx.ext !== ".md") continue;
+        if (!shouldIndexStashFile(currentStashDir, ctx.absPath, { treatStashRootAsWikiRoot: true })) continue;
         const relNoExt = ctx.relPath.replace(/\.md$/, "");
         const entry: StashEntry = {
           name: `${wikiName}/${relNoExt}`,
@@ -459,6 +460,7 @@ async function indexEntries(
             ? path.join(dirPath, entry.filename)
             : matchEntryToFile(entry.name, fileBasenameMap, files);
           if (!entryPath) continue; // skip unresolvable entries
+          if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
           // Skip if a higher-priority stash root already indexed this asset
           const basename = path.basename(entryPath);

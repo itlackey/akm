@@ -28,7 +28,7 @@ import {
 } from "./db";
 import { getRenderer } from "./file-context";
 import { buildSearchText } from "./indexer";
-import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
+import { generateMetadataFlat, loadStashFile, type StashEntry, shouldIndexStashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
@@ -797,6 +797,7 @@ async function indexAssets(stashDir: string, type: AkmSearchType): Promise<Index
           fileBasenameMap.get(entry.name.split("/").pop() ?? "") ??
           (files[0] || dirPath);
       }
+      if (!shouldIndexStashFile(stashDir, entryPath)) continue;
       assets.push({ entry, path: entryPath });
     }
   }
