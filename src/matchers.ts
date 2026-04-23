@@ -38,7 +38,9 @@ import { registerMatcher } from "./file-context";
 export function extensionMatcher(ctx: FileContext): MatchResult | null {
   // SKILL.md is a skill regardless of location — high specificity beats
   // smartMdMatcher's knowledge fallback and all directory-based matchers.
-  if (ctx.fileName === "SKILL.md") {
+  // Exception: files under wikis/<name>/… are always wiki pages; the wiki
+  // directory is an authoritative signal that outranks the filename.
+  if (ctx.fileName === "SKILL.md" && !ctx.ancestorDirs.includes("wikis")) {
     return { type: "skill", specificity: 25, renderer: "skill-md" };
   }
 

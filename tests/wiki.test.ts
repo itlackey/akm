@@ -253,6 +253,17 @@ describe("wikiMatcher", () => {
     const ctx = buildFileContext(stash, abs);
     expect(wikiMatcher(ctx)).toBeNull();
   });
+
+  test("wins over extensionMatcher's SKILL.md override when under wikis/", async () => {
+    const stash = makeStash();
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    fs.mkdirSync(wikiDir, { recursive: true });
+    const abs = writePage(wikiDir, "SKILL.md", "# not actually a skill\n");
+    const { runMatchers } = await import("../src/file-context");
+    const ctx = buildFileContext(stash, abs);
+    const result = await runMatchers(ctx);
+    expect(result?.type).toBe("wiki");
+  });
 });
 
 // ── Stash: raw/ invariants ─────────────────────────────────────────────────
