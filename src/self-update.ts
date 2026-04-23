@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,6 +7,12 @@ import { githubHeaders } from "./github";
 import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
 
 const REPO = "itlackey/akm";
+const DEFAULT_PACKAGE_NAME = "akm-cli";
+const NODE_MODULES_SEGMENT = "/node_modules/";
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
+const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
+
+export type InstallMethod = UpgradeCheckResponse["installMethod"];
 
 /** Signals used by detectInstallMethod; extracted for testability. */
 export interface InstallSignals {
@@ -25,11 +32,17 @@ export function getInstallSignals(): InstallSignals {
 
 // AKM_VERSION ambient type is declared in globals.d.ts
 
-export function detectInstallMethod(signals?: InstallSignals): "binary" | "npm" | "unknown" {
+export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   const s = signals ?? getInstallSignals();
+  const normalizedImportMetaDir = normalizePathSeparators(s.importMetaDir);
 
-  // npm/bun global install: import.meta.dir contains node_modules
-  if (s.importMetaDir?.includes("node_modules")) {
+  if (normalizedImportMetaDir.includes(NODE_MODULES_SEGMENT)) {
+    if (BUN_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
+      return "bun";
+    }
+    if (PNPM_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
+      return "pnpm";
+    }
     return "npm";
   }
 
@@ -91,13 +104,48 @@ export async function performUpgrade(
   const { currentVersion, latestVersion, installMethod } = check;
   const force = opts?.force === true;
 
-  if (installMethod === "npm") {
+  // All install methods can short-circuit here unless the user explicitly forces an upgrade.
+  if (!check.updateAvailable && !force) {
     return {
       currentVersion,
       newVersion: latestVersion,
       upgraded: false,
       installMethod,
-      message: `akm installed via npm. Run: bun install -g akm-cli@latest`,
+      message: `akm v${currentVersion} is already the latest version`,
+    };
+  }
+
+  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
+  if (packageManagerCommand) {
+    if (!latestVersion) {
+      throw new Error(
+        "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
+      );
+    }
+
+    const result = childProcess.spawnSync(packageManagerCommand.command, packageManagerCommand.args, {
+      encoding: "utf8",
+      env: process.env,
+      stdio: "pipe",
+    });
+
+    if (result.error) {
+      throw new Error(`Failed to run '${packageManagerCommand.displayCommand}': ${result.error.message}`);
+    }
+
+    if (result.status !== 0) {
+      const details = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+      throw new Error(
+        `Failed to upgrade akm via ${installMethod}: ${details}\nRun manually: ${packageManagerCommand.displayCommand}`,
+      );
+    }
+
+    return {
+      currentVersion,
+      newVersion: latestVersion,
+      upgraded: true,
+      installMethod,
+      message: `akm upgraded via ${installMethod}`,
     };
   }
 
@@ -112,16 +160,6 @@ export async function performUpgrade(
   }
 
   // Binary install
-  if (!check.updateAvailable && !force) {
-    return {
-      currentVersion,
-      newVersion: latestVersion,
-      upgraded: false,
-      installMethod,
-      message: `akm v${currentVersion} is already the latest version`,
-    };
-  }
-
   if (!latestVersion) {
     throw new Error(
       "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
@@ -308,5 +346,63 @@ function parseChecksumForFile(checksumsText: string, filename: string): string |
       return match[1];
     }
   }
+  return undefined;
+}
+
+function normalizePathSeparators(value: string | undefined): string {
+  return (value ?? "").replaceAll("\\", "/");
+}
+
+function getInstalledPackageName(): string {
+  try {
+    const pkgPath = path.resolve(import.meta.dir ?? __dirname, "../package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")) as { name?: unknown };
+      if (typeof pkg.name === "string" && pkg.name.trim()) {
+        return pkg.name.trim();
+      }
+    }
+  } catch {
+    // Swallow and fall back to default package name.
+  }
+  return DEFAULT_PACKAGE_NAME;
+}
+
+function resolveNodePackageManagerCommand(name: "npm" | "pnpm"): string {
+  const extension = IS_WINDOWS ? ".cmd" : "";
+  const adjacent = path.join(path.dirname(process.execPath), `${name}${extension}`);
+  return fs.existsSync(adjacent) ? adjacent : name;
+}
+
+export function getPackageManagerUpgradeCommand(
+  installMethod: InstallMethod,
+  packageName = getInstalledPackageName(),
+): { command: string; args: string[]; displayCommand: string } | undefined {
+  const pkgRef = `${packageName}@latest`;
+
+  if (installMethod === "bun") {
+    return {
+      command: "bun",
+      args: ["install", "-g", pkgRef],
+      displayCommand: `bun install -g ${pkgRef}`,
+    };
+  }
+
+  if (installMethod === "pnpm") {
+    return {
+      command: resolveNodePackageManagerCommand("pnpm"),
+      args: ["add", "-g", pkgRef],
+      displayCommand: `pnpm add -g ${pkgRef}`,
+    };
+  }
+
+  if (installMethod === "npm") {
+    return {
+      command: resolveNodePackageManagerCommand("npm"),
+      args: ["install", "-g", pkgRef],
+      displayCommand: `npm install -g ${pkgRef}`,
+    };
+  }
+
   return undefined;
 }
