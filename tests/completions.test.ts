@@ -80,6 +80,7 @@ describe("completions command", () => {
       "feedback",
       "registry",
       "config",
+      "help",
       "hints",
       "completions",
     ];

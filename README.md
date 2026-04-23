@@ -33,6 +33,7 @@ npx skills add itlackey/akm
 ```
 
 Upgrade in place with `akm upgrade`.
+Preview release notes and migration guidance with `akm help migrate <version>`.
 
 ## Quick Start
 

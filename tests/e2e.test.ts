@@ -1007,6 +1007,27 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     expect(output).toContain("--check");
     expect(output).toContain("--force");
   });
+
+  test("cli: akm help migrate prints migration guidance for a release", async () => {
+    const result = spawnSync("bun", [CLI, "help", "migrate", "0.5.0"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(result.status).toBe(0);
+    expect(output).toContain("Migration notes for akm v0.5.0");
+    expect(output).toContain("## [0.5.0]");
+  });
+
+  test("cli: akm --help lists the help command", async () => {
+    const result = spawnSync("bun", [CLI, "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(output).toContain("help");
+    expect(output).toContain("focused help topics");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
