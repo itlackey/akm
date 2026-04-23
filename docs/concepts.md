@@ -1,8 +1,8 @@
 # Concepts
 
 `akm` is a package manager for AI agent capabilities. It organizes scripts,
-skills, commands, agents, knowledge documents, vaults, workflows, and memories
-into a searchable library that any AI coding assistant can use.
+skills, commands, agents, knowledge documents, vaults, workflows, wikis, and
+memories into a searchable library that any AI coding assistant can use.
 
 ## Mental Model
 
@@ -34,7 +34,7 @@ The user never picks the kind. `akm add` infers it.
    registries with `akm registry add`.
 3. **Assets** are the individual capabilities an agent discovers and uses:
    scripts, skills, commands, agents, knowledge documents, vaults,
-   workflows, and memories.
+   workflows, wikis, and memories.
 
 Your **working stash** (`~/akm`) is created by `akm init` — it's the
 primary directory for your personal, editable assets.
@@ -62,12 +62,13 @@ my-kit/
   knowledge/      # Reference documents (.md)
   vaults/         # Environment vaults (.env)
   workflows/      # Step-by-step workflow documents (.md)
+  wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
   memories/       # Recalled context fragments (.md)
 ```
 
 ## Asset Types
 
-There are eight asset types:
+There are nine asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -78,6 +79,7 @@ There are eight asset types:
 | **knowledge** | A reference document | Navigable content with TOC and section views |
 | **vault** | A key/value environment vault | Key names and comments, never secret values |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
+| **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
 | **memory** | Context from external systems | Background information the agent should consider |
 
 ### Classification Taxonomy
@@ -196,6 +198,7 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 ## Further Reading
 
 - [CLI Reference](cli.md)
+- [Wikis](wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
 - [Kit Maker's Guide](kit-makers.md) -- How to build and share a kit
 - [Registry](registry.md) -- Finding and installing kits
 - [Search Architecture](technical/search.md) -- Hybrid search details

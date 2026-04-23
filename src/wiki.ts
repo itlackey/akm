@@ -561,7 +561,7 @@ export function slugifyForWiki(value: string): string {
  * Used when the caller didn't pass a preferredName. Skips frontmatter.
  * Caps words at 8 so the slug stays manageable.
  */
-export function deriveQueryFromSource(content: string): string {
+function deriveQueryFromSource(content: string): string {
   const lines = content.split(/\r?\n/);
   let inFrontmatter = false;
   let closed = false;

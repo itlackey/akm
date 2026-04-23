@@ -7,8 +7,8 @@
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
 A package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, and memories -- that works with any AI coding assistant that
-can run shell commands.
+agents, knowledge, wikis, and memories -- that works with any AI coding assistant
+that can run shell commands.
 
 ## Why akm?
 
@@ -62,7 +62,7 @@ more detailed version with advanced usage):
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
+knowledge, wikis, and memories via the `akm` CLI. Use `akm -h` for details.
 ~~~
 
 No plugins, SDKs, or integration code required. Platform-specific plugins
