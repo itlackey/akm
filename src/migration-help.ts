@@ -66,12 +66,18 @@ function versionCandidates(requested: string): string[] {
 }
 
 function resolveLatestVersion(changelog: string): string | undefined {
-  const match = changelog.match(/^## \[([^\]]+)\]/m);
-  return match?.[1];
+  for (const match of changelog.matchAll(/^## \[([^\]]+)\]/gm)) {
+    const version = match[1];
+    if (version !== "Unreleased") return version;
+  }
+  return undefined;
 }
 
 function extractChangelogSection(changelog: string, version: string): string | undefined {
-  const pattern = new RegExp(`^## \\[${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|\\Z)`, "m");
+  const pattern = new RegExp(
+    `^## \\[${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[|\\Z)`,
+    "m",
+  );
   const match = changelog.match(pattern);
   if (!match) return undefined;
   return `## [${version}]\n${match[1].trim()}\n`;
