@@ -10,7 +10,7 @@ const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
 const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/(?:[^/]+\/)+node_modules\//;
-const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/[^/]+)*\/node_modules\//;
+const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:pnpm\/global|\.pnpm-global)(?:\/\d+)?\/node_modules\//;
 
 export type InstallMethod = UpgradeCheckResponse["installMethod"];
 
@@ -117,6 +117,12 @@ export async function performUpgrade(
 
   const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
   if (packageManagerCommand) {
+    if (!latestVersion) {
+      throw new Error(
+        "Unable to determine latest version from GitHub releases. Check https://github.com/itlackey/akm/releases",
+      );
+    }
+
     const result = childProcess.spawnSync(packageManagerCommand.command, packageManagerCommand.args, {
       encoding: "utf8",
       env: process.env,
@@ -136,7 +142,7 @@ export async function performUpgrade(
 
     return {
       currentVersion,
-      newVersion: latestVersion || currentVersion,
+      newVersion: latestVersion,
       upgraded: true,
       installMethod,
       message: `akm upgraded via ${installMethod}`,
@@ -375,9 +381,8 @@ export function getPackageManagerUpgradeCommand(
   const pkgRef = `${packageName}@latest`;
 
   if (installMethod === "bun") {
-    const command = path.basename(process.execPath).toLowerCase().startsWith("bun") ? process.execPath : "bun";
     return {
-      command,
+      command: "bun",
       args: ["install", "-g", pkgRef],
       displayCommand: `bun install -g ${pkgRef}`,
     };
