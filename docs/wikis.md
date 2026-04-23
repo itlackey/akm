@@ -54,20 +54,26 @@ the writing.
 No LLM calls are made anywhere in the wiki surface. No network access.
 No `--llm` flag.
 
-## Command surface (9 verbs)
+## Command surface (10 verbs)
 
 ### Lifecycle
 
 ```sh
 akm wiki create <name>       # scaffold wikis/<name>/ with empty schema/index/log/raw
+akm wiki register <name> <path-or-repo>
+                             # register an existing directory/repo as a wiki
 akm wiki list                # table: name, pages, raws, last-modified
 akm wiki show <name>         # path, description, counts, last 3 log entries
 akm wiki remove <name> --force [--with-sources]
-                             # deletes pages/index/log/schema; preserves raw/
-                             # unless --with-sources. --force required.
+                              # deletes pages/index/log/schema; preserves raw/
+                              # unless --with-sources. For external wikis,
+                              # unregisters without touching source files.
 ```
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$`.
+
+`akm add --type wiki --name <name> <path-or-repo>` is a shortcut to
+`akm wiki register <name> <path-or-repo>`.
 
 ### Orientation
 

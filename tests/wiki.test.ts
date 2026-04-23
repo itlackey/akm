@@ -11,6 +11,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { loadConfig, saveConfig } from "../src/config";
 import { buildFileContext } from "../src/file-context";
 import { wikiMatcher } from "../src/matchers";
 import {
@@ -123,6 +124,24 @@ describe("createWiki", () => {
     expect(second.created.length).toBe(0);
     expect(second.skipped.length).toBeGreaterThanOrEqual(3);
   });
+
+  test("rejects creating a stash-owned wiki when that name is already registered", () => {
+    const stash = makeStash();
+    const externalWiki = makeStash("akm-create-conflict-");
+    const configHome = makeStash("akm-create-conflict-config-");
+    const origHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = configHome;
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+      });
+      expect(() => createWiki(stash, "ics-docs")).toThrow("Wiki already registered: ics-docs.");
+    } finally {
+      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origHome;
+    }
+  });
 });
 
 describe("listWikis", () => {
@@ -206,6 +225,31 @@ describe("removeWiki", () => {
     const result = removeWiki(stash, "research", { withSources: true });
     expect(result.preservedRaw).toBe(false);
     expect(fs.existsSync(wikiDir)).toBe(false);
+  });
+
+  test("unregisters an external wiki without deleting its source files", () => {
+    const stash = makeStash();
+    const externalWiki = makeStash("akm-external-wiki-");
+    const configHome = makeStash("akm-external-wiki-config-");
+    const origHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = configHome;
+    writePage(externalWiki, "overview.md", "---\ndescription: Overview\n---\n# Overview\n");
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+      });
+
+      const result = removeWiki(stash, "ics-docs");
+
+      expect(result.unregistered).toBe(true);
+      expect(fs.existsSync(path.join(externalWiki, "overview.md"))).toBe(true);
+      expect(listWikis(stash).map((wiki) => wiki.name)).not.toContain("ics-docs");
+      expect((loadConfig().stashes ?? []).some((entry) => entry.wikiName === "ics-docs")).toBe(false);
+    } finally {
+      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origHome;
+    }
   });
 });
 
@@ -469,6 +513,34 @@ describe("searchInWiki", () => {
         // Every hit must live inside alpha's wiki directory
         expect(hit.type === "registry" ? "" : (hit as { path: string }).path).toContain(alphaDir);
       }
+    } finally {
+      if (origStash === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = origStash;
+      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origHome;
+    }
+  });
+
+  test("finds hits in a registered external wiki", async () => {
+    const stash = makeStash();
+    const externalWiki = makeStash("akm-external-search-");
+    const origStash = process.env.AKM_STASH_DIR;
+    const origHome = process.env.XDG_CONFIG_HOME;
+    process.env.AKM_STASH_DIR = stash;
+    process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-external-search-home-"));
+    tempDirs.push(process.env.XDG_CONFIG_HOME);
+    try {
+      writePage(externalWiki, "attention.md", "---\ndescription: External attention page\n---\n# Attention\n");
+      saveConfig({
+        semanticSearchMode: "off",
+        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+      });
+
+      const response = await searchInWiki({ stashDir: stash, wikiName: "ics-docs", query: "attention" });
+
+      expect(response.hits.some((hit) => hit.type !== "registry" && hit.ref.includes("wiki:ics-docs/attention"))).toBe(
+        true,
+      );
     } finally {
       if (origStash === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = origStash;

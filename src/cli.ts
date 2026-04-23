@@ -699,7 +699,8 @@ function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): str
 
 function formatWikiListPlain(r: Record<string, unknown>): string {
   const wikis = Array.isArray(r.wikis) ? (r.wikis as Array<Record<string, unknown>>) : [];
-  if (wikis.length === 0) return "No wikis. Create one with `akm wiki create <name>`.";
+  if (wikis.length === 0)
+    return "No wikis. Create one with `akm wiki create <name>` or register one with `akm wiki register <name> <path-or-repo>`.";
   const lines = ["NAME\tPAGES\tRAWS\tLAST-MODIFIED"];
   for (const w of wikis) {
     const name = typeof w.name === "string" ? w.name : "?";
@@ -1336,9 +1337,20 @@ const addCommand = defineCommand({
           "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
         );
       }
-      const websiteOptions: Record<string, unknown> = {};
-      if (args["max-pages"]) websiteOptions.maxPages = args["max-pages"];
-      if (args["max-depth"]) websiteOptions.maxDepth = args["max-depth"];
+      const websiteOptions = buildWebsiteOptions(args);
+
+      if (args.type === "wiki") {
+        const { registerWikiSource } = await import("./stash-add");
+        const result = await registerWikiSource({
+          ref,
+          name: args.name,
+          options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
+          trustThisInstall: args.trust,
+          writable: args.writable,
+        });
+        output("add", result);
+        return;
+      }
 
       const result = await akmAdd({
         ref,
@@ -1352,6 +1364,15 @@ const addCommand = defineCommand({
     });
   },
 });
+
+function buildWebsiteOptions(args: Record<string, unknown>): Record<string, unknown> {
+  const websiteOptions: Record<string, unknown> = {};
+  if (typeof args["max-pages"] === "string" && args["max-pages"].length > 0)
+    websiteOptions.maxPages = args["max-pages"];
+  if (typeof args["max-depth"] === "string" && args["max-depth"].length > 0)
+    websiteOptions.maxDepth = args["max-depth"];
+  return websiteOptions;
+}
 
 const VALID_SOURCE_KINDS = new Set<SourceKind>(["local", "managed", "remote"]);
 
@@ -2679,6 +2700,42 @@ const wikiCreateCommand = defineCommand({
   },
 });
 
+const wikiRegisterCommand = defineCommand({
+  meta: {
+    name: "register",
+    description: "Register an existing directory or repo as a first-class wiki without copying or mutating it",
+  },
+  args: {
+    name: { type: "positional", description: "Wiki name (lowercase, digits, hyphens)", required: true },
+    ref: { type: "positional", description: "Path or repo ref for the external wiki source", required: true },
+    writable: {
+      type: "boolean",
+      description: "Mark a git-backed source as writable so changes can be pushed back",
+      default: false,
+    },
+    trust: {
+      type: "boolean",
+      description: "Bypass install-audit blocking for this registration only",
+      default: false,
+    },
+    "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
+    "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { registerWikiSource } = await import("./stash-add");
+      const result = await registerWikiSource({
+        ref: args.ref.trim(),
+        name: args.name,
+        options: Object.keys(buildWebsiteOptions(args)).length > 0 ? buildWebsiteOptions(args) : undefined,
+        trustThisInstall: args.trust,
+        writable: args.writable,
+      });
+      output("wiki-register", result);
+    });
+  },
+});
+
 const wikiListCommand = defineCommand({
   meta: { name: "list", description: "List wikis with page/raw counts and last-modified timestamps" },
   run() {
@@ -2769,12 +2826,9 @@ const wikiSearchCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { searchInWiki } = await import("./wiki.js");
+      const { resolveWikiSource, searchInWiki } = await import("./wiki.js");
       const stashDir = resolveStashDir();
-      const wikiDir = path.join(stashDir, "wikis", args.name);
-      if (!fs.existsSync(wikiDir)) {
-        throw new NotFoundError(`Wiki not found: ${args.name}`);
-      }
+      resolveWikiSource(stashDir, args.name);
       const parsedLimit = args.limit ? Number(args.limit) : undefined;
       const limit =
         typeof parsedLimit === "number" && Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
@@ -2859,6 +2913,7 @@ const wikiCommand = defineCommand({
   },
   subCommands: {
     create: wikiCreateCommand,
+    register: wikiRegisterCommand,
     list: wikiListCommand,
     show: wikiShowCommand,
     remove: wikiRemoveCommand,
@@ -3212,14 +3267,15 @@ ranking can learn from actual usage.
 
 ## Wikis
 
-Multi-wiki knowledge bases (Karpathy-style). Each wiki is a directory at
-\`<stashDir>/wikis/<name>/\` with \`schema.md\`, \`index.md\`, \`log.md\`, \`raw/\`,
-and agent-authored pages. akm owns lifecycle + raw-slug + lint + index
-regeneration; page edits use your native Read/Write/Edit tools.
+Multi-wiki knowledge bases (Karpathy-style). A stash-owned wiki lives at
+\`<stashDir>/wikis/<name>/\`; external directories or repos can also be registered
+as first-class wikis. akm owns lifecycle + raw-slug + lint + index regeneration
+for stash-owned wikis; page edits use your native Read/Write/Edit tools.
 
 \`\`\`sh
 akm wiki list                                  # List wikis (name, pages, raws, last-modified)
 akm wiki create research                       # Scaffold a new wiki
+akm wiki register ics-docs ~/code/ics-documentation # Register an external wiki
 akm wiki show research                         # Path, description, counts, last 3 log entries
 akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log/raw)
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)

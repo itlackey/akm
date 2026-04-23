@@ -523,7 +523,7 @@ async function substringSearch(
   sources: SearchSource[],
   config?: AkmConfig,
 ): Promise<StashSearchHit[]> {
-  const assets = await indexAssets(stashDir, searchType);
+  const assets = await indexAssets(stashDir, searchType, sources);
   const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
   if (!query) {
@@ -747,7 +747,13 @@ function readFileSize(filePath: string): number | undefined {
   }
 }
 
-async function indexAssets(stashDir: string, type: AkmSearchType): Promise<IndexedAsset[]> {
+async function indexAssets(stashDir: string, type: AkmSearchType, sources?: SearchSource[]): Promise<IndexedAsset[]> {
+  const resolvedStashDir = realpathOrResolve(stashDir);
+  const source = sources?.find((entry) => realpathOrResolve(entry.path) === resolvedStashDir);
+  if (source?.wikiName) {
+    return indexWikiRootAssets(stashDir, source.wikiName, type);
+  }
+
   const assets: IndexedAsset[] = [];
   const filterType = type === "any" ? undefined : type;
   const fileContexts = walkStashFlat(stashDir);
@@ -805,6 +811,28 @@ async function indexAssets(stashDir: string, type: AkmSearchType): Promise<Index
   return assets;
 }
 
+async function indexWikiRootAssets(wikiRoot: string, wikiName: string, type: AkmSearchType): Promise<IndexedAsset[]> {
+  if (type !== "any" && type !== "wiki") return [];
+
+  const assets: IndexedAsset[] = [];
+  for (const ctx of walkStashFlat(wikiRoot)) {
+    if (ctx.ext !== ".md") continue;
+    if (!shouldIndexStashFile(wikiRoot, ctx.absPath, { treatStashRootAsWikiRoot: true })) continue;
+    const relNoExt = ctx.relPath.replace(/\.md$/, "");
+    assets.push({
+      entry: {
+        name: `${wikiName}/${relNoExt}`,
+        type: "wiki",
+        filename: ctx.fileName,
+        description: ctx.frontmatter()?.description as string | undefined,
+        source: "frontmatter",
+      },
+      path: ctx.absPath,
+    });
+  }
+  return assets;
+}
+
 function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
   if (a.entry.type !== b.entry.type) return a.entry.type.localeCompare(b.entry.type);
   return a.entry.name.localeCompare(b.entry.name);
@@ -836,4 +864,12 @@ function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
     seen.add(asset.path);
     return true;
   });
+}
+
+function realpathOrResolve(targetPath: string): string {
+  try {
+    return fs.realpathSync(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
 }

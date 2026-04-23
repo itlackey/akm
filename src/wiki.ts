@@ -17,8 +17,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { isWithin } from "./common";
+import { loadUserConfig, saveConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "./frontmatter";
+import { resolveStashSources, type SearchSource } from "./search-source";
 import { akmSearch } from "./stash-search";
 import type { SearchResponse, StashSearchHit } from "./stash-types";
 import { buildIndexMd, buildLogMd, buildSchemaMd } from "./templates/wiki-templates";
@@ -72,6 +74,7 @@ export interface WikiRemoveResult {
   removed: string[];
   preservedRaw: boolean;
   rawPath?: string;
+  unregistered?: boolean;
 }
 
 // ── Validation + resolution ─────────────────────────────────────────────────
@@ -107,6 +110,51 @@ export function resolveWikiDir(stashDir: string, name: string): string {
 export function extractWikiNameFromRef(ref: string): string | undefined {
   const match = ref.match(/^wiki:([a-z0-9][a-z0-9-]*)(?:\/|$)/);
   return match?.[1];
+}
+
+export interface ResolvedWikiSource {
+  name: string;
+  path: string;
+  mode: "stash" | "external";
+  source?: SearchSource;
+}
+
+function wikiNotFoundMessage(name: string): string {
+  return `Wiki not found: ${name}. Run \`akm wiki create ${name}\` to create it or \`akm wiki register ${name} <path-or-repo>\` to register an external wiki.`;
+}
+
+function registeredWikiSources(stashDir: string): ResolvedWikiSource[] {
+  return resolveStashSources(stashDir)
+    .filter((source): source is SearchSource & { wikiName: string } => typeof source.wikiName === "string")
+    .map((source) => ({
+      name: source.wikiName,
+      path: source.path,
+      mode: "external" as const,
+      source,
+    }));
+}
+
+export function resolveWikiSource(stashDir: string, name: string): ResolvedWikiSource {
+  validateWikiName(name);
+  const wikiDir = resolveWikiDir(stashDir, name);
+  if (fs.existsSync(wikiDir)) {
+    return { name, path: wikiDir, mode: "stash" };
+  }
+  const external = registeredWikiSources(stashDir).find((source) => source.name === name);
+  if (external) return external;
+  throw new NotFoundError(wikiNotFoundMessage(name));
+}
+
+export function ensureWikiNameAvailable(stashDir: string, name: string): void {
+  validateWikiName(name);
+  const wikiDir = resolveWikiDir(stashDir, name);
+  if (fs.existsSync(wikiDir)) {
+    throw new UsageError(`Wiki already exists: ${name}.`);
+  }
+  const external = registeredWikiSources(stashDir).find((source) => source.name === name);
+  if (external) {
+    throw new UsageError(`Wiki already registered: ${name}.`);
+  }
 }
 
 // ── Scan helpers ────────────────────────────────────────────────────────────
@@ -218,23 +266,21 @@ function toIsoDate(ms: number): string {
  */
 export function listWikis(stashDir: string): WikiSummary[] {
   const wikisRoot = resolveWikisRoot(stashDir);
-  if (!fs.existsSync(wikisRoot)) return [];
+  const summaries = new Map<string, WikiSummary>();
 
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(wikisRoot, { withFileTypes: true });
-  } catch {
-    return [];
+  let entries: fs.Dirent[] = [];
+  if (fs.existsSync(wikisRoot)) {
+    try {
+      entries = fs.readdirSync(wikisRoot, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
   }
 
-  const summaries: WikiSummary[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (!WIKI_NAME_RE.test(entry.name)) continue;
-    const dir = path.join(wikisRoot, entry.name);
+  const summarize = (name: string, dir: string) => {
     const buckets = scanWikiFiles(dir);
     const summary: WikiSummary = {
-      name: entry.name,
+      name,
       path: dir,
       pages: buckets.pages.length,
       raws: buckets.raws.length,
@@ -242,10 +288,21 @@ export function listWikis(stashDir: string): WikiSummary[] {
     const description = readSchemaDescription(dir);
     if (description) summary.description = description;
     if (buckets.lastModifiedMs !== undefined) summary.lastModified = toIsoDate(buckets.lastModifiedMs);
-    summaries.push(summary);
+    summaries.set(name, summary);
+  };
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!WIKI_NAME_RE.test(entry.name)) continue;
+    summarize(entry.name, path.join(wikisRoot, entry.name));
   }
-  summaries.sort((a, b) => a.name.localeCompare(b.name));
-  return summaries;
+
+  for (const source of registeredWikiSources(stashDir)) {
+    if (summaries.has(source.name)) continue;
+    summarize(source.name, source.path);
+  }
+
+  return Array.from(summaries.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ── Show ────────────────────────────────────────────────────────────────────
@@ -292,11 +349,7 @@ function readRecentLog(wikiDir: string, limit = 3): string[] {
   return sections.slice(0, limit);
 }
 
-export function showWiki(stashDir: string, name: string): WikiShowResult {
-  const wikiDir = resolveWikiDir(stashDir, name);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}. Run \`akm wiki create ${name}\` to create it.`);
-  }
+export function showWikiAtPath(name: string, wikiDir: string): WikiShowResult {
   const buckets = scanWikiFiles(wikiDir);
   const result: WikiShowResult = {
     name,
@@ -312,9 +365,17 @@ export function showWiki(stashDir: string, name: string): WikiShowResult {
   return result;
 }
 
+export function showWiki(stashDir: string, name: string): WikiShowResult {
+  return showWikiAtPath(name, resolveWikiSource(stashDir, name).path);
+}
+
 // ── Create ──────────────────────────────────────────────────────────────────
 
 export function createWiki(stashDir: string, name: string): WikiCreateResult {
+  const existing = registeredWikiSources(stashDir).find((source) => source.name === name);
+  if (existing) {
+    throw new UsageError(`Wiki already registered: ${name}.`);
+  }
   const wikiDir = resolveWikiDir(stashDir, name);
   fs.mkdirSync(wikiDir, { recursive: true });
 
@@ -371,7 +432,25 @@ export interface RemoveOptions {
  * ignore that (e.g. idempotent cleanup) by catching.
  */
 export function removeWiki(stashDir: string, name: string, options: RemoveOptions = {}): WikiRemoveResult {
-  const wikiDir = resolveWikiDir(stashDir, name);
+  const resolved = resolveWikiSource(stashDir, name);
+  const wikiDir = resolved.path;
+  if (resolved.mode === "external") {
+    const config = loadUserConfig();
+    const stashes = (config.stashes ?? []).filter((entry) => entry.wikiName !== name);
+    const installed = (config.installed ?? []).filter((entry) => entry.wikiName !== name);
+    saveConfig({
+      ...config,
+      stashes: stashes.length > 0 ? stashes : undefined,
+      installed: installed.length > 0 ? installed : undefined,
+    });
+    return {
+      name,
+      path: wikiDir,
+      removed: [],
+      preservedRaw: false,
+      unregistered: true,
+    };
+  }
   if (!fs.existsSync(wikiDir)) {
     throw new NotFoundError(`Wiki not found: ${name}.`);
   }
@@ -499,10 +578,7 @@ function readPageFrontmatter(absPath: string): {
  * path, and frontmatter-derived fields for orientation.
  */
 export function listPages(stashDir: string, name: string): WikiPageEntry[] {
-  const wikiDir = resolveWikiDir(stashDir, name);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}.`);
-  }
+  const wikiDir = resolveWikiSource(stashDir, name).path;
   const { pages } = scanWikiFiles(wikiDir);
   const result: WikiPageEntry[] = [];
   for (const abs of pages) {
@@ -536,13 +612,21 @@ export interface WikiSearchInput {
  */
 export async function searchInWiki(input: WikiSearchInput): Promise<SearchResponse> {
   validateWikiName(input.wikiName);
-  const wikiDir = resolveWikiDir(input.stashDir, input.wikiName);
   const response = await akmSearch({
     query: input.query,
     type: "wiki",
     limit: input.limit,
     source: "stash",
   });
+  let wikiDir: string;
+  try {
+    wikiDir = resolveWikiSource(input.stashDir, input.wikiName).path;
+  } catch (err) {
+    if (err instanceof NotFoundError) {
+      return { ...response, hits: [], registryHits: undefined };
+    }
+    throw err;
+  }
   const rawDir = path.join(wikiDir, RAW_SUBDIR);
   const filtered: StashSearchHit[] = [];
   for (const hit of response.hits) {
@@ -679,10 +763,7 @@ export interface StashRawResult {
  * job (see `akm wiki ingest <name>` for the workflow).
  */
 export function stashRaw(input: StashRawInput): StashRawResult {
-  const wikiDir = resolveWikiDir(input.stashDir, input.wikiName);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${input.wikiName}. Run \`akm wiki create ${input.wikiName}\` first.`);
-  }
+  const wikiDir = resolveWikiSource(input.stashDir, input.wikiName).path;
   const rawDir = path.join(wikiDir, RAW_SUBDIR);
   fs.mkdirSync(rawDir, { recursive: true });
 
@@ -740,10 +821,7 @@ export interface WikiLintReport {
  *   - `stale-index`: `index.md` mtime is older than the newest page mtime
  */
 export function lintWiki(stashDir: string, name: string): WikiLintReport {
-  const wikiDir = resolveWikiDir(stashDir, name);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}.`);
-  }
+  const wikiDir = resolveWikiSource(stashDir, name).path;
   const pages = listPages(stashDir, name);
   const { raws, pagesLastModifiedMs } = scanWikiFiles(wikiDir);
 
@@ -975,10 +1053,7 @@ export interface IngestWorkflowResult {
  * a verb here and in the printer stays colocated.
  */
 export function buildIngestWorkflow(stashDir: string, name: string): IngestWorkflowResult {
-  const wikiDir = resolveWikiDir(stashDir, name);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}. Run \`akm wiki create ${name}\` first.`);
-  }
+  const wikiDir = resolveWikiSource(stashDir, name).path;
   const schemaPath = path.join(wikiDir, SCHEMA_MD);
   const workflow = `# Ingest workflow for wiki:${name}
 
