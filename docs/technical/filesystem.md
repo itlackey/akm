@@ -1,144 +1,120 @@
 # Filesystem Layout
 
-Quick reference for where akm stores files.
+Quick reference for where akm stores stash data, config, and cache state.
 
 ## Working Stash
 
-Your primary stash directory — where your personal assets live.
-
 | Env / Default | Path |
-|---|---|
-| `AKM_STASH_DIR` | User-defined |
+| --- | --- |
+| `AKM_STASH_DIR` | user-defined |
 | Linux / macOS | `~/akm` |
 | Windows | `%USERPROFILE%\Documents\akm` |
 
-### Preferred Directories
+Canonical built-in type directories come from `TYPE_DIRS`:
 
-The following directory names are **opt-in conventions** that increase
-classification confidence during indexing. They are not required -- assets
-are classified by file extension and content regardless of directory.
-
-```
+```text
 <stash>/
-  scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
-  skills/         # Skill definitions (SKILL.md)
-  commands/       # Slash commands (.md with template/parameters)
-  agents/         # Agent definitions (.md with model/tools)
-  knowledge/      # Reference documents (.md)
-  memories/       # Context fragments (.md)
-  bin/            # Auto-installed binaries (e.g. ripgrep)
+  scripts/
+  skills/
+  commands/
+  agents/
+  knowledge/
+  workflows/
+  memories/
+  vaults/
+  wikis/
 ```
 
-A `.py` file placed in `scripts/` is classified at higher confidence than
-one placed in `random/`, but both are recognized as scripts. See
-[Concepts](../concepts.md) for details on how classification works.
+Directory names still act as strong classification hints, but scripts and
+markdown assets can also be recognized outside these folders.
 
-Each type directory may contain a `.stash.json` with per-asset metadata (see below).
+## Cache
 
-## Asset Metadata (`.stash.json`)
+akm keeps operational state under the cache directory:
 
-Place a `.stash.json` file in any asset type subdirectory to provide curated
-metadata for the assets it contains. When present, it takes priority over
-auto-generated metadata from filenames, comments, and `package.json`.
+| Purpose | Path |
+| --- | --- |
+| index DB | `$XDG_CACHE_HOME/akm/index.db` |
+| workflow DB | `$XDG_CACHE_HOME/akm/workflow.db` |
+| semantic status | `$XDG_CACHE_HOME/akm/semantic-status.json` |
+| registry cache | `$XDG_CACHE_HOME/akm/registry/` |
+| registry-index cache | `$XDG_CACHE_HOME/akm/registry-index/` |
+| binaries | `$XDG_CACHE_HOME/akm/bin/` |
 
-### Schema
-
-```json
-{
-  "entries": [
-    {
-      "name": "deploy",
-      "type": "script",
-      "description": "Deploy the application to production",
-      "tags": ["deploy", "infrastructure"],
-      "filename": "deploy.sh",
-      "quality": "curated",
-      "source": "manual",
-      "confidence": 1.0,
-      "aliases": ["ship it", "push to prod"],
-      "usage": [
-        "Confirm staging health before running",
-        "Pass a release tag as the first argument"
-      ],
-      "intent": {
-        "when": "User wants to deploy",
-        "input": "Optional release tag",
-        "output": "Deployment status"
-      },
-      "examples": [
-        "deploy the app",
-        "ship latest to production"
-      ],
-      "searchHints": [
-        "deploy application",
-        "push to production"
-      ]
-    }
-  ]
-}
-```
-
-### Field Reference
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `name` | string | yes | Asset identifier (usually the filename without extension) |
-| `type` | string | yes | One of `script`, `skill`, `command`, `agent`, `knowledge`, `memory` |
-| `description` | string | no | Human-readable summary of what the asset does |
-| `tags` | string[] | no | Keywords for search and categorization |
-| `filename` | string | no | Filename of the asset relative to this directory |
-| `quality` | string | no | `"curated"` (hand-written) or `"generated"` (auto-created) |
-| `source` | string | no | Origin of metadata: `"manual"`, `"package"`, `"frontmatter"`, `"comments"`, `"filename"`, `"llm"` |
-| `confidence` | number | no | `0.0`-`1.0` confidence score (curated entries should use `1.0`) |
-| `aliases` | string[] | no | Alternative names or phrases that match this asset |
-| `usage` | string[] | no | Per-asset usage instructions retained as metadata, not emitted in the default search output |
-| `intent` | object | no | Structured intent with `when`, `input`, `output` fields |
-| `examples` | string[] | no | Example queries or phrases a user might type |
-| `searchHints` | string[] | no | Search phrases used for intent-based matching |
-| `toc` | object[] | no | Table of contents (knowledge type only, usually auto-generated) |
-| `run` | string | no | Explicit run command (e.g. `"bash deploy.sh"`), overrides auto-detection |
-| `setup` | string | no | Setup command to run before execution (e.g. `"bun install"`) |
-| `cwd` | string | no | Working directory for execution |
-
-### How It Works
-
-1. During indexing (`akm index`), each type directory is scanned for assets.
-2. If a `.stash.json` exists in the directory, its entries are used as-is.
-3. If no `.stash.json` is found, metadata is generated heuristically from
-   filenames, code comments, frontmatter, and `package.json`, then stored in
-   the search index database for that run.
-4. To override generated metadata, edit the `.stash.json` directly. Set
-   `quality` to `"curated"` and `source` to `"manual"` so the indexer
-   preserves your changes on future runs.
-
-### Tips
-
-- You only need to include the fields you care about. `name` and `type` are
-  the only required fields.
-- Good `description` and `tags` values significantly improve search quality.
-- The `usage` field remains useful metadata for kit authors, but it is not
-  surfaced in the default search output.
-- The `filename` field tells the indexer which file in the directory this entry
-  maps to. Without it, the indexer defaults to the first file found.
+`bin/` is cache-managed, not stash-local.
 
 ## Config
 
-Stored outside the stash directory, following XDG conventions.
-
 | Platform | Path |
-|---|---|
+| --- | --- |
 | Linux / macOS | `$XDG_CONFIG_HOME/akm/config.json` (default `~/.config/akm/config.json`) |
 | Windows | `%APPDATA%\akm\config.json` |
 
 Override with `AKM_CONFIG_DIR`.
 
-## Cache
+## `.stash.json`
 
-Used for SQLite indexes and registry downloads.
+Place `.stash.json` inside a type directory to provide curated metadata for the
+assets in that directory.
 
-| Purpose | Path |
-|---|---|
-| Index DB | `$XDG_CACHE_HOME/akm/` (default `~/.cache/akm/`) |
-| Registry cache | `~/.cache/akm/registry/` |
+### Supported entry fields
 
-Override with `AKM_CACHE_DIR`.
+| Field | Notes |
+| --- | --- |
+| `name`, `type` | required |
+| `description`, `tags`, `aliases` | search and display metadata |
+| `filename` | on-disk file mapping |
+| `quality`, `source`, `confidence` | provenance/quality metadata |
+| `usage`, `examples`, `searchHints`, `intent` | hint text for search |
+| `toc` | markdown heading cache |
+| `run`, `setup`, `cwd` | script execution hints |
+| `parameters` | structured parameters |
+| `wikiRole`, `pageKind`, `xrefs`, `sources` | wiki-specific metadata |
+| `fileSize` | sizing/token estimation |
+
+### Current type values
+
+Built-in `type` values are:
+
+- `script`
+- `skill`
+- `command`
+- `agent`
+- `knowledge`
+- `workflow`
+- `memory`
+- `vault`
+- `wiki`
+
+### Example
+
+```json
+{
+  "entries": [
+    {
+      "name": "release",
+      "type": "workflow",
+      "filename": "release.md",
+      "description": "Release workflow for tagged builds",
+      "searchHints": ["publish a release", "cut a release branch"],
+      "parameters": [{ "name": "version", "description": "Version to release" }]
+    }
+  ]
+}
+```
+
+### Filename resolution
+
+If `filename` is omitted, akm does not blindly choose the first file. It uses
+asset-type-specific canonical path rules and matching heuristics to resolve the
+entry to the right on-disk file.
+
+## Cache-Backed Sources
+
+Some configured stash sources are mirrored into cache before indexing:
+
+- git-backed stash sources
+- website sources
+- installed kits from registries
+
+Once mirrored, they are indexed like local stash directories.

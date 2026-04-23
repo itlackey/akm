@@ -1,190 +1,109 @@
 # ShowResponse Field Reference
 
-`akm show` returns structured output describing an asset. By default, the CLI
-emits JSON at `--detail brief`, which keeps only the fields needed to use the
-asset. `--detail normal` currently matches `brief`. `--detail full` adds
-verbose metadata.
+`akm show` returns a rendered asset payload. `brief` and `normal` currently use
+the same base payload shape; `full` adds filesystem/editability metadata;
+`summary` returns metadata-only subsets.
 
-## Default Fields
+## Common Fields
 
-These fields may appear in the default response shape:
+Base show output may include:
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `type` | string | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, or `memory` |
-| `name` | string | Asset display name |
-| `origin` | string \| null | Owning installed source when the asset came from one |
-| `action` | string | Next step the consumer should take |
-| `description` | string | Summary when the asset type has one |
+| Field | Description |
+| --- | --- |
+| `type` | asset type |
+| `name` | canonical asset name |
+| `origin` | source identifier when available |
+| `action` | what the consumer should do next |
+| `description` | optional summary |
+| `content` / `template` / `prompt` | type-specific payload |
+| `parameters` | extracted parameter names |
+| `run`, `setup`, `cwd` | script execution hints |
+| `workflowTitle`, `workflowParameters`, `steps` | workflow payload |
+| `keys`, `comments` | vault-safe key listing |
 
-## Full-Detail Only Fields
+`--detail full` additionally adds:
 
-These fields are only emitted with `--detail full`:
+- `schemaVersion`
+- `path`
+- `editable`
+- `editHint`
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `schemaVersion` | number | Response schema version (currently `1`) |
-| `path` | string | Absolute path to the asset file on disk |
-| `editable` | boolean | Whether the asset is safe to edit in place. `false` for cache-managed files from installed kits. Verbose-only. |
-| `editHint` | string | Actionable guidance when `editable` is false (e.g. "use `akm clone` to make an editable copy"). Verbose-only. |
+## Per-Type Payloads
 
-## Per-Type Fields
+### `script`
 
-### script
+- runnable script: `run`, optional `setup`, optional `cwd`
+- otherwise: `content`
 
-Scripts with a known extension (`.sh`, `.ts`, `.py`, etc.) return execution
-hints. Scripts with unrecognized extensions fall back to raw content.
+### `skill`
 
-**Known extensions:**
+- `content`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `run` | string | yes | Full run command (e.g. `"bash /path/to/deploy.sh"`) |
-| `cwd` | string | no | Working directory for execution when one is known |
-| `setup` | string | no | Setup command when a dependency file is detected (e.g. `"bun install"`) |
+### `command`
 
-**Unrecognized extensions:**
+- `template`
+- optional `description`
+- optional `modelHint`
+- optional `agent`
+- optional `parameters`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `content` | string | yes | Full source code of the script |
+### `agent`
 
-Execution hints are resolved in priority order: `.stash.json` fields,
-then `@run`/`@setup`/`@cwd` header comment tags, then auto-detection from
-the file extension and nearby dependency files. See
-[../concepts.md](../concepts.md) for details.
+- `prompt`
+- optional `description`
+- optional `modelHint`
+- optional `toolPolicy`
 
-### skill
+### `knowledge`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `content` | string | yes | Full text of the SKILL.md file |
+- `content`
+- supports `full`, `toc`, `frontmatter`, `section`, and `lines` views
 
-### command
+### `memory`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `template` | string | yes | The command template body (markdown content after frontmatter extraction) |
-| `description` | string | no | Summary from frontmatter `description` key |
-| `modelHint` | unknown | no | Preferred model from frontmatter `model` key |
-| `agent` | string | no | Dispatch target agent from frontmatter `agent` key (OpenCode convention) |
-| `parameters` | string[] | no | Extracted placeholders such as `ARGUMENTS`, `$1`, or `{{named}}` |
+- `content`
 
-Template bodies may contain `$ARGUMENTS`, `$1`-`$9`, or `{{named}}` placeholders that
-should be filled before dispatch.
+### `workflow`
 
-### agent
+- optional `description`
+- `workflowTitle`
+- optional `parameters`
+- optional `workflowParameters`
+- `steps`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `prompt` | string | yes | Full agent prompt content |
-| `description` | string | no | Summary from frontmatter `description` key |
-| `modelHint` | unknown | no | Preferred model from frontmatter `model` key |
-| `toolPolicy` | string, string[], or object | no | Tool access policy from frontmatter `tools` key |
+### `vault`
 
-The `toolPolicy` field can take several forms: a single tool name
-(`"Bash"`), a list of tool names (`["Bash", "Read"]`), or a structured
-policy object (`{ "read": "allow", "write": "deny" }`).
+Vault show never returns values.
 
-### knowledge
+- `keys`
+- `comments`
+- optional `description` synthesized from comments
 
-Knowledge assets support multiple view modes, controlled by a positional
-argument after the ref. All modes return their result in the `content`
-field.
+### `wiki`
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `content` | string | yes | Document content (format depends on the view mode) |
+Two shapes exist:
 
-**View modes:**
+1. **wiki page** (`wiki:name/page`)
+   - `content`
+   - same view modes as `knowledge`
+2. **wiki root** (`wiki:name`)
+   - `pages`
+   - `raws`
+   - `recentLog`
+   - optional `description`
+   - optional `lastModified`
 
-| Mode | Command | Content |
-| --- | --- | --- |
-| `full` (default) | `akm show knowledge:guide` | Full document text |
-| `toc` | `akm show knowledge:guide toc` | Formatted table of contents |
-| `frontmatter` | `akm show knowledge:guide frontmatter` | Raw YAML frontmatter block |
-| `section` | `akm show knowledge:guide section "Auth"` | Content under the named heading |
-| `lines` | `akm show knowledge:guide lines 10 30` | Lines 10 through 30 |
+## Summary Detail
 
-### memory
+`--detail summary` keeps only compact metadata. For example:
 
-| Field | Type | Guaranteed | Description |
-| --- | --- | --- | --- |
-| `content` | string | yes | Full text of the memory document |
+- general assets: `type`, `name`, `description`, `tags`, `parameters`, `action`, `origin`
+- workflows: also `workflowTitle`
+- scripts: may keep `run`
+- vaults: may keep `keys` and `comments`
 
 ## Remote Show
 
-Assets from remote stash providers (such as OpenViking) use standard
-`type:name` refs and always return `editable: false`. Content is fetched from
-the remote server transparently.
-
-## Example Responses
-
-A script with known extension (default detail):
-
-```json
-{
-  "type": "script",
-  "name": "deploy.sh",
-  "origin": null,
-  "action": "Execute the run command below",
-  "run": "bash /home/user/akm/scripts/deploy.sh",
-  "cwd": "/home/user/akm/scripts",
-  "setup": "bun install"
-}
-```
-
-The same script with `--detail full`:
-
-```json
-{
-  "schemaVersion": 1,
-  "type": "script",
-  "name": "deploy.sh",
-  "origin": null,
-  "action": "Execute the run command below",
-  "run": "bash /home/user/akm/scripts/deploy.sh",
-  "cwd": "/home/user/akm/scripts",
-  "setup": "bun install",
-  "path": "/home/user/akm/scripts/deploy.sh",
-  "editable": true
-}
-```
-
-An agent:
-
-```json
-{
-  "type": "agent",
-  "name": "reviewer",
-  "origin": null,
-  "action": "Dispatch using the prompt below verbatim. Use modelHint and toolPolicy if present.",
-  "prompt": "You are a code reviewer...",
-  "modelHint": "claude-3-opus",
-  "toolPolicy": ["Bash", "Read"]
-}
-```
-
-A knowledge asset with `toc` view:
-
-```json
-{
-  "type": "knowledge",
-  "name": "api-guide",
-  "origin": null,
-  "action": "Reference material - read the content below. Use 'toc' view for large documents.",
-  "content": "# Table of Contents\n- Authentication\n- Endpoints\n- Error Handling"
-}
-```
-
-A memory asset:
-
-```json
-{
-  "type": "memory",
-  "name": "project-context",
-  "origin": null,
-  "action": "Recalled context - read the content below.",
-  "content": "# Project Context\nThis project uses Bun as its runtime..."
-}
-```
+Remote providers can still return full payloads, but local lookup always tries
+filesystem resolution first and only falls back to remote providers on
+not-found.
