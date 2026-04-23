@@ -15,6 +15,7 @@ import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { formatInstallAuditSummary } from "./install-audit";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-kits";
+import { renderMigrationHelp } from "./migration-help";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
@@ -2276,6 +2277,31 @@ const hintsCommand = defineCommand({
   },
 });
 
+const helpCommand = defineCommand({
+  meta: {
+    name: "help",
+    description: "Print focused help topics such as migration guidance for a release",
+  },
+  subCommands: {
+    migrate: defineCommand({
+      meta: {
+        name: "migrate",
+        description: "Print release notes and migration guidance for a version",
+      },
+      args: {
+        version: {
+          type: "positional",
+          description: "Version to review (for example 0.5.0, v0.5.0, or latest)",
+          required: true,
+        },
+      },
+      run({ args }) {
+        process.stdout.write(renderMigrationHelp(args.version));
+      },
+    }),
+  },
+});
+
 const completionsCommand = defineCommand({
   meta: {
     name: "completions",
@@ -2882,6 +2908,7 @@ const main = defineCommand({
     enable: enableCommand,
     disable: disableCommand,
     feedback: feedbackCommand,
+    help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
     vault: vaultCommand,
@@ -3323,6 +3350,7 @@ akm index --full                              # Full reindex
 akm list                                      # List all sources
 akm upgrade                                   # Upgrade akm binary
 akm upgrade --check                           # Check for updates
+akm help migrate 0.5.0                        # Print migration notes for a release
 akm hints                                     # Print this reference
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
