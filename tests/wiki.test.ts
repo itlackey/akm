@@ -124,6 +124,24 @@ describe("createWiki", () => {
     expect(second.created.length).toBe(0);
     expect(second.skipped.length).toBeGreaterThanOrEqual(3);
   });
+
+  test("rejects creating a stash-owned wiki when that name is already registered", () => {
+    const stash = makeStash();
+    const externalWiki = makeStash("akm-create-conflict-");
+    const configHome = makeStash("akm-create-conflict-config-");
+    const origHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = configHome;
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+      });
+      expect(() => createWiki(stash, "ics-docs")).toThrow("Wiki already registered: ics-docs.");
+    } finally {
+      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origHome;
+    }
+  });
 });
 
 describe("listWikis", () => {

@@ -8,7 +8,7 @@ import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
 import { installRegistryRef, validateTarEntries } from "../src/registry-install";
 import { parseRegistryRef } from "../src/registry-resolve";
-import { akmAdd } from "../src/stash-add";
+import { akmAdd, registerWikiSource } from "../src/stash-add";
 import { akmShowUnified as akmShow } from "../src/stash-show";
 import { listPages, listWikis, showWiki } from "../src/wiki";
 
@@ -316,7 +316,7 @@ describe("local directory installs", () => {
       expect(pages.map((page) => page.ref)).toEqual(["wiki:ics-docs/overview"]);
 
       const shownPage = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
-        akmShow({ ref: "ics-docs//wiki:ics-docs/overview" }),
+        akmShow({ ref: "wiki:ics-docs/overview" }),
       );
       expect(shownPage.type).toBe("wiki");
       expect(shownPage.path).toBe(path.join(wikiDir, "overview.md"));
@@ -324,6 +324,25 @@ describe("local directory installs", () => {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
       fs.rmSync(wikiDir, { recursive: true, force: true });
+    }
+  });
+
+  test("registerWikiSource rejects a name that conflicts with an existing stash-owned wiki", async () => {
+    const stashDir = createEmptyStashDir("akm-wiki-conflict-stash-");
+    const cacheHome = makeTempDir("akm-wiki-conflict-cache-");
+    const wikiSourceDir = makeTempDir("akm-wiki-conflict-source-");
+    writeFile(path.join(stashDir, "wikis", "ics-docs", "schema.md"), "---\ndescription: Stash wiki\n---\n# Schema\n");
+
+    try {
+      await expect(
+        withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
+          registerWikiSource({ ref: wikiSourceDir, name: "ics-docs" }),
+        ),
+      ).rejects.toThrow("Wiki already exists: ics-docs.");
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+      fs.rmSync(cacheHome, { recursive: true, force: true });
+      fs.rmSync(wikiSourceDir, { recursive: true, force: true });
     }
   });
 
