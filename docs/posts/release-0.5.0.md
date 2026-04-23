@@ -1,8 +1,8 @@
 ---
-title: "akm 0.5.0: Wikis, Workflows, Vaults, and a Writable Stash"
+title: 'akm 0.5.0: Wikis, Workflows, Vaults, and a Writable Stash'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: "akm 0.5.0 ships multi-wiki support, workflow and vault asset types, writable git stash sync, and a one-off --trust install bypass."
+description: 'akm 0.5.0 ships multi-wiki support, workflow and vault asset types, writable git stash sync, and a one-off --trust install bypass.'
 tags:
   - ai
   - agents
@@ -10,6 +10,7 @@ tags:
   - release
 published: false
 date: '2026-04-22T00:00:00Z'
+id: 3539588
 ---
 
 akm 0.5.0 is out. This release adds four new asset types — wikis, workflows, and vaults are now first-class citizens — plus writable git stash support so your stash can sync back to a remote. There is one breaking change for anyone who was using the single-wiki LLM POC from 0.4.x.
