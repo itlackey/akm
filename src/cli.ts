@@ -2420,18 +2420,40 @@ const vaultCreateCommand = defineCommand({
 });
 
 const vaultSetCommand = defineCommand({
-  meta: { name: "set", description: "Set a key in a vault. Value is written to disk and never echoed back." },
+  meta: {
+    name: "set",
+    description:
+      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Optionally attach a comment with --comment "description".',
+  },
   args: {
     ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
-    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
-    value: { type: "positional", description: "Value to store", required: true },
+    key: { type: "positional", description: "Key name (e.g. DB_URL) or KEY=VALUE combined form", required: true },
+    value: {
+      type: "positional",
+      description: "Value to store (omit when using KEY=VALUE combined form)",
+      required: false,
+    },
+    comment: { type: "string", description: "Optional comment written above the key line", required: false },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setKey } = await import("./vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
-      setKey(absPath, args.key, args.value);
-      output("vault-set", { ref: `vault:${name}`, key: args.key, path: absPath });
+
+      let realKey: string;
+      let realValue: string;
+
+      if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
+        const eqIdx = args.key.indexOf("=");
+        realKey = args.key.slice(0, eqIdx);
+        realValue = args.key.slice(eqIdx + 1);
+      } else {
+        realKey = args.key;
+        realValue = args.value ?? "";
+      }
+
+      setKey(absPath, realKey, realValue, args.comment);
+      output("vault-set", { ref: `vault:${name}`, key: realKey, path: absPath });
     });
   },
 });
@@ -2500,6 +2522,24 @@ const vaultLoadCommand = defineCommand({
   },
 });
 
+const vaultShowCommand = defineCommand({
+  meta: { name: "show", description: "Show keys (no values) inside a vault — alias for `vault list <ref>`" },
+  args: {
+    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { listKeys } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const { keys, comments } = listKeys(absPath);
+      output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+    });
+  },
+});
+
 const vaultCommand = defineCommand({
   meta: {
     name: "vault",
@@ -2508,6 +2548,7 @@ const vaultCommand = defineCommand({
   },
   subCommands: {
     list: vaultListCommand,
+    show: vaultShowCommand,
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
@@ -2777,7 +2818,7 @@ const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
-const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "load"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "show", "create", "set", "unset", "load"]);
 const WIKI_SUBCOMMAND_SET = new Set(["create", "list", "show", "remove", "pages", "search", "stash", "lint", "ingest"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
