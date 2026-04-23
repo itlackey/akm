@@ -2401,36 +2401,38 @@ const vaultLoadCommand = defineCommand({
     ref: { type: "positional", description: "Vault ref", required: true },
   },
   async run({ args }) {
-    // This command deliberately bypasses output()/JSON shaping. Its stdout
-    // is a shell snippet intended for `eval`, not structured output.
-    const { name, absPath } = resolveVaultPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Vault not found: vault:${name}`);
-    }
+    return runWithJsonErrors(async () => {
+      // This command deliberately bypasses output()/JSON shaping. Its stdout
+      // is a shell snippet intended for `eval`, not structured output.
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
 
-    const { buildShellExportScript } = await import("./vault.js");
-    const crypto = await import("node:crypto");
-    const os = await import("node:os");
+      const { buildShellExportScript } = await import("./vault.js");
+      const crypto = await import("node:crypto");
+      const os = await import("node:os");
 
-    // Parse via dotenv (no expansion, no code execution) and build a
-    // script of literal `export KEY='value'` lines with `'\''` escaping.
-    // Sourcing this is safe even if the raw vault file contained shell
-    // metacharacters like $, backticks, or $(...).
-    const script = buildShellExportScript(absPath);
+      // Parse via dotenv (no expansion, no code execution) and build a
+      // script of literal `export KEY='value'` lines with `'\''` escaping.
+      // Sourcing this is safe even if the raw vault file contained shell
+      // metacharacters like $, backticks, or $(...).
+      const script = buildShellExportScript(absPath);
 
-    // Write to a mode-0600 temp file the shell can source.
-    const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
-    fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
-    try {
-      fs.chmodSync(tmpPath, 0o600);
-    } catch {
-      /* best-effort on platforms without chmod */
-    }
+      // Write to a mode-0600 temp file the shell can source.
+      const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
+      fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
+      try {
+        fs.chmodSync(tmpPath, 0o600);
+      } catch {
+        /* best-effort on platforms without chmod */
+      }
 
-    const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
-    // Emit: source the temp file, then remove it — values reach bash only
-    // via the temp file (mode 0600), never via akm's stdout.
-    process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+      const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
+      // Emit: source the temp file, then remove it — values reach bash only
+      // via the temp file (mode 0600), never via akm's stdout.
+      process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+    });
   },
 });
 

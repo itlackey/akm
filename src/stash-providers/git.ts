@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../common";
@@ -111,23 +111,38 @@ async function ensureGitMirror(
   }
 }
 
-function cloneRepo(cloneUrl: string, ref: string | null, destDir: string, writable = false): void {
-  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string, writable = false): void {
+  // Stage the clone into a sibling temp dir so that a failed clone never
+  // destroys a previously-valid destDir (e.g. when the remote is temporarily
+  // unreachable and we have a valid cached copy).
+  const tmpDir = `${destDir}.tmp-${randomBytes(4).toString("hex")}`;
 
   const args = ["clone", "--depth", "1"];
   if (ref) args.push("--branch", ref);
-  args.push(cloneUrl, destDir);
+  args.push(cloneUrl, tmpDir);
 
   const result = spawnSync("git", args, { encoding: "utf8", timeout: 120_000 });
   if (result.status !== 0) {
+    // Clean up the (possibly partial) temp dir but leave destDir untouched.
+    fs.rmSync(tmpDir, { recursive: true, force: true });
     const err = result.stderr?.trim() || result.error?.message || "unknown error";
     throw new Error(`Failed to clone ${cloneUrl}: ${err}`);
   }
 
-  if (!writable) {
-    // Remove .git directory — we only need the working tree for read-only stashes
-    const gitDir = path.join(destDir, ".git");
-    if (fs.existsSync(gitDir)) fs.rmSync(gitDir, { recursive: true, force: true });
+  try {
+    if (!writable) {
+      // Remove .git directory — we only need the working tree for read-only stashes
+      const gitDir = path.join(tmpDir, ".git");
+      if (fs.existsSync(gitDir)) fs.rmSync(gitDir, { recursive: true, force: true });
+    }
+
+    // Swap: remove the old destDir (if any) then atomically rename tmpDir into place.
+    if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+    fs.renameSync(tmpDir, destDir);
+  } catch (err) {
+    // Post-clone steps failed — clean up the temp dir to avoid orphaned dirs.
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    throw err;
   }
 }
 
