@@ -1614,11 +1614,19 @@ const saveCommand = defineCommand({
     await runWithJsonErrors(async () => {
       // Fix: citty can consume `--format json` (space-separated) as the
       // positional `name` argument (e.g. `akm save --format json` parses
-      // name="json"). Detect this by checking whether the positional value
-      // equals the value of the --format flag as seen in process.argv.
+      // name="json"). Detect the mis-parse by checking argv order — only
+      // treat the positional as consumed by --format when --format appears
+      // before any standalone occurrence of the same value in the save
+      // subcommand's argv slice. This preserves legitimate invocations
+      // like `akm save json --format json`.
       const parsedFormat = parseFlagValue("--format");
       const effectiveName =
-        args.name !== undefined && parsedFormat !== undefined && args.name === parsedFormat ? undefined : args.name;
+        args.name !== undefined &&
+        parsedFormat !== undefined &&
+        args.name === parsedFormat &&
+        wasFormatValueConsumedAsName(args.name, parsedFormat)
+          ? undefined
+          : args.name;
 
       let writable: boolean | undefined;
       if (!effectiveName) {
@@ -1632,6 +1640,50 @@ const saveCommand = defineCommand({
     });
   },
 });
+
+/**
+ * Detect whether `--format <value>` was consumed by citty as the optional
+ * `name` positional of `akm save`. Returns true only when `--format` appears
+ * in the save subcommand's argv slice AND the candidate name does NOT
+ * appear as a standalone positional elsewhere (before or after the flag).
+ *
+ * This keeps `akm save json --format json` routing `json` as the stash name,
+ * while `akm save --format json` (no separate positional) is treated as a
+ * primary-stash save.
+ */
+function wasFormatValueConsumedAsName(name: string, formatValue: string): boolean {
+  const argv = process.argv.slice(2);
+  const saveIndex = argv.indexOf("save");
+  const tokens = saveIndex >= 0 ? argv.slice(saveIndex + 1) : argv;
+
+  let formatIndex = -1;
+  let formatConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === "--format") {
+      formatIndex = i;
+      formatConsumesNextToken = true;
+      break;
+    }
+    if (token === `--format=${formatValue}`) {
+      formatIndex = i;
+      break;
+    }
+  }
+
+  if (formatIndex === -1) return false;
+
+  // If the name appears as a standalone token before --format, it's the
+  // real positional and --format did not consume it.
+  if (tokens.slice(0, formatIndex).includes(name)) return false;
+
+  // If --format has a space-separated value, skip past the value token
+  // when scanning after the flag; otherwise start right after the flag.
+  const firstTokenAfterFormat = formatIndex + (formatConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFormat).includes(name)) return false;
+
+  return true;
+}
 
 const cloneCommand = defineCommand({
   meta: {
@@ -2071,7 +2123,7 @@ const workflowCreateCommand = defineCommand({
       const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
       if (!namePattern.test(args.name)) {
         throw new UsageError(
-          "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, and underscores.",
+          "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, underscores, and slashes.",
         );
       }
       if (args.force && !args.from && !args.reset) {

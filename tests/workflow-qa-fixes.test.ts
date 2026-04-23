@@ -269,7 +269,8 @@ describe("workflow next --params", () => {
     const next = runCli(["workflow", "next", startRun.id, "--params", '{"x":1}'], env);
     expect(next.status).toBe(2);
     const err = JSON.parse(next.stderr) as { error: string };
-    expect(err.error).toContain("--params can only be set on a new run");
+    expect(err.error).toContain("--params can only be used when starting a new run from a workflow ref");
+    expect(err.error).toContain("existing run id");
   });
 });
 
@@ -333,6 +334,25 @@ describe("workflow create — name validation", () => {
     expect(result.status).toBe(0);
     const json = JSON.parse(result.stdout) as { ref: string };
     expect(json.ref).toBe("workflow:my-workflow");
+  });
+
+  test("hierarchical name with forward slash is accepted", () => {
+    // Slashes are allowed for hierarchical naming (e.g. release/ship)
+    const env = createWorkflowEnv();
+
+    const result = runCli(["workflow", "create", "release/ship"], env);
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { ref: string };
+    expect(json.ref).toBe("workflow:release/ship");
+  });
+
+  test("name validation error message mentions slashes", () => {
+    const env = createWorkflowEnv();
+
+    const result = runCli(["workflow", "create", "BAD NAME"], env);
+    expect(result.status).toBe(2);
+    const err = JSON.parse(result.stderr) as { error: string };
+    expect(err.error).toContain("slashes");
   });
 });
 

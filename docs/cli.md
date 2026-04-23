@@ -50,7 +50,9 @@ Every command exits with one of the following codes:
 | 2 | Usage / bad input | `UsageError` |
 | 78 | Configuration error | `ConfigError` |
 
-On failure, every command emits a JSON error envelope on stdout before exiting:
+On failure, every command emits a JSON error envelope on **stderr** before
+exiting; stdout is left empty (or contains only command-specific side-effect
+output such as shell snippets from `vault load`):
 
 ```json
 {"ok": false, "error": "<message>", "hint": "<optional hint>"}
@@ -58,8 +60,8 @@ On failure, every command emits a JSON error envelope on stdout before exiting:
 
 The `hint` field is present only when actionable remediation is available (e.g.
 `"Run akm add <source> --trust to bypass the audit for this source."`). Agents
-should check `ok === false` or a non-zero exit code to detect failure. Scripts
-can rely on the exit code alone.
+should check `ok === false` on the parsed stderr envelope or a non-zero exit
+code to detect failure. Scripts can rely on the exit code alone.
 
 ## Commands
 
@@ -284,9 +286,10 @@ akm workflow create ship-release --force --reset
 `--reset` (explicitly acknowledge you are overwriting in place). Without one of
 these, `--force` is rejected to prevent silent template overwrites.
 
-Workflow names must match `^[a-z0-9][a-z0-9._-]*$` — lowercase letters and
-digits, hyphens, dots, and underscores allowed; must start with a lowercase
-letter or digit.
+Workflow names must match `^[a-z0-9][a-z0-9._/-]*$` — lowercase letters and
+digits, hyphens, dots, underscores, and forward slashes allowed; must start
+with a lowercase letter or digit. Forward slashes are supported for
+hierarchical names (e.g. `release/ship`).
 
 #### workflow next
 

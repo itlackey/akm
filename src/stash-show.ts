@@ -61,13 +61,27 @@ export async function akmShowUnified(input: {
   const ref = input.ref.trim();
 
   // 0. Wiki-root shortcut: `wiki:<name>` with no page path routes to the
-  //    wiki summary (same payload as `akm wiki show <name>`).
+  //    wiki summary (same payload as `akm wiki show <name>`). Honour
+  //    `parsed.origin` by resolving against the matching stash source(s),
+  //    falling back to the primary stash when no origin is given.
   {
     const parsed = parseAssetRef(ref);
     if (parsed.type === "wiki" && !parsed.name.includes("/")) {
-      const { resolveStashDir } = await import("./common.js");
-      const stashDir = resolveStashDir({ readOnly: true });
-      return showWikiRoot(stashDir, parsed.name);
+      const allSources = resolveStashSources();
+      const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
+      let lastError: NotFoundError | undefined;
+      for (const source of searchSources) {
+        try {
+          return await showWikiRoot(source.path, parsed.name);
+        } catch (err) {
+          if (!(err instanceof NotFoundError)) throw err;
+          lastError = err;
+        }
+      }
+      throw (
+        lastError ??
+        new NotFoundError(`Wiki not found: ${parsed.name}. Run \`akm wiki create ${parsed.name}\` to create it.`)
+      );
     }
   }
 

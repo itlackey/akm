@@ -290,7 +290,7 @@ async function resolveRunSpecifier(
   if (explicitRun) {
     if (params && Object.keys(params).length > 0) {
       throw new UsageError(
-        `--params can only be set on a new run; ${explicitRun.workflow_ref} already has an active run`,
+        `--params can only be used when starting a new run from a workflow ref, not with an existing run id ("${specifier}")`,
       );
     }
     return { run: explicitRun, autoStarted: false };

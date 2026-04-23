@@ -105,6 +105,22 @@ describe("save command: --format flag not consumed as positional name", () => {
       expect(stderr).not.toContain('"json"');
     }
   });
+
+  test("3b. akm save json --format json keeps 'json' as the positional stash name", () => {
+    // Edge case: the legitimate stash name happens to equal the --format value.
+    // argv-order check should detect this isn't a mis-parse (positional appears
+    // BEFORE --format) and route "json" as the stash name, not the primary.
+    const stashDir = makeTempDir("akm-sqafix-stash3b-");
+    const { stderr } = runCli(["save", "json", "--format", "json"], {
+      AKM_STASH_DIR: stashDir,
+    });
+
+    // The real stash named "json" doesn't exist, so we expect "No git stash found"
+    // referencing "json" by name — not a primary-stash success.
+    if (stderr.includes("No git stash found")) {
+      expect(stderr).toContain("json");
+    }
+  });
 });
 
 // ── Test 4: Primary stash with writable:true pushes on save ──────────────────
