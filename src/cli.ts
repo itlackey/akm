@@ -50,6 +50,7 @@ import {
   getNextWorkflowStep,
   getWorkflowStatus,
   listWorkflowRuns,
+  resumeWorkflowRun,
   startWorkflowRun,
 } from "./workflow-runs";
 
@@ -1276,6 +1277,10 @@ const addCommand = defineCommand({
       description: "Bypass install-audit blocking for this add invocation only",
       default: false,
     },
+    type: {
+      type: "string",
+      description: "Override asset type for all files in this stash (currently supports: wiki)",
+    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
@@ -1337,6 +1342,7 @@ const addCommand = defineCommand({
       const result = await akmAdd({
         ref,
         name: args.name,
+        overrideType: args.type,
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
         trustThisInstall: args.trust,
         writable: args.writable,
@@ -1606,11 +1612,78 @@ const saveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = saveGitStash(args.name, args.message);
+      // Fix: citty can consume `--format json` (space-separated) as the
+      // positional `name` argument (e.g. `akm save --format json` parses
+      // name="json"). Detect the mis-parse by checking argv order — only
+      // treat the positional as consumed by --format when --format appears
+      // before any standalone occurrence of the same value in the save
+      // subcommand's argv slice. This preserves legitimate invocations
+      // like `akm save json --format json`.
+      const parsedFormat = parseFlagValue("--format");
+      const effectiveName =
+        args.name !== undefined &&
+        parsedFormat !== undefined &&
+        args.name === parsedFormat &&
+        wasFormatValueConsumedAsName(args.name, parsedFormat)
+          ? undefined
+          : args.name;
+
+      let writable: boolean | undefined;
+      if (!effectiveName) {
+        // Primary stash — honour the root-level writable flag from config.
+        const cfg = loadConfig();
+        writable = cfg.writable === true ? true : undefined;
+      }
+
+      const result = saveGitStash(effectiveName, args.message, writable);
       output("save", result);
     });
   },
 });
+
+/**
+ * Detect whether `--format <value>` was consumed by citty as the optional
+ * `name` positional of `akm save`. Returns true only when `--format` appears
+ * in the save subcommand's argv slice AND the candidate name does NOT
+ * appear as a standalone positional elsewhere (before or after the flag).
+ *
+ * This keeps `akm save json --format json` routing `json` as the stash name,
+ * while `akm save --format json` (no separate positional) is treated as a
+ * primary-stash save.
+ */
+function wasFormatValueConsumedAsName(name: string, formatValue: string): boolean {
+  const argv = process.argv.slice(2);
+  const saveIndex = argv.indexOf("save");
+  const tokens = saveIndex >= 0 ? argv.slice(saveIndex + 1) : argv;
+
+  let formatIndex = -1;
+  let formatConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === "--format") {
+      formatIndex = i;
+      formatConsumesNextToken = true;
+      break;
+    }
+    if (token === `--format=${formatValue}`) {
+      formatIndex = i;
+      break;
+    }
+  }
+
+  if (formatIndex === -1) return false;
+
+  // If the name appears as a standalone token before --format, it's the
+  // real positional and --format did not consume it.
+  if (tokens.slice(0, formatIndex).includes(name)) return false;
+
+  // If --format has a space-separated value, skip past the value token
+  // when scanning after the flag; otherwise start right after the flag.
+  const firstTokenAfterFormat = formatIndex + (formatConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFormat).includes(name)) return false;
+
+  return true;
+}
 
 const cloneCommand = defineCommand({
   meta: {
@@ -1932,10 +2005,12 @@ const workflowNextCommand = defineCommand({
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
+    params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await getNextWorkflowStep(args.target);
+      const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
+      const result = await getNextWorkflowStep(args.target, parsedParams);
       output("workflow-next", result);
     });
   },
@@ -1949,7 +2024,10 @@ const workflowCompleteCommand = defineCommand({
   args: {
     runId: { type: "positional", description: "Workflow run id", required: true },
     step: { type: "string", description: "Workflow step id", required: true },
-    state: { type: "string", description: `Step state (${WORKFLOW_STEP_STATES.join("|")})` },
+    state: {
+      type: "string",
+      description: `Step state (default: completed). One of: ${WORKFLOW_STEP_STATES.join(", ")}.`,
+    },
     notes: { type: "string", description: "Notes for the completed step" },
     evidence: { type: "string", description: "Evidence JSON object for the step" },
   },
@@ -1973,12 +2051,33 @@ const workflowStatusCommand = defineCommand({
     description: "Show full workflow run state for review or resume",
   },
   args: {
-    runId: { type: "positional", description: "Workflow run id", required: true },
+    target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      const result = getWorkflowStatus(args.runId);
-      output("workflow-status", result);
+      const target = args.target;
+      // Check if target looks like a workflow ref
+      const parsed = (() => {
+        try {
+          return parseAssetRef(target);
+        } catch {
+          return null;
+        }
+      })();
+      if (parsed?.type === "workflow") {
+        const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+        const { runs } = listWorkflowRuns({ workflowRef: ref });
+        if (runs.length === 0) {
+          throw new NotFoundError(`No workflow runs found for ${ref}`);
+        }
+        const mostRecent = runs[0];
+        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`);
+        const result = getWorkflowStatus(mostRecent.id);
+        output("workflow-status", result);
+      } else {
+        const result = getWorkflowStatus(target);
+        output("workflow-status", result);
+      }
     });
   },
 });
@@ -2008,10 +2107,30 @@ const workflowCreateCommand = defineCommand({
   args: {
     name: { type: "positional", description: "Workflow name", required: true },
     from: { type: "string", description: "Import and validate markdown from an existing file" },
-    force: { type: "boolean", description: "Overwrite an existing workflow", default: false },
+    force: {
+      type: "boolean",
+      description: "Overwrite an existing workflow (requires --from or --reset)",
+      default: false,
+    },
+    reset: {
+      type: "boolean",
+      description: "Explicitly replace an existing workflow with a fresh template (use with --force)",
+      default: false,
+    },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
+      if (!namePattern.test(args.name)) {
+        throw new UsageError(
+          "Workflow name must start with a lowercase letter or digit and contain only lowercase letters, digits, hyphens, dots, underscores, and slashes.",
+        );
+      }
+      if (args.force && !args.from && !args.reset) {
+        throw new UsageError(
+          "Refusing to overwrite with template: pass --from <file> to replace content, or --reset to explicitly replace with a fresh template.",
+        );
+      }
       const result = createWorkflowAsset({
         name: args.name,
         from: args.from,
@@ -2032,6 +2151,22 @@ const workflowTemplateCommand = defineCommand({
   },
 });
 
+const workflowResumeCommand = defineCommand({
+  meta: {
+    name: "resume",
+    description: "Resume a blocked or failed workflow run, flipping it back to active",
+  },
+  args: {
+    runId: { type: "positional", description: "Workflow run id", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = resumeWorkflowRun(args.runId);
+      output("workflow-run", result);
+    });
+  },
+});
+
 const workflowCommand = defineCommand({
   meta: {
     name: "workflow",
@@ -2045,6 +2180,7 @@ const workflowCommand = defineCommand({
     list: workflowListCommand,
     create: workflowCreateCommand,
     template: workflowTemplateCommand,
+    resume: workflowResumeCommand,
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2356,18 +2492,40 @@ const vaultCreateCommand = defineCommand({
 });
 
 const vaultSetCommand = defineCommand({
-  meta: { name: "set", description: "Set a key in a vault. Value is written to disk and never echoed back." },
+  meta: {
+    name: "set",
+    description:
+      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Optionally attach a comment with --comment "description".',
+  },
   args: {
     ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
-    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
-    value: { type: "positional", description: "Value to store", required: true },
+    key: { type: "positional", description: "Key name (e.g. DB_URL) or KEY=VALUE combined form", required: true },
+    value: {
+      type: "positional",
+      description: "Value to store (omit when using KEY=VALUE combined form)",
+      required: false,
+    },
+    comment: { type: "string", description: "Optional comment written above the key line", required: false },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setKey } = await import("./vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
-      setKey(absPath, args.key, args.value);
-      output("vault-set", { ref: `vault:${name}`, key: args.key, path: absPath });
+
+      let realKey: string;
+      let realValue: string;
+
+      if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
+        const eqIdx = args.key.indexOf("=");
+        realKey = args.key.slice(0, eqIdx);
+        realValue = args.key.slice(eqIdx + 1);
+      } else {
+        realKey = args.key;
+        realValue = args.value ?? "";
+      }
+
+      setKey(absPath, realKey, realValue, args.comment);
+      output("vault-set", { ref: `vault:${name}`, key: realKey, path: absPath });
     });
   },
 });
@@ -2401,36 +2559,56 @@ const vaultLoadCommand = defineCommand({
     ref: { type: "positional", description: "Vault ref", required: true },
   },
   async run({ args }) {
-    // This command deliberately bypasses output()/JSON shaping. Its stdout
-    // is a shell snippet intended for `eval`, not structured output.
-    const { name, absPath } = resolveVaultPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Vault not found: vault:${name}`);
-    }
+    return runWithJsonErrors(async () => {
+      // This command deliberately bypasses output()/JSON shaping. Its stdout
+      // is a shell snippet intended for `eval`, not structured output.
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
 
-    const { buildShellExportScript } = await import("./vault.js");
-    const crypto = await import("node:crypto");
-    const os = await import("node:os");
+      const { buildShellExportScript } = await import("./vault.js");
+      const crypto = await import("node:crypto");
+      const os = await import("node:os");
 
-    // Parse via dotenv (no expansion, no code execution) and build a
-    // script of literal `export KEY='value'` lines with `'\''` escaping.
-    // Sourcing this is safe even if the raw vault file contained shell
-    // metacharacters like $, backticks, or $(...).
-    const script = buildShellExportScript(absPath);
+      // Parse via dotenv (no expansion, no code execution) and build a
+      // script of literal `export KEY='value'` lines with `'\''` escaping.
+      // Sourcing this is safe even if the raw vault file contained shell
+      // metacharacters like $, backticks, or $(...).
+      const script = buildShellExportScript(absPath);
 
-    // Write to a mode-0600 temp file the shell can source.
-    const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
-    fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
-    try {
-      fs.chmodSync(tmpPath, 0o600);
-    } catch {
-      /* best-effort on platforms without chmod */
-    }
+      // Write to a mode-0600 temp file the shell can source.
+      const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
+      fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
+      try {
+        fs.chmodSync(tmpPath, 0o600);
+      } catch {
+        /* best-effort on platforms without chmod */
+      }
 
-    const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
-    // Emit: source the temp file, then remove it — values reach bash only
-    // via the temp file (mode 0600), never via akm's stdout.
-    process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+      const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
+      // Emit: source the temp file, then remove it — values reach bash only
+      // via the temp file (mode 0600), never via akm's stdout.
+      process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+    });
+  },
+});
+
+const vaultShowCommand = defineCommand({
+  meta: { name: "show", description: "Show keys (no values) inside a vault — alias for `vault list <ref>`" },
+  args: {
+    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const { listKeys } = await import("./vault.js");
+      const { name, absPath } = resolveVaultPath(args.ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: vault:${name}`);
+      }
+      const { keys, comments } = listKeys(absPath);
+      output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+    });
   },
 });
 
@@ -2442,6 +2620,7 @@ const vaultCommand = defineCommand({
   },
   subCommands: {
     list: vaultListCommand,
+    show: vaultShowCommand,
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
@@ -2562,6 +2741,10 @@ const wikiSearchCommand = defineCommand({
     return runWithJsonErrors(async () => {
       const { searchInWiki } = await import("./wiki.js");
       const stashDir = resolveStashDir();
+      const wikiDir = path.join(stashDir, "wikis", args.name);
+      if (!fs.existsSync(wikiDir)) {
+        throw new NotFoundError(`Wiki not found: ${args.name}`);
+      }
       const parsedLimit = args.limit ? Number(args.limit) : undefined;
       const limit =
         typeof parsedLimit === "number" && Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
@@ -2592,6 +2775,7 @@ const wikiStashCommand = defineCommand({
         wikiName: args.name,
         content,
         preferredName: args.as ?? preferredName,
+        explicitSlug: args.as !== undefined,
       });
       output("wiki-stash", { ok: true, wiki: args.name, source: args.source, ...result });
     });
@@ -2606,13 +2790,16 @@ const wikiLintCommand = defineCommand({
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
+  async run({ args }) {
+    let findingCount = 0;
+    await runWithJsonErrors(async () => {
       const { lintWiki } = await import("./wiki.js");
       const stashDir = resolveStashDir();
       const report = lintWiki(stashDir, args.name);
       output("wiki-lint", report);
+      findingCount = report.findings.length;
     });
+    if (findingCount > 0) process.exit(1); // EXIT_GENERAL
   },
 });
 
@@ -2703,7 +2890,7 @@ const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
-const VAULT_SUBCOMMAND_SET = new Set(["list", "create", "set", "unset", "load"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "show", "create", "set", "unset", "load"]);
 const WIKI_SUBCOMMAND_SET = new Set(["create", "list", "show", "remove", "pages", "search", "stash", "lint", "ingest"]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
@@ -3017,6 +3204,36 @@ akm wiki remove research --force --with-sources # Full nuke, including raw/
 to get the step-by-step workflow.** Wiki pages are also addressable as
 \`wiki:<name>/<page-path>\` and show up in stash-wide \`akm search\` as
 \`type: wiki\`. No \`--llm\` anywhere — akm never reasons about page content.
+
+## Vaults
+
+Encrypted-at-rest key/value stores for secrets. Each vault is a \`.env\`-format
+file at \`<stashDir>/vaults/<name>.env\`.
+
+\`\`\`sh
+akm vault create prod                         # Create a new vault
+akm vault set prod DB_URL postgres://...      # Set a key (or KEY=VALUE combined form)
+akm vault set prod DB_URL=postgres://...      # Combined KEY=VALUE form also works
+akm vault unset prod DB_URL                   # Remove a key
+akm vault list vault:prod                     # List key names (no values)
+akm vault show vault:prod                     # Same as list (alias)
+akm vault load vault:prod                     # Print export statements to source
+\`\`\`
+
+## Workflows
+
+Step-based workflows stored as \`<stashDir>/workflows/<name>.md\`.
+
+\`\`\`sh
+akm workflow template                         # Print a starter workflow template
+akm workflow create ship-release             # Scaffold a new workflow asset
+akm workflow start workflow:ship-release     # Start a new run
+akm workflow next workflow:ship-release      # Advance to the next step (or auto-start)
+akm workflow complete <run-id>               # Mark a step complete and advance
+akm workflow status <run-id>                 # Show current run status
+akm workflow resume <run-id>                 # Resume a blocked or failed run
+akm workflow list                            # List all workflow runs
+\`\`\`
 
 ## Clone
 

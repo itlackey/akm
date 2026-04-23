@@ -8,7 +8,16 @@ export const WORKFLOW_STEP_STATES: Array<Exclude<WorkflowRunStepStatus, "pending
   "skipped",
 ];
 
-export const WORKFLOW_SUBCOMMANDS = new Set(["start", "next", "complete", "status", "list", "create", "template"]);
+export const WORKFLOW_SUBCOMMANDS = new Set([
+  "start",
+  "next",
+  "complete",
+  "status",
+  "list",
+  "create",
+  "template",
+  "resume",
+]);
 
 export function parseWorkflowJsonObject(
   raw: string | undefined,

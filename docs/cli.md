@@ -39,6 +39,30 @@ capability discovery:
 - **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`
 - **search**: metadata-only view (no full content), under 200 tokens
 
+## Exit Codes and Error Envelope
+
+Every command exits with one of the following codes:
+
+| Exit code | Meaning | Error class |
+| --- | --- | --- |
+| 0 | Success | — |
+| 1 | Not found or general error | `NotFoundError`, other |
+| 2 | Usage / bad input | `UsageError` |
+| 78 | Configuration error | `ConfigError` |
+
+On failure, every command emits a JSON error envelope on **stderr** before
+exiting; stdout is left empty (or contains only command-specific side-effect
+output such as shell snippets from `vault load`):
+
+```json
+{"ok": false, "error": "<message>", "hint": "<optional hint>"}
+```
+
+The `hint` field is present only when actionable remediation is available (e.g.
+`"Run akm add <source> --trust to bypass the audit for this source."`). Agents
+should check `ok === false` on the parsed stderr envelope or a non-zero exit
+code to detect failure. Scripts can rely on the exit code alone.
+
 ## Commands
 
 ### init
@@ -214,6 +238,10 @@ everything else, and always return `editable: false`.
 If the ref points to a package origin that is not installed, `akm show`
 returns guidance to run `akm add <origin>` first.
 
+`akm show wiki:<name>` returns the same summary as `akm wiki show <name>` —
+path, description from `schema.md`, page and raw counts, and the last 3
+`log.md` entries.
+
 ### workflow
 
 Author, inspect, and execute structured workflow assets.
@@ -224,8 +252,11 @@ akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
+akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow complete <run-id> --step validate --state completed --notes "Inputs verified"
 akm workflow status <run-id>
+akm workflow status workflow:ship-release
+akm workflow resume <run-id>
 akm workflow list --active
 ```
 
@@ -238,8 +269,89 @@ Subcommands:
 | `start <ref>` | Create a new persisted workflow run |
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |
-| `status <run-id>` | Show the full run state, including all step statuses |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses |
 | `list` | List workflow runs (optionally filtered by `--ref` and `--active`) |
+| `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
+
+#### workflow create
+
+```sh
+akm workflow create ship-release
+akm workflow create ship-release --from ./ship-release.md
+akm workflow create ship-release --from ./ship-release.md --force
+akm workflow create ship-release --force --reset
+```
+
+`--force` requires either `--from <file>` (replace from a source file) or
+`--reset` (explicitly acknowledge you are overwriting in place). Without one of
+these, `--force` is rejected to prevent silent template overwrites.
+
+Workflow names must match `^[a-z0-9][a-z0-9._/-]*$` — lowercase letters and
+digits, hyphens, dots, underscores, and forward slashes allowed; must start
+with a lowercase letter or digit. Forward slashes are supported for
+hierarchical names (e.g. `release/ship`).
+
+#### workflow next
+
+```sh
+akm workflow next workflow:ship-release
+akm workflow next <run-id>
+akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
+```
+
+When multiple active runs exist for the same workflow ref, `next` selects the
+**most-recently-updated** run.
+
+When no active run exists, `next` auto-starts a new run for the workflow ref.
+Pass `--params` to supply parameters for the auto-started run. If an active run
+already exists, `--params` is rejected with a usage error.
+
+Response shape:
+
+| Field | When present |
+| --- | --- |
+| `step` | The current actionable step object, or `null` when the run is complete |
+| `done` | `true` when the resolved run is already complete |
+| `autoStarted` | `true` when `next` auto-started a new run (no active run existed) |
+| `run` | The run object |
+
+When `done: true` is present, `step` is `null` and no further action is needed
+for this run. Start a new run with `akm workflow start` if required.
+
+**Snapshot isolation:** workflow runs snapshot their step list when started.
+Edits to the source workflow file after a run has started do not affect
+in-flight runs. The run always follows the steps that were defined at start
+time.
+
+#### workflow complete
+
+```sh
+akm workflow complete <run-id> --step <step-id>
+akm workflow complete <run-id> --step <step-id> --state completed --notes "Done"
+akm workflow complete <run-id> --step <step-id> --state skipped
+```
+
+`--state` defaults to `completed` when omitted. Accepted values: `completed`,
+`skipped`, `failed`.
+
+#### workflow status
+
+```sh
+akm workflow status <run-id>
+akm workflow status workflow:ship-release
+```
+
+Accepts either a run-id or a workflow ref. When given a workflow ref, resolves
+to the most-recently-updated run for that ref.
+
+#### workflow resume
+
+```sh
+akm workflow resume <run-id>
+```
+
+Flips a `blocked` or `failed` run back to `active`. Completed runs cannot be
+resumed. Use `workflow list` to find runs by status.
 
 Workflow markdown contract:
 
@@ -273,7 +385,8 @@ akm add github:owner/private-kit --trust
 ```
 
 Use `--trust` only for one-off installs you have manually reviewed. It does not
-persist trust in config.
+persist trust in config. Note: `--trust` has no effect on local directory
+sources — the audit is not run for local paths.
 
 HTTP(S) URLs pointing to known git hosts (GitHub, GitLab, Bitbucket, Codeberg,
 SourceHut) or ending in `.git` are treated as git sources. All other HTTP(S)
@@ -440,6 +553,7 @@ remote configured and is marked `writable: true`, the commit is also pushed.
 ```sh
 akm save                            # Save primary stash (auto timestamp message)
 akm save -m "Add deploy skill"     # Save with custom message
+akm save --format json             # Explicit format (both --format json and --format=json work)
 akm save my-skills                  # Save a named writable git stash
 akm save my-skills -m "Update"     # Save named stash with message
 ```
@@ -448,6 +562,7 @@ akm save my-skills -m "Update"     # Save named stash with message
 | --- | --- |
 | `[name]` | Optional stash name. Defaults to the primary stash |
 | `-m`, `--message` | Commit message. Defaults to `akm save <timestamp>` |
+| `--format` | Output format (`json`, `text`, `yaml`). Both `--format json` and `--format=json` are accepted |
 
 **Behaviour by repo state:**
 
@@ -458,12 +573,28 @@ akm save my-skills -m "Update"     # Save named stash with message
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
 
+**Primary stash writable config:**
+
+To make the primary stash push on save, set `writable: true` at the root of
+your config file (`~/.config/akm/config.json` or the path shown by
+`akm config path`):
+
+```json
+{
+  "stashDir": "~/akm",
+  "writable": true
+}
+```
+
+When `writable: true` is set and the primary stash has a git remote configured,
+`akm save` will stage, commit, and push.
+
 When `akm init` successfully initializes the default stash as a local git repo
 (requires `git` to be installed), `akm save` will commit there safely without
 pushing. If git is unavailable, the stash will not be a git repo and save will
 return a skipped result.
 
-To make a remote git stash writable, pass `--writable` when adding it:
+To make a named remote git stash writable, pass `--writable` when adding it:
 
 ```sh
 akm add git@github.com:org/skills.git --provider git --name my-skills --writable
@@ -628,6 +759,110 @@ the CLI.
 akm hints
 ```
 
+### vault
+
+Manage `.env`-backed secret vaults. Each vault is a mode-0600 file stored
+under `vaults/` in your stash. The key security property: **vault values never
+appear in structured output**. `list` and `show` return key names and comments
+only.
+
+```sh
+akm vault list
+akm vault list vault:prod
+akm vault show vault:prod
+akm vault create prod
+akm vault set vault:prod DATABASE_URL https://db.example.com
+akm vault set vault:prod DATABASE_URL=https://db.example.com
+akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+akm vault unset vault:prod DATABASE_URL
+eval "$(akm vault load vault:prod)"
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `list` | List all vaults with key counts |
+| `list <ref>` | List keys and comments in one vault (no values) |
+| `show <ref>` | Alias for `list <ref>` — same output |
+| `create <name>` | Create an empty `.env` vault (mode 0600). No-op if it already exists |
+| `set <ref> <KEY> <VALUE>` | Set a key in the vault |
+| `unset <ref> <KEY>` | Remove a key from the vault |
+| `load <ref>` | Emit a shell snippet that loads vault values into the current shell |
+
+#### vault list
+
+```sh
+akm vault list                      # All vaults: name + keyCount
+akm vault list vault:prod           # Keys + comments for vault:prod (no values)
+```
+
+The top-level `list` returns one entry per vault with `name` and `keyCount`.
+The per-vault `list <ref>` returns an array of `{key, comment}` objects —
+values are never included.
+
+#### vault show
+
+```sh
+akm vault show vault:prod
+```
+
+An alias for `vault list <ref>`. Returns the same `{key, comment}` array as
+`vault list vault:prod`.
+
+#### vault create
+
+```sh
+akm vault create prod
+```
+
+Creates `vaults/prod.env` with mode 0600. If the vault already exists, the
+command exits 0 and reports `created: false` — it never overwrites.
+
+#### vault set
+
+```sh
+akm vault set vault:prod DATABASE_URL https://db.example.com
+akm vault set vault:prod DATABASE_URL=https://db.example.com
+akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+```
+
+Both the three-positional form (`<ref> <KEY> <VALUE>`) and the combined
+`KEY=VALUE` form are accepted. The `=` split happens on the first `=` so
+values may themselves contain `=`.
+
+`--comment "<text>"` attaches a `# <text>` comment line immediately above the
+key in the `.env` file. If the key already exists and is being updated, the
+preceding comment is also updated. Existing unrelated comments are preserved.
+
+| Flag | Description |
+| --- | --- |
+| `--comment` | Attach a comment line above the key |
+
+#### vault unset
+
+```sh
+akm vault unset vault:prod DATABASE_URL
+```
+
+Removes the key and its associated comment from the vault. Exits 0 whether or
+not the key existed.
+
+#### vault load
+
+```sh
+eval "$(akm vault load vault:prod)"
+```
+
+Emits a shell snippet that loads vault values into the current shell session.
+The implementation writes a mode-0600 temp file, sources it, then immediately
+removes it. **Values never appear on akm's stdout** — the snippet is the only
+output, and the values are loaded directly into the shell environment.
+
+Use `eval "$(akm vault load vault:<name>)"` in shell scripts or agent tool
+calls to hydrate the environment before running commands that need those
+secrets.
+
 ### wiki
 
 Manage multiple markdown wikis following the Karpathy LLM-wiki pattern.
@@ -666,12 +901,11 @@ Subcommands:
 | `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
 | `search <name> <query>` | Scope-filtered search — equivalent to `akm search <query> --type wiki` filtered to one wiki |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
-| `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index |
+| `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
 | `ingest <name>` | Print the step-by-step ingest workflow for the named wiki. Does not perform any ingest |
 
-Wiki names must match `^[a-z0-9][a-z0-9-]*$`. Wiki pages are also
-first-class in stash-wide `akm search` (`--type wiki`), so consumers who
-don't care about scoping never need to use `akm wiki search` at all.
+Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
+only; must start with a lowercase letter or digit.
 
 **Side effect:** `akm index` regenerates each wiki's `index.md` as part of
 its normal stash walk — there is no separate `reindex` verb.
@@ -679,6 +913,42 @@ its normal stash walk — there is no separate `reindex` verb.
 **Not provided:** no `page-create`, `page-append`, `xref`, `log-append`,
 `reindex`, or `migrate` verb. Those are the agent's job using its native
 file tools against paths surfaced by `show` and `pages`.
+
+#### wiki lint
+
+```sh
+akm wiki lint research
+```
+
+Runs deterministic structural checks and exits 1 when findings exist, 0 when
+the wiki is clean. Output is always JSON with a `findings` array.
+
+Finding kinds:
+
+| Kind | Description |
+| --- | --- |
+| `orphan` | A page not linked from `index.md` |
+| `broken-xref` | An internal link that points to a non-existent page |
+| `missing-description` | A page without a frontmatter `description` field |
+| `uncited-raw` | A file in `raw/` not referenced by any page |
+| `stale-index` | `index.md` is out of date and needs to be regenerated |
+| `broken-source` | A `sources:` entry in a page's frontmatter points to a raw file that does not exist |
+
+#### wiki stash
+
+```sh
+akm wiki stash research ./paper.md
+akm wiki stash research ./paper.md --as my-paper
+echo "..." | akm wiki stash research -
+```
+
+Copies a file (or stdin) into `wikis/<name>/raw/<slug>.md`. Never overwrites
+an existing raw file.
+
+When `--as <slug>` is passed and the slug already exists, the command errors
+with a `UsageError` — it does not silently rename the slug. Without `--as`,
+auto-increment applies: if `paper` exists, the next attempt uses `paper-1`,
+then `paper-2`, and so on.
 
 ### completions
 

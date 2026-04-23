@@ -80,7 +80,7 @@ export function validateWikiName(name: string): void {
   if (!name) throw new UsageError("Wiki name cannot be empty.");
   if (!WIKI_NAME_RE.test(name)) {
     throw new UsageError(
-      `Invalid wiki name "${name}". Use lowercase letters, digits, and hyphens (must start with a letter or digit).`,
+      `Invalid wiki name "${name}". Use lowercase letters, digits, and hyphens (must start with a lowercase letter or digit).`,
     );
   }
 }
@@ -543,6 +543,7 @@ export async function searchInWiki(input: WikiSearchInput): Promise<SearchRespon
     limit: input.limit,
     source: "stash",
   });
+  const rawDir = path.join(wikiDir, RAW_SUBDIR);
   const filtered: StashSearchHit[] = [];
   for (const hit of response.hits) {
     // hits can be StashSearchHit or RegistrySearchResultHit (union); filter
@@ -551,6 +552,11 @@ export async function searchInWiki(input: WikiSearchInput): Promise<SearchRespon
     const stashHit = hit as StashSearchHit;
     if (!stashHit.path) continue;
     if (!isWithin(stashHit.path, wikiDir)) continue;
+    // Exclude infrastructure files: schema.md, index.md, log.md at wiki root
+    const basename = path.basename(stashHit.path);
+    if (WIKI_SPECIAL_FILES.has(basename) && path.dirname(stashHit.path) === wikiDir) continue;
+    // Exclude anything under raw/
+    if (isWithin(stashHit.path, rawDir)) continue;
     filtered.push(stashHit);
   }
   return { ...response, hits: filtered, registryHits: undefined };
@@ -645,6 +651,13 @@ export interface StashRawInput {
    * derived from the content's first non-empty line.
    */
   preferredName?: string;
+  /**
+   * When `true`, the caller explicitly supplied a slug via `--as`. If the
+   * derived slug already exists, throw a `UsageError` rather than
+   * auto-incrementing. When `false` or `undefined`, the legacy auto-increment
+   * behaviour is preserved.
+   */
+  explicitSlug?: boolean;
 }
 
 export interface StashRawResult {
@@ -674,6 +687,11 @@ export function stashRaw(input: StashRawInput): StashRawResult {
   fs.mkdirSync(rawDir, { recursive: true });
 
   const baseSlug = slugifyForWiki(input.preferredName ?? deriveQueryFromSource(input.content) ?? "source");
+  if (input.explicitSlug === true && fs.existsSync(path.join(rawDir, `${baseSlug}.md`))) {
+    throw new UsageError(
+      `Raw slug "${baseSlug}" already exists in wiki:${input.wikiName}. Pass a different --as or omit --as to auto-increment.`,
+    );
+  }
   const slug = pickUniqueRawSlug(rawDir, baseSlug);
   const absPath = path.join(rawDir, `${slug}.md`);
   if (!isWithin(absPath, rawDir)) {
@@ -690,7 +708,13 @@ export function stashRaw(input: StashRawInput): StashRawResult {
 
 // ── Lint ────────────────────────────────────────────────────────────────────
 
-export type WikiLintKind = "orphan" | "broken-xref" | "missing-description" | "uncited-raw" | "stale-index";
+export type WikiLintKind =
+  | "orphan"
+  | "broken-xref"
+  | "missing-description"
+  | "uncited-raw"
+  | "stale-index"
+  | "broken-source";
 
 export interface WikiLintFinding {
   kind: WikiLintKind;
@@ -784,6 +808,23 @@ export function lintWiki(stashDir: string, name: string): WikiLintReport {
         refs: [`wiki:${name}/raw/${base}`],
         message: `Raw source raw/${base}.md is not cited by any page's sources: frontmatter.`,
       });
+    }
+  }
+
+  // broken-source: each page's sources: entries must resolve to an existing raw file.
+  for (const page of pages) {
+    for (const src of page.sources ?? []) {
+      const match = src.match(/^raw\/([^/\s]+?)(?:\.md)?$/);
+      if (!match) continue; // non-raw source entries are out of scope
+      const slug = match[1];
+      const rawFilePath = path.join(wikiDir, RAW_SUBDIR, `${slug}.md`);
+      if (!fs.existsSync(rawFilePath)) {
+        findings.push({
+          kind: "broken-source",
+          refs: [page.ref],
+          message: `Page "${page.ref}" references missing raw source "raw/${slug}".`,
+        });
+      }
     }
   }
 

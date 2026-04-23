@@ -24,6 +24,7 @@ import {
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchText } from "./search-fields";
+import type { SearchSource } from "./search-source";
 import {
   classifySemanticFailure,
   clearSemanticStatus,
@@ -86,9 +87,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
-  const { ensureStashCaches, resolveAllStashDirs } = await import("./search-source.js");
+  const { ensureStashCaches, resolveStashSources } = await import("./search-source.js");
   await ensureStashCaches(config);
-  const allStashDirs = resolveAllStashDirs(stashDir);
+  const allStashSources = resolveStashSources(stashDir, config);
+  const allStashDirs = allStashSources.map((s) => s.path);
 
   const t0 = Date.now();
 
@@ -152,7 +154,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     const doFullDelete = options?.full || !isIncremental;
     const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm } = await indexEntries(
       db,
-      allStashDirs,
+      allStashSources,
       isIncremental,
       builtAtMs,
       doFullDelete,
@@ -271,7 +273,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
 async function indexEntries(
   db: Database,
-  allStashDirs: string[],
+  allStashSources: SearchSource[],
   isIncremental: boolean,
   builtAtMs: number,
   doFullDelete = false,
@@ -310,8 +312,44 @@ async function indexEntries(
 
   const dirRecords: DirRecord[] = [];
 
-  for (const currentStashDir of allStashDirs) {
+  for (const stashSource of allStashSources) {
+    const currentStashDir = stashSource.path;
     const fileContexts = walkStashFlat(currentStashDir);
+
+    // Wiki-root stashes: all .md files are indexed as wiki pages under wikiName
+    if (stashSource.wikiName) {
+      const wikiName = stashSource.wikiName;
+      const wikiDirGroups = new Map<string, { files: string[]; entries: StashEntry[] }>();
+      for (const ctx of fileContexts) {
+        if (ctx.ext !== ".md") continue;
+        const relNoExt = ctx.relPath.replace(/\.md$/, "");
+        const entry: StashEntry = {
+          name: `${wikiName}/${relNoExt}`,
+          type: "wiki",
+          filename: ctx.fileName,
+          description: ctx.frontmatter()?.description as string | undefined,
+          source: "frontmatter",
+        };
+        const dir = ctx.parentDirAbs;
+        const group = wikiDirGroups.get(dir);
+        if (group) {
+          group.files.push(ctx.absPath);
+          group.entries.push(entry);
+        } else {
+          wikiDirGroups.set(dir, { files: [ctx.absPath], entries: [entry] });
+        }
+      }
+      for (const [dirPath, { files, entries }] of wikiDirGroups) {
+        if (seenPaths.has(path.resolve(dirPath))) {
+          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+          continue;
+        }
+        seenPaths.add(path.resolve(dirPath));
+        scannedDirs++;
+        dirRecords.push({ dirPath, currentStashDir, files, stash: { entries }, skip: false });
+      }
+      continue;
+    }
 
     const dirGroups = new Map<string, string[]>();
     for (const ctx of fileContexts) {

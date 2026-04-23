@@ -89,6 +89,8 @@ When the agent completes a step, it marks it done with notes:
 akm workflow complete run-abc123 --step validate --state completed --notes "Version 1.2.3, branch release/1.2.3 confirmed"
 ```
 
+`--state` defaults to `completed` when omitted, so the `--state completed` above is redundant but explicit.
+
 And the next call to `akm workflow next` returns the following step. The run persists independently of the conversation. If the session ends, a new agent picks up exactly where the previous one left off:
 
 ```sh
@@ -102,6 +104,12 @@ Want to see the full state of a run?
 akm workflow status run-abc123
 ```
 
+`workflow status` also accepts a workflow ref directly, resolving to the most-recently-updated run:
+
+```sh
+akm workflow status workflow:ship-release
+```
+
 That shows each step with its status and any notes the agent recorded. You can list all active runs:
 
 ```sh
@@ -111,6 +119,16 @@ akm workflow list --active
 The procedure is now auditable. You know which step failed, when, and what the agent noted. You can hand the run off to a different agent or a different developer. The state is outside the context window where it's durable.
 
 If you need a starting point, `akm workflow template` prints a starter workflow doc you can adapt.
+
+### Resuming blocked or failed runs
+
+Sometimes a run gets blocked — a step requires human input, an external dependency is unavailable, or a tool call fails. When that happens, the run transitions to `blocked` or `failed`. Use `workflow resume` to flip it back to `active` without discarding progress:
+
+```sh
+akm workflow resume run-abc123
+```
+
+Completed runs cannot be resumed. Use `workflow list` to find runs by status.
 
 ## Vault Assets: The Agent Knows What It Needs, Not What the Values Are
 
@@ -202,7 +220,7 @@ akm vault show vault:production
 # → { keys: ["DATABASE_URL", "API_KEY", "DEPLOY_TARGET"] }
 
 # Marks the step complete
-akm workflow complete run-xyz --step validate --state completed --notes "All keys present"
+akm workflow complete run-xyz --step validate --notes "All keys present"
 
 # Gets the next step
 akm workflow next workflow:ship-release

@@ -239,7 +239,8 @@ export function formatInstallAuditFailure(ref: string, report: InstallAuditRepor
     lines.push(`- ${report.findings.length - 5} more finding(s) omitted`);
   }
   lines.push(
-    "Disable blocking with `security.installAudit.blockOnCritical = false`, or disable audits with `security.installAudit.enabled = false`.",
+    "Disable blocking with `security.installAudit.blockOnCritical = false`, or disable audits with `security.installAudit.enabled = false`." +
+      " Or pass --trust on a one-off 'akm add' to bypass this audit for this install only.",
   );
   return lines.join("\n");
 }

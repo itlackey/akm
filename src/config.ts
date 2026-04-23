@@ -77,6 +77,8 @@ export interface StashConfigEntry {
   writable?: boolean;
   /** Arbitrary provider-specific options */
   options?: Record<string, unknown>;
+  /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
+  wikiName?: string;
 }
 
 export interface InstallAuditConfig {
@@ -128,6 +130,11 @@ export interface AkmConfig {
   security?: SecurityConfig;
   /** Output defaults for CLI rendering */
   output?: OutputConfig;
+  /**
+   * When true, the primary stash is treated as a writable git repo and
+   * `akm save` will push after committing (if a remote is configured).
+   */
+  writable?: boolean;
 }
 
 export interface OutputConfig {
@@ -337,6 +344,10 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const output = parseOutputConfig(raw.output);
   if (output) config.output = output;
+
+  if (typeof raw.writable === "boolean") {
+    config.writable = raw.writable;
+  }
 
   return config;
 }
@@ -622,6 +633,8 @@ function parseInstalledKitEntry(value: unknown): InstalledKitEntry | undefined {
   if (resolvedVersion) entry.resolvedVersion = resolvedVersion;
   const resolvedRevision = asNonEmptyString(obj.resolvedRevision);
   if (resolvedRevision) entry.resolvedRevision = resolvedRevision;
+  const wikiName = asNonEmptyString(obj.wikiName);
+  if (wikiName) entry.wikiName = wikiName;
   return entry;
 }
 
@@ -724,6 +737,8 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
     entry.options = obj.options as Record<string, unknown>;
   }
+  const wikiName = asNonEmptyString(obj.wikiName);
+  if (wikiName) entry.wikiName = wikiName;
   return entry;
 }
 

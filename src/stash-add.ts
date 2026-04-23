@@ -10,10 +10,15 @@ import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } fro
 import { parseRegistryRef } from "./registry-resolve";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
+import { warn } from "./warn";
+import { validateWikiName } from "./wiki";
+
+const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
 
 export async function akmAdd(input: {
   ref: string;
   name?: string;
+  overrideType?: string;
   options?: Record<string, unknown>;
   trustThisInstall?: boolean;
   writable?: boolean;
@@ -25,30 +30,53 @@ export async function akmAdd(input: {
         "Examples: `akm add @scope/kit`, `akm add github:owner/repo`, `akm add ./local/path`",
     );
 
+  // Validate and resolve wiki name when --type wiki is used
+  let wikiName: string | undefined;
+  if (input.overrideType) {
+    if (!VALID_OVERRIDE_TYPES.has(input.overrideType)) {
+      throw new UsageError(
+        `Invalid --type value: "${input.overrideType}". Supported types: ${[...VALID_OVERRIDE_TYPES].join(", ")}`,
+      );
+    }
+    if (input.overrideType === "wiki") {
+      const derived = input.name ?? deriveWikiNameFromRef(ref);
+      validateWikiName(derived);
+      wikiName = derived;
+    }
+  }
+
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteStashSource(ref, stashDir, input.name, input.options);
+    return addWebsiteStashSource(ref, stashDir, input.name ?? wikiName, input.options, wikiName);
   }
 
   // Detect local directory refs and route them to stashes[] instead of installed[]
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      return addLocalStashSource(ref, parsed.sourcePath, stashDir);
+      if (input.trustThisInstall) {
+        warn("--trust has no effect on local directory sources; the install audit is not run for local paths.");
+      }
+      return addLocalStashSource(ref, parsed.sourcePath, stashDir, wikiName);
     }
   } catch {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryKit(ref, stashDir, input.trustThisInstall, input.writable);
+  return addRegistryKit(ref, stashDir, input.trustThisInstall, input.writable, wikiName);
 }
 
 /**
  * Add a local directory as a filesystem stash source.
  * Creates a stashes[] entry instead of an installed[] entry.
  */
-async function addLocalStashSource(ref: string, sourcePath: string, stashDir: string): Promise<AddResponse> {
+async function addLocalStashSource(
+  ref: string,
+  sourcePath: string,
+  stashDir: string,
+  wikiName?: string,
+): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
   const config = loadUserConfig();
@@ -60,9 +88,13 @@ async function addLocalStashSource(ref: string, sourcePath: string, stashDir: st
     const entry: StashConfigEntry = {
       type: "filesystem",
       path: resolvedPath,
-      name: toReadableId(resolvedPath),
+      name: wikiName ?? toReadableId(resolvedPath),
+      ...(wikiName ? { wikiName } : {}),
     };
     stashes.push(entry);
+    saveConfig({ ...config, stashes });
+  } else if (wikiName && existing.wikiName !== wikiName) {
+    existing.wikiName = wikiName;
     saveConfig({ ...config, stashes });
   }
 
@@ -97,6 +129,7 @@ async function addWebsiteStashSource(
   stashDir: string,
   name?: string,
   options?: Record<string, unknown>,
+  wikiName?: string,
 ): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadUserConfig();
@@ -111,12 +144,21 @@ async function addWebsiteStashSource(
       url: normalizedUrl,
       name: name ?? toWebsiteName(normalizedUrl),
       ...(options && Object.keys(options).length > 0 ? { options } : {}),
+      ...(wikiName ? { wikiName } : {}),
     };
     stashes.push(entry);
     saveConfig({ ...config, stashes });
-  } else if (options && Object.keys(options).length > 0) {
-    entry.options = { ...entry.options, ...options };
-    saveConfig({ ...config, stashes });
+  } else {
+    let changed = false;
+    if (options && Object.keys(options).length > 0) {
+      entry.options = { ...entry.options, ...options };
+      changed = true;
+    }
+    if (wikiName && entry.wikiName !== wikiName) {
+      entry.wikiName = wikiName;
+      changed = true;
+    }
+    if (changed) saveConfig({ ...config, stashes });
   }
 
   const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
@@ -154,6 +196,7 @@ async function addRegistryKit(
   stashDir: string,
   trustThisInstall?: boolean,
   writable?: boolean,
+  wikiName?: string,
 ): Promise<AddResponse> {
   const installed = await installRegistryRef(ref, { trustThisInstall, writable });
   const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === installed.id);
@@ -168,6 +211,7 @@ async function addRegistryKit(
     cacheDir: installed.cacheDir,
     installedAt: installed.installedAt,
     writable: installed.writable,
+    ...(wikiName ? { wikiName } : {}),
   });
 
   await upsertLockEntry({
@@ -251,4 +295,44 @@ function toWebsiteName(siteUrl: string): string {
   } catch {
     return siteUrl;
   }
+}
+
+/**
+ * Derive a wiki name from a ref string when --name is not provided.
+ * Lowercases and slugifies the most meaningful identifier segment.
+ */
+export function deriveWikiNameFromRef(ref: string): string {
+  let candidate = ref;
+
+  // github:owner/repo or github:owner/repo@ref
+  if (/^github:/i.test(ref)) {
+    const repoPath = ref.replace(/^github:/i, "").split("@")[0];
+    candidate = repoPath.split("/").pop() ?? repoPath;
+  }
+  // npm:pkg or @scope/pkg
+  else if (/^npm:/i.test(ref) || ref.startsWith("@")) {
+    candidate = ref
+      .replace(/^npm:/i, "")
+      .replace(/^@[^/]+\//, "")
+      .split("@")[0];
+  }
+  // git URLs or HTTPS git URLs
+  else if (/^(git:|https?:\/\/)/.test(ref)) {
+    try {
+      candidate = new URL(ref).pathname.split("/").pop() ?? candidate;
+    } catch {
+      candidate = ref.split("/").pop() ?? ref;
+    }
+    candidate = candidate.replace(/\.git$/, "");
+  }
+  // Local paths
+  else {
+    candidate = path.basename(ref.replace(/\/+$/, ""));
+  }
+
+  return candidate
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
 }

@@ -41,4 +41,24 @@ akm registry search "<query>"                 # Search all registries
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.
 
+## Error Shapes and Exit Codes
+
+Every command returns JSON by default. On failure, the shape is always:
+
+```json
+{"ok": false, "error": "<message>", "hint": "<optional remediation hint>"}
+```
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Not found or general error |
+| 2 | Usage / bad input |
+| 78 | Configuration error |
+
+Check `ok === false` or a non-zero exit code to detect failure. The `hint`
+field, when present, describes a corrective action.
+
 Run `akm -h` for the full command reference.

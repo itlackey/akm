@@ -134,8 +134,15 @@ export function buildShellExportScript(vaultPath: string): string {
  * values that contain no characters requiring escaping (see quoteValue for
  * the full rule set). Values containing newlines or both quote types are
  * rejected outright. Round-trip safety is enforced by the test suite.
+ *
+ * When `comment` is provided it is written as a `# <comment>` line
+ * immediately before the `KEY=value` line:
+ *  - New key: the comment line is inserted just before the appended key.
+ *  - Existing key: if the preceding line is already a comment it is replaced
+ *    with the new comment; otherwise a new comment line is inserted.
+ * When `comment` is absent the surrounding comment lines are left unchanged.
  */
-export function setKey(vaultPath: string, key: string, value: string): void {
+export function setKey(vaultPath: string, key: string, value: string, comment?: string): void {
   validateKeyName(key);
   ensureParentDir(vaultPath);
   const existing = fs.existsSync(vaultPath) ? fs.readFileSync(vaultPath, "utf8") : "";
@@ -148,12 +155,31 @@ export function setKey(vaultPath: string, key: string, value: string): void {
     if (m && m[1] === key) {
       lines[i] = formatted;
       replaced = true;
+      if (comment !== undefined) {
+        const commentLine = `# ${comment}`;
+        const prevIsComment = i > 0 && lines[i - 1].trimStart().startsWith("#");
+        if (prevIsComment) {
+          lines[i - 1] = commentLine;
+        } else {
+          lines.splice(i, 0, commentLine);
+        }
+      }
       break;
     }
   }
 
   if (!replaced) {
-    if (lines.length > 0 && lines[lines.length - 1] === "") {
+    if (comment !== undefined) {
+      const commentLine = `# ${comment}`;
+      if (lines.length > 0 && lines[lines.length - 1] === "") {
+        lines[lines.length - 1] = commentLine;
+        lines.push(formatted);
+        lines.push("");
+      } else {
+        lines.push(commentLine);
+        lines.push(formatted);
+      }
+    } else if (lines.length > 0 && lines[lines.length - 1] === "") {
       lines[lines.length - 1] = formatted;
       lines.push("");
     } else {

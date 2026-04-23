@@ -13,6 +13,8 @@ export interface SearchSource {
   path: string;
   /** For installed sources, the installed kit id */
   registryId?: string;
+  /** If set, all .md files in this source are indexed as wiki pages under this wiki name */
+  wikiName?: string;
 }
 
 // ── Resolution ──────────────────────────────────────────────────────────────
@@ -33,7 +35,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   const sources: SearchSource[] = [{ path: stashDir }];
   const seen = new Set<string>([path.resolve(stashDir)]);
 
-  const addSource = (dir: string, registryId?: string) => {
+  const addSource = (dir: string, registryId?: string, wikiName?: string) => {
     const resolved = path.resolve(dir);
     if (seen.has(resolved)) return;
     seen.add(resolved);
@@ -41,14 +43,18 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);
     }
     if (isValidDirectory(dir)) {
-      sources.push({ path: resolved, ...(registryId ? { registryId } : {}) });
+      sources.push({
+        path: resolved,
+        ...(registryId ? { registryId } : {}),
+        ...(wikiName ? { wikiName } : {}),
+      });
     }
   };
 
   // Filesystem entries from stashes[]
   for (const entry of config.stashes ?? []) {
     if (entry.type === "filesystem" && entry.path && entry.enabled !== false) {
-      addSource(entry.path, entry.name);
+      addSource(entry.path, entry.name, entry.wikiName);
     }
   }
 
@@ -62,7 +68,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
         // The content/ subdirectory inside the extracted repo is the actual
         // stash root containing DOC.md / SKILL.md files that the walker indexes.
         const contentDir = path.join(cachePaths.repoDir, "content");
-        addSource(contentDir, entry.name);
+        addSource(contentDir, entry.name, entry.wikiName);
       } catch (err) {
         warn(
           `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
@@ -77,7 +83,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
     if (entry.type === "website" && entry.url && entry.enabled !== false) {
       try {
         const cachePaths = getWebsiteCachePaths(entry.url);
-        addSource(cachePaths.stashDir, entry.name ?? entry.url);
+        addSource(cachePaths.stashDir, entry.name ?? entry.url, entry.wikiName);
       } catch (err) {
         warn(
           `Warning: failed to resolve website stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
@@ -88,7 +94,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
 
   // Installed kits (registry and local)
   for (const entry of config.installed ?? []) {
-    addSource(entry.stashRoot, entry.id);
+    addSource(entry.stashRoot, entry.id, entry.wikiName);
   }
 
   return sources;

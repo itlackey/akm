@@ -70,7 +70,9 @@ export interface WorkflowNextResult {
     title: string;
     steps: WorkflowRunStepState[];
   };
-  step?: WorkflowRunStepState;
+  step: WorkflowRunStepState | null;
+  done?: true;
+  autoStarted?: true;
 }
 
 export interface CompleteWorkflowStepInput {
@@ -150,7 +152,7 @@ export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: bo
       params.push(`${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`);
     }
     if (input?.activeOnly) {
-      filters.push("status = 'active'");
+      filters.push("status IN ('active', 'blocked')");
     }
     const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
     const rows = workflowDb
@@ -162,12 +164,16 @@ export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: bo
   }
 }
 
-export async function getNextWorkflowStep(specifier: string): Promise<WorkflowNextResult> {
+export async function getNextWorkflowStep(
+  specifier: string,
+  params?: Record<string, unknown>,
+): Promise<WorkflowNextResult> {
   const workflowDb = openWorkflowDatabase();
   try {
-    const run = await resolveRunSpecifier(workflowDb, specifier);
+    const { run, autoStarted } = await resolveRunSpecifier(workflowDb, specifier, params);
     const steps = readWorkflowRunSteps(workflowDb, run.id);
     const currentStep = resolveCurrentStep(run, steps);
+    const done = run.status === "completed" ? (true as const) : undefined;
     return {
       run: toWorkflowRunSummary(run),
       workflow: {
@@ -175,8 +181,32 @@ export async function getNextWorkflowStep(specifier: string): Promise<WorkflowNe
         title: run.workflow_title,
         steps: steps.map(toWorkflowRunStepState),
       },
-      ...(currentStep ? { step: toWorkflowRunStepState(currentStep) } : {}),
+      step: currentStep ? toWorkflowRunStepState(currentStep) : null,
+      ...(done ? { done } : {}),
+      ...(autoStarted ? { autoStarted } : {}),
     };
+  } finally {
+    closeWorkflowDatabase(workflowDb);
+  }
+}
+
+export function resumeWorkflowRun(runId: string): WorkflowRunDetail {
+  const workflowDb = openWorkflowDatabase();
+  try {
+    const run = readWorkflowRun(workflowDb, runId);
+    if (run.status === "completed") {
+      throw new UsageError(`Workflow run ${run.id} is already completed and cannot be resumed.`);
+    }
+    if (run.status === "active") {
+      const steps = readWorkflowRunSteps(workflowDb, run.id);
+      return buildWorkflowRunDetail(run, steps);
+    }
+    // blocked or failed → flip back to active
+    const now = new Date().toISOString();
+    workflowDb.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
+    const updated: WorkflowRunRow = { ...run, status: "active", updated_at: now };
+    const steps = readWorkflowRunSteps(workflowDb, run.id);
+    return buildWorkflowRunDetail(updated, steps);
   } finally {
     closeWorkflowDatabase(workflowDb);
   }
@@ -249,11 +279,22 @@ export function completeWorkflowStep(input: CompleteWorkflowStepInput): Workflow
   }
 }
 
-async function resolveRunSpecifier(db: import("bun:sqlite").Database, specifier: string): Promise<WorkflowRunRow> {
+async function resolveRunSpecifier(
+  db: import("bun:sqlite").Database,
+  specifier: string,
+  params?: Record<string, unknown>,
+): Promise<{ run: WorkflowRunRow; autoStarted: boolean }> {
   const explicitRun = db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(specifier) as
     | WorkflowRunRow
     | undefined;
-  if (explicitRun) return explicitRun;
+  if (explicitRun) {
+    if (params && Object.keys(params).length > 0) {
+      throw new UsageError(
+        `--params can only be used when starting a new run from a workflow ref, not with an existing run id ("${specifier}")`,
+      );
+    }
+    return { run: explicitRun, autoStarted: false };
+  }
 
   const parsed = parseAssetRef(specifier);
   if (parsed.type !== "workflow") {
@@ -265,10 +306,15 @@ async function resolveRunSpecifier(db: import("bun:sqlite").Database, specifier:
       "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
     )
     .get(ref) as WorkflowRunRow | undefined;
-  if (active) return active;
+  if (active) {
+    if (params && Object.keys(params).length > 0) {
+      throw new UsageError(`--params can only be set on a new run; ${ref} already has an active run`);
+    }
+    return { run: active, autoStarted: false };
+  }
 
-  const started = await startWorkflowRun(ref);
-  return readWorkflowRun(db, started.run.id);
+  const started = await startWorkflowRun(ref, params ?? {});
+  return { run: readWorkflowRun(db, started.run.id), autoStarted: true };
 }
 
 async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
