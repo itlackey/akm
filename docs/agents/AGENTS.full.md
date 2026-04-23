@@ -36,6 +36,7 @@ akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
 akm show knowledge:my-doc                    # Show a knowledge asset
+akm show wiki:research                        # Wiki summary (same as akm wiki show research)
 ```
 
 | Type | Key fields returned |
@@ -49,6 +50,10 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 | memory | `content` (recalled context) |
 | vault | `keys`, `comments` (values are never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. |
+
+`akm show wiki:<name>` returns the same summary as `akm wiki show <name>`: path,
+description from `schema.md`, page and raw counts, and the last 3 `log.md`
+entries.
 
 ## Capture Knowledge While You Work
 
@@ -81,7 +86,7 @@ akm wiki pages research                        # Page refs + descriptions (exclu
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
 echo "..." | akm wiki stash research -         # stdin form
-akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
+akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index, broken sources
 akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
 akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
 akm wiki remove research --force --with-sources # Full nuke, including raw/
@@ -91,6 +96,10 @@ akm wiki remove research --force --with-sources # Full nuke, including raw/
 to get the step-by-step workflow.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
 `type: wiki`. No `--llm` anywhere — akm never reasons about page content.
+
+`akm wiki lint` exits 1 when findings exist and 0 when the wiki is clean.
+The `broken-source` finding kind flags pages whose `sources:` frontmatter
+entries point to raw files that no longer exist.
 
 See [wikis.md](wikis.md) for the full guide.
 
@@ -144,6 +153,16 @@ The `--writable` flag on `akm add` opts a remote git stash into push-on-save:
 akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 ```
 
+To make the primary stash push on save, set `writable: true` in your config
+(`~/.config/akm/config.json`):
+
+```json
+{
+  "stashDir": "~/akm",
+  "writable": true
+}
+```
+
 ## Registries
 
 ```sh
@@ -194,3 +213,33 @@ All commands accept `--format` and `--detail` flags:
 - `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
 
 Run `akm -h` or `akm <command> -h` for per-command help.
+
+## Error Shapes and Exit Codes
+
+Every command returns JSON by default. On success, the shape is command-specific.
+On failure, every command emits:
+
+```json
+{"ok": false, "error": "<message>", "hint": "<optional remediation hint>"}
+```
+
+The `hint` field is present only when there is an actionable next step (e.g.
+`"Run akm add <source> --trust to bypass the audit for this source."`).
+
+Exit codes:
+
+| Code | Meaning | Error class |
+| --- | --- | --- |
+| 0 | Success | — |
+| 1 | Not found or general error | `NotFoundError`, other |
+| 2 | Usage / bad input | `UsageError` |
+| 78 | Configuration error | `ConfigError` |
+
+To detect failure reliably, check either:
+
+- `ok === false` in the parsed JSON response, or
+- a non-zero exit code (`$?` in shell, process exit code in SDK calls)
+
+Both signals are always set consistently. The JSON envelope is the preferred
+signal for agents parsing output programmatically; the exit code is the
+preferred signal for shell scripts.

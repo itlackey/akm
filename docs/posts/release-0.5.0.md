@@ -17,8 +17,8 @@ akm 0.5.0 is out. This release adds four new asset types — wikis, workflows, a
 ## TL;DR
 
 - `akm wiki create|list|show|remove|pages|search|stash|lint|ingest` — multi-wiki support, no LLM required
-- `akm workflow create|start|next|complete|status|list` — multi-step agent procedures in the stash
-- `akm vault list|show|load` — `.env`-backed secrets that never appear in structured output
+- `akm workflow create|start|next|complete|status|list|resume` — multi-step agent procedures in the stash
+- `akm vault list|show|create|set|unset|load` — `.env`-backed secrets that never appear in structured output
 - `akm add <source> --writable` + `akm save` — push your stash changes back to a remote git repo
 - `akm add <source> --trust` — bypass the install audit for a single install
 - **Breaking**: the single-wiki LLM POC is removed; migrate to `akm wiki …`
@@ -97,14 +97,23 @@ Vaults store secrets and environment configuration. Each vault is a `.env` file 
 akm vault list
 
 # Show keys in a vault (no values)
-akm vault show prod-secrets
+akm vault show vault:prod-secrets
+
+# Create a new empty vault
+akm vault create prod-secrets
+
+# Set a key (three-positional form or combined KEY=VALUE form)
+akm vault set vault:prod-secrets API_KEY abc123
+akm vault set vault:prod-secrets API_KEY=abc123 --comment "Rotate every 90 days"
+
+# Remove a key
+akm vault unset vault:prod-secrets API_KEY
 
 # Emit a source snippet for the current shell — the only way to get values out
-akm vault load prod-secrets
-# outputs: source /path/to/.stash/vaults/prod-secrets.env
+eval "$(akm vault load vault:prod-secrets)"
 ```
 
-`akm vault load` emits a `source` command for the current shell rather than printing values to stdout. An agent can run `eval $(akm vault load prod-secrets)` to load the environment without the values passing through any logged output.
+`akm vault load` emits a shell snippet that sources vault values into the current shell via a temporary mode-0600 file. Values never appear on akm's stdout. An agent can run `eval "$(akm vault load vault:prod-secrets)"` to load the environment without the values passing through any logged output.
 
 This is a deliberate tradeoff: vaults are not a full secrets manager. They are a thin, auditable layer that keeps your `.env` files alongside your other agent assets and prevents accidental leakage through `akm show` or `akm search` results.
 
@@ -142,6 +151,8 @@ akm add github:your-org/internal-kit --trust
 ```
 
 `--trust` is a one-off bypass — it does not add the source to any persistent allowlist. Use it when you control the source and do not want to step through the audit prompt in a non-interactive context (a CI script, an automated agent workflow, a container build).
+
+When a blocked install error occurs, the error message includes a `hint` field referencing `--trust` as a remediation option.
 
 ---
 
