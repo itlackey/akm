@@ -73,10 +73,28 @@ describe("detectInstallMethod", () => {
     expect(detectInstallMethod(signals)).toBe("bun");
   });
 
+  test("returns 'bun' for Windows-style Bun global install path", () => {
+    const signals: InstallSignals = {
+      bunMain: "C:\\Program Files\\Bun\\bun.exe",
+      importMetaDir: "C:\\Users\\me\\.bun\\install\\global\\node_modules\\akm-cli\\dist",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("bun");
+  });
+
   test("returns 'pnpm' for pnpm global install path", () => {
     const signals: InstallSignals = {
       bunMain: "/usr/local/bin/bun",
       importMetaDir: "/home/user/.local/share/pnpm/global/5/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("pnpm");
+  });
+
+  test("returns 'pnpm' for Windows-style pnpm global install path", () => {
+    const signals: InstallSignals = {
+      bunMain: "C:\\Program Files\\Bun\\bun.exe",
+      importMetaDir: "C:\\Users\\me\\AppData\\Local\\pnpm\\global\\5\\node_modules\\akm-cli\\dist",
       hasAkmVersion: false,
     };
     expect(detectInstallMethod(signals)).toBe("pnpm");

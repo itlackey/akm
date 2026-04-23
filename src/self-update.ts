@@ -9,6 +9,8 @@ import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";
 const NODE_MODULES_SEGMENT = "/node_modules/";
+const BUN_GLOBAL_INSTALL_PATTERN = /(^|\/)\.bun\/.+\/node_modules\//;
+const PNPM_GLOBAL_INSTALL_PATTERN = /(^|\/)(?:\.pnpm(?:-global)?|pnpm(?:-global)?)(\/|$)/;
 
 export type InstallMethod = UpgradeCheckResponse["installMethod"];
 
@@ -35,15 +37,10 @@ export function detectInstallMethod(signals?: InstallSignals): InstallMethod {
   const normalizedImportMetaDir = normalizeInstallPath(s.importMetaDir);
 
   if (normalizedImportMetaDir.includes(NODE_MODULES_SEGMENT)) {
-    if (normalizedImportMetaDir.includes("/.bun/install/global/node_modules/")) {
+    if (BUN_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
       return "bun";
     }
-    if (
-      normalizedImportMetaDir.includes("/pnpm/") ||
-      normalizedImportMetaDir.includes("/.pnpm/") ||
-      normalizedImportMetaDir.includes("/.pnpm-global/") ||
-      normalizedImportMetaDir.includes("/pnpm-global/")
-    ) {
+    if (PNPM_GLOBAL_INSTALL_PATTERN.test(normalizedImportMetaDir)) {
       return "pnpm";
     }
     return "npm";
@@ -107,6 +104,7 @@ export async function performUpgrade(
   const { currentVersion, latestVersion, installMethod } = check;
   const force = opts?.force === true;
 
+  // All install methods can short-circuit here unless the user explicitly forces an upgrade.
   if (!check.updateAvailable && !force) {
     return {
       currentVersion,
@@ -346,7 +344,7 @@ function parseChecksumForFile(checksumsText: string, filename: string): string |
 }
 
 function normalizeInstallPath(value: string | undefined): string {
-  return (value ?? "").replaceAll("\\", "/").toLowerCase();
+  return (value ?? "").replaceAll("\\", "/");
 }
 
 function getInstalledPackageName(): string {
