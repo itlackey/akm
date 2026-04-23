@@ -72,6 +72,7 @@ describe("completions command", () => {
       "search",
       "curate",
       "show",
+      "workflow",
       "remember",
       "import",
       "clone",
@@ -103,17 +104,17 @@ describe("completions command", () => {
 
   test("contains flag value completions for --format", () => {
     expect(script).toContain("--format)");
-    expect(script).toContain("json text yaml");
+    expect(script).toContain("json text yaml jsonl");
   });
 
   test("contains flag value completions for --detail", () => {
     expect(script).toContain("--detail)");
-    expect(script).toContain("brief normal full");
+    expect(script).toContain("brief normal full summary");
   });
 
   test("contains flag value completions for --type", () => {
     expect(script).toContain("--type)");
-    expect(script).toContain("skill command agent knowledge script memory vault any");
+    expect(script).toContain("skill command agent knowledge workflow script memory vault any");
   });
 
   test("contains flag value completions for --source", () => {

@@ -55,6 +55,42 @@ export interface SearchResponse {
   timing?: { totalMs: number; rankMs?: number; embedMs?: number };
 }
 
+export interface WorkflowParameter {
+  name: string;
+  description?: string;
+}
+
+export interface WorkflowStepDefinition {
+  id: string;
+  title: string;
+  instructions: string;
+  completionCriteria?: string[];
+  sequenceIndex?: number;
+}
+
+export type WorkflowRunStatus = "active" | "completed" | "blocked" | "failed";
+export type WorkflowRunStepStatus = "pending" | "completed" | "blocked" | "failed" | "skipped";
+
+export interface WorkflowRunStepState extends WorkflowStepDefinition {
+  status: WorkflowRunStepStatus;
+  notes?: string;
+  evidence?: Record<string, unknown>;
+  completedAt?: string | null;
+}
+
+export interface WorkflowRunSummary {
+  id: string;
+  workflowRef: string;
+  workflowEntryId?: number | null;
+  workflowTitle: string;
+  status: WorkflowRunStatus;
+  currentStepId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+  params?: Record<string, unknown>;
+}
+
 export interface AddResponse {
   schemaVersion: number;
   stashDir: string;
@@ -221,6 +257,9 @@ export interface ShowResponse {
   origin?: string | null;
   action?: string;
   parameters?: string[];
+  workflowTitle?: string;
+  workflowParameters?: WorkflowParameter[];
+  steps?: WorkflowStepDefinition[];
   /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */

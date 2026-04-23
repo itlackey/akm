@@ -155,7 +155,7 @@ export async function showLocal(input: {
     throw new UsageError(`Renderer "${match.renderer}" not found for asset: ${displayType}:${parsed.name}`);
   }
 
-  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs);
+  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
   const fullResponse: ShowResponse = {
@@ -222,6 +222,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     ...(description ? { description } : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
     ...(full.parameters ? { parameters: full.parameters } : {}),
+    ...(full.workflowTitle ? { workflowTitle: full.workflowTitle } : {}),
     ...(full.action ? { action: full.action } : {}),
     ...(full.run ? { run: full.run } : {}),
     ...(full.origin !== undefined ? { origin: full.origin } : {}),

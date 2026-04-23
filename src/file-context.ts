@@ -153,6 +153,7 @@ export type AssetMatcher = (ctx: FileContext) => MatchResult | null;
 export interface RenderContext extends FileContext {
   matchResult: MatchResult;
   stashDirs: string[];
+  origin?: string;
 }
 
 /**
@@ -276,10 +277,16 @@ export async function runMatchers(ctx: FileContext): Promise<MatchResult | null>
  * Build a RenderContext by merging a FileContext with its winning MatchResult
  * and the list of stash search paths.
  */
-export function buildRenderContext(ctx: FileContext, match: MatchResult, stashDirs: string[]): RenderContext {
+export function buildRenderContext(
+  ctx: FileContext,
+  match: MatchResult,
+  stashDirs: string[],
+  origin?: string,
+): RenderContext {
   return {
     ...ctx,
     matchResult: match,
     stashDirs,
+    origin,
   };
 }

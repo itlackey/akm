@@ -1,6 +1,7 @@
 import path from "node:path";
 import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { toPosix } from "./common";
+import { buildWorkflowAction } from "./renderers";
 
 export interface AssetSpec {
   stashDir: string;
@@ -75,6 +76,12 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
   command: { stashDir: "commands", ...markdownSpec },
   agent: { stashDir: "agents", ...markdownSpec },
   knowledge: { stashDir: "knowledge", ...markdownSpec },
+  workflow: {
+    stashDir: "workflows",
+    ...markdownSpec,
+    rendererName: "workflow-md",
+    actionBuilder: (ref) => buildWorkflowAction(ref),
+  },
   script: { stashDir: "scripts", ...scriptSpec },
   memory: { stashDir: "memories", ...markdownSpec },
   vault: {

@@ -1,25 +1,26 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
 ```sh
 akm search "<query>"                          # Search your sources
-akm search "<query>" --type skill             # Filter by asset type
+akm search "<query>" --type workflow          # Filter by asset type
 akm search "<query>" --source both            # Also search registries for installable kits
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
+akm curate "<task>"                          # Curate the best matches for a task
 ```
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `any` | `any` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `any` | `any` |
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
-| `--format` | `json`, `text`, `yaml` | `json` |
-| `--detail` | `brief`, `normal`, `full` | `brief` |
+| `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
+| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` |
 
 ## Show
 
@@ -30,6 +31,7 @@ akm show script:deploy.sh                     # Show script (returns run command
 akm show skill:code-review                    # Show skill (returns full content)
 akm show command:release                      # Show command (returns template)
 akm show agent:architect                      # Show agent (returns system prompt)
+akm show workflow:ship-release                # Show parsed workflow steps
 akm show knowledge:guide toc                  # Table of contents
 akm show knowledge:guide section "Auth"       # Specific section
 akm show knowledge:guide lines 10 30          # Line range
@@ -43,7 +45,9 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 | command | `template`, `description`, `parameters` |
 | agent | `prompt`, `description`, `modelHint`, `toolPolicy` |
 | knowledge | `content` (with view modes: `full`, `toc`, `frontmatter`, `section`, `lines`) |
+| workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
+| vault | `keys`, `comments` (values are never returned) |
 
 ## Capture Knowledge While You Work
 
@@ -52,6 +56,8 @@ akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
+akm workflow create ship-release               # Create a workflow asset in the stash
+akm workflow next workflow:ship-release        # Resume the active run or start a new one
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
 ```
@@ -150,10 +156,12 @@ akm hints                                     # Print this reference
 All commands accept `--format` and `--detail` flags:
 
 - `--format json` (default) — structured JSON
+- `--format jsonl` — one JSON object per line (streaming-friendly)
 - `--format text` — human-readable plain text
 - `--format yaml` — YAML output
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
+- `--detail summary` — metadata only (no content/template/prompt), under 200 tokens
 
 Run `akm -h` or `akm <command> -h` for per-command help.
