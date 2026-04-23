@@ -25,11 +25,7 @@ import "./stash-providers/index";
  * `/`, e.g. `wiki:research`.
  */
 async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
-  const { showWiki, resolveWikiDir } = await import("./wiki.js");
-  const wikiDir = resolveWikiDir(stashDir, wikiName);
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${wikiName}. Run \`akm wiki create ${wikiName}\` to create it.`);
-  }
+  const { showWiki } = await import("./wiki.js");
   const result = showWiki(stashDir, wikiName);
   // Shape the WikiShowResult into a ShowResponse-compatible object.
   // The payload mirrors what `akm wiki show <name>` returns.
@@ -45,6 +41,50 @@ async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowRes
     ...(result.lastModified ? { lastModified: result.lastModified } : {}),
     recentLog: result.recentLog,
   } as unknown as ShowResponse;
+}
+
+async function showWikiRootForSource(
+  stashDir: string,
+  source: { path: string; wikiName?: string },
+  wikiName: string,
+): Promise<ShowResponse> {
+  const { showWikiAtPath } = await import("./wiki.js");
+  if (source.wikiName === wikiName) {
+    const result = showWikiAtPath(wikiName, source.path);
+    return {
+      type: "wiki",
+      name: result.ref,
+      path: result.path,
+      ...(result.description ? { description: result.description } : {}),
+      origin: null,
+      editable: false,
+      pages: result.pages,
+      raws: result.raws,
+      ...(result.lastModified ? { lastModified: result.lastModified } : {}),
+      recentLog: result.recentLog,
+    } as unknown as ShowResponse;
+  }
+  return showWikiRoot(stashDir, wikiName);
+}
+
+function resolveRegisteredWikiAssetPath(wikiRoot: string, wikiName: string, assetName: string): string {
+  const pageName = assetName === wikiName ? "" : assetName.slice(wikiName.length + 1);
+  if (!pageName) {
+    throw new NotFoundError(`Wiki page not found: wiki:${assetName}`);
+  }
+  const candidate = path.resolve(wikiRoot, `${pageName}.md`);
+  const resolvedRoot = fs.realpathSync(wikiRoot);
+  if (!candidate.startsWith(resolvedRoot + path.sep)) {
+    throw new UsageError("Ref resolves outside the stash root.");
+  }
+  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
+    throw new NotFoundError(`Stash asset not found for ref: wiki:${assetName}`);
+  }
+  const realTarget = fs.realpathSync(candidate);
+  if (!realTarget.startsWith(resolvedRoot + path.sep)) {
+    throw new UsageError("Ref resolves outside the stash root.");
+  }
+  return realTarget;
 }
 
 /**
@@ -72,7 +112,7 @@ export async function akmShowUnified(input: {
       let lastError: NotFoundError | undefined;
       for (const source of searchSources) {
         try {
-          return await showWikiRoot(source.path, parsed.name);
+          return await showWikiRootForSource(allSources[0]?.path ?? source.path, source, parsed.name);
         } catch (err) {
           if (!(err instanceof NotFoundError)) throw err;
           lastError = err;
@@ -159,8 +199,18 @@ export async function showLocal(input: {
   const allStashDirs = searchSources.map((s) => s.path);
 
   let assetPath: string | undefined;
+  const matchedSource =
+    parsed.type === "wiki" ? searchSources.find((source) => parsed.name.startsWith(`${source.wikiName}/`)) : undefined;
   let lastError: Error | undefined;
+  if (parsed.type === "wiki" && matchedSource?.wikiName) {
+    try {
+      assetPath = resolveRegisteredWikiAssetPath(matchedSource.path, matchedSource.wikiName, parsed.name);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
   for (const dir of allStashDirs) {
+    if (assetPath) break;
     try {
       assetPath = await resolveAssetPath(dir, parsed.type, parsed.name);
       break;
@@ -187,7 +237,7 @@ export async function showLocal(input: {
     );
   }
 
-  const source = findSourceForPath(assetPath, allSources);
+  const source = matchedSource ?? findSourceForPath(assetPath, allSources);
   const sourceStashDir = source?.path ?? allStashDirs[0];
 
   if (!sourceStashDir) {
@@ -198,7 +248,11 @@ export async function showLocal(input: {
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);
-  const match = await runMatchers(fileCtx);
+  const forcedWikiMatch =
+    parsed.type === "wiki" && source?.wikiName && parsed.name.startsWith(`${source.wikiName}/`)
+      ? { type: "wiki", specificity: 20, renderer: "wiki-md", meta: {} }
+      : undefined;
+  const match = forcedWikiMatch ?? (await runMatchers(fileCtx));
   if (!match) {
     throw new UsageError(
       `Could not display asset "${displayType}:${parsed.name}" — unsupported file type or unrecognized layout`,

@@ -895,9 +895,10 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `create <name>` | Scaffold `wikis/<name>/` with empty `schema.md`, `index.md`, `log.md`, and `raw/` |
+| `register <name> <path-or-repo>` | Register an existing directory or repo as a first-class wiki without copying it |
 | `list` | List wikis with page and raw counts plus last-modified timestamps |
 | `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
-| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force` |
+| `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force`. External wikis are unregistered without deleting source files |
 | `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
 | `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
@@ -906,6 +907,9 @@ Subcommands:
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$` — lowercase letters and digits
 only; must start with a lowercase letter or digit.
+
+`akm add --type wiki --name <name> <path-or-repo>` is a shortcut to
+`akm wiki register <name> <path-or-repo>`.
 
 **Side effect:** `akm index` regenerates each wiki's `index.md` as part of
 its normal stash walk — there is no separate `reindex` verb.

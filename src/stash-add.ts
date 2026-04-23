@@ -11,7 +11,7 @@ import { parseRegistryRef } from "./registry-resolve";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
 import { warn } from "./warn";
-import { validateWikiName } from "./wiki";
+import { ensureWikiNameAvailable, validateWikiName } from "./wiki";
 
 const VALID_OVERRIDE_TYPES = new Set(["wiki"]);
 
@@ -65,6 +65,27 @@ export async function akmAdd(input: {
   }
 
   return addRegistryKit(ref, stashDir, input.trustThisInstall, input.writable, wikiName);
+}
+
+export async function registerWikiSource(input: {
+  ref: string;
+  name?: string;
+  options?: Record<string, unknown>;
+  trustThisInstall?: boolean;
+  writable?: boolean;
+}): Promise<AddResponse> {
+  const stashDir = resolveStashDir();
+  const name = input.name ?? deriveWikiNameFromRef(input.ref);
+  validateWikiName(name);
+  ensureWikiNameAvailable(stashDir, name);
+  return akmAdd({
+    ref: input.ref,
+    name,
+    overrideType: "wiki",
+    options: input.options,
+    trustThisInstall: input.trustThisInstall,
+    writable: input.writable,
+  });
 }
 
 /**
