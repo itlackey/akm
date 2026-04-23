@@ -114,7 +114,10 @@ export function extractWikiNameFromRef(ref: string): string | undefined {
 interface WikiFileBuckets {
   pages: string[];
   raws: string[];
+  /** Newest mtime across every `.md` in the wiki (pages, raws, schema/index/log). */
   lastModifiedMs?: number;
+  /** Newest mtime across pages only — the signal `stale-index` lint uses. */
+  pagesLastModifiedMs?: number;
 }
 
 /**
@@ -123,11 +126,19 @@ interface WikiFileBuckets {
  * "Pages" are any `.md` files under the wiki root EXCEPT `schema.md`,
  * `index.md`, `log.md`, or anything under `raw/`. This matches the set the
  * agent edits, and the set `akm wiki pages` exposes.
+ *
+ * Returns two mtime signals:
+ *   - `lastModifiedMs` — newest across all .md files. Used for the `show` /
+ *     `list` "last activity" display, which should reflect any edit.
+ *   - `pagesLastModifiedMs` — newest page mtime only. Used by `lintWiki` to
+ *     decide `stale-index`: the index tracks pages, so stashing a raw or
+ *     editing log.md must NOT flag the index stale.
  */
 function scanWikiFiles(wikiDir: string): WikiFileBuckets {
   const pages: string[] = [];
   const raws: string[] = [];
   let lastModifiedMs: number | undefined;
+  let pagesLastModifiedMs: number | undefined;
 
   const stack: Array<{ abs: string; relDirSegs: string[] }> = [{ abs: wikiDir, relDirSegs: [] }];
   while (stack.length > 0) {
@@ -166,10 +177,13 @@ function scanWikiFiles(wikiDir: string): WikiFileBuckets {
       } else if (!(atRoot && WIKI_SPECIAL_FILES.has(entry.name))) {
         // schema.md / index.md / log.md at the wiki root are not pages
         pages.push(abs);
+        if (mtimeMs !== undefined) {
+          pagesLastModifiedMs = pagesLastModifiedMs === undefined ? mtimeMs : Math.max(pagesLastModifiedMs, mtimeMs);
+        }
       }
     }
   }
-  return { pages, raws, lastModifiedMs };
+  return { pages, raws, lastModifiedMs, pagesLastModifiedMs };
 }
 
 function readSchemaDescription(wikiDir: string): string | undefined {
@@ -237,12 +251,17 @@ export function listWikis(stashDir: string): WikiSummary[] {
 // ── Show ────────────────────────────────────────────────────────────────────
 
 /**
- * Extract the last three top-level (`##`) log entries from `log.md`.
+ * Extract the top N `##` log entries from `log.md`.
  *
- * The log convention is agent-maintained and free-form, but the Karpathy
- * pattern (and our schema template) recommends `## <timestamp> <op>` headers.
- * We tolerate anything that looks like a level-2 heading block and return the
- * most recent three as trimmed strings.
+ * The log convention (defined by `schema.md` and enforced by nothing) is
+ * newest-first: the most recent entry sits at the top of the file, so the
+ * first `limit` `##` blocks encountered in file order are the most recent.
+ * Agents that append to the bottom instead will have their entries appear
+ * at the end of this list.
+ *
+ * `log.md` is agent-maintained and can be free-form, so `parseFrontmatter`
+ * is called defensively: if the frontmatter is malformed we fall back to
+ * treating the whole file as body.
  */
 function readRecentLog(wikiDir: string, limit = 3): string[] {
   const logPath = path.join(wikiDir, LOG_MD);
@@ -252,8 +271,12 @@ function readRecentLog(wikiDir: string, limit = 3): string[] {
   } catch {
     return [];
   }
-  const parsed = parseFrontmatter(raw);
-  const body = parsed.content ?? raw;
+  let body: string;
+  try {
+    body = parseFrontmatter(raw).content ?? raw;
+  } catch {
+    body = raw;
+  }
   const sections: string[] = [];
   let current: string[] | undefined;
   for (const line of body.split(/\r?\n/)) {
@@ -265,7 +288,7 @@ function readRecentLog(wikiDir: string, limit = 3): string[] {
     }
   }
   if (current && current.length > 0) sections.push(current.join("\n").trim());
-  // Log format is newest-first by convention; take the top `limit`.
+  // Newest-first convention: the top `limit` `##` blocks are the most recent.
   return sections.slice(0, limit);
 }
 
@@ -314,10 +337,14 @@ export function createWiki(stashDir: string, name: string): WikiCreateResult {
   }
 
   // Ensure raw/ exists with a .gitkeep so empty wikis survive clean clones.
+  // Handle the dir-exists-but-no-.gitkeep case too (partial scaffolds,
+  // user-created directories) so the invariant always holds after `create`.
   const rawDir = path.join(wikiDir, RAW_SUBDIR);
-  if (!fs.existsSync(rawDir)) {
-    fs.mkdirSync(rawDir, { recursive: true });
-    const gitkeepPath = path.join(rawDir, ".gitkeep");
+  fs.mkdirSync(rawDir, { recursive: true });
+  const gitkeepPath = path.join(rawDir, ".gitkeep");
+  if (fs.existsSync(gitkeepPath)) {
+    skipped.push(gitkeepPath);
+  } else {
     fs.writeFileSync(gitkeepPath, "", "utf8");
     created.push(gitkeepPath);
   }
@@ -694,7 +721,7 @@ export function lintWiki(stashDir: string, name: string): WikiLintReport {
     throw new NotFoundError(`Wiki not found: ${name}.`);
   }
   const pages = listPages(stashDir, name);
-  const { raws, lastModifiedMs } = scanWikiFiles(wikiDir);
+  const { raws, pagesLastModifiedMs } = scanWikiFiles(wikiDir);
 
   const pageRefs = new Set(pages.map((p) => p.ref));
   const incomingXrefs = new Map<string, number>();
@@ -760,11 +787,13 @@ export function lintWiki(stashDir: string, name: string): WikiLintReport {
     }
   }
 
-  // stale-index: index.md older than newest non-index page
+  // stale-index: compare index.md's mtime to the newest PAGE mtime only.
+  // Stashing a raw source or appending to log.md must NOT flag the index as
+  // stale — the index catalogs pages, not raws or meta files.
   const indexPath = path.join(wikiDir, INDEX_MD);
   try {
     const indexMtimeMs = fs.statSync(indexPath).mtimeMs;
-    if (lastModifiedMs !== undefined && lastModifiedMs > indexMtimeMs + 1) {
+    if (pagesLastModifiedMs !== undefined && pagesLastModifiedMs > indexMtimeMs + 1) {
       // +1 ms fudge factor: when index is regenerated in the same tick as a
       // page, the two stats can tie exactly; don't flag equality.
       findings.push({

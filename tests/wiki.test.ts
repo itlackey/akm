@@ -164,17 +164,19 @@ describe("showWiki", () => {
     expect(result.recentLog).toEqual([]);
   });
 
-  test("extracts the last 3 log entries", () => {
+  test("returns the top 3 log entries (newest-first convention)", () => {
     const stash = makeStash();
     createWiki(stash, "research");
     const logPath = path.join(stash, WIKIS_SUBDIR, "research", LOG_MD);
+    // Newest first, per the schema-documented convention.
     fs.appendFileSync(
       logPath,
-      "\n## 2026-04-20 ingest foo\n\nsummary: first\n\n## 2026-04-21 ingest bar\n\nsummary: second\n\n## 2026-04-22 lint\n\nfindings: 0\n\n## 2026-04-23 ingest baz\n\nsummary: fourth\n",
+      "\n## 2026-04-23 ingest baz\n\nsummary: newest\n\n## 2026-04-22 lint\n\nfindings: 0\n\n## 2026-04-21 ingest bar\n\nsummary: third\n\n## 2026-04-20 ingest foo\n\nsummary: oldest\n",
     );
     const result = showWiki(stash, "research");
     expect(result.recentLog).toHaveLength(3);
-    expect(result.recentLog[0]).toContain("2026-04-20 ingest foo");
+    expect(result.recentLog[0]).toContain("2026-04-23 ingest baz");
+    expect(result.recentLog[2]).toContain("2026-04-21 ingest bar");
   });
 
   test("throws NotFoundError for unknown wiki", () => {
@@ -370,6 +372,29 @@ describe("lintWiki", () => {
     const report = lintWiki(stash, "research");
     const brokenXref = report.findings.filter((f) => f.kind === "broken-xref");
     expect(brokenXref).toHaveLength(0);
+  });
+
+  test("does not flag stale-index when only a raw source or log was touched", () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    // Regenerate the index AFTER a page exists so its mtime is fresh.
+    writePage(wikiDir, "page.md", "---\ndescription: present\n---\n# ok\n");
+    regenerateWikiIndex(stash, "research");
+    // Advance wall-clock ~50ms, then touch ONLY a raw source + the log. The
+    // index tracks pages, so neither of these should flag stale-index.
+    const future = new Date(Date.now() + 50);
+    const rawPath = path.join(wikiDir, "raw", "just-stashed.md");
+    fs.mkdirSync(path.dirname(rawPath), { recursive: true });
+    fs.writeFileSync(rawPath, "---\nwikiRole: raw\n---\nbody", "utf8");
+    fs.utimesSync(rawPath, future, future);
+    const logPath = path.join(wikiDir, LOG_MD);
+    fs.appendFileSync(logPath, "\n## touch\n\nentry\n");
+    fs.utimesSync(logPath, future, future);
+
+    const report = lintWiki(stash, "research");
+    const staleIndex = report.findings.filter((f) => f.kind === "stale-index");
+    expect(staleIndex).toHaveLength(0);
   });
 });
 
