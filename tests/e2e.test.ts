@@ -957,7 +957,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     expect(result.currentVersion).toBe("0.0.13");
     expect(result.latestVersion).toBe("0.0.14");
     expect(result.updateAvailable).toBe(true);
-    expect(["binary", "npm", "unknown"]).toContain(result.installMethod);
+    expect(["binary", "bun", "npm", "pnpm", "unknown"]).toContain(result.installMethod);
   });
 
   test("performUpgrade detects non-binary install and returns guidance", async () => {
@@ -969,7 +969,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
       installMethod: "unknown",
     });
     expect(result.upgraded).toBe(false);
-    expect(["npm", "unknown"]).toContain(result.installMethod);
+    expect(["bun", "npm", "pnpm", "unknown"]).toContain(result.installMethod);
     expect(result.message).toBeTruthy();
   });
 

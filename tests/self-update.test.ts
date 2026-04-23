@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import {
   checkForUpdate,
   detectInstallMethod,
   getAkmBinaryName,
+  getPackageManagerUpgradeCommand,
   type InstallSignals,
   performUpgrade,
 } from "../src/self-update";
@@ -20,6 +22,7 @@ function mockFetch(handler: (url: string) => Response): void {
 }
 
 afterEach(() => {
+  mock.restore();
   if (originalFetch) {
     globalThis.fetch = originalFetch;
   }
@@ -35,8 +38,8 @@ describe("detectInstallMethod", () => {
   test("returns a valid install method when running via bun run (not compiled)", () => {
     const method = detectInstallMethod();
     // In test context we're running from source. May be "binary" if AKM_VERSION
-    // is defined (e.g. compiled test runner), otherwise "unknown" or "npm".
-    expect(["unknown", "npm", "binary"]).toContain(method);
+    // is defined (e.g. compiled test runner), otherwise "unknown" or a package-manager install.
+    expect(["unknown", "npm", "pnpm", "bun", "binary"]).toContain(method);
   });
 
   test("does not throw", () => {
@@ -61,16 +64,34 @@ describe("detectInstallMethod", () => {
     expect(detectInstallMethod(signals)).toBe("binary");
   });
 
-  test("returns 'npm' when importMetaDir contains node_modules", () => {
+  test("returns 'bun' for Bun global install path", () => {
     const signals: InstallSignals = {
       bunMain: "/usr/local/bin/bun",
       importMetaDir: "/home/user/.bun/install/global/node_modules/akm-cli/dist",
       hasAkmVersion: false,
     };
+    expect(detectInstallMethod(signals)).toBe("bun");
+  });
+
+  test("returns 'pnpm' for pnpm global install path", () => {
+    const signals: InstallSignals = {
+      bunMain: "/usr/local/bin/bun",
+      importMetaDir: "/home/user/.local/share/pnpm/global/5/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+    };
+    expect(detectInstallMethod(signals)).toBe("pnpm");
+  });
+
+  test("returns 'npm' when importMetaDir contains node_modules without bun/pnpm markers", () => {
+    const signals: InstallSignals = {
+      bunMain: "/usr/local/bin/bun",
+      importMetaDir: "/usr/local/lib/node_modules/akm-cli/dist",
+      hasAkmVersion: false,
+    };
     expect(detectInstallMethod(signals)).toBe("npm");
   });
 
-  test("npm detection takes priority over binary signals", () => {
+  test("package-manager detection takes priority over binary signals", () => {
     const signals: InstallSignals = {
       bunMain: "/$bunfs/root/src/cli.ts",
       importMetaDir: "/some/node_modules/akm",
@@ -139,7 +160,7 @@ describe("checkForUpdate", () => {
     expect(result.currentVersion).toBe("0.0.13");
     expect(result.latestVersion).toBe("0.0.14");
     expect(result.updateAvailable).toBe(true);
-    expect(["binary", "npm", "unknown"]).toContain(result.installMethod);
+    expect(["binary", "bun", "npm", "pnpm", "unknown"]).toContain(result.installMethod);
   });
 
   test("updateAvailable is false when current matches latest", async () => {
@@ -180,7 +201,13 @@ describe("checkForUpdate", () => {
 // ── performUpgrade ──────────────────────────────────────────────────────────
 
 describe("performUpgrade", () => {
-  test("returns guidance message for npm installs", async () => {
+  test("runs npm global install for npm installs", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
     const result = await performUpgrade({
       currentVersion: "0.0.13",
       latestVersion: "0.0.14",
@@ -188,9 +215,59 @@ describe("performUpgrade", () => {
       installMethod: "npm",
     });
 
-    expect(result.upgraded).toBe(false);
+    expect(spawnSyncSpy).toHaveBeenCalledWith(
+      expect.stringContaining("npm"),
+      ["install", "-g", "akm-cli@latest"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+    expect(result.upgraded).toBe(true);
     expect(result.installMethod).toBe("npm");
-    expect(result.message).toContain("npm");
+  });
+
+  test("runs bun global install for bun installs", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "bun",
+    });
+
+    expect(spawnSyncSpy).toHaveBeenCalledWith(
+      expect.stringContaining("bun"),
+      ["install", "-g", "akm-cli@latest"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+    expect(result.upgraded).toBe(true);
+    expect(result.installMethod).toBe("bun");
+  });
+
+  test("runs pnpm global add for pnpm installs", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "pnpm",
+    });
+
+    expect(spawnSyncSpy).toHaveBeenCalledWith(
+      expect.stringContaining("pnpm"),
+      ["add", "-g", "akm-cli@latest"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+    expect(result.upgraded).toBe(true);
+    expect(result.installMethod).toBe("pnpm");
   });
 
   test("returns guidance message for unknown install method", async () => {
@@ -247,9 +324,12 @@ describe("performUpgrade", () => {
 
     // The binary download fails first (500), but if checksum fetch is tried before
     // binary download, it should throw a checksum error.
-    // Test the specific scenario where the binary downloads OK but checksum fails:
-    // Use installMethod: "npm" to avoid writing to disk, and verify the error type.
-    // For the actual checksum-blocks-write scenario, rely on integration coverage.
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
     await expect(
       performUpgrade({
         currentVersion: "0.0.13",
@@ -257,7 +337,8 @@ describe("performUpgrade", () => {
         updateAvailable: true,
         installMethod: "npm",
       }),
-    ).resolves.toMatchObject({ upgraded: false, installMethod: "npm" });
+    ).resolves.toMatchObject({ upgraded: true, installMethod: "npm" });
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
   });
 
   test("checksum URL 404 throws Checksum verification failed for binary install", async () => {
@@ -281,11 +362,11 @@ describe("performUpgrade", () => {
   });
 
   test("skipChecksum: true option is accepted by performUpgrade (npm path)", async () => {
-    // We cannot safely test the binary-write path with skipChecksum: true in a
-    // unit test because doing so would overwrite the bun binary used to run the
-    // tests themselves. The npm and unknown install paths return early without
-    // touching the filesystem, so we use those to verify the option is accepted.
-    mockFetch(() => Response.json({}));
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
 
     const result = await performUpgrade(
       {
@@ -296,7 +377,8 @@ describe("performUpgrade", () => {
       },
       { skipChecksum: true },
     );
-    expect(result.upgraded).toBe(false);
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+    expect(result.upgraded).toBe(true);
     expect(result.installMethod).toBe("npm");
   });
 
@@ -339,5 +421,36 @@ describe("performUpgrade", () => {
         installMethod: "binary",
       }),
     ).rejects.toThrow(/Checksum mismatch/);
+  });
+});
+
+describe("getPackageManagerUpgradeCommand", () => {
+  test("returns npm install command", () => {
+    expect(getPackageManagerUpgradeCommand("npm", "akm-cli")).toEqual({
+      command: expect.stringContaining("npm"),
+      args: ["install", "-g", "akm-cli@latest"],
+      displayCommand: "npm install -g akm-cli@latest",
+    });
+  });
+
+  test("returns bun install command", () => {
+    expect(getPackageManagerUpgradeCommand("bun", "akm-cli")).toEqual({
+      command: expect.stringContaining("bun"),
+      args: ["install", "-g", "akm-cli@latest"],
+      displayCommand: "bun install -g akm-cli@latest",
+    });
+  });
+
+  test("returns pnpm add command", () => {
+    expect(getPackageManagerUpgradeCommand("pnpm", "akm-cli")).toEqual({
+      command: expect.stringContaining("pnpm"),
+      args: ["add", "-g", "akm-cli@latest"],
+      displayCommand: "pnpm add -g akm-cli@latest",
+    });
+  });
+
+  test("returns undefined for non-package-manager installs", () => {
+    expect(getPackageManagerUpgradeCommand("binary", "akm-cli")).toBeUndefined();
+    expect(getPackageManagerUpgradeCommand("unknown", "akm-cli")).toBeUndefined();
   });
 });

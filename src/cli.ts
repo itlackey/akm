@@ -3348,7 +3348,7 @@ akm init                                      # Initialize working stash
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm list                                      # List all sources
-akm upgrade                                   # Upgrade akm binary
+akm upgrade                                   # Upgrade akm using its install method
 akm upgrade --check                           # Check for updates
 akm help migrate 0.5.0                        # Print migration notes for a release
 akm hints                                     # Print this reference

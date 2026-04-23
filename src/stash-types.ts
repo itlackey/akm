@@ -303,14 +303,14 @@ export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
-  installMethod: "binary" | "npm" | "unknown";
+  installMethod: "binary" | "bun" | "npm" | "pnpm" | "unknown";
 }
 
 export interface UpgradeResponse {
   currentVersion: string;
   newVersion: string;
   upgraded: boolean;
-  installMethod: "binary" | "npm" | "unknown";
+  installMethod: "binary" | "bun" | "npm" | "pnpm" | "unknown";
   binaryPath?: string;
   checksumVerified?: boolean;
   message?: string;

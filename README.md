@@ -27,12 +27,16 @@ curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 # Or via Bun
 bun install -g akm-cli
 
+# Or via npm / pnpm
+npm install -g akm-cli
+pnpm add -g akm-cli
+
 # Or via skills
 npx skills add itlackey/akm
 
 ```
 
-Upgrade in place with `akm upgrade`.
+Upgrade in place with `akm upgrade` for binary, npm, bun, and pnpm installs.
 Preview release notes and migration guidance with `akm help migrate <version>`.
 
 ## Quick Start
