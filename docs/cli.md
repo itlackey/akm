@@ -899,7 +899,7 @@ Subcommands:
 | `show <name>` | Path, description (from `schema.md`), counts, and the last 3 `log.md` entries |
 | `remove <name>` | Delete pages + schema + index + log. Preserves `raw/` unless `--with-sources`. Requires `--force` |
 | `pages <name>` | List page refs + frontmatter descriptions (excludes `schema.md`, `index.md`, `log.md`, `raw/`) |
-| `search <name> <query>` | Scope-filtered search — equivalent to `akm search <query> --type wiki` filtered to one wiki |
+| `search <name> <query>` | Scope-filtered search over wiki pages — equivalent to `akm search <query> --type wiki` filtered to one wiki. Excludes `raw/`, `schema.md`, `index.md`, and `log.md` |
 | `stash <name> <source>` | Copy `source` into `wikis/<name>/raw/<slug>.md`. Source is a file path or `-` for stdin. `--as <slug>` overrides the derived slug. Never overwrites |
 | `lint <name>` | Deterministic structural checks (no LLM): orphans, broken xrefs, missing descriptions, uncited raws, stale index, broken sources |
 | `ingest <name>` | Print the step-by-step ingest workflow for the named wiki. Does not perform any ingest |
@@ -909,6 +909,11 @@ only; must start with a lowercase letter or digit.
 
 **Side effect:** `akm index` regenerates each wiki's `index.md` as part of
 its normal stash walk — there is no separate `reindex` verb.
+
+**Search/index scope:** stash-wide `akm search --type wiki` and `akm wiki search`
+index and return wiki pages only. Files under `raw/` plus the wiki root
+infrastructure files `schema.md`, `index.md`, and `log.md` are intentionally
+excluded from the search index and search results.
 
 **Not provided:** no `page-create`, `page-append`, `xref`, `log-append`,
 `reindex`, or `migrate` verb. Those are the agent's job using its native

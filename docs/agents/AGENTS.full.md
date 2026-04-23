@@ -95,7 +95,9 @@ akm wiki remove research --force --with-sources # Full nuke, including raw/
 **For any wiki task, start with `akm wiki list`, then `akm wiki ingest <name>`
 to get the step-by-step workflow.** Wiki pages are also addressable as
 `wiki:<name>/<page-path>` and show up in stash-wide `akm search` as
-`type: wiki`. No `--llm` anywhere — akm never reasons about page content.
+`type: wiki`. Files under `raw/` and the wiki root infrastructure files
+`schema.md`, `index.md`, and `log.md` are not indexed and do not appear in
+search results. No `--llm` anywhere — akm never reasons about page content.
 
 `akm wiki lint` exits 1 when findings exist and 0 when the wiki is clean.
 The `broken-source` finding kind flags pages whose `sources:` frontmatter

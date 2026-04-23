@@ -46,14 +46,14 @@ akm wiki search architecture "deployment"
 # Lint a wiki for structural problems
 akm wiki lint architecture
 
-# Ingest raw content — moves files into raw/ and queues them for agent processing
-akm wiki ingest architecture ./notes/adr-001.md
+# Ingest raw content into raw/
+akm wiki stash architecture ./notes/adr-001.md
 
-# Stash a wiki — adds it as a searchable asset
-akm wiki stash architecture
+# Print the ingest workflow for the wiki
+akm wiki ingest architecture
 ```
 
-Wiki pages are indexed by `akm index` and show up in stash-wide `akm search`, so you do not need to remember which wiki a page lives in. Running `akm index` also regenerates each wiki's `index.md` as a side effect.
+Wiki pages are indexed by `akm index` and show up in stash-wide `akm search`, so you do not need to remember which wiki a page lives in. Raw sources under `raw/` plus the wiki root infrastructure files `schema.md`, `index.md`, and `log.md` are intentionally excluded from indexing and search results. Running `akm index` also regenerates each wiki's `index.md` as a side effect.
 
 The design principle is **akm surfaces, the agent writes**. akm makes no LLM calls. It owns only the operations where correctness is structural and deterministic: lifecycle management, raw-slug uniqueness, lint checks, index regeneration. The agent owns page content. This keeps the CLI fast and predictable — a wiki command always completes in milliseconds, and you can run it in any environment without model configuration.
 
@@ -169,7 +169,7 @@ If you were using the wiki functionality introduced in 0.4.1, you will need to m
 **Migration path:**
 
 1. Create a wiki for your content: `akm wiki create <name>`
-2. Move raw source files into `wikis/<name>/raw/`: `akm wiki ingest <name> <file>`
+2. Move raw source files into `wikis/<name>/raw/`: `akm wiki stash <name> <file>`
 3. Have your agent author wiki pages from the raw content
 4. Run `akm index` to regenerate the wiki index
 

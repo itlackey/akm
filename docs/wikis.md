@@ -79,7 +79,10 @@ akm wiki ingest <name>       # print the ingest workflow; no action
 
 `akm wiki search <n> <q>` is a convenience — wiki pages are first-class
 in stash-wide `akm search`, so `akm search <q> --type wiki` returns
-them too, mixed with skills, commands, and everything else.
+them too, mixed with skills, commands, and everything else. Raw sources
+under `raw/` plus the wiki root infrastructure files `schema.md`,
+`index.md`, and `log.md` are intentionally excluded from the search
+index and search results.
 
 ### The one akm-owned write
 
@@ -179,7 +182,7 @@ akm wiki lint research        # → "0 finding(s) — clean."
 
 # Search within this wiki
 akm wiki search research "attention mechanism"
-# (returns hits scoped to wikis/research/…)
+# (returns page hits scoped to wikis/research/…; excludes raw/schema/index/log)
 
 # Or mix wiki hits with everything else
 akm search "attention" --type wiki
@@ -193,12 +196,14 @@ Wiki pages are addressable as `wiki:<name>/<page-path>`:
 | --- | --- |
 | `wikis/research/ml-basics.md` | `wiki:research/ml-basics` |
 | `wikis/research/sub/page.md` | `wiki:research/sub/page` |
-| `wikis/research/raw/paper.md` | `wiki:research/raw/paper` |
-| `wikis/research/schema.md` | `wiki:research/schema` |
 
 Use `akm show wiki:research/ml-basics` to read a page with the standard
 akm show machinery — `toc`, `section <heading>`, `lines <start> <end>`,
 and `frontmatter` views all work.
+
+Files in `raw/` and the wiki root infrastructure files still exist on
+disk for ingest, linting, and regeneration, but they are not indexed as
+wiki search results.
 
 ## What's deliberately absent
 

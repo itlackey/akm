@@ -2757,7 +2757,11 @@ const wikiPagesCommand = defineCommand({
 });
 
 const wikiSearchCommand = defineCommand({
-  meta: { name: "search", description: "Search within a single wiki (scoped wrapper over `akm search --type wiki`)" },
+  meta: {
+    name: "search",
+    description:
+      "Search wiki pages within a single wiki (scoped wrapper over `akm search --type wiki`; excludes raw/schema/index/log)",
+  },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
     query: { type: "positional", description: "Search query", required: true },
@@ -3230,7 +3234,9 @@ akm wiki remove research --force --with-sources # Full nuke, including raw/
 **For any wiki task, start with \`akm wiki list\`, then \`akm wiki ingest <name>\`
 to get the step-by-step workflow.** Wiki pages are also addressable as
 \`wiki:<name>/<page-path>\` and show up in stash-wide \`akm search\` as
-\`type: wiki\`. No \`--llm\` anywhere — akm never reasons about page content.
+\`type: wiki\`. Files under \`raw/\` and the wiki root infrastructure files
+\`schema.md\`, \`index.md\`, and \`log.md\` are not indexed and do not appear in
+search results. No \`--llm\` anywhere — akm never reasons about page content.
 
 ## Vaults
 

@@ -299,6 +299,42 @@ export function applyWikiFrontmatter(entry: StashEntry, fmData: Record<string, u
   }
 }
 
+const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
+
+/**
+ * Apply wiki-specific index exclusions while leaving all other stash files
+ * untouched.
+ *
+ * - In a normal stash, excludes `wikis/<name>/raw/**` and wiki-root
+ *   `schema.md`, `index.md`, `log.md`.
+ * - In a wiki-root stash source (`wikiName`), excludes `raw/**` and those same
+ *   root-level infrastructure files.
+ */
+export function shouldIndexStashFile(
+  stashRoot: string,
+  file: string,
+  options?: { treatStashRootAsWikiRoot?: boolean },
+): boolean {
+  const relPath = path.relative(stashRoot, file);
+  if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) return true;
+
+  const segments = relPath.split(/[\\/]+/).filter(Boolean);
+  if (segments.length === 0) return true;
+
+  if (options?.treatStashRootAsWikiRoot) {
+    if (segments[0] === "raw") return false;
+    return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
+  }
+
+  const wikisIdx = segments.indexOf("wikis");
+  if (wikisIdx < 0 || wikisIdx + 1 >= segments.length) return true;
+
+  const wikiRelativeSegments = segments.slice(wikisIdx + 2);
+  if (wikiRelativeSegments.length === 0) return true;
+  if (wikiRelativeSegments[0] === "raw") return false;
+  return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]));
+}
+
 /**
  * Extract `@param` JSDoc tags from a script file's leading comment block.
  *
@@ -502,6 +538,7 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
   const pkgMetaCache = new Map<string, ReturnType<typeof extractPackageMetadata>>();
 
   for (const file of files) {
+    if (!shouldIndexStashFile(stashRoot, file)) continue;
     const ctx = buildFileContext(stashRoot, file);
     const match = await runMatchers(ctx);
     if (!match) continue;

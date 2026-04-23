@@ -174,6 +174,61 @@ test("akmIndex handles markdown assets", async () => {
   expect(result.totalEntries).toBe(2);
 });
 
+test("akmIndex excludes wiki raw and infrastructure files from the primary stash index", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "wikis", "research", "schema.md"), "---\ndescription: Schema\n---\n# Schema\n");
+  writeFile(path.join(stashDir, "wikis", "research", "index.md"), "---\ndescription: Index\n---\n# Index\n");
+  writeFile(path.join(stashDir, "wikis", "research", "log.md"), "---\ndescription: Log\n---\n# Log\n");
+  writeFile(
+    path.join(stashDir, "wikis", "research", "raw", "paper.md"),
+    "---\ndescription: Raw source\n---\n# Paper\n",
+  );
+  writeFile(path.join(stashDir, "wikis", "research", "page.md"), "---\ndescription: Indexed page\n---\n# Page\n");
+
+  await akmIndex({ stashDir, full: true });
+
+  const db = openDatabase();
+  const wikiEntries = getAllEntries(db, "wiki")
+    .map((row) => row.entry.name)
+    .sort();
+  expect(wikiEntries).toEqual(["research/page"]);
+  closeDatabase(db);
+});
+
+test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash sources", async () => {
+  const primaryStash = tmpStash();
+  const wikiSource = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-wiki-source-"));
+  writeFile(path.join(wikiSource, "schema.md"), "---\ndescription: Schema\n---\n# Schema\n");
+  writeFile(path.join(wikiSource, "index.md"), "---\ndescription: Index\n---\n# Index\n");
+  writeFile(path.join(wikiSource, "log.md"), "---\ndescription: Log\n---\n# Log\n");
+  writeFile(path.join(wikiSource, "raw", "paper.md"), "---\ndescription: Raw source\n---\n# Paper\n");
+  writeFile(path.join(wikiSource, "page.md"), "---\ndescription: Indexed page\n---\n# Page\n");
+  writeFile(path.join(wikiSource, "sub", "page-two.md"), "---\ndescription: Indexed page two\n---\n# Page Two\n");
+
+  const origStash = process.env.AKM_STASH_DIR;
+  try {
+    const { saveConfig } = await import("../src/config");
+    process.env.AKM_STASH_DIR = primaryStash;
+    saveConfig({
+      semanticSearchMode: "off",
+      stashes: [{ type: "filesystem", path: wikiSource, wikiName: "research" }],
+    });
+
+    await akmIndex({ stashDir: primaryStash, full: true });
+
+    const db = openDatabase();
+    const wikiEntries = getAllEntries(db, "wiki")
+      .map((row) => row.entry.name)
+      .sort();
+    expect(wikiEntries).toEqual(["research/page", "research/sub/page-two"]);
+    closeDatabase(db);
+  } finally {
+    if (origStash === undefined) delete process.env.AKM_STASH_DIR;
+    else process.env.AKM_STASH_DIR = origStash;
+    fs.rmSync(wikiSource, { recursive: true, force: true });
+  }
+});
+
 test("akmIndex generates TOC in database for knowledge entries", async () => {
   const stashDir = tmpStash();
   writeFile(

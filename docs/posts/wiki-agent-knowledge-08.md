@@ -133,9 +133,9 @@ There are no LLM calls inside akm. The tool is pure file operations, SQLite, and
 
 Once you have a few wikis, you'll use two different search paths depending on what you need.
 
-`akm wiki search research "attention mechanism"` runs a scoped search within the `research` wiki only. Use this when you know which wiki holds the answer and you want precision — no noise from other wikis or other asset types. The results are page refs with descriptions, scoped to `research/`.
+`akm wiki search research "attention mechanism"` runs a scoped search within the `research` wiki only. Use this when you know which wiki holds the answer and you want precision — no noise from other wikis or other asset types. The results are page refs with descriptions, scoped to `research/`. Raw sources under `raw/` plus the wiki root infrastructure files `schema.md`, `index.md`, and `log.md` are excluded from the search index and never appear as search hits.
 
-`akm search --type wiki "attention mechanism"` runs the full stash-wide search across all wikis plus any other indexed wiki content. Use this when you're not sure which wiki something lives in, or when you want to see if anything from multiple wikis is relevant to a task before loading anything.
+`akm search --type wiki "attention mechanism"` runs the full stash-wide search across all wiki pages. Use this when you're not sure which wiki something lives in, or when you want to see if anything from multiple wikis is relevant to a task before loading anything.
 
 In practice: scoped search during active work in a specific domain, wide search when starting a new session or doing cross-domain research. Wiki pages participate in the same FTS5 scoring pipeline as every other asset type, so `--type wiki` is not a second-class citizen — a highly relevant wiki page will outrank a mediocre skill in a general search.
 
