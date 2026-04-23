@@ -55,6 +55,8 @@ export interface InstalledKitEntry {
   cacheDir: string;
   installedAt: string;
   writable?: boolean;
+  /** If set, all .md files in this kit are indexed as wiki pages under this wiki name */
+  wikiName?: string;
 }
 
 export interface KitInstallResult extends InstalledKitEntry {

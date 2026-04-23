@@ -77,6 +77,8 @@ export interface StashConfigEntry {
   writable?: boolean;
   /** Arbitrary provider-specific options */
   options?: Record<string, unknown>;
+  /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
+  wikiName?: string;
 }
 
 export interface InstallAuditConfig {
@@ -631,6 +633,8 @@ function parseInstalledKitEntry(value: unknown): InstalledKitEntry | undefined {
   if (resolvedVersion) entry.resolvedVersion = resolvedVersion;
   const resolvedRevision = asNonEmptyString(obj.resolvedRevision);
   if (resolvedRevision) entry.resolvedRevision = resolvedRevision;
+  const wikiName = asNonEmptyString(obj.wikiName);
+  if (wikiName) entry.wikiName = wikiName;
   return entry;
 }
 
@@ -733,6 +737,8 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
     entry.options = obj.options as Record<string, unknown>;
   }
+  const wikiName = asNonEmptyString(obj.wikiName);
+  if (wikiName) entry.wikiName = wikiName;
   return entry;
 }
 

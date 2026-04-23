@@ -1277,6 +1277,10 @@ const addCommand = defineCommand({
       description: "Bypass install-audit blocking for this add invocation only",
       default: false,
     },
+    type: {
+      type: "string",
+      description: "Override asset type for all files in this stash (currently supports: wiki)",
+    },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
   },
@@ -1338,6 +1342,7 @@ const addCommand = defineCommand({
       const result = await akmAdd({
         ref,
         name: args.name,
+        overrideType: args.type,
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
         trustThisInstall: args.trust,
         writable: args.writable,
