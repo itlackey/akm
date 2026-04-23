@@ -91,29 +91,31 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
     const currentStepId = asset.steps[0]?.id ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
 
-    workflowDb
-      .prepare(
-        `INSERT INTO workflow_runs (
-        id, workflow_ref, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-      )
-      .run(runId, asset.ref, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
+    workflowDb.transaction(() => {
+      workflowDb
+        .prepare(
+          `INSERT INTO workflow_runs (
+          id, workflow_ref, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+        )
+        .run(runId, asset.ref, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
 
-    const insertStep = workflowDb.prepare(
-      `INSERT INTO workflow_run_steps (
-        run_id, step_id, step_title, instructions, completion_json, sequence_index, status
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-    );
-    for (const step of asset.steps) {
-      insertStep.run(
-        runId,
-        step.id,
-        step.title,
-        step.instructions,
-        step.completionCriteria ? JSON.stringify(step.completionCriteria) : null,
-        step.sequenceIndex ?? 0,
+      const insertStep = workflowDb.prepare(
+        `INSERT INTO workflow_run_steps (
+          run_id, step_id, step_title, instructions, completion_json, sequence_index, status
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
       );
-    }
+      for (const step of asset.steps) {
+        insertStep.run(
+          runId,
+          step.id,
+          step.title,
+          step.instructions,
+          step.completionCriteria ? JSON.stringify(step.completionCriteria) : null,
+          step.sequenceIndex ?? 0,
+        );
+      }
+    })();
 
     return getWorkflowStatus(runId);
   } finally {
@@ -183,61 +185,65 @@ export async function getNextWorkflowStep(specifier: string): Promise<WorkflowNe
 export function completeWorkflowStep(input: CompleteWorkflowStepInput): WorkflowRunDetail {
   const workflowDb = openWorkflowDatabase();
   try {
-    const run = readWorkflowRun(workflowDb, input.runId);
-    if (run.status !== "active") {
-      throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
-    }
-    const existing = workflowDb
-      .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
-      .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
-    if (!existing) {
-      throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
-    }
-    if (existing.status !== "pending") {
-      throw new UsageError(`Step "${input.stepId}" is already ${existing.status} in workflow run ${run.id}.`);
-    }
-    if (run.current_step_id !== existing.step_id) {
-      throw new UsageError(
-        `Step "${input.stepId}" is not the current step for workflow run ${run.id}. Complete "${run.current_step_id}" first.`,
-      );
-    }
+    let updatedRun: WorkflowRunRow | undefined;
+    let refreshedSteps: WorkflowRunStepRow[] = [];
 
-    const completedAt = new Date().toISOString();
-    workflowDb
-      .prepare(
-        `UPDATE workflow_run_steps
-         SET status = ?, notes = ?, evidence_json = ?, completed_at = ?
-         WHERE run_id = ? AND step_id = ?`,
-      )
-      .run(
-        input.status,
-        input.notes?.trim() || null,
-        input.evidence ? JSON.stringify(input.evidence) : null,
-        completedAt,
-        run.id,
-        input.stepId,
-      );
+    workflowDb.transaction(() => {
+      const run = readWorkflowRun(workflowDb, input.runId);
+      if (run.status !== "active") {
+        throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
+      }
+      const existing = workflowDb
+        .prepare("SELECT * FROM workflow_run_steps WHERE run_id = ? AND step_id = ?")
+        .get(run.id, input.stepId) as WorkflowRunStepRow | undefined;
+      if (!existing) {
+        throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
+      }
+      if (existing.status !== "pending") {
+        throw new UsageError(`Step "${input.stepId}" is already ${existing.status} in workflow run ${run.id}.`);
+      }
+      if (run.current_step_id !== existing.step_id) {
+        throw new UsageError(
+          `Step "${input.stepId}" is not the current step for workflow run ${run.id}. Complete "${run.current_step_id}" first.`,
+        );
+      }
 
-    const refreshedSteps = readWorkflowRunSteps(workflowDb, run.id);
-    const state = deriveRunState(refreshedSteps);
-    workflowDb
-      .prepare(
-        `UPDATE workflow_runs
-         SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?
-         WHERE id = ?`,
-      )
-      .run(state.status, state.currentStepId, completedAt, state.completedAt, run.id);
+      const completedAt = new Date().toISOString();
+      workflowDb
+        .prepare(
+          `UPDATE workflow_run_steps
+           SET status = ?, notes = ?, evidence_json = ?, completed_at = ?
+           WHERE run_id = ? AND step_id = ?`,
+        )
+        .run(
+          input.status,
+          input.notes?.trim() || null,
+          input.evidence ? JSON.stringify(input.evidence) : null,
+          completedAt,
+          run.id,
+          input.stepId,
+        );
 
-    return buildWorkflowRunDetail(
-      {
+      refreshedSteps = readWorkflowRunSteps(workflowDb, run.id);
+      const state = deriveRunState(refreshedSteps);
+      workflowDb
+        .prepare(
+          `UPDATE workflow_runs
+           SET status = ?, current_step_id = ?, updated_at = ?, completed_at = ?
+           WHERE id = ?`,
+        )
+        .run(state.status, state.currentStepId, completedAt, state.completedAt, run.id);
+
+      updatedRun = {
         ...run,
         status: state.status,
         current_step_id: state.currentStepId,
         updated_at: completedAt,
         completed_at: state.completedAt,
-      },
-      refreshedSteps,
-    );
+      };
+    })();
+
+    return buildWorkflowRunDetail(updatedRun as WorkflowRunRow, refreshedSteps);
   } finally {
     closeWorkflowDatabase(workflowDb);
   }

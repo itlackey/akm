@@ -1,8 +1,8 @@
 # Concepts
 
 `akm` is a package manager for AI agent capabilities. It organizes scripts,
-skills, commands, agents, knowledge documents, and memories into a searchable
-library that any AI coding assistant can use.
+skills, commands, agents, knowledge documents, vaults, workflows, and memories
+into a searchable library that any AI coding assistant can use.
 
 ## Mental Model
 
@@ -33,7 +33,8 @@ The user never picks the kind. `akm add` infers it.
    about yet. The official registry ships by default; add third-party
    registries with `akm registry add`.
 3. **Assets** are the individual capabilities an agent discovers and uses:
-   scripts, skills, commands, agents, knowledge documents, and memories.
+   scripts, skills, commands, agents, knowledge documents, vaults,
+   workflows, and memories.
 
 Your **working stash** (`~/akm`) is created by `akm init` — it's the
 primary directory for your personal, editable assets.
@@ -49,7 +50,8 @@ directory name. A `.sh` file is a script whether it lives in `scripts/`,
 `deploy/`, or at the root.
 
 That said, using these directory names as an opt-in convention improves
-indexing confidence:
+indexing confidence. Vaults are the current exception: `.env` vault assets are
+only discovered under `vaults/` paths.
 
 ```text
 my-kit/
@@ -58,13 +60,14 @@ my-kit/
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
+  vaults/         # Environment vaults (.env)
   workflows/      # Step-by-step workflow documents (.md)
   memories/       # Recalled context fragments (.md)
 ```
 
 ## Asset Types
 
-There are seven asset types:
+There are eight asset types:
 
 | Type | Purpose | What the agent gets |
 | --- | --- | --- |
@@ -73,6 +76,7 @@ There are seven asset types:
 | **command** | A prompt template | A template with placeholders to fill in |
 | **agent** | An agent definition | A system prompt, model hint, and tool policy |
 | **knowledge** | A reference document | Navigable content with TOC and section views |
+| **vault** | A key/value environment vault | Key names and comments, never secret values |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **memory** | Context from external systems | Background information the agent should consider |
 
