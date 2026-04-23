@@ -1,137 +1,172 @@
 # Architecture
 
-akm (Agent Kit Manager) is a CLI tool for managing AI agent assets: skills, commands, agents, knowledge, workflows, scripts, and memories. This document defines the system's core design decisions. These are final and inviolable.
+akm is a Bun-based CLI for discovering and using agent assets from local stashes,
+cache-backed sources, and registries.
 
 ---
 
-## Stash Provider Types
+## Asset Types
 
-There are exactly three stash provider types:
+Built-in asset types are:
 
-| Type | Category | Behavior |
-|------|----------|----------|
-| **filesystem** | local | Directory on disk. Walker classifies files, indexer writes to FTS5. |
-| **git** | local | Any git repository. Cloned to cache, then indexed identically to filesystem. |
-| **openviking** | remote | REST API returning pre-scored results. We merge, not index. |
+- `skill`
+- `command`
+- `agent`
+- `knowledge`
+- `workflow`
+- `script`
+- `memory`
+- `vault`
+- `wiki`
 
-**Local** providers (filesystem, git) are indexed by us into a unified FTS5 index. **Remote** providers (openviking) return their own pre-scored results which compete with local results during merge.
+Each type maps to a canonical stash directory through `src/asset-spec.ts`
+(`skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`, `scripts/`,
+`memories/`, `vaults/`, `wikis/`).
 
-The deciding question for any new provider: "Do we index it, or does it come pre-indexed?"
+---
 
-### Constraints
+## Stash Sources and Provider Reality
 
-- **MUST NOT** create a provider types for git repos. Any git-based stash source follows one path: clone, cache, register as filesystem stash, index through FTS5.
-- **MUST NOT** create parallel scoring pipelines for local content. All locally-cached content goes through one index.
-- **MUST NOT** suppress remote provider scores below local scores. Remote results compete fairly.
+Current source handling has two layers:
+
+1. **Indexed local sources** resolved by `resolveStashSources()`:
+   - primary working stash
+   - extra filesystem stashes
+   - installed kit stash roots
+   - cache-backed git sources
+   - cache-backed website snapshots
+2. **Remote show/search providers**:
+   - OpenViking remains the main remote pre-scored provider
+
+Important implementation details:
+
+- Git-backed stash entries use canonical type `git`
+- Legacy stash types `context-hub` and `github` are still accepted as aliases
+  for git-backed mirrors
+- Website sources are mirrored into cache and then indexed locally like any
+  other stash source
+- Filesystem, git mirrors, website mirrors, and installed kits all compete
+  through the same local indexing pipeline once resolved to directories
 
 ---
 
 ## Ref Format
 
-Assets are identified by `type:name` refs (e.g., `skill:deploy`, `script:deploy.sh`). This encodes the file path convention (`skills/deploy`, `scripts/deploy.sh`).
+Refs are parsed and emitted in wire format:
 
-Source locators for `akm add` are URLs or shorthands:
+```text
+[origin//]type:name
+```
 
-| Locator | Example |
-|---------|---------|
-| GitHub | `github:owner/repo`, `github:owner/repo#v1.2.3` |
-| npm | `npm:@scope/pkg`, `@scope/pkg` |
-| Git URL | `git+https://gitlab.com/org/kit` |
-| Local path | `./path/to/kit` |
+- `type:name` is the canonical asset identity
+- optional `origin//` narrows lookup to a specific installed or named source
+- refs are normalized through `src/stash-ref.ts`
+- markdown-backed asset types strip `.md` from canonical names
 
-Source locators are NOT refs. They identify where to fetch a kit, not how to address an asset.
+Examples:
 
-### Constraints
-
-- **MUST NOT** use URI schemes in user-facing refs. No `viking://`, no `context-hub://`. Provider routing is internal, based on which stash the asset came from, not on a prefix in the ref.
-- **MUST NOT** invent new ref formats. `type:name` is the only asset addressing scheme.
-
----
-
-## Workflow Runtime State
-
-Workflow assets are markdown documents stored under `workflows/`, but workflow
-run state is **runtime state**, not derived index data.
-
-- Workflow runs live in a **separate local workflow database**
-- Workflow run state **must survive** index rebuilds and index schema resets
-- Workflow search/show still uses the same local asset indexing pipeline as all
-  other indexed asset types
+- `skill:code-review`
+- `workflow:release/train`
+- `npm:@scope/pkg//command:deploy`
 
 ---
 
 ## Search Pipeline
 
-One scoring pipeline for all indexed content:
+Local indexed content shares one scoring pipeline:
 
-1. FTS5 multi-column search (name 10x, desc 5x, tags 3x, hints 2x, content 1x)
-2. Normalized BM25 scoring (0.3--1.0 base range)
-3. Boost signals: exact name match, type relevance, alias match, description relevance, searchHints, quality, utility
-4. Optional vector similarity (sqlite-vec) combined with FTS score
+1. multi-column FTS5 search
+2. BM25 normalization
+3. optional semantic/vector scoring
+4. metadata and utility boosts
 
-Remote providers (openviking) return their own scores. These scores are normalized and merged fairly with local results -- not suppressed, not placed below.
+Indexed field weighting is:
 
-Registry results (installable kits from npm, GitHub, skills.sh) are separated into `registryHits` in the search response. They are never mixed into `hits`.
+- `name` ×10
+- `description` ×5
+- `tags` ×3
+- `hints` ×2
+- `content` ×1
 
-### Constraints
+Implementation notes:
 
-- **MUST NOT** create separate scoring functions for different provider types. One pipeline scores all indexed content.
-- **MUST NOT** merge registry results into the `hits` array. Registry hits are installable kits; stash hits are usable assets. They serve different purposes.
-- **MUST NOT** treat any stash provider's results as second-class. If content is indexed locally, it goes through the same pipeline. If it comes pre-scored from a remote provider, its scores compete on equal footing.
+- `hints` includes `searchHints`, `examples`, `usage`, intent fields, wiki
+  cross-references, and page-kind hints
+- `content` is primarily TOC headings plus parameter names/descriptions
+- remote registry results are returned separately in `registryHits`
+- `--source both` does not flatten registry results into stash `hits`
+- OpenViking scores are preserved and merged fairly with stash hits
 
 ---
 
-## Show Routing
+## Show Resolution
 
-`akm show` resolves content through this order:
+`akm show` does **not** resolve local assets through the FTS index.
 
-1. Query the local FTS5 index first
-2. Fall back to remote providers if not found locally
+Local show flow:
 
-Routing is by source metadata (which stash the asset belongs to), not by URI prefix matching. A provider's `canShow()` means "I am available and configured," not "this ref has my prefix."
+1. parse `[origin//]type:name`
+2. resolve candidate stash sources by origin
+3. resolve the asset path from the filesystem layout
+4. classify the file and render a response
 
-### Constraints
+If local lookup fails with `NotFoundError`, akm falls back to remote providers
+that support `show()`.
 
-- **MUST NOT** route show requests by parsing URI prefixes from refs. Refs are `type:name`, period.
-- **MUST NOT** require users to know which provider holds an asset. The system resolves this internally.
+Special case:
+
+- `wiki:<name>` with no page path returns the wiki root summary payload rather
+  than a single markdown page response
+
+---
+
+## Workflow Runtime State
+
+Workflow definitions live in `workflows/`, but workflow run state is separate
+runtime state stored in `workflow.db`.
+
+- workflow discovery and search use the shared asset index
+- workflow run records survive index rebuilds
+- workflow run state is not derived from the FTS index
 
 ---
 
 ## Utility Scoring
 
-Utility scores are primarily feedback-driven. Usage frequency (search/show events) is a minor additive modifier, not the primary signal. EMA decay is time-proportional -- it decays based on elapsed time, not on how many times the indexer runs.
+Utility is feedback-driven and rebuilt from `usage_events`.
 
-### Constraints
-
-- **MUST NOT** tie decay rate to indexing frequency. Indexing twice as often must not cause twice as fast decay.
-- **MUST NOT** make usage frequency the dominant scoring signal. Feedback is primary.
+- usage history is preserved across schema resets and full rebuilds
+- detached events are re-linked to fresh entry ids by ref
+- decay is time-proportional, not tied to index frequency
 
 ---
 
 ## Module Boundaries
 
 | Module | Responsibility |
-|--------|---------------|
-| `src/cli.ts` | citty-based CLI, argument parsing, output formatting |
-| `src/stash-search.ts` | Search orchestration: local FTS5 + remote provider merge |
-| `src/local-search.ts` | FTS5 queries, scoring pipeline, boost computation |
-| `src/stash-show.ts` | Asset content retrieval (local first, remote fallback) |
-| `src/indexer.ts` | Walks stash dirs, classifies files, builds FTS5 index |
-| `src/walker.ts` | Filesystem traversal (`walkStashFlat`) |
-| `src/db.ts` | SQLite schema, FTS5 table management |
-| `src/asset-spec.ts` | Asset type registry, type directories, `registerAssetType()` |
-| `src/config.ts` | User configuration (stash sources, providers, embedding settings) |
-| `src/stash-providers/` | Provider implementations (filesystem, git, openviking) |
-| `src/providers/` | Registry provider implementations (static-index, skills-sh) |
+| --- | --- |
+| `src/cli.ts` | command parsing, output shaping, user-facing help |
+| `src/asset-spec.ts` | asset type registry and canonical stash directories |
+| `src/matchers.ts` | file classification rules |
+| `src/renderers.ts` | search/show shaping per asset type |
+| `src/search-source.ts` | stash source resolution, cache-backed source discovery, editability |
+| `src/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
+| `src/search-fields.ts` | FTS field extraction |
+| `src/local-search.ts` | local FTS/vector search and reranking |
+| `src/stash-search.ts` | local/provider/registry orchestration |
+| `src/stash-ref.ts` | ref parsing and normalization |
+| `src/stash-resolve.ts` | filesystem path resolution for refs |
+| `src/stash-show.ts` | local-first show with remote fallback |
+| `src/workflow-runs.ts` | workflow run persistence |
+| `src/stash-providers/` | stash source/provider implementations (`filesystem`, `git`, `openviking`, `website`) |
+| `src/providers/` | registry providers such as static index and skills.sh |
 
 ---
 
 ## Tech Stack
 
-- **Runtime:** Bun
-- **Language:** TypeScript (strict, ESM)
-- **Testing:** bun:test
-- **Linting:** Biome
-- **CLI framework:** citty
-- **Database:** bun:sqlite with FTS5; optional sqlite-vec for vector search
-- **Build:** tsc (JS emit only, no declarations)
+- Runtime: Bun
+- Language: TypeScript (ESM, strict)
+- Database: `bun:sqlite` with FTS5 and optional `sqlite-vec`
+- Testing: `bun:test`
+- Formatting/linting: Biome

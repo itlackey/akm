@@ -60,7 +60,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["skill", "command", "agent", "knowledge", "script"]
+            "enum": ["skill", "command", "agent", "knowledge", "workflow", "script", "memory", "vault", "wiki"]
           },
           "description": "What kind of stash assets this kit provides."
         },
@@ -87,7 +87,7 @@
       "properties": {
         "type": {
           "type": "string",
-          "description": "Asset type (e.g. skill, command, agent, knowledge, script)"
+          "description": "Asset type (e.g. skill, command, agent, knowledge, workflow, script, memory, vault, wiki)"
         },
         "name": {
           "type": "string",
