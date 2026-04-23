@@ -16,10 +16,42 @@ bun install
 
 ## Development Workflow
 
+Run the CLI from source during development:
+
+```bash
+bun run src/cli.ts <command>
+```
+
+### Local `akm` wrapper
+
+If you have `~/.local/bin/akm` set up to point at this repo, it must be a **real file**, not a symlink:
+
+```bash
+cat > ~/.local/bin/akm << 'EOF'
+#!/usr/bin/env bash
+exec bun /path/to/agentikit/src/cli.ts "$@"
+EOF
+chmod +x ~/.local/bin/akm
+```
+
+**Do not** make it a symlink to `~/.bun/bin/akm`. Bun's global install chain is:
+
+```
+~/.local/bin/akm  →  ~/.bun/bin/akm  →  ~/.bun/install/global/node_modules/akm-cli/dist/cli.js
+```
+
+A symlink into that chain means any `bun install -g akm-cli` (or `akm upgrade`) silently replaces what `akm` runs with the published compiled bundle rather than your local source.
+
 ### Running Tests
 
 ```bash
 bun test
+```
+
+Run the scoring benchmark suite:
+
+```bash
+bun run tests/benchmark-suite.ts
 ```
 
 ### Linting

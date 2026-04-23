@@ -4,7 +4,7 @@
 
 - [Concepts](concepts.md) -- Sources, registries, asset types, and refs
 - [Getting Started](getting-started.md) -- Quick setup guide
-- [Agent Install Guide](agent-install.md) -- Step-by-step automated install for agents
+- [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated install for agents
 - [Kit Maker's Guide](kit-makers.md) -- Build and share a kit on GitHub, npm, or a network directory
 
 ## Reference

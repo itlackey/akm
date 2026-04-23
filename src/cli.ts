@@ -2858,7 +2858,7 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
 
   // Try reading from the docs/ directory (works in dev and when installed via npm)
   try {
-    const docsPath = path.resolve(import.meta.dir ?? __dirname, `../docs/${filename}`);
+    const docsPath = path.resolve(import.meta.dir ?? __dirname, `../docs/agents/${filename}`);
     if (fs.existsSync(docsPath)) {
       return fs.readFileSync(docsPath, "utf8");
     }

@@ -6,48 +6,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-22
+
 ### Added
-- **Multi-wiki support** (issue #119): a new `wiki` asset type and nine CLI verbs under `akm wiki …` (`create`, `list`, `show`, `remove`, `pages`, `search`, `stash`, `lint`, `ingest`). Each wiki lives at `<stashDir>/wikis/<name>/` with `schema.md`, `index.md`, `log.md`, `raw/`, and agent-authored pages. Wiki pages are first-class in stash-wide `akm search`. `akm index` regenerates each wiki's `index.md` as a side effect. See `docs/wikis.md` for the full guide. Design principle: **akm surfaces, the agent writes** — no LLM calls, no network access; akm owns only operations with invariants an agent can't reliably enforce (lifecycle, raw-slug uniqueness, structural lint, index regeneration, workflow discovery).
+
+- **Multi-wiki support** (#119, #121): new `wiki` asset type with nine CLI verbs under `akm wiki …` (`create`, `list`, `show`, `remove`, `pages`, `search`, `stash`, `lint`, `ingest`). Each wiki lives at `<stashDir>/wikis/<name>/` with `schema.md`, `index.md`, `log.md`, `raw/`, and agent-authored pages. Wiki pages are first-class in stash-wide `akm search`. `akm index` regenerates each wiki's `index.md` as a side effect. See `docs/wikis.md` for the full guide. Design principle: **akm surfaces, the agent writes** — no LLM calls, no network access; akm owns only operations with invariants an agent can't reliably enforce (lifecycle, raw-slug uniqueness, structural lint, index regeneration, workflow discovery).
+- **Workflow asset type** (#118): new `workflow` type with `akm workflow create <name>` and `akm workflow next <ref>` for authoring and stepping through multi-step workflows stored in the stash
+- **Vault asset type** (#117): new `vault` type backed by `.env` files; `akm vault` subcommand with `list`, `show`, `load` (emits a `source` snippet for the current shell); values never appear in structured output
+- **`--trust` flag for installs**: `akm add <source> --trust` performs a one-off trusted install, bypassing the install audit for that source
+- **Writable git stash + `akm save`** (#114): `akm add … --writable` opts a remote git-backed stash into push-on-save; `akm save [name] [-m message]` commits (and pushes when writable + remote is set); default stash is auto-initialized as a git repo; git stash provider now uses `git clone` instead of HTTP tarball download
 
 ### Removed (breaking)
+
 - The unreleased single-wiki LLM POC: removes `akm lint` command, `akm import --llm` / `--dry-run` flags, `knowledge.pageKinds` config, and the `ingestKnowledgeSource` / `lintKnowledge` LLM prompts. Users of the POC should migrate to the new `akm wiki …` surface; raw content can be manually moved to `wikis/<name>/raw/`.
+
+## [0.4.1] - 2026-04-21
+
+### Added
+
+- **`akm enable` / `akm disable`** (#108): toggle optional components (`skills.sh`, `context-hub`) on/off without manually editing config
+- **`akm remember` and `akm import` commands** (#110): capture in-session knowledge directly from the CLI; `akm remember` records a memory to the default stash (supports stdin); `akm import` ingests a file or stdin as a knowledge asset
+- **Karpathy-style wiki workflow in knowledge assets** (#113): `akm show knowledge:<doc>` now surfaces an `ingest` workflow for knowledge documents; `--dry-run` flag added; `pageKind` taxonomy made extensible
+- Documentation: expanded `agent-install.md`, added `info` and `feedback` command docs, global flags reference (#106)
+
+### Fixed
+
+- Remote embedding endpoint URL normalization — trailing slashes and path segments now handled correctly (#112)
+- Reduced fallback capture-name collisions in `akm remember`
 
 ## [0.4.0] - 2026-04-19
 
 ### Added
+
 - **Install security audit**: new pre-install scanner inspects kit contents for dangerous patterns and executable scripts before install; configurable via `config` CLI
 - **Project-level config stash merging**: `.akm.json` in a project directory merges its stash/registry entries with user config during CLI runs
 - **Disable inherited project stashes**: project config can disable stashes inherited from parent/user scopes
 - **`akm curate` command**: new subcommand for curating assets from the stash (initial skeleton)
 
 ### Fixed
+
 - Index nested agent markdown files as agents so `akm search agent:...` finds them
 - `install-audit` now reads at most `MAX_SCANNED_FILE_BYTES` per file using `Buffer.alloc`, with the file descriptor always closed via `try/finally`, and corrects the `scannedBytes` counter
 
 ## [0.3.1] - 2026-04-01
 
 ### Added
+
 - **Website stash provider**: add a URL directly as a stash source with `akm stash add <url>`; crawls the site and indexes pages as knowledge assets
 - Website provider options: `--max-pages` and `--depth` flags to bound crawling
 
 ### Fixed
+
 - Relaxed HTTP warnings for localhost website sources
 - Addressed review feedback around website provider routing and security heuristics
 
 ## [0.3.0] - 2026-03-30
 
 ### Added
+
 - Regression tests for vector/semantic search readiness, install, and setup flows
 - `CONTRIBUTING.md` and "Why akm" section in documentation
 - Three draft SEO blog posts
 
 ### Changed
+
 - **Unified source model**: replaced the `kit` vs `stash` split with a single source concept; `akm add` works for all source types
 - Removed `stash` and `kit` subcommand groups; their behaviors fold into the top-level CLI (`akm list`, `akm add`, etc.)
 - Refactored semantic search readiness tracking for clearer state transitions
 - Aligned documentation voice and updated older posts for the current CLI surface
 
 ### Fixed
+
 - Embedding fingerprint is purged on model change and `usage_events` are re-linked correctly
 - Local embedder dtype selection
 - Release validation workflow
@@ -56,16 +85,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.2] - 2026-03-28
 
 ### Fixed
+
 - Binary install detection in `akm upgrade` self-update; centralized `AKM_VERSION` declaration with binary detection tests
 
 ## [0.2.1] - 2026-03-25
 
 ### Added
+
 - Docker-based install tests covering multiple OS configurations (skipped in CI)
 - Detailed error reporting in embedding availability checks
 - Actionable guidance when `sqlite-vec` fails to open the DB
 
 ### Changed
+
 - **Rename**: project renamed from `Agent-i-Kit` to `akm` across docs and links
 - Local embeddings switched to `@huggingface/transformers`
 - `@huggingface/transformers` moved to `optionalDependencies`, then promoted to a runtime dependency
@@ -74,6 +106,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] - 2026-03-18
 
 ### Added
+
 - **Extensible asset type system**: `AkmAssetType` (formerly `AgentIKitAssetType`) is now `string` instead of a fixed union; new types can be registered at runtime via `registerAssetType()`
 - **Memory asset type**: built-in `memory` type stored in `memories/`, with `memory-md` renderer and directory/parent-dir-hint matchers
 - **OpenViking stash provider**: `openviking` provider type for searching OpenViking servers via REST; add with `akm stash add <url> --provider openviking`
@@ -86,6 +119,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Architecture docs and test fixture for OpenViking manual testing (`tests/fixtures/openviking/`)
 
 ### Changed
+
 - Unified context-hub indexing and fair provider scoring: local FTS scores are preserved everywhere and remote provider scores compete on equal footing
 - Replaced RRF with normalized BM25 scoring across all merge paths
 - EMA utility decay is now time-proportional instead of tied to index frequency
@@ -93,11 +127,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - YAML output format fixed; local registry refs now use a `file:` prefix
 
 ### Removed
+
 - `manifest` subcommand (adds no value over `search`)
 - URI schemes (`viking://`, `context-hub://`) from user-facing refs — assets are addressed as `type:name`; sources use URLs
 - Stale audit/ergonomics markdown from the repo
 
 ### Fixed
+
 - `skills.sh` install refs now produce valid `akm add` commands (#82)
 - Prevented `akm remove` and `akm update --force` from deleting user-owned local source directories installed via path refs
 - `usage_events` reverted to `DELETE` on full reindex
@@ -108,6 +144,7 @@ Major internal overhaul and rebrand. This release simplifies the asset model,
 cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cli`.
 
 ### Added
+
 - `--verbose` flag on `search` for detailed scoring output
 - ExecHints system (`run`, `cwd`, `setup`) for script assets, replacing the old tool-runner
 - New environment variable overrides: `AKM_CONFIG_DIR`, `AKM_CACHE_DIR`, `AKM_STASH_DIR`
@@ -116,6 +153,7 @@ cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cl
 - README badges (npm version, CI status, license)
 
 ### Changed
+
 - **Rebrand**: npm package `agent-i-kit` renamed to `akm-cli`; binary remains `akm`
 - **Rebrand**: config field `"agent-i-kit"` renamed to `"akm"` in `package.json`
 - **Rebrand**: plugin `agent-i-kit-opencode` renamed to `akm-opencode`
@@ -132,11 +170,13 @@ cleans up the CLI surface, and renames the package from `agent-i-kit` to `akm-cl
 - Version now injected at compile time via `--define AKM_VERSION` with safe runtime fallback
 
 ### Removed
+
 - `submit` command
 - Provider presets (configure providers with raw JSON)
 - `generated` boolean from `.stash.json`
 
 ### Fixed
+
 - CLI crash on macOS when running as compiled binary (`package.json` not embedded)
 - Cleaned up search output formatting
 
@@ -147,6 +187,7 @@ first-class registry management CLI, modernizes the config schema, and
 rewrites all documentation against the final asset model.
 
 ### Added
+
 - `akm registry` subcommand group with `list`, `add`, `remove`, and `search` subcommands
 - `akm registry search --assets` flag for asset-level search against v2 registry indexes
 - `registries` config field (`RegistryConfigEntry[]`) with `url`, `name`, and `enabled` properties
@@ -155,6 +196,7 @@ rewrites all documentation against the final asset model.
 - Type names: `KitSource`, `InstalledKitEntry`, `KitInstallResult`, `KitInstallStatus`, `InstalledKitListEntry`
 
 ### Changed
+
 - Config: `installed` is now a top-level field (`config.installed`) instead of nested under `config.registry.installed`
 - Config: registry URLs configured via `registries` array instead of `registryUrls`
 - Documentation: complete rewrite of concepts, registry, CLI reference, README, and all technical docs
@@ -166,6 +208,7 @@ rewrites all documentation against the final asset model.
 - Documentation: added registry hosting and v2 index format guides
 
 ### Removed
+
 - `tool` asset type (fully removed across all documentation and code)
 - `registryUrls` config field (replaced by `registries`)
 - `config.registry.installed` nesting (replaced by `config.installed`)
@@ -176,6 +219,7 @@ rewrites all documentation against the final asset model.
 Initial public release of Agent-i-Kit (`akm` CLI).
 
 ### Added
+
 - CLI tool (`akm`) for searching, showing, and running Agent-i-Kit stash assets
 - Hybrid search with FTS5 full-text and optional vector similarity scoring
 - Registry support for discovering, installing, and updating community kits
