@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
@@ -17,6 +18,36 @@ import { insertUsageEvent } from "./usage-events";
 import "./stash-providers/index";
 
 /**
+ * Show a wiki root (no page path) — returns the same payload as
+ * `akm wiki show <name>`.
+ *
+ * Called when `parseAssetRef` yields `type === "wiki"` and the name has no
+ * `/`, e.g. `wiki:research`.
+ */
+async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
+  const { showWiki, resolveWikiDir } = await import("./wiki.js");
+  const wikiDir = resolveWikiDir(stashDir, wikiName);
+  if (!fs.existsSync(wikiDir)) {
+    throw new NotFoundError(`Wiki not found: ${wikiName}. Run \`akm wiki create ${wikiName}\` to create it.`);
+  }
+  const result = showWiki(stashDir, wikiName);
+  // Shape the WikiShowResult into a ShowResponse-compatible object.
+  // The payload mirrors what `akm wiki show <name>` returns.
+  return {
+    type: "wiki",
+    name: result.ref,
+    path: result.path,
+    ...(result.description ? { description: result.description } : {}),
+    origin: null,
+    editable: false,
+    pages: result.pages,
+    raws: result.raws,
+    ...(result.lastModified ? { lastModified: result.lastModified } : {}),
+    recentLog: result.recentLog,
+  } as unknown as ShowResponse;
+}
+
+/**
  * Unified show: tries local FTS5 index first, then remote providers.
  *
  * When `detail` is `"summary"`, the response omits content/template/prompt and
@@ -28,6 +59,17 @@ export async function akmShowUnified(input: {
   detail?: ShowDetailLevel;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
+
+  // 0. Wiki-root shortcut: `wiki:<name>` with no page path routes to the
+  //    wiki summary (same payload as `akm wiki show <name>`).
+  {
+    const parsed = parseAssetRef(ref);
+    if (parsed.type === "wiki" && !parsed.name.includes("/")) {
+      const { resolveStashDir } = await import("./common.js");
+      const stashDir = resolveStashDir({ readOnly: true });
+      return showWikiRoot(stashDir, parsed.name);
+    }
+  }
 
   // 1. Try local filesystem first (FTS5 index lookup)
   let localError: Error | undefined;

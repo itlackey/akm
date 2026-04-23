@@ -2564,6 +2564,10 @@ const wikiSearchCommand = defineCommand({
     return runWithJsonErrors(async () => {
       const { searchInWiki } = await import("./wiki.js");
       const stashDir = resolveStashDir();
+      const wikiDir = path.join(stashDir, "wikis", args.name);
+      if (!fs.existsSync(wikiDir)) {
+        throw new NotFoundError(`Wiki not found: ${args.name}`);
+      }
       const parsedLimit = args.limit ? Number(args.limit) : undefined;
       const limit =
         typeof parsedLimit === "number" && Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
@@ -2594,6 +2598,7 @@ const wikiStashCommand = defineCommand({
         wikiName: args.name,
         content,
         preferredName: args.as ?? preferredName,
+        explicitSlug: args.as !== undefined,
       });
       output("wiki-stash", { ok: true, wiki: args.name, source: args.source, ...result });
     });
@@ -2608,13 +2613,16 @@ const wikiLintCommand = defineCommand({
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
   },
-  run({ args }) {
-    return runWithJsonErrors(async () => {
+  async run({ args }) {
+    let findingCount = 0;
+    await runWithJsonErrors(async () => {
       const { lintWiki } = await import("./wiki.js");
       const stashDir = resolveStashDir();
       const report = lintWiki(stashDir, args.name);
       output("wiki-lint", report);
+      findingCount = report.findings.length;
     });
+    if (findingCount > 0) process.exit(1); // EXIT_GENERAL
   },
 });
 
