@@ -166,12 +166,22 @@ function isCompleteHit(hit: RegistrySearchHit | undefined | null): hit is Regist
 
 function isCompleteAssetHit(hit: RegistryAssetSearchHit | undefined | null): hit is RegistryAssetSearchHit {
   if (!hit || typeof hit !== "object") return false;
-  return (
-    hit.type === "registry-asset" &&
-    typeof hit.assetType === "string" &&
-    hit.assetType.length > 0 &&
-    typeof hit.assetName === "string" &&
-    hit.assetName.length > 0 &&
-    typeof hit.action === "string"
-  );
+  if (
+    hit.type !== "registry-asset" ||
+    typeof hit.assetType !== "string" ||
+    hit.assetType.length === 0 ||
+    typeof hit.assetName !== "string" ||
+    hit.assetName.length === 0 ||
+    typeof hit.action !== "string"
+  ) {
+    return false;
+  }
+  // `stash` is required by the consumer (output shaping + asset-action display);
+  // rejecting incomplete stashes here keeps malformed objects out of the JSON
+  // output. Flagged in PR #168 review (#9).
+  const stash = hit.stash as { id?: unknown; name?: unknown } | undefined;
+  if (!stash || typeof stash !== "object") return false;
+  if (typeof stash.id !== "string" || stash.id.length === 0) return false;
+  if (typeof stash.name !== "string" || stash.name.length === 0) return false;
+  return true;
 }
