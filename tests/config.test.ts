@@ -663,3 +663,52 @@ describe("stashDir config", () => {
     expect(loadConfig().stashDir).toBeUndefined();
   });
 });
+
+describe("stash type alias normalization", () => {
+  test('normalizes legacy type "context-hub" to "git" at load time', () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "auto",
+        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
+      }),
+    );
+
+    const loaded = loadConfig();
+    expect(loaded.stashes).toHaveLength(1);
+    expect(loaded.stashes?.[0].type).toBe("git");
+    expect(loaded.stashes?.[0].url).toBe("https://github.com/andrewyng/context-hub");
+    expect(loaded.stashes?.[0].name).toBe("context-hub");
+  });
+
+  test('normalizes legacy type "github" to "git" at load time', () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "auto",
+        stashes: [{ type: "github", url: "https://github.com/example/repo", name: "example" }],
+      }),
+    );
+
+    const loaded = loadConfig();
+    expect(loaded.stashes).toHaveLength(1);
+    expect(loaded.stashes?.[0].type).toBe("git");
+  });
+
+  test("does not rewrite config.json on disk when normalizing aliases", () => {
+    const raw = JSON.stringify(
+      {
+        semanticSearchMode: "auto",
+        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
+      },
+      null,
+      2,
+    );
+    writeRawConfig(getConfigPath(), raw);
+
+    loadConfig();
+
+    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(onDisk.stashes?.[0]?.type).toBe("context-hub");
+  });
+});

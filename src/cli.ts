@@ -68,8 +68,6 @@ const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
 const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
 const NORMAL_DESCRIPTION_LIMIT = 250;
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
-const CONTEXT_HUB_ALIAS_REF = "context-hub";
-const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 const SKILLS_SH_NAME = "skills.sh";
 const SKILLS_SH_URL = "https://skills.sh";
 const SKILLS_SH_PROVIDER = "skills-sh";
@@ -1301,17 +1299,6 @@ const addCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
 
-      // Context-hub convenience alias
-      if (ref === CONTEXT_HUB_ALIAS_REF) {
-        const result = addStash({
-          target: CONTEXT_HUB_ALIAS_URL,
-          providerType: "git",
-          name: "context-hub",
-        });
-        output("stash-add", result);
-        return;
-      }
-
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
         if (shouldWarnOnPlainHttp(ref)) {
@@ -2366,11 +2353,15 @@ const completionsCommand = defineCommand({
   },
 });
 
-function normalizeToggleTarget(target: string): "skills.sh" | "context-hub" {
+function normalizeToggleTarget(target: string): "skills.sh" {
   const normalized = target.trim().toLowerCase();
   if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
-  if (normalized === "context-hub") return "context-hub";
-  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh, context-hub`);
+  if (normalized === "context-hub") {
+    throw new UsageError(
+      'The "context-hub" component is no longer toggleable. Run `akm add github:andrewyng/context-hub --name context-hub` to add it as a git stash.',
+    );
+  }
+  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
 }
 
 function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
@@ -2401,41 +2392,20 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
   return { changed: true, component: SKILLS_SH_NAME, enabled: true };
 }
 
-function toggleContextHubStash(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
-  const config = loadUserConfig();
-  const stashes = [...(config.stashes ?? [])];
-  const idx = stashes.findIndex((stash) => stash.name === CONTEXT_HUB_ALIAS_REF || stash.url === CONTEXT_HUB_ALIAS_URL);
-
-  if (idx >= 0) {
-    const existing = stashes[idx];
-    const wasEnabled = existing.enabled !== false;
-    existing.enabled = enabled;
-    saveConfig({ ...config, stashes });
-    return { changed: wasEnabled !== enabled, component: CONTEXT_HUB_ALIAS_REF, enabled };
-  }
-
-  if (!enabled) {
-    return { changed: false, component: CONTEXT_HUB_ALIAS_REF, enabled: false };
-  }
-
-  stashes.push({ type: "git", url: CONTEXT_HUB_ALIAS_URL, name: CONTEXT_HUB_ALIAS_REF, enabled: true });
-  saveConfig({ ...config, stashes });
-  return { changed: true, component: CONTEXT_HUB_ALIAS_REF, enabled: true };
-}
-
 function toggleComponent(
   targetRaw: string,
   enabled: boolean,
 ): { changed: boolean; component: string; enabled: boolean } {
   const target = normalizeToggleTarget(targetRaw);
   if (target === "skills.sh") return toggleSkillsShRegistry(enabled);
-  return toggleContextHubStash(enabled);
+  // normalizeToggleTarget throws for any unsupported target; this is unreachable.
+  throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
 
 const enableCommand = defineCommand({
-  meta: { name: "enable", description: "Enable an optional component (skills.sh or context-hub)" },
+  meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
   args: {
-    target: { type: "positional", description: "Component to enable (skills.sh|context-hub)", required: true },
+    target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2446,9 +2416,9 @@ const enableCommand = defineCommand({
 });
 
 const disableCommand = defineCommand({
-  meta: { name: "disable", description: "Disable an optional component (skills.sh or context-hub)" },
+  meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
   args: {
-    target: { type: "positional", description: "Component to disable (skills.sh|context-hub)", required: true },
+    target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -3396,8 +3366,6 @@ akm add ./path/to/local/stash                   # Local directory
 akm add git@github.com:org/repo.git --provider git --name my-skills --writable
 akm enable skills.sh                          # Enable the skills.sh registry
 akm disable skills.sh                         # Disable the skills.sh registry
-akm enable context-hub                        # Add/enable the context-hub source
-akm disable context-hub                       # Disable the context-hub source
 akm list                                      # List all sources
 akm list --kind managed                       # List managed sources only
 akm remove <target>                           # Remove by id, ref, path, or name

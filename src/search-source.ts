@@ -59,7 +59,8 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   }
 
   // Git stash entries: resolve cache directory so the indexer can walk it.
-  // "git" provider type (and its legacy aliases "context-hub", "github") are handled.
+  // Legacy "context-hub" / "github" type aliases are normalized to "git" at
+  // config-load time (see src/config.ts).
   for (const entry of config.stashes ?? []) {
     if (GIT_STASH_TYPES.has(entry.type) && entry.url && entry.enabled !== false) {
       try {
@@ -197,7 +198,7 @@ function isValidDirectory(dir: string): boolean {
 
 // ── Git stash cache integration ──────────────────────────────────────────────
 
-const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
+const GIT_STASH_TYPES = new Set(["git"]);
 
 /**
  * Ensure all cache-backed stash providers are refreshed so their cache

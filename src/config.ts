@@ -718,12 +718,24 @@ function parseInstallAuditAllowedFinding(value: unknown): InstallAuditAllowedFin
   return finding;
 }
 
+/**
+ * Legacy stash type aliases that are normalized to canonical types at
+ * config-load time. Both "context-hub" and "github" were never distinct
+ * provider types — they were always git stashes — so we normalize them in
+ * memory to "git" without rewriting `config.json` on disk.
+ */
+const STASH_TYPE_ALIASES: Record<string, string> = {
+  "context-hub": "git",
+  github: "git",
+};
+
 function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
 
-  const type = asNonEmptyString(obj.type);
-  if (!type) return undefined;
+  const rawType = asNonEmptyString(obj.type);
+  if (!rawType) return undefined;
+  const type = STASH_TYPE_ALIASES[rawType] ?? rawType;
 
   const entry: StashConfigEntry = { type };
   const entryPath = asNonEmptyString(obj.path);

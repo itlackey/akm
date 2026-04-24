@@ -53,10 +53,10 @@ export async function akmSearch(input: {
   const stashDir = sources[0].path;
 
   // Resolve additional stash providers (e.g. OpenViking) from config.
-  // Exclude filesystem (handled by resolveStashSources) and context-hub/github
-  // (content now indexed through the unified FTS5 pipeline).
+  // Exclude filesystem (handled by resolveStashSources) and git (content
+  // now indexed through the unified FTS5 pipeline).
   const additionalStashProviders = resolveStashProviders(config).filter(
-    (p) => p.type !== "filesystem" && p.type !== "context-hub" && p.type !== "git",
+    (p) => p.type !== "filesystem" && p.type !== "git",
   );
 
   const localResult =

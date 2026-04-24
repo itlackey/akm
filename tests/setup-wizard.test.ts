@@ -106,68 +106,35 @@ describe("onCancel – escape handling", () => {
 
 // ── stepStashSources tests ───────────────────────────────────────────────────
 
-const CTX_HUB_URL = "https://github.com/andrewyng/context-hub";
-
 describe("stepStashSources – recommended GitHub repos", () => {
   beforeEach(reset);
 
-  test("selecting a recommended repo adds it with type 'git'", async () => {
+  test("with no recommended repos configured, the multiselect prompt is skipped", async () => {
     const { stepStashSources } = await import("../src/setup");
 
-    // multiselect recommended repos → select context-hub
-    q.multiselects.push([CTX_HUB_URL]);
-    // select "Add another source?" → "done"
-    q.selects.push("done");
-
-    const result = await stepStashSources({ stashes: [] } as never);
-    const hub = result.find((s) => s.url === CTX_HUB_URL);
-    expect(hub).toBeDefined();
-    expect(hub?.type).toBe("git");
-    expect(hub?.name).toBe("context-hub");
-  });
-
-  test("deselecting a previously added recommended repo removes it", async () => {
-    const { stepStashSources } = await import("../src/setup");
-    const cfg = {
-      stashes: [{ type: "git", url: CTX_HUB_URL, name: "context-hub" }],
-    };
-
-    // multiselect recommended repos → deselect all (empty array)
-    q.multiselects.push([]);
-    // select "Add another source?" → "done"
-    q.selects.push("done");
-
-    const result = await stepStashSources(cfg as never);
-    const hub = result.find((s) => s.url === CTX_HUB_URL);
-    expect(hub).toBeUndefined();
-  });
-
-  test("keeping a recommended repo that is already configured", async () => {
-    const { stepStashSources } = await import("../src/setup");
-    const cfg = {
-      stashes: [{ type: "git", url: CTX_HUB_URL, name: "context-hub" }],
-    };
-
-    // multiselect → keep it selected
-    q.multiselects.push([CTX_HUB_URL]);
-    // select → done
-    q.selects.push("done");
-
-    const result = await stepStashSources(cfg as never);
-    const hub = result.find((s) => s.url === CTX_HUB_URL);
-    expect(hub).toBeDefined();
-  });
-
-  test("selecting no recommended repos is fine", async () => {
-    const { stepStashSources } = await import("../src/setup");
-
-    // multiselect → select nothing
-    q.multiselects.push([]);
-    // select → done
+    // No multiselect should be consumed because the recommended-repos array
+    // is empty. Only the "Add another source?" select should be needed.
     q.selects.push("done");
 
     const result = await stepStashSources({ stashes: [] } as never);
     expect(result).toEqual([]);
+    // multiselect queue should still be empty (nothing pushed, nothing consumed)
+    expect(q.multiselects.length).toBe(0);
+  });
+
+  test("preserves an existing git stash that points at the legacy context-hub URL", async () => {
+    const { stepStashSources } = await import("../src/setup");
+    const ctxHubUrl = "https://github.com/andrewyng/context-hub";
+    const cfg = {
+      stashes: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
+    };
+
+    q.selects.push("done");
+
+    const result = await stepStashSources(cfg as never);
+    const hub = result.find((s) => s.url === ctxHubUrl);
+    expect(hub).toBeDefined();
+    expect(hub?.type).toBe("git");
   });
 });
 

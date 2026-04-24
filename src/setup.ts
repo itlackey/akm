@@ -28,14 +28,14 @@ import { clearSemanticStatus, deriveSemanticProviderFingerprint, writeSemanticSt
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** Recommended GitHub repositories shown during setup. */
-const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string }> = [
-  {
-    url: "https://github.com/andrewyng/context-hub",
-    name: "context-hub",
-    hint: "community knowledge",
-  },
-];
+/**
+ * Recommended GitHub repositories shown during setup.
+ *
+ * Currently empty — populating from the akm-registry at runtime is a
+ * separate feature. The wizard prompt infrastructure is retained for that
+ * future use.
+ */
+const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string }> = [];
 
 // Approximate first-download sizes used in the setup note.
 // LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
@@ -640,40 +640,44 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
   }
 
   // ── Recommended GitHub repos ───────────────────────────────────────────
-  const existingUrls = new Set(stashes.map((s) => s.url));
+  // Skip the prompt entirely when there are no recommendations to show.
+  // The infrastructure is retained for a future registry-driven version.
+  if (RECOMMENDED_GITHUB_REPOS.length > 0) {
+    const existingUrls = new Set(stashes.map((s) => s.url));
 
-  const repoOptions = RECOMMENDED_GITHUB_REPOS.map((r) => ({
-    value: r.url,
-    label: r.name,
-    hint: existingUrls.has(r.url) ? `${r.hint} (already added)` : r.hint,
-  }));
+    const repoOptions = RECOMMENDED_GITHUB_REPOS.map((r) => ({
+      value: r.url,
+      label: r.name,
+      hint: existingUrls.has(r.url) ? `${r.hint} (already added)` : r.hint,
+    }));
 
-  const selectedRepos = await prompt(() =>
-    p.multiselect({
-      message: "Recommended GitHub repositories — toggle to add or remove:",
-      options: repoOptions,
-      initialValues: repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value),
-      required: false,
-    }),
-  );
+    const selectedRepos = await prompt(() =>
+      p.multiselect({
+        message: "Recommended GitHub repositories — toggle to add or remove:",
+        options: repoOptions,
+        initialValues: repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value),
+        required: false,
+      }),
+    );
 
-  // Add newly selected repos
-  for (const url of selectedRepos) {
-    if (!existingUrls.has(url)) {
-      const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
-      stashes.push({ type: "git", url, name: rec?.name });
-      existingUrls.add(url);
+    // Add newly selected repos
+    for (const url of selectedRepos) {
+      if (!existingUrls.has(url)) {
+        const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
+        stashes.push({ type: "git", url, name: rec?.name });
+        existingUrls.add(url);
+      }
     }
-  }
 
-  // Remove deselected repos that were previously configured
-  for (const rec of RECOMMENDED_GITHUB_REPOS) {
-    if (existingUrls.has(rec.url) && !selectedRepos.includes(rec.url)) {
-      const idx = stashes.findIndex((s) => s.url === rec.url);
-      if (idx !== -1) {
-        stashes.splice(idx, 1);
-        existingUrls.delete(rec.url);
-        p.log.info(`Removed ${rec.name}.`);
+    // Remove deselected repos that were previously configured
+    for (const rec of RECOMMENDED_GITHUB_REPOS) {
+      if (existingUrls.has(rec.url) && !selectedRepos.includes(rec.url)) {
+        const idx = stashes.findIndex((s) => s.url === rec.url);
+        if (idx !== -1) {
+          stashes.splice(idx, 1);
+          existingUrls.delete(rec.url);
+          p.log.info(`Removed ${rec.name}.`);
+        }
       }
     }
   }
