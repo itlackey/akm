@@ -24,7 +24,7 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 /** Maximum stale age allowed when refresh fails (7 days). */
 const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 
-const GIT_STASH_TYPES = new Set(["git", "context-hub", "github"]);
+const GIT_STASH_TYPES = new Set(["git"]);
 
 interface ParsedRepoUrl {
   cloneUrl: string;
@@ -100,8 +100,6 @@ class GitStashProvider implements LiveStashProvider, SyncableStashProvider {
 // ── Self-register ───────────────────────────────────────────────────────────
 
 registerStashProvider("git", (config) => new GitStashProvider(config));
-registerStashProvider("context-hub", (config) => new GitStashProvider(config));
-registerStashProvider("github", (config) => new GitStashProvider(config));
 
 // ── Cache management ────────────────────────────────────────────────────────
 
@@ -111,7 +109,23 @@ function getCachePaths(repoUrl: string): {
   indexPath: string;
 } {
   const key = createHash("sha256").update(repoUrl).digest("hex").slice(0, 16);
-  const rootDir = path.join(getRegistryIndexCacheDir(), `context-hub-${key}`);
+  const cacheRoot = getRegistryIndexCacheDir();
+  const rootDir = path.join(cacheRoot, `git-${key}`);
+
+  // One-time silent migration: legacy `context-hub-${key}` directories were
+  // created for ALL git stashes (not just the andrewyng/context-hub repo). If
+  // the new path doesn't yet exist but the legacy one does, rename it in place
+  // so existing clones aren't silently invalidated. Failures are non-fatal —
+  // worst case the repo is re-cloned on the next refresh.
+  try {
+    const legacyRootDir = path.join(cacheRoot, `context-hub-${key}`);
+    if (!fs.existsSync(rootDir) && fs.existsSync(legacyRootDir)) {
+      fs.renameSync(legacyRootDir, rootDir);
+    }
+  } catch {
+    /* migration is best-effort */
+  }
+
   return {
     rootDir,
     repoDir: path.join(rootDir, "repo"),

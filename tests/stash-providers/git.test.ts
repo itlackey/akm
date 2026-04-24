@@ -114,18 +114,18 @@ afterAll(() => {
 });
 
 describe("GitStashProvider", () => {
-  test("self-registers as 'context-hub' and 'github' (migration aliases)", () => {
-    expect(resolveStashProviderFactory("context-hub")).toBeTruthy();
-    expect(resolveStashProviderFactory("github")).toBeTruthy();
+  test("self-registers as 'git' only (legacy aliases removed)", () => {
     expect(resolveStashProviderFactory("git")).toBeTruthy();
+    expect(resolveStashProviderFactory("context-hub")).toBeNull();
+    expect(resolveStashProviderFactory("github")).toBeNull();
   });
 
   test("search() returns empty hits (content indexed via FTS5 pipeline)", async () => {
-    const factory = resolveStashProviderFactory("context-hub");
+    const factory = resolveStashProviderFactory("git");
     expect(factory).toBeTruthy();
     // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
     const provider = factory!({
-      type: "context-hub",
+      type: "git",
       url: "https://github.com/andrewyng/context-hub",
       name: "context-hub",
     });
@@ -144,6 +144,40 @@ describe("GitStashProvider", () => {
       name: "test",
     });
     expect(provider.canShow("skill:foo")).toBe(false);
+  });
+
+  test("getCachePaths uses 'git-' prefix (not legacy 'context-hub-')", () => {
+    const cachePaths = getCachePaths("https://github.com/example/repo");
+    expect(path.basename(cachePaths.rootDir).startsWith("git-")).toBe(true);
+    expect(path.basename(cachePaths.rootDir).startsWith("context-hub-")).toBe(false);
+  });
+
+  test("getCachePaths silently migrates legacy context-hub cache directories", () => {
+    const url = "https://github.com/example/migration-test";
+
+    // Compute expected key using the same hashing strategy used by getCachePaths.
+    // We do this by calling getCachePaths once to learn the new path, then
+    // deriving the legacy path from the same suffix.
+    const newPaths = getCachePaths(url);
+    const cacheRoot = path.dirname(newPaths.rootDir);
+    const newBase = path.basename(newPaths.rootDir);
+    expect(newBase.startsWith("git-")).toBe(true);
+    const key = newBase.slice("git-".length);
+    const legacyRoot = path.join(cacheRoot, `context-hub-${key}`);
+
+    // Clean any state from the prior call.
+    fs.rmSync(newPaths.rootDir, { recursive: true, force: true });
+    fs.rmSync(legacyRoot, { recursive: true, force: true });
+
+    // Seed a legacy cache dir with a marker file.
+    fs.mkdirSync(path.join(legacyRoot, "repo", "content"), { recursive: true });
+    fs.writeFileSync(path.join(legacyRoot, "marker"), "legacy", "utf8");
+
+    // Trigger the migration.
+    const migrated = getCachePaths(url);
+    expect(fs.existsSync(legacyRoot)).toBe(false);
+    expect(fs.existsSync(migrated.rootDir)).toBe(true);
+    expect(fs.readFileSync(path.join(migrated.rootDir, "marker"), "utf8")).toBe("legacy");
   });
 
   test("cache mirror clones content to disk via git", async () => {
@@ -189,6 +223,7 @@ describe("GitStashProvider", () => {
     fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
     fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
 
+    // Verify legacy "context-hub" type alias is still accepted (normalized at load).
     saveConfig({
       semanticSearchMode: "off",
       stashes: [{ type: "context-hub", url: stashUrl, name: "context-hub" }],
@@ -200,10 +235,10 @@ describe("GitStashProvider", () => {
     const config = loadConfig();
     await ensureGitCaches(config);
 
-    // Verify context-hub content dir appears in stash sources
+    // Verify git stash content dir appears in stash sources.
     const { resolveStashSources } = await import("../../src/search-source");
     const sources = resolveStashSources(undefined, config);
-    const gitSource = sources.find((s) => s.path.includes("context-hub-"));
+    const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();
   });
 });

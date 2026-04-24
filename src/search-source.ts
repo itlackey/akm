@@ -7,7 +7,10 @@ import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-provide
 import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./stash-providers/website";
 import { warn } from "./warn";
 
-const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
+// Legacy "context-hub" / "github" type aliases are normalized to "git" at
+// config-load time (see src/config.ts), so this set only contains the canonical
+// type.
+const GIT_STASH_TYPES = new Set(["git"]);
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
