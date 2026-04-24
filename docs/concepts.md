@@ -116,6 +116,13 @@ akm add http://host:1933 --provider openviking --options '{"apiKey":"key"}'
 Memory assets appear in search results with the `memory` type, giving agents
 access to recalled context from previous sessions or external knowledge bases.
 
+Memories captured with `akm remember` can carry optional YAML frontmatter
+(`tags`, `source`, `observed_at`, `expires`, `subjective`, `description`) that
+the indexer uses for ranking. Supply those fields explicitly with
+`--tag`/`--expires`/`--source`, derive them from the body heuristically with
+`--auto`, or have the configured LLM propose them with `--enrich`. See
+[`akm remember`](cli.md#remember) for the full flag list.
+
 ## Refs
 
 Assets are identified by a **ref** -- a compact handle returned by

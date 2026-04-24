@@ -61,7 +61,7 @@ Search output is shaped in `src/cli.ts`:
 - `brief` stash hits: `type`, `name`, `action`, `estimatedTokens`
 - `normal` stash hits: adds `description` and `score`
 - `full` stash hits: full hit object
-- `for-agent`: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
+- `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias): keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 
 Registry hits use a smaller shape and still stay under `registryHits`.
 

@@ -214,8 +214,9 @@ By default (`--format json`, `--detail brief`), search emits minimal fields:
 
 ### Agent-optimized output
 
-`--for-agent` strips non-actionable fields, keeping only: `name`, `ref`,
-`type`, `description`, `action`, `score`. Takes precedence over `--detail`.
+`--detail=agent` strips non-actionable fields, keeping only: `name`, `ref`,
+`type`, `description`, `action`, `score`. (The pre-0.6.0 `--for-agent`
+boolean is kept as a deprecated alias for one release cycle.)
 
 `--format jsonl` outputs one JSON object per line for streaming consumption.
 

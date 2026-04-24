@@ -234,9 +234,13 @@ akm show script:deploy.sh
    gh repo edit --add-topic akm-stash
    ```
 
-   Or add it from the repository settings page under "Topics". The legacy
-   `akm-stash` and `agentikit` topics are still honored by the official
-   registry, but `akm-stash` is preferred for new publishers.
+   Or add it from the repository settings page under "Topics". `akm-cli`
+   0.6.0 indexes only the `akm-stash` topic; the pre-0.6.0 `akm-kit` and
+   `agentikit` topics are **not** honored as fallbacks. If you are migrating
+   a 0.5.x stash, add the new topic (and remove the old ones once your
+   audience has moved). See the
+   [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) for the full
+   publisher checklist.
 
 3. Others can now install it:
 

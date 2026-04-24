@@ -12,8 +12,8 @@ These flags are accepted by all commands:
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level |
-| `--for-agent` | boolean | `false` | Agent-optimized output: strips non-actionable fields, overrides `--detail` |
+| `--detail` | `brief`, `normal`, `full`, `summary`, `agent` | `brief` | Output detail level |
+| `--for-agent` | boolean | `false` | **Deprecated alias** for `--detail=agent`; kept for one release cycle. Prefer `--detail=agent` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 
 ### `--format jsonl`
@@ -22,14 +22,16 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--for-agent`
+### `--detail=agent` (was `--for-agent`)
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`
 
-Takes precedence over `--detail`.
+Prefer `--detail=agent` going forward. The `--for-agent` boolean is kept as
+a deprecated alias for one release cycle and will be removed in a future
+minor release — see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md).
 
 ### `--detail summary`
 
@@ -406,7 +408,7 @@ akm add github:owner/repo#v1.2.3     # GitHub with tag
 akm add https://github.com/owner/repo
 akm add git+https://gitlab.com/org/stash
 akm add ./path/to/local/stash
-akm add context-hub
+akm add github:andrewyng/context-hub --name context-hub  # context-hub as a git stash
 akm add https://docs.example.com --name docs              # Website
 akm add https://docs.example.com --max-pages 100 --max-depth 5
 ```
@@ -441,8 +443,12 @@ config so subsequent re-indexes use the same limits.
 
 See [registry.md](registry.md) for the full install flow for managed sources.
 
-`akm add context-hub` is a convenience alias that adds the context-hub
-GitHub repo as a git provider source.
+> **0.6.0 note:** the pre-0.6.0 `akm add context-hub` convenience alias and
+> the `akm enable context-hub` / `akm disable context-hub` commands were
+> removed. Add it explicitly as a git stash:
+> `akm add github:andrewyng/context-hub --name context-hub`. The legacy
+> stash *type* string `"context-hub"` in existing configs still normalizes
+> to `"git"` at load time, so you don't need to edit your config files.
 
 ### list
 
@@ -611,15 +617,38 @@ Record a memory in the default stash. This writes a markdown file into
 akm remember "Deployment needs VPN access"
 akm remember --name release-retro < notes.md
 akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secrets
+
+# With structured frontmatter (0.6.0+):
+akm remember "VPN required for staging deploys" \
+  --tag ops --tag networking \
+  --expires 90d \
+  --source "skill:deploy"
+
+# Opt-in heuristic tagging — derives `code`, `source`, `observed_at`, `subjective`:
+akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
+
+# Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
+akm remember "Long meeting notes..." --enrich
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--force` | Overwrite an existing memory with the same name |
+| `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
+| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
+| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
+| `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
+| `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
+
+**Zero-flag form** (`akm remember "body"`) writes a bare memory with no
+frontmatter — existing agent scripts keep working unchanged. Any use of
+`--tag` / `--expires` / `--source` / `--auto` / `--enrich` triggers a
+required-field check: if `tags` cannot be derived, the command rejects
+*before* writing the file, so you never end up with an orphan.
 
 ### import
 
