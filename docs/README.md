@@ -2,10 +2,14 @@
 
 ## Getting Started
 
-- [Concepts](concepts.md) -- Sources, registries, asset types, and refs
+- [Concepts](concepts.md) -- Stashes, registries, asset types, and refs
 - [Getting Started](getting-started.md) -- Quick setup guide
 - [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated install for agents
 - [Stash Maker's Guide](stash-makers.md) -- Build and share a stash on GitHub, npm, or a network directory
+
+## Upgrading
+
+- [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting
 
 ## Reference
 

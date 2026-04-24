@@ -44,12 +44,13 @@ directory. Project config files are meant to be edited directly in the project.
 | `semanticSearchMode` | `"off"` \| `"auto"` | `"auto"` | Semantic vector search mode. Legacy boolean values accepted. |
 | `embedding` | object | null (local) | Embedding connection settings |
 | `llm` | object | null (disabled) | LLM connection for metadata enhancement |
-| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`) |
-| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`) |
-| `stashDir` | string | platform default | Path to the working stash directory |
+| `output.format` | string | `json` | Default output format (`json`, `text`, `yaml`, `jsonl`) |
+| `output.detail` | string | `brief` | Default output detail (`brief`, `normal`, `full`, `summary`, `agent`) |
+| `stashes` | array | `[]` | Local and remote sources — directories and providers (managed via `akm add/remove`). The entry with `primary: true` is the working stash where new memories / workflows / imports land |
+| `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project stashes compose with global ones. `merge` keeps both; `replace` hides globals when a project-level config is present (replaces the pre-0.6.0 `disableGlobalStashes` boolean) |
 | `registries` | array | official registry | Configured registries (managed via `akm registry add/remove`) |
-| `stashes` | array | `[]` | Local and remote sources — directories and providers (managed via `akm add/remove`) |
-| `installed` | array | `[]` | Managed source metadata, cached in `~/.cache/akm/` (managed by akm) |
+| `stashDir` | string | platform default | **Deprecated (0.6.0)** — auto-migrated to `primary: true` on the matching stash entry. New configs should not set this field |
+| `installed` | array | — | **Removed (0.6.0)** — managed stash metadata now lives in `akm.lock` (was `stash.lock`) under `AKM_CONFIG_DIR` |
 | `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing |
 | `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
