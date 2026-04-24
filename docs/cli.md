@@ -780,6 +780,26 @@ akm config path --all               # Print all config-related paths
 
 See [configuration.md](configuration.md) for details.
 
+### help
+
+Print focused help topics. Currently the only subcommand is `migrate`, which
+prints release notes and migration guidance for a specific version so you can
+review what changed — and what to do about it — without leaving the terminal.
+
+```sh
+akm help migrate 0.6.0         # Notes for a specific release
+akm help migrate v0.6.0        # v-prefix accepted
+akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
+akm help migrate latest        # Resolve against the most recent CHANGELOG entry
+```
+
+Migration notes live as one markdown file per release in
+[`docs/migration/release-notes/`](migration/release-notes/). Adding notes for a
+future version is a one-file drop — no code edit required. Requesting an
+unknown version prints the list of bundled notes so you can pick one that
+exists. See [`CONTRIBUTING.md`](../.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
+for the per-release workflow.
+
 ### hints
 
 Print agent-facing instructions for using `akm`. Add this output to your
