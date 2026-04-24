@@ -11,7 +11,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "./asset-registry";
+import { defaultRendererRegistry, type RendererRegistry } from "./asset-registry";
 import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import {
@@ -47,13 +47,17 @@ type IndexedAsset = {
   path: string;
 };
 
-export async function rendererForType(type: string) {
-  const name = TYPE_TO_RENDERER[type];
+export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
+  const name = registry.rendererNameFor(type);
   return name ? getRenderer(name) : undefined;
 }
 
-export function buildLocalAction(type: string, ref: string): string {
-  const builder = ACTION_BUILDERS[type];
+export function buildLocalAction(
+  type: string,
+  ref: string,
+  registry: RendererRegistry = defaultRendererRegistry,
+): string {
+  const builder = registry.actionBuilderFor(type);
   return builder ? builder(ref) : `akm show ${ref}`;
 }
 
@@ -77,6 +81,8 @@ export async function searchLocal(input: {
   stashDir: string;
   sources: SearchSource[];
   config: AkmConfig;
+  /** Optional renderer registry override for test isolation. */
+  rendererRegistry?: RendererRegistry;
 }): Promise<{
   hits: StashSearchHit[];
   tip?: string;
@@ -85,6 +91,7 @@ export async function searchLocal(input: {
   rankMs?: number;
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
+  const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allStashDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
@@ -139,6 +146,7 @@ export async function searchLocal(input: {
             allStashDirs,
             config,
             sources,
+            rendererRegistry,
           );
           return {
             hits,
@@ -163,7 +171,7 @@ export async function searchLocal(input: {
   }
 
   const hitArrays = await Promise.all(
-    allStashDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config)),
+    allStashDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry)),
   );
   const hits = hitArrays.flat().slice(0, limit);
   return {
@@ -184,6 +192,7 @@ async function searchDatabase(
   allStashDirs: string[],
   config: AkmConfig,
   sources: SearchSource[],
+  rendererRegistry: RendererRegistry = defaultRendererRegistry,
 ): Promise<{
   hits: StashSearchHit[];
   embedMs?: number;
@@ -213,6 +222,7 @@ async function searchDatabase(
           allStashDirs,
           sources,
           config,
+          rendererRegistry,
         }),
       ),
     );
@@ -485,6 +495,7 @@ async function searchDatabase(
         sources,
         config,
         utilityBoosted,
+        rendererRegistry,
       }),
     ),
   );
@@ -533,6 +544,7 @@ async function substringSearch(
   stashDir: string,
   sources: SearchSource[],
   config?: AkmConfig,
+  rendererRegistry: RendererRegistry = defaultRendererRegistry,
 ): Promise<StashSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType, sources);
   const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
@@ -540,7 +552,11 @@ async function substringSearch(
   if (!query) {
     const sorted = matched.sort(compareAssets);
     const unique = deduplicateAssetsByPath(sorted);
-    return Promise.all(unique.slice(0, limit).map((asset) => assetToSearchHit(asset, stashDir, sources, config)));
+    return Promise.all(
+      unique
+        .slice(0, limit)
+        .map((asset) => assetToSearchHit(asset, stashDir, sources, config, undefined, rendererRegistry)),
+    );
   }
 
   // Score and sort by relevance
@@ -551,7 +567,9 @@ async function substringSearch(
   const dedupedScored = deduplicateByPath(scored.map((s) => ({ ...s, filePath: s.asset.path })));
 
   return Promise.all(
-    dedupedScored.slice(0, limit).map(({ asset, score }) => assetToSearchHit(asset, stashDir, sources, config, score)),
+    dedupedScored
+      .slice(0, limit)
+      .map(({ asset, score }) => assetToSearchHit(asset, stashDir, sources, config, score, rendererRegistry)),
   );
 }
 
@@ -598,7 +616,10 @@ export async function buildDbHit(input: {
   sources: SearchSource[];
   config?: AkmConfig;
   utilityBoosted?: boolean;
+  /** Optional renderer registry override for test isolation. */
+  rendererRegistry?: RendererRegistry;
 }): Promise<StashSearchHit> {
+  const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
   const refName =
@@ -640,13 +661,13 @@ export async function buildDbHit(input: {
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),
-    action: buildLocalAction(input.entry.type, ref),
+    action: buildLocalAction(input.entry.type, ref, rendererRegistry),
     score,
     whyMatched,
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
 
-  const renderer = await rendererForType(input.entry.type);
+  const renderer = await rendererForType(input.entry.type, rendererRegistry);
   if (renderer?.enrichSearchHit) {
     renderer.enrichSearchHit(hit, entryStashDir);
   }
@@ -711,6 +732,7 @@ async function assetToSearchHit(
   sources: SearchSource[],
   config?: AkmConfig,
   score?: number,
+  rendererRegistry: RendererRegistry = defaultRendererRegistry,
 ): Promise<StashSearchHit> {
   const source = findSourceForPath(asset.path, sources);
   const editable = isEditable(asset.path, config);
@@ -731,11 +753,11 @@ async function assetToSearchHit(
     description: asset.entry.description,
     tags: asset.entry.tags,
     ...(size ? { size } : {}),
-    action: buildLocalAction(asset.entry.type, ref),
+    action: buildLocalAction(asset.entry.type, ref, rendererRegistry),
     ...(score !== undefined ? { score } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
   };
-  const renderer = await rendererForType(asset.entry.type);
+  const renderer = await rendererForType(asset.entry.type, rendererRegistry);
   if (renderer?.enrichSearchHit) {
     renderer.enrichSearchHit(hit, stashDir);
   }

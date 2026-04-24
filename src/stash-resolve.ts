@@ -36,14 +36,14 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
   const resolvedRoot = resolveAndValidateTypeRoot(root, type, name);
   const resolvedTarget = path.resolve(target);
   if (!isWithin(resolvedTarget, resolvedRoot)) {
-    throw new UsageError("Ref resolves outside the stash root.");
+    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
   if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
-    throw new NotFoundError(`Stash asset not found for ref: ${type}:${name}`);
+    throw new NotFoundError(`Stash asset not found for ref: ${type}:${name}`, "ASSET_NOT_FOUND");
   }
   const realTarget = fs.realpathSync(resolvedTarget);
   if (!isWithin(realTarget, resolvedRoot)) {
-    throw new UsageError("Ref resolves outside the stash root.");
+    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
   if (!isRelevantAssetFile(type, path.basename(resolvedTarget))) {
     if (type === "script") {
@@ -51,7 +51,7 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
         "Script ref must resolve to a file with a supported script extension. Refer to the akm documentation for the complete list of supported script extensions.",
       );
     }
-    throw new NotFoundError(`Stash asset not found for ref: ${type}:${name}`);
+    throw new NotFoundError(`Stash asset not found for ref: ${type}:${name}`, "ASSET_NOT_FOUND");
   }
   return realTarget;
 }
@@ -88,7 +88,7 @@ async function resolveByCanonicalName(stashDir: string, type: string, name: stri
     const realTarget = fs.realpathSync(ctx.absPath);
     const resolvedRoot = fs.realpathSync(stashDir);
     if (!isWithin(realTarget, resolvedRoot)) {
-      throw new UsageError("Ref resolves outside the stash root.");
+      throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
     }
     return realTarget;
   }

@@ -153,7 +153,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -264,7 +264,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -380,7 +380,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -482,7 +482,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "remote-unreachable",
@@ -572,7 +572,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => false,
+      isTransformersAvailable: () => false,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "missing-package",
@@ -663,7 +663,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -749,7 +749,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -828,7 +828,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -901,7 +901,7 @@ describe("runSetupWizard", () => {
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({

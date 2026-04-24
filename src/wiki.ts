@@ -142,18 +142,18 @@ export function resolveWikiSource(stashDir: string, name: string): ResolvedWikiS
   }
   const external = registeredWikiSources(stashDir).find((source) => source.name === name);
   if (external) return external;
-  throw new NotFoundError(wikiNotFoundMessage(name));
+  throw new NotFoundError(wikiNotFoundMessage(name), "STASH_NOT_FOUND");
 }
 
 export function ensureWikiNameAvailable(stashDir: string, name: string): void {
   validateWikiName(name);
   const wikiDir = resolveWikiDir(stashDir, name);
   if (fs.existsSync(wikiDir)) {
-    throw new UsageError(`Wiki already exists: ${name}.`);
+    throw new UsageError(`Wiki already exists: ${name}.`, "RESOURCE_ALREADY_EXISTS");
   }
   const external = registeredWikiSources(stashDir).find((source) => source.name === name);
   if (external) {
-    throw new UsageError(`Wiki already registered: ${name}.`);
+    throw new UsageError(`Wiki already registered: ${name}.`, "RESOURCE_ALREADY_EXISTS");
   }
 }
 
@@ -374,7 +374,7 @@ export function showWiki(stashDir: string, name: string): WikiShowResult {
 export function createWiki(stashDir: string, name: string): WikiCreateResult {
   const existing = registeredWikiSources(stashDir).find((source) => source.name === name);
   if (existing) {
-    throw new UsageError(`Wiki already registered: ${name}.`);
+    throw new UsageError(`Wiki already registered: ${name}.`, "RESOURCE_ALREADY_EXISTS");
   }
   const wikiDir = resolveWikiDir(stashDir, name);
   fs.mkdirSync(wikiDir, { recursive: true });
@@ -452,11 +452,11 @@ export function removeWiki(stashDir: string, name: string, options: RemoveOption
     };
   }
   if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}.`);
+    throw new NotFoundError(`Wiki not found: ${name}.`, "STASH_NOT_FOUND");
   }
   const wikisRoot = resolveWikisRoot(stashDir);
   if (!isWithin(wikiDir, wikisRoot)) {
-    throw new UsageError(`Refusing to remove a path outside the wikis root: ${wikiDir}`);
+    throw new UsageError(`Refusing to remove a path outside the wikis root: ${wikiDir}`, "PATH_ESCAPE_VIOLATION");
   }
 
   const removed: string[] = [];
