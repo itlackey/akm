@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.ref_name }}
 
       - uses: oven-sh/setup-bun@v2
 
@@ -31,14 +31,23 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
-      - name: Ensure workflow runs from default branch
-        if: ${{ github.ref_name != github.event.repository.default_branch }}
+      - name: Validate dispatch branch and version
         run: |
-          echo "Releases must be dispatched from ${{ github.event.repository.default_branch }}."
-          exit 1
+          BRANCH="${{ github.ref_name }}"
+          DEFAULT="${{ github.event.repository.default_branch }}"
+          VERSION="${{ inputs.version }}"
+          if [ "$BRANCH" = "$DEFAULT" ]; then
+            echo "Dispatched from default branch ($BRANCH)."
+          elif [[ "$BRANCH" == release/* ]] && echo "$VERSION" | grep -qE '-'; then
+            echo "Dispatched from release branch ($BRANCH) with prerelease version ($VERSION)."
+          else
+            echo "Releases must be dispatched from $DEFAULT, or from a release/* branch with a prerelease version (e.g. 0.6.0-rc1)."
+            echo "Got branch=$BRANCH version=$VERSION"
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
