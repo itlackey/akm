@@ -363,7 +363,32 @@ export function upsertEntry(
   // Fetch the row id explicitly since last_insert_rowid() is unreliable for ON CONFLICT DO UPDATE
   const row = db.prepare("SELECT id FROM entries WHERE entry_key = ?").get(entryKey) as { id: number } | undefined;
   if (!row) throw new Error("upsertEntry: entry_key not found after upsert");
+
+  // Mark this entry as FTS-dirty so an incremental rebuild only revisits the
+  // entries that actually changed. Without this, every `akm index` run had to
+  // re-scan and re-insert every FTS row, even if only one entry was touched.
+  markFtsDirty(db, row.id);
   return row.id;
+}
+
+/**
+ * Mark an entry as needing FTS re-indexing on the next `rebuildFts` call.
+ *
+ * The list lives in a small `entries_fts_dirty` table — a per-entry-id queue
+ * of work items. `rebuildFts({ incremental: true })` drains this list rather
+ * than scanning the entire `entries` table.
+ */
+function markFtsDirty(db: Database, entryId: number): void {
+  ensureFtsDirtyTable(db);
+  db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)").run(entryId);
+}
+
+function ensureFtsDirtyTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS entries_fts_dirty (
+      entry_id INTEGER PRIMARY KEY
+    );
+  `);
 }
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
@@ -388,6 +413,24 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
   const vecAvail = isVecAvailable(db);
+
+  // Drop matching FTS rows + dirty markers immediately so an incremental
+  // rebuild after a deletion doesn't try to re-index entries that no longer
+  // exist (and so a full scan after deletion sees a consistent FTS).
+  for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    try {
+      db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* fts table may not exist on a brand-new db */
+    }
+    try {
+      db.prepare(`DELETE FROM entries_fts_dirty WHERE entry_id IN (${placeholders})`).run(...chunk);
+    } catch {
+      /* dirty table is created lazily by upsertEntry */
+    }
+  }
 
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
@@ -426,28 +469,57 @@ function deleteRelatedRows(db: Database, ids: Array<{ id: number }>): void {
   }
 }
 
-export function rebuildFts(db: Database): void {
-  // Wrap DELETE + INSERT in a single transaction so the FTS table is
-  // never left empty between the two statements if a crash occurs.
-  // Store the integer id directly (FTS5 stores all content as text
-  // internally; the join in searchFts compares numerically without CAST).
-  //
-  // Insert into separate FTS5 columns by extracting per-field text from
-  // the entry_json using buildSearchFields(). The entries.search_text column
-  // is kept as a concatenated fallback for embedding generation.
+/**
+ * Rebuild the FTS5 search index.
+ *
+ * `incremental` (default `false`): when true, only rebuild rows that
+ * `upsertEntry` marked dirty since the last `rebuildFts` call. The full path
+ * (default) wipes `entries_fts` and re-inserts every row from `entries` —
+ * appropriate for `akm index --full` and version-upgrade rebuilds.
+ *
+ * Both paths are wrapped in a single transaction so the FTS table is never
+ * left in a half-rebuilt state.
+ *
+ * Skipped corrupt-JSON rows are aggregated into one warning instead of
+ * spamming stderr per-entry.
+ */
+export function rebuildFts(db: Database, options?: { incremental?: boolean }): void {
+  const incremental = options?.incremental === true;
 
   db.transaction(() => {
-    db.exec("DELETE FROM entries_fts");
-
-    const rows = db.prepare("SELECT id, entry_json FROM entries").all() as Array<{
-      id: number;
-      entry_json: string;
-    }>;
+    let rows: Array<{ id: number; entry_json: string }>;
+    if (incremental) {
+      ensureFtsDirtyTable(db);
+      // Read the dirty queue and join against entries to get the JSON.
+      // Then drop the matching rows from entries_fts so the INSERT below
+      // doesn't double-up. The dirty list is drained at the end.
+      rows = db
+        .prepare(
+          `SELECT e.id AS id, e.entry_json AS entry_json
+             FROM entries_fts_dirty d
+             JOIN entries e ON e.id = d.entry_id`,
+        )
+        .all() as typeof rows;
+      if (rows.length === 0) return;
+      const ids = rows.map((r) => r.id);
+      // Delete only the dirty FTS rows — chunk to stay under
+      // SQLITE_MAX_VARIABLE_NUMBER on large dirty queues.
+      for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
+        const placeholders = chunk.map(() => "?").join(",");
+        db.prepare(`DELETE FROM entries_fts WHERE entry_id IN (${placeholders})`).run(...chunk);
+      }
+    } else {
+      // Full path: wipe and re-read every row.
+      db.exec("DELETE FROM entries_fts");
+      rows = db.prepare("SELECT id, entry_json FROM entries").all() as typeof rows;
+    }
 
     const insertStmt = db.prepare(
       "INSERT INTO entries_fts (entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?)",
     );
 
+    let skipped = 0;
     for (const row of rows) {
       let entry: import("./metadata").StashEntry;
       let fields: ReturnType<typeof buildSearchFields>;
@@ -455,10 +527,27 @@ export function rebuildFts(db: Database): void {
         entry = JSON.parse(row.entry_json) as import("./metadata").StashEntry;
         fields = buildSearchFields(entry);
       } catch {
-        warn(`[db] rebuildFts: skipping entry id=${row.id} — invalid entry_json`);
+        skipped++;
         continue;
       }
       insertStmt.run(row.id, fields.name, fields.description, fields.tags, fields.hints, fields.content);
+    }
+
+    if (skipped > 0) {
+      warn(`[db] rebuildFts: skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} with invalid entry_json`);
+    }
+
+    // Always drain the dirty queue — if it exists. A full rebuild also
+    // clears it because the full path covers everything the dirty list
+    // tracks.
+    if (incremental) {
+      db.exec("DELETE FROM entries_fts_dirty");
+    } else {
+      // Full path: only drop the dirty table if it exists. Use
+      // `CREATE IF NOT EXISTS` then DELETE so we don't error on databases
+      // that haven't run any upserts yet (e.g. fresh schema).
+      ensureFtsDirtyTable(db);
+      db.exec("DELETE FROM entries_fts_dirty");
     }
   })();
 }
