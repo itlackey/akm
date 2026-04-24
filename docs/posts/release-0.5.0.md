@@ -8,20 +8,23 @@ tags:
   - agents
   - cli
   - release
-published: false
+published: true
 date: '2026-04-22T00:00:00Z'
 id: 3539588
 ---
 
-akm 0.5.0 is out. This release adds four new asset types — wikis, workflows, and vaults are now first-class citizens — plus writable git stash support so your stash can sync back to a remote. There is one breaking change for anyone who was using the single-wiki LLM POC from 0.4.x.
+akm 0.5.0 is out. This release adds three new asset types — wikis, workflows, and vaults are now first-class citizens — plus writable git stash support so your stash can sync back to a remote. It also upgrades the self-update path to cover npm, bun, pnpm, and binary installs, and ships a new `akm help migrate` command for release-to-release guidance. There is one breaking change for anyone who was using the single-wiki LLM POC from 0.4.x.
 
 ## TL;DR
 
-- `akm wiki create|list|show|remove|pages|search|stash|lint|ingest` — multi-wiki support, no LLM required
-- `akm workflow create|start|next|complete|status|list|resume` — multi-step agent procedures in the stash
+- `akm wiki create|register|list|show|remove|pages|search|stash|lint|ingest` — multi-wiki support, no LLM required
+- `akm workflow template|create|start|next|complete|status|list|resume` — multi-step agent procedures in the stash
 - `akm vault list|show|create|set|unset|load` — `.env`-backed secrets that never appear in structured output
 - `akm add <source> --writable` + `akm save` — push your stash changes back to a remote git repo
 - `akm add <source> --trust` — bypass the install audit for a single install
+- `akm add --type wiki --name <name> <source>` / `akm wiki register` — register an existing directory or repo as a first-class wiki
+- `akm upgrade` now covers npm, bun, pnpm, and standalone-binary installs
+- `akm help migrate <version>` prints release notes and migration guidance for any shipped release
 - **Breaking**: the single-wiki LLM POC is removed; migrate to `akm wiki …`
 
 ---
@@ -57,7 +60,21 @@ Wiki pages are indexed by `akm index` and show up in stash-wide `akm search`, so
 
 The design principle is **akm surfaces, the agent writes**. akm makes no LLM calls. It owns only the operations where correctness is structural and deterministic: lifecycle management, raw-slug uniqueness, lint checks, index regeneration. The agent owns page content. This keeps the CLI fast and predictable — a wiki command always completes in milliseconds, and you can run it in any environment without model configuration.
 
-The 9-verb surface (`create`, `list`, `show`, `remove`, `pages`, `search`, `stash`, `lint`, `ingest`) covers the full lifecycle from creation to indexing to removal.
+The 10-verb surface (`create`, `register`, `list`, `show`, `remove`, `pages`, `search`, `stash`, `lint`, `ingest`) covers the full lifecycle from creation to indexing to removal.
+
+If you already have a wiki-shaped directory or repo you want to adopt without copying it, use `akm wiki register`:
+
+```sh
+# Register a local directory as a first-class wiki
+akm wiki register notes ~/team/notes
+
+# Or via the unified add command
+akm add --type wiki --name notes ~/team/notes
+
+# Registered external wikis show up in both `akm list` and `akm wiki list`
+```
+
+Registration refreshes source state and wiki search hits immediately, and the indexer normalizes external wiki refs on subsequent runs.
 
 ---
 
@@ -78,11 +95,14 @@ akm workflow next workflow:release-checklist
 # Check where you are
 akm workflow status workflow:release-checklist
 
-# Mark it done
-akm workflow complete workflow:release-checklist
+# Mark a specific step done (defaults to --state completed)
+akm workflow complete <run-id> --step validate --notes "Inputs verified"
 
-# List all workflows
+# List all workflow runs
 akm workflow list
+
+# Print a starter workflow you can adapt
+akm workflow template
 ```
 
 Workflows live in the stash like any other asset, so `akm search workflow:…` finds them and `akm show workflow:release-checklist` renders the current step. They can be shared in a kit and versioned in a git stash.
@@ -173,7 +193,31 @@ If you were using the wiki functionality introduced in 0.4.1, you will need to m
 3. Have your agent author wiki pages from the raw content
 4. Run `akm index` to regenerate the wiki index
 
-The new surface is more capable — 9 verbs vs the old 2, proper multi-wiki support, structural lint, and page search — and it does not require an LLM to be configured for any of the CLI operations.
+The new surface is more capable — 10 verbs vs the old 2, proper multi-wiki support, structural lint, and page search — and it does not require an LLM to be configured for any of the CLI operations.
+
+---
+
+## Broader `akm upgrade` coverage
+
+`akm upgrade` used to assume a standalone-binary install. 0.5.0 detects how akm was installed (npm, bun, pnpm, or binary) and runs the right self-update path for each. The same command now works whether you bootstrapped from the install script or from a package manager, and the internal runtime-asset coverage was expanded so newly shipped asset types stay up to date after an upgrade.
+
+```sh
+akm upgrade              # Works for binary, npm, bun, and pnpm installs
+akm upgrade --check      # Report whether an update is available, without installing
+```
+
+---
+
+## `akm help migrate <version>` — release notes at the CLI
+
+Release notes belong where you're actually working. `akm help migrate` prints the relevant CHANGELOG section plus embedded migration guidance for a given version, so you can review what changed (and what to do about it) without leaving the terminal.
+
+```sh
+akm help migrate 0.5.0     # or v0.5.0
+akm help migrate latest    # resolve against the most recent CHANGELOG entry
+```
+
+It favors the bundled CHANGELOG section when it exists and falls back to an embedded summary and a link to the full changelog otherwise.
 
 ---
 
