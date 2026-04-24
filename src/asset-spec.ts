@@ -153,8 +153,6 @@ export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;
 export function registerAssetType(type: string, spec: AssetSpec): void {
   ASSET_SPECS_INTERNAL[type] = spec;
   TYPE_DIRS[type] = spec.stashDir;
-  ASSET_TYPES.length = 0;
-  ASSET_TYPES.push(...getAssetTypes());
 
   // Auto-register renderer and action builder if provided in spec
   if (spec.rendererName) {
@@ -165,12 +163,21 @@ export function registerAssetType(type: string, spec: AssetSpec): void {
   }
 }
 
-export function getAssetTypes(): string[] {
-  return Object.keys(ASSET_SPECS_INTERNAL);
+/**
+ * Remove a previously-registered asset type.
+ *
+ * Primarily used by tests for cleanup after `registerAssetType` calls so
+ * subsequent tests see a pristine type registry. Built-in types should not
+ * normally be deregistered at runtime.
+ */
+export function deregisterAssetType(type: string): void {
+  delete ASSET_SPECS_INTERNAL[type];
+  delete TYPE_DIRS[type];
 }
 
-/** Warning: mutable array — stale if captured before `registerAssetType()` calls. Prefer `getAssetTypes()`. */
-export const ASSET_TYPES: string[] = getAssetTypes();
+export function getAssetTypes(): readonly string[] {
+  return Object.keys(ASSET_SPECS_INTERNAL);
+}
 
 export const TYPE_DIRS: Record<string, string> = Object.fromEntries(
   Object.entries(ASSET_SPECS_INTERNAL).map(([type, spec]) => [type, spec.stashDir]),

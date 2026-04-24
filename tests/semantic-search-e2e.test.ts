@@ -15,9 +15,9 @@ import path from "node:path";
 import type { AkmConfig } from "../src/config";
 import { resetConfigCache, saveConfig } from "../src/config";
 import { closeDatabase, EMBEDDING_DIM, getEmbeddingCount, getEntryCount, getMeta, openDatabase } from "../src/db";
+import { searchLocal } from "../src/db-search";
 import { clearEmbeddingCache } from "../src/embedder";
 import { akmIndex } from "../src/indexer";
-import { searchLocal } from "../src/local-search";
 import { getDbPath } from "../src/paths";
 
 // ── Gate ───────────────────────────────────────────────────────────────────

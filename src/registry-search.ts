@@ -5,8 +5,7 @@ import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse 
 
 // ── Eagerly import providers to trigger self-registration ───────────────────
 
-import "./providers/static-index";
-import "./providers/skills-sh";
+import "./providers/index";
 
 // ── Re-exports for backward compatibility ───────────────────────────────────
 

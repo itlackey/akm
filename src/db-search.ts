@@ -1,11 +1,14 @@
 /**
- * Local (filesystem + SQLite) stash search implementation.
+ * Database-backed (SQLite + FTS5/vector) stash search implementation.
  *
  * Extracted from stash-search.ts to break the circular import:
- *   stash-search.ts → stash-providers/filesystem.ts → local-search.ts (no cycle)
+ *   stash-search.ts → stash-providers/filesystem.ts → db-search.ts (no cycle)
  *
  * stash-search.ts imports this module for the `searchLocal` export.
  * stash-providers/filesystem.ts also imports `searchLocal` from here.
+ *
+ * Renamed from `local-search.ts` to signal that this is the DB-layer search
+ * implementation, not a "local vs. remote" distinction.
  */
 
 import type { Database } from "bun:sqlite";
