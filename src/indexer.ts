@@ -831,7 +831,10 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
   return files[0] || null;
 }
 
-export { buildSearchFields, buildSearchText } from "./search-fields";
+// `buildSearchFields` and `buildSearchText` were previously re-exported from
+// here for backwards compatibility. Importers should now pull them directly
+// from `./search-fields` to avoid loading the indexer's full dependency
+// graph (LLM client, embedder facade) when only the text builder is needed.
 
 // ── Utility score recomputation ──────────────────────────────────────────────
 

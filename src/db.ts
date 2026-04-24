@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { cosineSimilarity, type EmbeddingVector } from "./embedder";
+import { cosineSimilarity, type EmbeddingVector } from "./embedders/types";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchFields } from "./search-fields";
