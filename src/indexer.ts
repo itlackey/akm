@@ -506,12 +506,17 @@ async function enhanceDirsWithLlm(
 ): Promise<void> {
   if (!config.llm || dirsNeedingLlm.length === 0) return;
 
+  // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
+  // as a single visible warning instead of silently degrading every entry
+  // and leaving the user wondering why nothing got enhanced.
+  const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
+
   for (const { dirPath, files, currentStashDir, stash: originalStash } of dirsNeedingLlm) {
     // Only enhance generated entries; user-provided overrides should not be overwritten
     const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
     if (generatedEntries.length === 0) continue;
     const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, files);
+    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, files, summary);
 
     // Re-upsert the enhanced entries in a single transaction so a crash
     // cannot leave half the entries updated and the rest stale.
@@ -523,6 +528,18 @@ async function enhanceDirsWithLlm(
         upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
       }
     })();
+  }
+
+  if (summary.attempted > 0 && summary.succeeded === 0) {
+    const sample = summary.failureSamples.length ? ` Example: ${summary.failureSamples[0]}` : "";
+    warn(
+      `LLM enhancement failed for all ${summary.attempted} attempted entries — index built without LLM enrichment.` +
+        ` Check llm.endpoint and llm.model in your config.${sample}`,
+    );
+  } else if (summary.attempted > 0 && summary.succeeded < summary.attempted) {
+    const failed = summary.attempted - summary.succeeded;
+    const sample = summary.failureSamples.length ? ` Examples: ${summary.failureSamples.join("; ")}` : "";
+    warn(`LLM enhancement failed for ${failed}/${summary.attempted} entries — they were left un-enhanced.${sample}`);
   }
 }
 
@@ -758,15 +775,25 @@ function isDirStale(
   return false;
 }
 
+interface LlmEnhancementSummary {
+  attempted: number;
+  succeeded: number;
+  /** Sample of error messages from failed entries (first 3, deduped). */
+  failureSamples: string[];
+}
+
 async function enhanceStashWithLlm(
   llmConfig: LlmConnectionConfig,
   stash: StashFile,
   files: string[],
+  summary: LlmEnhancementSummary,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("./llm.js");
 
   const enhanced: StashEntry[] = [];
+  const seenSamples = new Set<string>();
   for (const entry of stash.entries) {
+    summary.attempted++;
     try {
       const entryFile = entry.filename
         ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
@@ -786,8 +813,14 @@ async function enhanceStashWithLlm(
       if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
       if (improvements.tags?.length) updated.tags = improvements.tags;
       enhanced.push(updated);
-    } catch {
+      summary.succeeded++;
+    } catch (err) {
       enhanced.push(entry);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (summary.failureSamples.length < 3 && !seenSamples.has(msg)) {
+        summary.failureSamples.push(msg);
+        seenSamples.add(msg);
+      }
     }
   }
   return { entries: enhanced };

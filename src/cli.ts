@@ -707,6 +707,11 @@ const registryCommand = defineCommand({
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
         options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+        "allow-insecure": {
+          type: "boolean",
+          description: "Allow a plain HTTP registry URL (otherwise rejected)",
+          default: false,
+        },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
@@ -714,8 +719,15 @@ const registryCommand = defineCommand({
             throw new UsageError("Registry URL must start with http:// or https://");
           }
           if (args.url.startsWith("http://")) {
+            const allowInsecure = Boolean((args as Record<string, unknown>)["allow-insecure"]);
+            if (!allowInsecure) {
+              throw new UsageError(
+                "Registry URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious index. " +
+                  "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+              );
+            }
             warn(
-              "Warning: registry URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+              "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious index.",
             );
           }
           const config = loadUserConfig();
