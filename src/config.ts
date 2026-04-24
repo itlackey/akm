@@ -239,11 +239,23 @@ export function getConfigPath(): string {
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
 
 let cachedConfig: { config: AkmConfig; signature: string } | undefined;
-let cachedUserConfig: { config: AkmConfig; path: string; mtime: number } | undefined;
+let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number; contentHash: string } | undefined;
 
 export function resetConfigCache(): void {
   cachedConfig = undefined;
   cachedUserConfig = undefined;
+}
+
+function hashString(text: string): string {
+  // Simple, fast non-cryptographic hash (FNV-1a 32-bit) — sufficient to detect
+  // content changes between config writes when filesystem mtime resolution is
+  // too coarse to reflect rapid back-to-back writes (common in tests).
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 export function loadUserConfig(): AkmConfig {
@@ -252,17 +264,43 @@ export function loadUserConfig(): AkmConfig {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(configPath);
-    if (cachedUserConfig && cachedUserConfig.path === configPath && cachedUserConfig.mtime === stat.mtimeMs) {
-      return cachedUserConfig.config;
-    }
   } catch {
     cachedUserConfig = undefined;
     return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
   }
 
-  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfig(configPath));
+  // Cache key combines mtimeMs + size + content hash. mtimeMs alone is unreliable
+  // when tests write multiple times within the filesystem mtime resolution
+  // window (often 1ms+). Reading + hashing on cache miss is cheap and ensures
+  // we never serve stale config.
+  let text: string;
+  try {
+    text = fs.readFileSync(configPath, "utf8");
+  } catch {
+    cachedUserConfig = undefined;
+    return applyRuntimeEnvApiKeys({ ...DEFAULT_CONFIG });
+  }
+  const contentHash = hashString(text);
+
+  if (
+    cachedUserConfig &&
+    cachedUserConfig.path === configPath &&
+    cachedUserConfig.mtime === stat.mtimeMs &&
+    cachedUserConfig.size === stat.size &&
+    cachedUserConfig.contentHash === contentHash
+  ) {
+    return cachedUserConfig.config;
+  }
+
+  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(configPath, text));
   const finalConfig = applyRuntimeEnvApiKeys(config);
-  cachedUserConfig = { config: finalConfig, path: configPath, mtime: stat.mtimeMs };
+  cachedUserConfig = {
+    config: finalConfig,
+    path: configPath,
+    mtime: stat.mtimeMs,
+    size: stat.size,
+    contentHash,
+  };
   return finalConfig;
 }
 
@@ -287,6 +325,7 @@ export function loadConfig(): AkmConfig {
 
 export function saveConfig(config: AkmConfig): void {
   cachedConfig = undefined;
+  cachedUserConfig = undefined;
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
@@ -429,6 +468,18 @@ function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefine
   const raw = readConfigObject(configPath);
   const expanded = raw ? expandEnvVars(raw) : undefined;
   return expanded ? pickKnownKeys(expanded) : undefined;
+}
+
+function readNormalizedConfigFromText(_configPath: string, text: string): Partial<AkmConfig> | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stripJsonComments(text));
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const expanded = expandEnvVars(raw as Record<string, unknown>);
+  return pickKnownKeys(expanded);
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {
@@ -1107,7 +1158,18 @@ function isFile(filePath: string): boolean {
 
 function getFileSignatureToken(filePath: string): string {
   try {
-    return String(fs.statSync(filePath).mtimeMs);
+    const stat = fs.statSync(filePath);
+    // mtimeMs alone is unreliable on filesystems with low-resolution mtime
+    // (HFS+, some network FS, or very fast back-to-back writes in tests).
+    // Combine mtime + size + content hash so the signature actually changes
+    // when content does.
+    let contentHash = "";
+    try {
+      contentHash = hashString(fs.readFileSync(filePath, "utf8"));
+    } catch {
+      // ignore — fall back to stat-only signature
+    }
+    return `${stat.mtimeMs}:${stat.size}:${contentHash}`;
   } catch {
     return "missing";
   }

@@ -1912,18 +1912,33 @@ const WIKI_SUBCOMMAND_SET = new Set([
 ]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
+// ── Exit codes ──────────────────────────────────────────────────────────────
+const EXIT_GENERAL = 1;
+const EXIT_USAGE = 2;
+const EXIT_CONFIG = 78;
+
 // citty reads process.argv directly and does not accept a custom argv array,
 // so we must replace process.argv with the normalized version before runMain.
 process.argv = normalizeShowArgv(process.argv);
 // Resolve output mode once at startup from the (normalized) argv and persisted
 // config. All subsequent output() calls read from this in-memory singleton.
-initOutputMode(process.argv, loadConfig().output ?? {});
+// `initOutputMode` can throw a UsageError when --format/--detail values are
+// invalid; surface it through the same JSON-error path the rest of the CLI uses
+// rather than letting the raw exception escape with a stack trace.
+try {
+  initOutputMode(process.argv, loadConfig().output ?? {});
+} catch (error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const hint = buildHint(message);
+  const exitCode = classifyExitCode(error);
+  const code =
+    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+      ? error.code
+      : undefined;
+  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
+  process.exit(exitCode);
+}
 runMain(main);
-
-// ── Exit codes ──────────────────────────────────────────────────────────────
-const EXIT_GENERAL = 1;
-const EXIT_USAGE = 2;
-const EXIT_CONFIG = 78;
 
 function classifyExitCode(error: unknown): number {
   if (error instanceof UsageError) return EXIT_USAGE;
