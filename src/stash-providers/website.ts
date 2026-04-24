@@ -34,6 +34,14 @@ const MAX_DEPTH_DEFAULT = 3;
  */
 const WEBSITE_PAGE_BYTE_CAP = 5 * 1024 * 1024;
 
+/**
+ * Wall-clock cap for a full crawl (10 minutes). With per-request timeouts
+ * of 15s and a `maxPages` default of 50, an unresponsive site could
+ * otherwise stall `akm add` for 12.5 minutes with no feedback. Cap the
+ * whole crawl and return what we have when time runs out.
+ */
+const WEBSITE_CRAWL_WALL_CLOCK_MS = 10 * 60 * 1000;
+
 interface WebsitePage {
   url: string;
   title: string;
@@ -220,8 +228,14 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
   const queue: Array<{ url: string; depth: number }> = [{ url: start.toString(), depth: 0 }];
   const visited = new Set<string>();
   const pages: WebsitePage[] = [];
+  const deadline = Date.now() + WEBSITE_CRAWL_WALL_CLOCK_MS;
+  let stoppedAtDeadline = false;
 
   while (queue.length > 0 && pages.length < options.maxPages) {
+    if (Date.now() > deadline) {
+      stoppedAtDeadline = true;
+      break;
+    }
     const next = queue.shift();
     if (!next) break;
     const normalized = normalizeCrawlUrl(next.url);
@@ -240,6 +254,12 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
       if (!candidate || visited.has(candidate) || isAssetLikePath(link.pathname)) continue;
       queue.push({ url: candidate, depth: next.depth + 1 });
     }
+  }
+
+  if (stoppedAtDeadline) {
+    console.warn(
+      `[akm] website crawl stopped at the ${WEBSITE_CRAWL_WALL_CLOCK_MS / 1000}s wall-clock cap with ${pages.length}/${options.maxPages} pages collected from ${startUrl}.`,
+    );
   }
 
   return pages;

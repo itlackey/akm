@@ -450,12 +450,27 @@ function matchesAllowedFinding(
   ref: string,
   allowedFindings: InstallAuditAllowedFinding[],
 ): boolean {
+  // Normalize paths so a waiver written against `scripts/setup.sh` matches
+  // a finding emitted as `./scripts/setup.sh` or `scripts//setup.sh`. On
+  // Windows we also fold case, mirroring `isWithin`'s comparison rules.
+  const findingPathNormalized = normalizeWaiverPath(finding.file);
   return allowedFindings.some((allowed) => {
     if (allowed.id !== finding.id) return false;
     if (allowed.ref && allowed.ref !== ref) return false;
-    if (allowed.path && allowed.path !== finding.file) return false;
+    if (allowed.path && normalizeWaiverPath(allowed.path) !== findingPathNormalized) return false;
     return true;
   });
+}
+
+function normalizeWaiverPath(value: string | undefined): string | undefined {
+  if (!value) return value;
+  // Strip a leading `./`, collapse duplicate slashes via path.normalize, and
+  // POSIX-ify so Windows path separators don't trigger spurious mismatches.
+  const normalized = path
+    .normalize(value)
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function addUrlLabels(labels: Set<string>, rawUrl: string | undefined): void {
