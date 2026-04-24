@@ -3,8 +3,8 @@ import path from "node:path";
 import { TYPE_DIRS } from "./asset-spec";
 import { UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
-import { installRegistryRef } from "./registry-install";
 import { findSourceForPath, getPrimarySource, resolveStashSources, type SearchSource } from "./search-source";
+import { syncFromRef } from "./stash-providers/sync-from-ref";
 import { makeAssetRef, parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
 
@@ -59,16 +59,16 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   // Remote fetch fallback: if no local source matched and origin looks remote, fetch it
   let remoteFetched: CloneResponse["remoteFetched"] | undefined;
   if (searchSources.length === 0 && parsed.origin && isRemoteOrigin(parsed.origin, allSources)) {
-    const installResult = await installRegistryRef(parsed.origin);
+    const installResult = await syncFromRef(parsed.origin);
     const syntheticSource: SearchSource = {
-      path: installResult.stashRoot,
+      path: installResult.contentDir,
       registryId: installResult.id,
     };
     searchSources = [syntheticSource];
     allSources = [...allSources, syntheticSource];
     remoteFetched = {
       origin: parsed.origin,
-      stashRoot: installResult.stashRoot,
+      stashRoot: installResult.contentDir,
       cacheDir: installResult.cacheDir,
     };
   }

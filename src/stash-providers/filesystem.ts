@@ -1,15 +1,24 @@
 import { resolveStashDir } from "../common";
 import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
+import { ConfigError } from "../errors";
 import { searchLocal } from "../local-search";
 import { resolveStashSources } from "../search-source";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import type {
+  StashLockData,
+  StashSearchOptions,
+  StashSearchResult,
+  SyncableStashProvider,
+  SyncOptions,
+} from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import { showLocal } from "../stash-show";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
+import { detectStashRoot } from "./provider-utils";
 
-class FilesystemStashProvider implements StashProvider {
+class FilesystemStashProvider implements SyncableStashProvider {
   readonly type = "filesystem";
+  readonly kind = "syncable" as const;
   readonly name: string;
   private readonly stashDir: string;
 
@@ -43,6 +52,36 @@ class FilesystemStashProvider implements StashProvider {
 
   canShow(ref: string): boolean {
     return !ref.includes("://");
+  }
+
+  /** No-op: a filesystem stash already lives on disk. */
+  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+    if (!config.path) {
+      throw new ConfigError("filesystem stash entry must include a `path`");
+    }
+    const stashRoot = detectStashRoot(config.path);
+    const syncedAt = (options?.now ?? new Date()).toISOString();
+    return {
+      id: stashRoot,
+      source: "local",
+      ref: stashRoot,
+      artifactUrl: stashRoot,
+      contentDir: stashRoot,
+      cacheDir: stashRoot,
+      extractedDir: stashRoot,
+      syncedAt,
+    };
+  }
+
+  getContentDir(config: StashConfigEntry): string {
+    if (!config.path) {
+      throw new ConfigError("filesystem stash entry must include a `path`");
+    }
+    return config.path;
+  }
+
+  async remove(_config: StashConfigEntry): Promise<void> {
+    // Filesystem stashes are user-managed; never delete the source on `akm remove`.
   }
 }
 

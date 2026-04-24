@@ -5,9 +5,17 @@ import type { StashConfigEntry } from "./config";
 import { loadConfig, loadUserConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
 import { akmIndex } from "./indexer";
+import {
+  auditInstallCandidate,
+  deriveRegistryLabels,
+  enforceRegistryInstallPolicy,
+  formatInstallAuditFailure,
+} from "./install-audit";
 import { upsertLockEntry } from "./lockfile";
-import { detectStashRoot, installRegistryRef, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
+import type { InstalledStashEntry, StashSource } from "./registry-types";
+import { detectStashRoot } from "./stash-providers/provider-utils";
+import { syncFromRef } from "./stash-providers/sync-from-ref";
 import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
 import type { AddResponse } from "./stash-types";
 import { warn } from "./warn";
@@ -218,7 +226,9 @@ async function addWebsiteStashSource(
 }
 
 /**
- * Install a stash from a registry (npm, github, git).
+ * Install a stash from a registry (npm, github, git) by dispatching to the
+ * matching syncable provider, then running the post-sync install audit and
+ * persisting the lock entry.
  */
 async function addRegistryStash(
   ref: string,
@@ -227,33 +237,58 @@ async function addRegistryStash(
   writable?: boolean,
   wikiName?: string,
 ): Promise<AddResponse> {
-  const installed = await installRegistryRef(ref, { trustThisInstall, writable });
-  const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === installed.id);
-  const config = upsertInstalledRegistryEntry({
-    id: installed.id,
-    source: installed.source,
-    ref: installed.ref,
-    artifactUrl: installed.artifactUrl,
-    resolvedVersion: installed.resolvedVersion,
-    resolvedRevision: installed.resolvedRevision,
-    stashRoot: installed.stashRoot,
-    cacheDir: installed.cacheDir,
-    installedAt: installed.installedAt,
-    writable: installed.writable,
+  // Pre-sync registry-policy enforcement uses just the parsed ref (no fetch needed),
+  // so we keep parity with the historical behavior where `enforceRegistryInstallPolicy`
+  // ran before `extractTarGzSecure` etc.
+  const config = loadConfig();
+  const synced = await syncFromRef(ref, { trustThisInstall, writable });
+  const registryLabels = deriveRegistryLabels({
+    source: synced.source,
+    ref: synced.ref,
+    artifactUrl: synced.artifactUrl,
+  });
+  enforceRegistryInstallPolicy(registryLabels, config, ref);
+
+  // Post-sync hook: install audit. Throws when blocked unless `--trust` is set
+  // (in which case the audit report still surfaces in the response).
+  const audit = auditInstallCandidate({
+    rootDir: synced.extractedDir,
+    source: synced.source,
+    ref: synced.ref,
+    registryLabels,
+    config,
+    trustThisInstall,
+  });
+  if (audit.blocked) {
+    throw new Error(formatInstallAuditFailure(synced.ref, audit));
+  }
+
+  const replaced = (loadConfig().installed ?? []).find((entry) => entry.id === synced.id);
+  const updatedConfig = upsertInstalledRegistryEntry({
+    id: synced.id,
+    source: synced.source,
+    ref: synced.ref,
+    artifactUrl: synced.artifactUrl,
+    resolvedVersion: synced.resolvedVersion,
+    resolvedRevision: synced.resolvedRevision,
+    stashRoot: synced.contentDir,
+    cacheDir: synced.cacheDir,
+    installedAt: synced.syncedAt,
+    writable: synced.writable,
     ...(wikiName ? { wikiName } : {}),
   });
 
   await upsertLockEntry({
-    id: installed.id,
-    source: installed.source,
-    ref: installed.ref,
-    resolvedVersion: installed.resolvedVersion,
-    resolvedRevision: installed.resolvedRevision,
-    integrity: installed.integrity,
+    id: synced.id,
+    source: synced.source,
+    ref: synced.ref,
+    resolvedVersion: synced.resolvedVersion,
+    resolvedRevision: synced.resolvedRevision,
+    integrity: synced.integrity,
   });
 
   // Clean up old cache directory on re-install
-  if (replaced && replaced.cacheDir !== installed.cacheDir) {
+  if (replaced && replaced.cacheDir !== synced.cacheDir) {
     try {
       fs.rmSync(replaced.cacheDir, { recursive: true, force: true });
     } catch {
@@ -268,21 +303,21 @@ async function addRegistryStash(
     stashDir,
     ref,
     installed: {
-      id: installed.id,
-      source: installed.source,
-      ref: installed.ref,
-      artifactUrl: installed.artifactUrl,
-      resolvedVersion: installed.resolvedVersion,
-      resolvedRevision: installed.resolvedRevision,
-      stashRoot: installed.stashRoot,
-      cacheDir: installed.cacheDir,
-      extractedDir: installed.extractedDir,
-      installedAt: installed.installedAt,
-      audit: installed.audit,
+      id: synced.id,
+      source: synced.source,
+      ref: synced.ref,
+      artifactUrl: synced.artifactUrl,
+      resolvedVersion: synced.resolvedVersion,
+      resolvedRevision: synced.resolvedRevision,
+      stashRoot: synced.contentDir,
+      cacheDir: synced.cacheDir,
+      extractedDir: synced.extractedDir,
+      installedAt: synced.syncedAt,
+      audit,
     },
     config: {
-      stashCount: config.stashes?.length ?? 0,
-      installedKitCount: config.installed?.length ?? 0,
+      stashCount: updatedConfig.stashes?.length ?? 0,
+      installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
       mode: index.mode,
@@ -291,6 +326,40 @@ async function addRegistryStash(
       directoriesSkipped: index.directoriesSkipped,
       ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
+  };
+}
+
+/** Persist or replace an installed stash entry in the user config. */
+export function upsertInstalledRegistryEntry(entry: InstalledStashEntry) {
+  const current = loadUserConfig();
+  const currentInstalled = current.installed ?? [];
+  const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
+  const nextInstalled = [...withoutExisting, normalizeInstalledEntry(entry)];
+
+  const nextConfig = { ...current, installed: nextInstalled };
+  saveConfig(nextConfig);
+  return nextConfig;
+}
+
+/** Remove an installed stash entry from the user config. */
+export function removeInstalledRegistryEntry(id: string) {
+  const current = loadUserConfig();
+  const currentInstalled = current.installed ?? [];
+  const nextInstalled = currentInstalled.filter((item) => item.id !== id);
+
+  const nextConfig = {
+    ...current,
+    installed: nextInstalled.length > 0 ? nextInstalled : undefined,
+  };
+  saveConfig(nextConfig);
+  return nextConfig;
+}
+
+function normalizeInstalledEntry(entry: InstalledStashEntry): InstalledStashEntry {
+  return {
+    ...entry,
+    stashRoot: path.resolve(entry.stashRoot),
+    cacheDir: path.resolve(entry.cacheDir),
   };
 }
 
@@ -366,3 +435,7 @@ export function deriveWikiNameFromRef(ref: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
 }
+
+// Re-export StashSource so existing imports of `upsertInstalledRegistryEntry`
+// (formerly from registry-install) continue to compile against the same nominal types.
+export type { StashSource };

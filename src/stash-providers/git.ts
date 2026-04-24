@@ -6,12 +6,27 @@ import { resolveStashDir } from "../common";
 import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { ConfigError, UsageError } from "../errors";
-import { getRegistryIndexCacheDir } from "../paths";
-import { validateGitUrl } from "../registry-resolve";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../paths";
+import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../registry-resolve";
+import type { ParsedGitRef } from "../registry-types";
+import type {
+  StashLockData,
+  StashSearchOptions,
+  StashSearchResult,
+  SyncableStashProvider,
+  SyncOptions,
+} from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
-import { isExpired, sanitizeString } from "./provider-utils";
+import {
+  applyAkmIncludeConfig,
+  buildInstallCacheDir,
+  copyDirectoryContents,
+  detectStashRoot,
+  isDirectory,
+  isExpired,
+  sanitizeString,
+} from "./provider-utils";
 
 /** Cache TTL before refreshing the mirrored repo (12 hours). */
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -27,8 +42,9 @@ interface ParsedRepoUrl {
   canonicalUrl: string;
 }
 
-class GitStashProvider implements StashProvider {
+class GitStashProvider implements SyncableStashProvider {
   readonly type = "git";
+  readonly kind = "syncable" as const;
   readonly name: string;
 
   constructor(config: StashConfigEntry) {
@@ -48,6 +64,45 @@ class GitStashProvider implements StashProvider {
   /** Content is local; no remote show needed. */
   canShow(_ref: string): boolean {
     return false;
+  }
+
+  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+    // Two execution modes:
+    //   1. Long-lived configured stash (config.url) — mirror into the
+    //      registry-index cache and serve as a read-only working tree.
+    //   2. One-shot install ref (config.options.ref like "git:..." / "github:...") —
+    //      run the historical clone-into-cache flow used by `akm add`.
+    if (typeof config.options?.ref === "string" && config.options.ref) {
+      return syncRegistryGitRef(String(config.options.ref), options);
+    }
+    return syncMirroredRepo(config, options);
+  }
+
+  getContentDir(config: StashConfigEntry): string {
+    if (config.path) return config.path;
+    if (config.url) {
+      const repo = parseGitRepoUrl(config.url);
+      return getCachePaths(repo.canonicalUrl).repoDir;
+    }
+    throw new ConfigError("git stash entry must have either `path` or `url`");
+  }
+
+  async remove(config: StashConfigEntry): Promise<void> {
+    if (config.path && isDirectory(config.path)) {
+      try {
+        fs.rmSync(path.dirname(config.path), { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    } else if (config.url) {
+      const repo = parseGitRepoUrl(config.url);
+      const paths = getCachePaths(repo.canonicalUrl);
+      try {
+        fs.rmSync(paths.rootDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
   }
 }
 
@@ -76,10 +131,11 @@ function getCachePaths(repoUrl: string): {
 async function ensureGitMirror(
   repo: ParsedRepoUrl,
   cachePaths: ReturnType<typeof getCachePaths>,
-  options?: { requireRepoDir?: boolean; writable?: boolean },
+  options?: { requireRepoDir?: boolean; writable?: boolean; force?: boolean },
 ): Promise<void> {
   const requireRepoDir = options?.requireRepoDir === true;
   const writable = options?.writable === true;
+  const force = options?.force === true;
 
   // Check if cache is fresh
   let mtime = 0;
@@ -89,7 +145,7 @@ async function ensureGitMirror(
     /* no cached index */
   }
 
-  if (mtime && !isExpired(mtime, CACHE_TTL_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
+  if (!force && mtime && !isExpired(mtime, CACHE_TTL_MS) && (!requireRepoDir || hasExtractedRepo(cachePaths.repoDir))) {
     return;
   }
 
@@ -109,6 +165,154 @@ async function ensureGitMirror(
     }
     throw err;
   }
+}
+
+/**
+ * Sync mode for a long-lived configured git stash. Mirrors the repo into the
+ * shared registry-index cache (12h TTL) and exposes the working tree as the
+ * stash content directory.
+ */
+async function syncMirroredRepo(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+  if (!config.url) {
+    throw new ConfigError("git stash entry requires a URL when no install ref is supplied");
+  }
+  const repo = parseGitRepoUrl(config.url);
+  const cachePaths = getCachePaths(repo.canonicalUrl);
+  await ensureGitMirror(repo, cachePaths, {
+    requireRepoDir: true,
+    writable: options?.writable ?? config.writable === true,
+    force: options?.force,
+  });
+
+  const syncedAt = (options?.now ?? new Date()).toISOString();
+  const contentDir = cachePaths.repoDir;
+  return {
+    id: repo.canonicalUrl,
+    source: "git",
+    ref: repo.canonicalUrl,
+    artifactUrl: repo.canonicalUrl,
+    contentDir,
+    cacheDir: cachePaths.rootDir,
+    extractedDir: contentDir,
+    writable: options?.writable ?? config.writable === true,
+    syncedAt,
+  };
+}
+
+/**
+ * Sync mode for a one-shot install ref (`akm add github:owner/repo` or
+ * `akm add git:url`). Runs the clone → strip → include-filter pipeline that
+ * historically lived in `installRegistryRef()`.
+ */
+export async function syncRegistryGitRef(ref: string, options?: SyncOptions): Promise<StashLockData> {
+  const parsed = parseRegistryRef(ref);
+  if (parsed.source === "github") {
+    const githubRef: ParsedGitRef = {
+      source: "git",
+      ref: parsed.ref,
+      id: parsed.id,
+      url: `https://github.com/${parsed.owner}/${parsed.repo}.git`,
+      requestedRef: parsed.requestedRef,
+    };
+    const result = await doSyncGit(githubRef, options);
+    return { ...result, source: "github" };
+  }
+  if (parsed.source !== "git") {
+    throw new UsageError(`syncRegistryGitRef requires a git: or github: ref, got "${ref}"`);
+  }
+  return doSyncGit(parsed, options);
+}
+
+async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<StashLockData> {
+  const resolved = await resolveRegistryArtifact(parsed);
+  const syncedAt = (options?.now ?? new Date()).toISOString();
+  const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
+  const cacheDir = buildInstallCacheDir(cacheRootDir, parsed.source, parsed.id, resolved.resolvedRevision);
+  const cloneDir = path.join(cacheDir, "clone");
+  const extractedDir = path.join(cacheDir, "extracted");
+
+  // Cache hit
+  if (!options?.force && isDirectory(extractedDir)) {
+    try {
+      const provisionalKitRoot = detectStashRoot(extractedDir);
+      const installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+      const stashRoot = detectStashRoot(installRoot);
+      if (stashRoot) {
+        return {
+          id: resolved.id,
+          source: resolved.source,
+          ref: resolved.ref,
+          artifactUrl: resolved.artifactUrl,
+          resolvedVersion: resolved.resolvedVersion,
+          resolvedRevision: resolved.resolvedRevision,
+          contentDir: stashRoot,
+          cacheDir,
+          extractedDir,
+          writable: options?.writable,
+          syncedAt,
+        };
+      }
+    } catch {
+      // Cache invalid, re-clone
+    }
+  }
+
+  fs.mkdirSync(cacheDir, { recursive: true });
+
+  // Validate URL and ref before passing to git to prevent command injection
+  validateGitUrl(parsed.url);
+  if (parsed.requestedRef) validateGitRef(parsed.requestedRef);
+
+  let provisionalKitRoot: string;
+  let installRoot: string;
+  let stashRoot: string;
+  try {
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (parsed.requestedRef) {
+      cloneArgs.push("--branch", parsed.requestedRef);
+    }
+    cloneArgs.push(parsed.url, cloneDir);
+
+    const cloneResult = spawnSync("git", cloneArgs, { encoding: "utf8", timeout: 120_000 });
+    if (cloneResult.status !== 0) {
+      const err = cloneResult.stderr?.trim() || cloneResult.error?.message || "unknown error";
+      throw new Error(`Failed to clone ${parsed.url}: ${err}`);
+    }
+
+    // Copy contents to extracted dir without .git
+    fs.mkdirSync(extractedDir, { recursive: true });
+    copyDirectoryContents(cloneDir, extractedDir);
+
+    // Clean up the clone dir
+    fs.rmSync(cloneDir, { recursive: true, force: true });
+
+    provisionalKitRoot = detectStashRoot(extractedDir);
+    installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
+    stashRoot = detectStashRoot(installRoot);
+  } catch (err) {
+    // Clean up the cache directory so stale or partially-cloned artifacts
+    // don't cause false cache hits on the next install attempt.
+    try {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+    throw err;
+  }
+
+  return {
+    id: resolved.id,
+    source: resolved.source,
+    ref: resolved.ref,
+    artifactUrl: resolved.artifactUrl,
+    resolvedVersion: resolved.resolvedVersion,
+    resolvedRevision: resolved.resolvedRevision,
+    contentDir: stashRoot,
+    cacheDir,
+    extractedDir,
+    writable: options?.writable,
+    syncedAt,
+  };
 }
 
 export function cloneRepo(cloneUrl: string, ref: string | null, destDir: string, writable = false): void {
