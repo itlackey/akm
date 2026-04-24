@@ -25,6 +25,7 @@ import { akmInit } from "./init";
 import { probeLlmCapabilities } from "./llm";
 import { getDefaultStashDir } from "./paths";
 import { clearSemanticStatus, deriveSemanticProviderFingerprint, writeSemanticStatus } from "./semantic-status";
+import { createSetupContext, runSetupSteps, type SetupStep } from "./setup-steps";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -176,7 +177,7 @@ async function prepareSemanticSearchAssets(
 
   // For local embeddings, ensure the required package is installed first.
   if (!remote) {
-    if (!(await isTransformersAvailable())) {
+    if (!isTransformersAvailable()) {
       const spin = p.spinner();
       spin.start("Installing @huggingface/transformers...");
       try {
@@ -851,15 +852,104 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[
 
 // ── Main Wizard ─────────────────────────────────────────────────────────────
 
+/**
+ * Build the canonical list of `SetupStep`s for the interactive wizard.
+ * Exposed (and exported) so tests and `akm init` can compose subsets.
+ *
+ * Each step wraps the existing `step*` functions, accumulating its result
+ * into the shared `SetupContext`. The `nonInteractive` flag controls
+ * inclusion in `akm init` (a non-interactive preset of `akm setup`).
+ */
+export function buildSetupSteps(options: {
+  online: boolean;
+  semanticSearchOutcome: { mode: "off" | "auto"; prepareAssets: boolean };
+}): {
+  steps: SetupStep[];
+  /** Latest semantic-search choice; populated by the semantic-search step. */
+  outcome: { semantic: { mode: "off" | "auto"; prepareAssets: boolean } };
+} {
+  const outcome = { semantic: options.semanticSearchOutcome };
+  // Local cache of Ollama-detected fields surfaced from the embedding step
+  // to the LLM step. Mutable by design — `stepLlm` needs them.
+  let ollamaEndpoint: string | undefined;
+  let ollamaChatModels: string[] | undefined;
+
+  const steps: SetupStep[] = [
+    {
+      id: "stash-dir",
+      label: "Stash Directory",
+      nonInteractive: true,
+      async run(ctx) {
+        const stashDir = await stepStashDir(ctx.config);
+        ctx.apply({ stashDir });
+      },
+    },
+    {
+      id: "embedding",
+      label: "Embedding",
+      async run(ctx) {
+        if (!options.online) {
+          ctx.apply({ embedding: ctx.config.embedding });
+          return;
+        }
+        const result = await stepOllama(ctx.config);
+        ollamaEndpoint = result.ollamaEndpoint;
+        ollamaChatModels = result.ollamaChatModels;
+        ctx.apply({ embedding: result.embedding });
+      },
+    },
+    {
+      id: "llm",
+      label: "LLM Provider",
+      async run(ctx) {
+        if (!options.online) {
+          ctx.apply({ llm: ctx.config.llm });
+          return;
+        }
+        const llm = await stepLlm(ctx.config, ollamaEndpoint, ollamaChatModels);
+        ctx.apply({ llm });
+      },
+    },
+    {
+      id: "semantic-search",
+      label: "Semantic Search",
+      async run(ctx) {
+        const semantic = await stepSemanticSearch(ctx.config, ctx.config.embedding);
+        outcome.semantic = semantic;
+        ctx.apply({ semanticSearchMode: semantic.mode });
+      },
+    },
+    {
+      id: "registries",
+      label: "Registries",
+      async run(ctx) {
+        const registries = await stepRegistries(ctx.config);
+        ctx.apply({ registries });
+      },
+    },
+    {
+      id: "stash-sources",
+      label: "Stash Sources",
+      async run(ctx) {
+        const stashes = await stepStashSources(ctx.config);
+        const platforms = await stepAgentPlatforms(ctx.config);
+        const merged = [...stashes];
+        for (const ps of platforms) {
+          if (!merged.some((s) => s.path === ps.path)) merged.push(ps);
+        }
+        ctx.apply({ stashes: merged.length > 0 ? merged : undefined });
+      },
+    },
+  ];
+
+  return { steps, outcome };
+}
+
 export async function runSetupWizard(): Promise<void> {
   p.intro("akm setup");
 
   const current = loadUserConfig();
   const configPath = getConfigPath();
-
-  // Step 1: Stash directory
-  p.log.step("Step 1: Stash Directory");
-  const stashDir = await stepStashDir(current);
 
   // Quick connectivity check — skip network-dependent steps when offline
   const online = await isOnline();
@@ -870,54 +960,36 @@ export async function runSetupWizard(): Promise<void> {
     );
   }
 
-  // Step 2: Embedding (Ollama detection drives the embedding choice + surfaces
-  // the Ollama endpoint to the LLM step that follows).
-  p.log.step("Step 2: Embedding");
-  const { embedding, ollamaEndpoint, ollamaChatModels } = online
-    ? await stepOllama(current)
-    : { embedding: current.embedding };
+  const ctx = createSetupContext(current, { nonInteractive: false });
+  const { steps, outcome } = buildSetupSteps({
+    online,
+    semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
+  });
 
-  // Step 2b: LLM provider — Anthropic / OpenAI / Gemini / Ollama / custom.
-  p.log.step("Step 2b: LLM Provider");
-  const llm = online ? await stepLlm(current, ollamaEndpoint, ollamaChatModels) : current.llm;
+  // Wrap each step with a `p.log.step()` header so the wizard UI is
+  // unchanged. The canonical `runSetupSteps()` runner is used directly by
+  // `akm init` (non-interactive) and by tests.
+  const labeledSteps: SetupStep[] = steps.map((step) => ({
+    ...step,
+    async run(stepCtx) {
+      p.log.step(step.label);
+      await step.run(stepCtx);
+    },
+  }));
+  await runSetupSteps(labeledSteps, ctx);
 
-  // Step 3: Semantic search assets
-  p.log.step("Step 3: Semantic Search");
-  const semanticSearchMode = await stepSemanticSearch(current, embedding);
-
-  // Step 4: Registries
-  p.log.step("Step 4: Registries");
-  const registries = await stepRegistries(current);
-
-  // Step 5: Stash sources
-  p.log.step("Step 5: Stash Sources");
-  const stashes = await stepStashSources(current);
-
-  // Step 6: Agent platform detection
-  p.log.step("Step 6: Agent Platform Detection");
-  const platformStashes = await stepAgentPlatforms(current);
-
-  // Merge platform stashes into main stashes list
-  const allStashes = [...stashes];
-  for (const ps of platformStashes) {
-    if (!allStashes.some((s) => s.path === ps.path)) {
-      allStashes.push(ps);
-    }
-  }
-
-  // Build final config
   const newConfig: AkmConfig = {
-    ...current,
-    stashDir,
-    embedding,
-    llm,
-    registries,
-    stashes: allStashes.length > 0 ? allStashes : undefined,
-    // Preserve existing fields
-    semanticSearchMode: semanticSearchMode.mode,
+    ...ctx.config,
+    // Preserve fields the steps don't manage explicitly.
     installed: current.installed,
     output: current.output,
   };
+  const semanticSearchMode = outcome.semantic;
+  const stashDir = newConfig.stashDir ?? current.stashDir ?? getDefaultStashDir();
+  const embedding = newConfig.embedding;
+  const llm = newConfig.llm;
+  const registries = newConfig.registries;
+  const allStashes = newConfig.stashes ?? [];
 
   // Confirm before saving
   const effectiveRegistries = registries ?? DEFAULT_CONFIG.registries ?? [];

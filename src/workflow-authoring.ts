@@ -41,10 +41,13 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const normalizedName = normalizeWorkflowName(input.name);
   const assetPath = resolveAssetPathFromName("workflow", typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
-    throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`);
+    throw new UsageError(`Resolved workflow path escapes the stash: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
   }
   if (fs.existsSync(assetPath) && !input.force) {
-    throw new UsageError(`Workflow "${normalizedName}" already exists. Re-run with --force to overwrite it.`);
+    throw new UsageError(
+      `Workflow "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+      "RESOURCE_ALREADY_EXISTS",
+    );
   }
 
   const content = input.from

@@ -493,7 +493,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
   test("registry source returns install guidance", async () => {
     const registryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-03-09T00:00:00Z",
       stashes: [
         {
@@ -537,7 +537,7 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
   test("both source includes local and registry hits", async () => {
     const registryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-03-09T00:00:00Z",
       stashes: [
         {

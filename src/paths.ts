@@ -23,7 +23,10 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
 
     const userProfile = env.USERPROFILE?.trim();
     if (!userProfile) {
-      throw new ConfigError("Unable to determine config directory. Set APPDATA or USERPROFILE.");
+      throw new ConfigError(
+        "Unable to determine config directory. Set APPDATA or USERPROFILE.",
+        "CONFIG_DIR_UNRESOLVABLE",
+      );
     }
     return path.join(userProfile, "AppData", "Roaming", "akm");
   }
@@ -33,7 +36,10 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
 
   const home = env.HOME?.trim();
   if (!home) {
-    throw new ConfigError("Unable to determine config directory. Set XDG_CONFIG_HOME or HOME.");
+    throw new ConfigError(
+      "Unable to determine config directory. Set XDG_CONFIG_HOME or HOME.",
+      "CONFIG_DIR_UNRESOLVABLE",
+    );
   }
   return path.join(home, ".config", "akm");
 }
@@ -57,7 +63,10 @@ export function getCacheDir(): string {
 
     const appData = process.env.APPDATA?.trim();
     if (!appData) {
-      throw new ConfigError("Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.");
+      throw new ConfigError(
+        "Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
+        "CONFIG_DIR_UNRESOLVABLE",
+      );
     }
     // Heuristic fallback: APPDATA points to %APPDATA% (Roaming), so navigate
     // to the sibling "Local" directory. This is typically
@@ -113,7 +122,7 @@ export function getDefaultStashDir(): string {
 
   const home = process.env.HOME?.trim();
   if (!home) {
-    throw new ConfigError("Unable to determine default stash directory. Set HOME.");
+    throw new ConfigError("Unable to determine default stash directory. Set HOME.", "STASH_DIR_NOT_FOUND");
   }
   return path.join(home, "akm");
 }

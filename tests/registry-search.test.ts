@@ -8,7 +8,7 @@ import { searchRegistry } from "../src/registry-search";
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
 const FIXTURE_INDEX: RegistryIndex = {
-  version: 1,
+  version: 3,
   updatedAt: "2026-03-09T00:00:00Z",
   stashes: [
     {
@@ -339,7 +339,7 @@ describe("error handling", () => {
 describe("multiple registries", () => {
   test("merges stashes from multiple registry URLs", async () => {
     const index1: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -353,7 +353,7 @@ describe("multiple registries", () => {
       ],
     };
     const index2: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -385,7 +385,7 @@ describe("multiple registries", () => {
 
   test("one failing registry does not block others", async () => {
     const goodIndex: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -483,7 +483,7 @@ describe("AKM_REGISTRY_URL env var", () => {
   test("supports comma-separated URLs in env var", async () => {
     const srv1 = serveIndex(FIXTURE_INDEX);
     const srv2 = serveIndex({
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -552,7 +552,7 @@ describe("provider routing", () => {
 
   test("mixed static-index and skills-sh registries return merged results", async () => {
     const staticSrv = serveIndex({
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -605,7 +605,7 @@ describe("provider routing", () => {
 
   test("one provider fails, other succeeds — partial results + warning", async () => {
     const goodSrv = serveIndex({
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {

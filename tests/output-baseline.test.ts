@@ -216,7 +216,7 @@ describe("output baseline", () => {
     writeFile(
       path.join(registryDir, "index.json"),
       JSON.stringify({
-        version: 1,
+        version: 3,
         updatedAt: "2026-03-11T00:00:00Z",
         stashes: [
           {

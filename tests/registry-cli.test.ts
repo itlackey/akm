@@ -198,7 +198,7 @@ describe("resolveRegistries", () => {
 describe("registry search with config entries", () => {
   test("basic query against mock index", async () => {
     const index: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -227,7 +227,7 @@ describe("registry search with config entries", () => {
 
   test("multi-registry search merges results from multiple URLs", async () => {
     const index1: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {
@@ -241,7 +241,7 @@ describe("registry search with config entries", () => {
       ],
     };
     const index2: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
       stashes: [
         {

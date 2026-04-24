@@ -142,7 +142,7 @@ export async function checkEmbeddingAvailability(
     }
   }
   // Check if the package is importable before attempting the model download.
-  if (!(await isTransformersAvailable())) {
+  if (!isTransformersAvailable()) {
     return {
       available: false,
       reason: "missing-package",

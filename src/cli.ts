@@ -1024,10 +1024,10 @@ const workflowStatusCommand = defineCommand({
         const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
         const { runs } = listWorkflowRuns({ workflowRef: ref });
         if (runs.length === 0) {
-          throw new NotFoundError(`No workflow runs found for ${ref}`);
+          throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         }
         const mostRecent = runs[0];
-        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`);
+        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         const result = getWorkflowStatus(mostRecent.id);
         output("workflow-status", result);
       } else {
@@ -1943,7 +1943,13 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
     const message = error instanceof Error ? error.message : String(error);
     const hint = buildHint(message);
     const exitCode = classifyExitCode(error);
-    console.error(JSON.stringify({ ok: false, error: message, hint }, null, 2));
+    // Surface machine-readable error code from typed errors when present so
+    // scripts can branch on `.code` instead of message-string matching.
+    const code =
+      error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+        ? error.code
+        : undefined;
+    console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
     process.exit(exitCode);
   }
 }
@@ -1960,7 +1966,7 @@ function buildHint(message: string): string | undefined {
     return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
   if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
   if (message.includes("Invalid value for --format")) return "Pick one of: json, jsonl, text, yaml.";
-  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary.";
+  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary, agent.";
   if (message.includes("expected JSON object with endpoint and model")) {
     return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
   }
@@ -2143,8 +2149,8 @@ akm search "<query>" --detail full            # Include scores, paths, timing
 | \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
 | \`--limit\` | number | \`20\` |
 | \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
-| \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
-| \`--for-agent\` | boolean | \`false\` |
+| \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\`, \`agent\` | \`brief\` |
+| \`--for-agent\` | boolean (deprecated — use \`--detail agent\`) | \`false\` |
 
 ## Curate
 
@@ -2363,7 +2369,8 @@ All commands accept \`--format\` and \`--detail\` flags:
 - \`--detail normal\` — adds tags, refs, origins
 - \`--detail full\` — includes scores, paths, timing, debug info
 - \`--detail summary\` — metadata only (no content/template/prompt), under 200 tokens
-- \`--for-agent\` — agent-optimized output: strips non-actionable fields (takes precedence over \`--detail\`)
+- \`--detail agent\` — agent-optimized output: strips non-actionable fields
+- \`--for-agent\` — deprecated alias for \`--detail agent\`
 
 Run \`akm -h\` or \`akm <command> -h\` for per-command help.
 `;

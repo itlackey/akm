@@ -12,7 +12,7 @@
 import { UsageError } from "./errors";
 
 export type OutputFormat = "json" | "yaml" | "text" | "jsonl";
-export type DetailLevel = "brief" | "normal" | "full" | "summary";
+export type DetailLevel = "brief" | "normal" | "full" | "summary" | "agent";
 
 export interface OutputMode {
   format: OutputFormat;
@@ -22,11 +22,11 @@ export interface OutputMode {
 
 export interface OutputDefaults {
   format?: OutputFormat | "json" | "yaml" | "text";
-  detail?: DetailLevel | "brief" | "normal" | "full";
+  detail?: DetailLevel | "brief" | "normal" | "full" | "agent";
 }
 
 export const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
-export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
+export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary", "agent"];
 
 export function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
@@ -62,7 +62,9 @@ export function resolveOutputMode(argv: string[], defaults: OutputDefaults | und
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
   const detail =
     parseDetailLevel(parseFlagValue(argv, "--detail")) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
-  const forAgent = hasBooleanFlag(argv, "--for-agent");
+  // `--detail=agent` is the preferred preset. `--for-agent` is kept for one
+  // release cycle as an alias so existing scripts and docs keep working.
+  const forAgent = detail === "agent" || hasBooleanFlag(argv, "--for-agent");
   return { format, detail, forAgent };
 }
 

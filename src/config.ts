@@ -7,17 +7,25 @@ import type { InstalledStashEntry, KitSource } from "./registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export interface EmbeddingConnectionConfig {
-  /** Provider name for display (e.g. "openai", "ollama") */
+/**
+ * Fields shared by every OpenAI-compatible connection config (embedding +
+ * LLM). Specialized configs extend this base. Pure type DRY — the on-disk
+ * JSON schema is unchanged.
+ */
+export interface BaseConnectionConfig {
+  /** Provider name for display (e.g. "openai", "anthropic", "ollama"). */
   provider?: string;
-  /** OpenAI-compatible embeddings endpoint (e.g. "http://localhost:11434/v1/embeddings") */
+  /** OpenAI-compatible HTTP endpoint. */
   endpoint: string;
-  /** Model name to use for remote embeddings (e.g. "nomic-embed-text") */
+  /** Model name to use. */
   model: string;
+  /** Optional API key for authenticated endpoints. */
+  apiKey?: string;
+}
+
+export interface EmbeddingConnectionConfig extends BaseConnectionConfig {
   /** Optional output dimension for providers that support it */
   dimension?: number;
-  /** Optional API key for authenticated endpoints */
-  apiKey?: string;
   /** Optional local transformer model name (e.g. "Xenova/bge-small-en-v1.5"). Overrides the default when using local embeddings. */
   localModel?: string;
 }
@@ -31,19 +39,11 @@ export interface LlmCapabilities {
   toolUse?: boolean;
 }
 
-export interface LlmConnectionConfig {
-  /** Provider name for display (e.g. "openai", "anthropic", "google", "ollama") */
-  provider?: string;
-  /** OpenAI-compatible chat completions endpoint (e.g. "http://localhost:11434/v1/chat/completions") */
-  endpoint: string;
-  /** Model name to use (e.g. "llama3.2") */
-  model: string;
+export interface LlmConnectionConfig extends BaseConnectionConfig {
   /** Optional sampling temperature */
   temperature?: number;
   /** Optional response token limit */
   maxTokens?: number;
-  /** Optional API key for authenticated endpoints */
-  apiKey?: string;
   /** Approximate context window in tokens. Used to size ingest/lint chunks. */
   contextWindow?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
@@ -180,8 +180,16 @@ export interface AkmConfig {
    */
   registries?: RegistryConfigEntry[];
   /**
-   * When true on a later config layer (typically project config), discard
-   * inherited stashes from earlier layers before applying `stashes`.
+   * When set on a later config layer (typically project config), controls how
+   * the layer's `stashes` interact with stashes inherited from earlier layers.
+   * - `"merge"` (default): append the layer's stashes to the inherited list.
+   * - `"replace"`: discard the inherited stashes before applying this layer's.
+   */
+  stashInheritance?: "merge" | "replace";
+  /**
+   * @deprecated Use `stashInheritance: "replace"` instead. Retained for one
+   * minor-release cycle so existing config files continue to work; the loader
+   * coerces this boolean into `stashInheritance` when the new field is absent.
    */
   disableGlobalStashes?: boolean;
   /** Additional stash sources (filesystem paths and remote providers) */
@@ -392,7 +400,12 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
 
-  if (typeof raw.disableGlobalStashes === "boolean") {
+  // Prefer the new `stashInheritance` field; fall back to the legacy boolean
+  // `disableGlobalStashes` so existing config files keep working unchanged.
+  if (raw.stashInheritance === "replace" || raw.stashInheritance === "merge") {
+    config.stashInheritance = raw.stashInheritance;
+  } else if (typeof raw.disableGlobalStashes === "boolean") {
+    config.stashInheritance = raw.disableGlobalStashes ? "replace" : "merge";
     config.disableGlobalStashes = raw.disableGlobalStashes;
   }
 
@@ -988,7 +1001,8 @@ function mergeInstallAuditConfig(
  * Scalar fields follow normal override semantics. Known nested objects are
  * deep-merged so project config files can override individual fields without
  * clobbering sibling settings. `stashes` are additive by default, but a later
- * layer can set `disableGlobalStashes: true` to drop inherited stashes first.
+ * layer can set `stashInheritance: "replace"` (or the legacy
+ * `disableGlobalStashes: true`) to drop inherited stashes first.
  */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
@@ -1010,7 +1024,12 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
   }
-  if (override.disableGlobalStashes) {
+  // The new `stashInheritance` field wins; fall back to the legacy
+  // `disableGlobalStashes` boolean so old config files behave identically.
+  const replaceStashes =
+    override.stashInheritance === "replace" ||
+    (override.stashInheritance === undefined && override.disableGlobalStashes === true);
+  if (replaceStashes) {
     merged.stashes = [...(override.stashes ?? [])];
   } else if (override.stashes) {
     merged.stashes = [...(base.stashes ?? []), ...override.stashes];

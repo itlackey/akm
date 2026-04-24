@@ -75,14 +75,14 @@ function resolveRegisteredWikiAssetPath(wikiRoot: string, wikiName: string, asse
   const candidate = path.resolve(wikiRoot, `${pageName}.md`);
   const resolvedRoot = fs.realpathSync(wikiRoot);
   if (!candidate.startsWith(resolvedRoot + path.sep)) {
-    throw new UsageError("Ref resolves outside the stash root.");
+    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
   if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
     throw new NotFoundError(`Stash asset not found for ref: wiki:${assetName}`);
   }
   const realTarget = fs.realpathSync(candidate);
   if (!realTarget.startsWith(resolvedRoot + path.sep)) {
-    throw new UsageError("Ref resolves outside the stash root.");
+    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
   return realTarget;
 }

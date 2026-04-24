@@ -153,14 +153,30 @@ function shouldRetryWithoutExplicitDtype(error: unknown): boolean {
 }
 
 /**
- * Check whether the `@huggingface/transformers` package can be imported.
- * Returns `true` if it can, `false` otherwise.
+ * Check whether the `@huggingface/transformers` package can be resolved.
+ * Uses `Bun.resolveSync` so we never load the module (which would trigger
+ * heavy WASM/model side-effects) just to test availability.
+ *
+ * Falls back to `require.resolve` when `Bun.resolveSync` is unavailable
+ * (e.g. running under Node), so the function still works in mixed runtimes.
  */
-export async function isTransformersAvailable(): Promise<boolean> {
+export function isTransformersAvailable(): boolean {
   try {
-    await import("@huggingface/transformers");
-    return true;
+    if (typeof Bun !== "undefined" && typeof Bun.resolveSync === "function") {
+      Bun.resolveSync("@huggingface/transformers", import.meta.dir);
+      return true;
+    }
   } catch {
     return false;
   }
+  try {
+    const req = (globalThis as { require?: { resolve?: (id: string) => string } }).require;
+    if (req && typeof req.resolve === "function") {
+      req.resolve("@huggingface/transformers");
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
