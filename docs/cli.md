@@ -141,7 +141,7 @@ Use `akm info` to verify that semantic search is working after setup.
 
 ### search
 
-Search stash assets, registry kits, or both.
+Search stash assets, registry stashes, or both.
 
 ```sh
 akm search "deploy"
@@ -163,8 +163,8 @@ search results:
 
 - **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
 - **`name`** -- The asset's filename or identifier
-- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for managed source assets
-- **`id`** -- Registry-level kit identifier (registry hits only)
+- **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for managed source assets
+- **`id`** -- Registry-level stash identifier (registry hits only)
 
 The default brief shape is intentionally small: local hits expose `type`,
 `name`, `description`, and `action`; registry hits expose `type`, `name`,
@@ -193,7 +193,7 @@ akm curate "learn the release workflow" --source both --format text
 
 `akm curate` selects high-signal results, prefers one strong match per asset
 type by default, and includes direct follow-up commands such as `akm show <ref>`
-or `akm add <kit>` so you can immediately inspect or install what it found.
+or `akm add <stash>` so you can immediately inspect or install what it found.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
 
@@ -375,7 +375,7 @@ Workflow markdown contract:
 | --- | --- |
 | `akm add ~/.claude/skills` | Registers a local directory as a source |
 | `akm add github:owner/repo` | Fetches and caches a managed source |
-| `akm add @scope/kit` | Fetches and caches a managed source from npm |
+| `akm add @scope/stash` | Fetches and caches a managed source from npm |
 | `akm add https://docs.example.com` | Crawls and caches a website as knowledge |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
@@ -383,7 +383,7 @@ Workflow markdown contract:
 the source:
 
 ```sh
-akm add github:owner/private-kit --trust
+akm add github:owner/private-stash --trust
 ```
 
 Use `--trust` only for one-off installs you have manually reviewed. It does not
@@ -400,12 +400,12 @@ Add a source — a local directory, npm package, GitHub repo, git URL, or websit
 
 ```sh
 akm add ~/.claude/skills              # Local directory
-akm add @scope/kit                    # npm package
-akm add npm:@scope/kit@latest         # npm with version
+akm add @scope/stash                    # npm package
+akm add npm:@scope/stash@latest         # npm with version
 akm add github:owner/repo#v1.2.3     # GitHub with tag
 akm add https://github.com/owner/repo
-akm add git+https://gitlab.com/org/kit
-akm add ./path/to/local/kit
+akm add git+https://gitlab.com/org/stash
+akm add ./path/to/local/stash
 akm add context-hub
 akm add https://docs.example.com --name docs              # Website
 akm add https://docs.example.com --max-pages 100 --max-depth 5
@@ -465,7 +465,7 @@ akm list --kind local,remote        # Multiple kinds
 Remove a source by id, ref, path, URL, or name and reindex.
 
 ```sh
-akm remove npm:@scope/kit           # Managed source by id
+akm remove npm:@scope/stash           # Managed source by id
 akm remove owner/repo               # Managed source by ref
 akm remove ~/.claude/skills         # Local source by path
 akm remove my-provider              # Any source by name
@@ -477,7 +477,7 @@ Update one or all managed sources to the latest available version. Local and
 remote sources are not updatable — akm explains why if you target one.
 
 ```sh
-akm update npm:@scope/kit
+akm update npm:@scope/stash
 akm update --all
 akm update --all --force   # Force fresh download even if version is unchanged
 ```
@@ -536,11 +536,11 @@ requested asset. The package is **not** registered as a managed source --
 use `akm add` for that.
 
 ```sh
-# Clone a single script from a remote package without installing the full kit
+# Clone a single script from a remote package without installing the full stash
 akm clone "npm:@scope/pkg//script:deploy.sh"
 
 # Clone from a local directory that isn't configured as a search path
-akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude
+akm clone "/path/to/stash//skill:code-review" --dest ./project/.claude
 ```
 
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
@@ -662,7 +662,7 @@ Specify exactly one of `--positive` or `--negative`.
 
 ### registry
 
-Manage kit registries. The `registry` command has four subcommands:
+Manage stash registries. The `registry` command has four subcommands:
 
 #### registry list
 
@@ -715,14 +715,14 @@ akm registry build-index --out dist/index.json
 | Flag | Description |
 | --- | --- |
 | `--out` | Output path for the generated index (default: `./index.json`) |
-| `--manual` | Path to a JSON file with manual kit entries |
+| `--manual` | Path to a JSON file with manual stash entries |
 | `--npmRegistry` | npm registry base URL (default: `https://registry.npmjs.org`) |
 | `--githubApi` | GitHub API base URL (default: `https://api.github.com`) |
 | `--format` | Output format: `json` or `text` (default: `json`) |
 
 #### registry search
 
-Search all enabled registries for kits.
+Search all enabled registries for stashes.
 
 ```sh
 akm registry search "deploy"

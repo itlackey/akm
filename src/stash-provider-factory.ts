@@ -5,8 +5,8 @@
  * factory functions that create StashProvider instances from a StashConfigEntry.
  *
  * "Stash providers" are runtime data sources for the search and show commands —
- * distinct from the kit-discovery registries (registry-factory.ts) and the
- * installed-kit operations (installed-kits.ts).
+ * distinct from the stash-discovery registries (registry-factory.ts) and the
+ * installed-stash operations (installed-stashes.ts).
  */
 
 import { createProviderRegistry } from "./create-provider-registry";

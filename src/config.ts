@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings } from "./common";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
-import type { InstalledKitEntry, KitSource } from "./registry-types";
+import type { InstalledStashEntry, StashSource } from "./registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -110,10 +110,10 @@ export interface AkmConfig {
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
   llm?: LlmConnectionConfig;
-  /** Installed kits (from npm, GitHub, git, or local sources) */
-  installed?: InstalledKitEntry[];
+  /** Installed stashes (from npm, GitHub, git, or local sources) */
+  installed?: InstalledStashEntry[];
   /**
-   * Configured registries for kit discovery.
+   * Configured registries for stash discovery.
    * - `undefined` (field absent): use the built-in default registries.
    * - `[]` (explicit empty array): disable all registries (no registry search).
    * - `[...]` (non-empty array): use exactly the listed registries, overriding defaults.
@@ -596,22 +596,22 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   return result;
 }
 
-function parseInstalledEntries(value: unknown): InstalledKitEntry[] | undefined {
+function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
   const entries = value
-    .map((entry) => parseInstalledKitEntry(entry))
-    .filter((entry): entry is InstalledKitEntry => entry !== undefined);
+    .map((entry) => parseInstalledStashEntry(entry))
+    .filter((entry): entry is InstalledStashEntry => entry !== undefined);
 
   return entries.length > 0 ? entries : undefined;
 }
 
-function parseInstalledKitEntry(value: unknown): InstalledKitEntry | undefined {
+function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
 
   const id = asNonEmptyString(obj.id);
-  const source = asKitSource(obj.source);
+  const source = asStashSource(obj.source);
   const ref = asNonEmptyString(obj.ref);
   const artifactUrl = asNonEmptyString(obj.artifactUrl);
   const stashRoot = asNonEmptyString(obj.stashRoot);
@@ -619,7 +619,7 @@ function parseInstalledKitEntry(value: unknown): InstalledKitEntry | undefined {
   const installedAt = asNonEmptyString(obj.installedAt);
   if (!id || !source || !ref || !artifactUrl || !stashRoot || !cacheDir || !installedAt) return undefined;
 
-  const entry: InstalledKitEntry = {
+  const entry: InstalledStashEntry = {
     id,
     source,
     ref,
@@ -642,8 +642,8 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
-function asKitSource(value: unknown): KitSource | undefined {
-  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as KitSource;
+function asStashSource(value: unknown): StashSource | undefined {
+  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as StashSource;
   return undefined;
 }
 

@@ -19,7 +19,7 @@ Refs currently use this wire format:
 
 | Part | Required | Description |
 | --- | --- | --- |
-| `origin` | no | Identifies which installed kit or source owns the asset. Separated from the rest of the ref by `//`. |
+| `origin` | no | Identifies which installed stash or source owns the asset. Separated from the rest of the ref by `//`. |
 | `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, or `memory`. |
 | `name` | yes | Asset filename or path relative to the type directory. |
 

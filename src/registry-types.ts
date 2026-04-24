@@ -1,9 +1,9 @@
 import type { InstallAuditReport } from "./install-audit";
 
-export type KitSource = "npm" | "github" | "git" | "local";
+export type StashSource = "npm" | "github" | "git" | "local";
 
 export interface RegistryRefBase {
-  source: KitSource;
+  source: StashSource;
   ref: string;
   id: string;
 }
@@ -37,16 +37,16 @@ export type ParsedRegistryRef = ParsedNpmRef | ParsedGithubRef | ParsedGitRef | 
 
 export interface ResolvedRegistryArtifact {
   id: string;
-  source: KitSource;
+  source: StashSource;
   ref: string;
   artifactUrl: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
 }
 
-export interface InstalledKitEntry {
+export interface InstalledStashEntry {
   id: string;
-  source: KitSource;
+  source: StashSource;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
@@ -55,11 +55,11 @@ export interface InstalledKitEntry {
   cacheDir: string;
   installedAt: string;
   writable?: boolean;
-  /** If set, all .md files in this kit are indexed as wiki pages under this wiki name */
+  /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
   wikiName?: string;
 }
 
-export interface KitInstallResult extends InstalledKitEntry {
+export interface StashInstallResult extends InstalledStashEntry {
   extractedDir: string;
   integrity?: string;
   audit?: InstallAuditReport;
@@ -74,7 +74,7 @@ export interface RegistryAssetEntry {
 }
 
 export interface RegistrySearchHit {
-  source: KitSource;
+  source: StashSource;
   id: string;
   title: string;
   description?: string;
@@ -96,7 +96,7 @@ export interface RegistryAssetSearchHit {
   assetName: string;
   description?: string;
   estimatedTokens?: number;
-  kit: { id: string; name: string };
+  stash: { id: string; name: string };
   registryName?: string;
   action: string;
   score?: number;

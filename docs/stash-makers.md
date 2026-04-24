@@ -1,11 +1,11 @@
-# Kit Maker's Guide
+# Stash Maker's Guide
 
-This guide walks through building a kit from scratch and sharing it so others
+This guide walks through building a stash from scratch and sharing it so others
 can install it with `akm add`.
 
 ## Step 1: Organize Your Assets
 
-You can organize a kit however you like. akm classifies assets by
+You can organize a stash however you like. akm classifies assets by
 **file extension and content**, so directory names are not required to
 follow any particular pattern.
 
@@ -13,7 +13,7 @@ That said, using these preferred directory names is an **opt-in convention**
 that increases classification confidence during indexing:
 
 ```text
-my-kit/
+my-stash/
   scripts/        # .sh, .ts, .js, .py, .rb, .go, etc.
   skills/         # Directories containing SKILL.md
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
@@ -23,10 +23,10 @@ my-kit/
 ```
 
 These directories are hints, not requirements. A `.sh` file is a script
-whether it lives in `scripts/`, `deploy/`, or at the kit root. A `.md` file
+whether it lives in `scripts/`, `deploy/`, or at the stash root. A `.md` file
 with `model` in its frontmatter is an agent definition no matter where you
 put it. Nesting is fully supported — `scripts/azure/deploy/run.sh` works
-just as well as `scripts/run.sh`. Organize your kit in whatever way makes
+just as well as `scripts/run.sh`. Organize your stash in whatever way makes
 sense for your project.
 
 ## Step 2: Add Assets
@@ -167,13 +167,13 @@ explicit prompts.
 
 ## Step 3: Add Metadata
 
-Metadata makes your kit searchable. There are two approaches.
+Metadata makes your stash searchable. There are two approaches.
 
 ### Automatic (do nothing)
 
-When someone installs your kit and runs `akm index`, metadata is generated
+When someone installs your stash and runs `akm index`, metadata is generated
 automatically from filenames, code comments, frontmatter, and `package.json`.
-This works well for most kits.
+This works well for most stashes.
 
 ### Curated (`.stash.json`)
 
@@ -208,11 +208,11 @@ reference.
 
 ## Step 4: Test Locally
 
-Before sharing, install your kit locally to verify everything works:
+Before sharing, install your stash locally to verify everything works:
 
 ```sh
 # Install from the local directory
-akm add ./my-kit
+akm add ./my-stash
 
 # Check it appears in the list
 akm list
@@ -226,20 +226,22 @@ akm show script:deploy.sh
 
 ## Sharing on GitHub
 
-1. Push your kit to a GitHub repository.
+1. Push your stash to a GitHub repository.
 
-2. Add the `akm` topic to your repo so it appears in registry search:
+2. Add the `akm-stash` topic to your repo so it appears in registry search:
 
    ```sh
-   gh repo edit --add-topic akm
+   gh repo edit --add-topic akm-stash
    ```
 
-   Or add it from the repository settings page under "Topics".
+   Or add it from the repository settings page under "Topics". The legacy
+   `akm-stash` and `agentikit` topics are still honored by the official
+   registry, but `akm-stash` is preferred for new publishers.
 
 3. Others can now install it:
 
    ```sh
-   akm add github:your-username/my-kit
+   akm add github:your-username/my-stash
    ```
 
 4. To pin a version, create a GitHub release. When a release exists, `akm add`
@@ -247,31 +249,31 @@ akm show script:deploy.sh
 
    ```sh
    # Install a specific tag
-   akm add github:your-username/my-kit#v1.0.0
+   akm add github:your-username/my-stash#v1.0.0
    ```
 
 ## Sharing on npm
 
-1. Add a `package.json` with `"akm"` in the keywords:
+1. Add a `package.json` with `"akm-stash"` in the keywords:
 
    ```json
    {
-     "name": "@your-scope/my-kit",
+     "name": "@your-scope/my-stash",
      "version": "1.0.0",
      "description": "Scripts and skills for deployment workflows",
-     "keywords": ["akm"]
+     "keywords": ["akm-stash"]
    }
    ```
 
-2. If your repo contains files that should not be part of the kit (source
+2. If your repo contains files that should not be part of the stash (source
    code, tests, CI config), use `akm.include` to declare which paths
    to ship:
 
    ```json
    {
-     "name": "@your-scope/my-kit",
+     "name": "@your-scope/my-stash",
      "version": "1.0.0",
-     "keywords": ["akm"],
+     "keywords": ["akm-stash"],
      "akm": {
        "include": ["scripts", "skills", "knowledge"]
      }
@@ -291,22 +293,32 @@ akm show script:deploy.sh
 4. Others can now install it:
 
    ```sh
-   akm add @your-scope/my-kit
+   akm add @your-scope/my-stash
    ```
 
 ## Submitting to the Registry
 
-CLI-based kit submission is planned for a future release. To submit a kit now, open a pull request directly against the [akm-registry](https://github.com/itlackey/akm-registry) repository.
+The official [akm-registry](https://github.com/itlackey/akm-registry) gets
+your stash listed in three ways:
+
+- Publish an npm package with `akm-stash` in `keywords`
+- Add the `akm-stash` GitHub topic to your repository
+- Open a PR updating `manual-entries.json` for a curated entry or override
+
+Auto-discovered entries are merged into `index.json` on the registry's
+build cycle. Curated entries are reviewed before inclusion.
+
+CLI-based submission (`akm` driving the PR) is planned for a future release.
 
 ## Sharing on a Network Directory
 
 For teams that want to share assets without publishing to a registry, use
 stashes.
 
-1. Place your kit on a shared filesystem (NFS, SMB, cloud-synced folder):
+1. Place your stash on a shared filesystem (NFS, SMB, cloud-synced folder):
 
    ```text
-   /mnt/shared/team-kit/
+   /mnt/shared/team-stash/
      scripts/
      skills/
      commands/
@@ -315,14 +327,14 @@ stashes.
 2. Each team member adds it as a source:
 
    ```sh
-   akm add /mnt/shared/team-kit
+   akm add /mnt/shared/team-stash
    ```
 
    Or add it directly to `~/.config/akm/config.json`:
 
    ```json
    {
-     "stashes": [{ "type": "filesystem", "path": "/mnt/shared/team-kit" }]
+     "stashes": [{ "type": "filesystem", "path": "/mnt/shared/team-stash" }]
    }
    ```
 
@@ -342,9 +354,9 @@ stashes.
 You can mount multiple directories. They are searched in the order listed,
 after the working stash.
 
-## Kit Structure Tips
+## Stash Structure Tips
 
-- **Keep it focused.** A kit with 5 great scripts is more useful than one with
+- **Keep it focused.** A stash with 5 great scripts is more useful than one with
   50 mediocre ones.
 
 - **Write good descriptions.** The `description` field (in frontmatter,
@@ -355,7 +367,7 @@ after the working stash.
   agents, and knowledge documents more discoverable without needing a
   `.stash.json`.
 
-- **Test the search experience.** After installing your kit, search for it
+- **Test the search experience.** After installing your stash, search for it
   using the terms you expect users to try. If results are poor, improve the
   descriptions, tags, and searchHints.
 
@@ -363,6 +375,6 @@ after the working stash.
   `SKILL.md`. For commands, put the workflow in the markdown body. The agent
   reads these directly.
 
-- **Version your kit.** Use npm versions or GitHub releases so users can pin
+- **Version your stash.** Use npm versions or GitHub releases so users can pin
   to a known-good state with `akm add npm:pkg@1.2.3` or
   `akm add github:owner/repo#v1.2.3`.

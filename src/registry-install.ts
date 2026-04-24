@@ -11,17 +11,17 @@ import {
   enforceRegistryInstallPolicy,
   formatInstallAuditFailure,
 } from "./install-audit";
-import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
 import type {
-  InstalledKitEntry,
-  KitInstallResult,
-  KitSource,
+  InstalledStashEntry,
   ParsedGithubRef,
   ParsedGitRef,
   ParsedLocalRef,
+  StashInstallResult,
+  StashSource,
 } from "./registry-types";
+import { copyIncludedPaths, findNearestIncludeConfig } from "./stash-include";
 import { warn } from "./warn";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
@@ -33,7 +33,10 @@ export interface InstallRegistryRefOptions {
   writable?: boolean;
 }
 
-export async function installRegistryRef(ref: string, options?: InstallRegistryRefOptions): Promise<KitInstallResult> {
+export async function installRegistryRef(
+  ref: string,
+  options?: InstallRegistryRefOptions,
+): Promise<StashInstallResult> {
   const parsed = parseRegistryRef(ref);
   const config = loadConfig();
   if (parsed.source === "local") {
@@ -105,7 +108,7 @@ export async function installRegistryRef(ref: string, options?: InstallRegistryR
   let provisionalKitRoot: string;
   let installRoot: string;
   let stashRoot: string;
-  let audit: KitInstallResult["audit"];
+  let audit: StashInstallResult["audit"];
   try {
     await downloadArchive(resolved.artifactUrl, archivePath);
     verifyArchiveIntegrity(archivePath, resolved.resolvedRevision, resolved.source);
@@ -148,7 +151,7 @@ async function installGithubRegistryRef(
   parsed: ParsedGithubRef,
   config: AkmConfig,
   options?: InstallRegistryRefOptions,
-): Promise<KitInstallResult> {
+): Promise<StashInstallResult> {
   const gitParsed: ParsedGitRef = {
     source: "git",
     ref: parsed.ref,
@@ -167,7 +170,7 @@ async function installLocalRegistryRef(
   parsed: ParsedLocalRef,
   config: AkmConfig,
   options?: InstallRegistryRefOptions,
-): Promise<KitInstallResult> {
+): Promise<StashInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed);
   const installedAt = (options?.now ?? new Date()).toISOString();
   const registryLabels = deriveRegistryLabels({
@@ -208,7 +211,7 @@ async function installGitRegistryRef(
   parsed: ParsedGitRef,
   config: AkmConfig,
   options?: InstallRegistryRefOptions,
-): Promise<KitInstallResult> {
+): Promise<StashInstallResult> {
   const resolved = await resolveRegistryArtifact(parsed);
   const registryLabels = deriveRegistryLabels({
     source: resolved.source,
@@ -267,7 +270,7 @@ async function installGitRegistryRef(
   let provisionalKitRoot: string;
   let installRoot: string;
   let stashRoot: string;
-  let audit: KitInstallResult["audit"];
+  let audit: StashInstallResult["audit"];
   try {
     const cloneArgs = ["clone", "--depth", "1"];
     if (parsed.requestedRef) {
@@ -319,7 +322,7 @@ async function installGitRegistryRef(
   };
 }
 
-export function upsertInstalledRegistryEntry(entry: InstalledKitEntry): AkmConfig {
+export function upsertInstalledRegistryEntry(entry: InstalledStashEntry): AkmConfig {
   const current = loadUserConfig();
   const currentInstalled = current.installed ?? [];
   const withoutExisting = currentInstalled.filter((item) => item.id !== entry.id);
@@ -368,7 +371,7 @@ export function detectStashRoot(extractedDir: string): string {
   return root;
 }
 
-function buildInstallCacheDir(cacheRootDir: string, source: KitSource, id: string, version?: string): string {
+function buildInstallCacheDir(cacheRootDir: string, source: StashSource, id: string, version?: string): string {
   const slug = `${source}-${id.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "")}`;
   const versionSlug =
     source === "local"
@@ -410,7 +413,7 @@ async function downloadArchive(url: string, destination: string): Promise<void> 
   }
 }
 
-export function verifyArchiveIntegrity(archivePath: string, expected: string | undefined, source?: KitSource): void {
+export function verifyArchiveIntegrity(archivePath: string, expected: string | undefined, source?: StashSource): void {
   if (!expected) return;
 
   // For GitHub and git sources, resolvedRevision is a commit SHA, not a content hash.
@@ -554,7 +557,7 @@ function countStashDirs(dirPath: string): number {
 /**
  * BFS to find the shallowest directory that looks like a stash root.
  * Checks for both `.stash` directories and well-known type directories
- * (scripts/, skills/, etc.), so nested layouts like `project/my-kit/scripts/`
+ * (scripts/, skills/, etc.), so nested layouts like `project/my-stash/scripts/`
  * are discovered even without a `.stash` marker.
  *
  * Skips `root` itself since the caller already checked it via `hasStashDirs`.
@@ -596,7 +599,7 @@ function findShallowestStashRoot(root: string): string | undefined {
   return undefined;
 }
 
-function normalizeInstalledEntry(entry: InstalledKitEntry): InstalledKitEntry {
+function normalizeInstalledEntry(entry: InstalledStashEntry): InstalledStashEntry {
   return {
     ...entry,
     stashRoot: path.resolve(entry.stashRoot),
@@ -626,7 +629,7 @@ async function computeFileHash(filePath: string): Promise<string> {
 
 function runInstallAuditOrThrow(
   rootDir: string,
-  source: KitSource,
+  source: StashSource,
   ref: string,
   registryLabels: string[],
   config: AkmConfig,

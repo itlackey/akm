@@ -27,7 +27,7 @@ export async function akmAdd(input: {
   if (!ref)
     throw new UsageError(
       "Install ref or local directory is required. " +
-        "Examples: `akm add @scope/kit`, `akm add github:owner/repo`, `akm add ./local/path`",
+        "Examples: `akm add @scope/stash`, `akm add github:owner/repo`, `akm add ./local/path`",
     );
 
   // Validate and resolve wiki name when --type wiki is used
@@ -64,7 +64,7 @@ export async function akmAdd(input: {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryKit(ref, stashDir, input.trustThisInstall, input.writable, wikiName);
+  return addRegistryStash(ref, stashDir, input.trustThisInstall, input.writable, wikiName);
 }
 
 export async function registerWikiSource(input: {
@@ -218,9 +218,9 @@ async function addWebsiteStashSource(
 }
 
 /**
- * Install a kit from a registry (npm, github, git).
+ * Install a stash from a registry (npm, github, git).
  */
-async function addRegistryKit(
+async function addRegistryStash(
   ref: string,
   stashDir: string,
   trustThisInstall?: boolean,

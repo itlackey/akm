@@ -3,17 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { fetchWithRetry } from "./common";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
-import { copyIncludedPaths, findNearestIncludeConfig } from "./kit-include";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
-import { parseRegistryIndex, type RegistryIndex, type RegistryKitEntry } from "./providers/static-index";
+import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
 import { detectStashRoot, extractTarGzSecure } from "./registry-install";
+import { copyIncludedPaths, findNearestIncludeConfig } from "./stash-include";
 import { walkStashFlat } from "./walker";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
 const DEFAULT_MANUAL_ENTRIES_PATH = path.resolve("manual-entries.json");
 const DEFAULT_OUTPUT_PATH = path.resolve("index.json");
-const REQUIRED_KEYWORDS = ["akm-kit"];
-const GITHUB_TOPICS = ["akm-kit"];
+const REQUIRED_KEYWORDS = ["akm-stash"];
+const GITHUB_TOPICS = ["akm-stash"];
 const EXCLUDED_REPOS = new Set(["itlackey/akm"]);
 const EXCLUDED_NPM_PACKAGES = new Set(["akm-cli"]);
 
@@ -71,7 +71,7 @@ interface PackageInspection {
   license?: string;
   tags?: string[];
   assetTypes?: string[];
-  assets?: RegistryKitEntry["assets"];
+  assets?: RegistryStashEntry["assets"];
 }
 
 const EMPTY_INSPECTION: PackageInspection = {};
@@ -87,11 +87,13 @@ export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): P
     scanGithub(githubApiBase),
   ]);
 
-  const kits = deduplicateKits([...manualKits, ...npmKits, ...githubKits]).sort((a, b) => a.name.localeCompare(b.name));
+  const stashes = deduplicateStashes([...manualKits, ...npmKits, ...githubKits]).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
   const index: RegistryIndex = {
     version: 2,
     updatedAt: new Date().toISOString(),
-    kits,
+    stashes,
   };
 
   return {
@@ -100,7 +102,7 @@ export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): P
       manual: manualKits.length,
       npm: npmKits.length,
       github: githubKits.length,
-      total: kits.length,
+      total: stashes.length,
     },
     paths: {
       manualEntriesPath,
@@ -115,8 +117,8 @@ export function writeRegistryIndex(index: RegistryIndex, outPath?: string): stri
   return resolved;
 }
 
-async function scanNpm(npmRegistryBase: string): Promise<RegistryKitEntry[]> {
-  const kits: RegistryKitEntry[] = [];
+async function scanNpm(npmRegistryBase: string): Promise<RegistryStashEntry[]> {
+  const stashes: RegistryStashEntry[] = [];
   const seen = new Set<string>();
 
   for (const keyword of REQUIRED_KEYWORDS) {
@@ -157,8 +159,8 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryKitEntry[]> {
           inspection.tags,
         );
 
-        kits.push(
-          normalizeKit({
+        stashes.push(
+          normalizeStash({
             id,
             name: pkg.name,
             description: inspection.description ?? pkg.description,
@@ -180,7 +182,7 @@ async function scanNpm(npmRegistryBase: string): Promise<RegistryKitEntry[]> {
     }
   }
 
-  return kits;
+  return stashes;
 }
 
 async function inspectNpmPackage(
@@ -202,8 +204,8 @@ async function inspectNpmPackage(
   };
 }
 
-async function scanGithub(githubApiBase: string): Promise<RegistryKitEntry[]> {
-  const kits: RegistryKitEntry[] = [];
+async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> {
+  const stashes: RegistryStashEntry[] = [];
   const seen = new Set<string>();
   const headers = githubHeaders();
 
@@ -228,8 +230,8 @@ async function scanGithub(githubApiBase: string): Promise<RegistryKitEntry[]> {
         ).catch(() => EMPTY_INSPECTION);
         const topics = repo.topics.filter((value) => !GITHUB_TOPICS.includes(value));
 
-        kits.push(
-          normalizeKit({
+        stashes.push(
+          normalizeStash({
             id,
             name: repo.name,
             description: inspection.description ?? repo.description ?? undefined,
@@ -251,7 +253,7 @@ async function scanGithub(githubApiBase: string): Promise<RegistryKitEntry[]> {
     }
   }
 
-  return kits;
+  return stashes;
 }
 
 async function inspectArchive(url: string, headers?: HeadersInit): Promise<PackageInspection> {
@@ -366,13 +368,13 @@ function applyIncludeConfigForInspection(stashRoot: string, tempDir: string, sea
   return selectedDir;
 }
 
-async function loadManualEntries(manualEntriesPath: string): Promise<RegistryKitEntry[]> {
+async function loadManualEntries(manualEntriesPath: string): Promise<RegistryStashEntry[]> {
   try {
     const raw = JSON.parse(fs.readFileSync(manualEntriesPath, "utf8"));
-    const candidateKits = Array.isArray(raw) ? raw : asRecord(raw).kits;
-    const parsed = parseRegistryIndex({ version: 2, updatedAt: new Date().toISOString(), kits: candidateKits });
+    const candidateKits = Array.isArray(raw) ? raw : asRecord(raw).stashes;
+    const parsed = parseRegistryIndex({ version: 2, updatedAt: new Date().toISOString(), stashes: candidateKits });
     if (!parsed) return [];
-    return parsed.kits.map((kit) => normalizeKit({ ...kit, curated: kit.curated ?? true }));
+    return parsed.stashes.map((stash) => normalizeStash({ ...stash, curated: stash.curated ?? true }));
   } catch {
     return [];
   }
@@ -387,19 +389,19 @@ async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function deduplicateKits(kits: RegistryKitEntry[]): RegistryKitEntry[] {
-  const byId = new Map<string, RegistryKitEntry>();
-  for (const kit of kits) {
-    const existing = byId.get(kit.id);
-    byId.set(kit.id, existing ? mergeEntries(existing, kit) : kit);
+function deduplicateStashes(stashes: RegistryStashEntry[]): RegistryStashEntry[] {
+  const byId = new Map<string, RegistryStashEntry>();
+  for (const stash of stashes) {
+    const existing = byId.get(stash.id);
+    byId.set(stash.id, existing ? mergeEntries(existing, stash) : stash);
   }
   return [...byId.values()];
 }
 
-function mergeEntries(a: RegistryKitEntry, b: RegistryKitEntry): RegistryKitEntry {
+function mergeEntries(a: RegistryStashEntry, b: RegistryStashEntry): RegistryStashEntry {
   const assets = mergeAssets(a.assets, b.assets);
   const assetTypes = mergeStrings(a.assetTypes, b.assetTypes, assets ? deriveAssetTypes(assets) : undefined);
-  return normalizeKit({
+  return normalizeStash({
     id: a.id,
     name: a.name,
     description: a.description ?? b.description,
@@ -417,11 +419,11 @@ function mergeEntries(a: RegistryKitEntry, b: RegistryKitEntry): RegistryKitEntr
 }
 
 function mergeAssets(
-  a?: RegistryKitEntry["assets"],
-  b?: RegistryKitEntry["assets"],
-): RegistryKitEntry["assets"] | undefined {
+  a?: RegistryStashEntry["assets"],
+  b?: RegistryStashEntry["assets"],
+): RegistryStashEntry["assets"] | undefined {
   if (!a && !b) return undefined;
-  const merged = new Map<string, NonNullable<RegistryKitEntry["assets"]>[number]>();
+  const merged = new Map<string, NonNullable<RegistryStashEntry["assets"]>[number]>();
   for (const asset of [...(a ?? []), ...(b ?? [])]) {
     const key = `${asset.type}:${asset.name}`;
     if (!merged.has(key)) merged.set(key, asset);
@@ -435,7 +437,7 @@ function mergeStrings(...values: Array<string[] | undefined>): string[] | undefi
   return merged.length > 0 ? merged : undefined;
 }
 
-function deriveAssetTypes(assets?: RegistryKitEntry["assets"]): string[] | undefined {
+function deriveAssetTypes(assets?: RegistryStashEntry["assets"]): string[] | undefined {
   return mergeStrings(assets?.map((asset) => asset.type));
 }
 
@@ -449,17 +451,17 @@ function extractNonReservedKeywords(value: unknown): string[] | undefined {
   return filtered.length > 0 ? filtered : undefined;
 }
 
-function normalizeKit(kit: RegistryKitEntry): RegistryKitEntry {
-  const assets = kit.assets ? sortAssets(kit.assets) : undefined;
+function normalizeStash(stash: RegistryStashEntry): RegistryStashEntry {
+  const assets = stash.assets ? sortAssets(stash.assets) : undefined;
   return {
-    ...kit,
-    ...(kit.tags && kit.tags.length > 0 ? { tags: kit.tags } : {}),
-    ...(kit.assetTypes && kit.assetTypes.length > 0 ? { assetTypes: kit.assetTypes } : {}),
+    ...stash,
+    ...(stash.tags && stash.tags.length > 0 ? { tags: stash.tags } : {}),
+    ...(stash.assetTypes && stash.assetTypes.length > 0 ? { assetTypes: stash.assetTypes } : {}),
     ...(assets && assets.length > 0 ? { assets } : {}),
   };
 }
 
-function sortAssets(assets: NonNullable<RegistryKitEntry["assets"]>): NonNullable<RegistryKitEntry["assets"]> {
+function sortAssets(assets: NonNullable<RegistryStashEntry["assets"]>): NonNullable<RegistryStashEntry["assets"]> {
   return [...assets].sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
 }
 

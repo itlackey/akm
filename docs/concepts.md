@@ -20,7 +20,7 @@ inferred from the input:
 | --- | --- | --- |
 | `~/.claude/skills` | `local` | Indexed in place. Not updatable. |
 | `github:owner/repo` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
-| `npm:@scope/kit` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
+| `npm:@scope/stash` | `managed` | Cached in `~/.cache/akm/`. Updatable. |
 | `https://docs.example.com` | `website` | Crawled, converted to markdown, cached. Refreshed every 12 hours. |
 | `http://host --provider openviking` | `remote` | Queried at search time. Not cached. |
 
@@ -42,9 +42,9 @@ primary directory for your personal, editable assets.
 When you search, akm merges all sources transparently into one unified
 collection.
 
-## What's In a Kit?
+## What's In a Stash?
 
-A kit is a directory of assets you can share and install. There's no required
+A stash is a directory of assets you can share and install. There's no required
 structure -- `akm` classifies assets by **file extension and content**, not by
 directory name. A `.sh` file is a script whether it lives in `scripts/`,
 `deploy/`, or at the root.
@@ -54,7 +54,7 @@ indexing confidence. Vaults are the current exception: `.env` vault assets are
 only discovered under `vaults/` paths.
 
 ```text
-my-kit/
+my-stash/
   scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
   skills/         # Skill definitions (directories with SKILL.md)
   commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
@@ -128,7 +128,7 @@ type:name
 For example: `script:deploy.sh`, `agent:reviewer`, `knowledge:api-guide`,
 `workflow:ship-release`.
 
-When an asset comes from an installed kit, refs can include an **origin**
+When an asset comes from an installed stash, refs can include an **origin**
 prefix to narrow lookup to that specific source:
 
 ```text
@@ -192,15 +192,15 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |
 | **registry ref** | A package identifier passed to `akm add` | `npm:@scope/pkg`, `github:owner/repo` |
 | **git ref** | A branch, tag, or commit (used when installing) | `main`, `v1.0.0` |
-| **kit** | A managed source (backward-compatible term) | An npm package or GitHub repo |
+| **stash** | A managed source (backward-compatible term) | An npm package or GitHub repo |
 | **search source** | Where to look: `stash` (local), `registry`, or `both` | `--source stash` |
 
 ## Further Reading
 
 - [CLI Reference](cli.md)
 - [Wikis](wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
-- [Kit Maker's Guide](kit-makers.md) -- How to build and share a kit
-- [Registry](registry.md) -- Finding and installing kits
+- [Stash Maker's Guide](stash-makers.md) -- How to build and share a stash
+- [Registry](registry.md) -- Finding and installing stashes
 - [Search Architecture](technical/search.md) -- Hybrid search details
 - [Indexing](technical/indexing.md) -- How the search index is built
 - [Filesystem Layout](technical/filesystem.md) -- Directory structure and metadata schema

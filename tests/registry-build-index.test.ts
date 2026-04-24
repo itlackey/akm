@@ -40,13 +40,13 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
           objects: [
             {
               package: {
-                name: "agent-kit",
+                name: "agent-stash",
                 version: "1.2.3",
                 description: "npm description",
-                keywords: ["akm-kit", "deploy"],
+                keywords: ["akm-stash", "deploy"],
                 links: {
-                  homepage: "https://example.test/agent-kit",
-                  repository: "https://github.com/acme/agent-kit",
+                  homepage: "https://example.test/agent-stash",
+                  repository: "https://github.com/acme/agent-stash",
                 },
                 author: { name: "acme" },
               },
@@ -55,14 +55,14 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
         });
       }
 
-      if (pathname === "/agent-kit/latest") {
+      if (pathname === "/agent-stash/latest") {
         return Response.json({
           version: "1.2.3",
           description: "npm latest description",
-          keywords: ["akm-kit", "deploy", "review"],
+          keywords: ["akm-stash", "deploy", "review"],
           license: "MIT",
           dist: {
-            tarball: `${url.origin}/archives/npm-agent-kit.tgz`,
+            tarball: `${url.origin}/archives/npm-agent-stash.tgz`,
           },
         });
       }
@@ -71,26 +71,26 @@ function createRegistryServer(npmArchivePath: string, githubArchivePath: string)
         return Response.json({
           items: [
             {
-              full_name: "acme/release-kit",
-              name: "release-kit",
+              full_name: "acme/release-stash",
+              name: "release-stash",
               description: "github description",
-              html_url: "https://github.com/acme/release-kit",
+              html_url: "https://github.com/acme/release-stash",
               owner: { login: "acme" },
               license: { spdx_id: "Apache-2.0" },
-              topics: ["akm-kit", "release"],
+              topics: ["akm-stash", "release"],
               default_branch: "main",
             },
           ],
         });
       }
 
-      if (pathname === "/repos/acme/release-kit/tarball/main") {
+      if (pathname === "/repos/acme/release-stash/tarball/main") {
         return new Response(Bun.file(githubArchivePath), {
           headers: { "Content-Type": "application/gzip" },
         });
       }
 
-      if (pathname === "/archives/npm-agent-kit.tgz") {
+      if (pathname === "/archives/npm-agent-stash.tgz") {
         return new Response(Bun.file(npmArchivePath), {
           headers: { "Content-Type": "application/gzip" },
         });
@@ -126,31 +126,31 @@ describe("buildRegistryIndex", () => {
     writeFile(
       path.join(npmPackageDir, "package.json"),
       JSON.stringify({
-        name: "agent-kit",
+        name: "agent-stash",
         version: "1.2.3",
         description: "package archive description",
-        keywords: ["akm-kit", "deploy", "review"],
+        keywords: ["akm-stash", "deploy", "review"],
         license: "MIT",
       }),
     );
     writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n");
     writeFile(path.join(npmPackageDir, "skills", "review", "SKILL.md"), "---\ndescription: Review code\n---\n");
-    const npmArchivePath = path.join(fixtureRoot, "npm-agent-kit.tgz");
+    const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
     createTarball(npmPackageDir, npmArchivePath);
 
-    const githubRepoDir = path.join(fixtureRoot, "release-kit-main");
+    const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
     writeFile(
       path.join(githubRepoDir, "package.json"),
       JSON.stringify({
-        name: "release-kit",
+        name: "release-stash",
         version: "0.4.0",
         description: "repo archive description",
-        keywords: ["akm-kit", "release", "automation"],
+        keywords: ["akm-stash", "release", "automation"],
       }),
     );
     writeFile(path.join(githubRepoDir, "agents", "planner.md"), "---\ndescription: Plan releases\n---\n");
     writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
-    const githubArchivePath = path.join(fixtureRoot, "github-release-kit.tgz");
+    const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
     createTarball(githubRepoDir, githubArchivePath);
 
     const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
@@ -160,10 +160,10 @@ describe("buildRegistryIndex", () => {
       `${JSON.stringify(
         [
           {
-            id: "npm:agent-kit",
-            name: "Agent Kit",
+            id: "npm:agent-stash",
+            name: "Agent Stash",
             description: "manual description",
-            ref: "agent-kit",
+            ref: "agent-stash",
             source: "npm",
             tags: ["curated"],
             assets: [{ type: "knowledge", name: "guide", description: "Manual guide" }],
@@ -194,32 +194,32 @@ describe("buildRegistryIndex", () => {
     expect(result.index.version).toBe(2);
     expect(result.counts).toEqual({ manual: 2, npm: 1, github: 1, total: 3 });
 
-    const npmKit = result.index.kits.find((kit) => kit.id === "npm:agent-kit");
-    expect(npmKit).toBeDefined();
-    expect(npmKit?.description).toBe("manual description");
-    expect(npmKit?.curated).toBe(true);
-    expect(npmKit?.assetTypes).toEqual(["knowledge", "script", "skill"]);
-    expect(npmKit?.tags).toEqual(["curated", "deploy", "review"]);
-    expect(npmKit?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
+    const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
+    expect(npmStash).toBeDefined();
+    expect(npmStash?.description).toBe("manual description");
+    expect(npmStash?.curated).toBe(true);
+    expect(npmStash?.assetTypes).toEqual(["knowledge", "script", "skill"]);
+    expect(npmStash?.tags).toEqual(["curated", "deploy", "review"]);
+    expect(npmStash?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
       "knowledge:guide",
       "script:deploy.sh",
       "skill:review",
     ]);
 
-    const githubKit = result.index.kits.find((kit) => kit.id === "github:acme/release-kit");
-    expect(githubKit).toBeDefined();
-    expect(githubKit?.assetTypes).toEqual(["agent", "command"]);
-    expect(githubKit?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
+    const githubStash = result.index.stashes.find((stash) => stash.id === "github:acme/release-stash");
+    expect(githubStash).toBeDefined();
+    expect(githubStash?.assetTypes).toEqual(["agent", "command"]);
+    expect(githubStash?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
       "agent:planner",
       "command:release",
     ]);
-    expect(githubKit?.assets?.every((asset) => typeof asset.estimatedTokens === "number")).toBe(true);
-    expect(githubKit?.latestVersion).toBe("0.4.0");
-    expect(githubKit?.tags).toEqual(["automation", "release"]);
+    expect(githubStash?.assets?.every((asset) => typeof asset.estimatedTokens === "number")).toBe(true);
+    expect(githubStash?.latestVersion).toBe("0.4.0");
+    expect(githubStash?.tags).toEqual(["automation", "release"]);
 
-    const manualOnlyKit = result.index.kits.find((kit) => kit.id === "github:manual/only");
-    expect(manualOnlyKit?.curated).toBe(true);
-    expect(manualOnlyKit?.assetTypes).toEqual(["skill"]);
+    const manualOnlyStash = result.index.stashes.find((stash) => stash.id === "github:manual/only");
+    expect(manualOnlyStash?.curated).toBe(true);
+    expect(manualOnlyStash?.assetTypes).toEqual(["skill"]);
   });
 
   test("respects .stash.json metadata and akm.include when enriching assets", async () => {
@@ -229,7 +229,7 @@ describe("buildRegistryIndex", () => {
     writeFile(
       path.join(npmPackageDir, "package.json"),
       JSON.stringify({
-        name: "agent-kit",
+        name: "agent-stash",
         version: "1.2.3",
         akm: { include: ["skills", "docs"] },
       }),
@@ -251,12 +251,12 @@ describe("buildRegistryIndex", () => {
       }),
     );
     writeFile(path.join(npmPackageDir, "docs", "guide.md"), "# Guide\n");
-    const npmArchivePath = path.join(fixtureRoot, "npm-agent-kit.tgz");
+    const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
     createTarball(npmPackageDir, npmArchivePath);
 
-    const githubRepoDir = path.join(fixtureRoot, "release-kit-main");
+    const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
     writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
-    const githubArchivePath = path.join(fixtureRoot, "github-release-kit.tgz");
+    const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
     createTarball(githubRepoDir, githubArchivePath);
 
     const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
@@ -269,18 +269,18 @@ describe("buildRegistryIndex", () => {
       githubApiBase: serverBase,
     });
 
-    const npmKit = result.index.kits.find((kit) => kit.id === "npm:agent-kit");
-    expect(npmKit?.assetTypes).toEqual(["knowledge", "skill"]);
-    expect(npmKit?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
+    const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
+    expect(npmStash?.assetTypes).toEqual(["knowledge", "skill"]);
+    expect(npmStash?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
       "knowledge:docs/guide",
       "skill:review",
     ]);
 
-    const reviewAsset = npmKit?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
+    const reviewAsset = npmStash?.assets?.find((asset) => asset.type === "skill" && asset.name === "review");
     expect(reviewAsset?.description).toBe("Curated review workflow");
     expect(reviewAsset?.tags).toEqual(["quality", "code-review"]);
     expect(reviewAsset?.estimatedTokens).toBeGreaterThan(0);
-    expect(npmKit?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
+    expect(npmStash?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });
 });
 
@@ -332,14 +332,14 @@ describe("akm registry build-index", () => {
     async () => {
       const fixtureRoot = makeTempDir("akm-registry-build-cli-");
       const npmPackageDir = path.join(fixtureRoot, "package");
-      writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-kit", version: "1.2.3" }));
+      writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-stash", version: "1.2.3" }));
       writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n");
-      const npmArchivePath = path.join(fixtureRoot, "npm-agent-kit.tgz");
+      const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
       createTarball(npmPackageDir, npmArchivePath);
 
-      const githubRepoDir = path.join(fixtureRoot, "release-kit-main");
+      const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
       writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
-      const githubArchivePath = path.join(fixtureRoot, "github-release-kit.tgz");
+      const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
       createTarball(githubRepoDir, githubArchivePath);
 
       const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
@@ -394,10 +394,10 @@ describe("akm registry build-index", () => {
 
       const written = JSON.parse(fs.readFileSync(outPath, "utf8")) as {
         version: number;
-        kits: Array<{ id: string }>;
+        stashes: Array<{ id: string }>;
       };
       expect(written.version).toBe(2);
-      expect(written.kits.map((kit) => kit.id)).toEqual(["npm:agent-kit", "github:acme/release-kit"]);
+      expect(written.stashes.map((stash) => stash.id)).toEqual(["npm:agent-stash", "github:acme/release-stash"]);
     },
     { timeout: 60_000 },
   );

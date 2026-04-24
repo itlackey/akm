@@ -295,7 +295,7 @@ There are two different upgrade paths and both matter.
 
 ### 1. Managed-source upgrades: `akm update`
 
-`akm update` refreshes managed kits, not the `akm` binary itself.
+`akm update` refreshes managed stashes, not the `akm` binary itself.
 
 Automated coverage already exists in:
 

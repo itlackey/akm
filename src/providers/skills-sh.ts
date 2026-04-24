@@ -130,7 +130,7 @@ class SkillsShProvider implements RegistryProvider {
         type: "registry-asset",
         assetType: "skill",
         assetName: entry.name,
-        kit: { id: `skills-sh:${entry.id}`, name: entry.name },
+        stash: { id: `skills-sh:${entry.id}`, name: entry.name },
         registryName,
         action: `akm add github:${ownerRepo}`,
         score: Math.round((entry.installs / maxInstalls) * 1000) / 1000,

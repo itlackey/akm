@@ -130,11 +130,11 @@ Add the directories or packages that contain the agent's assets:
 # Add a local directory
 akm add /path/to/skills
 
-# Add a GitHub kit
+# Add a GitHub stash
 akm add github:owner/repo
 
-# Add an npm kit
-akm add @scope/my-kit
+# Add an npm stash
+akm add @scope/my-stash
 
 # Add the current project's .claude directory (common for Claude Code)
 akm add ./.claude

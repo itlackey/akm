@@ -10,7 +10,7 @@ import "./providers/skills-sh";
 
 // ── Re-exports for backward compatibility ───────────────────────────────────
 
-export type { RegistryIndex, RegistryKitEntry } from "./providers/static-index";
+export type { RegistryIndex, RegistryStashEntry } from "./providers/static-index";
 export type { RegistryAssetSearchHit } from "./registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ export interface RegistrySearchOptions {
   limit?: number;
   /** Override registries. Accepts an array of RegistryConfigEntry objects. */
   registries?: RegistryConfigEntry[];
-  /** When true, also search asset-level metadata within kits. */
+  /** When true, also search asset-level metadata within stashes. */
   includeAssets?: boolean;
 }
 

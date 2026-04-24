@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { akmListSources, akmRemove, akmUpdate } from "../src/installed-kits";
+import { akmListSources, akmRemove, akmUpdate } from "../src/installed-stashes";
 
 const createdTmpDirs: string[] = [];
 
@@ -340,7 +340,7 @@ describe("selectTargets via akmUpdate", () => {
     await expect(akmUpdate({ stashDir })).rejects.toThrow("Either <target> or --all is required.");
   });
 
-  test("--all selects all installed entries (registry kits only)", async () => {
+  test("--all selects all installed entries (registry stashes only)", async () => {
     // Use local directory refs so installRegistryRef works without network.
     const localDir1 = createTmpDir("akm-registry-all-1-");
     const localDir2 = createTmpDir("akm-registry-all-2-");

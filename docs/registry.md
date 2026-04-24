@@ -1,6 +1,6 @@
 # Registry
 
-A registry is a searchable source of kits that `akm` can discover and
+A registry is a searchable source of stashes that `akm` can discover and
 install from. The default registry type is a static JSON index, but akm
 supports pluggable **registry providers** that can connect to different
 ecosystems (e.g. skills.sh).
@@ -13,9 +13,28 @@ akm ships with the official registry pre-configured:
 https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json
 ```
 
-This registry is curated -- entries are reviewed before inclusion. To submit
-a kit, open a pull request against the
-[akm-registry](https://github.com/itlackey/akm-registry) repository.
+The [akm-registry](https://github.com/itlackey/akm-registry) repo publishes
+a static `index.json` (v2 format). It merges three sources:
+
+- npm packages with the `akm-stash` keyword
+- GitHub repos with the `akm-stash` topic
+- `manual-entries.json` for curated additions and overrides
+
+To submit a stash, either tag your repo/package as above (auto-discovery)
+or open a pull request against `manual-entries.json` for a curated entry.
+
+### Official onboarding stash
+
+In addition to the registry, akm has an official onboarding stash —
+[itlackey/akm-stash](https://github.com/itlackey/akm-stash) — that ships
+skills, commands, knowledge, workflows, and a librarian subagent for
+working with akm itself. Install it with:
+
+```bash
+akm add github:itlackey/akm-stash
+akm index
+akm show skill:akm-quickstart
+```
 
 ## Managing Registries
 
@@ -93,8 +112,8 @@ Each registry hit includes:
 | Field | Description |
 | --- | --- |
 | `type` | Always `"registry"` |
-| `name` | Kit display name |
-| `id` | Unique identifier (e.g. `npm:@scope/kit`) |
+| `name` | Stash display name |
+| `id` | Unique identifier (e.g. `npm:@scope/stash`) |
 | `description` | Summary from the registry |
 | `action` | Ready-to-run next step such as `akm add ... -> then search again` |
 | `curated` | Whether the entry was manually reviewed |
@@ -104,7 +123,7 @@ Use `--detail full` to include ranking metadata like `score`.
 ### The `--assets` Flag
 
 When a registry publishes a v2 index (see below), `akm registry search` can
-return individual asset-level hits in addition to kit-level hits. Pass
+return individual asset-level hits in addition to stash-level hits. Pass
 `--assets` to enable this:
 
 ```bash
@@ -112,39 +131,43 @@ akm registry search "code review" --assets
 ```
 
 Asset hits include `assetType`, `assetName`, `description`, and the parent
-`kit` information, so you can install the right kit and immediately know
+`stash` information, so you can install the right stash and immediately know
 which asset to use.
 
 ## Discovery Filtering
 
-Not every npm package or GitHub repo is an akm kit. To keep results
+Not every npm package or GitHub repo is an akm stash. To keep results
 relevant, the registry enforces tag-based filtering:
 
-- **npm** -- Only packages whose `keywords` array includes `"akm-kit"` appear in search results.
-- **GitHub** -- Only repositories with the topic `akm-kit` appear in search results.
+- **npm** -- Only packages whose `keywords` array includes `"akm-stash"` appear in search results.
+- **GitHub** -- Only repositories with the topic `akm-stash` appear in search results.
 
-If you are publishing a kit, add these tags so it can be discovered:
+> Legacy keywords/topics `akm-stash` and `agentikit` are still honored by the
+> official registry's discovery merge, but new publishers should prefer
+> `akm-stash`.
+
+If you are publishing a stash, add these tags so it can be discovered:
 
 ```jsonc
 // package.json
 {
-  "keywords": ["akm", "your-other-tags"]
+  "keywords": ["akm-stash", "your-other-tags"]
 }
 ```
 
 For GitHub repos, add topics via the repository settings page or the
-`gh repo edit --add-topic` command.
+`gh repo edit --add-topic akm-stash` command.
 
 ## Installing
 
-Install a kit with `akm add` using any supported ref format:
+Install a stash with `akm add` using any supported ref format:
 
 ```bash
 # npm package
-akm add npm:@scope/my-kit
+akm add npm:@scope/my-stash
 
 # npm package (shorthand)
-akm add @scope/my-kit
+akm add @scope/my-stash
 
 # GitHub repo
 akm add github:owner/repo
@@ -156,17 +179,17 @@ akm add github:owner/repo#v1.2.0
 akm add https://github.com/owner/repo
 
 # Any git repo (GitLab, Bitbucket, Gitea, self-hosted, etc.)
-akm add git+https://gitlab.com/org/kit
-akm add git+https://gitlab.com/org/kit#v1.0
-akm add git+ssh://git@gitlab.com/org/kit.git
+akm add git+https://gitlab.com/org/stash
+akm add git+https://gitlab.com/org/stash#v1.0
+akm add git+ssh://git@gitlab.com/org/stash.git
 
 # Non-GitHub https URLs are automatically treated as git repos
-akm add https://gitlab.com/org/my-kit
+akm add https://gitlab.com/org/my-stash
 
 # Local directory (path or file: URI)
-akm add ./path/to/local/kit
-akm add file:../relative/kit
-akm add file:///absolute/path/to/kit
+akm add ./path/to/local/stash
+akm add file:../relative/stash
+akm add file:///absolute/path/to/stash
 ```
 
 ### What Happens During Install
@@ -179,17 +202,17 @@ akm add file:///absolute/path/to/kit
 3. **Download and extract** -- The tarball is downloaded (or repo cloned) to a
    cache directory under `~/.cache/akm/registry/` and extracted securely
    (path traversal is rejected).
-4. **Security audit** -- The extracted kit is audited before install completes.
+4. **Security audit** -- The extracted stash is audited before install completes.
    akm scans source files, metadata, prompts, and install scripts for suspicious
    patterns such as prompt-injection phrases, remote shell pipes, and risky
    lifecycle hooks. Critical findings block the install by default.
 5. **Stash root detection** -- The extracted contents are scanned for asset
    type directories (`scripts/`, `skills/`, etc.) or a `.stash/` marker. If the
-   kit nests its stash under an `opencode/` subdirectory, that is detected
+   stash nests its stash under an `opencode/` subdirectory, that is detected
    automatically.
 6. **Selective include** -- If the package's `package.json` contains an
    `akm.include` array, only the listed paths are copied into the
-   install cache. This lets a kit ship a subset of its repo as the stash.
+   install cache. This lets a stash ship a subset of its repo as the stash.
 7. **Config registration** -- The installed entry is saved to
    `config.installed` with its id, source, ref, resolved version,
    cache path, and install timestamp.
@@ -198,7 +221,7 @@ akm add file:///absolute/path/to/kit
 
 ### Selective Include
 
-A kit can declare which paths to include via `package.json`:
+A stash can declare which paths to include via `package.json`:
 
 ```jsonc
 {
@@ -243,18 +266,18 @@ akm config set security.installAudit.blockUnlistedRegistries true
 # List all managed sources with their status
 akm list
 
-# Update a specific kit to its latest version
-akm update npm:@scope/my-kit
+# Update a specific stash to its latest version
+akm update npm:@scope/my-stash
 
 # Update all managed sources
 akm update --all
 
 # Force fresh download even if version is unchanged
-akm update npm:@scope/my-kit --force
+akm update npm:@scope/my-stash --force
 akm update --all --force
 
-# Remove a kit
-akm remove npm:@scope/my-kit
+# Remove a stash
+akm remove npm:@scope/my-stash
 ```
 
 ### Cloning Assets
@@ -263,10 +286,10 @@ Managed sources are cache-managed and may be overwritten by `akm update`.
 To edit an asset from a managed source, clone it into the working stash:
 
 ```bash
-akm clone "npm:@scope/my-kit//script:deploy.sh"
+akm clone "npm:@scope/my-stash//script:deploy.sh"
 
 # Clone with a new name
-akm clone "npm:@scope/my-kit//script:deploy.sh" --name my-deploy.sh
+akm clone "npm:@scope/my-stash//script:deploy.sh" --name my-deploy.sh
 ```
 
 The cloned asset lives in the working stash and takes priority over the
@@ -276,7 +299,7 @@ Use `--dest` to clone to a custom directory instead of the working stash:
 
 ```bash
 # Deploy a script directly into a project's .claude directory
-akm clone "npm:@scope/my-kit//script:deploy.sh" --dest ./project/.claude
+akm clone "npm:@scope/my-stash//script:deploy.sh" --dest ./project/.claude
 ```
 
 The type subdirectory (`scripts/`, `skills/`, etc.) is appended automatically,
@@ -447,12 +470,12 @@ Minimal example:
 {
   "version": 2,
   "updatedAt": "2026-03-12T00:00:00Z",
-  "kits": [
+  "stashes": [
     {
-      "id": "github:your-org/deploy-kit",
-      "name": "deploy-kit",
+      "id": "github:your-org/deploy-stash",
+      "name": "deploy-stash",
       "description": "Deployment scripts and skills",
-      "ref": "your-org/deploy-kit",
+      "ref": "your-org/deploy-stash",
       "source": "github",
       "tags": ["deploy", "infrastructure"],
       "assetTypes": ["script", "skill", "memory"]
@@ -474,26 +497,26 @@ akm registry build-index --out dist/index.json
 ```
 
 This scans the current directory for asset type directories and produces a v2
-index with kit and asset entries. You can also use the tooling in the
+index with stash and asset entries. You can also use the tooling in the
 [akm-registry](https://github.com/itlackey/akm-registry) repository used by the
 official registry.
 
 ## Registry Index v2
 
 Version 2 of the registry index schema adds an optional `assets` array to
-each kit entry. This enables asset-level search without installing the kit
+each stash entry. This enables asset-level search without installing the stash
 first.
 
 ```json
 {
   "version": 2,
   "updatedAt": "2026-03-12T00:00:00Z",
-  "kits": [
+  "stashes": [
     {
-      "id": "npm:@scope/my-kit",
-      "name": "my-kit",
+      "id": "npm:@scope/my-stash",
+      "name": "my-stash",
       "description": "Scripts and skills for deployment",
-      "ref": "@scope/my-kit",
+      "ref": "@scope/my-stash",
       "source": "npm",
       "tags": ["deploy"],
       "assetTypes": ["script", "skill", "memory"],
@@ -520,11 +543,11 @@ v1 indexes (without `assets`) remain fully supported. akm treats the
 
 ## Cache Layout
 
-Installed kits are cached under `~/.cache/akm/registry/`:
+Installed stashes are cached under `~/.cache/akm/registry/`:
 
 ```
 ~/.cache/akm/registry/
-  npm-@scope-my-kit/
+  npm-@scope-my-stash/
     <timestamp>-<random>/
       artifact.tar.gz     # Downloaded archive
       extracted/           # Extracted contents
@@ -532,4 +555,4 @@ Installed kits are cached under `~/.cache/akm/registry/`:
 ```
 
 Each install creates a new timestamped directory. Previous versions are
-cleaned up automatically when a kit is updated.
+cleaned up automatically when a stash is updated.

@@ -164,7 +164,7 @@ For one-off installs you trust after manual review, use the CLI flag instead of
 persisting a waiver:
 
 ```sh
-akm add github:owner/private-kit --trust
+akm add github:owner/private-stash --trust
 ```
 
 ## Using Ollama

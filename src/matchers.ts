@@ -59,7 +59,7 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
  * directory segment from the stash root matches a known type name.
  *
  * The first matching type-like ancestor wins. This preserves intuitive
- * behavior for nested kit layouts such as `agent-stash/agents/blog/foo.md`
+ * behavior for nested stash layouts such as `agent-stash/agents/blog/foo.md`
  * while still honoring earlier type roots like `commands/agents/foo.md`.
  */
 export function directoryMatcher(ctx: FileContext): MatchResult | null {

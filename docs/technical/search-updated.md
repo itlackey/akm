@@ -36,7 +36,7 @@ The local indexed path includes more than the primary working stash:
 
 - primary stash
 - configured filesystem stashes
-- installed kit stash roots
+- installed stash stash roots
 - cache-backed git mirrors
 - cache-backed website mirrors
 

@@ -14,14 +14,14 @@ import { akmIndex } from "./indexer";
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
-import type { InstalledKitEntry } from "./registry-types";
+import type { InstalledStashEntry } from "./registry-types";
 import { removeStash } from "./stash-source-manage";
 import type {
-  KitInstallStatus,
   RemoveResponse,
   SourceEntry,
   SourceKind,
   SourceListResponse,
+  StashInstallStatus,
   UpdateResponse,
 } from "./stash-types";
 
@@ -81,7 +81,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   const target = input.target.trim();
   if (!target)
     throw new UsageError(
-      "Target is required. Provide the source id, ref, path, URL, or name (e.g. `akm remove npm:@scope/kit` or `akm remove ~/my-stash`).",
+      "Target is required. Provide the source id, ref, path, URL, or name (e.g. `akm remove npm:@scope/stash` or `akm remove ~/my-stash`).",
     );
 
   const stashDir = input.stashDir ?? resolveStashDir();
@@ -232,7 +232,11 @@ export async function akmUpdate(input?: {
   };
 }
 
-function selectTargets(installed: InstalledKitEntry[], target: string | undefined, all: boolean): InstalledKitEntry[] {
+function selectTargets(
+  installed: InstalledStashEntry[],
+  target: string | undefined,
+  all: boolean,
+): InstalledStashEntry[] {
   if (all && target) {
     throw new UsageError("Specify either <target> or --all, not both.");
   }
@@ -268,7 +272,7 @@ function selectTargets(installed: InstalledKitEntry[], target: string | undefine
   throw new NotFoundError(`No matching source for target: ${target}`);
 }
 
-function tryResolveInstalledTarget(installed: InstalledKitEntry[], target: string): InstalledKitEntry | undefined {
+function tryResolveInstalledTarget(installed: InstalledStashEntry[], target: string): InstalledStashEntry | undefined {
   const byId = installed.find((entry) => entry.id === target);
   if (byId) return byId;
 
@@ -289,13 +293,13 @@ function tryResolveInstalledTarget(installed: InstalledKitEntry[], target: strin
   return undefined;
 }
 
-function toInstalledEntry(status: KitInstallStatus): InstalledKitEntry {
-  // KitInstallStatus extends InstalledKitEntry; omit transient install-only fields.
+function toInstalledEntry(status: StashInstallStatus): InstalledStashEntry {
+  // StashInstallStatus extends InstalledStashEntry; omit transient install-only fields.
   const { extractedDir: _extractedDir, audit: _audit, ...base } = status;
   return base;
 }
 
-function toInstallStatus(status: KitInstallStatus): KitInstallStatus {
+function toInstallStatus(status: StashInstallStatus): StashInstallStatus {
   return { ...status };
 }
 
@@ -307,7 +311,7 @@ function cleanupDirectoryBestEffort(target: string): void {
   }
 }
 
-function shouldCleanupCache(entry: InstalledKitEntry): boolean {
+function shouldCleanupCache(entry: InstalledStashEntry): boolean {
   return entry.source !== "local";
 }
 

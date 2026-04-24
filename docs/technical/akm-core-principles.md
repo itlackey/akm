@@ -5,7 +5,7 @@ it with minimal context overhead.
 
 ## What akm Does
 
-An agent has a task. Across local stashes, installed kits, mirrored sources, and
+An agent has a task. Across local stashes, installed stashes, mirrored sources, and
 registries, akm helps it discover assets such as scripts, skills, commands,
 agents, knowledge docs, workflows, vaults, and wiki pages.
 
@@ -57,10 +57,10 @@ filesystem is optional depth
 
 ### 5. Registries, stashes, and mirrored sources stay conceptually separate
 
-- registries are catalogs of installable kits
+- registries are catalogs of installable stashes
 - stashes are locally searchable directories
 - mirrored git/website sources become local searchable stash roots
-- installed kits behave like additional stash roots once materialized
+- installed stashes behave like additional stash roots once materialized
 
 ### 6. Refs are plumbing
 

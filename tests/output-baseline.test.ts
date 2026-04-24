@@ -218,12 +218,12 @@ describe("output baseline", () => {
       JSON.stringify({
         version: 1,
         updatedAt: "2026-03-11T00:00:00Z",
-        kits: [
+        stashes: [
           {
-            id: "npm:@scope/deploy-kit",
-            name: "deploy-kit",
-            description: "Registry deploy kit",
-            ref: "@scope/deploy-kit",
+            id: "npm:@scope/deploy-stash",
+            name: "deploy-stash",
+            description: "Registry deploy stash",
+            ref: "@scope/deploy-stash",
             source: "npm",
             tags: ["deploy"],
           },
@@ -259,7 +259,7 @@ describe("output baseline", () => {
       };
       // Brief local hits have type; registry hits are in registryHits
       const localHit = json.hits.find((hit) => hit.type === "script");
-      const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-kit");
+      const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
       expect(localHit?.action).toBeTruthy();
       expect(registryHit?.action).toBeTruthy();

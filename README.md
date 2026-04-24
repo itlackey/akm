@@ -44,7 +44,7 @@ Preview release notes and migration guidance with `akm help migrate <version>`.
 ```sh
 akm setup                         # Guided setup: configure, initialize, and index
 akm add ~/.claude/skills          # Add your existing local skills
-akm add github:owner/repo         # Add a kit from GitHub
+akm add github:owner/repo         # Add a stash from GitHub
 akm search "deploy"               # Find assets
 akm show script:deploy.sh         # View details and run command
 akm remember "Deployment needs VPN access"
@@ -115,7 +115,7 @@ provider caches queries for 15 minutes with a 24-hour stale fallback.
 
 ### Registries and Private Registry Support
 
-Registries are indexes of available kits. The official
+Registries are indexes of available stashes. The official
 [akm-registry](https://github.com/itlackey/akm-registry) is pre-configured.
 
 ```sh
@@ -128,7 +128,7 @@ akm show knowledge:my-doc                                                # Show 
 ```
 
 Private access is supported through:
-- **GitHub tokens** -- Set `GITHUB_TOKEN` to access private GitHub repos when installing kits
+- **GitHub tokens** -- Set `GITHUB_TOKEN` to access private GitHub repos when installing stashes
 - **Provider options** -- `--options` flag accepts JSON for provider-specific configuration (API keys, custom headers)
 - **Pluggable providers** -- Built-in registry providers include `static-index` and `skills-sh`; source providers include `filesystem` and `openviking`; custom providers can implement their own authentication
 
@@ -140,10 +140,10 @@ the index format.
 ```sh
 akm add ~/.claude/skills                    # Local directory
 akm add --type wiki --name docs ~/team/wiki # Register an existing wiki source
-akm add @scope/my-kit                       # npm
+akm add @scope/my-stash                       # npm
 akm add github:owner/repo#v1.2.3            # GitHub with tag
-akm add github:owner/private-kit --trust    # One-off trusted install
-akm add git+https://gitlab.com/org/kit      # Any git repo
+akm add github:owner/private-stash --trust    # One-off trusted install
+akm add git+https://gitlab.com/org/stash      # Any git repo
 akm add https://docs.example.com --name docs  # Website as knowledge
 ```
 
@@ -162,14 +162,27 @@ akm add https://www.agentic-patterns.com/ --name agent-patterns
 akm add https://docs.example.com --name docs --max-pages 100 --max-depth 5
 ```
 
-### Publish Your Own Kit
+### Publish Your Own Stash
 
 1. Organize your assets into a directory
-2. Add `"akm"` to `keywords` in `package.json` or the `akm` topic to your GitHub repo
+2. Add `"akm-stash"` to `keywords` in `package.json` or the `akm-stash` topic to your GitHub repo
 3. Optionally add `akm.include` in `package.json` to control what gets installed
 4. Publish to npm or push to GitHub
 
-See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
+See the [Stash Maker's Guide](docs/stash-makers.md) for a full walkthrough.
+
+### Official Onboarding Stash
+
+Want a ready-made set of akm assets? Install the official onboarding stash —
+[itlackey/akm-stash](https://github.com/itlackey/akm-stash) — which ships
+skills, commands, knowledge, workflows, and a librarian subagent for
+working with akm:
+
+```sh
+akm add github:itlackey/akm-stash
+akm index
+akm show skill:akm-quickstart
+```
 
 ## Documentation
 
@@ -179,7 +192,7 @@ See the [Kit Maker's Guide](docs/kit-makers.md) for a full walkthrough.
 | [CLI Reference](docs/cli.md) | All commands and flags |
 | [Configuration](docs/configuration.md) | Settings, providers, and Ollama setup |
 | [Concepts](docs/concepts.md) | Sources, registries, asset types |
-| [Kit Maker's Guide](docs/kit-makers.md) | Build and share assets |
+| [Stash Maker's Guide](docs/stash-makers.md) | Build and share assets |
 | [Registry](docs/registry.md) | Registries, search, and the v2 index format |
 | [Blog Posts](docs/posts/) | Articles and posts about akm |
 

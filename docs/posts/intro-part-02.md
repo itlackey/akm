@@ -13,7 +13,7 @@ published: true
 date: '2026-03-16T17:26:29Z'
 ---
 
-In the [last post](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about the problem: your agent's skill collection is growing faster than your ability to manage it. Skills scattered across directories, no search, no sharing, no sanity. I introduced [Agent-i-Kit](https://github.com/itlackey/akm) as the fix — a CLI called `akm` that gives your agent a searchable, indexed stash of assets.
+In the [last post](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck), I talked about the problem: your agent's skill collection is growing faster than your ability to manage it. Skills scattered across directories, no search, no sharing, no sanity. I introduced [Agent-i-Stash](https://github.com/itlackey/akm) as the fix — a CLI called `akm` that gives your agent a searchable, indexed stash of assets.
 
 But here's what I glossed over: most of you aren't starting from zero. You've already got skills, commands, agents, and rules spread across multiple platforms. Claude Code has `~/.claude/skills/`. OpenCode has `.opencode/`. Cursor has `.cursor/rules/`. Codex has its `agents.md`. You might be using two or three of these tools in the same week, building up assets in each one, and none of them can see each other.
 
@@ -78,14 +78,14 @@ For assets that live in a git repo or an npm package, `akm add` handles installa
 # A team repo full of shared skills
 akm add github:your-org/team-agent-toolkit
 
-# An npm kit
+# An npm stash
 akm add @scope/deploy-skills
 
 # A local git directory
 akm add ./path/to/my-opencode-skills
 ```
 
-Every `akm add` registers the kit, caches the assets, and triggers an incremental index build.
+Every `akm add` registers the stash, caches the assets, and triggers an incremental index build.
 
 ## Build the Index
 
@@ -132,13 +132,13 @@ akm search "code review" --source both
 Now you're searching your local stash and community registries in one shot. Found something useful? Install it:
 
 ```bash
-akm add github:someone/great-kit
+akm add github:someone/great-stash
 ```
 
-Or if you just want one asset from a kit without installing the whole thing:
+Or if you just want one asset from a stash without installing the whole thing:
 
 ```bash
-akm clone "github:someone/great-kit//skill:code-review" --dest ./.claude
+akm clone "github:someone/great-stash//skill:code-review" --dest ./.claude
 ```
 
 That clones just the skill directly into your project's Claude Code skills directory. The type subdirectory (`skills/`, `scripts/`, etc.) gets appended automatically.
@@ -207,3 +207,8 @@ The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). If yo
 ---
 
 *__Update (March 2026):__ This post was updated to reflect akm's current CLI. The unified `akm add` command replaces the earlier `akm stash add`, `akm setup` replaces `akm init`, and `akm list` replaces `akm stash list`. Sources (formerly "stash sources") are now managed through a single `akm add` / `akm remove` interface. If you're following along with an older version, `akm upgrade` will get you current.*
+
+
+---
+
+> **Note (2026-04-23):** This post has been updated to align with akm 0.6.0 terminology. Earlier wording referred to a *kit* and the *Kit Maker's Guide*; those terms have been renamed to *stash* and *Stash Maker's Guide* throughout. The pre-rename text is preserved in this repository's git history.

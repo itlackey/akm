@@ -11,7 +11,7 @@ import { warn } from "./warn";
 
 export interface SearchSource {
   path: string;
-  /** For installed sources, the installed kit id */
+  /** For installed sources, the installed stash id */
   registryId?: string;
   /** If set, all .md files in this source are indexed as wiki pages under this wiki name */
   wikiName?: string;
@@ -23,10 +23,10 @@ export interface SearchSource {
  * Build the ordered list of stash sources:
  *   1. Primary stash dir (user's own, destination for clone)
  *   2. Additional stashes (filesystem and remote providers)
- *   3. Installed kit paths (cache-managed, from registry)
+ *   3. Installed stash paths (cache-managed, from registry)
  *
  * The first entry is always the primary stash. Additional entries come
- * from `stashes` config and `installed` kit entries.
+ * from `stashes` config and `installed` stash entries.
  */
 export function resolveStashSources(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir();
@@ -92,7 +92,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
     }
   }
 
-  // Installed kits (registry and local)
+  // Installed stashes (registry and local)
   for (const entry of config.installed ?? []) {
     addSource(entry.stashRoot, entry.id, entry.wikiName);
   }

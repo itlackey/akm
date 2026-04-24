@@ -68,7 +68,7 @@ If your team is distributed, a Git repo is the natural choice. You already use G
 ```sh
 # Team lead creates the repo
 # github.com/your-org/team-agent-skills
-# Standard kit structure: skills/, commands/, knowledge/
+# Standard stash structure: skills/, commands/, knowledge/
 
 # Each developer adds it
 akm add github:your-org/team-agent-skills
@@ -177,7 +177,7 @@ The agent doesn't know or care whether a skill came from the team source, a pers
 If you're a team lead looking to set up shared skills:
 
 1. Pick your approach — shared filesystem for co-located teams, Git repo for distributed teams, registry for large organizations
-2. Create the shared source with a standard [kit structure](https://github.com/itlackey/akm/blob/main/docs/getting-started.md)
+2. Create the shared source with a standard [stash structure](https://github.com/itlackey/akm/blob/main/docs/getting-started.md)
 3. Have each developer run `akm add` to register the source
 4. Start with 3-5 high-value skills that everyone uses (deploy, test, review, etc.)
 5. Iterate from there
@@ -185,3 +185,8 @@ If you're a team lead looking to set up shared skills:
 The infrastructure is minimal. The payoff is immediate.
 
 Give it a shot and let me know how it holds up. The repo's at [github.com/itlackey/akm](https://github.com/itlackey/akm), and the [Getting Started guide](https://github.com/itlackey/akm/blob/main/docs/getting-started.md) will get you wired up in a few minutes.
+
+
+---
+
+> **Note (2026-04-23):** This post has been updated to align with akm 0.6.0 terminology. Earlier wording referred to a *kit* and the *Kit Maker's Guide*; those terms have been renamed to *stash* and *Stash Maker's Guide* throughout. The pre-rename text is preserved in this repository's git history.

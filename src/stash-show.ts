@@ -223,7 +223,7 @@ export async function showLocal(input: {
     const installCmd = `akm add ${parsed.origin}`;
     throw new NotFoundError(
       `Stash asset not found for ref: ${displayType}:${parsed.name}. ` +
-        `Kit "${parsed.origin}" is not installed. Run: ${installCmd}`,
+        `Stash "${parsed.origin}" is not installed. Run: ${installCmd}`,
     );
   }
 

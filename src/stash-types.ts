@@ -1,5 +1,5 @@
 import type { InstallAuditReport } from "./install-audit";
-import type { InstalledKitEntry, KitSource } from "./registry-types";
+import type { InstalledStashEntry, StashSource } from "./registry-types";
 
 export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
@@ -95,10 +95,10 @@ export interface AddResponse {
   schemaVersion: number;
   stashDir: string;
   ref: string;
-  /** Present for registry kit installs (npm, github, git) */
+  /** Present for registry stash installs (npm, github, git) */
   installed?: {
     id: string;
-    source: KitSource;
+    source: StashSource;
     ref: string;
     artifactUrl: string;
     resolvedVersion?: string;
@@ -138,7 +138,7 @@ export interface AddResponse {
   };
 }
 
-export interface KitInstallStatus extends InstalledKitEntry {
+export interface StashInstallStatus extends InstalledStashEntry {
   extractedDir: string;
   audit?: InstallAuditReport;
 }
@@ -171,7 +171,7 @@ export interface RemoveResponse {
   target: string;
   removed: {
     id: string;
-    source: KitSource | string;
+    source: StashSource | string;
     ref: string;
     cacheDir: string;
     stashRoot: string;
@@ -190,14 +190,14 @@ export interface RemoveResponse {
 
 export interface UpdateResultItem {
   id: string;
-  source: KitSource;
+  source: StashSource;
   ref: string;
   previous: {
     resolvedVersion?: string;
     resolvedRevision?: string;
     cacheDir: string;
   };
-  installed: KitInstallStatus;
+  installed: StashInstallStatus;
   changed: {
     version: boolean;
     revision: boolean;

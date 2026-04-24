@@ -32,7 +32,7 @@ Current source handling has two layers:
 1. **Indexed local sources** resolved by `resolveStashSources()`:
    - primary working stash
    - extra filesystem stashes
-   - installed kit stash roots
+   - installed stash stash roots
    - cache-backed git sources
    - cache-backed website snapshots
 2. **Remote show/search providers**:
@@ -45,7 +45,7 @@ Important implementation details:
   for git-backed mirrors
 - Website sources are mirrored into cache and then indexed locally like any
   other stash source
-- Filesystem, git mirrors, website mirrors, and installed kits all compete
+- Filesystem, git mirrors, website mirrors, and installed stashes all compete
   through the same local indexing pipeline once resolved to directories
 
 ---

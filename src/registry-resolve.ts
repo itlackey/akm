@@ -522,7 +522,7 @@ function fileUriToPath(ref: string): string {
 /**
  * Build a human-readable local ID from an absolute path.
  *   /home/user/akm/skills     → ~/akm/skills
- *   /tmp/my-kit               → /tmp/my-kit
+ *   /tmp/my-stash               → /tmp/my-stash
  */
 function toReadableLocalId(absolutePath: string): string {
   const home = os.homedir();

@@ -5,11 +5,20 @@ on:
     branches: [main, "fix/*"]
     paths-ignore:
       - "docs/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "schemas/**"
+      - "CLAUDE.md"
+      - "LICENSE"
   pull_request:
     branches: [main]
     paths-ignore:
       - "docs/**"
-
+      - "README.md"
+      - "CHANGELOG.md"
+      - "schemas/**"
+      - "CLAUDE.md"
+      - "LICENSE"
 jobs:
   check:
     runs-on: ubuntu-latest

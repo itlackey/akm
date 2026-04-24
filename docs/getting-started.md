@@ -115,8 +115,8 @@ Add any source — a local directory, a GitHub repo, an npm package, or a websit
 
 ```sh
 akm add ~/.claude/skills              # Your Claude Code skills
-akm add github:owner/repo             # A team's shared kit
-akm add @scope/my-kit                 # An npm package
+akm add github:owner/repo             # A team's shared stash
+akm add @scope/my-stash                 # An npm package
 akm add https://docs.example.com --name docs  # A documentation site
 ```
 
@@ -138,4 +138,4 @@ ref formats.
 - [Concepts](concepts.md) -- Asset types, classification, and the stash
 - [CLI Reference](cli.md) -- All commands and flags
 - [Ref Format](technical/ref.md) -- How asset references work
-- [Kit Maker's Guide](kit-makers.md) -- Build and share your own kits
+- [Stash Maker's Guide](stash-makers.md) -- Build and share your own stashes

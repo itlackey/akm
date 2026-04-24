@@ -31,8 +31,8 @@ describe("makeAssetRef", () => {
   });
 
   test("with github shorthand origin", () => {
-    expect(makeAssetRef("skill", "code-review", "itlackey/dimm-city-kit")).toBe(
-      "itlackey/dimm-city-kit//skill:code-review",
+    expect(makeAssetRef("skill", "code-review", "itlackey/dimm-city-stash")).toBe(
+      "itlackey/dimm-city-stash//skill:code-review",
     );
   });
 
@@ -111,8 +111,8 @@ describe("parseAssetRef", () => {
   });
 
   test("github shorthand origin", () => {
-    const ref = parseAssetRef("itlackey/dimm-city-kit//skill:code-review");
-    expect(ref.origin).toBe("itlackey/dimm-city-kit");
+    const ref = parseAssetRef("itlackey/dimm-city-stash//skill:code-review");
+    expect(ref.origin).toBe("itlackey/dimm-city-stash");
     expect(ref.type).toBe("skill");
     expect(ref.name).toBe("code-review");
   });

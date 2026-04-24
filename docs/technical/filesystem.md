@@ -115,6 +115,6 @@ Some configured stash sources are mirrored into cache before indexing:
 
 - git-backed stash sources
 - website sources
-- installed kits from registries
+- installed stashes from registries
 
 Once mirrored, they are indexed like local stash directories.

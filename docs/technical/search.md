@@ -197,7 +197,7 @@ places provider noise below 0.28.
 
 ## Substring Fallback
 
-When no index is available, search falls back to scanning stash and kit
+When no index is available, search falls back to scanning stash and stash
 directories and filtering by substring match. This ensures search always works,
 even before `akm index` has been run.
 

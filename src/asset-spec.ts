@@ -195,7 +195,7 @@ export function deriveCanonicalAssetNameFromStashRoot(
   // When the first segment matches the canonical type dir (e.g. "agents"),
   // use it as the type root so canonical names are relative to it.
   // Otherwise fall back to stashRoot — this preserves the full relative path
-  // as the canonical name, which is correct for installed kits that live
+  // as the canonical name, which is correct for installed stashes that live
   // under custom directories (e.g. "tools/agents/svelte-file-editor").
   const typeRoot = firstSegment === TYPE_DIRS[assetType] ? path.join(stashRoot, firstSegment) : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);

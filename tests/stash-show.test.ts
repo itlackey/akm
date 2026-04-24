@@ -102,7 +102,7 @@ describe("akmShow installed ref", () => {
     await expect(akmShow({ ref: "npm:@other/missing-pkg//script:missing.sh" })).rejects.toThrow(/akm add/);
   });
 
-  test("resolves installed-kit style nested agent refs", async () => {
+  test("resolves installed-stash style nested agent refs", async () => {
     const installedStashRoot = createTmpDir("akm-show-installed-agent-");
     writeFile(
       path.join(installedStashRoot, "tools", "agents", "svelte-file-editor.md"),
@@ -133,7 +133,7 @@ describe("akmShow installed ref", () => {
     expect(result.prompt).toContain("Use Svelte tools.");
   });
 
-  test("resolves installed-kit style nested skill refs", async () => {
+  test("resolves installed-stash style nested skill refs", async () => {
     const installedStashRoot = createTmpDir("akm-show-installed-skill-");
     writeFile(
       path.join(installedStashRoot, "tools", "skills", "svelte-code-writer", "SKILL.md"),

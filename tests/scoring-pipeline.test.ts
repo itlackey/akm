@@ -713,7 +713,7 @@ describe("Cross-stash deduplication at index time", () => {
     const secondStash = tmpStash();
 
     // Same file with same content/metadata in both stashes, but under
-    // different directory prefixes (mimics primary stash + installed kit)
+    // different directory prefixes (mimics primary stash + installed stash)
     const script = "#!/bin/bash\necho github platform adapter\n";
     const metadata = JSON.stringify({
       entries: [

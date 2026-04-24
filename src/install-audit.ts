@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings } from "./common";
 import type { AkmConfig, InstallAuditAllowedFinding } from "./config";
-import type { KitSource } from "./registry-types";
+import type { StashSource } from "./registry-types";
 
 export type InstallAuditSeverity = "low" | "moderate" | "high" | "critical";
 export type InstallAuditCategory = "prompt-injection" | "install-script" | "malicious-code" | "vendored-dependency";
@@ -184,7 +184,7 @@ export function enforceRegistryInstallPolicy(
 
 export function auditInstallCandidate(input: {
   rootDir: string;
-  source: KitSource;
+  source: StashSource;
   ref: string;
   registryLabels: string[];
   config: AkmConfig | undefined;
@@ -259,7 +259,7 @@ export function formatInstallAuditSummary(report: InstallAuditReport): string {
 }
 
 export function deriveRegistryLabels(input: {
-  source: KitSource;
+  source: StashSource;
   ref: string;
   artifactUrl?: string;
   gitUrl?: string;

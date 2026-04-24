@@ -14,7 +14,7 @@ import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { formatInstallAuditSummary } from "./install-audit";
-import { akmListSources, akmRemove, akmUpdate } from "./installed-kits";
+import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
 import { renderMigrationHelp } from "./migration-help";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
@@ -213,7 +213,7 @@ function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: Deta
   const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
   const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
 
-  // Shape kit hits as registry type
+  // Shape stash hits as registry type
   const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
 
   // Shape asset hits by detail level
@@ -236,7 +236,7 @@ function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Recor
   if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
   if (detail === "normal") {
     return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "kit", "action", "estimatedTokens"]),
+      pickFields(hit, ["assetName", "assetType", "description", "stash", "action", "estimatedTokens"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }
@@ -1143,7 +1143,7 @@ async function searchForCuration(input: {
  * - stash-*          : Asset operations (search, show, add, clone)
  * - stash-provider-* : Runtime data source providers (filesystem, openviking)
  * - registry-*       : Discovery from remote registries (npm, GitHub)
- * - installed-kits   : Unified source operations (list, remove, update)
+ * - installed-stashes   : Unified source operations (list, remove, update)
  */
 
 const setupCommand = defineCommand({
@@ -1743,7 +1743,7 @@ const cloneCommand = defineCommand({
 });
 
 const registryCommand = defineCommand({
-  meta: { name: "registry", description: "Manage kit registries" },
+  meta: { name: "registry", description: "Manage stash registries" },
   subCommands: {
     list: defineCommand({
       meta: { name: "list", description: "List configured registries" },
@@ -1817,7 +1817,7 @@ const registryCommand = defineCommand({
       },
     }),
     search: defineCommand({
-      meta: { name: "search", description: "Search enabled registries for kits" },
+      meta: { name: "search", description: "Search enabled registries for stashes" },
       args: {
         query: { type: "positional", description: "Search query", required: true },
         limit: { type: "string", description: "Maximum number of results" },
@@ -3390,9 +3390,9 @@ akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 
 \`\`\`sh
 akm add <ref>                                 # Add a source
-akm add @scope/kit                            # From npm (managed)
+akm add @scope/stash                            # From npm (managed)
 akm add owner/repo                            # From GitHub (managed)
-akm add ./path/to/local/kit                   # Local directory
+akm add ./path/to/local/stash                   # Local directory
 akm add git@github.com:org/repo.git --provider git --name my-skills --writable
 akm enable skills.sh                          # Enable the skills.sh registry
 akm disable skills.sh                         # Disable the skills.sh registry

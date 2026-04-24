@@ -21,10 +21,10 @@ const CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 export interface RegistryIndex {
   version: number;
   updatedAt: string;
-  kits: RegistryKitEntry[];
+  stashes: RegistryStashEntry[];
 }
 
-export interface RegistryKitEntry {
+export interface RegistryStashEntry {
   id: string;
   name: string;
   description?: string;
@@ -53,14 +53,14 @@ class StaticIndexProvider implements RegistryProvider {
 
   async search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult> {
     const warnings: string[] = [];
-    const allKits: Array<{ kit: RegistryKitEntry; registryName?: string }> = [];
+    const allKits: Array<{ stash: RegistryStashEntry; registryName?: string }> = [];
 
     try {
       const index = await loadIndex(this.config);
       if (index) {
         const regName = this.config.name;
-        for (const kit of index.kits) {
-          allKits.push({ kit, registryName: regName });
+        for (const stash of index.stashes) {
+          allKits.push({ stash, registryName: regName });
         }
       }
     } catch (err) {
@@ -169,19 +169,19 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
 
   if (typeof obj.version !== "number" || (obj.version !== 1 && obj.version !== 2)) return null;
   if (typeof obj.updatedAt !== "string") return null;
-  if (!Array.isArray(obj.kits)) return null;
+  if (!Array.isArray(obj.stashes)) return null;
 
-  const kits = obj.kits.flatMap((raw): RegistryKitEntry[] => {
-    const kit = parseKitEntry(raw);
-    return kit ? [kit] : [];
+  const stashes = obj.stashes.flatMap((raw): RegistryStashEntry[] => {
+    const stash = parseStashEntry(raw);
+    return stash ? [stash] : [];
   });
 
-  return { version: obj.version, updatedAt: obj.updatedAt, kits };
+  return { version: obj.version, updatedAt: obj.updatedAt, stashes };
 }
 
-// ── Kit entry parsing ───────────────────────────────────────────────────────
+// ── Stash entry parsing ───────────────────────────────────────────────────────
 
-function parseKitEntry(raw: unknown): RegistryKitEntry | null {
+function parseStashEntry(raw: unknown): RegistryStashEntry | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
 
@@ -211,31 +211,31 @@ function parseKitEntry(raw: unknown): RegistryKitEntry | null {
 // ── Scoring ─────────────────────────────────────────────────────────────────
 
 function scoreKits(
-  kits: Array<{ kit: RegistryKitEntry; registryName?: string }>,
+  stashes: Array<{ stash: RegistryStashEntry; registryName?: string }>,
   query: string,
   limit: number,
 ): RegistrySearchHit[] {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
 
-  const scored: Array<{ kit: RegistryKitEntry; registryName?: string; score: number }> = [];
+  const scored: Array<{ stash: RegistryStashEntry; registryName?: string; score: number }> = [];
 
-  for (const { kit, registryName } of kits) {
-    const score = scoreKit(kit, tokens);
+  for (const { stash, registryName } of stashes) {
+    const score = scoreStash(stash, tokens);
     if (score > 0) {
-      scored.push({ kit, registryName, score });
+      scored.push({ stash, registryName, score });
     }
   }
 
   scored.sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, limit).map(({ kit, registryName, score }) => toSearchHit(kit, score, registryName));
+  return scored.slice(0, limit).map(({ stash, registryName, score }) => toSearchHit(stash, score, registryName));
 }
 
-function scoreKit(kit: RegistryKitEntry, tokens: string[]): number {
+function scoreStash(stash: RegistryStashEntry, tokens: string[]): number {
   let score = 0;
-  const nameLower = kit.name.toLowerCase();
-  const descLower = (kit.description ?? "").toLowerCase();
-  const tagsLower = (kit.tags ?? []).map((t) => t.toLowerCase());
+  const nameLower = stash.name.toLowerCase();
+  const descLower = (stash.description ?? "").toLowerCase();
+  const tagsLower = (stash.tags ?? []).map((t) => t.toLowerCase());
 
   for (const token of tokens) {
     // Exact name match is strongest signal
@@ -258,7 +258,7 @@ function scoreKit(kit: RegistryKitEntry, tokens: string[]): number {
     }
 
     // Author match
-    if (kit.author?.toLowerCase().includes(token)) {
+    if (stash.author?.toLowerCase().includes(token)) {
       score += 0.15;
     }
   }
@@ -267,24 +267,24 @@ function scoreKit(kit: RegistryKitEntry, tokens: string[]): number {
   return tokens.length > 0 ? score / tokens.length : 0;
 }
 
-function toSearchHit(kit: RegistryKitEntry, score: number, registryName?: string): RegistrySearchHit {
+function toSearchHit(stash: RegistryStashEntry, score: number, registryName?: string): RegistrySearchHit {
   const metadata: Record<string, string> = {};
-  if (kit.latestVersion) metadata.version = kit.latestVersion;
-  if (kit.author) metadata.author = kit.author;
-  if (kit.license) metadata.license = kit.license;
-  if (kit.assetTypes?.length) metadata.assetTypes = kit.assetTypes.join(", ");
+  if (stash.latestVersion) metadata.version = stash.latestVersion;
+  if (stash.author) metadata.author = stash.author;
+  if (stash.license) metadata.license = stash.license;
+  if (stash.assetTypes?.length) metadata.assetTypes = stash.assetTypes.join(", ");
 
   return {
-    source: kit.source,
-    id: kit.id,
-    title: kit.name,
-    description: kit.description,
-    ref: kit.ref,
-    installRef: buildInstallRef(kit.source, kit.ref),
-    homepage: kit.homepage,
+    source: stash.source,
+    id: stash.id,
+    title: stash.name,
+    description: stash.description,
+    ref: stash.ref,
+    installRef: buildInstallRef(stash.source, stash.ref),
+    homepage: stash.homepage,
     score: Math.round(score * 1000) / 1000,
     metadata,
-    curated: kit.curated,
+    curated: stash.curated,
     registryName,
   };
 }
@@ -320,7 +320,7 @@ function parseAssetEntry(raw: unknown): RegistryAssetEntry | null {
 // ── Asset-level scoring ─────────────────────────────────────────────────────
 
 function scoreAssets(
-  kits: Array<{ kit: RegistryKitEntry; registryName?: string }>,
+  stashes: Array<{ stash: RegistryStashEntry; registryName?: string }>,
   query: string,
   limit: number,
 ): RegistryAssetSearchHit[] {
@@ -329,12 +329,12 @@ function scoreAssets(
 
   const scored: Array<{ hit: RegistryAssetSearchHit; score: number }> = [];
 
-  for (const { kit, registryName } of kits) {
-    if (!kit.assets || kit.assets.length === 0) continue;
+  for (const { stash, registryName } of stashes) {
+    if (!stash.assets || stash.assets.length === 0) continue;
 
-    const installRef = buildInstallRef(kit.source, kit.ref);
+    const installRef = buildInstallRef(stash.source, stash.ref);
 
-    for (const asset of kit.assets) {
+    for (const asset of stash.assets) {
       const score = scoreAsset(asset, tokens);
       if (score > 0) {
         scored.push({
@@ -344,7 +344,7 @@ function scoreAssets(
             assetName: asset.name,
             description: asset.description,
             estimatedTokens: asset.estimatedTokens,
-            kit: { id: kit.id, name: kit.name },
+            stash: { id: stash.id, name: stash.name },
             registryName,
             action: `akm add ${installRef}`,
             score: Math.round(score * 1000) / 1000,

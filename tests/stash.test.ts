@@ -214,10 +214,10 @@ test("akmSearch includes origin for installed-source hits", async () => {
     semanticSearchMode: "off",
     installed: [
       {
-        id: "npm:@scope/deploy-kit",
+        id: "npm:@scope/deploy-stash",
         source: "npm",
-        ref: "@scope/deploy-kit",
-        artifactUrl: "https://example.com/deploy-kit.tgz",
+        ref: "@scope/deploy-stash",
+        artifactUrl: "https://example.com/deploy-stash.tgz",
         stashRoot: installedStash,
         cacheDir: installedStash,
         installedAt: new Date().toISOString(),
@@ -229,7 +229,7 @@ test("akmSearch includes origin for installed-source hits", async () => {
   await akmIndex({ stashDir, full: true });
   const result = await akmSearch({ query: "deploy", type: "script" });
 
-  expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-kit")).toBe(true);
+  expect(result.hits.filter(isLocalHit).some((hit) => hit.origin === "npm:@scope/deploy-stash")).toBe(true);
 });
 
 test("akmShow returns full payloads for skill/command/agent", async () => {

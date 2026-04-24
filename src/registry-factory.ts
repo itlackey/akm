@@ -4,9 +4,9 @@
  * Maps registry provider type identifiers (e.g. "static-index", "skills-sh")
  * to factory functions that create RegistryProvider instances.
  *
- * "Registry" here refers to the kit discovery registries (npm, GitHub, static
+ * "Registry" here refers to the stash discovery registries (npm, GitHub, static
  * index files) — not to be confused with the stash provider factory map in
- * stash-provider-factory.ts or the installed-kit operations in installed-kits.ts.
+ * stash-provider-factory.ts or the installed-stash operations in installed-stashes.ts.
  */
 
 import { createProviderRegistry } from "./create-provider-registry";

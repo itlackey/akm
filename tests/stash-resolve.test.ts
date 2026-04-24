@@ -115,7 +115,7 @@ describe("resolveAssetPath", () => {
     expect(result).toBe(fs.realpathSync(skillFile));
   });
 
-  test("resolves installed-kit style nested agent refs outside top-level agents root", async () => {
+  test("resolves installed-stash style nested agent refs outside top-level agents root", async () => {
     const stashDir = createTmpDir();
     const agentFile = path.join(stashDir, "tools", "agents", "svelte-file-editor.md");
     writeFile(agentFile, "---\nname: svelte-file-editor\n---\nUse Svelte tools.\n");
@@ -124,7 +124,7 @@ describe("resolveAssetPath", () => {
     expect(result).toBe(fs.realpathSync(agentFile));
   });
 
-  test("resolves installed-kit style nested skill refs outside top-level skills root", async () => {
+  test("resolves installed-stash style nested skill refs outside top-level skills root", async () => {
     const stashDir = createTmpDir();
     const skillFile = path.join(stashDir, "tools", "skills", "svelte-code-writer", "SKILL.md");
     writeFile(skillFile, "# Svelte code writer\n");

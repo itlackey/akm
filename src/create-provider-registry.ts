@@ -2,7 +2,7 @@
  * Generic factory-map utility.
  *
  * Creates a lightweight registry that maps string keys to factory functions.
- * Both registry-factory.ts (kit discovery) and stash-provider-factory.ts
+ * Both registry-factory.ts (stash discovery) and stash-provider-factory.ts
  * (stash source providers) are built on this utility.
  */
 

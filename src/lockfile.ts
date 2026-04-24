@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigDir } from "./config";
-import type { KitSource } from "./registry-types";
+import type { StashSource } from "./registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface LockfileEntry {
   id: string;
-  source: KitSource;
+  source: StashSource;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;

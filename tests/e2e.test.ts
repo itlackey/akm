@@ -495,31 +495,31 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     const registryIndex = {
       version: 1,
       updatedAt: "2026-03-09T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:@scope/kit",
-          name: "@scope/kit",
-          description: "Example registry kit",
-          ref: "@scope/kit",
+          id: "npm:@scope/stash",
+          name: "@scope/stash",
+          description: "Example registry stash",
+          ref: "@scope/stash",
           source: "npm",
-          homepage: "https://www.npmjs.com/package/@scope/kit",
-          tags: ["kit"],
+          homepage: "https://www.npmjs.com/package/@scope/stash",
+          tags: ["stash"],
           latestVersion: "1.2.3",
         },
         {
-          id: "github:itlackey/example-kit",
-          name: "Example Kit",
-          description: "Example GitHub kit",
-          ref: "itlackey/example-kit",
+          id: "github:itlackey/example-stash",
+          name: "Example Stash",
+          description: "Example GitHub stash",
+          ref: "itlackey/example-stash",
           source: "github",
-          homepage: "https://github.com/itlackey/example-kit",
-          tags: ["kit"],
+          homepage: "https://github.com/itlackey/example-stash",
+          tags: ["stash"],
         },
       ],
     };
     const result = await withMockedFetch(
       () => new Response(JSON.stringify(registryIndex), { status: 200 }),
-      () => akmSearch({ query: "kit", source: "registry" }),
+      () => akmSearch({ query: "stash", source: "registry" }),
     );
 
     expect(result.source).toBe("registry");
@@ -539,12 +539,12 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
     const registryIndex = {
       version: 1,
       updatedAt: "2026-03-09T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:docker-kit",
-          name: "docker-kit",
+          id: "npm:docker-stash",
+          name: "docker-stash",
           description: "Registry docker helper",
-          ref: "docker-kit",
+          ref: "docker-stash",
           source: "npm",
           tags: ["docker"],
           latestVersion: "0.1.0",
@@ -969,7 +969,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
   test("cli: akm remove resolves parsed ref id and removes cache directory", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-remove-");
-    const stashRoot = path.join(stashDir, "registry-kit");
+    const stashRoot = path.join(stashDir, "registry-stash");
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-remove-"));
     fs.mkdirSync(path.join(stashRoot, "scripts"), { recursive: true });
     process.env.AKM_STASH_DIR = stashDir;
@@ -978,10 +978,10 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       semanticSearchMode: "off",
       installed: [
         {
-          id: "npm:@scope/kit",
+          id: "npm:@scope/stash",
           source: "npm",
-          ref: "npm:@scope/kit@1.0.0",
-          artifactUrl: "https://registry.npmjs.org/@scope/kit/-/kit-1.0.0.tgz",
+          ref: "npm:@scope/stash@1.0.0",
+          artifactUrl: "https://registry.npmjs.org/@scope/stash/-/stash-1.0.0.tgz",
           resolvedVersion: "1.0.0",
           resolvedRevision: "abc123",
           stashRoot,
@@ -992,11 +992,11 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     });
 
     try {
-      const result = runCli("remove", "npm:@scope/kit@latest");
+      const result = runCli("remove", "npm:@scope/stash@latest");
       expect(result.exitCode).toBe(0);
 
       const json = parseJson(result.stdout);
-      expect(expectDefined(json.removed).id).toBe("npm:@scope/kit");
+      expect(expectDefined(json.removed).id).toBe("npm:@scope/stash");
 
       const config = loadConfig();
       expect(config.installed).toBeUndefined();
@@ -1028,7 +1028,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     try {
-      const result = runCli("update", "npm:@scope/kit", "--all");
+      const result = runCli("update", "npm:@scope/stash", "--all");
       expect(result.exitCode).not.toBe(0);
       const output = result.stdout + result.stderr;
       expect(output).toContain("Specify either <target> or --all, not both.");
@@ -1043,10 +1043,10 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     try {
-      const result = runCli("update", "npm:@scope/kit");
+      const result = runCli("update", "npm:@scope/stash");
       expect(result.exitCode).not.toBe(0);
       const output = result.stdout + result.stderr;
-      expect(output).toContain("No matching source for target: npm:@scope/kit");
+      expect(output).toContain("No matching source for target: npm:@scope/stash");
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }

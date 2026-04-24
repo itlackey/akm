@@ -7,7 +7,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ```sh
 akm search "<query>"                          # Search your sources
 akm search "<query>" --type workflow          # Filter by asset type
-akm search "<query>" --source both            # Also search registries for installable kits
+akm search "<query>" --source both            # Also search registries for installable stashes
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -109,9 +109,9 @@ See [wikis.md](wikis.md) for the full guide.
 
 ```sh
 akm add <ref>                                 # Add a source
-akm add @scope/kit                            # From npm (managed)
+akm add @scope/stash                            # From npm (managed)
 akm add owner/repo                            # From GitHub (managed)
-akm add ./path/to/local/kit                   # Local directory
+akm add ./path/to/local/stash                   # Local directory
 akm list                                      # List all sources
 akm list --kind managed                       # List managed sources only
 akm remove <target>                           # Remove by id, ref, path, or name
