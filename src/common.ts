@@ -217,6 +217,16 @@ function shouldRetry(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+/**
+ * Read stdin as UTF-8 text if something is piped in. Returns `undefined`
+ * when stdin is a TTY (no pipe) or when the piped content is empty.
+ */
+export function tryReadStdinText(): string | undefined {
+  if (process.stdin.isTTY) return undefined;
+  const input = fs.readFileSync(0, "utf8");
+  return input.length > 0 ? input : undefined;
+}
+
 function parseRetryAfter(response: Response): number | undefined {
   const header = response.headers.get("retry-after");
   if (!header) return undefined;
