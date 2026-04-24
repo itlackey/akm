@@ -8,7 +8,12 @@ import { loadConfig } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import { validateGitUrl } from "../registry-resolve";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import type {
+  LiveStashProvider,
+  StashSearchOptions,
+  StashSearchResult,
+  SyncableStashProvider,
+} from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
 import { isExpired, sanitizeString } from "./provider-utils";
@@ -27,11 +32,19 @@ interface ParsedRepoUrl {
   canonicalUrl: string;
 }
 
-class GitStashProvider implements StashProvider {
+/**
+ * Git stash provider. Implements both {@link LiveStashProvider} (no-op
+ * search/show because the FTS5 indexer handles queries) and
+ * {@link SyncableStashProvider} (clone/pull the repo into a local mirror so
+ * the indexer has files to walk).
+ */
+class GitStashProvider implements LiveStashProvider, SyncableStashProvider {
   readonly type = "git";
   readonly name: string;
+  private readonly config: StashConfigEntry;
 
   constructor(config: StashConfigEntry) {
+    this.config = config;
     this.name = config.name ?? "git";
   }
 
@@ -48,6 +61,39 @@ class GitStashProvider implements StashProvider {
   /** Content is local; no remote show needed. */
   canShow(_ref: string): boolean {
     return false;
+  }
+
+  // ── SyncableStashProvider ────────────────────────────────────────────────
+
+  /** Refresh the local clone (or perform the initial clone). */
+  async sync(): Promise<void> {
+    if (!this.config.url) return;
+    const repo = parseGitRepoUrl(this.config.url);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    await ensureGitMirror(repo, cachePaths, {
+      requireRepoDir: true,
+      writable: this.config.writable === true,
+    });
+  }
+
+  /** Return the directory the indexer should walk for this stash. */
+  getContentDir(): string {
+    if (!this.config.url) return "";
+    const repo = parseGitRepoUrl(this.config.url);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    return path.join(cachePaths.repoDir, "content");
+  }
+
+  /** Remove the local clone. Best-effort. */
+  async remove(): Promise<void> {
+    if (!this.config.url) return;
+    try {
+      const repo = parseGitRepoUrl(this.config.url);
+      const cachePaths = getCachePaths(repo.canonicalUrl);
+      fs.rmSync(cachePaths.rootDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 }
 

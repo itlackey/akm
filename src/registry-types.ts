@@ -1,9 +1,21 @@
+import type { StashSource } from "./config";
 import type { InstallAuditReport } from "./install-audit";
 
-export type StashSource = "npm" | "github" | "git" | "local";
+/**
+ * KitSource — the discriminator string of a {@link StashSource}.
+ *
+ * This used to be a hand-maintained union of `"npm" | "github" | "git" | "local"`.
+ * It is now derived from {@link StashSource}["type"] so adding a new source
+ * kind in `config.ts` automatically widens this type.
+ *
+ * Use {@link KitSource} where you only need the discriminator string. Use
+ * {@link StashSource} where you also need the kind-specific options
+ * (path/url/owner/etc.).
+ */
+export type KitSource = StashSource["type"];
 
 export interface RegistryRefBase {
-  source: StashSource;
+  source: KitSource;
   ref: string;
   id: string;
 }
@@ -37,7 +49,7 @@ export type ParsedRegistryRef = ParsedNpmRef | ParsedGithubRef | ParsedGitRef | 
 
 export interface ResolvedRegistryArtifact {
   id: string;
-  source: StashSource;
+  source: KitSource;
   ref: string;
   artifactUrl: string;
   resolvedVersion?: string;
@@ -46,7 +58,7 @@ export interface ResolvedRegistryArtifact {
 
 export interface InstalledStashEntry {
   id: string;
-  source: StashSource;
+  source: KitSource;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
@@ -74,7 +86,7 @@ export interface RegistryAssetEntry {
 }
 
 export interface RegistrySearchHit {
-  source: StashSource;
+  source: KitSource;
   id: string;
   title: string;
   description?: string;

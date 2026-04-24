@@ -3,12 +3,12 @@ import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { searchLocal } from "../local-search";
 import { resolveStashSources } from "../search-source";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import type { LiveStashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import { showLocal } from "../stash-show";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
 
-class FilesystemStashProvider implements StashProvider {
+class FilesystemStashProvider implements LiveStashProvider {
   readonly type = "filesystem";
   readonly name: string;
   private readonly stashDir: string;

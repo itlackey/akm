@@ -5,7 +5,12 @@ import { fetchWithRetry } from "../common";
 import type { StashConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import type {
+  LiveStashProvider,
+  StashSearchOptions,
+  StashSearchResult,
+  SyncableStashProvider,
+} from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
 import { isExpired, sanitizeString } from "./provider-utils";
@@ -27,11 +32,19 @@ interface WebsitePage {
   markdown: string;
 }
 
-class WebsiteStashProvider implements StashProvider {
+/**
+ * Website stash provider. Implements both {@link LiveStashProvider} (no-op
+ * search/show — the FTS5 indexer answers queries) and
+ * {@link SyncableStashProvider} (scrape pages into a local mirror so the
+ * indexer has files to walk).
+ */
+class WebsiteStashProvider implements LiveStashProvider, SyncableStashProvider {
   readonly type = "website";
   readonly name: string;
+  private readonly config: StashConfigEntry;
 
   constructor(config: StashConfigEntry) {
+    this.config = config;
     this.name = config.name ?? "website";
     validateWebsiteUrl(config.url ?? "");
   }
@@ -49,6 +62,30 @@ class WebsiteStashProvider implements StashProvider {
   /** Content is local; no remote show needed. */
   canShow(_ref: string): boolean {
     return false;
+  }
+
+  // ── SyncableStashProvider ────────────────────────────────────────────────
+
+  /** Refresh the scraped snapshot for this site. */
+  async sync(): Promise<void> {
+    await ensureWebsiteMirror(this.config, { requireStashDir: true });
+  }
+
+  /** Return the directory the indexer should walk for this stash. */
+  getContentDir(): string {
+    if (!this.config.url) return "";
+    return getCachePaths(this.config.url).stashDir;
+  }
+
+  /** Remove the local snapshot. Best-effort. */
+  async remove(): Promise<void> {
+    if (!this.config.url) return;
+    try {
+      const cachePaths = getCachePaths(this.config.url);
+      fs.rmSync(cachePaths.rootDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 }
 
