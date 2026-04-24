@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { isHttpUrl, resolveStashDir } from "./common";
+import { isHttpUrl, resolveStashDir, toErrorMessage } from "./common";
 import type { AkmConfig, LlmConnectionConfig } from "./config";
 import {
   closeDatabase,
@@ -797,7 +797,6 @@ async function enhanceStashWithLlm(
   const { enhanceMetadata } = await import("./llm.js");
 
   const enhanced: StashEntry[] = [];
-  const seenSamples = new Set<string>();
   for (const entry of stash.entries) {
     summary.attempted++;
     try {
@@ -822,10 +821,11 @@ async function enhanceStashWithLlm(
       summary.succeeded++;
     } catch (err) {
       enhanced.push(entry);
-      const msg = err instanceof Error ? err.message : String(err);
-      if (summary.failureSamples.length < 3 && !seenSamples.has(msg)) {
+      const msg = toErrorMessage(err);
+      // failureSamples is bounded to 3 items, so a linear scan is cheaper
+      // than maintaining a parallel Set for membership checks (#177 review).
+      if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
         summary.failureSamples.push(msg);
-        seenSamples.add(msg);
       }
     }
   }

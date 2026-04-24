@@ -54,6 +54,25 @@ export function hasBooleanFlag(argv: string[], flag: string): boolean {
 }
 
 /**
+ * Read a hyphenated arg out of citty's parsed `args` object.
+ *
+ * citty does not auto-camelise hyphenated arg keys (see `--max-pages`,
+ * `--with-sources` for the existing convention), so command handlers end up
+ * casting `args` to a string-indexed record at every read site. This helper
+ * encapsulates the cast.
+ */
+export function getHyphenatedArg<T = string>(args: unknown, key: string): T | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const value = (args as Record<string, unknown>)[key];
+  return value === undefined ? undefined : (value as T);
+}
+
+/** Boolean variant of {@link getHyphenatedArg} for `--<flag>` switches. */
+export function getHyphenatedBoolean(args: unknown, key: string): boolean {
+  return Boolean(getHyphenatedArg(args, key));
+}
+
+/**
  * Resolve output mode from a synthetic argv array and config defaults.
  * Pure function — no IO. Suitable for unit tests.
  */

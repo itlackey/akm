@@ -17,7 +17,14 @@ import { assembleInfo } from "./info";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
 import { renderMigrationHelp } from "./migration-help";
-import { getOutputMode, initOutputMode, type OutputMode, parseFlagValue } from "./output-context";
+import {
+  getHyphenatedArg,
+  getHyphenatedBoolean,
+  getOutputMode,
+  initOutputMode,
+  type OutputMode,
+  parseFlagValue,
+} from "./output-context";
 import { shapeForCommand } from "./output-shapes";
 import { formatPlain, outputJsonl } from "./output-text";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
@@ -419,7 +426,7 @@ const upgradeCommand = defineCommand({
         output("upgrade", check);
         return;
       }
-      const skipChecksum = Boolean((args as Record<string, unknown>)["skip-checksum"]);
+      const skipChecksum = getHyphenatedBoolean(args, "skip-checksum");
       const result = await performUpgrade(check, { force: args.force, skipChecksum });
       output("upgrade", result);
     });
@@ -470,7 +477,6 @@ const showCommand = defineCommand({
             throw new UsageError(`Unknown view mode: ${akmView}. Expected one of: full|toc|frontmatter|section|lines`);
         }
       }
-      // Map CLI detail level to ShowDetailLevel for the show function
       const cliDetail = getOutputMode().detail;
       const showDetail: ShowDetailLevel | undefined = cliDetail === "summary" ? "summary" : undefined;
       const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
@@ -722,7 +728,7 @@ const registryCommand = defineCommand({
             throw new UsageError("Registry URL must start with http:// or https://");
           }
           if (args.url.startsWith("http://")) {
-            const allowInsecure = Boolean((args as Record<string, unknown>)["allow-insecure"]);
+            const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
             if (!allowInsecure) {
               throw new UsageError(
                 "Registry URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious index. " +
@@ -804,11 +810,10 @@ const registryCommand = defineCommand({
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
-          const argsRecord = args as Record<string, unknown>;
           const result = await buildRegistryIndex({
             manualEntriesPath: args.manual,
-            npmRegistryBase: typeof argsRecord["npm-registry"] === "string" ? argsRecord["npm-registry"] : undefined,
-            githubApiBase: typeof argsRecord["github-api"] === "string" ? argsRecord["github-api"] : undefined,
+            npmRegistryBase: getHyphenatedArg<string>(args, "npm-registry"),
+            githubApiBase: getHyphenatedArg<string>(args, "github-api"),
           });
           const outPath = writeRegistryIndex(result.index, args.out);
           output("registry-build-index", {
@@ -1224,7 +1229,6 @@ const rememberCommand = defineCommand({
 
       const hasStructuredArgs = rawTags.length > 0 || !!args.expires || !!args.source || args.auto || args.enrich;
 
-      // Zero-flag path: write bare memory (no frontmatter). Preserve existing behaviour.
       if (!hasStructuredArgs) {
         const result = writeMarkdownAsset({
           type: "memory",
@@ -1837,7 +1841,7 @@ const wikiRemoveCommand = defineCommand({
       if (!args.force) {
         throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
       }
-      const withSources = Boolean((args as Record<string, unknown>)["with-sources"]);
+      const withSources = getHyphenatedBoolean(args, "with-sources");
       const { removeWiki } = await import("./wiki.js");
       const { akmIndex } = await import("./indexer");
       const stashDir = resolveStashDir();

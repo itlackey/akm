@@ -202,6 +202,16 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
+  // FTS-dirty queue. Created here (not lazily on first upsert) so the
+  // per-entry write path doesn't issue a CREATE TABLE IF NOT EXISTS on
+  // every call — that DDL would fire thousands of times during a full
+  // index. See `markFtsDirty` and `rebuildFts({ incremental: true })`.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS entries_fts_dirty (
+      entry_id INTEGER PRIMARY KEY
+    );
+  `);
+
   // sqlite-vec table
   if (isVecAvailable(db)) {
     // Check if stored embedding dimension differs from configured one
@@ -348,47 +358,59 @@ export function upsertEntry(
   entry: StashEntry,
   searchText: string,
 ): number {
-  const stmt = db.prepare(`
-    INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(entry_key) DO UPDATE SET
-      dir_path = excluded.dir_path,
-      file_path = excluded.file_path,
-      stash_dir = excluded.stash_dir,
-      entry_json = excluded.entry_json,
-      search_text = excluded.search_text,
-      entry_type = excluded.entry_type
-  `);
-  stmt.run(entryKey, dirPath, filePath, stashDir, JSON.stringify(entry), searchText, entry.type);
-  // Fetch the row id explicitly since last_insert_rowid() is unreliable for ON CONFLICT DO UPDATE
-  const row = db.prepare("SELECT id FROM entries WHERE entry_key = ?").get(entryKey) as { id: number } | undefined;
-  if (!row) throw new Error("upsertEntry: entry_key not found after upsert");
+  // Hot path during indexing — cache the two prepared statements per
+  // database connection so we don't pay the SQL parse/compile cost on
+  // every call. The dirty-mark INSERT and the upsert-with-RETURNING
+  // share the same WeakMap so they live and die with the connection.
+  const stmts = getUpsertStmts(db);
+  const result = stmts.upsert.get(
+    entryKey,
+    dirPath,
+    filePath,
+    stashDir,
+    JSON.stringify(entry),
+    searchText,
+    entry.type,
+  ) as { id: number } | undefined;
+  if (!result) throw new Error("upsertEntry: entry_key not found after upsert");
 
-  // Mark this entry as FTS-dirty so an incremental rebuild only revisits the
-  // entries that actually changed. Without this, every `akm index` run had to
-  // re-scan and re-insert every FTS row, even if only one entry was touched.
-  markFtsDirty(db, row.id);
-  return row.id;
+  // Mark this entry as FTS-dirty so `rebuildFts({ incremental: true })`
+  // only revisits entries that actually changed. INSERT OR IGNORE is
+  // idempotent across multiple upserts of the same row.
+  stmts.markDirty.run(result.id);
+  return result.id;
 }
 
-/**
- * Mark an entry as needing FTS re-indexing on the next `rebuildFts` call.
- *
- * The list lives in a small `entries_fts_dirty` table — a per-entry-id queue
- * of work items. `rebuildFts({ incremental: true })` drains this list rather
- * than scanning the entire `entries` table.
- */
-function markFtsDirty(db: Database, entryId: number): void {
-  ensureFtsDirtyTable(db);
-  db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)").run(entryId);
+interface UpsertStmts {
+  upsert: ReturnType<Database["prepare"]>;
+  markDirty: ReturnType<Database["prepare"]>;
 }
 
-function ensureFtsDirtyTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS entries_fts_dirty (
-      entry_id INTEGER PRIMARY KEY
-    );
-  `);
+const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
+
+function getUpsertStmts(db: Database): UpsertStmts {
+  const existing = upsertStmtsByDb.get(db);
+  if (existing) return existing;
+  const stmts: UpsertStmts = {
+    // RETURNING id handles ON CONFLICT DO UPDATE correctly — no second
+    // SELECT round-trip needed (last_insert_rowid() is unreliable for
+    // ON CONFLICT). Use `.get()` so a single row comes back.
+    upsert: db.prepare(`
+      INSERT INTO entries (entry_key, dir_path, file_path, stash_dir, entry_json, search_text, entry_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(entry_key) DO UPDATE SET
+        dir_path = excluded.dir_path,
+        file_path = excluded.file_path,
+        stash_dir = excluded.stash_dir,
+        entry_json = excluded.entry_json,
+        search_text = excluded.search_text,
+        entry_type = excluded.entry_type
+      RETURNING id
+    `),
+    markDirty: db.prepare("INSERT OR IGNORE INTO entries_fts_dirty (entry_id) VALUES (?)"),
+  };
+  upsertStmtsByDb.set(db, stmts);
+  return stmts;
 }
 
 export function deleteEntriesByDir(db: Database, dirPath: string): void {
@@ -489,7 +511,6 @@ export function rebuildFts(db: Database, options?: { incremental?: boolean }): v
   db.transaction(() => {
     let rows: Array<{ id: number; entry_json: string }>;
     if (incremental) {
-      ensureFtsDirtyTable(db);
       // Read the dirty queue and join against entries to get the JSON.
       // Then drop the matching rows from entries_fts so the INSERT below
       // doesn't double-up. The dirty list is drained at the end.
@@ -543,10 +564,8 @@ export function rebuildFts(db: Database, options?: { incremental?: boolean }): v
     if (incremental) {
       db.exec("DELETE FROM entries_fts_dirty");
     } else {
-      // Full path: only drop the dirty table if it exists. Use
-      // `CREATE IF NOT EXISTS` then DELETE so we don't error on databases
-      // that haven't run any upserts yet (e.g. fresh schema).
-      ensureFtsDirtyTable(db);
+      // Full path: drain the dirty queue too. The table is created by
+      // ensureSchema(), so it always exists at this point.
       db.exec("DELETE FROM entries_fts_dirty");
     }
   })();
