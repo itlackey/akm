@@ -247,16 +247,14 @@ test("akmIndex skips malformed workflow assets and reports warnings", async () =
       "",
     ].join("\n"),
   );
+  // Truly malformed: no `# Workflow:` heading at all. (Intro prose between
+  // the title and the first step is now permitted — see #158.)
   writeFile(
     path.join(stashDir, "workflows", "bad.md"),
     [
       "---",
       "description: Bad workflow",
       "---",
-      "",
-      "# Workflow: Bad",
-      "",
-      "This prose breaks the parser.",
       "",
       "## Step: First",
       "Step ID: first",
