@@ -937,16 +937,14 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       ].join("\n"),
       "utf8",
     );
+    // Truly malformed: no `# Workflow:` heading. Intro prose between the
+    // title and the first step is now permitted (#158).
     fs.writeFileSync(
       path.join(stashDir, "workflows", "bad.md"),
       [
         "---",
         "description: Bad workflow",
         "---",
-        "",
-        "# Workflow: Bad",
-        "",
-        "This prose breaks the parser.",
         "",
         "## Step: First",
         "Step ID: first",

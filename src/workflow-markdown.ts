@@ -121,6 +121,18 @@ function extractWorkflowSteps(body: string): WorkflowStepDefinition[] {
   const steps: WorkflowStepDefinition[] = [];
   let index = titleLineIndex + 1;
 
+  // Skip optional intro prose before the first ## Step: section.
+  while (index < lines.length && !/^##\s+Step:\s+/.test((lines[index] ?? "").trim())) {
+    const line = lines[index] ?? "";
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("# ") && !/^#\s+Workflow:\s+/.test(trimmed)) {
+      throw new WorkflowValidationError(`Unexpected top-level heading after workflow title: "${trimmed}".`);
+    }
+
+    index++;
+  }
+
   while (index < lines.length) {
     const line = lines[index] ?? "";
     const trimmed = line.trim();
