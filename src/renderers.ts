@@ -467,6 +467,60 @@ const memoryMdRenderer: AssetRenderer = {
       content: ctx.content(),
     };
   },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    try {
+      const parsed = parseFrontmatter(ctx.content());
+      const fm = parsed.data;
+
+      // Description from frontmatter
+      const desc = toStringOrUndefined(fm.description);
+      if (desc && !entry.description) {
+        entry.description = desc;
+        entry.source = "frontmatter";
+        entry.confidence = 0.9;
+      }
+
+      // Tags from frontmatter
+      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+        if (fmTags.length > 0) {
+          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+        }
+      }
+
+      // Build searchHints from structured memory metadata fields
+      const hints = new Set<string>(entry.searchHints ?? []);
+      const source = toStringOrUndefined(fm.source);
+      if (source) hints.add(source);
+
+      // observed_at: prefer frontmatter value, fall back to file mtime
+      const fmObservedAt = toStringOrUndefined(fm.observed_at);
+      if (fmObservedAt) {
+        hints.add(`observed_at:${fmObservedAt}`);
+      } else {
+        // mtime fallback: format as ISO date (YYYY-MM-DD)
+        try {
+          const mtime = ctx.stat().mtime;
+          const isoDate = mtime.toISOString().slice(0, 10);
+          hints.add(`observed_at:${isoDate}`);
+        } catch {
+          // Non-fatal: skip mtime fallback on stat error
+        }
+      }
+
+      const expires = toStringOrUndefined(fm.expires);
+      if (expires) hints.add(`expires:${expires}`);
+
+      if (fm.subjective === true) hints.add("subjective");
+
+      if (hints.size > 0) {
+        entry.searchHints = Array.from(hints).filter(Boolean);
+      }
+    } catch {
+      // Non-fatal: skip metadata extraction on error
+    }
+  },
 };
 
 // ── 6. workflow-md ───────────────────────────────────────────────────────────
