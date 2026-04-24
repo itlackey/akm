@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { filterNonEmptyStrings } from "./common";
+import { filterNonEmptyStrings, toPosix } from "./common";
 import type { AkmConfig, InstallAuditAllowedFinding } from "./config";
 import type { KitSource } from "./registry-types";
 
@@ -464,12 +464,9 @@ function matchesAllowedFinding(
 
 function normalizeWaiverPath(value: string | undefined): string | undefined {
   if (!value) return value;
-  // Strip a leading `./`, collapse duplicate slashes via path.normalize, and
-  // POSIX-ify so Windows path separators don't trigger spurious mismatches.
-  const normalized = path
-    .normalize(value)
-    .replace(/\\/g, "/")
-    .replace(/^\.\/+/, "");
+  // Strip a leading `./` and POSIX-ify after path.normalize so Windows path
+  // separators don't trigger spurious mismatches.
+  const normalized = toPosix(path.normalize(value)).replace(/^\.\/+/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 

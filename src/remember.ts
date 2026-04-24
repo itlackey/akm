@@ -7,7 +7,7 @@
  */
 
 import { stringify as yamlStringify } from "yaml";
-import { tryReadStdinText } from "./common";
+import { toErrorMessage, tryReadStdinText } from "./common";
 import { loadConfig } from "./config";
 import { UsageError } from "./errors";
 import { warn } from "./warn";
@@ -113,34 +113,34 @@ export function runAutoHeuristics(body: string): HeuristicResult {
   const source = urlMatch ? urlMatch[0] : undefined;
 
   // ISO date token or obvious relative date phrase → observed_at
-  let observed_at: string | undefined;
-  const isoMatch = body.match(/\b(\d{4}-\d{2}-\d{2})\b/);
-  if (isoMatch) {
-    observed_at = isoMatch[1];
-  } else {
-    const relMatch = body.match(/\b(today|yesterday|last\s+week|last\s+month)\b/i);
-    if (relMatch) {
-      const phrase = relMatch[1].toLowerCase();
-      const now = new Date();
-      if (phrase === "today") {
-        observed_at = now.toISOString().slice(0, 10);
-      } else if (phrase === "yesterday") {
-        const d = new Date(now);
-        d.setDate(d.getDate() - 1);
-        observed_at = d.toISOString().slice(0, 10);
-      } else if (phrase.startsWith("last week")) {
-        const d = new Date(now);
-        d.setDate(d.getDate() - 7);
-        observed_at = d.toISOString().slice(0, 10);
-      } else if (phrase.startsWith("last month")) {
-        const d = new Date(now);
-        d.setMonth(d.getMonth() - 1);
-        observed_at = d.toISOString().slice(0, 10);
-      }
-    }
-  }
+  const observed_at = detectObservedAt(body);
 
   return { tags, source, observed_at, subjective };
+}
+
+const RELATIVE_DATE_OFFSETS: Record<string, (d: Date) => void> = {
+  today: () => {},
+  yesterday: (d) => d.setDate(d.getDate() - 1),
+  "last week": (d) => d.setDate(d.getDate() - 7),
+  "last month": (d) => d.setMonth(d.getMonth() - 1),
+};
+
+function detectObservedAt(body: string): string | undefined {
+  const isoMatch = body.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (isoMatch) return isoMatch[1];
+
+  const relMatch = body.match(/\b(today|yesterday|last\s+week|last\s+month)\b/i);
+  if (!relMatch) return undefined;
+
+  // Normalise the matched phrase: lowercase, collapse internal whitespace,
+  // so "last  week" matches the lookup table key.
+  const phrase = relMatch[1].toLowerCase().replace(/\s+/g, " ");
+  const offset = RELATIVE_DATE_OFFSETS[phrase];
+  if (!offset) return undefined;
+
+  const d = new Date();
+  offset(d);
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -220,8 +220,7 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
 
     return { tags, description, observed_at };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    warn(`Warning: --enrich failed (${msg}). Writing memory without enrichment.`);
+    warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
     return { tags: [] };
   }
 }

@@ -14,6 +14,7 @@ import type {
 } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
+import { warn } from "../warn";
 import { isDirectory, isExpired, sanitizeString } from "./provider-utils";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
@@ -229,13 +230,9 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
   const visited = new Set<string>();
   const pages: WebsitePage[] = [];
   const deadline = Date.now() + WEBSITE_CRAWL_WALL_CLOCK_MS;
-  let stoppedAtDeadline = false;
 
   while (queue.length > 0 && pages.length < options.maxPages) {
-    if (Date.now() > deadline) {
-      stoppedAtDeadline = true;
-      break;
-    }
+    if (Date.now() > deadline) break;
     const next = queue.shift();
     if (!next) break;
     const normalized = normalizeCrawlUrl(next.url);
@@ -256,9 +253,13 @@ async function crawlWebsite(startUrl: string, options: { maxPages: number; maxDe
     }
   }
 
-  if (stoppedAtDeadline) {
-    console.warn(
-      `[akm] website crawl stopped at the ${WEBSITE_CRAWL_WALL_CLOCK_MS / 1000}s wall-clock cap with ${pages.length}/${options.maxPages} pages collected from ${startUrl}.`,
+  if (Date.now() > deadline) {
+    warn(
+      "[akm] website crawl stopped at the %ds wall-clock cap with %d/%d pages collected from %s.",
+      WEBSITE_CRAWL_WALL_CLOCK_MS / 1000,
+      pages.length,
+      options.maxPages,
+      startUrl,
     );
   }
 
