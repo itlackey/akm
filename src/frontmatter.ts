@@ -12,10 +12,8 @@
  *
  * **Limitations**: This is a hand-rolled YAML-subset parser with intentional
  * constraints for simplicity and safety:
- * - **No list support**: YAML block sequences (`- item`) and flow arrays
- *   (`[a, b, c]`) are silently ignored. List-valued frontmatter keys will
- *   produce an empty string or be skipped. Callers must NOT rely on list-
- *   valued frontmatter.
+ * - **List support**: YAML block sequences (`- item`) and flow arrays
+ *   (`[a, b, c]`) are both supported for top-level list-valued keys.
  * - **No nested objects beyond one level**: Only a single level of indented
  *   key-value pairs is supported.
  * - **Scalar values only**: string, boolean, and number scalars are supported.
@@ -33,36 +31,97 @@ export function parseFrontmatter(raw: string): {
 
   const data: Record<string, unknown> = {};
   let currentKey: string | null = null;
+  /** "scalar" | "list" | "object" | "pending" — "pending" means empty value, mode determined by next line */
+  let mode: "scalar" | "list" | "object" | "pending" = "scalar";
   let nested: Record<string, unknown> | null = null;
+  let currentList: unknown[] | null = null;
+
+  const flushPending = () => {
+    // Called when we start a new top-level key and the previous key was still "pending".
+    // An empty-value key followed by another top-level key means it was an empty scalar.
+    if (mode === "pending" && currentKey !== null) {
+      data[currentKey] = "";
+    }
+  };
 
   for (const line of parsedBlock.frontmatter.split(/\r?\n/)) {
-    const indented = line.match(/^ {2}(\w[\w-]*):\s*(.+)$/);
-    if (indented && currentKey && nested) {
-      nested[indented[1]] = parseYamlScalar(indented[2].trim());
+    // Block-sequence item: "- value" or "  - value" (optional 2-space indent)
+    // Only match when the current key is in list or pending mode.
+    const seqItem = line.match(/^(?: {2})?- (.*)$/);
+    if (seqItem && currentKey !== null && (mode === "list" || mode === "pending")) {
+      if (mode === "pending") {
+        // First block-sequence item after an empty-value key — switch to list mode
+        currentList = [];
+        data[currentKey] = currentList;
+        mode = "list";
+      }
+      (currentList as unknown[]).push(parseYamlScalar(seqItem[1].trim()));
       continue;
     }
 
+    // Indented nested key-value (object under a key with empty value)
+    const indented = line.match(/^ {2}(\w[\w-]*):\s*(.+)$/);
+    if (indented && currentKey !== null && (mode === "object" || mode === "pending")) {
+      if (mode === "pending") {
+        // First indented k-v after an empty-value key — switch to object mode
+        nested = {};
+        data[currentKey] = nested;
+        mode = "object";
+      }
+      (nested as Record<string, unknown>)[indented[1]] = parseYamlScalar(indented[2].trim());
+      continue;
+    }
+
+    // Top-level key (possibly with inline value)
     const top = line.match(/^(\w[\w-]*):\s*(.*)$/);
     if (!top) {
       continue;
     }
 
+    // Starting a new top-level key — flush any pending empty-value key
+    flushPending();
+
     currentKey = top[1];
     const value = top[2].trim();
+
     if (value === "") {
-      nested = {};
-      data[currentKey] = nested;
-    } else {
+      // Defer mode decision until we see the next line
+      mode = "pending";
       nested = null;
+      currentList = null;
+      // Don't store anything yet — flushPending will set "" if no continuation
+    } else if (value.startsWith("[") && value.endsWith("]")) {
+      // Inline flow array: tags: [ops, networking]
+      mode = "list";
+      nested = null;
+      currentList = parseFlowArray(value);
+      data[currentKey] = currentList;
+    } else {
+      mode = "scalar";
+      nested = null;
+      currentList = null;
       data[currentKey] = parseYamlScalar(value);
     }
   }
+
+  // Flush the last key if it was still pending (empty value, no continuation)
+  flushPending();
+
   return {
     data,
     content: parsedBlock.content,
     frontmatter: parsedBlock.frontmatter,
     bodyStartLine: parsedBlock.bodyStartLine,
   };
+}
+
+/**
+ * Parse a YAML flow array string like `[a, b, c]` into an array of scalars.
+ */
+function parseFlowArray(value: string): unknown[] {
+  const inner = value.slice(1, -1).trim();
+  if (!inner) return [];
+  return inner.split(",").map((item) => parseYamlScalar(item.trim()));
 }
 
 export function parseFrontmatterBlock(
