@@ -178,9 +178,15 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
     const tLlmEnd = Date.now();
 
-    // Rebuild FTS after all inserts
-    rebuildFts(db);
-    onProgress({ phase: "fts", message: "Rebuilt full-text search index." });
+    // Rebuild FTS after all inserts. Use incremental mode when this whole
+    // index run is incremental — only entries touched by `upsertEntry`
+    // since the last rebuild are re-indexed, instead of re-scanning every
+    // row on every `akm index` invocation.
+    rebuildFts(db, { incremental: isIncremental });
+    onProgress({
+      phase: "fts",
+      message: isIncremental ? "Rebuilt full-text search index (dirty rows only)." : "Rebuilt full-text search index.",
+    });
     const tFtsEnd = Date.now();
 
     // Re-link detached usage_events to their new entry_ids via entry_ref.

@@ -657,3 +657,106 @@ describe("Vector / Embedding integration", () => {
     }
   });
 });
+
+// ── Incremental rebuildFts (#177 perf finding) ──────────────────────────────
+
+describe("rebuildFts incremental", () => {
+  function makeEntry(name: string, description = ""): StashEntry {
+    return {
+      name,
+      type: "skill",
+      description,
+      filename: `${name}.md`,
+    };
+  }
+
+  function ftsCount(db: Database): number {
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries_fts").get() as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
+  function dirtyCount(db: Database): number {
+    try {
+      const row = db.prepare("SELECT COUNT(*) AS cnt FROM entries_fts_dirty").get() as { cnt: number } | undefined;
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  test("upsertEntry marks rows dirty; incremental rebuild only re-indexes them", () => {
+    const db = openDatabase(tmpDbPath("inc-fts"));
+    try {
+      upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha", "first"), "alpha first");
+      upsertEntry(db, "k2", "/d", "/d/k2.md", "/stash", makeEntry("bravo", "second"), "bravo second");
+      upsertEntry(db, "k3", "/d", "/d/k3.md", "/stash", makeEntry("charlie", "third"), "charlie third");
+      rebuildFts(db, { incremental: false });
+      expect(ftsCount(db)).toBe(3);
+      expect(dirtyCount(db)).toBe(0);
+
+      // Touch only one entry — its row should be the only dirty one.
+      upsertEntry(db, "k2", "/d", "/d/k2.md", "/stash", makeEntry("bravo", "second-updated"), "bravo second-updated");
+      expect(dirtyCount(db)).toBe(1);
+
+      rebuildFts(db, { incremental: true });
+      expect(ftsCount(db)).toBe(3);
+      expect(dirtyCount(db)).toBe(0);
+
+      const hits = db
+        .prepare("SELECT entry_id FROM entries_fts WHERE entries_fts MATCH ?")
+        .all(`"second-updated"`) as Array<{ entry_id: number }>;
+      expect(hits.length).toBe(1);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("incremental rebuild with empty dirty queue is a no-op", () => {
+    const db = openDatabase(tmpDbPath("inc-fts-empty"));
+    try {
+      upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
+      rebuildFts(db, { incremental: false });
+      expect(ftsCount(db)).toBe(1);
+      expect(dirtyCount(db)).toBe(0);
+      rebuildFts(db, { incremental: true });
+      expect(ftsCount(db)).toBe(1);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("full rebuild also drains the dirty queue", () => {
+    const db = openDatabase(tmpDbPath("inc-fts-full"));
+    try {
+      upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
+      expect(dirtyCount(db)).toBe(1);
+      rebuildFts(db, { incremental: false });
+      expect(ftsCount(db)).toBe(1);
+      expect(dirtyCount(db)).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("deleteEntriesByDir purges FTS rows + dirty markers immediately", () => {
+    const db = openDatabase(tmpDbPath("inc-fts-del"));
+    try {
+      upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha"), "alpha");
+      upsertEntry(db, "k2", "/d", "/d/k2.md", "/stash", makeEntry("bravo"), "bravo");
+      rebuildFts(db, { incremental: false });
+      expect(ftsCount(db)).toBe(2);
+
+      upsertEntry(db, "k1", "/d", "/d/k1.md", "/stash", makeEntry("alpha", "updated"), "alpha updated");
+      expect(dirtyCount(db)).toBe(1);
+
+      deleteEntriesByDir(db, "/d");
+      expect(ftsCount(db)).toBe(0);
+      expect(dirtyCount(db)).toBe(0);
+
+      rebuildFts(db, { incremental: true });
+      expect(ftsCount(db)).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
