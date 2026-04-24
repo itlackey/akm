@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fetchWithRetry } from "./common";
+import { fetchWithRetry, jsonWithByteCap } from "./common";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
@@ -381,13 +381,20 @@ async function loadManualEntries(manualEntriesPath: string): Promise<RegistrySta
   }
 }
 
+// npm / GitHub API JSON pages; 25 MB cap covers the largest realistic
+// search result set while still bounding memory against a malicious or
+// misconfigured upstream that streams unbounded JSON.
+const BUILD_INDEX_JSON_BYTE_CAP = 25 * 1024 * 1024;
+
 async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   const response = await fetchWithRetry(url, headers ? { headers } : undefined, { timeout: 30_000 });
   if (!response.ok) {
+    // Error-body sampling is intentionally small; 4 KB is plenty to
+    // include upstream hints in the thrown error.
     const body = await response.text().catch(() => "");
     throw new Error(`HTTP ${response.status} from ${url}: ${body.slice(0, 200)}`);
   }
-  return (await response.json()) as T;
+  return jsonWithByteCap<T>(response, BUILD_INDEX_JSON_BYTE_CAP);
 }
 
 function deduplicateStashes(stashes: RegistryStashEntry[]): RegistryStashEntry[] {
