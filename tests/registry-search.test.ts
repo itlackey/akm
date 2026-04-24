@@ -648,3 +648,66 @@ describe("provider routing", () => {
     }
   });
 });
+
+// ── Issue #159: incomplete hits must never appear in JSON output ────────────
+
+describe("incomplete hits filter (#159)", () => {
+  test("hits missing required fields are dropped from response", async () => {
+    const { registerProvider } = await import("../src/registry-factory");
+    const goodHit = {
+      source: "github" as const,
+      id: "github:owner/good",
+      title: "Good Hit",
+      ref: "github:owner/good",
+      installRef: "github:owner/good",
+    };
+    registerProvider("incomplete-hits-test", () => ({
+      type: "incomplete-hits-test",
+      async search() {
+        return {
+          // {} = empty placeholder; missing-id = partial; goodHit = valid
+          hits: [{} as never, { source: "github", title: "x" } as never, goodHit],
+        };
+      },
+    }));
+
+    const result = await searchRegistry("anything", {
+      registries: [{ url: "http://unused", provider: "incomplete-hits-test" }],
+    });
+
+    expect(result.hits).toEqual([goodHit]);
+    expect(result.hits.every((h) => h && typeof h === "object" && Object.keys(h).length > 0)).toBe(true);
+    expect(result.warnings.some((w) => /incomplete hit/i.test(w))).toBe(true);
+  });
+
+  test("incomplete asset hits are dropped from assetHits", async () => {
+    const { registerProvider } = await import("../src/registry-factory");
+    registerProvider("incomplete-assets-test", () => ({
+      type: "incomplete-assets-test",
+      async search() {
+        return {
+          hits: [],
+          assetHits: [
+            {} as never,
+            { type: "registry-asset", assetType: "skill" } as never,
+            {
+              type: "registry-asset" as const,
+              assetType: "skill",
+              assetName: "deploy",
+              action: "akm show skill:deploy",
+              stash: { id: "x", name: "x" },
+            },
+          ],
+        };
+      },
+    }));
+
+    const result = await searchRegistry("anything", {
+      registries: [{ url: "http://unused", provider: "incomplete-assets-test" }],
+    });
+
+    expect(result.assetHits).toBeDefined();
+    expect(result.assetHits?.length).toBe(1);
+    expect(result.assetHits?.[0].assetName).toBe("deploy");
+  });
+});

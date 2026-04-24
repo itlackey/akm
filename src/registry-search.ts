@@ -57,8 +57,26 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
     const value = result.value;
     if (!value) continue;
 
-    allHits.push(...value.hits);
-    if (value.assetHits) allAssetHits.push(...value.assetHits);
+    let dropped = 0;
+    for (const hit of value.hits) {
+      if (isCompleteHit(hit)) {
+        allHits.push(hit);
+      } else {
+        dropped++;
+      }
+    }
+    if (value.assetHits) {
+      for (const hit of value.assetHits) {
+        if (isCompleteAssetHit(hit)) {
+          allAssetHits.push(hit);
+        } else {
+          dropped++;
+        }
+      }
+    }
+    if (dropped > 0) {
+      warnings.push(`Registry returned ${dropped} incomplete hit(s); dropped from response.`);
+    }
     if (value.warnings) warnings.push(...value.warnings);
   }
 
@@ -126,4 +144,34 @@ function createProvider(entry: RegistryConfigEntry, warnings: string[]) {
 function clampLimit(limit: number | undefined): number {
   if (!limit || !Number.isFinite(limit)) return 20;
   return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+// A complete hit must have the fields downstream consumers (CLI rendering,
+// `akm add`) rely on. Providers that return partial records would otherwise
+// surface as `{}` in the JSON output.
+function isCompleteHit(hit: RegistrySearchHit | undefined | null): hit is RegistrySearchHit {
+  if (!hit || typeof hit !== "object") return false;
+  return (
+    typeof hit.source === "string" &&
+    typeof hit.id === "string" &&
+    hit.id.length > 0 &&
+    typeof hit.title === "string" &&
+    hit.title.length > 0 &&
+    typeof hit.ref === "string" &&
+    hit.ref.length > 0 &&
+    typeof hit.installRef === "string" &&
+    hit.installRef.length > 0
+  );
+}
+
+function isCompleteAssetHit(hit: RegistryAssetSearchHit | undefined | null): hit is RegistryAssetSearchHit {
+  if (!hit || typeof hit !== "object") return false;
+  return (
+    hit.type === "registry-asset" &&
+    typeof hit.assetType === "string" &&
+    hit.assetType.length > 0 &&
+    typeof hit.assetName === "string" &&
+    hit.assetName.length > 0 &&
+    typeof hit.action === "string"
+  );
 }
