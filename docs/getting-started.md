@@ -133,6 +133,33 @@ akm add https://www.agentic-patterns.com/ --name agent-patterns --max-pages 100
 See [registry.md](registry.md) for the full install flow and supported
 ref formats.
 
+## Isolated Sandbox Workflow
+
+When testing agent behavior, authoring new assets, or reproducing an issue,
+you often want a clean stash that does not touch your real one. Every akm
+command honours the standard XDG env vars plus `AKM_STASH_DIR`, so you can
+spin up a disposable environment in a single terminal:
+
+```bash
+SANDBOX=$(mktemp -d)
+export HOME="$SANDBOX"
+export XDG_CONFIG_HOME="$SANDBOX/config"
+export XDG_DATA_HOME="$SANDBOX/data"
+export XDG_CACHE_HOME="$SANDBOX/cache"
+export AKM_STASH_DIR="$SANDBOX/stash"
+
+akm init                        # initialize the sandbox stash
+akm index --full                # empty but valid index
+akm workflow create demo        # create a template-backed workflow asset
+akm workflow start workflow:demo
+# ... exercise the flow ...
+
+rm -rf "$SANDBOX"               # tear down when done
+```
+
+Nothing written to `$SANDBOX` ever reaches your default stash, so this
+pattern is safe to script into CI or agent test harnesses.
+
 ## Next Steps
 
 - [Concepts](concepts.md) -- Asset types, classification, and the stash
