@@ -32,6 +32,27 @@ function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
   fs.writeFileSync(path.join(configDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
+/**
+ * Pull the JSON error envelope out of stderr. Stderr may contain
+ * preceding `warn(...)` lines (e.g. the "Importing workflow content
+ * from outside the stash" notice) before the (possibly multi-line) JSON
+ * envelope. We slice from the last `{` at column 0 to the end and parse
+ * that.
+ */
+function parseLastJsonLine(stderr: string): unknown {
+  const lines = stderr.split("\n");
+  let startIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].startsWith("{")) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx === -1) throw new Error(`stderr did not contain a JSON envelope: ${stderr}`);
+  const tail = lines.slice(startIdx).join("\n").trim();
+  return JSON.parse(tail);
+}
+
 function runCli(args: string[], env: NodeJS.ProcessEnv) {
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -113,7 +134,7 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "create", "broken", "--from", sourcePath], env);
     expect(result.status).toBe(2);
 
-    const error = JSON.parse(result.stderr) as { error: string };
+    const error = parseLastJsonLine(result.stderr) as { error: string };
     expect(error.error).toContain('must contain a "### Instructions" section');
   });
 
@@ -126,7 +147,7 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "create", "duplicate", "--from", sourcePath], env);
     expect(result.status).toBe(2);
 
-    const error = JSON.parse(result.stderr) as { error: string };
+    const error = parseLastJsonLine(result.stderr) as { error: string };
     expect(error.error).toContain('Duplicate Step ID: "validate"');
   });
 

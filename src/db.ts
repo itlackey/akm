@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { cosineSimilarity, type EmbeddingVector } from "./embedder";
+import { cosineSimilarity, type EmbeddingVector } from "./embedders/types";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchFields } from "./search-fields";
@@ -118,6 +118,9 @@ export function warnIfVecMissing(db: Database, { once }: { once: boolean } = { o
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
+/** A row backed up out of the legacy `usage_events` table during a version upgrade. */
+type UsageEventRow = Record<string, string | number | null>;
+
 function ensureSchema(db: Database, embeddingDim: number): void {
   // Create meta table first so we can check version
   db.exec(`
@@ -129,31 +132,11 @@ function ensureSchema(db: Database, embeddingDim: number): void {
 
   // Check stored version — if it differs from DB_VERSION, drop and recreate all tables.
   // Usage events are preserved across version upgrades so that utility score
-  // history is not silently lost.
-  const storedVersion = getMeta(db, "version");
-  if (storedVersion && storedVersion !== String(DB_VERSION)) {
-    // Back up usage_events before dropping tables
-    let usageBackup: Array<Record<string, unknown>> = [];
-    try {
-      usageBackup = db.prepare("SELECT * FROM usage_events").all() as typeof usageBackup;
-    } catch {
-      /* table may not exist in older versions */
-    }
-
-    db.exec("DROP TABLE IF EXISTS utility_scores");
-    db.exec("DROP TABLE IF EXISTS usage_events");
-    db.exec("DROP TABLE IF EXISTS embeddings");
-    db.exec("DROP TABLE IF EXISTS entries_vec");
-    db.exec("DROP TABLE IF EXISTS entries_fts");
-    db.exec("DROP INDEX IF EXISTS idx_entries_dir");
-    db.exec("DROP INDEX IF EXISTS idx_entries_type");
-    db.exec("DROP TABLE IF EXISTS entries");
-    db.exec("DELETE FROM index_meta");
-
-    // Store backup for restoration after ensureUsageEventsSchema runs
-    (db as unknown as Record<string, unknown>).__usageBackup = usageBackup;
-    console.warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
-  }
+  // history is not silently lost. The backup is captured here and threaded
+  // explicitly to `restoreUsageEventsBackup` below — the previous version
+  // attached `__usageBackup` to the Database instance via a typeless property
+  // injection, which was a source of fragile coupling.
+  const usageBackup: UsageEventRow[] = handleVersionUpgrade(db);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS entries (
@@ -272,29 +255,67 @@ function ensureSchema(db: Database, embeddingDim: number): void {
   // Usage telemetry table
   ensureUsageEventsSchema(db);
 
-  // Restore usage_events that were backed up during a version upgrade.
-  // Wrapped in outer try/catch because schema changes across versions may
-  // make the backup incompatible with the new table definition.
-  const dbAny = db as unknown as Record<string, unknown>;
-  const backup = dbAny.__usageBackup as Array<Record<string, unknown>> | undefined;
-  if (backup && backup.length > 0) {
-    try {
-      db.transaction(() => {
-        const cols = Object.keys(backup[0]);
-        const placeholders = cols.map(() => "?").join(", ");
-        const insert = db.prepare(`INSERT INTO usage_events (${cols.join(", ")}) VALUES (${placeholders})`);
-        for (const row of backup) {
-          try {
-            insert.run(...cols.map((c) => row[c] as string | number | null));
-          } catch {
-            /* skip rows that fail */
-          }
+  // Restore usage_events backed up by the version-upgrade path above.
+  restoreUsageEventsBackup(db, usageBackup);
+}
+
+/**
+ * Detect a stored DB version that differs from {@link DB_VERSION}, drop the
+ * old schema, and return a backup of the previous `usage_events` rows so the
+ * rest of `ensureSchema()` can restore them once the new table exists.
+ *
+ * Returns an empty array when no upgrade is needed or when the previous
+ * `usage_events` table is unreadable.
+ */
+function handleVersionUpgrade(db: Database): UsageEventRow[] {
+  const storedVersion = getMeta(db, "version");
+  if (!storedVersion || storedVersion === String(DB_VERSION)) return [];
+
+  let usageBackup: UsageEventRow[] = [];
+  try {
+    usageBackup = db.prepare("SELECT * FROM usage_events").all() as UsageEventRow[];
+  } catch {
+    /* table may not exist in older versions */
+  }
+
+  db.exec("DROP TABLE IF EXISTS utility_scores");
+  db.exec("DROP TABLE IF EXISTS usage_events");
+  db.exec("DROP TABLE IF EXISTS embeddings");
+  db.exec("DROP TABLE IF EXISTS entries_vec");
+  db.exec("DROP TABLE IF EXISTS entries_fts");
+  db.exec("DROP INDEX IF EXISTS idx_entries_dir");
+  db.exec("DROP INDEX IF EXISTS idx_entries_type");
+  db.exec("DROP TABLE IF EXISTS entries");
+  db.exec("DELETE FROM index_meta");
+
+  console.warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
+  return usageBackup;
+}
+
+/**
+ * Re-insert backed-up `usage_events` rows into the freshly-created table.
+ *
+ * Wrapped in an outer try/catch because schema changes across versions may
+ * make the backup incompatible with the new table definition; in that case
+ * the backup is discarded silently rather than blocking startup.
+ */
+function restoreUsageEventsBackup(db: Database, backup: UsageEventRow[]): void {
+  if (backup.length === 0) return;
+  try {
+    db.transaction(() => {
+      const cols = Object.keys(backup[0]);
+      const placeholders = cols.map(() => "?").join(", ");
+      const insert = db.prepare(`INSERT INTO usage_events (${cols.join(", ")}) VALUES (${placeholders})`);
+      for (const row of backup) {
+        try {
+          insert.run(...cols.map((c) => row[c]));
+        } catch {
+          /* skip rows that fail */
         }
-      })();
-    } catch {
-      /* schema changed too much — discard backup gracefully */
-    }
-    delete dbAny.__usageBackup;
+      }
+    })();
+  } catch {
+    /* schema changed too much — discard backup gracefully */
   }
 }
 

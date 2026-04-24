@@ -5,8 +5,9 @@ import path from "node:path";
 import type { EmbeddingConnectionConfig } from "../src/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/db";
 import * as embedderModule from "../src/embedder";
-import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
+import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer";
 import { getDbPath } from "../src/paths";
+import { buildSearchText } from "../src/search-fields";
 
 let testConfigDir = "";
 let testCacheDir = "";

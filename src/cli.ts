@@ -436,35 +436,38 @@ const showCommand = defineCommand({
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
-    akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
-    akmHeading: { type: "string", description: "Internal positional section heading parser" },
-    akmStart: { type: "string", description: "Internal positional start-line parser" },
-    akmEnd: { type: "string", description: "Internal positional end-line parser" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
+      // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
+      // by `normalizeShowArgv` before citty parses argv. We read those values
+      // directly via `parseFlagValue` so the flags don't surface as user-facing
+      // options in `akm show --help`.
+      const akmView = parseFlagValue(process.argv, "--akmView");
+      const akmHeading = parseFlagValue(process.argv, "--akmHeading");
+      const akmStart = parseFlagValue(process.argv, "--akmStart");
+      const akmEnd = parseFlagValue(process.argv, "--akmEnd");
       let view: KnowledgeView | undefined;
-      if (args.akmView) {
-        switch (args.akmView) {
+      if (akmView) {
+        switch (akmView) {
           case "section":
-            view = { mode: "section", heading: args.akmHeading ?? "" };
+            view = { mode: "section", heading: akmHeading ?? "" };
             break;
           case "lines":
             view = {
               mode: "lines",
-              start: Number(args.akmStart ?? "1"),
-              end: args.akmEnd ? parseInt(args.akmEnd, 10) : Number.MAX_SAFE_INTEGER,
+              start: Number(akmStart ?? "1"),
+              end: akmEnd ? parseInt(akmEnd, 10) : Number.MAX_SAFE_INTEGER,
             };
             break;
           case "toc":
           case "frontmatter":
           case "full":
-            view = { mode: args.akmView };
+            view = { mode: akmView };
             break;
           default:
-            throw new UsageError(
-              `Unknown view mode: ${args.akmView}. Expected one of: full|toc|frontmatter|section|lines`,
-            );
+            throw new UsageError(`Unknown view mode: ${akmView}. Expected one of: full|toc|frontmatter|section|lines`);
         }
       }
       // Map CLI detail level to ShowDetailLevel for the show function
@@ -707,6 +710,11 @@ const registryCommand = defineCommand({
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
         options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+        "allow-insecure": {
+          type: "boolean",
+          description: "Allow a plain HTTP registry URL (otherwise rejected)",
+          default: false,
+        },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
@@ -714,8 +722,15 @@ const registryCommand = defineCommand({
             throw new UsageError("Registry URL must start with http:// or https://");
           }
           if (args.url.startsWith("http://")) {
+            const allowInsecure = Boolean((args as Record<string, unknown>)["allow-insecure"]);
+            if (!allowInsecure) {
+              throw new UsageError(
+                "Registry URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious index. " +
+                  "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+              );
+            }
             warn(
-              "Warning: registry URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+              "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious index.",
             );
           }
           const config = loadUserConfig();

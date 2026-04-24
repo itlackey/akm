@@ -16,9 +16,9 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/db";
-import { buildSearchText } from "../src/indexer";
 import type { StashEntry, StashFile } from "../src/metadata";
 import { getDbPath } from "../src/paths";
+import { buildSearchText } from "../src/search-fields";
 import { akmSearch, mergeStashHits } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
 

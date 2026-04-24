@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveAssetPathFromName } from "./asset-spec";
 import { isWithin, resolveStashDir } from "./common";
 import { UsageError } from "./errors";
+import { warn } from "./warn";
 import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
@@ -51,7 +52,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   }
 
   const content = input.from
-    ? readWorkflowSource(input.from)
+    ? readWorkflowSource(input.from, stashDir)
     : (input.content ?? buildWorkflowTemplate(normalizedName));
   try {
     parseWorkflowMarkdown(content);
@@ -72,7 +73,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   };
 }
 
-function readWorkflowSource(source: string): string {
+function readWorkflowSource(source: string, stashDir: string): string {
   const resolved = path.resolve(source);
   let stat: fs.Stats;
   try {
@@ -82,6 +83,15 @@ function readWorkflowSource(source: string): string {
   }
   if (!stat.isFile()) {
     throw new UsageError(`Workflow source must be a file: "${source}".`);
+  }
+  // The user is allowed to import any readable file as a workflow body, but
+  // an import from outside the stash is unusual enough to warn about. Anyone
+  // running `akm workflow create --from /etc/passwd` deserves a heads-up.
+  if (!isWithin(resolved, stashDir)) {
+    warn(
+      `Importing workflow content from outside the stash: ${resolved}\n  ` +
+        `If this was unintentional, abort and re-run with a --from path inside ${stashDir}.`,
+    );
   }
   return fs.readFileSync(resolved, "utf8");
 }
