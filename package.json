@@ -35,7 +35,8 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/migration/release-notes"
   ],
   "bin": {
     "akm": "dist/cli.js"

@@ -4,67 +4,16 @@ import path from "node:path";
 const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/CHANGELOG.md";
 const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md";
 
-const EMBEDDED_MIGRATION_GUIDES: Record<string, string> = {
-  "0.6.0": `Migration notes for akm v0.6.0
-
-This release is a clean break: the runtime "kit" / "source" concept is renamed to **stash**, the registry wire format moves from \`kits[]\` to \`stashes[]\` (schema v3), and the discovery keyword/topic is renamed from \`akm-kit\` to \`akm-stash\`.
-
-Automatic (no action required):
-- \`stash.lock\` is renamed to \`akm.lock\` on startup.
-- \`config.installed[]\` entries are mapped to \`config.stashes[]\` + \`akm.lock\` records.
-- \`stashDir\` is loaded as an implicit \`primary: true\` filesystem stash entry.
-- Stash type aliases \`"context-hub"\` and \`"github"\` normalize to \`"git"\` in memory.
-
-Manual actions required:
-- Replace \`akm enable context-hub\` / \`akm disable context-hub\` with
-  \`akm add github:andrewyng/context-hub --name context-hub\`.
-- Switch error-handling scripts from string-matching the \`error\` message
-  to comparing the new machine-readable \`code\` field.
-
-Publishers:
-- The discovery keyword/topic was renamed from \`akm-kit\` to \`akm-stash\`.
-  Update your npm \`keywords\` and GitHub topics. Legacy keywords are no
-  longer honored — clean break, no transition window.
-
-Self-hosted registries:
-- The wire format \`kits[]\` is renamed to \`stashes[]\`. Schema is bumped
-  to v3 and \`akm-cli >= 0.6.0\` only parses v3.
-
-Full migration guide: ${MIGRATION_DOC_URL}
-`,
-  "0.5.0": `Migration notes for akm v0.5.0
-
-- New top-level surfaces: \`akm wiki …\`, \`akm workflow …\`, \`akm vault …\`, and \`akm save\`.
-- If you tried the unreleased single-wiki LLM prototype, move to the new \`akm wiki …\` workflow.
-- Removed from the prototype surface: \`akm lint\`, \`akm import --llm\`, \`akm import --dry-run\`, \`knowledge.pageKinds\`, and the old ingest/lint LLM prompts.
-- Existing raw wiki-like content should be moved into \`wikis/<name>/raw/\` and then managed with the new wiki commands.
-`,
-  "0.3.0": `Migration notes for akm v0.3.0
-
-- The old \`stash\` and \`kit\` command groups were folded into the top-level CLI.
-- Use \`akm add\`, \`akm list\`, and \`akm remove\` instead of the older split command surfaces.
-- Documentation and examples from older releases should be updated to the unified source model.
-`,
-  "0.2.0": `Migration notes for akm v0.2.0
-
-- Asset refs are user-facing \`type:name\` values; do not rely on URI-style refs.
-- The old fixed asset-type union was replaced by an extensible asset type system.
-- \`tool\` assets were removed; use \`script\` assets instead.
-- Config and docs should treat remote provider scores and local scores as part of one shared search pipeline.
-`,
-  "0.1.0": `Migration notes for akm v0.1.0
-
-- The package and project were rebranded from Agent-i-Kit to akm.
-- Update package references from \`agent-i-kit\` to \`akm-cli\`.
-- Update config, registry, plugin, path, and environment-variable references from \`agent-i-kit\` / \`AGENT_I_KIT_*\` to \`akm\` / \`AKM_*\`.
-- The \`tool\` asset type and \`submit\` command were removed.
-`,
-  "0.0.13": `Migration notes for akm v0.0.13
-
-- Initial public release.
-- No migration steps are required for earlier akm versions.
-`,
-};
+/**
+ * Directory containing per-version release notes. Resolved relative to
+ * `import.meta.dir` so the lookup works whether this module is running
+ * from source (`<repo>/src`) or from the published build (`<pkg>/dist`).
+ * The `docs/migration/release-notes/` directory is shipped via the
+ * `files[]` array in `package.json`.
+ */
+function releaseNotesDir(): string {
+  return path.resolve(import.meta.dir, "../docs/migration/release-notes");
+}
 
 function loadChangelog(): string | undefined {
   try {
@@ -73,13 +22,40 @@ function loadChangelog(): string | undefined {
       return fs.readFileSync(changelogPath, "utf8");
     }
   } catch {
-    // fall through to embedded notes
+    // fall through to bundled notes
   }
   return undefined;
 }
 
-function escapeRegexString(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Load the bundled migration note for a specific version, if one exists.
+ * Returns the file body verbatim (no transformations). Missing files,
+ * permission errors, and non-file entries all return `undefined` —
+ * callers are responsible for the fallback message.
+ */
+function loadReleaseNote(version: string): string | undefined {
+  if (!isSafeVersionComponent(version)) return undefined;
+  const notePath = path.join(releaseNotesDir(), `${version}.md`);
+  try {
+    if (!fs.existsSync(notePath)) return undefined;
+    const stat = fs.statSync(notePath);
+    if (!stat.isFile()) return undefined;
+    return fs.readFileSync(notePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Restrict version lookups to strings that are safe as a single path
+ * segment. Accepts typical semver forms (`0.6.0`, `0.6.0-rc1`,
+ * `0.6.0+build.5`) and rejects anything with slashes, `..`, or control
+ * characters that would let a crafted input escape the release-notes
+ * directory.
+ */
+function isSafeVersionComponent(version: string): boolean {
+  if (!version || version.length > 64) return false;
+  return /^[A-Za-z0-9._+-]+$/.test(version) && !version.includes("..");
 }
 
 function normalizeRequestedVersion(input: string): string {
@@ -112,10 +88,18 @@ function extractChangelogSection(changelog: string, version: string): string | u
   return `## [${version}]\n${match[1].trim()}\n`;
 }
 
+function escapeRegexString(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function fallbackGuide(version: string): string {
-  const embedded = EMBEDDED_MIGRATION_GUIDES[version];
-  if (embedded) return `${embedded.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
-  return `No dedicated migration note is bundled for akm v${version}.\n\nSee the full changelog: ${CHANGELOG_URL}\n`;
+  const bundled = loadReleaseNote(version);
+  if (bundled) return `${bundled.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+  return (
+    `No dedicated migration note is bundled for akm v${version}.\n\n` +
+    `See the full changelog: ${CHANGELOG_URL}\n` +
+    `Longform migration guide: ${MIGRATION_DOC_URL}\n`
+  );
 }
 
 export function renderMigrationHelp(versionInput: string, changelogText = loadChangelog()): string {
@@ -131,13 +115,28 @@ export function renderMigrationHelp(versionInput: string, changelogText = loadCh
     for (const candidate of candidates) {
       const section = extractChangelogSection(changelogText, candidate);
       if (section) {
-        const embedded = EMBEDDED_MIGRATION_GUIDES[candidate];
-        if (!embedded) return `${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
-        return `${embedded.trim()}\n\nRelease notes\n-------------\n${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+        const bundled = loadReleaseNote(candidate);
+        if (!bundled) return `${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+        return `${bundled.trim()}\n\nRelease notes\n-------------\n${section.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
       }
     }
   }
 
   const fallbackVersion = candidates.find((candidate) => candidate !== "latest") ?? requested;
   return fallbackGuide(fallbackVersion);
+}
+
+/** Test-only helper — list every version with a bundled release note. */
+export function listBundledReleaseVersions(): string[] {
+  try {
+    const dir = releaseNotesDir();
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith(".md") && name !== "README.md")
+      .map((name) => name.slice(0, -".md".length))
+      .sort();
+  } catch {
+    return [];
+  }
 }
