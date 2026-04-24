@@ -1,6 +1,6 @@
 {
   "name": "akm-cli",
-  "version": "0.5.0-rc4",
+  "version": "0.5.0",
   "type": "module",
   "description": "akm (Agent Kit Manager) — A package manager for AI agent skills, commands, tools, and knowledge. Works with Claude Code, OpenCode, Cursor, and any AI coding assistant.",
   "keywords": [
