@@ -6,14 +6,15 @@ import type { StashConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import type {
-  LiveStashProvider,
+  StashLockData,
   StashSearchOptions,
   StashSearchResult,
   SyncableStashProvider,
+  SyncOptions,
 } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse } from "../stash-types";
-import { isExpired, sanitizeString } from "./provider-utils";
+import { isDirectory, isExpired, sanitizeString } from "./provider-utils";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
 const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -33,13 +34,13 @@ interface WebsitePage {
 }
 
 /**
- * Website stash provider. Implements both {@link LiveStashProvider} (no-op
- * search/show — the FTS5 indexer answers queries) and
- * {@link SyncableStashProvider} (scrape pages into a local mirror so the
- * indexer has files to walk).
+ * Website stash provider. Implements {@link SyncableStashProvider} (which
+ * extends LiveStashProvider) — scrapes pages into a local mirror so the FTS5
+ * indexer can walk them.
  */
-class WebsiteStashProvider implements LiveStashProvider, SyncableStashProvider {
+class WebsiteStashProvider implements SyncableStashProvider {
   readonly type = "website";
+  readonly kind = "syncable" as const;
   readonly name: string;
   private readonly config: StashConfigEntry;
 
@@ -64,27 +65,38 @@ class WebsiteStashProvider implements LiveStashProvider, SyncableStashProvider {
     return false;
   }
 
-  // ── SyncableStashProvider ────────────────────────────────────────────────
-
-  /** Refresh the scraped snapshot for this site. */
-  async sync(): Promise<void> {
-    await ensureWebsiteMirror(this.config, { requireStashDir: true });
+  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+    const cachePaths = await ensureWebsiteMirror(config, { requireStashDir: true, force: options?.force });
+    const syncedAt = (options?.now ?? new Date()).toISOString();
+    const url = config.url ?? "";
+    // #123 added "website" to the StashSource union, so we can use it directly.
+    return {
+      id: url,
+      source: "website",
+      ref: url,
+      artifactUrl: url,
+      contentDir: cachePaths.stashDir,
+      cacheDir: cachePaths.rootDir,
+      extractedDir: cachePaths.stashDir,
+      syncedAt,
+    };
   }
 
-  /** Return the directory the indexer should walk for this stash. */
-  getContentDir(): string {
-    if (!this.config.url) return "";
-    return getCachePaths(this.config.url).stashDir;
+  getContentDir(config: StashConfigEntry): string {
+    const url = config.url ?? "";
+    return getCachePaths(url).stashDir;
   }
 
-  /** Remove the local snapshot. Best-effort. */
-  async remove(): Promise<void> {
-    if (!this.config.url) return;
-    try {
-      const cachePaths = getCachePaths(this.config.url);
-      fs.rmSync(cachePaths.rootDir, { recursive: true, force: true });
-    } catch {
-      /* best-effort cleanup */
+  async remove(config: StashConfigEntry): Promise<void> {
+    const url = config.url;
+    if (!url) return;
+    const paths = getCachePaths(url);
+    if (isDirectory(paths.rootDir)) {
+      try {
+        fs.rmSync(paths.rootDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
     }
   }
 }
@@ -107,12 +119,13 @@ function getCachePaths(siteUrl: string): {
 
 async function ensureWebsiteMirror(
   config: StashConfigEntry,
-  options?: { requireStashDir?: boolean },
+  options?: { requireStashDir?: boolean; force?: boolean },
 ): Promise<ReturnType<typeof getCachePaths>> {
   const rawUrl = config.url ?? "";
   const normalizedUrl = validateWebsiteUrl(rawUrl);
   const cachePaths = getCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
+  const force = options?.force === true;
 
   let mtime = 0;
   try {
@@ -122,6 +135,7 @@ async function ensureWebsiteMirror(
   }
 
   if (
+    !force &&
     mtime &&
     !isExpired(mtime, CACHE_REFRESH_INTERVAL_MS) &&
     (!requireStashDir || hasExtractedSite(cachePaths.stashDir))

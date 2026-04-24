@@ -6,7 +6,53 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { installRegistryRef, validateTarEntries } from "../src/registry-install";
+import {
+  auditInstallCandidate,
+  deriveRegistryLabels,
+  enforceRegistryInstallPolicy,
+  formatInstallAuditFailure,
+} from "../src/install-audit";
+import { syncFromRef } from "../src/stash-providers/sync-from-ref";
+import { validateTarEntries } from "../src/stash-providers/tar-utils";
+
+/**
+ * Test helper that mirrors the pre-#125 `installRegistryRef()` behaviour:
+ * provider sync + post-sync audit + return the legacy `stashRoot` field.
+ *
+ * The production `akmAdd` flow inlines this same pipeline; the helper exists
+ * here so the historical security test suite keeps a single call site.
+ */
+async function installRegistryRef(
+  ref: string,
+  options?: { trustThisInstall?: boolean; cacheRootDir?: string; writable?: boolean },
+) {
+  const synced = await syncFromRef(ref, options);
+  const config = loadConfig();
+  const registryLabels = deriveRegistryLabels({
+    source: synced.source,
+    ref: synced.ref,
+    artifactUrl: synced.artifactUrl,
+  });
+  enforceRegistryInstallPolicy(registryLabels, config, ref);
+  const audit = auditInstallCandidate({
+    rootDir: synced.extractedDir,
+    source: synced.source,
+    ref: synced.ref,
+    registryLabels,
+    config,
+    trustThisInstall: options?.trustThisInstall,
+  });
+  if (audit.blocked) {
+    throw new Error(formatInstallAuditFailure(synced.ref, audit));
+  }
+  return {
+    ...synced,
+    stashRoot: synced.contentDir,
+    installedAt: synced.syncedAt,
+    audit,
+  };
+}
+
 import { parseRegistryRef } from "../src/registry-resolve";
 import { akmAdd, registerWikiSource } from "../src/stash-add";
 import { akmShowUnified as akmShow } from "../src/stash-show";

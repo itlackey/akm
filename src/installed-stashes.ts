@@ -11,19 +11,19 @@ import { resolveStashDir } from "./common";
 import { loadConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { akmIndex } from "./indexer";
+import {
+  auditInstallCandidate,
+  deriveRegistryLabels,
+  enforceRegistryInstallPolicy,
+  formatInstallAuditFailure,
+} from "./install-audit";
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
-import { installRegistryRef, removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./registry-install";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledStashEntry } from "./registry-types";
+import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./stash-add";
+import { syncFromRef } from "./stash-providers/sync-from-ref";
 import { removeStash } from "./stash-source-manage";
-import type {
-  RemoveResponse,
-  SourceEntry,
-  SourceKind,
-  SourceListResponse,
-  StashInstallStatus,
-  UpdateResponse,
-} from "./stash-types";
+import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "./stash-types";
 
 export async function akmListSources(input?: { stashDir?: string; kind?: SourceKind[] }): Promise<SourceListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
@@ -170,27 +170,61 @@ export async function akmUpdate(input?: {
   const installedEntries = loadConfig().installed ?? [];
   const selectedEntries = selectTargets(installedEntries, target, all);
 
+  const auditConfig = loadConfig();
   const processed: UpdateResponse["processed"] = [];
   for (const entry of selectedEntries) {
     if (force && shouldCleanupCache(entry)) {
       cleanupDirectoryBestEffort(entry.cacheDir);
     }
-    const installed = await installRegistryRef(entry.ref);
-    upsertInstalledRegistryEntry(toInstalledEntry(installed));
-    await upsertLockEntry({
-      id: installed.id,
-      source: installed.source,
-      ref: installed.ref,
-      resolvedVersion: installed.resolvedVersion,
-      resolvedRevision: installed.resolvedRevision,
-      integrity: installed.integrity ?? (installed.source === "local" ? "local" : undefined),
+    const synced = await syncFromRef(entry.ref, { force });
+
+    // Mirror the post-sync audit hook from akmAdd so `akm update` can't
+    // silently land malicious content during refresh.
+    const registryLabels = deriveRegistryLabels({
+      source: synced.source,
+      ref: synced.ref,
+      artifactUrl: synced.artifactUrl,
     });
-    if (entry.cacheDir !== installed.cacheDir && shouldCleanupCache(entry)) {
+    enforceRegistryInstallPolicy(registryLabels, auditConfig, entry.ref);
+    const audit = auditInstallCandidate({
+      rootDir: synced.extractedDir,
+      source: synced.source,
+      ref: synced.ref,
+      registryLabels,
+      config: auditConfig,
+    });
+    if (audit.blocked) {
+      throw new Error(formatInstallAuditFailure(synced.ref, audit));
+    }
+
+    const installedEntry: InstalledStashEntry = {
+      id: synced.id,
+      source: synced.source,
+      ref: synced.ref,
+      artifactUrl: synced.artifactUrl,
+      resolvedVersion: synced.resolvedVersion,
+      resolvedRevision: synced.resolvedRevision,
+      stashRoot: synced.contentDir,
+      cacheDir: synced.cacheDir,
+      installedAt: synced.syncedAt,
+      writable: synced.writable ?? entry.writable,
+      ...(entry.wikiName ? { wikiName: entry.wikiName } : {}),
+    };
+    upsertInstalledRegistryEntry(installedEntry);
+    await upsertLockEntry({
+      id: synced.id,
+      source: synced.source,
+      ref: synced.ref,
+      resolvedVersion: synced.resolvedVersion,
+      resolvedRevision: synced.resolvedRevision,
+      integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
+    });
+    if (entry.cacheDir !== synced.cacheDir && shouldCleanupCache(entry)) {
       cleanupDirectoryBestEffort(entry.cacheDir);
     }
 
-    const versionChanged = (entry.resolvedVersion ?? "") !== (installed.resolvedVersion ?? "");
-    const revisionChanged = (entry.resolvedRevision ?? "") !== (installed.resolvedRevision ?? "");
+    const versionChanged = (entry.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
+    const revisionChanged = (entry.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
 
     processed.push({
       id: entry.id,
@@ -201,7 +235,7 @@ export async function akmUpdate(input?: {
         resolvedRevision: entry.resolvedRevision,
         cacheDir: entry.cacheDir,
       },
-      installed: toInstallStatus(installed),
+      installed: { ...installedEntry, extractedDir: synced.extractedDir, audit },
       changed: {
         version: versionChanged,
         revision: revisionChanged,
@@ -291,16 +325,6 @@ function tryResolveInstalledTarget(installed: InstalledStashEntry[], target: str
   }
 
   return undefined;
-}
-
-function toInstalledEntry(status: StashInstallStatus): InstalledStashEntry {
-  // StashInstallStatus extends InstalledStashEntry; omit transient install-only fields.
-  const { extractedDir: _extractedDir, audit: _audit, ...base } = status;
-  return base;
-}
-
-function toInstallStatus(status: StashInstallStatus): StashInstallStatus {
-  return { ...status };
 }
 
 function cleanupDirectoryBestEffort(target: string): void {
