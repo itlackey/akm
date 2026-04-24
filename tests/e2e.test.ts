@@ -858,6 +858,15 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     try {
       const registerResult = runCli("wiki", "register", "ics-docs", externalWiki, "--format", "json");
       expect(registerResult.exitCode).toBe(0);
+      const registerJson = parseJson(registerResult.stdout);
+      expect(registerJson.ref).toBe("ics-docs");
+      expect(registerJson.stashSource).toEqual(
+        expect.objectContaining({
+          type: "filesystem",
+          name: "ics-docs",
+          wiki: "ics-docs",
+        }),
+      );
 
       const listResult = runCli("list", "--format", "json");
       expect(listResult.exitCode).toBe(0);
@@ -903,6 +912,58 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(externalWiki, { recursive: true, force: true });
+    }
+  });
+
+  test("cli: akm index text output surfaces skipped-asset warnings", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-index-warn-");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "workflows", "good.md"),
+      [
+        "---",
+        "description: Good workflow",
+        "---",
+        "",
+        "# Workflow: Good",
+        "",
+        "## Step: First",
+        "Step ID: first",
+        "### Instructions",
+        "Do it.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(stashDir, "workflows", "bad.md"),
+      [
+        "---",
+        "description: Bad workflow",
+        "---",
+        "",
+        "# Workflow: Bad",
+        "",
+        "This prose breaks the parser.",
+        "",
+        "## Step: First",
+        "Step ID: first",
+        "### Instructions",
+        "Do it.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const result = runCli("index", "--full", "--format", "text");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Warnings (");
+      expect(result.stdout).toContain(path.join(stashDir, "workflows", "bad.md"));
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
     }
   });
 

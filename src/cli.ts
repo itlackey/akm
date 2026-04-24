@@ -389,6 +389,11 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
     case "index": {
       const indexResult = result as Partial<IndexResponse>;
       let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+      const warnings = indexResult.warnings;
+      if (Array.isArray(warnings) && warnings.length > 0) {
+        out += `\nWarnings (${warnings.length}):`;
+        for (const message of warnings) out += `\n  - ${String(message)}`;
+      }
       const verification = indexResult.verification;
       if (verification?.ok === false && verification.message) {
         out += `\nVerification: ${String(verification.message)}`;
@@ -2982,7 +2987,18 @@ const main = defineCommand({
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "show", "create", "set", "unset", "load"]);
-const WIKI_SUBCOMMAND_SET = new Set(["create", "list", "show", "remove", "pages", "search", "stash", "lint", "ingest"]);
+const WIKI_SUBCOMMAND_SET = new Set([
+  "create",
+  "register",
+  "list",
+  "show",
+  "remove",
+  "pages",
+  "search",
+  "stash",
+  "lint",
+  "ingest",
+]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
 // citty reads process.argv directly and does not accept a custom argv array,

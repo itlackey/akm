@@ -116,12 +116,14 @@ export interface AddResponse {
         path: string;
         name?: string;
         stashRoot: string;
+        wiki?: string;
       }
     | {
         type: "website";
         url: string;
         name?: string;
         stashRoot: string;
+        wiki?: string;
       };
   config: {
     stashCount: number;
