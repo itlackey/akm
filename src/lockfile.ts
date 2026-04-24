@@ -1,13 +1,52 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigDir } from "./config";
-import type { StashSource } from "./registry-types";
+import type { KitSource } from "./registry-types";
+// `KitSource` is the typed alias for the legacy install-source strings
+// ("npm" | "github" | "git" | "local"). It is now derived from
+// `StashSource["type"]` via `src/config.ts`.
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/**
+ * StashLockEntry — install-time provenance for a stash.
+ *
+ * Companion to `StashEntry`: the StashEntry describes *where* a stash is
+ * configured to come from (declared in config); the StashLockEntry records
+ * *what was actually installed* (resolved version, integrity hash, etc.).
+ *
+ * Lock entries are keyed by `name` (the stable identifier shared with the
+ * matching StashEntry). The lockfile lives at `<configDir>/akm.lock` and is
+ * managed independently from `config.json`.
+ */
+export interface StashLockEntry {
+  /** Stable identifier; matches the name on the corresponding StashEntry. */
+  name: string;
+  /** Resolved package version (npm registry). */
+  resolvedVersion?: string;
+  /** Resolved git commit SHA / revision. */
+  resolvedRevision?: string;
+  /** Final URL the artifact was downloaded from (post-resolution). */
+  artifactUrl?: string;
+  /** Filesystem directory containing the indexable content (the "stashRoot"). */
+  contentDir?: string;
+  /** ISO-8601 timestamp when the install completed. */
+  installedAt?: string;
+  /** Integrity hash (SRI / sha1 hex / sha256:hex). */
+  integrity?: string;
+}
+
+/**
+ * @deprecated Use {@link StashLockEntry}. Maintained for backwards
+ * compatibility with code that still consumes the old shape.
+ */
 export interface LockfileEntry {
+  /**
+   * Stable identifier. Older callers used `id`; aligned with
+   * {@link StashLockEntry.name} so both shapes can coexist during migration.
+   */
   id: string;
-  source: StashSource;
+  source: KitSource;
   ref: string;
   resolvedVersion?: string;
   resolvedRevision?: string;
@@ -16,8 +55,34 @@ export interface LockfileEntry {
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
+const LOCKFILE_NAME = "akm.lock";
+const LEGACY_LOCKFILE_NAME = "stash.lock";
+
 function getLockfilePath(): string {
-  return path.join(getConfigDir(), "stash.lock");
+  return path.join(getConfigDir(), LOCKFILE_NAME);
+}
+
+function getLegacyLockfilePath(): string {
+  return path.join(getConfigDir(), LEGACY_LOCKFILE_NAME);
+}
+
+/**
+ * One-time migration: if the new `akm.lock` does not exist but the legacy
+ * `stash.lock` does, copy it across so installed-stash tracking survives the
+ * rename. Best-effort; failures are silent because the lockfile loader treats
+ * a missing file as an empty lockfile.
+ */
+function migrateLegacyLockfileIfNeeded(): void {
+  const newPath = getLockfilePath();
+  const legacyPath = getLegacyLockfilePath();
+  try {
+    if (fs.existsSync(newPath)) return;
+    if (!fs.existsSync(legacyPath)) return;
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
+    fs.copyFileSync(legacyPath, newPath);
+  } catch {
+    /* best-effort — fall through to empty lockfile */
+  }
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────
@@ -91,6 +156,7 @@ function releaseLockSentinel(): void {
 // ── Read / Write ────────────────────────────────────────────────────────────
 
 export function readLockfile(): LockfileEntry[] {
+  migrateLegacyLockfileIfNeeded();
   const lockfilePath = getLockfilePath();
   try {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));

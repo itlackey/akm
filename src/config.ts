@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings } from "./common";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
-import type { InstalledStashEntry, StashSource } from "./registry-types";
+import type { InstalledStashEntry, KitSource } from "./registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,63 @@ export interface RegistryConfigEntry {
   options?: Record<string, unknown>;
 }
 
+/**
+ * StashSource — discriminated union describing *where* a stash comes from.
+ *
+ * This is the canonical runtime model. The on-disk config keeps using the
+ * flat `{ type, path, url, ... }` shape (see {@link StashConfigEntry}); a
+ * {@link StashSource} value is constructed from those fields by
+ * {@link parseStashEntrySource} at load time and attached to the runtime
+ * {@link StashEntry}. `StashSource` values are not serialized in this shape —
+ * they are derived.
+ */
+export type StashSource =
+  | { type: "filesystem"; path: string }
+  | { type: "git"; url: string; ref?: string }
+  | { type: "npm"; package: string; version?: string }
+  | { type: "github"; owner: string; repo: string; ref?: string }
+  | { type: "website"; url: string; maxPages?: number }
+  | { type: "openviking"; url: string }
+  | { type: "local"; path: string };
+
+/**
+ * StashEntry — runtime representation of a configured stash.
+ *
+ * Unifies the four overlapping types this codebase used to carry
+ * (`StashConfigEntry`, `InstalledStashEntry`, `SourceEntry`, `SearchSource`)
+ * into one value. Persisted on disk via {@link StashConfigEntry}; the
+ * `source` field is derived at load time and never written back out.
+ *
+ * Iteration order convention (see `resolveStashEntries()`):
+ *   1. The entry marked `primary: true` (or, as a backwards-compat shim,
+ *      a synthetic filesystem entry built from the top-level `stashDir`).
+ *   2. Remaining `stashes[]` entries in declared order.
+ *   3. Legacy `installed[]` entries last.
+ */
+export interface StashEntry {
+  /** Stable identifier. Generated from `type+hash` when absent in legacy configs. */
+  name: string;
+  /** Provider type discriminator (mirrors `source.type`). */
+  type: string;
+  /** Internal derived field — not persisted to disk. */
+  source: StashSource;
+  /** Default true. When false, the entry is loaded but skipped at runtime. */
+  enabled?: boolean;
+  /** Whether the underlying repo accepts writes (e.g. git push). */
+  writable?: boolean;
+  /** Marks one entry in `stashes[]` as the primary working stash. */
+  primary?: boolean;
+  /** Pass-through provider-specific options. */
+  options?: Record<string, unknown>;
+  /** If set, .md files in this stash are indexed as wiki pages under this name. */
+  wikiName?: string;
+}
+
+/**
+ * @deprecated Use {@link StashEntry} (runtime) and let the loader derive
+ * {@link StashSource} from the persisted fields. `StashConfigEntry` describes
+ * the on-disk JSON shape; new code should not reach for it directly.
+ */
 export interface StashConfigEntry {
   /** Provider type (e.g. "filesystem", "git", "openviking") */
   type: string;
@@ -75,6 +133,8 @@ export interface StashConfigEntry {
   enabled?: boolean;
   /** If true, the stash is a git repo the user can commit and push changes back to. */
   writable?: boolean;
+  /** Marks this entry as the primary working stash (replaces top-level stashDir). */
+  primary?: boolean;
   /** Arbitrary provider-specific options */
   options?: Record<string, unknown>;
   /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
@@ -611,7 +671,7 @@ function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefin
   const obj = value as Record<string, unknown>;
 
   const id = asNonEmptyString(obj.id);
-  const source = asStashSource(obj.source);
+  const source = asKitSource(obj.source);
   const ref = asNonEmptyString(obj.ref);
   const artifactUrl = asNonEmptyString(obj.artifactUrl);
   const stashRoot = asNonEmptyString(obj.stashRoot);
@@ -642,8 +702,16 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
-function asStashSource(value: unknown): StashSource | undefined {
-  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as StashSource;
+/**
+ * Validate a legacy lockfile/installed-entry source string.
+ *
+ * Restricted to the four kinds that the install pipeline produces
+ * (`"npm" | "github" | "git" | "local"`). The full {@link KitSource} union is
+ * wider, but persisted `installed[]` entries should never carry the runtime
+ * provider kinds (`"filesystem" | "website" | "openviking"`).
+ */
+function asKitSource(value: unknown): KitSource | undefined {
+  if (value === "npm" || value === "github" || value === "git" || value === "local") return value as KitSource;
   return undefined;
 }
 
@@ -734,12 +802,135 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   if (name) entry.name = name;
   if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
   if (typeof obj.writable === "boolean") entry.writable = obj.writable;
+  if (typeof obj.primary === "boolean") entry.primary = obj.primary;
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
     entry.options = obj.options as Record<string, unknown>;
   }
   const wikiName = asNonEmptyString(obj.wikiName);
   if (wikiName) entry.wikiName = wikiName;
   return entry;
+}
+
+// ── StashEntry runtime construction ─────────────────────────────────────────
+
+/**
+ * Synthesize a stable identifier when a {@link StashConfigEntry} omits its
+ * `name`. Uses a short hash of the discriminating fields so two equivalent
+ * entries collapse to the same generated name.
+ */
+function deriveStashEntryName(entry: StashConfigEntry): string {
+  if (entry.name) return entry.name;
+  const seed = JSON.stringify({
+    type: entry.type,
+    path: entry.path ?? null,
+    url: entry.url ?? null,
+  });
+  const hash = createHash("sha256").update(seed).digest("hex").slice(0, 8);
+  return `${entry.type}-${hash}`;
+}
+
+/**
+ * Convert a persisted {@link StashConfigEntry} into the runtime
+ * {@link StashSource} discriminated union. Returns `undefined` when the
+ * entry is missing the fields its provider type requires (e.g. a
+ * `filesystem` entry with no `path`); callers should drop or warn for those.
+ *
+ * Unknown provider types fall back to `{ type: "filesystem", path: ... }` so
+ * legacy aliases (`"context-hub"`, `"github"` for git) still produce a usable
+ * runtime value when a path/url is supplied.
+ */
+export function parseStashEntrySource(entry: StashConfigEntry): StashSource | undefined {
+  switch (entry.type) {
+    case "filesystem":
+      return entry.path ? { type: "filesystem", path: entry.path } : undefined;
+    case "git":
+    case "context-hub":
+    case "github":
+      // Note: a configured `github` provider entry historically meant "git
+      // repo over the GitHub web URL", not the registry-install `github:` ref.
+      return entry.url ? { type: "git", url: entry.url } : undefined;
+    case "website":
+      return entry.url
+        ? {
+            type: "website",
+            url: entry.url,
+            ...(typeof entry.options?.maxPages === "number" ? { maxPages: entry.options.maxPages as number } : {}),
+          }
+        : undefined;
+    case "openviking":
+      return entry.url ? { type: "openviking", url: entry.url } : undefined;
+    case "npm":
+      // Persisted `npm` stash entries are unusual but supported for symmetry.
+      return entry.path ? { type: "npm", package: entry.path } : undefined;
+    default:
+      // Unknown provider — best-effort fallback so callers still get something.
+      return entry.path ? { type: "filesystem", path: entry.path } : undefined;
+  }
+}
+
+/**
+ * Build the full ordered list of runtime {@link StashEntry} values from a
+ * loaded {@link AkmConfig}. Order is the canonical iteration order:
+ *
+ *   1. The entry marked `primary: true` (or, as a backwards-compat shim,
+ *      a synthetic filesystem entry built from the top-level `stashDir`).
+ *   2. Remaining `stashes[]` entries in declared order.
+ *   3. Legacy `installed[]` entries, mapped into runtime entries.
+ *
+ * Entries with `enabled: false` are still emitted — callers decide whether
+ * to honour the flag (mirrors how `installed[]` entries have always been
+ * unconditional). Entries that fail {@link parseStashEntrySource} are
+ * dropped silently.
+ */
+export function resolveStashEntries(config: AkmConfig): StashEntry[] {
+  const entries: StashEntry[] = [];
+  const stashes = config.stashes ?? [];
+
+  // (1) Primary entry: explicit `primary: true` wins; fall back to top-level stashDir.
+  let primary = stashes.find((entry) => entry.primary === true);
+  if (!primary && config.stashDir) {
+    primary = { type: "filesystem", path: config.stashDir, primary: true };
+  }
+  if (primary) {
+    const runtime = toStashEntry(primary, true);
+    if (runtime) entries.push(runtime);
+  }
+
+  // (2) Declared stashes (skip the primary entry — already added).
+  for (const entry of stashes) {
+    if (entry === primary) continue;
+    const runtime = toStashEntry(entry, false);
+    if (runtime) entries.push(runtime);
+  }
+
+  // (3) Legacy installed[] entries.
+  for (const installed of config.installed ?? []) {
+    entries.push({
+      name: installed.id,
+      type: "filesystem",
+      source: { type: "filesystem", path: installed.stashRoot },
+      enabled: true,
+      writable: installed.writable,
+      ...(installed.wikiName ? { wikiName: installed.wikiName } : {}),
+    });
+  }
+
+  return entries;
+}
+
+function toStashEntry(persisted: StashConfigEntry, isPrimary: boolean): StashEntry | undefined {
+  const source = parseStashEntrySource(persisted);
+  if (!source) return undefined;
+  return {
+    name: deriveStashEntryName(persisted),
+    type: persisted.type,
+    source,
+    ...(persisted.enabled !== undefined ? { enabled: persisted.enabled } : {}),
+    ...(persisted.writable !== undefined ? { writable: persisted.writable } : {}),
+    ...(isPrimary || persisted.primary ? { primary: true } : {}),
+    ...(persisted.options ? { options: persisted.options } : {}),
+    ...(persisted.wikiName ? { wikiName: persisted.wikiName } : {}),
+  };
 }
 
 function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefined {

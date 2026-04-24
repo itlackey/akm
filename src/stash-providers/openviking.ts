@@ -5,7 +5,7 @@ import { fetchWithRetry } from "../common";
 import type { StashConfigEntry } from "../config";
 import { ConfigError, NotFoundError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
-import type { StashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
+import type { LiveStashProvider, StashSearchOptions, StashSearchResult } from "../stash-provider";
 import { registerStashProvider } from "../stash-provider-factory";
 import type { KnowledgeView, ShowResponse, StashSearchHit } from "../stash-types";
 import { isExpired, sanitizeString } from "./provider-utils";
@@ -51,7 +51,7 @@ const OV_TYPE_MAP: Record<string, string> = {
   scripts: "script",
 };
 
-class OpenVikingStashProvider implements StashProvider {
+class OpenVikingStashProvider implements LiveStashProvider {
   readonly type = "openviking";
   readonly name: string;
   private readonly config: StashConfigEntry;

@@ -15,11 +15,11 @@ import { getRegistryCacheDir as _getRegistryCacheDir } from "./paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "./registry-resolve";
 import type {
   InstalledStashEntry,
+  KitSource,
   ParsedGithubRef,
   ParsedGitRef,
   ParsedLocalRef,
   StashInstallResult,
-  StashSource,
 } from "./registry-types";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./stash-include";
 import { warn } from "./warn";
@@ -371,7 +371,7 @@ export function detectStashRoot(extractedDir: string): string {
   return root;
 }
 
-function buildInstallCacheDir(cacheRootDir: string, source: StashSource, id: string, version?: string): string {
+function buildInstallCacheDir(cacheRootDir: string, source: KitSource, id: string, version?: string): string {
   const slug = `${source}-${id.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "")}`;
   const versionSlug =
     source === "local"
@@ -413,7 +413,7 @@ async function downloadArchive(url: string, destination: string): Promise<void> 
   }
 }
 
-export function verifyArchiveIntegrity(archivePath: string, expected: string | undefined, source?: StashSource): void {
+export function verifyArchiveIntegrity(archivePath: string, expected: string | undefined, source?: KitSource): void {
   if (!expected) return;
 
   // For GitHub and git sources, resolvedRevision is a commit SHA, not a content hash.
@@ -629,7 +629,7 @@ async function computeFileHash(filePath: string): Promise<string> {
 
 function runInstallAuditOrThrow(
   rootDir: string,
-  source: StashSource,
+  source: KitSource,
   ref: string,
   registryLabels: string[],
   config: AkmConfig,

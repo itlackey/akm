@@ -15,7 +15,7 @@ function makeTmpDir(): string {
 }
 
 function getLockfilePath(): string {
-  return path.join(testConfigDir, "akm", "stash.lock");
+  return path.join(testConfigDir, "akm", "akm.lock");
 }
 
 function writeRawLockfile(content: string): void {

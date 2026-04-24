@@ -30,8 +30,8 @@ export function resolveStashProviderFactory(type: string): StashProviderFactory 
  */
 export function resolveStashProviders(
   config: import("./config").AkmConfig,
-): import("./stash-provider").StashProvider[] {
-  const providers: import("./stash-provider").StashProvider[] = [];
+): import("./stash-provider").LiveStashProvider[] {
+  const providers: import("./stash-provider").LiveStashProvider[] = [];
 
   for (const entry of config.stashes ?? []) {
     if (entry.enabled === false) continue;

@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
-import type { AkmConfig } from "./config";
+import type { AkmConfig, StashConfigEntry } from "./config";
 import { loadConfig } from "./config";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-providers/git";
 import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./stash-providers/website";
 import { warn } from "./warn";
+
+const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -20,13 +22,19 @@ export interface SearchSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * Build the ordered list of stash sources:
- *   1. Primary stash dir (user's own, destination for clone)
- *   2. Additional stashes (filesystem and remote providers)
- *   3. Installed stash paths (cache-managed, from registry)
+ * Build the ordered list of stash sources, walking every configured stash
+ * once. Iteration order:
  *
- * The first entry is always the primary stash. Additional entries come
- * from `stashes` config and `installed` stash entries.
+ *   1. The primary stash directory (the entry marked `primary: true`, or the
+ *      legacy top-level `stashDir`). Always emitted, even when the directory
+ *      does not yet exist on disk, so callers can use it as the clone target.
+ *   2. Each entry in `config.stashes[]` (in declared order), excluding the
+ *      one already emitted as the primary.
+ *   3. Each entry in `config.installed[]` (registry-managed stashes).
+ *
+ * Replaces the previous four-pass loop that walked `stashes[]` separately
+ * for each provider kind. Disabled entries (`enabled: false`) and entries
+ * whose disk path doesn't exist are filtered after deduplication.
  */
 export function resolveStashSources(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir();
@@ -51,53 +59,71 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
     }
   };
 
-  // Filesystem entries from stashes[]
-  for (const entry of config.stashes ?? []) {
-    if (entry.type === "filesystem" && entry.path && entry.enabled !== false) {
-      addSource(entry.path, entry.name, entry.wikiName);
-    }
+  // (1) + (2) Single pass over declared stashes — primary first if present,
+  // then the rest in declared order. The primary's directory is already
+  // injected as `sources[0]` above, so we only need to dedupe the source set.
+  const stashes = config.stashes ?? [];
+  const primaryIdx = stashes.findIndex((entry) => entry.primary === true);
+  const ordered: StashConfigEntry[] = [];
+  if (primaryIdx >= 0) {
+    ordered.push(stashes[primaryIdx]);
+    stashes.forEach((entry, i) => {
+      if (i !== primaryIdx) ordered.push(entry);
+    });
+  } else {
+    ordered.push(...stashes);
   }
 
-  // Git stash entries: resolve cache directory so the indexer can walk it.
-  // "git" provider type (and its legacy aliases "context-hub", "github") are handled.
-  for (const entry of config.stashes ?? []) {
-    if (GIT_STASH_TYPES.has(entry.type) && entry.url && entry.enabled !== false) {
-      try {
-        const repo = parseGitRepoUrl(entry.url);
-        const cachePaths = getCachePaths(repo.canonicalUrl);
-        // The content/ subdirectory inside the extracted repo is the actual
-        // stash root containing DOC.md / SKILL.md files that the walker indexes.
-        const contentDir = path.join(cachePaths.repoDir, "content");
-        addSource(contentDir, entry.name, entry.wikiName);
-      } catch (err) {
-        warn(
-          `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+  for (const entry of ordered) {
+    if (entry.enabled === false) continue;
+    const dir = resolveEntryContentDir(entry);
+    if (dir == null) continue;
+    addSource(dir, entry.name, entry.wikiName);
   }
 
-  // Website stash entries: resolve cache directory so the indexer can walk
-  // the scraped markdown snapshots.
-  for (const entry of config.stashes ?? []) {
-    if (entry.type === "website" && entry.url && entry.enabled !== false) {
-      try {
-        const cachePaths = getWebsiteCachePaths(entry.url);
-        addSource(cachePaths.stashDir, entry.name ?? entry.url, entry.wikiName);
-      } catch (err) {
-        warn(
-          `Warning: failed to resolve website stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
-
-  // Installed stashes (registry and local)
+  // (3) Installed stashes (registry-managed). Always last.
   for (const entry of config.installed ?? []) {
     addSource(entry.stashRoot, entry.id, entry.wikiName);
   }
 
   return sources;
+}
+
+/**
+ * Resolve the content directory the indexer should walk for a given config
+ * entry. Returns `undefined` if the entry has no walkable content (e.g. an
+ * `openviking` remote stash) so the caller can skip it.
+ */
+function resolveEntryContentDir(entry: StashConfigEntry): string | undefined {
+  if (entry.type === "filesystem" && entry.path) {
+    return entry.path;
+  }
+  if (GIT_STASH_TYPES.has(entry.type) && entry.url) {
+    try {
+      const repo = parseGitRepoUrl(entry.url);
+      const cachePaths = getCachePaths(repo.canonicalUrl);
+      // The content/ subdirectory inside the extracted repo is the actual
+      // stash root containing DOC.md / SKILL.md files that the walker indexes.
+      return path.join(cachePaths.repoDir, "content");
+    } catch (err) {
+      warn(
+        `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
+  }
+  if (entry.type === "website" && entry.url) {
+    try {
+      return getWebsiteCachePaths(entry.url).stashDir;
+    } catch (err) {
+      warn(
+        `Warning: failed to resolve website stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
+  }
+  // Remote-only providers (openviking) have no walkable directory.
+  return undefined;
 }
 
 /**
@@ -195,9 +221,7 @@ function isValidDirectory(dir: string): boolean {
   }
 }
 
-// ── Git stash cache integration ──────────────────────────────────────────────
-
-const GIT_STASH_TYPES = new Set(["context-hub", "github", "git"]);
+// ── Stash cache integration ─────────────────────────────────────────────────
 
 /**
  * Ensure all cache-backed stash providers are refreshed so their cache
