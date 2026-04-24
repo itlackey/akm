@@ -95,8 +95,10 @@ function escapeRegexString(value: string): string {
 function fallbackGuide(version: string): string {
   const bundled = loadReleaseNote(version);
   if (bundled) return `${bundled.trim()}\n\nFull changelog: ${CHANGELOG_URL}\n`;
+  const available = listBundledReleaseVersions();
+  const availableLine = available.length ? `\nAvailable bundled notes: ${available.join(", ")}\n` : "";
   return (
-    `No dedicated migration note is bundled for akm v${version}.\n\n` +
+    `No dedicated migration note is bundled for akm v${version}.\n${availableLine}\n` +
     `See the full changelog: ${CHANGELOG_URL}\n` +
     `Longform migration guide: ${MIGRATION_DOC_URL}\n`
   );

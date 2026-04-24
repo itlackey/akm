@@ -1536,12 +1536,13 @@ const helpCommand = defineCommand({
     migrate: defineCommand({
       meta: {
         name: "migrate",
-        description: "Print release notes and migration guidance for a version",
+        description:
+          "Print release notes and migration guidance for a version. Bundled notes live in docs/migration/release-notes/<version>.md; an unknown version lists what's available.",
       },
       args: {
         version: {
           type: "positional",
-          description: "Version to review (for example 0.5.0, v0.5.0, or latest)",
+          description: "Version to review (for example 0.6.0, v0.6.0, 0.6.0-rc1, or latest)",
           required: true,
         },
       },
@@ -2661,7 +2662,7 @@ akm index --full                              # Full reindex
 akm list                                      # List all sources
 akm upgrade                                   # Upgrade akm using its install method
 akm upgrade --check                           # Check for updates
-akm help migrate 0.5.0                        # Print migration notes for a release
+akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm hints                                     # Print this reference
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions

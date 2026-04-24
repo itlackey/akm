@@ -54,6 +54,9 @@ describe("migration help", () => {
     const result = renderMigrationHelp("9.9.9", undefined);
     expect(result).toContain("No dedicated migration note");
     expect(result).toContain("9.9.9");
+    // Fallback lists the bundled versions so users can pick one that exists.
+    expect(result).toContain("Available bundled notes:");
+    expect(result).toContain("0.6.0");
   });
 
   test("rejects unsafe version components (path traversal guard)", () => {
