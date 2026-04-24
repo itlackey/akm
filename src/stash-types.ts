@@ -116,12 +116,14 @@ export interface AddResponse {
         path: string;
         name?: string;
         stashRoot: string;
+        wiki?: string;
       }
     | {
         type: "website";
         url: string;
         name?: string;
         stashRoot: string;
+        wiki?: string;
       };
   config: {
     stashCount: number;
@@ -132,6 +134,7 @@ export interface AddResponse {
     totalEntries: number;
     directoriesScanned: number;
     directoriesSkipped: number;
+    warnings?: string[];
   };
 }
 
@@ -145,6 +148,7 @@ export type SourceKind = "local" | "managed" | "remote";
 export interface SourceEntry {
   name: string;
   kind: SourceKind;
+  wiki?: string;
   path?: string;
   ref?: string;
   provider?: string;

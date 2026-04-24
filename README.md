@@ -139,6 +139,7 @@ the index format.
 
 ```sh
 akm add ~/.claude/skills                    # Local directory
+akm add --type wiki --name docs ~/team/wiki # Register an existing wiki source
 akm add @scope/my-kit                       # npm
 akm add github:owner/repo#v1.2.3            # GitHub with tag
 akm add github:owner/private-kit --trust    # One-off trusted install
@@ -146,7 +147,9 @@ akm add git+https://gitlab.com/org/kit      # Any git repo
 akm add https://docs.example.com --name docs  # Website as knowledge
 ```
 
-Manage sources with `akm list`, `akm update --all`, and `akm remove`.
+Manage sources with `akm list`, `akm update --all`, and `akm remove`. Registered
+external wikis also appear in `akm list`, and `akm wiki register` / `akm wiki remove`
+refresh wiki search results immediately.
 
 ### Website Sources
 

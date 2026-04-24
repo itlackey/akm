@@ -62,18 +62,21 @@ No `--llm` flag.
 akm wiki create <name>       # scaffold wikis/<name>/ with empty schema/index/log/raw
 akm wiki register <name> <path-or-repo>
                              # register an existing directory/repo as a wiki
+                             # and refresh source/search state immediately
 akm wiki list                # table: name, pages, raws, last-modified
 akm wiki show <name>         # path, description, counts, last 3 log entries
 akm wiki remove <name> --force [--with-sources]
-                              # deletes pages/index/log/schema; preserves raw/
-                              # unless --with-sources. For external wikis,
-                              # unregisters without touching source files.
+                               # deletes pages/index/log/schema; preserves raw/
+                               # unless --with-sources. For external wikis,
+                               # unregisters without touching source files and
+                               # clears wiki search hits immediately.
 ```
 
 Wiki names must match `^[a-z0-9][a-z0-9-]*$`.
 
 `akm add --type wiki --name <name> <path-or-repo>` is a shortcut to
 `akm wiki register <name> <path-or-repo>`.
+Registered external wikis also show up in `akm list`.
 
 ### Orientation
 
@@ -88,7 +91,8 @@ in stash-wide `akm search`, so `akm search <q> --type wiki` returns
 them too, mixed with skills, commands, and everything else. Raw sources
 under `raw/` plus the wiki root infrastructure files `schema.md`,
 `index.md`, and `log.md` are intentionally excluded from the search
-index and search results.
+index and search results. Both commands return canonical refs such as
+`wiki:<name>/<page>` that you can pass directly to `akm show`.
 
 ### The one akm-owned write
 

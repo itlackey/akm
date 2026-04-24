@@ -104,9 +104,11 @@ akm index --verbose
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
-`directoriesSkipped`, `verification`, and `timing` breakdown in milliseconds.
-Use `--verbose` to print the indexing mode, semantic-search settings, and
-phase-by-phase progress to stderr while the index is being built.
+`directoriesSkipped`, `verification`, optional `warnings`, and `timing`
+breakdown in milliseconds. Use `--verbose` to print the indexing mode,
+semantic-search settings, and phase-by-phase progress to stderr while the
+index is being built. Malformed workflow assets are skipped with file-path
+warnings instead of aborting the full run.
 
 ### info
 

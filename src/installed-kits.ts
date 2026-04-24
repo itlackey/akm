@@ -42,6 +42,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     sources.push({
       name,
       kind,
+      wiki: stash.wikiName,
       path: stash.path,
       provider: isRemote ? stash.type : undefined,
       updatable: false,
@@ -58,6 +59,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
     sources.push({
       name: entry.id,
       kind,
+      wiki: entry.wikiName,
       path: entry.stashRoot,
       ref: entry.ref,
       version: entry.resolvedVersion,

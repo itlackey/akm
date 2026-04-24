@@ -843,6 +843,130 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   });
 
+  test("cli: registered external wikis appear in list and wiki remove clears stale search hits", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-wiki-source-");
+    const externalWiki = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-ext-wiki-"));
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.mkdirSync(path.join(externalWiki, "tools", "documentation", "how-to"), { recursive: true });
+    fs.writeFileSync(
+      path.join(externalWiki, "tools", "documentation", "how-to", "001-get-started.md"),
+      "---\ndescription: External docs\n---\n# Start\n",
+      "utf8",
+    );
+
+    try {
+      const registerResult = runCli("wiki", "register", "ics-docs", externalWiki, "--format", "json");
+      expect(registerResult.exitCode).toBe(0);
+      const registerJson = parseJson(registerResult.stdout);
+      expect(registerJson.ref).toBe("ics-docs");
+      expect(registerJson.stashSource).toEqual(
+        expect.objectContaining({
+          type: "filesystem",
+          name: "ics-docs",
+          wiki: "ics-docs",
+        }),
+      );
+
+      const listResult = runCli("list", "--format", "json");
+      expect(listResult.exitCode).toBe(0);
+      const listJson = parseJson(listResult.stdout);
+      expect(listJson.sources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "ics-docs",
+            kind: "local",
+            wiki: "ics-docs",
+          }),
+        ]),
+      );
+
+      const searchResult = runCli(
+        "search",
+        "documentation",
+        "--type",
+        "wiki",
+        "--detail",
+        "normal",
+        "--format",
+        "json",
+      );
+      expect(searchResult.exitCode).toBe(0);
+      const searchJson = parseJson(searchResult.stdout);
+      expect(searchJson.hits).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "ics-docs/tools/documentation/how-to/001-get-started",
+            action: "akm show wiki:ics-docs/tools/documentation/how-to/001-get-started -> read the wiki page",
+          }),
+        ]),
+      );
+
+      const removeResult = runCli("wiki", "remove", "ics-docs", "--force", "--format", "json");
+      expect(removeResult.exitCode).toBe(0);
+
+      const removedSearchResult = runCli("search", "documentation", "--type", "wiki", "--format", "json");
+      expect(removedSearchResult.exitCode).toBe(0);
+      const removedSearchJson = parseJson(removedSearchResult.stdout);
+      expect(removedSearchJson.hits).toEqual([]);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+      fs.rmSync(externalWiki, { recursive: true, force: true });
+    }
+  });
+
+  test("cli: akm index text output surfaces skipped-asset warnings", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-index-warn-");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "workflows", "good.md"),
+      [
+        "---",
+        "description: Good workflow",
+        "---",
+        "",
+        "# Workflow: Good",
+        "",
+        "## Step: First",
+        "Step ID: first",
+        "### Instructions",
+        "Do it.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(stashDir, "workflows", "bad.md"),
+      [
+        "---",
+        "description: Bad workflow",
+        "---",
+        "",
+        "# Workflow: Bad",
+        "",
+        "This prose breaks the parser.",
+        "",
+        "## Step: First",
+        "Step ID: first",
+        "### Instructions",
+        "Do it.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const result = runCli("index", "--full", "--format", "text");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Warnings (");
+      expect(result.stdout).toContain(path.join(stashDir, "workflows", "bad.md"));
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+    }
+  });
+
   test("cli: akm remove resolves parsed ref id and removes cache directory", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-remove-");
     const stashRoot = path.join(stashDir, "registry-kit");

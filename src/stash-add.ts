@@ -105,18 +105,22 @@ async function addLocalStashSource(
   // Check for duplicates in stashes[]
   const stashes = [...(config.stashes ?? [])];
   const existing = stashes.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
+  let persistedEntry: StashConfigEntry;
   if (!existing) {
-    const entry: StashConfigEntry = {
+    persistedEntry = {
       type: "filesystem",
       path: resolvedPath,
       name: wikiName ?? toReadableId(resolvedPath),
       ...(wikiName ? { wikiName } : {}),
     };
-    stashes.push(entry);
+    stashes.push(persistedEntry);
     saveConfig({ ...config, stashes });
-  } else if (wikiName && existing.wikiName !== wikiName) {
-    existing.wikiName = wikiName;
-    saveConfig({ ...config, stashes });
+  } else {
+    if (wikiName && existing.wikiName !== wikiName) {
+      existing.wikiName = wikiName;
+      saveConfig({ ...config, stashes });
+    }
+    persistedEntry = existing;
   }
 
   const index = await akmIndex({ stashDir });
@@ -125,12 +129,13 @@ async function addLocalStashSource(
   return {
     schemaVersion: 1,
     stashDir,
-    ref,
+    ref: wikiName ?? ref,
     stashSource: {
       type: "filesystem",
       path: resolvedPath,
-      name: toReadableId(resolvedPath),
+      name: persistedEntry.name ?? toReadableId(resolvedPath),
       stashRoot: resolvedPath,
+      ...(persistedEntry.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
       stashCount: updatedConfig.stashes?.length ?? 0,
@@ -141,6 +146,7 @@ async function addLocalStashSource(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }
@@ -189,12 +195,13 @@ async function addWebsiteStashSource(
   return {
     schemaVersion: 1,
     stashDir,
-    ref,
+    ref: wikiName ?? ref,
     stashSource: {
       type: "website",
       url: normalizedUrl,
       name: entry.name,
       stashRoot: cachePaths.stashDir,
+      ...(entry.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
       stashCount: updatedConfig.stashes?.length ?? 0,
@@ -205,6 +212,7 @@ async function addWebsiteStashSource(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }
@@ -281,6 +289,7 @@ async function addRegistryKit(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }

@@ -57,6 +57,17 @@ export function buildLocalAction(type: string, ref: string): string {
   return builder ? builder(ref) : `akm show ${ref}`;
 }
 
+function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
+  if (source?.wikiName) {
+    return makeAssetRef(entry.type, entry.name);
+  }
+  return makeAssetRef(entry.type, refName, source?.registryId);
+}
+
+function resolveSearchHitOrigin(source?: SearchSource): string | null {
+  return source?.wikiName ? null : (source?.registryId ?? null);
+}
+
 // ── Main search entrypoint ───────────────────────────────────────────────────
 
 export async function searchLocal(input: {
@@ -613,6 +624,7 @@ export async function buildDbHit(input: {
   );
 
   const source = findSourceForPath(input.path, input.sources);
+  const ref = resolveSearchHitRef(input.entry, refName, source);
 
   const editable = isEditable(input.path, input.config);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
@@ -621,14 +633,14 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     name: input.entry.name,
     path: input.path,
-    ref: makeAssetRef(input.entry.type, refName, source?.registryId),
-    origin: source?.registryId ?? null,
+    ref,
+    origin: resolveSearchHitOrigin(source),
     editable,
     ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, refName, source?.registryId) } : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),
-    action: buildLocalAction(input.entry.type, makeAssetRef(input.entry.type, refName, source?.registryId)),
+    action: buildLocalAction(input.entry.type, ref),
     score,
     whyMatched,
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
@@ -702,7 +714,7 @@ async function assetToSearchHit(
 ): Promise<StashSearchHit> {
   const source = findSourceForPath(asset.path, sources);
   const editable = isEditable(asset.path, config);
-  const ref = makeAssetRef(asset.entry.type, asset.entry.name, source?.registryId);
+  const ref = resolveSearchHitRef(asset.entry, asset.entry.name, source);
   const fileSize = readFileSize(asset.path);
   const size = deriveSize(fileSize);
   const estimatedTokens = typeof fileSize === "number" ? Math.round(fileSize / 4) : undefined;
@@ -711,7 +723,7 @@ async function assetToSearchHit(
     name: asset.entry.name,
     path: asset.path,
     ref,
-    origin: source?.registryId ?? null,
+    origin: resolveSearchHitOrigin(source),
     editable,
     ...(!editable
       ? { editHint: buildEditHint(asset.path, asset.entry.type, asset.entry.name, source?.registryId) }
