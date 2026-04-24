@@ -8,3 +8,5 @@ tests/fixtures/openviking/workspace/vectordb/context/
 tests/fixtures/openviking/workspace/viking/_system/accounts.json
 .dev/
 .claude/worktrees/
+.akm/state/
+.claude/scheduled_tasks.lock
