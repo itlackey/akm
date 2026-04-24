@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry } from "../common";
+import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap } from "../common";
 import type { StashConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
@@ -26,6 +26,13 @@ const QUEUE_EXPANSION_FACTOR = 5;
 
 const MAX_PAGES_DEFAULT = 50;
 const MAX_DEPTH_DEFAULT = 3;
+
+/**
+ * Per-page body cap for website scraping. HTML pages this large are
+ * almost never useful as agent knowledge sources and a runaway server
+ * streaming tens of megabytes would blow memory with no upside.
+ */
+const WEBSITE_PAGE_BYTE_CAP = 5 * 1024 * 1024;
 
 interface WebsitePage {
   url: string;
@@ -256,7 +263,16 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
   }
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const body = await response.text();
+  let body: string;
+  try {
+    body = await readBodyWithByteCap(response, WEBSITE_PAGE_BYTE_CAP);
+  } catch (err) {
+    if (err instanceof ResponseTooLargeError) {
+      // Skip oversized pages rather than aborting the whole crawl.
+      return null;
+    }
+    throw err;
+  }
   const finalUrl = normalizeCrawlUrl(response.url || pageUrl) ?? pageUrl;
 
   if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml") || looksLikeMarkup(body)) {

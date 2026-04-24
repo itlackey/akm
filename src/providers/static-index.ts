@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, toErrorMessage } from "../common";
+import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../common";
 import type { RegistryConfigEntry } from "../config";
 import { asString } from "../github";
 import { getRegistryIndexCacheDir } from "../paths";
@@ -101,7 +101,9 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-    const data = (await response.json()) as unknown;
+    // Cap at 50 MB — registry indexes can grow large but unbounded
+    // responses from a compromised server would OOM us.
+    const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024);
     const index = parseRegistryIndex(data);
     if (index) {
       writeCachedIndex(cachePath, index);

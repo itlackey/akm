@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { fetchWithRetry } from "./common";
+import { fetchWithRetry, jsonWithByteCap } from "./common";
 import { UsageError } from "./errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import type {
@@ -651,16 +651,21 @@ export function maxSatisfying(versions: string[], range: string): string | undef
   return candidates[0].version;
 }
 
+// Cap JSON responses at 10 MB — npm package manifests and GitHub API
+// responses are typically a few KB; a compromised registry streaming
+// tens of MB of JSON is a DoS surface, not a feature.
+const REGISTRY_JSON_BYTE_CAP = 10 * 1024 * 1024;
+
 async function fetchJson<T>(url: string, headers?: HeadersInit): Promise<T> {
   const response = await fetchWithRetry(url, { headers });
   if (!response.ok) {
     throw new Error(`Request failed (${response.status}) for ${url}`);
   }
-  return (await response.json()) as T;
+  return jsonWithByteCap<T>(response, REGISTRY_JSON_BYTE_CAP);
 }
 
 async function tryFetchJson<T>(url: string, headers?: HeadersInit): Promise<T | null> {
   const response = await fetchWithRetry(url, { headers });
   if (!response.ok) return null;
-  return (await response.json()) as T;
+  return jsonWithByteCap<T>(response, REGISTRY_JSON_BYTE_CAP);
 }
