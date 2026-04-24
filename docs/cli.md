@@ -168,12 +168,19 @@ search results:
 - **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for managed source assets
 - **`id`** -- Registry-level stash identifier (registry hits only)
 
-The default brief shape is intentionally small: local hits expose `type`,
-`name`, `description`, and `action`; registry hits expose `type`, `name`,
-`id`, `description`, `action`, and `curated`. `--detail normal` adds commonly
-useful fields like `ref`, `origin`, `size`, and `tags`. `--detail full`
-includes debug-oriented fields such as scores, match explanations, timings,
-and stash metadata.
+The default brief shape is intentionally small. The exact field set per
+detail level matches `src/output-shapes.ts`:
+
+| Level | Local stash hits | Registry hits |
+| --- | --- | --- |
+| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` |
+| `normal` | adds `description` and `score` | adds `score` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, timings, stash metadata) | full hit object |
+| `summary` | metadata-only view (no content), under 200 tokens | — |
+| `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+
+If you want a `ref` handle without the rest of the `full` payload, use
+`--detail=agent`.
 
 ### curate
 

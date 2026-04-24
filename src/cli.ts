@@ -175,7 +175,7 @@ const searchCommand = defineCommand({
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -281,7 +281,7 @@ const addCommand = defineCommand({
           options: parsedOptions,
           writable: args.writable,
         });
-        output("stash-add", result);
+        output("add", result);
         return;
       }
 
@@ -404,7 +404,7 @@ const upgradeCommand = defineCommand({
   args: {
     check: { type: "boolean", description: "Check for updates without installing", default: false },
     force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
-    skipChecksum: {
+    "skip-checksum": {
       type: "boolean",
       description: "Skip checksum verification (not recommended)",
       default: false,
@@ -417,7 +417,8 @@ const upgradeCommand = defineCommand({
         output("upgrade", check);
         return;
       }
-      const result = await performUpgrade(check, { force: args.force, skipChecksum: args.skipChecksum });
+      const skipChecksum = Boolean((args as Record<string, unknown>)["skip-checksum"]);
+      const result = await performUpgrade(check, { force: args.force, skipChecksum });
       output("upgrade", result);
     });
   },
@@ -432,7 +433,7 @@ const showCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
     akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
     akmHeading: { type: "string", description: "Internal positional section heading parser" },
     akmStart: { type: "string", description: "Internal positional start-line parser" },
@@ -781,15 +782,16 @@ const registryCommand = defineCommand({
       args: {
         out: { type: "string", description: "Output path for the generated index", default: "index.json" },
         manual: { type: "string", description: "Manual entries JSON file", default: "manual-entries.json" },
-        npmRegistry: { type: "string", description: "Override npm registry base URL" },
-        githubApi: { type: "string", description: "Override GitHub API base URL" },
+        "npm-registry": { type: "string", description: "Override npm registry base URL" },
+        "github-api": { type: "string", description: "Override GitHub API base URL" },
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
+          const argsRecord = args as Record<string, unknown>;
           const result = await buildRegistryIndex({
             manualEntriesPath: args.manual,
-            npmRegistryBase: args.npmRegistry,
-            githubApiBase: args.githubApi,
+            npmRegistryBase: typeof argsRecord["npm-registry"] === "string" ? argsRecord["npm-registry"] : undefined,
+            githubApiBase: typeof argsRecord["github-api"] === "string" ? argsRecord["github-api"] : undefined,
           });
           const outPath = writeRegistryIndex(result.index, args.out);
           output("registry-build-index", {
@@ -1137,7 +1139,7 @@ const workflowResumeCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       const result = resumeWorkflowRun(args.runId);
-      output("workflow-run", result);
+      output("workflow-resume", result);
     });
   },
 });
@@ -1522,8 +1524,10 @@ const hintsCommand = defineCommand({
     detail: { type: "string", description: "Detail level (normal|full)", default: "normal" },
   },
   run({ args }) {
-    const detail = args.detail === "full" ? "full" : "normal";
-    process.stdout.write(loadHints(detail));
+    if (args.detail !== "normal" && args.detail !== "full") {
+      throw new UsageError(`Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`);
+    }
+    process.stdout.write(loadHints(args.detail));
   },
 });
 
@@ -2158,7 +2162,7 @@ const main = defineCommand({
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
