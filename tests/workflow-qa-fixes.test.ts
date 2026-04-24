@@ -131,6 +131,56 @@ describe("workflow resume command", () => {
     const { run: resumedRun } = JSON.parse(resumed.stdout) as { run: { status: string } };
     expect(resumedRun.status).toBe("active");
   });
+
+  // Issue #156: after resuming a blocked run, the previously-blocked step must be
+  // re-actionable so it can be reclassified to completed/failed/skipped.
+  for (const newState of ["completed", "failed", "skipped"] as const) {
+    test(`resume re-opens a blocked step so it can be reclassified to ${newState}`, () => {
+      const env = createWorkflowEnv();
+      setupWorkflow(env);
+
+      const started = runCli(["workflow", "start", "workflow:test-flow"], env);
+      expect(started.status).toBe(0);
+      const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
+
+      expect(runCli(["workflow", "complete", startRun.id, "--step", "first", "--state", "blocked"], env).status).toBe(
+        0,
+      );
+      expect(runCli(["workflow", "resume", startRun.id], env).status).toBe(0);
+
+      const reclassified = runCli(
+        ["workflow", "complete", startRun.id, "--step", "first", "--state", newState, "--notes", "resolved"],
+        env,
+      );
+      expect(reclassified.status).toBe(0);
+      const parsed = JSON.parse(reclassified.stdout) as {
+        workflow: { steps: Array<{ id: string; status: string }> };
+      };
+      const firstStep = parsed.workflow.steps.find((s) => s.id === "first");
+      expect(firstStep?.status).toBe(newState);
+    });
+  }
+
+  test("resume does not disturb already-completed earlier steps", () => {
+    const env = createWorkflowEnv();
+    setupWorkflow(env);
+
+    const started = runCli(["workflow", "start", "workflow:test-flow"], env);
+    expect(started.status).toBe(0);
+    const { run: startRun } = JSON.parse(started.stdout) as { run: { id: string } };
+
+    expect(runCli(["workflow", "complete", startRun.id, "--step", "first"], env).status).toBe(0);
+    expect(runCli(["workflow", "complete", startRun.id, "--step", "second", "--state", "blocked"], env).status).toBe(0);
+    expect(runCli(["workflow", "resume", startRun.id], env).status).toBe(0);
+
+    const status = runCli(["workflow", "status", startRun.id], env);
+    expect(status.status).toBe(0);
+    const detail = JSON.parse(status.stdout) as {
+      workflow: { steps: Array<{ id: string; status: string }> };
+    };
+    expect(detail.workflow.steps.find((s) => s.id === "first")?.status).toBe("completed");
+    expect(detail.workflow.steps.find((s) => s.id === "second")?.status).toBe("pending");
+  });
 });
 
 // ---------------------------------------------------------------------------

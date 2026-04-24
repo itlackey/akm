@@ -201,9 +201,21 @@ export function resumeWorkflowRun(runId: string): WorkflowRunDetail {
       const steps = readWorkflowRunSteps(workflowDb, run.id);
       return buildWorkflowRunDetail(run, steps);
     }
-    // blocked or failed → flip back to active
+    // blocked or failed → flip back to active and re-open the current step so
+    // it can be reclassified (completed, failed, skipped) after resuming.
     const now = new Date().toISOString();
-    workflowDb.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
+    workflowDb.transaction(() => {
+      if (run.current_step_id) {
+        workflowDb
+          .prepare(
+            `UPDATE workflow_run_steps
+             SET status = 'pending', notes = NULL, evidence_json = NULL, completed_at = NULL
+             WHERE run_id = ? AND step_id = ? AND status IN ('blocked', 'failed')`,
+          )
+          .run(run.id, run.current_step_id);
+      }
+      workflowDb.prepare("UPDATE workflow_runs SET status = 'active', updated_at = ? WHERE id = ?").run(now, run.id);
+    })();
     const updated: WorkflowRunRow = { ...run, status: "active", updated_at: now };
     const steps = readWorkflowRunSteps(workflowDb, run.id);
     return buildWorkflowRunDetail(updated, steps);
