@@ -6,5 +6,5 @@ package-lock.json
 tests/fixtures/openviking/workspace/vectordb/
 tests/fixtures/openviking/workspace/vectordb/context/
 tests/fixtures/openviking/workspace/viking/_system/accounts.json
-.dev/.claude/worktrees/
+.dev/
 .claude/worktrees/
