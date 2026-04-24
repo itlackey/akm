@@ -218,6 +218,16 @@ function shouldRetry(status: number): boolean {
 }
 
 /**
+ * Read stdin as UTF-8 text if something is piped in. Returns `undefined`
+ * when stdin is a TTY (no pipe) or when the piped content is empty.
+ */
+export function tryReadStdinText(): string | undefined {
+  if (process.stdin.isTTY) return undefined;
+  const input = fs.readFileSync(0, "utf8");
+  return input.length > 0 ? input : undefined;
+}
+
+/**
  * Default byte cap for untrusted network responses (10 MB).
  *
  * Applies to website scraping, registry index fetches, and any other
