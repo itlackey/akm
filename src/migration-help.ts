@@ -2,8 +2,36 @@ import fs from "node:fs";
 import path from "node:path";
 
 const CHANGELOG_URL = "https://github.com/itlackey/akm/blob/main/CHANGELOG.md";
+const MIGRATION_DOC_URL = "https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md";
 
 const EMBEDDED_MIGRATION_GUIDES: Record<string, string> = {
+  "0.6.0": `Migration notes for akm v0.6.0
+
+This release is a clean break: the runtime "kit" / "source" concept is renamed to **stash**, the registry wire format moves from \`kits[]\` to \`stashes[]\` (schema v3), and the discovery keyword/topic is renamed from \`akm-kit\` to \`akm-stash\`.
+
+Automatic (no action required):
+- \`stash.lock\` is renamed to \`akm.lock\` on startup.
+- \`config.installed[]\` entries are mapped to \`config.stashes[]\` + \`akm.lock\` records.
+- \`stashDir\` is loaded as an implicit \`primary: true\` filesystem stash entry.
+- Stash type aliases \`"context-hub"\` and \`"github"\` normalize to \`"git"\` in memory.
+
+Manual actions required:
+- Replace \`akm enable context-hub\` / \`akm disable context-hub\` with
+  \`akm add github:andrewyng/context-hub --name context-hub\`.
+- Switch error-handling scripts from string-matching the \`error\` message
+  to comparing the new machine-readable \`code\` field.
+
+Publishers:
+- The discovery keyword/topic was renamed from \`akm-kit\` to \`akm-stash\`.
+  Update your npm \`keywords\` and GitHub topics. Legacy keywords are no
+  longer honored — clean break, no transition window.
+
+Self-hosted registries:
+- The wire format \`kits[]\` is renamed to \`stashes[]\`. Schema is bumped
+  to v3 and \`akm-cli >= 0.6.0\` only parses v3.
+
+Full migration guide: ${MIGRATION_DOC_URL}
+`,
   "0.5.0": `Migration notes for akm v0.5.0
 
 - New top-level surfaces: \`akm wiki …\`, \`akm workflow …\`, \`akm vault …\`, and \`akm save\`.
