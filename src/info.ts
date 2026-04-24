@@ -17,8 +17,8 @@ import { pkgVersion } from "./version";
 export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   const config = loadConfig();
 
-  // Asset types
-  const assetTypes = getAssetTypes();
+  // Asset types (copy into a mutable array — `getAssetTypes()` returns readonly)
+  const assetTypes = [...getAssetTypes()];
 
   const semanticRuntime = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, semanticRuntime);

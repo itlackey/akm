@@ -1,8 +1,8 @@
 import { resolveStashDir } from "../common";
 import type { StashConfigEntry } from "../config";
 import { loadConfig } from "../config";
+import { searchLocal } from "../db-search";
 import { ConfigError } from "../errors";
-import { searchLocal } from "../local-search";
 import { resolveStashSources } from "../search-source";
 import type {
   StashLockData,

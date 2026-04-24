@@ -10,8 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
+import { buildDbHit, buildWhyMatched } from "../src/db-search";
 import { akmIndex } from "../src/indexer";
-import { buildDbHit, buildWhyMatched } from "../src/local-search";
 import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
 

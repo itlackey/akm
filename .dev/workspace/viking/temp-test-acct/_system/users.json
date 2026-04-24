@@ -1,0 +1,8 @@
+{
+  "users": {
+    "admin-user": {
+      "role": "admin",
+      "key": "be9ed6c8eb3226303ce98edbaa4bcd1e090c1de89c23a8b3b3d3c91d3b264547"
+    }
+  }
+}

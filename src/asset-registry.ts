@@ -1,13 +1,13 @@
 /**
  * Central registry for asset type renderer and action builder maps.
  *
- * Previously these maps lived in `local-search.ts` and were wired into
- * `asset-spec.ts` via a fragile `_setAssetTypeHooks` deferred callback
- * pattern. If `local-search.ts` was imported after `registerAssetType()`
- * calls, hooks would be silently dropped.
+ * Previously these maps lived in `db-search.ts` (then `local-search.ts`) and
+ * were wired into `asset-spec.ts` via a fragile `_setAssetTypeHooks` deferred
+ * callback pattern. If the search module was imported after
+ * `registerAssetType()` calls, hooks would be silently dropped.
  *
  * This module is a simple singleton that both `asset-spec.ts` and
- * `local-search.ts` import from, eliminating the import-order dependency
+ * `db-search.ts` import from, eliminating the import-order dependency
  * entirely.
  */
 

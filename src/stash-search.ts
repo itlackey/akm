@@ -1,6 +1,6 @@
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
-import { searchLocal } from "./local-search";
+import { searchLocal } from "./db-search";
 import { resolveStashProviders } from "./stash-provider-factory";
 
 // Eagerly import stash providers to trigger self-registration

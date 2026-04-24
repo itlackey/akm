@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import { buildDbHit } from "../src/local-search";
+import { buildDbHit } from "../src/db-search";
 import type { StashEntry } from "../src/metadata";
 import { akmShowUnified as akmShow } from "../src/stash-show";
 
