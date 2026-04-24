@@ -3,10 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
-import { akmIndex, buildSearchText } from "../src/indexer";
+import { akmIndex } from "../src/indexer";
 import type { StashEntry } from "../src/metadata";
 import { extractCommandParameters, generateMetadataFlat } from "../src/metadata";
 import { getDbPath } from "../src/paths";
+import { buildSearchText } from "../src/search-fields";
 
 let testConfigDir = "";
 let testCacheDir = "";

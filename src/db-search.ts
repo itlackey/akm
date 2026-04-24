@@ -30,9 +30,9 @@ import {
   searchVec,
 } from "./db";
 import { getRenderer } from "./file-context";
-import { buildSearchText } from "./indexer";
 import { generateMetadataFlat, loadStashFile, type StashEntry, shouldIndexStashFile } from "./metadata";
 import { getDbPath } from "./paths";
+import { buildSearchText } from "./search-fields";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,

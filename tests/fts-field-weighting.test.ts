@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { closeDatabase, DB_VERSION, openDatabase, rebuildFts, searchFts, upsertEntry } from "../src/db";
-import { buildSearchFields } from "../src/indexer";
 import type { StashEntry } from "../src/metadata";
+import { buildSearchFields } from "../src/search-fields";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
