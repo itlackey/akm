@@ -80,3 +80,40 @@ describe("parseWorkflowMarkdown", () => {
     expect(() => parseWorkflowMarkdown(invalid)).toThrow(/Unsupported key\(s\): model/);
   });
 });
+
+describe("parseWorkflowMarkdown — intro paragraph (issue #158)", () => {
+  const WORKFLOW_WITH_INTRO = `# Workflow: Example
+
+This workflow is advisory and should only prepare commands.
+
+## Step: First Step
+Step ID: first-step
+
+### Instructions
+Do the thing.
+`;
+
+  test("parses cleanly when intro paragraph precedes first step", () => {
+    const workflow = parseWorkflowMarkdown(WORKFLOW_WITH_INTRO);
+    expect(workflow.title).toBe("Example");
+    expect(workflow.steps).toHaveLength(1);
+    expect(workflow.steps[0]?.id).toBe("first-step");
+    expect(workflow.steps[0]?.title).toBe("First Step");
+  });
+
+  test("existing valid workflows without intro paragraph parse identically", () => {
+    const workflow = parseWorkflowMarkdown(VALID_WORKFLOW);
+    expect(workflow.title).toBe("Ship Release");
+    expect(workflow.steps).toHaveLength(2);
+    expect(workflow.steps[0]?.id).toBe("validate");
+    expect(workflow.steps[1]?.id).toBe("deploy");
+  });
+
+  test("rejects workflow with intro paragraph but no steps", () => {
+    const noSteps = `# Workflow: No Steps
+
+This workflow has an intro but no steps at all.
+`;
+    expect(() => parseWorkflowMarkdown(noSteps)).toThrow(/must contain at least one "## Step: <title>" section/);
+  });
+});
