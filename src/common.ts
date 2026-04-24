@@ -217,6 +217,110 @@ function shouldRetry(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+/**
+ * Default byte cap for untrusted network responses (10 MB).
+ *
+ * Applies to website scraping, registry index fetches, and any other
+ * response that is read into memory from a source the CLI does not fully
+ * control. A compromised or malicious endpoint that streams an unbounded
+ * response would otherwise exhaust RAM — this cap ensures the process
+ * aborts with a clean error instead of crashing.
+ */
+export const DEFAULT_RESPONSE_BYTE_CAP = 10 * 1024 * 1024;
+
+/**
+ * Thrown by {@link readBodyWithByteCap} and its helpers when a response
+ * body exceeds the caller's byte cap. Callers can catch this specifically
+ * to surface a targeted error to the user.
+ */
+export class ResponseTooLargeError extends Error {
+  readonly url: string;
+  readonly maxBytes: number;
+  readonly observedBytes: number | null;
+  constructor(url: string, maxBytes: number, observedBytes: number | null) {
+    const observed = observedBytes === null ? "unknown" : `${observedBytes} bytes`;
+    super(`Response body exceeded ${maxBytes} bytes (observed: ${observed}): ${url}`);
+    this.name = "ResponseTooLargeError";
+    this.url = url;
+    this.maxBytes = maxBytes;
+    this.observedBytes = observedBytes;
+  }
+}
+
+/**
+ * Read a Response body as a UTF-8 string with a byte-count cap.
+ *
+ * Streams the body so we abort as soon as the cap is exceeded, without
+ * buffering the full response first. If the server sent a
+ * `Content-Length` larger than the cap, we refuse before reading any
+ * bytes. `response.body` is consumed and cancelled on cap breach.
+ *
+ * `maxBytes` defaults to {@link DEFAULT_RESPONSE_BYTE_CAP} (10 MB).
+ */
+export async function readBodyWithByteCap(response: Response, maxBytes = DEFAULT_RESPONSE_BYTE_CAP): Promise<string> {
+  const url = response.url || "(unknown URL)";
+  const contentLengthHeader = response.headers.get("content-length");
+  if (contentLengthHeader) {
+    const declared = Number(contentLengthHeader);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      // Don't even start reading.
+      await response.body?.cancel?.().catch(() => undefined);
+      throw new ResponseTooLargeError(url, maxBytes, declared);
+    }
+  }
+
+  const body = response.body;
+  if (!body) {
+    // No streaming body available (e.g., some mock environments). Fall
+    // back to text() but still enforce the cap post-hoc.
+    const text = await response.text();
+    if (text.length > maxBytes) throw new ResponseTooLargeError(url, maxBytes, text.length);
+    return text;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ResponseTooLargeError(url, maxBytes, total);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+
+  if (chunks.length === 0) return "";
+  if (chunks.length === 1) return new TextDecoder().decode(chunks[0]);
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
+}
+
+/**
+ * Parse a Response body as JSON with a byte-count cap. A cheap wrapper
+ * around {@link readBodyWithByteCap}; prefer this for registry index
+ * fetches, GitHub API responses, and any other untrusted JSON source.
+ */
+export async function jsonWithByteCap<T = unknown>(
+  response: Response,
+  maxBytes = DEFAULT_RESPONSE_BYTE_CAP,
+): Promise<T> {
+  const text = await readBodyWithByteCap(response, maxBytes);
+  return JSON.parse(text) as T;
+}
+
 function parseRetryAfter(response: Response): number | undefined {
   const header = response.headers.get("retry-after");
   if (!header) return undefined;
