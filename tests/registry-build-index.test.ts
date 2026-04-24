@@ -191,7 +191,7 @@ describe("buildRegistryIndex", () => {
       githubApiBase: serverBase,
     });
 
-    expect(result.index.version).toBe(2);
+    expect(result.index.version).toBe(3);
     expect(result.counts).toEqual({ manual: 2, npm: 1, github: 1, total: 3 });
 
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
@@ -396,7 +396,7 @@ describe("akm registry build-index", () => {
         version: number;
         stashes: Array<{ id: string }>;
       };
-      expect(written.version).toBe(2);
+      expect(written.version).toBe(3);
       expect(written.stashes.map((stash) => stash.id)).toEqual(["npm:agent-stash", "github:acme/release-stash"]);
     },
     { timeout: 60_000 },

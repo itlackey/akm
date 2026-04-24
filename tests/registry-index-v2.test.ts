@@ -8,7 +8,7 @@ import { searchRegistry } from "../src/registry-search";
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const V1_INDEX: RegistryIndex = {
-  version: 1,
+  version: 3,
   updatedAt: "2026-03-01T00:00:00Z",
   stashes: [
     {
@@ -23,7 +23,7 @@ const V1_INDEX: RegistryIndex = {
 };
 
 const V2_INDEX: RegistryIndex = {
-  version: 2,
+  version: 3,
   updatedAt: "2026-03-12T00:00:00Z",
   stashes: [
     {
@@ -267,7 +267,7 @@ describe("asset-level search", () => {
 
   test("local source stash uses file: prefix in action string", async () => {
     const localIndex: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
       stashes: [
         {
@@ -330,7 +330,7 @@ describe("asset-level search", () => {
 describe("edge cases", () => {
   test("missing assets field parsed as undefined", async () => {
     const index: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
       stashes: [
         {
@@ -357,7 +357,7 @@ describe("edge cases", () => {
 
   test("empty assets array parsed correctly", async () => {
     const index: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
       stashes: [
         {
@@ -385,7 +385,7 @@ describe("edge cases", () => {
   test("asset with invalid structure is skipped", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: testing invalid input
     const index: any = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
       stashes: [
         {

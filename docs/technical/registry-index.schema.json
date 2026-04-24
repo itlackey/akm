@@ -7,8 +7,8 @@
   "properties": {
     "version": {
       "type": "integer",
-      "enum": [1, 2],
-      "description": "Schema version for forward compatibility"
+      "enum": [3],
+      "description": "Schema version. v3 introduced the wire-format clean break (`stashes[]` replacing `kits[]`); v1/v2 are not supported by akm-cli >= 0.6.0."
     },
     "updatedAt": {
       "type": "string",

@@ -91,7 +91,7 @@ export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): P
     a.name.localeCompare(b.name),
   );
   const index: RegistryIndex = {
-    version: 2,
+    version: 3,
     updatedAt: new Date().toISOString(),
     stashes,
   };
@@ -372,7 +372,7 @@ async function loadManualEntries(manualEntriesPath: string): Promise<RegistrySta
   try {
     const raw = JSON.parse(fs.readFileSync(manualEntriesPath, "utf8"));
     const candidateKits = Array.isArray(raw) ? raw : asRecord(raw).stashes;
-    const parsed = parseRegistryIndex({ version: 2, updatedAt: new Date().toISOString(), stashes: candidateKits });
+    const parsed = parseRegistryIndex({ version: 3, updatedAt: new Date().toISOString(), stashes: candidateKits });
     if (!parsed) return [];
     return parsed.stashes.map((stash) => normalizeStash({ ...stash, curated: stash.curated ?? true }));
   } catch {

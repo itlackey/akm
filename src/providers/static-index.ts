@@ -167,7 +167,7 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   const obj = data as Record<string, unknown>;
 
-  if (typeof obj.version !== "number" || (obj.version !== 1 && obj.version !== 2)) return null;
+  if (typeof obj.version !== "number" || obj.version !== 3) return null;
   if (typeof obj.updatedAt !== "string") return null;
   if (!Array.isArray(obj.stashes)) return null;
 
