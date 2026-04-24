@@ -710,4 +710,58 @@ describe("incomplete hits filter (#159)", () => {
     expect(result.assetHits?.length).toBe(1);
     expect(result.assetHits?.[0].assetName).toBe("deploy");
   });
+
+  // PR #168 review #9: asset hits with missing/empty `stash.id` or `stash.name`
+  // are also incomplete and must not propagate to JSON output.
+  test("asset hits with missing or empty stash fields are dropped", async () => {
+    const { registerProvider } = await import("../src/registry-factory");
+    registerProvider("incomplete-stash-test", () => ({
+      type: "incomplete-stash-test",
+      async search() {
+        return {
+          hits: [],
+          assetHits: [
+            // stash entirely missing
+            {
+              type: "registry-asset",
+              assetType: "skill",
+              assetName: "no-stash",
+              action: "akm show skill:no-stash",
+            } as never,
+            // stash present but id is empty
+            {
+              type: "registry-asset",
+              assetType: "skill",
+              assetName: "empty-id",
+              action: "akm show skill:empty-id",
+              stash: { id: "", name: "x" },
+            } as never,
+            // stash present but name is missing
+            {
+              type: "registry-asset",
+              assetType: "skill",
+              assetName: "no-name",
+              action: "akm show skill:no-name",
+              stash: { id: "x" },
+            } as never,
+            // valid — only this one should survive
+            {
+              type: "registry-asset" as const,
+              assetType: "skill",
+              assetName: "good",
+              action: "akm show skill:good",
+              stash: { id: "x", name: "x" },
+            },
+          ],
+        };
+      },
+    }));
+
+    const result = await searchRegistry("anything", {
+      registries: [{ url: "http://unused", provider: "incomplete-stash-test" }],
+    });
+
+    expect(result.assetHits?.length).toBe(1);
+    expect(result.assetHits?.[0].assetName).toBe("good");
+  });
 });

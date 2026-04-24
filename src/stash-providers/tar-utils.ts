@@ -110,16 +110,25 @@ function scanExtractedFiles(dir: string, root: string): void {
   }
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
-    // Check for ".." segments in names (e.g. symlink tricks or crafted filenames)
-    if (entry.name.includes("..")) {
+    // Reject only entries whose name is exactly the parent-traversal segment
+    // (or `.`). Substring matches (`foo..bar`, `archive..2024.tar`) are
+    // legitimate filenames that the previous `entry.name.includes("..")`
+    // check rejected as false positives — flagged in PR #168 review.
+    if (entry.name === ".." || entry.name === ".") {
       throw new Error(`Post-extraction scan: suspicious entry name: ${fullPath}`);
     }
-    // Resolve symlinks to detect escapes outside the destination directory
+    // Symlinks: resolve and confirm the target stays inside the destination.
     if (entry.isSymbolicLink()) {
       const target = fs.realpathSync(fullPath);
       if (!isWithin(target, root)) {
         throw new Error(`Post-extraction scan: symlink escapes destination directory: ${fullPath} -> ${target}`);
       }
+    }
+    // Belt-and-suspenders: any regular entry whose resolved path lands outside
+    // the destination root is rejected, regardless of how its name looks. This
+    // catches anything the tar pre-validation missed.
+    if (!entry.isSymbolicLink() && !isWithin(fullPath, root)) {
+      throw new Error(`Post-extraction scan: entry escapes destination directory: ${fullPath}`);
     }
     if (entry.isDirectory()) {
       scanExtractedFiles(fullPath, root);
