@@ -134,6 +134,7 @@ export interface AddResponse {
     totalEntries: number;
     directoriesScanned: number;
     directoriesSkipped: number;
+    warnings?: string[];
   };
 }
 

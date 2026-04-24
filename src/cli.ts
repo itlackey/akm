@@ -528,6 +528,11 @@ function formatPlain(command: string, result: unknown, detail: DetailLevel): str
       const scanned = index?.directoriesScanned ?? 0;
       const total = index?.totalEntries ?? 0;
       const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
+      const warnings = index?.warnings;
+      if (Array.isArray(warnings) && warnings.length > 0) {
+        lines.push(`Warnings (${warnings.length}):`);
+        for (const message of warnings) lines.push(`  - ${String(message)}`);
+      }
       const installed = r.installed as Record<string, unknown> | undefined;
       const audit = installed?.audit;
       if (audit && typeof audit === "object") {

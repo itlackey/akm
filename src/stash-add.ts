@@ -146,6 +146,7 @@ async function addLocalStashSource(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }
@@ -211,6 +212,7 @@ async function addWebsiteStashSource(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }
@@ -287,6 +289,7 @@ async function addRegistryKit(
       totalEntries: index.totalEntries,
       directoriesScanned: index.directoriesScanned,
       directoriesSkipped: index.directoriesSkipped,
+      ...(index.warnings?.length ? { warnings: index.warnings } : {}),
     },
   };
 }
