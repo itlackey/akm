@@ -28,7 +28,7 @@ current CLI that usually means:
 
 - `brief`: `type`, `name`, `action`, `estimatedTokens`
 - `normal`: adds `description` and `score`
-- `for-agent`: includes `ref`
+- `agent` (0.6.0+; `--for-agent` is the deprecated alias): includes `ref`
 
 Richer provenance/debug fields belong behind fuller detail modes.
 

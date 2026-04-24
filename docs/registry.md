@@ -142,9 +142,12 @@ relevant, the registry enforces tag-based filtering:
 - **npm** -- Only packages whose `keywords` array includes `"akm-stash"` appear in search results.
 - **GitHub** -- Only repositories with the topic `akm-stash` appear in search results.
 
-> Legacy keywords/topics `akm-stash` and `agentikit` are still honored by the
-> official registry's discovery merge, but new publishers should prefer
-> `akm-stash`.
+> **0.6.0 breaking change:** `akm-cli >= 0.6.0` indexes only the
+> `akm-stash` keyword / topic. The pre-0.6.0 `akm-kit` and `agentikit`
+> keywords/topics are **not** honored as fallbacks. Publishers migrating
+> from 0.5.x must add the new tag — see the
+> [migration guide](migration/v0.5-to-v0.6.md) for the step-by-step
+> publisher checklist.
 
 If you are publishing a stash, add these tags so it can be discovered:
 
