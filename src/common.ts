@@ -123,11 +123,37 @@ export function isWithin(candidate: string, root: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/**
+ * Resolve symlinks on `p`, walking up to the closest existing ancestor when
+ * `p` itself does not exist.  This ensures that comparisons between an
+ * existing directory and a not-yet-created child path inside it are
+ * consistent even when the directory hierarchy contains symlinks (e.g.
+ * macOS /tmp → /private/tmp, or a HOME that is itself a symlink).
+ */
 function safeRealpath(p: string): string {
+  const resolved = path.resolve(p);
   try {
-    return fs.realpathSync(path.resolve(p));
+    return fs.realpathSync(resolved);
   } catch {
-    return path.resolve(p);
+    // Path doesn't exist — resolve symlinks on the nearest existing ancestor
+    // and reconstruct the full path from there.
+    const suffix: string[] = [];
+    let current = resolved;
+    for (;;) {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        // Reached filesystem root without finding an existing entry.
+        return resolved;
+      }
+      suffix.unshift(path.basename(current));
+      current = parent;
+      try {
+        const realParent = fs.realpathSync(current);
+        return path.join(realParent, ...suffix);
+      } catch {
+        // parent also doesn't exist; keep walking up
+      }
+    }
   }
 }
 
