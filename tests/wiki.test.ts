@@ -134,7 +134,7 @@ describe("createWiki", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
       expect(() => createWiki(stash, "ics-docs")).toThrow("Wiki already registered: ics-docs.");
     } finally {
@@ -237,7 +237,7 @@ describe("removeWiki", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
 
       const result = removeWiki(stash, "ics-docs");
@@ -245,7 +245,7 @@ describe("removeWiki", () => {
       expect(result.unregistered).toBe(true);
       expect(fs.existsSync(path.join(externalWiki, "overview.md"))).toBe(true);
       expect(listWikis(stash).map((wiki) => wiki.name)).not.toContain("ics-docs");
-      expect((loadConfig().stashes ?? []).some((entry) => entry.wikiName === "ics-docs")).toBe(false);
+      expect((loadConfig().sources ?? []).some((entry) => entry.wikiName === "ics-docs")).toBe(false);
     } finally {
       if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = origHome;
@@ -533,7 +533,7 @@ describe("searchInWiki", () => {
       writePage(externalWiki, "attention.md", "---\ndescription: External attention page\n---\n# Attention\n");
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
 
       const response = await searchInWiki({ stashDir: stash, wikiName: "ics-docs", query: "attention" });

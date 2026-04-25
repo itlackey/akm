@@ -8,7 +8,7 @@ import {
   getPrimarySource,
   isEditable,
   resolveAllStashDirs,
-  resolveStashSources,
+  resolveSourceEntries,
 } from "../src/search-source";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
@@ -37,10 +37,10 @@ afterEach(() => {
   if (stashDir) fs.rmSync(stashDir, { recursive: true, force: true });
 });
 
-describe("resolveStashSources", () => {
+describe("resolveSourceEntries", () => {
   test("returns primary stash as first source", () => {
     saveConfig({ semanticSearchMode: "off" });
-    const sources = resolveStashSources();
+    const sources = resolveSourceEntries();
     expect(sources.length).toBeGreaterThanOrEqual(1);
     expect(sources[0].path).toBe(stashDir);
     expect(sources[0].registryId).toBeUndefined();
@@ -49,8 +49,8 @@ describe("resolveStashSources", () => {
   test("includes valid stash paths", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: extraDir }] });
-      const sources = resolveStashSources();
+      saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: extraDir }] });
+      const sources = resolveSourceEntries();
       expect(sources.length).toBe(2);
       expect(sources[1].path).toBe(extraDir);
     } finally {
@@ -61,9 +61,9 @@ describe("resolveStashSources", () => {
   test("skips non-existent stash paths", () => {
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: "/nonexistent/path/should/not/exist" }],
+      sources: [{ type: "filesystem", path: "/nonexistent/path/should/not/exist" }],
     });
-    const sources = resolveStashSources();
+    const sources = resolveSourceEntries();
     expect(sources.length).toBe(1);
   });
 
@@ -84,7 +84,7 @@ describe("resolveStashSources", () => {
           },
         ],
       });
-      const sources = resolveStashSources();
+      const sources = resolveSourceEntries();
       const installed = sources.find((s) => s.registryId === "npm:test-pkg");
       expect(installed).toBeDefined();
       expect(installed?.path).toBe(installedDir);
@@ -99,7 +99,7 @@ describe("resolveStashSources", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: extraDir }],
+        sources: [{ type: "filesystem", path: extraDir }],
         installed: [
           {
             id: "npm:test-pkg",
@@ -112,7 +112,7 @@ describe("resolveStashSources", () => {
           },
         ],
       });
-      const sources = resolveStashSources();
+      const sources = resolveSourceEntries();
       expect(sources[0].path).toBe(stashDir);
       expect(sources[0].registryId).toBeUndefined();
       expect(sources[1].path).toBe(extraDir);
@@ -129,7 +129,7 @@ describe("resolveStashSources", () => {
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-override-"));
     try {
       saveConfig({ semanticSearchMode: "off" });
-      const sources = resolveStashSources(overrideDir);
+      const sources = resolveSourceEntries(overrideDir);
       expect(sources[0].path).toBe(overrideDir);
     } finally {
       fs.rmSync(overrideDir, { recursive: true, force: true });
@@ -197,7 +197,7 @@ describe("isEditable", () => {
   test("files in stash paths are editable", () => {
     const extraDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-extra-"));
     try {
-      saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: extraDir }] });
+      saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: extraDir }] });
       const filePath = path.join(extraDir, "scripts", "deploy.sh");
       expect(isEditable(filePath)).toBe(true);
     } finally {

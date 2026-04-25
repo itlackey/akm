@@ -13,20 +13,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { StashConfigEntry } from "../config";
+import type { SourceConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryCacheDir } from "../paths";
 import { parseRegistryRef, resolveRegistryArtifact } from "../registry-resolve";
 import type { ParsedNpmRef } from "../registry-types";
 import type {
-  StashLockData,
-  StashSearchOptions,
-  StashSearchResult,
-  SyncableStashProvider,
+  SourceLockData,
+  SourceSearchOptions,
+  SourceSearchResult,
+  SyncableSourceProvider,
   SyncOptions,
-} from "../stash-provider";
-import { registerStashProvider } from "../stash-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../stash-types";
+} from "../source-provider";
+import { registerSourceProvider } from "../source-provider-factory";
+import type { KnowledgeView, ShowResponse } from "../source-types";
 import {
   applyAkmIncludeConfig,
   buildInstallCacheDir,
@@ -37,17 +37,17 @@ import {
 } from "./provider-utils";
 import { extractTarGzSecure, verifyArchiveIntegrity } from "./tar-utils";
 
-class NpmStashProvider implements SyncableStashProvider {
+class NpmSourceProvider implements SyncableSourceProvider {
   readonly type = "npm";
   readonly kind = "syncable" as const;
   readonly name: string;
 
-  constructor(config: StashConfigEntry) {
+  constructor(config: SourceConfigEntry) {
     this.name = config.name ?? config.url ?? "npm";
   }
 
   /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: StashSearchOptions): Promise<StashSearchResult> {
+  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
     return { hits: [] };
   }
 
@@ -60,17 +60,17 @@ class NpmStashProvider implements SyncableStashProvider {
     return false;
   }
 
-  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
     const ref = npmRefFromConfig(config);
     return syncNpmRef(ref, options);
   }
 
-  getContentDir(config: StashConfigEntry): string {
+  getContentDir(config: SourceConfigEntry): string {
     if (config.path) return config.path;
     throw new ConfigError("npm stash entry missing resolved content path");
   }
 
-  async remove(config: StashConfigEntry): Promise<void> {
+  async remove(config: SourceConfigEntry): Promise<void> {
     if (config.path && isDirectory(config.path)) {
       // Remove the whole versioned cache dir if we know the parent layout.
       const parent = path.dirname(config.path);
@@ -83,9 +83,9 @@ class NpmStashProvider implements SyncableStashProvider {
   }
 }
 
-registerStashProvider("npm", (config) => new NpmStashProvider(config));
+registerSourceProvider("npm", (config) => new NpmSourceProvider(config));
 
-function npmRefFromConfig(config: StashConfigEntry): string {
+function npmRefFromConfig(config: SourceConfigEntry): string {
   // Prefer an explicit ref-bearing field (set by akmAdd when persisting), else fall back
   // to options or url so the provider stays usable from a hand-rolled config.
   const candidate = config.options?.ref ?? config.url ?? config.options?.package ?? config.name;
@@ -96,7 +96,7 @@ function npmRefFromConfig(config: StashConfigEntry): string {
 }
 
 /**
- * Fetch and extract an npm tarball, returning a populated `StashLockData`.
+ * Fetch and extract an npm tarball, returning a populated `SourceLockData`.
  *
  * Mirrors the historical `installRegistryRef()` path for npm sources:
  *   - resolve artifact URL + integrity from the npm registry
@@ -104,7 +104,7 @@ function npmRefFromConfig(config: StashConfigEntry): string {
  *   - download, verify, extract securely, then detect the stash root
  *   - honour `.akm-include` filters
  */
-export async function syncNpmRef(ref: string, options?: SyncOptions): Promise<StashLockData> {
+export async function syncNpmRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {
   const parsed = parseRegistryRef(ref);
   if (parsed.source !== "npm") {
     throw new UsageError(`syncNpmRef requires an npm: ref, got "${ref}"`);
@@ -112,7 +112,7 @@ export async function syncNpmRef(ref: string, options?: SyncOptions): Promise<St
   return doSyncNpm(parsed, options);
 }
 
-async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<StashLockData> {
+async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<SourceLockData> {
   const resolved = await resolveRegistryArtifact(parsed);
   const syncedAt = (options?.now ?? new Date()).toISOString();
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -192,4 +192,4 @@ async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<S
   };
 }
 
-export { NpmStashProvider };
+export { NpmSourceProvider };

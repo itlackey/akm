@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
 import { UsageError } from "../src/errors";
-import { akmClone } from "../src/stash-clone";
+import { akmClone } from "../src/source-clone";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
@@ -38,7 +38,7 @@ beforeEach(() => {
 
   saveConfig({
     semanticSearchMode: "off",
-    stashes: [{ type: "filesystem", path: searchPathDir }],
+    sources: [{ type: "filesystem", path: searchPathDir }],
   });
 });
 

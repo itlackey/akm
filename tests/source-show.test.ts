@@ -3,10 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
-import { akmShowUnified as akmShow } from "../src/stash-show";
+import { akmShowUnified as akmShow } from "../src/source-show";
 
-// Trigger stash-provider self-registration
-import "../src/stash-providers/index";
+// Trigger source-provider self-registration
+import "../src/source-providers/index";
 
 const createdTmpDirs: string[] = [];
 
@@ -172,7 +172,7 @@ describe("akmShow search path", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: searchPathDir }] });
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
 
     const result = await akmShow({ ref: "script:deploy.sh" });
 
@@ -203,7 +203,7 @@ describe("akmShow editability", () => {
     const searchPathDir = createTmpDir("akm-show-searchpath-editable-");
     writeFile(path.join(searchPathDir, "scripts", "remote.sh"), "#!/usr/bin/env bash\necho remote\n");
 
-    saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: searchPathDir }] });
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
 
     const result = await akmShow({ ref: "script:remote.sh" });
 

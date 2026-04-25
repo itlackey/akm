@@ -83,7 +83,7 @@ describe("akmListSources", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot, writable: true }],
+      sources: [{ type: "filesystem", path: stashRoot, writable: true }],
       installed: [
         {
           id: "test-pkg",
@@ -183,7 +183,7 @@ describe("akmListSources", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot }],
+      sources: [{ type: "filesystem", path: stashRoot }],
       installed: [
         {
           id: "test-pkg",
@@ -249,7 +249,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot }],
+      sources: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -281,7 +281,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot }],
+      sources: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -313,7 +313,7 @@ describe("akmRemove", () => {
 
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: stashRoot }],
+      sources: [{ type: "filesystem", path: stashRoot }],
       installed: [entry],
     });
 
@@ -389,13 +389,13 @@ describe("selectTargets via akmUpdate", () => {
     saveConfig({
       semanticSearchMode: "off",
 
-      stashes: [{ type: "filesystem", path: localDir, name: "test-local" }],
+      sources: [{ type: "filesystem", path: localDir, name: "test-local" }],
       installed: [],
     });
 
     // Local dirs are stash sources now — update only affects installed entries
     expect(fs.existsSync(localDir)).toBe(true);
     const config = loadConfig();
-    expect((config.stashes ?? []).some((s) => s.path === localDir)).toBe(true);
+    expect((config.sources ?? []).some((s) => s.path === localDir)).toBe(true);
   });
 });

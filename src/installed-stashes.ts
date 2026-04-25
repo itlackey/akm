@@ -20,10 +20,10 @@ import {
 import { removeLockEntry, upsertLockEntry } from "./lockfile";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledStashEntry } from "./registry-types";
-import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./stash-add";
-import { syncFromRef } from "./stash-providers/sync-from-ref";
-import { removeStash } from "./stash-source-manage";
-import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "./stash-types";
+import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
+import { removeStash } from "./source-manage";
+import { syncFromRef } from "./source-providers/sync-from-ref";
+import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "./source-types";
 
 export async function akmListSources(input?: { stashDir?: string; kind?: SourceKind[] }): Promise<SourceListResponse> {
   const stashDir = input?.stashDir ?? resolveStashDir();
@@ -33,7 +33,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
   const sources: SourceEntry[] = [];
 
   // Stash entries → local or remote sources
-  for (const stash of config.stashes ?? []) {
+  for (const stash of config.sources ?? config.stashes ?? []) {
     const isRemote = stash.url != null;
     const kind: SourceKind = isRemote ? "remote" : "local";
     if (kindFilter && !kindFilter.includes(kind)) continue;
@@ -111,7 +111,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
         stashRoot: entry.stashRoot,
       },
       config: {
-        stashCount: updatedConfig.stashes?.length ?? 0,
+        sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
         installedKitCount: updatedConfig.installed?.length ?? 0,
       },
       index: {
@@ -145,7 +145,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       stashRoot: removedEntry.path ?? "",
     },
     config: {
-      stashCount: updatedConfig.stashes?.length ?? 0,
+      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -254,7 +254,7 @@ export async function akmUpdate(input?: {
     all,
     processed,
     config: {
-      stashCount: config.stashes?.length ?? 0,
+      sourceCount: (config.sources ?? config.stashes ?? []).length,
       installedKitCount: config.installed?.length ?? 0,
     },
     index: {
@@ -284,7 +284,7 @@ function selectTargets(
 
   // Check if target matches a stash source and give a helpful message
   const config = loadConfig();
-  const stashes = config.stashes ?? [];
+  const stashes = config.sources ?? config.stashes ?? [];
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
   const resolvedPath = !isUrl ? path.resolve(target) : undefined;
   const stashMatch = stashes.find((s) => {

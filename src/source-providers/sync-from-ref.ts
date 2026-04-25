@@ -10,14 +10,14 @@
  * synced `contentDir` because they own the `--trust` flag.
  */
 
-import type { StashSource } from "../config";
+import type { SourceSpec } from "../config";
 import { UsageError } from "../errors";
 import { parseRegistryRef } from "../registry-resolve";
 import type { ParsedLocalRef } from "../registry-types";
-import type { StashLockData, SyncOptions } from "../stash-provider";
+import type { SourceLockData, SyncOptions } from "../source-provider";
 import { detectStashRoot } from "./provider-utils";
 
-export async function syncFromRef(ref: string, options?: SyncOptions): Promise<StashLockData> {
+export async function syncFromRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {
   const parsed = parseRegistryRef(ref);
   if (parsed.source === "local") {
     return syncLocalRef(parsed, options);
@@ -32,11 +32,11 @@ export async function syncFromRef(ref: string, options?: SyncOptions): Promise<S
   }
   // Exhaustiveness — `parseRegistryRef` only emits the four sources above.
   throw new UsageError(
-    `No syncable provider for ref: ${ref} (source=${(parsed as { source: StashSource["type"] }).source})`,
+    `No syncable provider for ref: ${ref} (source=${(parsed as { source: SourceSpec["type"] }).source})`,
   );
 }
 
-function syncLocalRef(parsed: ParsedLocalRef, options?: SyncOptions): StashLockData {
+function syncLocalRef(parsed: ParsedLocalRef, options?: SyncOptions): SourceLockData {
   const stashRoot = detectStashRoot(parsed.sourcePath);
   const syncedAt = (options?.now ?? new Date()).toISOString();
   return {

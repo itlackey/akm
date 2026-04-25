@@ -5,10 +5,10 @@ import path from "node:path";
 import { saveConfig } from "../src/config";
 import { buildDbHit } from "../src/db-search";
 import type { StashEntry } from "../src/metadata";
-import { akmShowUnified as akmShow } from "../src/stash-show";
+import { akmShowUnified as akmShow } from "../src/source-show";
 
-// Trigger stash-provider self-registration
-import "../src/stash-providers/index";
+// Trigger source-provider self-registration
+import "../src/source-providers/index";
 
 const createdTmpDirs: string[] = [];
 

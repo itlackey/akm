@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mergeSearchHits } from "../src/stash-search";
-import type { RegistrySearchResultHit, StashSearchHit } from "../src/stash-types";
+import { mergeSearchHits } from "../src/source-search";
+import type { RegistrySearchResultHit, SourceSearchHit } from "../src/source-types";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
 // from production code when the OpenViking provider was dropped (Phase 1).
 function mergeStashHits(
-  localHits: StashSearchHit[],
-  additionalHits: StashSearchHit[],
+  localHits: SourceSearchHit[],
+  additionalHits: SourceSearchHit[],
   limit: number,
-): StashSearchHit[] {
+): SourceSearchHit[] {
   if (additionalHits.length === 0) return localHits.slice(0, limit);
   const localKeys = new Set<string>();
   for (const h of localHits) localKeys.add(h.path ?? h.ref ?? h.name);
@@ -18,7 +18,7 @@ function mergeStashHits(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeStashHit(name: string, score: number): StashSearchHit {
+function makeStashHit(name: string, score: number): SourceSearchHit {
   return {
     type: "script",
     name,

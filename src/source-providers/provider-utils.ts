@@ -3,8 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../asset-spec";
 import { fetchWithRetry } from "../common";
-import type { StashSource } from "../config";
-import { copyIncludedPaths, findNearestIncludeConfig } from "../stash-include";
+import type { SourceSpec } from "../config";
+import { copyIncludedPaths, findNearestIncludeConfig } from "../source-include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
 
@@ -51,7 +51,7 @@ export function detectStashRoot(extractedDir: string): string {
  */
 export function buildInstallCacheDir(
   cacheRootDir: string,
-  source: StashSource["type"],
+  source: SourceSpec["type"],
   id: string,
   version?: string,
 ): string {

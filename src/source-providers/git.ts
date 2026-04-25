@@ -3,21 +3,21 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../common";
-import type { StashConfigEntry } from "../config";
+import type { SourceConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../registry-resolve";
 import type { ParsedGitRef } from "../registry-types";
 import type {
-  StashLockData,
-  StashSearchOptions,
-  StashSearchResult,
-  SyncableStashProvider,
+  SourceLockData,
+  SourceSearchOptions,
+  SourceSearchResult,
+  SyncableSourceProvider,
   SyncOptions,
-} from "../stash-provider";
-import { registerStashProvider } from "../stash-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../stash-types";
+} from "../source-provider";
+import { registerSourceProvider } from "../source-provider-factory";
+import type { KnowledgeView, ShowResponse } from "../source-types";
 import {
   applyAkmIncludeConfig,
   buildInstallCacheDir,
@@ -43,23 +43,23 @@ interface ParsedRepoUrl {
 }
 
 /**
- * Git stash provider. Implements {@link SyncableStashProvider} (which extends
- * the LiveStashProvider surface) — the indexer walks the cloned repo, and
+ * Git stash provider. Implements {@link SyncableSourceProvider} (which extends
+ * the LiveSourceProvider surface) — the indexer walks the cloned repo, and
  * `sync()` clones/pulls into a local mirror.
  */
-class GitStashProvider implements SyncableStashProvider {
+class GitSourceProvider implements SyncableSourceProvider {
   readonly type = "git";
   readonly kind = "syncable" as const;
   readonly name: string;
-  private readonly config: StashConfigEntry;
+  private readonly config: SourceConfigEntry;
 
-  constructor(config: StashConfigEntry) {
+  constructor(config: SourceConfigEntry) {
     this.config = config;
     this.name = config.name ?? "git";
   }
 
   /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: StashSearchOptions): Promise<StashSearchResult> {
+  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
     return { hits: [] };
   }
 
@@ -73,7 +73,7 @@ class GitStashProvider implements SyncableStashProvider {
     return false;
   }
 
-  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
     // Two execution modes:
     //   1. Long-lived configured stash (config.url) — mirror into the
     //      registry-index cache and serve as a read-only working tree.
@@ -85,7 +85,7 @@ class GitStashProvider implements SyncableStashProvider {
     return syncMirroredRepo(config, options);
   }
 
-  getContentDir(config: StashConfigEntry): string {
+  getContentDir(config: SourceConfigEntry): string {
     if (config.path) return config.path;
     if (config.url) {
       const repo = parseGitRepoUrl(config.url);
@@ -94,7 +94,7 @@ class GitStashProvider implements SyncableStashProvider {
     throw new ConfigError("git stash entry must have either `path` or `url`");
   }
 
-  async remove(config: StashConfigEntry): Promise<void> {
+  async remove(config: SourceConfigEntry): Promise<void> {
     if (config.path && isDirectory(config.path)) {
       try {
         fs.rmSync(path.dirname(config.path), { recursive: true, force: true });
@@ -115,7 +115,7 @@ class GitStashProvider implements SyncableStashProvider {
 
 // ── Self-register ───────────────────────────────────────────────────────────
 
-registerStashProvider("git", (config) => new GitStashProvider(config));
+registerSourceProvider("git", (config) => new GitSourceProvider(config));
 
 // ── Cache management ────────────────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ async function ensureGitMirror(
  * shared registry-index cache (12h TTL) and exposes the working tree as the
  * stash content directory.
  */
-async function syncMirroredRepo(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+async function syncMirroredRepo(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
   if (!config.url) {
     throw new ConfigError("git stash entry requires a URL when no install ref is supplied");
   }
@@ -225,7 +225,7 @@ async function syncMirroredRepo(config: StashConfigEntry, options?: SyncOptions)
  * `akm add git:url`). Runs the clone → strip → include-filter pipeline that
  * historically lived in `installRegistryRef()`.
  */
-export async function syncRegistryGitRef(ref: string, options?: SyncOptions): Promise<StashLockData> {
+export async function syncRegistryGitRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {
   const parsed = parseRegistryRef(ref);
   if (parsed.source === "github") {
     const githubRef: ParsedGitRef = {
@@ -244,7 +244,7 @@ export async function syncRegistryGitRef(ref: string, options?: SyncOptions): Pr
   return doSyncGit(parsed, options);
 }
 
-async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<StashLockData> {
+async function doSyncGit(parsed: ParsedGitRef, options?: SyncOptions): Promise<SourceLockData> {
   const resolved = await resolveRegistryArtifact(parsed);
   const syncedAt = (options?.now ?? new Date()).toISOString();
   const cacheRootDir = options?.cacheRootDir ?? getRegistryCacheDir();
@@ -489,7 +489,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
 
   if (name) {
     const config = loadConfig();
-    const stash = config.stashes?.find((s) => s.name === name || s.url === name);
+    const stash = (config.sources ?? config.stashes ?? []).find((s) => s.name === name || s.url === name);
     if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
     if (!GIT_STASH_TYPES.has(stash.type)) {
       throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
@@ -563,4 +563,4 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
 
 // ── Exports ─────────────────────────────────────────────────────────────────
 
-export { ensureGitMirror, GitStashProvider, getCachePaths, parseGitRepoUrl };
+export { ensureGitMirror, GitSourceProvider, getCachePaths, parseGitRepoUrl };

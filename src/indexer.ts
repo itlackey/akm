@@ -88,10 +88,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
-  const { ensureStashCaches, resolveStashSources } = await import("./search-source.js");
-  await ensureStashCaches(config);
-  const allStashSources = resolveStashSources(stashDir, config);
-  const allStashDirs = allStashSources.map((s) => s.path);
+  const { ensureSourceCaches, resolveSourceEntries } = await import("./search-source.js");
+  await ensureSourceCaches(config);
+  const allSourceEntries = resolveSourceEntries(stashDir, config);
+  const allSourceDirs = allSourceEntries.map((s) => s.path);
 
   const t0 = Date.now();
 
@@ -110,7 +110,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       phase: "summary",
       message: buildIndexSummaryMessage({
         mode: isIncremental ? "incremental" : "full",
-        stashSources: allStashDirs.length,
+        sourcesCount: allSourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
         llmEnabled: !!config.llm,
@@ -138,7 +138,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         } catch {
           warn("index_meta stashDirs value is corrupt JSON — treating as empty");
         }
-        const currentSet = new Set(allStashDirs);
+        const currentSet = new Set(allSourceDirs);
         for (const dir of prevStashDirs) {
           if (!currentSet.has(dir)) {
             deleteEntriesByStashDir(db, dir);
@@ -155,7 +155,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     const doFullDelete = options?.full || !isIncremental;
     const { scannedDirs, skippedDirs, generatedCount, dirsNeedingLlm, warnings } = await indexEntries(
       db,
-      allStashSources,
+      allSourceEntries,
       isIncremental,
       builtAtMs,
       doFullDelete,
@@ -229,7 +229,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // Update metadata
     setMeta(db, "builtAt", new Date().toISOString());
     setMeta(db, "stashDir", stashDir);
-    setMeta(db, "stashDirs", JSON.stringify(allStashDirs));
+    setMeta(db, "stashDirs", JSON.stringify(allSourceDirs));
     setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
 
     const totalEntries = getEntryCount(db);
@@ -281,7 +281,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
 async function indexEntries(
   db: Database,
-  allStashSources: SearchSource[],
+  allSourceEntries: SearchSource[],
   isIncremental: boolean,
   builtAtMs: number,
   doFullDelete = false,
@@ -322,13 +322,13 @@ async function indexEntries(
 
   const dirRecords: DirRecord[] = [];
 
-  for (const stashSource of allStashSources) {
-    const currentStashDir = stashSource.path;
+  for (const sourceAdded of allSourceEntries) {
+    const currentStashDir = sourceAdded.path;
     const fileContexts = walkStashFlat(currentStashDir);
 
     // Wiki-root stashes: all .md files are indexed as wiki pages under wikiName
-    if (stashSource.wikiName) {
-      const wikiName = stashSource.wikiName;
+    if (sourceAdded.wikiName) {
+      const wikiName = sourceAdded.wikiName;
       const wikiDirGroups = new Map<string, { files: string[]; entries: StashEntry[] }>();
       for (const ctx of fileContexts) {
         if (ctx.ext !== ".md") continue;
@@ -648,19 +648,19 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
 
 function buildIndexSummaryMessage(options: {
   mode: "full" | "incremental";
-  stashSources: number;
+  sourcesCount: number;
   semanticSearchMode: AkmConfig["semanticSearchMode"];
   embeddingProvider: "local" | "remote";
   llmEnabled: boolean;
   vecAvailable: boolean;
 }): string {
-  const stashSourceLabel = options.stashSources === 1 ? "stash source" : "stash sources";
+  const stashSourceLabel = options.sourcesCount === 1 ? "stash source" : "stash sources";
   const semanticDetail = getSemanticSearchLabel(
     options.semanticSearchMode,
     options.embeddingProvider,
     options.vecAvailable,
   );
-  return `Starting ${options.mode} index (${options.stashSources} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
+  return `Starting ${options.mode} index (${options.sourcesCount} ${stashSourceLabel}, semantic search: ${semanticDetail}, LLM: ${options.llmEnabled ? "enabled" : "disabled"}).`;
 }
 
 function getEmbeddingProvider(embedding?: import("./config").EmbeddingConnectionConfig): "local" | "remote" {

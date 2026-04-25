@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import { parseAssetRef } from "./asset-ref";
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveSourcesForOrigin } from "./origin-resolve";
 import { getDbPath } from "./paths";
-import { resolveStashSources } from "./search-source";
-import { parseAssetRef } from "./stash-ref";
-import { resolveAssetPath } from "./stash-resolve";
+import { resolveSourceEntries } from "./search-source";
+import { resolveAssetPath } from "./source-resolve";
 import type {
   WorkflowParameter,
   WorkflowRunStatus,
@@ -15,7 +15,7 @@ import type {
   WorkflowRunStepStatus,
   WorkflowRunSummary,
   WorkflowStepDefinition,
-} from "./stash-types";
+} from "./source-types";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "./workflow-db";
 import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
 
@@ -336,7 +336,7 @@ async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   }
 
   const config = loadConfig();
-  const allSources = resolveStashSources(undefined, config);
+  const allSources = resolveSourceEntries(undefined, config);
   const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
   let assetPath: string | undefined;
   let sourcePath: string | undefined;

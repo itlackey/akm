@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../src/config";
 import { akmIndex } from "../src/indexer";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import type { SourceSearchHit } from "../src/source-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -120,12 +120,12 @@ describe("Database search path (FTS scoring)", () => {
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+      sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
     });
     await akmIndex({ stashDir, full: true });
 
     const result = await akmSearch({ query: "documentation", type: "wiki", source: "stash" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const wikiHit = expectDefined(
       localHits.find(
         (hit) => hit.ref === "wiki:ics-docs/tools/documentation/how-to/001-get-started-with-ics-documentation",
@@ -159,7 +159,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name === "deploy");
@@ -207,7 +207,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "code", type: "script", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     for (const hit of localHits) {
       expect(hit.type).toBe("script");
@@ -244,7 +244,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
   });
@@ -266,7 +266,7 @@ describe("Database search path (FTS scoring)", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "", limit: 3, source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBe(3);
   });
@@ -329,7 +329,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const deployHit = localHits.find((h) => h.name === "deploy");
 
     const resolvedDeployHit = expectDefined(deployHit);
@@ -358,7 +358,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "formatter", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "formatter");
 
     const resolvedHit = expectDefined(hit);
@@ -409,7 +409,7 @@ describe("Score boosts", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "testing utility", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     const curatedHit = localHits.find((h) => h.name === "curated");
     const generatedHit = localHits.find((h) => h.name === "generated");
@@ -438,7 +438,7 @@ describe("Substring fallback", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name.includes("deploy"));
@@ -458,7 +458,7 @@ describe("Substring fallback", () => {
 
     // Do NOT call akmIndex
     const result = await akmSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.toLowerCase().includes("deploy"));
@@ -476,7 +476,7 @@ describe("Substring fallback", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "coordination", type: "agent", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits).toHaveLength(1);
     expect(localHits[0]?.name).toBe("agentic-systems-architect");
@@ -501,7 +501,7 @@ describe("Substring fallback", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "blog topics", type: "agent", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits).toHaveLength(1);
     expect(localHits[0]?.type).toBe("agent");
@@ -532,7 +532,7 @@ describe("Substring fallback", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await akmSearch({ query: "diagnostics", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const doctorHit = localHits.find((h) => h.name === "doctor");
 
     expect(doctorHit).toBeDefined();

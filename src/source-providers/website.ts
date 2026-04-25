@@ -2,18 +2,18 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap } from "../common";
-import type { StashConfigEntry } from "../config";
+import type { SourceConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
 import type {
-  StashLockData,
-  StashSearchOptions,
-  StashSearchResult,
-  SyncableStashProvider,
+  SourceLockData,
+  SourceSearchOptions,
+  SourceSearchResult,
+  SyncableSourceProvider,
   SyncOptions,
-} from "../stash-provider";
-import { registerStashProvider } from "../stash-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../stash-types";
+} from "../source-provider";
+import { registerSourceProvider } from "../source-provider-factory";
+import type { KnowledgeView, ShowResponse } from "../source-types";
 import { warn } from "../warn";
 import { isDirectory, isExpired, sanitizeString } from "./provider-utils";
 
@@ -50,24 +50,24 @@ interface WebsitePage {
 }
 
 /**
- * Website stash provider. Implements {@link SyncableStashProvider} (which
- * extends LiveStashProvider) — scrapes pages into a local mirror so the FTS5
+ * Website stash provider. Implements {@link SyncableSourceProvider} (which
+ * extends LiveSourceProvider) — scrapes pages into a local mirror so the FTS5
  * indexer can walk them.
  */
-class WebsiteStashProvider implements SyncableStashProvider {
+class WebsiteSourceProvider implements SyncableSourceProvider {
   readonly type = "website";
   readonly kind = "syncable" as const;
   readonly name: string;
-  private readonly config: StashConfigEntry;
+  private readonly config: SourceConfigEntry;
 
-  constructor(config: StashConfigEntry) {
+  constructor(config: SourceConfigEntry) {
     this.config = config;
     this.name = config.name ?? "website";
     validateWebsiteUrl(config.url ?? "");
   }
 
   /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: StashSearchOptions): Promise<StashSearchResult> {
+  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
     return { hits: [] };
   }
 
@@ -81,11 +81,11 @@ class WebsiteStashProvider implements SyncableStashProvider {
     return false;
   }
 
-  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
     const cachePaths = await ensureWebsiteMirror(config, { requireStashDir: true, force: options?.force });
     const syncedAt = (options?.now ?? new Date()).toISOString();
     const url = config.url ?? "";
-    // #123 added "website" to the StashSource union, so we can use it directly.
+    // #123 added "website" to the SourceSpec union, so we can use it directly.
     return {
       id: url,
       source: "website",
@@ -98,12 +98,12 @@ class WebsiteStashProvider implements SyncableStashProvider {
     };
   }
 
-  getContentDir(config: StashConfigEntry): string {
+  getContentDir(config: SourceConfigEntry): string {
     const url = config.url ?? "";
     return getCachePaths(url).stashDir;
   }
 
-  async remove(config: StashConfigEntry): Promise<void> {
+  async remove(config: SourceConfigEntry): Promise<void> {
     const url = config.url;
     if (!url) return;
     const paths = getCachePaths(url);
@@ -117,7 +117,7 @@ class WebsiteStashProvider implements SyncableStashProvider {
   }
 }
 
-registerStashProvider("website", (config) => new WebsiteStashProvider(config));
+registerSourceProvider("website", (config) => new WebsiteSourceProvider(config));
 
 function getCachePaths(siteUrl: string): {
   rootDir: string;
@@ -134,7 +134,7 @@ function getCachePaths(siteUrl: string): {
 }
 
 async function ensureWebsiteMirror(
-  config: StashConfigEntry,
+  config: SourceConfigEntry,
   options?: { requireStashDir?: boolean; force?: boolean },
 ): Promise<ReturnType<typeof getCachePaths>> {
   const rawUrl = config.url ?? "";
@@ -582,4 +582,4 @@ function safeCodePointToString(value: number): string | undefined {
   }
 }
 
-export { ensureWebsiteMirror, getCachePaths, validateWebsiteInputUrl, validateWebsiteUrl, WebsiteStashProvider };
+export { ensureWebsiteMirror, getCachePaths, validateWebsiteInputUrl, validateWebsiteUrl, WebsiteSourceProvider };

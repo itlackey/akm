@@ -6,9 +6,9 @@ import { getConfigPath, saveConfig } from "../src/config";
 import { akmIndex } from "../src/indexer";
 import { akmInit } from "../src/init";
 import { getBinDir } from "../src/paths";
-import { akmSearch } from "../src/stash-search";
-import { akmShowUnified as akmShow } from "../src/stash-show";
-import type { SearchHit, StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import { akmShowUnified as akmShow } from "../src/source-show";
+import type { SearchHit, SourceSearchHit } from "../src/source-types";
 
 const createdTmpDirs: string[] = [];
 
@@ -23,7 +23,7 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-function isLocalHit(hit: SearchHit): hit is StashSearchHit {
+function isLocalHit(hit: SearchHit): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
@@ -139,7 +139,7 @@ test("akmSearch resolves script run correctly for search path directories", asyn
   writeFile(path.join(searchPathDir, "scripts", "group", "nested", "job.js"), "console.log('job')\n");
   writeFile(path.join(searchPathDir, "scripts", "group", "package.json"), '{"name":"group"}');
 
-  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: searchPathDir }] });
+  saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathDir }] });
 
   process.env.AKM_STASH_DIR = primaryStashDir;
   await akmIndex({ stashDir: primaryStashDir, full: true });

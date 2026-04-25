@@ -12,9 +12,9 @@
  */
 
 import { truncateDescription } from "./output-shapes";
-import { akmSearch, parseSearchSource } from "./stash-search";
-import { akmShowUnified } from "./stash-show";
-import type { RegistrySearchResultHit, SearchResponse, ShowResponse, StashSearchHit } from "./stash-types";
+import { akmSearch, parseSearchSource } from "./source-search";
+import { akmShowUnified } from "./source-show";
+import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "./source-types";
 
 export type CuratedStashItem = {
   source: "stash";
@@ -111,21 +111,21 @@ export async function curateSearchResults(
   limit: number,
   selectedType?: string,
 ): Promise<CurateResponse> {
-  const stashHits = result.hits.filter((hit): hit is StashSearchHit => hit.type !== "registry");
+  const stashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
-  let selectedStashHits: StashSearchHit[];
+  let selectedStashHits: SourceSearchHit[];
   if (selectedType && selectedType !== "any") {
     selectedStashHits = stashHits.slice(0, limit);
   } else {
-    const bestByType = new Map<string, StashSearchHit>();
+    const bestByType = new Map<string, SourceSearchHit>();
     for (const hit of stashHits) {
       if (!bestByType.has(hit.type)) bestByType.set(hit.type, hit);
     }
     const orderedTypes = orderCuratedTypes(query, Array.from(bestByType.keys()));
     selectedStashHits = orderedTypes
       .map((type) => bestByType.get(type))
-      .filter((hit): hit is StashSearchHit => Boolean(hit));
+      .filter((hit): hit is SourceSearchHit => Boolean(hit));
   }
 
   const selectedRegistryHits =
@@ -179,7 +179,7 @@ export function orderCuratedTypes(query: string, types: string[]): string[] {
   });
 }
 
-async function enrichCuratedStashHit(query: string, hit: StashSearchHit): Promise<CuratedStashItem> {
+async function enrichCuratedStashHit(query: string, hit: SourceSearchHit): Promise<CuratedStashItem> {
   let shown: ShowResponse | undefined;
   try {
     shown = await akmShowUnified({ ref: hit.ref });
@@ -221,7 +221,7 @@ function firstNonEmpty(values: Array<string | undefined>): string | undefined {
   return values.find((value) => typeof value === "string" && value.trim().length > 0);
 }
 
-function buildCuratedPreview(shown: ShowResponse | undefined, hit: StashSearchHit): string | undefined {
+function buildCuratedPreview(shown: ShowResponse | undefined, hit: SourceSearchHit): string | undefined {
   if (shown?.run) return truncateDescription(`run ${shown.run}`, 160);
   const payload = firstNonEmpty([shown?.template, shown?.prompt, shown?.content, hit.description])
     ?.replace(/\s+/g, " ")
@@ -285,12 +285,12 @@ export function deriveCurateFallbackQueries(query: string): string[] {
 }
 
 export function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
-  const hitsByRef = new Map<string, StashSearchHit>();
-  for (const hit of base.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
+  const hitsByRef = new Map<string, SourceSearchHit>();
+  for (const hit of base.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
     hitsByRef.set(hit.ref, hit);
   }
   for (const result of extras) {
-    for (const hit of result.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
+    for (const hit of result.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
       const existing = hitsByRef.get(hit.ref);
       if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
         hitsByRef.set(hit.ref, hit);

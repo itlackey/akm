@@ -14,8 +14,8 @@ import { saveConfig } from "../src/config";
 import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer";
 import { getDbPath } from "../src/paths";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import type { SourceSearchHit } from "../src/source-types";
 import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
@@ -292,7 +292,7 @@ describe("Utility boost in search scoring", () => {
     }
 
     const result = await akmSearch({ query: "deployment automation", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const boostedHit = localHits.find((h) => h.name === "boosted-tool");
     const plainHit = localHits.find((h) => h.name === "plain-tool");
 
@@ -328,7 +328,7 @@ describe("No utility boost for entries without usage data", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "simple test tool", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "no-usage");
 
     const resolved = expectDefined(hit);
@@ -397,7 +397,7 @@ describe("Utility boost cap", () => {
     }
 
     const result = await akmSearch({ query: "network monitoring", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const cappedHit = localHits.find((h) => h.name === "capped-a");
     const baselineHit = localHits.find((h) => h.name === "capped-b");
 
@@ -485,7 +485,7 @@ describe("Recency decay on utility boost", () => {
     }
 
     const result = await akmSearch({ query: "data processing pipeline", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const recentHit = localHits.find((h) => h.name === "recent-use");
     const oldHit = localHits.find((h) => h.name === "old-use");
 
@@ -629,7 +629,7 @@ describe("whyMatched includes usage history boost", () => {
     }
 
     const result = await akmSearch({ query: "logging infrastructure", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "why-util");
 
     const resolved = expectDefined(hit);
@@ -663,7 +663,7 @@ describe("Production path end-to-end", () => {
 
     // Search to trigger usage event logging
     const result = await akmSearch({ query: "end-to-end test", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
     // Verify usage_events have entry_id

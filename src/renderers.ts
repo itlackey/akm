@@ -9,6 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { makeAssetRef } from "./asset-ref";
 import { hasErrnoCode } from "./common";
 import { UsageError } from "./errors";
 import type { AssetRenderer, RenderContext } from "./file-context";
@@ -17,8 +18,7 @@ import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import { extractFrontmatterOnly, extractLineRange, extractSection, formatToc, parseMarkdownToc } from "./markdown";
 import type { StashEntry } from "./metadata";
 import { extractDescriptionFromComments, loadStashFile } from "./metadata";
-import { makeAssetRef } from "./stash-ref";
-import type { KnowledgeView, ShowResponse, StashSearchHit } from "./stash-types";
+import type { KnowledgeView, ShowResponse, SourceSearchHit } from "./source-types";
 import { listKeys as listVaultKeys } from "./vault";
 import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
 
@@ -615,7 +615,7 @@ const scriptSourceRenderer: AssetRenderer = {
     };
   },
 
-  enrichSearchHit(hit: StashSearchHit, _stashDir: string): void {
+  enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
     const ext = path.extname(hit.path).toLowerCase();
     if (!INTERPRETER_MAP[ext]) return;
 

@@ -7,7 +7,7 @@ import {
   type OutputConfig,
   type RegistryConfigEntry,
   type SecurityConfig,
-  type StashConfigEntry,
+  type SourceConfigEntry,
 } from "./config";
 import { UsageError } from "./errors";
 
@@ -29,8 +29,10 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { llm: parseLlmConnectionValue(value) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
+    case "sources":
     case "stashes":
-      return { stashes: parseStashesValue(value) };
+      // "stashes" is kept as an alias for backwards-compat; both write to `sources`.
+      return { sources: parseStashesValue(value) };
     case "output.format":
       return { output: { format: parseOutputFormat(value) } };
     case "output.detail":
@@ -64,8 +66,10 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return config.llm ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
+    case "sources":
     case "stashes":
-      return config.stashes ?? [];
+      // "stashes" is an alias for "sources" for backwards-compat.
+      return config.sources ?? config.stashes ?? [];
     case "output.format":
       return config.output?.format ?? null;
     case "output.detail":
@@ -96,6 +100,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     case "embedding":
     case "llm":
     case "registries":
+    case "sources":
     case "stashes":
     case "output.format":
     case "output.detail":
@@ -121,8 +126,10 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
       return { ...config, llm: undefined };
     case "registries":
       return { ...config, registries: undefined };
+    case "sources":
     case "stashes":
-      return { ...config, stashes: undefined };
+      // "stashes" is kept as an alias for backwards-compat; both clear `sources`.
+      return { ...config, sources: undefined, stashes: undefined };
     case "output.format":
       return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
     case "output.detail":
@@ -168,7 +175,7 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
     output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
     stashDir: config.stashDir ?? null,
     installed: config.installed ?? [],
-    stashes: config.stashes ?? [],
+    sources: config.sources ?? config.stashes ?? [],
   };
   if (config.embedding) result.embedding = config.embedding;
   if (config.llm) result.llm = config.llm;
@@ -397,7 +404,7 @@ function parseUnknownPositiveInteger(value: unknown, key: string): number {
   return value;
 }
 
-function parseStashesValue(value: string): StashConfigEntry[] | undefined {
+function parseStashesValue(value: string): SourceConfigEntry[] | undefined {
   if (value === "null" || value === "") return undefined;
   let parsed: unknown;
   try {
@@ -418,7 +425,7 @@ function parseStashesValue(value: string): StashConfigEntry[] | undefined {
     if (typeof obj.type !== "string" || !obj.type) {
       throw new UsageError(`Invalid value for stashes[${i}]: "type" is required`);
     }
-    const result: StashConfigEntry = { type: obj.type };
+    const result: SourceConfigEntry = { type: obj.type };
     if (typeof obj.path === "string" && obj.path) result.path = obj.path;
     if (typeof obj.url === "string" && obj.url) result.url = obj.url;
     if (typeof obj.name === "string" && obj.name) result.name = obj.name;

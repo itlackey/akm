@@ -1,5 +1,5 @@
 import { UsageError } from "./errors";
-import type { WorkflowRunStepStatus } from "./stash-types";
+import type { WorkflowRunStepStatus } from "./source-types";
 
 export const WORKFLOW_STEP_STATES: Array<Exclude<WorkflowRunStepStatus, "pending">> = [
   "completed",

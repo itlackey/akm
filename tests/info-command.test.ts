@@ -148,13 +148,13 @@ describe("assembleInfo", () => {
     expect(typeof info.indexStats.vecAvailable).toBe("boolean");
   });
 
-  test("returns stashProviders from config", () => {
+  test("returns sourceProviders from config", () => {
     const stashDir = makeStashDir();
     process.env.AKM_STASH_DIR = stashDir;
 
     const info = assembleInfo();
 
-    expect(Array.isArray(info.stashProviders)).toBe(true);
+    expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
   test("output is valid JSON-serializable", () => {
