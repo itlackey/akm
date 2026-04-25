@@ -9,7 +9,7 @@
 
 The v1 migration collapses the LiveStash/SyncableStash split into a single minimal `SourceProvider` interface, removes OpenViking, renames `stash → source` throughout, and centralises the two write behaviours (plain-fs vs. git-commit) into one `write-source.ts` helper.
 
-**Delivery model:** a **single long-lived branch** `refactor/v1-architecture`, cut from `release/0.6.0`, merged back to `release/0.6.0` via **one PR** when the full v1 surface is green. Internal phases are commits on that branch (or commits brought in via merged worktrees). No incremental PRs to `release/0.6.0`.
+**Delivery model (revised 2026-04-25):** **per-phase merges into `release/0.6.0`.** Each phase runs on its own branch (`refactor/v1-phase-N` or, for parallel phases, a worktree branch), is verified + reviewed + green-tested, then `--no-ff`-merged into `release/0.6.0`. The next phase cuts from the updated `release/0.6.0`. The original "single long-lived branch + one mega-PR" model was abandoned after Phase 1 to reduce review burden and let downstream work see each phase's improvements immediately. Per-phase merge commits preserve clear phase boundaries in `release/0.6.0`'s history.
 
 **Parallelism:** later phases that don't depend on each other are developed in **local git worktrees** branched off the integration branch, then fast-forward-merged back when their phase passes verification. The two early phases (drop OpenViking, rename) are sequential and land on the integration branch directly because they touch the whole tree.
 
@@ -19,19 +19,21 @@ The v1 migration collapses the LiveStash/SyncableStash split into a single minim
 
 ## 2. Branch and Worktree Strategy
 
-### 2.1 The integration branch
+### 2.1 Per-phase branches into release/0.6.0
 
 ```
-release/0.6.0
-   └─ refactor/v1-architecture        ← single long-lived branch
-                                        single PR target back to release/0.6.0
+release/0.6.0  ◄── --no-ff merge ── refactor/v1-phase-N (per phase)
+                                       └─ optional worktree for fan-out
 ```
 
-- Cut once from `release/0.6.0` at the start.
-- Every phase commits here (directly or via a merged worktree).
-- The branch must build green at every commit on its tip — phases that aren't green stay in a worktree until they are.
-- Rebase onto `release/0.6.0` nightly while the work is in flight if upstream sees activity. Otherwise, leave it alone.
-- One PR opens at the end: `refactor/v1-architecture → release/0.6.0`.
+- Each phase cuts a branch from current `release/0.6.0` tip.
+- Sequential phases: branch named `refactor/v1-phase-N` (e.g. `refactor/v1-phase-2`).
+- Parallel phases (3+4, 5, 6, 7): branched as worktrees from `release/0.6.0` after Phase 2 lands; named `phase/N-<descriptor>` (e.g. `phase/5-write-source`).
+- Each phase merges back with `--no-ff` so the merge commit makes the phase boundary explicit in history.
+- Build must be green on the phase branch before merge. Build must remain green on `release/0.6.0` after merge.
+- No single integration PR at the end. Each phase is its own deliverable.
+
+**Phase 1 already landed** as commits `392f40d` + `34ade9d` on the (now retired) `refactor/v1-architecture` branch and is being merged into `release/0.6.0` with `--no-ff` retroactively under this revised model.
 
 ### 2.2 Worktrees for parallel phases
 
