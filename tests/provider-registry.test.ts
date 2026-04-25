@@ -18,12 +18,12 @@ describe("provider-registry", () => {
 
   test("static-index is registered after import", async () => {
     // Importing triggers self-registration
-    await import("../src/providers/static-index");
+    await import("../src/registry-providers/static-index");
     expect(resolveProviderFactory("static-index")).not.toBeNull();
   });
 
   test("skills-sh is registered after import", async () => {
-    await import("../src/providers/skills-sh");
+    await import("../src/registry-providers/skills-sh");
     expect(resolveProviderFactory("skills-sh")).not.toBeNull();
   });
 

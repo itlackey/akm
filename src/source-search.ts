@@ -4,8 +4,8 @@ import { searchLocal } from "./db-search";
 
 // Eagerly import stash providers to trigger self-registration
 import "./source-providers/index";
+import { searchRegistry } from "./commands/registry-search";
 import { UsageError } from "./errors";
-import { searchRegistry } from "./registry-search";
 import { resolveSourceEntries } from "./search-source";
 import type {
   AkmSearchType,

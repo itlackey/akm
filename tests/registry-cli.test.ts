@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { RegistryIndex } from "../src/commands/registry-search";
+import { resolveRegistries, searchRegistry } from "../src/commands/registry-search";
 import type { RegistryConfigEntry } from "../src/config";
 import { getConfigPath, loadConfig, saveConfig } from "../src/config";
-import type { RegistryIndex } from "../src/registry-search";
-import { resolveRegistries, searchRegistry } from "../src/registry-search";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
