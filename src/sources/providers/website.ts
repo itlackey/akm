@@ -6,8 +6,8 @@ import type { SourceConfigEntry } from "../../core/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import type { ProviderContext, SourceProvider } from "../source-provider";
-import { registerSourceProvider } from "../source-provider-factory";
+import type { ProviderContext, SourceProvider } from "../provider";
+import { registerSourceProvider } from "../provider-factory";
 import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */

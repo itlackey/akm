@@ -8,7 +8,7 @@ import { buildDbHit } from "../src/indexer/db-search";
 import type { StashEntry } from "../src/indexer/metadata";
 
 // Trigger source-provider self-registration
-import "../src/sources/source-providers/index";
+import "../src/sources/providers/index";
 
 const createdTmpDirs: string[] = [];
 

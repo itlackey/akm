@@ -25,7 +25,7 @@ import { loadConfig, saveConfig } from "../src/core/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
 import { loadStashFile } from "../src/indexer/metadata";
-import type { SearchHit, SourceSearchHit } from "../src/sources/source-types";
+import type { SearchHit, SourceSearchHit } from "../src/sources/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

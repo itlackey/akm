@@ -11,7 +11,7 @@ import { makeAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
-import type { ShowResponse } from "../sources/source-types";
+import type { ShowResponse } from "../sources/types";
 import { cacheWorkflowDocument } from "./document-cache";
 import { parseWorkflow } from "./parser";
 import type { WorkflowDocument } from "./schema";

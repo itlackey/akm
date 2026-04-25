@@ -6,7 +6,7 @@
  *
  * "Registry" here refers to the kit discovery registries (static index files,
  * skills.sh API) — not to be confused with the source provider factory map in
- * `source-provider-factory.ts` or the installed-source operations in
+ * `sources/provider-factory.ts` or the installed-source operations in
  * `installed-stashes.ts`.
  *
  * Phase 6 (v1 architecture refactor): factories are now the

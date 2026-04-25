@@ -1,8 +1,8 @@
 import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config";
 import { ConfigError } from "../../core/errors";
-import type { ProviderContext, SourceProvider } from "../source-provider";
-import { registerSourceProvider } from "../source-provider-factory";
+import type { ProviderContext, SourceProvider } from "../provider";
+import { registerSourceProvider } from "../provider-factory";
 
 /**
  * Filesystem source — points at a directory the user already manages.

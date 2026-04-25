@@ -16,7 +16,7 @@ import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
 import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/indexer/db";
 import { akmIndex } from "../src/indexer/indexer";
-import type { SourceSearchHit } from "../src/sources/source-types";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 

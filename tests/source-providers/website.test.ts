@@ -4,16 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../../src/core/config";
 import { ConfigError, UsageError } from "../../src/core/errors";
-import { resolveSourceProviderFactory } from "../../src/sources/source-provider-factory";
+import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
 import {
   ensureWebsiteMirror,
   getCachePaths,
   validateWebsiteInputUrl,
   validateWebsiteUrl,
-} from "../../src/sources/source-providers/website";
+} from "../../src/sources/providers/website";
 
 // Trigger self-registration
-import "../../src/sources/source-providers/website";
+import "../../src/sources/providers/website";
 
 const createdTmpDirs: string[] = [];
 

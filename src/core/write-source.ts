@@ -19,7 +19,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { getCachePaths, parseGitRepoUrl } from "../sources/source-providers/git";
+import { getCachePaths, parseGitRepoUrl } from "../sources/providers/git";
 import type { AssetRef } from "./asset-ref";
 import { makeAssetRef } from "./asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";

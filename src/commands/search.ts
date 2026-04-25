@@ -16,7 +16,7 @@ import { searchLocal } from "../indexer/db-search";
 import { resolveSourceEntries } from "../indexer/search-source";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
-import "../sources/source-providers/index";
+import "../sources/providers/index";
 import { insertUsageEvent } from "../indexer/usage-events";
 import type {
   AkmSearchType,
@@ -25,7 +25,7 @@ import type {
   SearchResponse,
   SearchSource,
   SourceSearchHit,
-} from "../sources/source-types";
+} from "../sources/types";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;

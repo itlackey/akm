@@ -13,7 +13,7 @@
 
 import { UsageError } from "../core/errors";
 import { truncateDescription } from "../output/shapes";
-import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../sources/source-types";
+import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../sources/types";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 

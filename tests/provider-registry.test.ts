@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { registerProvider, resolveProviderFactory } from "../src/registry/factory";
-import { resolveSourceProviderFactory } from "../src/sources/source-provider-factory";
+import { resolveSourceProviderFactory } from "../src/sources/provider-factory";
 
 describe("provider-registry", () => {
   test("resolveProviderFactory returns null for unknown type", () => {
@@ -28,7 +28,7 @@ describe("provider-registry", () => {
   });
 
   test("filesystem stash provider is registered after import", async () => {
-    await import("../src/sources/source-providers/filesystem");
+    await import("../src/sources/providers/filesystem");
     expect(resolveSourceProviderFactory("filesystem")).not.toBeNull();
   });
 });

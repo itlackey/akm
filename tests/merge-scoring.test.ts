@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mergeSearchHits } from "../src/commands/search";
-import type { RegistrySearchResultHit, SourceSearchHit } from "../src/sources/source-types";
+import type { RegistrySearchResultHit, SourceSearchHit } from "../src/sources/types";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
 // from production code when the OpenViking provider was dropped (Phase 1).

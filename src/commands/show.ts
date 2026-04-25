@@ -33,10 +33,10 @@ import { loadStashFile } from "../indexer/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 // Eagerly import source providers to trigger self-registration.
-import "../sources/source-providers/index";
+import "../sources/providers/index";
 import { insertUsageEvent } from "../indexer/usage-events";
-import { resolveAssetPath } from "../sources/source-resolve";
-import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/source-types";
+import { resolveAssetPath } from "../sources/resolve";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as

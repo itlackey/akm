@@ -20,7 +20,7 @@ import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
 import type { StashEntry, StashFile } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
-import type { SourceSearchHit } from "../src/sources/source-types";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
 // from production code when the OpenViking provider was dropped (Phase 1).

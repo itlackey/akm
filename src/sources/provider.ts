@@ -15,7 +15,7 @@
  * All other writing/reading concerns live outside this interface:
  *   - Writes:    src/core/write-source.ts (Phase 5)
  *   - Reads:     src/indexer.ts (Phase 4)
- *   - Install:   src/source-providers/sync-from-ref.ts (install-time helpers,
+ *   - Install:   src/sources/providers/sync-from-ref.ts (install-time helpers,
  *                separate from configured-source plumbing)
  */
 

@@ -17,7 +17,7 @@ import {
 import { akmIndex } from "../src/indexer/indexer";
 import type { StashEntry } from "../src/indexer/metadata";
 import { clearEmbeddingCache } from "../src/llm/embedder";
-import type { SourceSearchHit } from "../src/sources/source-types";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

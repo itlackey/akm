@@ -26,7 +26,7 @@ import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../
 import { recomputeUtilityScores } from "../src/indexer/indexer";
 import { buildSearchFields } from "../src/indexer/search-fields";
 import { insertUsageEvent } from "../src/indexer/usage-events";
-import type { SourceSearchHit } from "../src/sources/source-types";
+import type { SourceSearchHit } from "../src/sources/types";
 import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── CLI flags ────────────────────────────────────────────────────────────────

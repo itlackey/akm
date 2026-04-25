@@ -4,7 +4,7 @@ import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset-spec";
 import { fetchWithRetry } from "../../core/common";
 import type { SourceSpec } from "../../core/config";
-import { copyIncludedPaths, findNearestIncludeConfig } from "../source-include";
+import { copyIncludedPaths, findNearestIncludeConfig } from "../include";
 
 const REGISTRY_STASH_DIR_NAMES = new Set<string>(Object.values(TYPE_DIRS));
 

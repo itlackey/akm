@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cloneRepo } from "../src/sources/source-providers/git";
+import { cloneRepo } from "../src/sources/providers/git";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ import { getDbPath } from "../core/paths";
 import { closeDatabase, openDatabase } from "../indexer/db";
 import { resolveSourceEntries } from "../indexer/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { resolveAssetPath } from "../sources/source-resolve";
+import { resolveAssetPath } from "../sources/resolve";
 import type {
   WorkflowParameter,
   WorkflowRunStatus,
@@ -15,7 +15,7 @@ import type {
   WorkflowRunStepStatus,
   WorkflowRunSummary,
   WorkflowStepDefinition,
-} from "../sources/source-types";
+} from "../sources/types";
 import { formatWorkflowErrors } from "./authoring";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";

@@ -9,8 +9,8 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../../registry/resolve";
 import type { ParsedGitRef } from "../../registry/types";
-import type { ProviderContext, SourceProvider } from "../source-provider";
-import { registerSourceProvider } from "../source-provider-factory";
+import type { ProviderContext, SourceProvider } from "../provider";
+import { registerSourceProvider } from "../provider-factory";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import {
   applyAkmIncludeConfig,

@@ -9,10 +9,10 @@ import { akmIndex } from "../indexer/indexer";
 import { upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/resolve";
 import type { InstalledStashEntry } from "../registry/types";
-import { detectStashRoot } from "../sources/source-providers/provider-utils";
-import { syncFromRef } from "../sources/source-providers/sync-from-ref";
-import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../sources/source-providers/website";
-import type { AddResponse } from "../sources/source-types";
+import { detectStashRoot } from "../sources/providers/provider-utils";
+import { syncFromRef } from "../sources/providers/sync-from-ref";
+import { ensureWebsiteMirror, validateWebsiteInputUrl } from "../sources/providers/website";
+import type { AddResponse } from "../sources/types";
 import { ensureWikiNameAvailable, validateWikiName } from "../wiki/wiki";
 import {
   auditInstallCandidate,

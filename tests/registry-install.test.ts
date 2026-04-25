@@ -12,8 +12,8 @@ import {
   formatInstallAuditFailure,
 } from "../src/commands/install-audit";
 import { loadConfig, saveConfig } from "../src/core/config";
-import { syncFromRef } from "../src/sources/source-providers/sync-from-ref";
-import { validateTarEntries } from "../src/sources/source-providers/tar-utils";
+import { syncFromRef } from "../src/sources/providers/sync-from-ref";
+import { validateTarEntries } from "../src/sources/providers/tar-utils";
 
 /**
  * Test helper that mirrors the pre-#125 `installRegistryRef()` behaviour:

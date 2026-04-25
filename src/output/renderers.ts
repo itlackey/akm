@@ -23,7 +23,7 @@ import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import { registerRenderer } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
 import { extractDescriptionFromComments, loadStashFile } from "../indexer/metadata";
-import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/source-types";
+import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────

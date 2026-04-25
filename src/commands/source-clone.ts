@@ -5,8 +5,8 @@ import { TYPE_DIRS } from "../core/asset-spec";
 import { NotFoundError, UsageError } from "../core/errors";
 import { findSourceForPath, getPrimarySource, resolveSourceEntries, type SearchSource } from "../indexer/search-source";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { syncFromRef } from "../sources/source-providers/sync-from-ref";
-import { resolveAssetPath } from "../sources/source-resolve";
+import { syncFromRef } from "../sources/providers/sync-from-ref";
+import { resolveAssetPath } from "../sources/resolve";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */

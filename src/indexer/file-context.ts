@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { toPosix } from "../core/common";
 import { parseFrontmatter } from "../core/frontmatter";
-import type { ShowResponse, SourceSearchHit } from "../sources/source-types";
+import type { ShowResponse, SourceSearchHit } from "../sources/types";
 import type { StashEntry } from "./metadata";
 
 // ── FileContext ──────────────────────────────────────────────────────────────

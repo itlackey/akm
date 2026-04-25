@@ -20,7 +20,7 @@ import { akmShowUnified } from "../../src/commands/show";
 import { parseAssetRef } from "../../src/core/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
-import "../../src/sources/source-providers/index";
+import "../../src/sources/providers/index";
 
 const createdTmpDirs: string[] = [];
 

@@ -6,7 +6,7 @@ import { akmShowUnified as akmShow } from "../../src/commands/show";
 import { saveConfig } from "../../src/core/config";
 
 // Trigger source-provider self-registration
-import "../../src/sources/source-providers/index";
+import "../../src/sources/providers/index";
 
 const createdTmpDirs: string[] = [];
 

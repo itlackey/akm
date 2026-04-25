@@ -4,11 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
-import { resolveSourceProviderFactory } from "../../src/sources/source-provider-factory";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/sources/source-providers/git";
+import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
 
 // Trigger self-registration
-import "../../src/sources/source-providers/git";
+import "../../src/sources/providers/git";
 
 const createdTmpDirs: string[] = [];
 

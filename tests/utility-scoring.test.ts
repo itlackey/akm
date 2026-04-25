@@ -15,7 +15,7 @@ import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/indexer/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer/indexer";
-import type { SourceSearchHit } from "../src/sources/source-types";
+import type { SourceSearchHit } from "../src/sources/types";
 import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────

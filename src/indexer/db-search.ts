@@ -2,10 +2,10 @@
  * Database-backed (SQLite + FTS5/vector) source search implementation.
  *
  * Extracted from source-search.ts to break the circular import:
- *   source-search.ts → source-providers/filesystem.ts → db-search.ts (no cycle)
+ *   source-search.ts → sources/providers/filesystem.ts → db-search.ts (no cycle)
  *
  * source-search.ts imports this module for the `searchLocal` export.
- * source-providers/filesystem.ts also imports `searchLocal` from here.
+ * sources/providers/filesystem.ts also imports `searchLocal` from here.
  *
  * Renamed from `local-search.ts` to signal that this is the DB-layer search
  * implementation, not a "local vs. remote" distinction.
@@ -20,7 +20,7 @@ import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
 import type { AkmConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "../sources/source-types";
+import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "../sources/types";
 import {
   closeDatabase,
   type DbSearchResult,

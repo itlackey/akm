@@ -8,7 +8,7 @@ import { akmShowUnified as akmShow } from "../src/commands/show";
 import { getConfigPath, saveConfig } from "../src/core/config";
 import { getBinDir } from "../src/core/paths";
 import { akmIndex } from "../src/indexer/indexer";
-import type { SearchHit, SourceSearchHit } from "../src/sources/source-types";
+import type { SearchHit, SourceSearchHit } from "../src/sources/types";
 
 const createdTmpDirs: string[] = [];
 

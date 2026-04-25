@@ -15,7 +15,7 @@ import { resolveStashDir } from "../core/common";
 import { type AkmConfig, loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import type { ManifestEntry, ManifestResponse } from "../sources/source-types";
+import type { ManifestEntry, ManifestResponse } from "../sources/types";
 import { closeDatabase, getAllEntries, getEntryCount, getMeta, openDatabase } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search-source";

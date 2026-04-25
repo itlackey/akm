@@ -12,7 +12,7 @@
 
 import type { AkmConfig } from "../core/config";
 import { createProviderRegistry } from "../registry/create-provider-registry";
-import type { SourceProvider, SourceProviderFactory } from "./source-provider";
+import type { SourceProvider, SourceProviderFactory } from "./provider";
 
 // ── Factory map ─────────────────────────────────────────────────────────────
 

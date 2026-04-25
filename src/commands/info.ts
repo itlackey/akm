@@ -5,7 +5,7 @@ import { loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openDatabase } from "../indexer/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../indexer/semantic-status";
-import type { InfoResponse } from "../sources/source-types";
+import type { InfoResponse } from "../sources/types";
 import { pkgVersion } from "../version";
 
 /**

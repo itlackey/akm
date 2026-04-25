@@ -49,9 +49,9 @@ import { shapeForCommand } from "./output/shapes";
 import { formatPlain, outputJsonl } from "./output/text";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry/build-index";
 import { resolveSourcesForOrigin } from "./registry/origin-resolve";
-import { saveGitStash } from "./sources/source-providers/git";
-import { resolveAssetPath } from "./sources/source-resolve";
-import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/source-types";
+import { saveGitStash } from "./sources/providers/git";
+import { resolveAssetPath } from "./sources/resolve";
+import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
 import { pkgVersion } from "./version";
 import {
   createWorkflowAsset,
@@ -125,9 +125,9 @@ function output(command: string, result: unknown): void {
 }
 /**
  * Module Naming:
- * - source-*          : Asset operations (search, show, add, clone)
- * - source-provider-* : Runtime data source providers (filesystem, git, website, npm)
- * - registry-*       : Discovery from remote registries (npm, GitHub)
+ * - sources/*           : Asset operations (search, show, add, clone)
+ * - sources/providers/* : Runtime data source providers (filesystem, git, website, npm)
+ * - registry/*          : Discovery from remote registries (npm, GitHub)
  * - installed-stashes   : Unified source operations (list, remove, update)
  */
 

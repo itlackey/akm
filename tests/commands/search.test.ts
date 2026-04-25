@@ -5,7 +5,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { SourceSearchHit } from "../../src/sources/source-types";
+import type { SourceSearchHit } from "../../src/sources/types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 

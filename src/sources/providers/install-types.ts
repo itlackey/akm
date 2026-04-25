@@ -7,7 +7,7 @@
  * `akm add <install-ref>` materialises an upstream artifact into a local
  * cache directory.
  *
- * They live here, outside `source-provider.ts`, so the v1 SourceProvider
+ * They live here, outside `provider.ts`, so the v1 SourceProvider
  * interface stays minimal (`{ name, kind, init, path, sync? }`) per the
  * architecture spec §2.1.
  */
