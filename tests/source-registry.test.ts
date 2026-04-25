@@ -100,15 +100,14 @@ describe("akmListSources", () => {
     const result = await akmListSources({ stashDir });
 
     expect(result.totalSources).toBe(2);
-    // Local source from stashes[]
-    const local = result.sources.find((s) => s.kind === "local");
+    // Filesystem source from stashes[] — kind must be "filesystem" (spec §2.1)
+    const local = result.sources.find((s) => s.kind === "filesystem");
     expect(local).toBeDefined();
     if (!local) {
-      throw new Error("Expected local source");
+      throw new Error("Expected filesystem source");
     }
     expect(local.path).toBe(stashRoot);
     expect(local.writable).toBe(true);
-    expect(local.updatable).toBe(false);
     // Managed source from installed[]
     const managed = result.sources.find((s) => s.kind === "managed");
     expect(managed).toBeDefined();
@@ -119,7 +118,6 @@ describe("akmListSources", () => {
     expect(managed.ref).toBe("test-pkg");
     expect(managed.status.exists).toBe(true);
     expect(managed.writable).toBe(false);
-    expect(managed.updatable).toBe(true);
   });
 
   test("reports missing directories in status", async () => {
@@ -173,7 +171,6 @@ describe("akmListSources", () => {
 
     expect(result.totalSources).toBe(1);
     expect(result.sources[0].kind).toBe("managed");
-    expect(result.sources[0].updatable).toBe(true);
     expect(result.sources[0].writable).toBe(true);
   });
 
@@ -201,9 +198,9 @@ describe("akmListSources", () => {
     expect(managedOnly.totalSources).toBe(1);
     expect(managedOnly.sources[0].kind).toBe("managed");
 
-    const localOnly = await akmListSources({ stashDir, kind: ["local"] });
-    expect(localOnly.totalSources).toBe(1);
-    expect(localOnly.sources[0].kind).toBe("local");
+    const filesystemOnly = await akmListSources({ stashDir, kind: ["filesystem"] });
+    expect(filesystemOnly.totalSources).toBe(1);
+    expect(filesystemOnly.sources[0].kind).toBe("filesystem");
   });
 });
 

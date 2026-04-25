@@ -15,6 +15,7 @@ import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/registry-resolve";
 import type { InstalledStashEntry } from "../registry/registry-types";
 import { syncFromRef } from "../sources/source-providers/sync-from-ref";
+import { ensureWebsiteMirror } from "../sources/source-providers/website";
 import type {
   RemoveResponse,
   SourceEntry,
@@ -38,21 +39,22 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
 
   const sources: SourceEntry[] = [];
 
-  // Stash entries → local or remote sources
+  // Stash entries — each entry exposes its provider type as kind (spec §2.1).
+  // Writable defaults: true for filesystem, false for git/npm/website (CLAUDE.md "Writes").
   for (const stash of config.sources ?? config.stashes ?? []) {
-    const isRemote = stash.url != null;
-    const kind: SourceKind = isRemote ? "remote" : "local";
+    const kind: SourceKind = (stash.type as SourceKind) ?? "filesystem";
     if (kindFilter && !kindFilter.includes(kind)) continue;
 
+    const isFilesystem = kind === "filesystem";
+    const writableDefault = isFilesystem;
     const name = stash.name ?? stash.path ?? stash.url ?? "unknown";
     sources.push({
       name,
       kind,
       wiki: stash.wikiName,
       path: stash.path,
-      provider: isRemote ? stash.type : undefined,
-      updatable: false,
-      writable: stash.writable === true,
+      provider: stash.url != null ? stash.type : undefined,
+      writable: stash.writable !== undefined ? stash.writable : writableDefault,
       status: { exists: stash.path ? directoryExists(stash.path) : true },
     });
   }
@@ -69,7 +71,6 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       path: entry.stashRoot,
       ref: entry.ref,
       version: entry.resolvedVersion,
-      updatable: true,
       writable: entry.writable === true,
       status: { exists: directoryExists(entry.stashRoot) },
     });
@@ -173,10 +174,50 @@ export async function akmUpdate(input?: {
   const target = input?.target?.trim();
   const all = input?.all === true;
   const force = input?.force === true;
-  const installedEntries = loadConfig().installed ?? [];
+  const config = loadConfig();
+  const installedEntries = config.installed ?? [];
+
+  // Check if the target refers to a website source — those are syncable via
+  // ensureWebsiteMirror and are stored in sources[] not installed[].
+  if (target && !all) {
+    const stashes = config.sources ?? config.stashes ?? [];
+    const isUrl = target.startsWith("http://") || target.startsWith("https://");
+    const resolvedPath = !isUrl ? path.resolve(target) : undefined;
+    const websiteMatch = stashes.find((s) => {
+      if (s.type !== "website") return false;
+      if (isUrl && s.url === target) return true;
+      if (s.name === target) return true;
+      if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
+      return false;
+    });
+    if (websiteMatch) {
+      // TODO: full incremental re-crawl with delta tracking (#19)
+      await ensureWebsiteMirror(websiteMatch, { requireStashDir: true, force: true });
+      const index = await akmIndex({ stashDir });
+      const updatedConfig = loadConfig();
+      return {
+        schemaVersion: 1,
+        stashDir,
+        target,
+        all,
+        processed: [],
+        config: {
+          sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+          installedKitCount: updatedConfig.installed?.length ?? 0,
+        },
+        index: {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+        },
+      };
+    }
+  }
+
   const selectedEntries = selectTargets(installedEntries, target, all);
 
-  const auditConfig = loadConfig();
+  const auditConfig = config;
   const processed: UpdateResponse["processed"] = [];
   for (const entry of selectedEntries) {
     if (force && shouldCleanupCache(entry)) {
@@ -251,7 +292,7 @@ export async function akmUpdate(input?: {
   }
 
   const index = await akmIndex({ stashDir });
-  const config = loadConfig();
+  const finalConfig = loadConfig();
 
   return {
     schemaVersion: 1,
@@ -260,8 +301,8 @@ export async function akmUpdate(input?: {
     all,
     processed,
     config: {
-      sourceCount: (config.sources ?? config.stashes ?? []).length,
-      installedKitCount: config.installed?.length ?? 0,
+      sourceCount: (finalConfig.sources ?? finalConfig.stashes ?? []).length,
+      installedKitCount: finalConfig.installed?.length ?? 0,
     },
     index: {
       mode: index.mode,
@@ -301,9 +342,12 @@ function selectTargets(
   });
 
   if (stashMatch) {
-    if (stashMatch.url) {
+    if (stashMatch.type === "website") {
+      // Website sources should be handled before reaching selectTargets.
+      // This path should not be reached; surface a clear message if it is.
       throw new UsageError(
-        `"${target}" is a remote provider — it queries live data and has nothing to update.`,
+        `"${target}" is a website source — website caching not yet implemented for --all. ` +
+          `Run \`akm update ${target}\` to re-mirror this source individually.`,
         "TARGET_NOT_UPDATABLE",
       );
     }

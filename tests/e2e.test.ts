@@ -875,7 +875,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
         expect.arrayContaining([
           expect.objectContaining({
             name: "ics-docs",
-            kind: "local",
+            kind: "filesystem",
             wiki: "ics-docs",
           }),
         ]),

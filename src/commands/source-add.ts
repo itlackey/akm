@@ -66,7 +66,7 @@ export async function akmAdd(input: {
       if (input.trustThisInstall) {
         warn("--trust has no effect on local directory sources; the install audit is not run for local paths.");
       }
-      return addLocalSource(ref, parsed.sourcePath, stashDir, wikiName);
+      return addLocalSource(ref, parsed.sourcePath, stashDir, wikiName, input.name);
     }
   } catch {
     // Not a local ref — fall through to registry install
@@ -105,10 +105,14 @@ async function addLocalSource(
   sourcePath: string,
   stashDir: string,
   wikiName?: string,
+  explicitName?: string,
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
   const config = loadUserConfig();
+
+  // Derive the canonical name: explicit --name wins, then wiki name, then readable path.
+  const derivedName = explicitName ?? wikiName ?? toReadableId(resolvedPath);
 
   // Check for duplicates in sources[]
   const sources = [...(config.sources ?? config.stashes ?? [])];
@@ -118,16 +122,23 @@ async function addLocalSource(
     persistedEntry = {
       type: "filesystem",
       path: resolvedPath,
-      name: wikiName ?? toReadableId(resolvedPath),
+      name: derivedName,
       ...(wikiName ? { wikiName } : {}),
     };
     sources.push(persistedEntry);
     saveConfig({ ...config, sources, stashes: undefined });
   } else {
+    let changed = false;
+    // If --name was explicitly supplied, update the persisted name.
+    if (explicitName && existing.name !== explicitName) {
+      existing.name = explicitName;
+      changed = true;
+    }
     if (wikiName && existing.wikiName !== wikiName) {
       existing.wikiName = wikiName;
-      saveConfig({ ...config, sources, stashes: undefined });
+      changed = true;
     }
+    if (changed) saveConfig({ ...config, sources, stashes: undefined });
     persistedEntry = existing;
   }
 

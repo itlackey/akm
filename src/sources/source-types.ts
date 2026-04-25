@@ -143,7 +143,12 @@ export interface SourceInstallStatus extends InstalledStashEntry {
   audit?: InstallAuditReport;
 }
 
-export type SourceKind = "local" | "managed" | "remote";
+/**
+ * Canonical source kind values (v1 spec §2.1 + list-only "managed" for installed entries).
+ * The four provider kinds must match the `SourceProvider.kind` discriminators exactly.
+ * @deprecated "local" and "remote" were pre-v1 names; use "filesystem" and "website".
+ */
+export type SourceKind = "filesystem" | "git" | "npm" | "website" | "managed" | "local" | "remote";
 
 export interface SourceEntry {
   name: string;
@@ -153,7 +158,6 @@ export interface SourceEntry {
   ref?: string;
   provider?: string;
   version?: string;
-  updatable: boolean;
   writable: boolean;
   status: { exists: boolean };
 }

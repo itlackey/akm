@@ -79,8 +79,8 @@ constraints are inviolable:
 - `show` uses `indexer.lookup(ref)` then reads the file from disk. No per-provider `show` method exists.
 
 ### Errors and exit codes
-- Error classes own `.code` and `.hint()`. No regex-on-message hint chain.
-- Hints print to stderr inline. `--verbose` is not required to see them.
+- Error classes own `.code`. No regex-on-message hint chain.
+- Errors render to stderr as a JSON envelope `{ok:false, error, code}`.
 - Exit codes: `USAGE = 2`, `CONFIG = 78`, `GENERAL = 1`.
 
 ### Utility scoring
@@ -95,7 +95,7 @@ Any change to the following requires a major version bump after v1.0:
 - Asset ref grammar (`[origin//]type:name`) and install ref grammar (distinct).
 - Score range for `SearchHit.score`: `[0, 1]`, higher = better.
 - Configuration JSON Schema, including literal-or-env value form and the `writable` flag.
-- Error classes, `.code` values, exit codes, hints attached to error classes.
+- Error classes, `.code` values, exit codes.
 - CLI command surface: `add | remove | list | update | search | show | clone | index | setup | remember | import | feedback | registry *` (plus `info`, `curate`, `workflow`, `vault`, `wiki`, `enable`, `disable`, `completions`, `upgrade`, `save`, `help`, `hints`). Renaming or removing is major.
 - Output shape registry is exhaustive. Each command registers `{ shape, textRenderer }` at module load. No silent `JSON.stringify` fallback.
 - v2 JSON index schema, owned by `static-index`.
