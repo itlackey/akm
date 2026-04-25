@@ -5,8 +5,22 @@ import type { RegistryConfigEntry } from "../config";
 import { asString } from "../github";
 import { getRegistryIndexCacheDir } from "../paths";
 import { registerProvider } from "../registry-factory";
-import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "../registry-provider";
-import type { RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../registry-types";
+import type {
+  ParsedRegistryRef,
+  RegistryAssetEntry,
+  RegistryAssetSearchHit,
+  RegistrySearchHit,
+} from "../registry-types";
+import type {
+  AssetPreview,
+  KitId,
+  KitManifest,
+  KitResult,
+  RegistryProvider,
+  RegistryProviderResult,
+  RegistryProviderSearchOptions,
+  RegistryQuery,
+} from "./types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -53,8 +67,72 @@ class StaticIndexProvider implements RegistryProvider {
 
   async search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult> {
     const warnings: string[] = [];
-    const allKits: Array<{ stash: RegistryStashEntry; registryName?: string }> = [];
+    const allKits = await this.loadAllKits(warnings);
 
+    const hits = scoreKits(allKits, options.query, options.limit);
+
+    let assetHits: RegistryAssetSearchHit[] | undefined;
+    if (options.includeAssets) {
+      const scored = scoreAssets(allKits, options.query, options.limit);
+      if (scored.length > 0) assetHits = scored;
+    }
+
+    return { hits, assetHits, warnings: warnings.length > 0 ? warnings : undefined };
+  }
+
+  // ── v1-spec §3.1 surface ────────────────────────────────────────────────
+
+  async searchKits(q: RegistryQuery): Promise<KitResult[]> {
+    const result = await this.search({
+      query: q.text,
+      limit: q.limit ?? 20,
+      includeAssets: false,
+    });
+    return result.hits.map(hitToKitResult);
+  }
+
+  async searchAssets(q: RegistryQuery): Promise<AssetPreview[]> {
+    const result = await this.search({
+      query: q.text,
+      limit: q.limit ?? 20,
+      includeAssets: true,
+    });
+    return (result.assetHits ?? []).map(assetHitToPreview);
+  }
+
+  async getKit(id: KitId): Promise<KitManifest | null> {
+    const allKits = await this.loadAllKits([]);
+    const found = allKits.find(({ stash }) => stash.id === id);
+    if (!found) return null;
+    const installRef = buildInstallRef(found.stash.source, found.stash.ref);
+    return {
+      id: found.stash.id,
+      installRef,
+      assets: found.stash.assets?.map((asset) => ({
+        kitId: found.stash.id,
+        type: asset.type,
+        name: asset.name,
+        summary: asset.description,
+        cloneRef: installRef,
+      })),
+    };
+  }
+
+  /**
+   * Static-index doesn't own a URL prefix — any `ParsedRegistryRef` could
+   * theoretically be backed by an entry in some static-index registry. We
+   * therefore claim every ref. The orchestrator picks the first matching
+   * provider, and `static-index` is registered first by `index.ts`, so this
+   * is effectively the default catch-all.
+   */
+  canHandle(_ref: ParsedRegistryRef): boolean {
+    return true;
+  }
+
+  // ── Internals ───────────────────────────────────────────────────────────
+
+  private async loadAllKits(warnings: string[]): Promise<Array<{ stash: RegistryStashEntry; registryName?: string }>> {
+    const allKits: Array<{ stash: RegistryStashEntry; registryName?: string }> = [];
     try {
       const index = await loadIndex(this.config);
       if (index) {
@@ -67,17 +145,28 @@ class StaticIndexProvider implements RegistryProvider {
       const label = this.config.name ? `${this.config.name} (${this.config.url})` : this.config.url;
       warnings.push(`Registry ${label}: ${toErrorMessage(err)}`);
     }
-
-    const hits = scoreKits(allKits, options.query, options.limit);
-
-    let assetHits: RegistryAssetSearchHit[] | undefined;
-    if (options.includeAssets) {
-      const scored = scoreAssets(allKits, options.query, options.limit);
-      if (scored.length > 0) assetHits = scored;
-    }
-
-    return { hits, assetHits, warnings: warnings.length > 0 ? warnings : undefined };
+    return allKits;
   }
+}
+
+function hitToKitResult(hit: RegistrySearchHit): KitResult {
+  return {
+    id: hit.id,
+    title: hit.title,
+    summary: hit.description,
+    installRef: hit.installRef,
+    score: hit.score,
+  };
+}
+
+function assetHitToPreview(hit: RegistryAssetSearchHit): AssetPreview {
+  return {
+    kitId: hit.stash.id,
+    type: hit.assetType,
+    name: hit.assetName,
+    summary: hit.description,
+    cloneRef: hit.action.replace(/^akm add\s+/, ""),
+  };
 }
 
 // ── Self-register ───────────────────────────────────────────────────────────

@@ -13,7 +13,6 @@ import { loadConfig } from "../config";
 import { closeDatabase, openDatabase } from "../db";
 import { searchLocal } from "../db-search";
 import { UsageError } from "../errors";
-import { searchRegistry } from "../registry-search";
 import { resolveSourceEntries } from "../search-source";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
@@ -27,6 +26,7 @@ import type {
   SourceSearchHit,
 } from "../source-types";
 import { insertUsageEvent } from "../usage-events";
+import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
 

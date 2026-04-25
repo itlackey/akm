@@ -6,7 +6,7 @@ import { resolveProviderFactory } from "../../src/registry-factory";
 import type { RegistryProvider } from "../../src/registry-provider";
 
 // Trigger self-registration
-import "../../src/providers/skills-sh";
+import "../../src/registry-providers/skills-sh";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
