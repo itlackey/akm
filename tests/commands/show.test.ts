@@ -2,11 +2,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { akmShowUnified as akmShow } from "../src/source-show";
+import { akmShowUnified as akmShow } from "../../src/commands/show";
+import { saveConfig } from "../../src/config";
 
 // Trigger source-provider self-registration
-import "../src/source-providers/index";
+import "../../src/source-providers/index";
 
 const createdTmpDirs: string[] = [];
 

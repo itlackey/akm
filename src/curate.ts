@@ -11,9 +11,9 @@
  * `deriveCurateFallbackQueries`) by importing them directly.
  */
 
+import { akmSearch, parseSearchSource } from "./commands/search";
+import { akmShowUnified } from "./commands/show";
 import { truncateDescription } from "./output-shapes";
-import { akmSearch, parseSearchSource } from "./source-search";
-import { akmShowUnified } from "./source-show";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "./source-types";
 
 export type CuratedStashItem = {

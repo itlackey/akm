@@ -53,9 +53,9 @@ async function installRegistryRef(
   };
 }
 
+import { akmShowUnified as akmShow } from "../src/commands/show";
 import { parseRegistryRef } from "../src/registry-resolve";
 import { akmAdd, registerWikiSource } from "../src/source-add";
-import { akmShowUnified as akmShow } from "../src/source-show";
 import { listPages, listWikis, showWiki } from "../src/wiki";
 
 function makeTempDir(prefix: string): string {

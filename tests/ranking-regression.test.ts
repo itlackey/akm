@@ -14,12 +14,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/config";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/db";
 import type { StashEntry, StashFile } from "../src/metadata";
 import { getDbPath } from "../src/paths";
 import { buildSearchText } from "../src/search-fields";
-import { akmSearch } from "../src/source-search";
 import type { SourceSearchHit } from "../src/source-types";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed

@@ -16,12 +16,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
+import { akmSearch } from "./commands/search";
 import { isWithin } from "./common";
 import { loadUserConfig, saveConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "./frontmatter";
 import { resolveSourceEntries, type SearchSource } from "./search-source";
-import { akmSearch } from "./source-search";
 import type { SearchResponse, SourceSearchHit } from "./source-types";
 import { buildIndexMd, buildLogMd, buildSchemaMd } from "./templates/wiki-templates";
 
