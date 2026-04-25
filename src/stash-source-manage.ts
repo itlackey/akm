@@ -32,7 +32,7 @@ export interface SourceListResult {
  *
  * Filesystem paths are auto-detected when `target` does not start with
  * `http://` or `https://`. URL sources require a `providerType` option
- * (e.g. "openviking").
+ * (e.g. "website", "git").
  */
 export function addStash(opts: {
   target: string;
@@ -55,7 +55,7 @@ export function addStash(opts: {
 
   if (isRemoteUrl) {
     if (!providerType) {
-      throw new UsageError("--provider is required for URL sources (e.g. --provider openviking)");
+      throw new UsageError("--provider is required for URL sources (e.g. --provider git --provider website)");
     }
     // Deduplicate by URL
     if (stashes.some((s) => s.url === target)) {

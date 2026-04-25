@@ -8,7 +8,6 @@ import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import { loadStashFile } from "./metadata";
 import { resolveSourcesForOrigin } from "./origin-resolve";
 import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./search-source";
-import { resolveStashProviders } from "./stash-provider-factory";
 import { parseAssetRef } from "./stash-ref";
 import { resolveAssetPath } from "./stash-resolve";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./stash-types";
@@ -125,36 +124,10 @@ export async function akmShowUnified(input: {
     }
   }
 
-  // 1. Try local filesystem first (FTS5 index lookup)
-  let localError: Error | undefined;
-  try {
-    const result = await showLocal(input);
-    logShowEvent(ref);
-    return result;
-  } catch (err) {
-    // Only fall through to remote providers on NotFoundError
-    if (!(err instanceof NotFoundError)) throw err;
-    localError = err;
-  }
-
-  // 2. Try remote providers (e.g. OpenViking)
-  const config = loadConfig();
-  const providers = resolveStashProviders(config).filter((p) => p.type !== "filesystem" && p.canShow(ref));
-  for (const provider of providers) {
-    try {
-      const response = await provider.show(ref, input.view);
-      logShowEvent(ref);
-      if (input.detail === "summary") {
-        return buildSummaryResponse(response);
-      }
-      return response;
-    } catch (err) {
-      if (!(err instanceof NotFoundError)) throw err;
-    }
-  }
-
-  // Nothing found anywhere — rethrow the original local error with its specific message
-  throw localError;
+  // Try local filesystem (FTS5 index lookup)
+  const result = await showLocal(input);
+  logShowEvent(ref);
+  return result;
 }
 
 /**
@@ -290,8 +263,8 @@ export async function showLocal(input: {
  * Enriches description and tags from frontmatter or .stash.json when available.
  *
  * Enrichment via frontmatter and .stash.json is only performed when `assetPath`
- * is supplied (local assets). Remote provider responses (e.g. OpenViking) rely
- * on the provider having already populated description and tags.
+ * is supplied. Callers that construct a response without a local file path
+ * must populate description and tags themselves.
  *
  * The resulting JSON should be under 200 tokens.
  */

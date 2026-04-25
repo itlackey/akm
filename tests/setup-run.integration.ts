@@ -149,7 +149,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -260,7 +259,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -376,7 +374,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -478,7 +475,6 @@ describe("runSetupWizard", () => {
         models: ["nomic-embed-text", "llama3.2"],
       }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -568,7 +564,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -659,7 +654,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -745,7 +739,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -824,7 +817,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
@@ -897,7 +889,6 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",

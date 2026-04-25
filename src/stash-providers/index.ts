@@ -8,5 +8,4 @@
 import "./filesystem";
 import "./git";
 import "./npm";
-import "./openviking";
 import "./website";

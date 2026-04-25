@@ -5,7 +5,7 @@ import path from "node:path";
 import { saveConfig } from "../src/config";
 import { akmShowUnified as akmShow } from "../src/stash-show";
 
-// Trigger stash-provider self-registration (needed for openviking provider)
+// Trigger stash-provider self-registration
 import "../src/stash-providers/index";
 
 const createdTmpDirs: string[] = [];
@@ -396,68 +396,5 @@ describe("akmShow content-based classification", () => {
       view: { mode: "section", heading: "Setup" },
     });
     expect(sectionResult.content).toContain("Install things.");
-  });
-});
-
-// ── Remote show via OpenViking provider ──────────────────────────────────────
-
-describe("akmShow remote (OpenViking)", () => {
-  const remoteServers: Array<{ stop: (force: boolean) => void }> = [];
-
-  afterEach(() => {
-    for (const s of remoteServers) {
-      try {
-        s.stop(true);
-      } catch {
-        /* already stopped */
-      }
-    }
-    remoteServers.length = 0;
-  });
-
-  test("falls back to openviking provider when asset not found locally", async () => {
-    const server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === "/api/v1/fs/stat") {
-          return new Response(
-            JSON.stringify({
-              status: "ok",
-              result: { name: "test-skill", type: "skills", abstract: "A remote skill" },
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
-        }
-        if (url.pathname === "/api/v1/content/read") {
-          return new Response(JSON.stringify({ status: "ok", result: "# Remote Skill\n\nDo the thing." }), {
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        return new Response("Not found", { status: 404 });
-      },
-    });
-    remoteServers.push(server);
-
-    saveConfig({
-      semanticSearchMode: "off",
-
-      stashes: [
-        {
-          type: "openviking",
-          url: `http://localhost:${server.port}`,
-          name: "test-ov",
-        },
-      ],
-    });
-
-    const result = await akmShow({ ref: "skill:test-skill" });
-
-    expect(result.type).toBe("skill");
-    expect(result.name).toBe("test-skill");
-    expect(result.content).toBe("# Remote Skill\n\nDo the thing.");
-    expect(result.description).toBe("A remote skill");
-    expect(result.editable).toBe(false);
-    expect(result.path).toBe("skill:test-skill");
   });
 });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings } from "./common";
+import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import type { InstalledStashEntry, KitSource } from "./registry-types";
 
@@ -79,7 +80,6 @@ export type StashSource =
   | { type: "npm"; package: string; version?: string }
   | { type: "github"; owner: string; repo: string; ref?: string }
   | { type: "website"; url: string; maxPages?: number }
-  | { type: "openviking"; url: string }
   | { type: "local"; path: string };
 
 /**
@@ -121,11 +121,11 @@ export interface StashEntry {
  * the on-disk JSON shape; new code should not reach for it directly.
  */
 export interface StashConfigEntry {
-  /** Provider type (e.g. "filesystem", "git", "openviking") */
+  /** Provider type (e.g. "filesystem", "git", "website", "npm") */
   type: string;
   /** Filesystem path (for type: "filesystem") */
   path?: string;
-  /** URL (for remote providers like openviking) */
+  /** URL (for remote providers like git or website) */
   url?: string;
   /** Human-friendly label */
   name?: string;
@@ -772,7 +772,7 @@ function asNonEmptyString(value: unknown): string | undefined {
  * Restricted to the four kinds that the install pipeline produces
  * (`"npm" | "github" | "git" | "local"`). The full {@link KitSource} union is
  * wider, but persisted `installed[]` entries should never carry the runtime
- * provider kinds (`"filesystem" | "website" | "openviking"`).
+ * provider kinds (`"filesystem" | "website"`).
  */
 function asKitSource(value: unknown): KitSource | undefined {
   if (value === "npm" || value === "github" || value === "git" || value === "local") return value as KitSource;
@@ -867,6 +867,15 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
 
   const rawType = asNonEmptyString(obj.type);
   if (!rawType) return undefined;
+
+  if (rawType === "openviking") {
+    const name = asNonEmptyString(obj.name) ?? "unnamed";
+    throw new ConfigError(
+      `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source from your config (akm\nconfig sources remove ${name}) or downgrade to 0.6.x. See docs/migration/v1.md.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   const type = STASH_TYPE_ALIASES[rawType] ?? rawType;
 
   const entry: StashConfigEntry = { type };
@@ -933,8 +942,6 @@ export function parseStashEntrySource(entry: StashConfigEntry): StashSource | un
             ...(typeof entry.options?.maxPages === "number" ? { maxPages: entry.options.maxPages as number } : {}),
           }
         : undefined;
-    case "openviking":
-      return entry.url ? { type: "openviking", url: entry.url } : undefined;
     case "npm":
       // Persisted `npm` stash entries are unusual but supported for symmetry.
       return entry.path ? { type: "npm", package: entry.path } : undefined;

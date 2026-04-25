@@ -24,11 +24,10 @@ export interface StashSearchResult {
  * a live data source on every call.
  *
  * Use this for providers whose content is *not* mirrored to local disk and
- * therefore cannot participate in the FTS5 indexing pipeline (e.g.
- * OpenViking). Local providers whose content is also indexed locally still
- * implement this surface so that callers have a uniform query API; the
- * `search()` method may return an empty hit list and let the FTS5 pipeline
- * supply hits instead.
+ * therefore cannot participate in the FTS5 indexing pipeline. Local providers
+ * whose content is also indexed locally still implement this surface so that
+ * callers have a uniform query API; the `search()` method may return an empty
+ * hit list and let the FTS5 pipeline supply hits instead.
  */
 export interface LiveStashProvider {
   readonly type: string;

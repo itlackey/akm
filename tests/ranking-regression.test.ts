@@ -403,7 +403,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "remote-skill-1",
         path: "/remote/skills/remote-1/SKILL.md",
         ref: "skill:remote-skill-1",
-        origin: "openviking",
+        origin: "remote",
         score: 0.85,
       },
     ];
@@ -444,7 +444,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "remote-1",
         path: "/remote/skills/1/SKILL.md",
         ref: "skill:remote-1",
-        origin: "openviking",
+        origin: "remote",
         score: 1.0, // Normalized provider score between local-high and local-low
       },
     ];
@@ -479,7 +479,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "shared-skill",
         path: "/test/skills/shared/SKILL.md", // Same path = duplicate
         ref: "skill:shared-skill",
-        origin: "openviking",
+        origin: "remote",
         score: 0.5,
       },
     ];

@@ -213,18 +213,6 @@ describe("stepStashSources – cancel within sub-actions", () => {
     expect(result).toEqual([]);
   });
 
-  test("pressing Escape on OpenViking URL returns to menu", async () => {
-    const { stepStashSources } = await import("../src/setup");
-
-    q.multiselects.push([]);
-    q.selects.push("openviking");
-    q.texts.push(CANCEL); // cancel the URL prompt
-    q.selects.push("done");
-
-    const result = await stepStashSources({ stashes: [] } as never);
-    expect(result).toEqual([]);
-  });
-
   test("pressing Escape on filesystem path returns to menu", async () => {
     const { stepStashSources } = await import("../src/setup");
 

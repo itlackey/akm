@@ -12,6 +12,7 @@ import {
   saveConfig,
   updateConfig,
 } from "../src/config";
+import { ConfigError } from "../src/errors";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -319,6 +320,34 @@ describe("loadConfig", () => {
       expect(loadConfig().stashes).toEqual([]);
     } finally {
       cleanup(projectDir);
+    }
+  });
+
+  test("throws ConfigError when config contains an openviking-typed source", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow("openviking is not supported in akm v1");
+    expect(() => loadConfig()).toThrow("docs/migration/v1.md");
+  });
+
+  test("throws ConfigError with INVALID_CONFIG_FILE code for openviking source", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    try {
+      loadConfig();
+      throw new Error("Expected loadConfig to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
     }
   });
 
