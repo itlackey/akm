@@ -195,6 +195,13 @@ const searchCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const query = (args.query ?? "").trim();
+      if (!query) {
+        throw new UsageError(
+          'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
       const type = args.type as string | undefined;
       const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
       if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
@@ -202,7 +209,7 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await akmSearch({ query: args.query, type, limit, source });
+      const result = await akmSearch({ query, type, limit, source });
       output("search", result);
     });
   },
@@ -1216,6 +1223,10 @@ const rememberCommand = defineCommand({
       description: "Overwrite an existing memory with the same name",
       default: false,
     },
+    description: {
+      type: "string",
+      description: "Short description written to frontmatter (persisted as the memory's description field)",
+    },
     tag: {
       type: "string",
       description: "Tag to add to the memory (repeatable: --tag foo --tag bar)",
@@ -1253,7 +1264,8 @@ const rememberCommand = defineCommand({
       // only exposes the last value for repeated string flags.
       const rawTags = parseAllFlagValues("--tag");
 
-      const hasStructuredArgs = rawTags.length > 0 || !!args.expires || !!args.source || args.auto || args.enrich;
+      const hasStructuredArgs =
+        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.auto || args.enrich;
 
       if (!hasStructuredArgs) {
         const result = await writeMarkdownAsset({
@@ -1272,7 +1284,8 @@ const rememberCommand = defineCommand({
 
       // Start with CLI args (Mode 1: always)
       const tags = [...rawTags];
-      let description: string | undefined;
+      // --description is persisted as-is; LLM enrichment may fill it if absent.
+      let description: string | undefined = args.description || undefined;
       let source: string | undefined = args.source;
       let observed_at: string | undefined;
       let expires: string | undefined;
@@ -1597,14 +1610,14 @@ const vaultListCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./commands/vault.js");
+      const { listKeys, listEntries } = await import("./commands/vault.js");
       if (args.ref) {
         const { name, absPath } = resolveVaultPath(args.ref);
         if (!fs.existsSync(absPath)) {
           throw new NotFoundError(`Vault not found: vault:${name}`);
         }
-        const { keys, comments } = listKeys(absPath);
-        output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+        const entries = listEntries(absPath);
+        output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
         return;
       }
       const vaults = listVaultsRecursive(listKeys);
@@ -1738,13 +1751,13 @@ const vaultShowCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./commands/vault.js");
+      const { listEntries } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: vault:${name}`);
       }
-      const { keys, comments } = listKeys(absPath);
-      output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+      const entries = listEntries(absPath);
+      output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
     });
   },
 });

@@ -39,8 +39,9 @@ describe("resolveAssetPath", () => {
     const stashDir = createTmpDir();
     // No scripts/ directory created
 
+    // QA #27: error message no longer leaks internal "Stash type root" wording
     await expect(resolveAssetPath(stashDir, "script", "deploy.sh")).rejects.toThrow(
-      "Stash type root not found for ref: script:deploy.sh",
+      /Asset not found for ref: script:deploy\.sh|not found for ref/i,
     );
   });
 

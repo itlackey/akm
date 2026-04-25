@@ -70,6 +70,49 @@ export function listKeys(vaultPath: string): { keys: string[]; comments: string[
 }
 
 /**
+ * Return structured `entries` pairing each key with the nearest preceding
+ * comment line (if any). This replaces the parallel `keys[]` + `comments[]`
+ * shape used internally by `listKeys` with a single merged array, which is
+ * easier for callers to consume (QA #35).
+ *
+ * Values are never included — the same privacy guarantee as `listKeys`.
+ */
+export function listEntries(vaultPath: string): Array<{ key: string; comment?: string }> {
+  if (!fs.existsSync(vaultPath)) return [];
+  const text = fs.readFileSync(vaultPath, "utf8");
+  const lines = text.split(/\r?\n/);
+  const seen = new Set<string>();
+  const entries: Array<{ key: string; comment?: string }> = [];
+  let pendingComment: string | undefined;
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("#")) {
+      // Capture the most recent comment before a key
+      pendingComment = trimmed.slice(1).trimStart() || undefined;
+      continue;
+    }
+    const m = line.match(ASSIGN_RE);
+    if (m) {
+      const key = m[1];
+      if (!seen.has(key)) {
+        seen.add(key);
+        const entry: { key: string; comment?: string } = { key };
+        if (pendingComment) entry.comment = pendingComment;
+        entries.push(entry);
+      }
+      pendingComment = undefined;
+    } else {
+      // Non-comment, non-assignment line resets pending comment
+      if (trimmed && !trimmed.startsWith("#")) {
+        pendingComment = undefined;
+      }
+    }
+  }
+  return entries;
+}
+
+/**
  * Read all KEY=value pairs from a vault file. Intended for programmatic
  * callers that need to inject values into a process environment. Callers
  * MUST NOT write the returned values to stdout or any logged output.

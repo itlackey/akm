@@ -619,7 +619,8 @@ describe("Scenario: CLI subprocess execution", () => {
   });
 
   test("cli: akm search --limit 2 respects limit", async () => {
-    const result = runCli("search", "", "--limit", "2");
+    // QA #14: empty query now throws UsageError (exit 2); use a real query
+    const result = runCli("search", "docker", "--limit", "2");
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
@@ -736,7 +737,8 @@ describe("Scenario: CLI subprocess execution", () => {
     const json = parseJson(result.stdout);
     expect(json.type).toBe("skill");
     expect(json.content).toContain("Code Review Skill");
-    expect(json.path).toBeUndefined();
+    // QA #7: path is now always included in the JSON shape (not just --detail full)
+    expect(json.path).toBeDefined();
   });
 
   test("cli: akm show --detail full includes schemaVersion and path", async () => {

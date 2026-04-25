@@ -37,8 +37,15 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(r.enabled !== undefined ? { enabled: r.enabled } : {}),
   }));
 
-  // Stash providers
-  const sourceProviders = (config.sources ?? config.stashes ?? []).map((s) => ({
+  // Stash providers — prefer `sources[]`; fall back to `stashDir` when the
+  // user has not yet migrated to the sources[] config shape so that info
+  // always reflects at least one provider when a stash is configured.
+  const configuredSources = config.sources ?? config.stashes ?? [];
+  const stashesList =
+    configuredSources.length === 0 && config.stashDir
+      ? [{ type: "filesystem", path: config.stashDir, name: "primary" }]
+      : configuredSources;
+  const sourceProviders = stashesList.map((s) => ({
     type: s.type,
     ...(s.name ? { name: s.name } : {}),
     ...(s.path ? { path: s.path } : {}),

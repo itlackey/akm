@@ -365,8 +365,9 @@ describe("loadConfig", () => {
       expect(err).toBeInstanceOf(ConfigError);
       const hint = (err as ConfigError).hint();
       expect(hint).toBeDefined();
-      expect(hint).toContain("akm config sources remove");
+      // QA #38: hint now uses real commands (akm remove, not akm config sources remove)
       expect(hint).toContain("my-ov");
+      expect(hint).toContain("akm remove");
     }
   });
 

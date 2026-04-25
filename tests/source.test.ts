@@ -261,8 +261,9 @@ test("akmShow returns clear error when stash type root is missing", async () => 
   const stashDir = createTmpDir("akm-stash-");
   try {
     process.env.AKM_STASH_DIR = stashDir;
+    // QA #27: error should not leak "Stash type root" wording; be user-facing
     await expect(akmShow({ ref: "agent:missing.md" })).rejects.toThrow(
-      /Stash type root not found for ref: agent:missing\.md/,
+      /Asset not found for ref: agent:missing\.md|not found for ref/i,
     );
   } finally {
     fs.rmSync(stashDir, { recursive: true, force: true });

@@ -106,9 +106,21 @@ export function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel)
 
 export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (hit.type === "registry") {
-    if (detail === "brief") return pickFields(hit, ["name", "action"]);
+    if (detail === "brief") {
+      // RegistrySearchHit uses `title` (not `name`); always project installRef
+      // and score so callers can use the result without --detail full (QA #28).
+      const out = pickFields(hit, ["title", "name", "installRef", "score"]);
+      // Normalise: if only title exists, expose it as `name` for consistency
+      if (out.title && !out.name) out.name = out.title;
+      return out;
+    }
     if (detail === "normal") {
-      return capDescription(pickFields(hit, ["name", "description", "action", "curated"]), NORMAL_DESCRIPTION_LIMIT);
+      const out = capDescription(
+        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "curated"]),
+        NORMAL_DESCRIPTION_LIMIT,
+      );
+      if (out.title && !out.name) out.name = out.title;
+      return out;
     }
     return hit;
   }
@@ -211,6 +223,10 @@ export function shapeShowOutput(
     "cwd",
     "keys",
     "comments",
+    // path and editable are always projected so JSON consumers can locate and
+    // edit the asset without needing --detail full (QA #7).
+    "path",
+    "editable",
   ]);
 
   if (detail !== "full") {
@@ -220,7 +236,7 @@ export function shapeShowOutput(
   return {
     schemaVersion: 1,
     ...base,
-    ...pickFields(result, ["path", "editable", "editHint"]),
+    ...pickFields(result, ["editHint"]),
   };
 }
 

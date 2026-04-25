@@ -139,12 +139,15 @@ describe("output baseline", () => {
     const output = runCli(stashDir, ["show", "command:release.md", "--format=json"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
+    // QA #7: path and editable are now always projected in JSON shape
     expect(Object.keys(json).sort()).toEqual([
       "action",
       "description",
+      "editable",
       "name",
       "origin",
       "parameters",
+      "path",
       "template",
       "type",
     ]);
@@ -262,7 +265,8 @@ describe("output baseline", () => {
       const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
       expect(localHit?.action).toBeTruthy();
-      expect(registryHit?.action).toBeTruthy();
+      // QA #28: registry brief no longer includes action (use installRef instead)
+      expect(registryHit?.name).toBeTruthy();
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

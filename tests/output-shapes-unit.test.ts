@@ -133,11 +133,13 @@ describe("shapeSearchHit — registry hits", () => {
     score: 0.7,
   };
 
-  test("brief keeps only name/action", () => {
-    expect(shapeSearchHit(registryHit, "brief")).toEqual({
-      name: "azure-ops",
-      action: "akm add npm:azure-ops",
-    });
+  test("brief keeps name/score (QA #28: brief now projects name+installRef+score)", () => {
+    // Brief now includes name (normalised from title if needed) and score so
+    // callers can use the result without --detail full.
+    const result = shapeSearchHit(registryHit, "brief");
+    expect(result.name).toBe("azure-ops");
+    expect(result.score).toBe(0.7);
+    // action is no longer in brief output — use installRef to act
   });
 
   test("normal adds description and curated", () => {
@@ -337,6 +339,7 @@ describe("shapeRegistrySearchOutput", () => {
       registryHits: [],
     };
     const brief = shapeRegistrySearchOutput(result, "brief");
-    expect(brief.hits[0]).toEqual({ name: "azure-ops", action: "akm add npm:azure-ops" });
+    // QA #28: brief now projects name + score at minimum (not just name/action)
+    expect(brief.hits[0]).toMatchObject({ name: "azure-ops", score: 0.5 });
   });
 });

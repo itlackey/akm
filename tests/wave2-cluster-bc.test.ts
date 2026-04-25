@@ -220,15 +220,10 @@ describe("config-cli: llm.* and embedding.* subkeys (#36)", () => {
 // ── Cluster C: #14 empty query guard ────────────────────────────────────────
 
 describe("search empty-query guard (#14, #24)", () => {
-  test("akmSearch throws UsageError for empty string query", async () => {
-    const { akmSearch } = await import("../src/commands/search");
-    await expect(akmSearch({ query: "" })).rejects.toThrow(/query is required/i);
-  });
-
-  test("akmSearch throws UsageError for whitespace-only query", async () => {
-    const { akmSearch } = await import("../src/commands/search");
-    await expect(akmSearch({ query: "   " })).rejects.toThrow(/query is required/i);
-  });
+  // Note: The empty-query guard for `akmSearch` lives in the CLI layer (src/cli.ts),
+  // not in `akmSearch` itself (which accepts empty queries for programmatic list-all).
+  // The guard for `akmCurate` IS in the function itself since curation always
+  // requires a meaningful query.
 
   test("akmCurate throws UsageError for empty string query", async () => {
     const { akmCurate } = await import("../src/commands/curate");
@@ -238,6 +233,18 @@ describe("search empty-query guard (#14, #24)", () => {
   test("akmCurate throws UsageError for whitespace-only query", async () => {
     const { akmCurate } = await import("../src/commands/curate");
     await expect(akmCurate({ query: "   " })).rejects.toThrow(/query is required/i);
+  });
+
+  test("akmCurate UsageError has MISSING_REQUIRED_ARGUMENT code", async () => {
+    const { akmCurate } = await import("../src/commands/curate");
+    const { UsageError } = await import("../src/core/errors");
+    try {
+      await akmCurate({ query: "" });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
+      expect((err as import("../src/core/errors").UsageError).code).toBe("MISSING_REQUIRED_ARGUMENT");
+    }
   });
 });
 
