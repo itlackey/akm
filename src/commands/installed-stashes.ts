@@ -12,8 +12,8 @@ import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
-import { parseRegistryRef } from "../registry/registry-resolve";
-import type { InstalledStashEntry } from "../registry/registry-types";
+import { parseRegistryRef } from "../registry/resolve";
+import type { InstalledStashEntry } from "../registry/types";
 import { syncFromRef } from "../sources/source-providers/sync-from-ref";
 import { ensureWebsiteMirror } from "../sources/source-providers/website";
 import type {

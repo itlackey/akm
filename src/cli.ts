@@ -47,8 +47,8 @@ import {
 } from "./output/context";
 import { shapeForCommand } from "./output/shapes";
 import { formatPlain, outputJsonl } from "./output/text";
+import { buildRegistryIndex, writeRegistryIndex } from "./registry/build-index";
 import { resolveSourcesForOrigin } from "./registry/origin-resolve";
-import { buildRegistryIndex, writeRegistryIndex } from "./registry/registry-build-index";
 import { saveGitStash } from "./sources/source-providers/git";
 import { resolveAssetPath } from "./sources/source-resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/source-types";

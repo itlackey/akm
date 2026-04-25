@@ -24,7 +24,7 @@
  */
 
 import type { RegistryConfigEntry } from "../../core/config";
-import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../registry-types";
+import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 
 // ── Search call shape (v0.6 surface, kept for the orchestrator) ─────────────
 

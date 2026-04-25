@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { filterNonEmptyStrings, toPosix } from "../core/common";
 import type { AkmConfig, InstallAuditAllowedFinding } from "../core/config";
-import type { KitSource } from "../registry/registry-types";
+import type { KitSource } from "../registry/types";
 
 export type InstallAuditSeverity = "low" | "moderate" | "high" | "critical";
 export type InstallAuditCategory = "prompt-injection" | "install-script" | "malicious-code" | "vendored-dependency";

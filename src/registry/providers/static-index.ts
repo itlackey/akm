@@ -4,13 +4,8 @@ import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/comm
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { asString } from "../../integrations/github";
-import { registerProvider } from "../registry-factory";
-import type {
-  ParsedRegistryRef,
-  RegistryAssetEntry,
-  RegistryAssetSearchHit,
-  RegistrySearchHit,
-} from "../registry-types";
+import { registerProvider } from "../factory";
+import type { ParsedRegistryRef, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type {
   AssetPreview,
   KitId,

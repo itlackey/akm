@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { registerProvider, resolveProviderFactory } from "../src/registry/registry-factory";
+import { registerProvider, resolveProviderFactory } from "../src/registry/factory";
 import { resolveSourceProviderFactory } from "../src/sources/source-provider-factory";
 
 describe("provider-registry", () => {
@@ -18,12 +18,12 @@ describe("provider-registry", () => {
 
   test("static-index is registered after import", async () => {
     // Importing triggers self-registration
-    await import("../src/registry/registry-providers/static-index");
+    await import("../src/registry/providers/static-index");
     expect(resolveProviderFactory("static-index")).not.toBeNull();
   });
 
   test("skills-sh is registered after import", async () => {
-    await import("../src/registry/registry-providers/skills-sh");
+    await import("../src/registry/providers/skills-sh");
     expect(resolveProviderFactory("skills-sh")).not.toBeNull();
   });
 

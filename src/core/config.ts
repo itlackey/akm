@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { InstalledStashEntry, KitSource } from "../registry/registry-types";
+import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { filterNonEmptyStrings } from "./common";
 import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";

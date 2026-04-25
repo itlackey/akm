@@ -12,8 +12,8 @@
 
 import type { SourceSpec } from "../../core/config";
 import { UsageError } from "../../core/errors";
-import { parseRegistryRef } from "../../registry/registry-resolve";
-import type { ParsedLocalRef } from "../../registry/registry-types";
+import { parseRegistryRef } from "../../registry/resolve";
+import type { ParsedLocalRef } from "../../registry/types";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { detectStashRoot } from "./provider-utils";
 

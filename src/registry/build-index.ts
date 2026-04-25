@@ -1,7 +1,7 @@
 /**
  * Build the v2 JSON registry index consumed by the `static-index` registry
  * provider. This module emits artifacts that conform to the v2 schema; the
- * schema itself is the input contract owned by `src/registry-providers/static-index.ts`
+ * schema itself is the input contract owned by `src/registry/providers/static-index.ts`
  * (see v1 architecture spec §3.3 — "the v2 JSON index schema belongs to
  * static-index"). When the schema changes, both the parser in `static-index.ts`
  * and the JSON Schema in `docs/technical/registry-index.schema.json` must be
@@ -18,7 +18,7 @@ import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrati
 import { copyIncludedPaths, findNearestIncludeConfig } from "../sources/source-include";
 import { detectStashRoot } from "../sources/source-providers/provider-utils";
 import { extractTarGzSecure } from "../sources/source-providers/tar-utils";
-import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./registry-providers/static-index";
+import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
 const DEFAULT_MANUAL_ENTRIES_PATH = path.resolve("manual-entries.json");

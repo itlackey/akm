@@ -1,5 +1,5 @@
 import type { InstallAuditReport } from "../commands/install-audit";
-import type { InstalledStashEntry, KitSource } from "../registry/registry-types";
+import type { InstalledStashEntry, KitSource } from "../registry/types";
 
 export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";

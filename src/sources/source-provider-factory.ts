@@ -5,7 +5,7 @@
  * to factory functions that build {@link SourceProvider} instances from a
  * {@link SourceConfigEntry}.
  *
- * Distinct from the registry-discovery factory (`registry-factory.ts`).
+ * Distinct from the registry-discovery factory (`registry/factory.ts`).
  * Both share `create-provider-registry.ts` for the underlying string→factory
  * map.
  */

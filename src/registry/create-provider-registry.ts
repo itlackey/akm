@@ -2,7 +2,7 @@
  * Generic factory-map utility.
  *
  * Creates a lightweight registry that maps string keys to factory functions.
- * Both registry-factory.ts (registry discovery) and source-provider-factory.ts
+ * Both registry/factory.ts (registry discovery) and sources/source-provider-factory.ts
  * (source providers) are built on this utility.
  */
 

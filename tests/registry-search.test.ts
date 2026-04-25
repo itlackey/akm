@@ -653,7 +653,7 @@ describe("provider routing", () => {
 
 describe("incomplete hits filter (#159)", () => {
   test("hits missing required fields are dropped from response", async () => {
-    const { registerProvider } = await import("../src/registry/registry-factory");
+    const { registerProvider } = await import("../src/registry/factory");
     const goodHit = {
       source: "github" as const,
       id: "github:owner/good",
@@ -681,7 +681,7 @@ describe("incomplete hits filter (#159)", () => {
   });
 
   test("incomplete asset hits are dropped from assetHits", async () => {
-    const { registerProvider } = await import("../src/registry/registry-factory");
+    const { registerProvider } = await import("../src/registry/factory");
     registerProvider("incomplete-assets-test", () => ({
       type: "incomplete-assets-test",
       async search() {
@@ -714,7 +714,7 @@ describe("incomplete hits filter (#159)", () => {
   // PR #168 review #9: asset hits with missing/empty `stash.id` or `stash.name`
   // are also incomplete and must not propagate to JSON output.
   test("asset hits with missing or empty stash fields are dropped", async () => {
-    const { registerProvider } = await import("../src/registry/registry-factory");
+    const { registerProvider } = await import("../src/registry/factory");
     registerProvider("incomplete-stash-test", () => ({
       type: "incomplete-stash-test",
       async search() {

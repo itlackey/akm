@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { SearchSource } from "../indexer/search-source";
-import { parseRegistryRef } from "./registry-resolve";
+import { parseRegistryRef } from "./resolve";
 
 /**
  * Given an origin string (from an AssetRef) and the full list of stash

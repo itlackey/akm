@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigDir } from "../core/config";
-import type { KitSource } from "../registry/registry-types";
+import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
 // `SourceSpec["type"]` via `src/config.ts`.

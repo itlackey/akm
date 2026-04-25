@@ -13,7 +13,7 @@ import type {
   ParsedNpmRef,
   ParsedRegistryRef,
   ResolvedRegistryArtifact,
-} from "./registry-types";
+} from "./types";
 
 /**
  * Validate that a URL is safe to pass to git.

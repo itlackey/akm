@@ -3,8 +3,8 @@ import path from "node:path";
 import { fetchWithRetry } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
-import { registerProvider } from "../registry-factory";
-import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../registry-types";
+import { registerProvider } from "../factory";
+import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type {
   AssetPreview,
   KitId,

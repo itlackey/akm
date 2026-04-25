@@ -10,13 +10,13 @@
  * `installed-stashes.ts`.
  *
  * Phase 6 (v1 architecture refactor): factories are now the
- * `RegistryProviderFactory` type owned by `src/registry-providers/types.ts`.
+ * `RegistryProviderFactory` type owned by `src/registry/providers/types.ts`.
  * The legacy alias in `src/registry-provider.ts` is kept as a thin re-export
  * for transitional callers and will be removed after the dust settles.
  */
 
 import { createProviderRegistry } from "./create-provider-registry";
-import type { RegistryProviderFactory } from "./registry-providers/types";
+import type { RegistryProviderFactory } from "./providers/types";
 
 // ── Factory map ─────────────────────────────────────────────────────────────
 
