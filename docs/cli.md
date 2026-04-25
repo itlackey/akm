@@ -129,7 +129,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
-| `stashProviders` | Configured stash sources |
+| `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
 
 `semanticSearch.status` values:
@@ -243,11 +243,10 @@ Returns type-specific payloads:
 | memory | `content` |
 | vault | `keys`, `comments` |
 
-Assets from OpenViking sources use standard `type:name` refs like
-everything else, and always return `editable: false`.
-
-If the ref points to a package origin that is not installed, `akm show`
-returns guidance to run `akm add <origin>` first.
+Assets from non-writable sources (git clones, npm packages, websites) return
+`editable: false`. `akm show` queries the local FTS5 index directly — there
+is no remote-provider fallback. If the ref points to a package origin that
+is not installed, `akm show` returns guidance to run `akm add <origin>` first.
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>` —
 path, description from `schema.md`, page and raw counts, and the last 3
@@ -382,10 +381,10 @@ Workflow markdown contract:
 
 | Input | What happens |
 | --- | --- |
-| `akm add ~/.claude/skills` | Registers a local directory as a source |
-| `akm add github:owner/repo` | Fetches and caches a managed source |
-| `akm add @scope/stash` | Fetches and caches a managed source from npm |
-| `akm add https://docs.example.com` | Crawls and caches a website as knowledge |
+| `akm add ~/.claude/skills` | Registers a local directory as a `filesystem` source |
+| `akm add github:owner/repo` | Clones the repo into akm's cache as a `git` source |
+| `akm add @scope/stash` | Installs the npm package as a `git`/`npm` source |
+| `akm add https://docs.example.com` | Crawls and caches a website as a `website` source |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
 `akm add` also supports a per-install audit bypass when you intentionally trust
@@ -423,9 +422,11 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | Flag | Description |
 | --- | --- |
 | `--name` | Human-friendly name for the source |
-| `--provider` | Provider type (e.g. `git`, `openviking`). Required for remote provider sources |
-| `--writable` | Mark a git stash as writable so `akm save` also pushes (default: false) |
-| `--options` | Provider options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--provider` | Provider type (e.g. `website`, `npm`). Required for URL sources where inference would be ambiguous |
+| `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
+| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
+| `--trust` | Bypass install-audit blocking for this add invocation only |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 
@@ -518,7 +519,7 @@ akm upgrade --force      # Force upgrade even if already on latest
 | --- | --- |
 | `--check` | Check for updates without installing |
 | `--force` | Force upgrade even if on latest version |
-| `--skipChecksum` | Skip checksum verification during upgrade (not recommended) |
+| `--skip-checksum` | Skip checksum verification during upgrade (not recommended) |
 
 ### clone
 
@@ -617,8 +618,12 @@ akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 
 ### remember
 
-Record a memory in the default stash. This writes a markdown file into
-`memories/` and returns the resulting ref.
+Record a memory. This writes a markdown file into `memories/` in the configured
+write target and returns the resulting ref.
+
+**Write target resolution:** the destination is the working stash (`stashDir`)
+unless `defaultWriteTarget` is set in config, which overrides it to a named
+source. See [Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm remember "Deployment needs VPN access"
@@ -659,8 +664,12 @@ required-field check: if `tags` cannot be derived, the command rejects
 
 ### import
 
-Import a knowledge document into the default stash. This writes a markdown file
-into `knowledge/` and returns the resulting ref.
+Import a knowledge document. This writes a markdown file into `knowledge/` in
+the configured write target and returns the resulting ref.
+
+**Write target resolution:** the destination is the working stash (`stashDir`)
+unless `defaultWriteTarget` is set in config, which overrides it to a named
+source. See [Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm import ./docs/auth-flow.md
@@ -723,10 +732,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
-
-```sh
-akm add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
-```
+| `--allow-insecure` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
 
@@ -752,9 +758,8 @@ akm registry build-index --out dist/index.json
 | --- | --- |
 | `--out` | Output path for the generated index (default: `./index.json`) |
 | `--manual` | Path to a JSON file with manual stash entries |
-| `--npmRegistry` | npm registry base URL (default: `https://registry.npmjs.org`) |
-| `--githubApi` | GitHub API base URL (default: `https://api.github.com`) |
-| `--format` | Output format: `json` or `text` (default: `json`) |
+| `--npm-registry` | Override npm registry base URL |
+| `--github-api` | Override GitHub API base URL |
 
 #### registry search
 

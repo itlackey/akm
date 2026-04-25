@@ -160,10 +160,10 @@ description: "Team coding standards for TypeScript projects"
 
 The `memories/` directory is primarily used by agent memory systems that
 write markdown files. You generally don't create memories by hand — they're
-populated by tools like OpenViking or file-based memory agents. You can also
-add one directly with `akm remember`. Memories are surfaced alongside other
-assets in search results, giving the agent relevant context without requiring
-explicit prompts.
+populated by file-based memory agents or tools that emit markdown. You can
+also add one directly with `akm remember`. Memories are surfaced alongside
+other assets in search results, giving the agent relevant context without
+requiring explicit prompts.
 
 ## Step 3: Add Metadata
 
@@ -338,7 +338,7 @@ stashes.
 
    ```json
    {
-     "stashes": [{ "type": "filesystem", "path": "/mnt/shared/team-stash" }]
+     "sources": [{ "type": "filesystem", "path": "/mnt/shared/team-stash" }]
    }
    ```
 

@@ -111,7 +111,8 @@ reference.
 
 ## Add Sources
 
-Add any source — a local directory, a GitHub repo, an npm package, or a website:
+Add any source — a local directory, a GitHub repo, an npm package, or a website.
+Every source materialises files to a directory; akm indexes them locally:
 
 ```sh
 akm add ~/.claude/skills              # Your Claude Code skills

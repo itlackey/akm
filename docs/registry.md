@@ -50,9 +50,6 @@ akm registry add https://example.com/registry/index.json --name my-team
 # Add a skills.sh registry
 akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
-# Add an OpenViking source
-akm add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
-
 # Remove a registry by URL or name
 akm registry remove my-team
 ```
@@ -67,10 +64,6 @@ Registries are stored in the `registries` array in your config file:
     { "url": "https://example.com/registry/index.json", "name": "my-team", "enabled": true },
     // skills.sh provider
     { "url": "https://skills.sh", "name": "skills.sh", "provider": "skills-sh" }
-  ],
-  "stashes": [
-    // OpenViking source (configured via `akm add`)
-    { "type": "openviking", "url": "http://localhost:1933", "name": "openviking", "options": { "apiKey": "..." } }
   ]
 }
 ```
@@ -329,15 +322,19 @@ This means your local assets always override managed package versions. Use
 
 akm uses a pluggable provider system for registries. Each registry entry can
 specify a `provider` type that determines how it is searched. When omitted,
-the provider defaults to `"static-index"` (the original behavior).
+the provider defaults to `"static-index"`.
+
+Registries discover *kits* (installable source bundles). They never store
+asset content directly — installing a kit creates a regular `sources[]`
+entry that the indexer walks like any other source.
 
 ### Built-in Providers
 
 #### `static-index` (default)
 
-Fetches a static JSON index from the configured URL and performs client-side
-scoring. This is the original registry behavior. The index is cached locally
-with a 1-hour TTL and a 7-day stale fallback.
+Fetches a static JSON v2 index from the configured URL and performs
+client-side scoring. The index is cached locally with a 1-hour TTL and a
+7-day stale fallback.
 
 ```bash
 akm registry add https://example.com/registry/index.json --name my-team
@@ -354,12 +351,12 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 
 Key behaviors:
 - Server-side search via `GET {url}/api/search?q={query}&limit={limit}`
-- Results are mapped to `RegistrySearchHit` with source `"github"`
 - Hit IDs are namespaced with `"skills-sh:"` prefix to avoid collisions
 - Scores are normalized from install counts (0-1 range)
 - Per-query response caching with 15-minute TTL
 - Stale cache fallback (up to 24 hours) on network failure
 - No authentication required
+- Toggle on/off via `akm enable skills.sh` / `akm disable skills.sh`
 
 To install a skill found via skills.sh, use the `ref` field (GitHub
 `owner/repo`) with `akm add`:
@@ -367,91 +364,6 @@ To install a skill found via skills.sh, use the `ref` field (GitHub
 ```bash
 akm add vercel-labs/agent-skills
 ```
-
-#### `openviking` (source provider)
-
-Connects to an [OpenViking](https://github.com/volcengine/openviking) server
-for context management. OpenViking is ByteDance's open-source context file
-system for AI agents.
-
-> **Note:** OpenViking is a *source provider*, not a registry provider. Configure
-> it via `akm add`, not `akm registry add`.
-
-```bash
-akm add http://localhost:1933 --provider openviking --options '{"apiKey":"my-key"}'
-```
-
-Key behaviors:
-- Semantic search via `POST /api/v1/search/find` (or text search via `POST /api/v1/search/grep`)
-- Results returned as stash hits in the unified `hits[]` array (not installable via `akm add`)
-- Results use standard `type:name` refs, viewable with `akm show`
-- Per-query response caching with 5-minute TTL
-- Stale cache fallback (up to 1 hour) on network failure
-- Optional API key authentication via `options.apiKey`
-- Optional `options.searchType`: `"semantic"` (default) or `"text"`
-
-#### `git` (source provider)
-
-Indexes a git repository locally and exposes its docs/skills directly in
-`akm search` and `akm show`.
-
-```bash
-akm add https://github.com/andrewyng/context-hub --provider git
-```
-
-Key behaviors:
-- Clones the repository using `git clone --depth 1` into akm's cache
-- Discovers `content/**/DOC.md` and `content/**/SKILL.md` entries
-- Maps Context Hub docs to `knowledge` hits and skills to `skill` hits
-- Returns direct `akm show ...` actions for matched entries
-- Reuses cached content on subsequent searches and falls back to stale cache on network failure
-
-### Implementing a Custom Provider
-
-Each provider is a TypeScript class implementing the `RegistryProvider`
-interface:
-
-```ts
-interface RegistryProvider {
-  readonly type: string;
-  search(options: RegistryProviderSearchOptions): Promise<RegistryProviderResult>;
-}
-
-interface RegistryProviderSearchOptions {
-  query: string;
-  limit: number;
-  includeAssets?: boolean;
-}
-
-interface RegistryProviderResult {
-  hits: RegistrySearchHit[];
-  assetHits?: RegistryAssetSearchHit[];
-  warnings?: string[];
-}
-```
-
-Contract:
-- `search()` must never throw. Catch errors internally and return them as
-  `warnings[]`.
-- `limit` is always in the range `[1, 100]`.
-- Return `hits` sorted by relevance. The orchestrator performs a final
-  merge-sort across providers.
-
-To register a provider, create a file in `src/providers/` and call
-`registerProvider()` at module scope:
-
-```ts
-import { registerProvider } from "../provider-registry";
-
-class MyProvider implements RegistryProvider {
-  readonly type = "my-provider";
-  // ...
-}
-
-registerProvider("my-provider", (config) => new MyProvider(config));
-```
-
-Then import the file in `src/registry-search.ts` to trigger self-registration.
 
 ### Future Provider Candidates
 
