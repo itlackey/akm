@@ -212,7 +212,10 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
   // Accept "local" as alias for "stash"
   if (source === "local") return "stash";
   if (typeof source === "undefined") return "stash";
-  throw new UsageError(`Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`);
+  throw new UsageError(
+    `Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`,
+    "INVALID_SOURCE_VALUE",
+  );
 }
 
 /**
