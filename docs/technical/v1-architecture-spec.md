@@ -40,7 +40,7 @@ Vault providers (keychain, 1Password, etc.) are also out of scope. Env vars cove
 ### 2.1 Interface
 
 ```ts
-// src/source-providers/types.ts
+// src/sources/providers/types.ts
 
 export interface ProviderContext {
   readonly name: string;
@@ -203,7 +203,7 @@ Same pattern.
 ### 3.1 Interface
 
 ```ts
-// src/registry-providers/types.ts
+// src/registry/providers/types.ts
 
 export interface RegistryProvider {
   readonly name: string;
@@ -445,7 +445,7 @@ src/
     output.ts             # exhaustive shape registry
     write-source.ts       # writeAssetToSource / deleteAssetFromSource
 
-  source-providers/
+  providers/
     types.ts              # SourceProvider interface
     index.ts              # registration
     filesystem.ts
@@ -453,7 +453,7 @@ src/
     website.ts
     npm.ts
 
-  registry-providers/
+  providers/
     types.ts              # RegistryProvider interface
     index.ts              # registration
     static-index.ts       # owns the v2 JSON index schema
@@ -554,8 +554,8 @@ Add the `writable` flag to `SourceConfigEntry`. Default per kind per §5.4.
 
 ### Step 6 — Extract registry providers
 
-- `src/registry-providers/static-index.ts` — owns the v2 JSON index schema.
-- `src/registry-providers/skills-sh.ts` — extracts current skills.sh special-casing.
+- `src/registry/providers/static-index.ts` — owns the v2 JSON index schema.
+- `src/registry/providers/skills-sh.ts` — extracts current skills.sh special-casing.
 - `commands/registry-search.ts` loops over registered registry providers.
 - Remove any Context Hub code. If Context Hub is supported, it's a recommended kit in the official registry.
 
@@ -622,7 +622,7 @@ Parsers reject each other's inputs.
 ## Appendix B — Provider registration
 
 ```ts
-// src/source-providers/index.ts
+// src/sources/providers/index.ts
 import { createProviderRegistry } from "../create-provider-registry";
 
 export const sourceRegistry = createProviderRegistry<SourceProvider>();
@@ -633,7 +633,7 @@ sourceRegistry.register("npm",        (name) => new NpmSource(name));
 ```
 
 ```ts
-// src/registry-providers/index.ts
+// src/registry/providers/index.ts
 export const registryRegistry = createProviderRegistry<RegistryProvider>();
 registryRegistry.register("static-index", (name) => new StaticIndexRegistry(name));
 registryRegistry.register("skills-sh",    (name) => new SkillsShRegistry(name));

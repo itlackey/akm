@@ -124,5 +124,5 @@ Some configured sources are materialised into cache before indexing:
 
 Once materialised, they are indexed like local filesystem sources. Cache
 materialisation is driven by each provider's `sync()` method
-(`src/sources/source-providers/`), invoked through `ensureSourceCaches()` in
+(`src/sources/providers/`), invoked through `ensureSourceCaches()` in
 `src/indexer/search-source.ts`.

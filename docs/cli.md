@@ -169,7 +169,7 @@ search results:
 - **`id`** -- Registry-level stash identifier (registry hits only)
 
 The default brief shape is intentionally small. The exact field set per
-detail level matches `src/output-shapes.ts`:
+detail level matches `src/output/shapes.ts`:
 
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
@@ -260,6 +260,8 @@ Author, inspect, and execute structured workflow assets.
 akm workflow template
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
+akm workflow validate workflow:ship-release    # Validate a workflow ref
+akm workflow validate ./workflows/release.md   # Validate a workflow file
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
 akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
@@ -276,6 +278,7 @@ Subcommands:
 | --- | --- |
 | `template` | Print a valid starter workflow markdown document |
 | `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
+| `validate <ref\|path>` | Validate a workflow markdown file or ref and print any errors |
 | `start <ref>` | Create a new persisted workflow run |
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |

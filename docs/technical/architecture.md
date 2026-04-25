@@ -180,7 +180,7 @@ Write-target resolution (`resolveWriteTarget`) follows: explicit `--target` →
 ## Registry Providers
 
 Registry providers are read-only catalogs of installable kits. The interface
-lives in `src/registry/registry-providers/types.ts`:
+lives in `src/registry/providers/types.ts`:
 
 ```ts
 interface RegistryProvider {
@@ -253,7 +253,7 @@ parsing error messages.
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/sources/source-provider.ts` | minimal `SourceProvider` interface |
-| `src/sources/source-providers/` | filesystem / git / website / npm implementations |
+| `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/source-resolve.ts` | filesystem path resolution for refs |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walker.ts` | flat directory walker |
@@ -264,7 +264,7 @@ parsing error messages.
 | `src/indexer/search-source.ts` | source resolution, cache materialisation, editability |
 | `src/commands/search.ts` | `akm search` orchestration |
 | `src/commands/show.ts` | `akm show` orchestration |
-| `src/registry/registry-providers/` | registry provider implementations (static-index, skills-sh) |
+| `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
 | `src/output/renderers.ts` | search/show shaping per asset type |
 | `src/workflows/workflow-runs.ts` | workflow run persistence |
 

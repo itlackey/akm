@@ -25,7 +25,7 @@ Refresh semantic status / embeddings when enabled
 ```
 
 Cache materialisation runs through each source's `sync()` method
-(`src/sources/source-providers/`) before the indexer walks `path()`.
+(`src/sources/providers/`) before the indexer walks `path()`.
 
 ## Search Field Mapping
 
