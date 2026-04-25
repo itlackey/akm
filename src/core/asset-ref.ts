@@ -47,7 +47,7 @@ export function makeAssetRef(type: string, name: string, origin?: string): strin
  */
 export function parseAssetRef(ref: string): AssetRef {
   const trimmed = ref.trim();
-  if (!trimmed) throw new UsageError("Empty ref.");
+  if (!trimmed) throw new UsageError("Empty ref.", "MISSING_REQUIRED_ARGUMENT");
 
   let origin: string | undefined;
   let body = trimmed;
@@ -56,19 +56,22 @@ export function parseAssetRef(ref: string): AssetRef {
   if (boundary >= 0) {
     origin = trimmed.slice(0, boundary);
     body = trimmed.slice(boundary + 2);
-    if (!origin) throw new UsageError("Empty origin in ref.");
+    if (!origin) throw new UsageError("Empty origin in ref.", "MISSING_REQUIRED_ARGUMENT");
   }
 
   const colon = body.indexOf(":");
   if (colon <= 0) {
-    throw new UsageError(`Invalid ref "${trimmed}". Expected [origin//]type:name`);
+    throw new UsageError(
+      `Invalid ref "${trimmed}". Expected [origin//]type:name, e.g. skill:deploy or knowledge:guide.md`,
+      "MISSING_REQUIRED_ARGUMENT",
+    );
   }
 
   const rawType = body.slice(0, colon);
   const rawName = body.slice(colon + 1);
 
   if (!isAssetType(rawType)) {
-    throw new UsageError(`Invalid asset type: "${rawType}".`);
+    throw new UsageError(`Invalid asset type: "${rawType}".`, "MISSING_REQUIRED_ARGUMENT");
   }
 
   validateName(rawName);

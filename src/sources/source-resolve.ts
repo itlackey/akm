@@ -59,7 +59,12 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
 function resolveAndValidateTypeRoot(root: string, type: string, name: string): string {
   const rootStat = readTypeRootStat(root, type, name);
   if (!rootStat.isDirectory()) {
-    throw new NotFoundError(`Stash type root is not a directory for ref: ${type}:${name}`);
+    throw new NotFoundError(
+      `Asset directory for ${type} assets is not accessible — got a file where a directory was expected for ref: ${type}:${name}. ` +
+        "Run `akm index` to rebuild the index, or check your source configuration.",
+      "ASSET_NOT_FOUND",
+      "Run `akm list` to see your configured sources and verify the source path exists.",
+    );
   }
   return fs.realpathSync(root);
 }
@@ -69,7 +74,11 @@ function readTypeRootStat(root: string, type: string, name: string): fs.Stats {
     return fs.statSync(root);
   } catch (error: unknown) {
     if (hasErrnoCode(error, "ENOENT")) {
-      throw new NotFoundError(`Stash type root not found for ref: ${type}:${name}`);
+      throw new NotFoundError(
+        `Asset not found for ref: ${type}:${name}. No ${type} assets are present in the configured source.`,
+        "ASSET_NOT_FOUND",
+        "Run `akm list` to see your configured sources, or `akm index` to rebuild the search index.",
+      );
     }
     throw error;
   }

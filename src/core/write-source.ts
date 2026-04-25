@@ -211,7 +211,7 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
     throw new ConfigError(
       `defaultWriteTarget "${akmConfig.defaultWriteTarget}" does not match any configured source.`,
       "INVALID_CONFIG_FILE",
-      "Update `defaultWriteTarget` in your config or run `akm config sources` to list configured sources.",
+      "Update `defaultWriteTarget` in your config (run `akm config get defaultWriteTarget`) or run `akm list` to see configured sources.",
     );
   }
 

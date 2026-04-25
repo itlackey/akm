@@ -508,19 +508,19 @@ function parseStashesValue(value: string): SourceConfigEntry[] | undefined {
     parsed = JSON.parse(value);
   } catch {
     throw new UsageError(
-      `Invalid value for stashes: expected JSON array of {type, path?, url?, name?, enabled?, options?} objects`,
+      `Invalid value for sources: expected JSON array of {type, path?, url?, name?, enabled?, options?} objects`,
     );
   }
   if (!Array.isArray(parsed)) {
-    throw new UsageError(`Invalid value for stashes: expected a JSON array`);
+    throw new UsageError(`Invalid value for sources: expected a JSON array`);
   }
   return parsed.map((entry: unknown, i: number) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new UsageError(`Invalid value for stashes[${i}]: expected an object with a "type" field`);
+      throw new UsageError(`Invalid value for sources[${i}]: expected an object with a "type" field`);
     }
     const obj = entry as Record<string, unknown>;
     if (typeof obj.type !== "string" || !obj.type) {
-      throw new UsageError(`Invalid value for stashes[${i}]: "type" is required`);
+      throw new UsageError(`Invalid value for sources[${i}]: "type" is required`);
     }
     const result: SourceConfigEntry = { type: obj.type };
     if (typeof obj.path === "string" && obj.path) result.path = obj.path;

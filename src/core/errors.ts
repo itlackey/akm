@@ -71,6 +71,8 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
   MISSING_OR_AMBIGUOUS_TARGET: "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg` (not both).",
   TARGET_NOT_UPDATABLE: "Run `akm list` to view your sources, then retry with one of those values.",
+  MISSING_REQUIRED_ARGUMENT:
+    "Refs use the form type:name, e.g. `akm show skill:deploy` or `akm show knowledge:guide.md`.",
 };
 
 /** Default hint for each NotFoundError code. */

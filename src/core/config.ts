@@ -486,7 +486,8 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
       // Emit a one-time deprecation warning and carry the value forward as
       // `sources`. The renamed key is persisted on the next `akm config` write.
       warn(
-        'Config key "stashes" is deprecated; rename it to "sources" in your config file (akm config edit). ' +
+        'Config key "stashes" is deprecated; rename it to "sources" in your config file ' +
+          `(edit it directly at ${_getConfigPath()}). ` +
           "Your configuration has been loaded successfully — no manual action is required right now.",
       );
       config.sources = legacyStashes;
@@ -926,9 +927,9 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
   if (rawType === "openviking") {
     const name = asNonEmptyString(obj.name) ?? "unnamed";
     throw new ConfigError(
-      `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source from your config (akm\nconfig sources remove ${name}) or downgrade to 0.6.x. See docs/migration/v1.md.`,
+      `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
       "INVALID_CONFIG_FILE",
-      `Run \`akm config sources remove ${name}\` then re-run.`,
+      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${_getConfigPath()} to remove the openviking entry.`,
     );
   }
 
