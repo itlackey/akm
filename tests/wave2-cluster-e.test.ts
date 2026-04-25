@@ -15,7 +15,7 @@ import path from "node:path";
 import { buildMemoryFrontmatter } from "../src/commands/remember";
 import { listEntries, listKeys } from "../src/commands/vault";
 import type { AkmConfig } from "../src/core/config";
-import { shapeSearchHit, shapeShowOutput } from "../src/output/output-shapes";
+import { shapeSearchHit, shapeShowOutput } from "../src/output/shapes";
 
 // ── #7: show shape includes path + editable ───────────────────────────────────
 

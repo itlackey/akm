@@ -8,7 +8,7 @@
 
 import { formatInstallAuditSummary } from "../commands/install-audit";
 import type { IndexResponse } from "../indexer/indexer";
-import type { DetailLevel } from "./output-context";
+import type { DetailLevel } from "./context";
 
 export function outputJsonl(command: string, shaped: unknown): void {
   if (command === "search" || command === "registry-search") {

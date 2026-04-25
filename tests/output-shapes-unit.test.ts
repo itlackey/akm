@@ -10,7 +10,7 @@ import {
   shapeSearchOutput,
   shapeShowOutput,
   truncateDescription,
-} from "../src/output/output-shapes";
+} from "../src/output/shapes";
 
 describe("pickFields", () => {
   test("returns only requested fields, in the requested order", () => {

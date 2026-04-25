@@ -6,7 +6,7 @@
  * `Record<string, unknown>` shapes, which makes them trivial to unit test.
  */
 
-import type { DetailLevel } from "./output-context";
+import type { DetailLevel } from "./context";
 
 const NORMAL_DESCRIPTION_LIMIT = 250;
 

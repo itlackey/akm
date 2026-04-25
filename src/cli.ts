@@ -44,9 +44,9 @@ import {
   initOutputMode,
   type OutputMode,
   parseFlagValue,
-} from "./output/output-context";
-import { shapeForCommand } from "./output/output-shapes";
-import { formatPlain, outputJsonl } from "./output/output-text";
+} from "./output/context";
+import { shapeForCommand } from "./output/shapes";
+import { formatPlain, outputJsonl } from "./output/text";
 import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry/registry-build-index";
 import { saveGitStash } from "./sources/source-providers/git";
