@@ -12,6 +12,7 @@ import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
+import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { akmCurate } from "./curate";
 import { closeDatabase, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
@@ -931,22 +932,30 @@ function readKnowledgeContent(source: string): { content: string; preferredName?
   };
 }
 
-function writeMarkdownAsset(options: {
+async function writeMarkdownAsset(options: {
   type: "knowledge" | "memory";
   content: string;
   name?: string;
   fallbackPrefix: string;
   preferredName?: string;
   force?: boolean;
-}): { ref: string; path: string; stashDir: string } {
-  const stashDir = resolveStashDir();
-  const typeRoot = path.join(stashDir, options.type === "knowledge" ? "knowledge" : "memories");
-  fs.mkdirSync(typeRoot, { recursive: true });
+  /** Optional explicit `--target` override naming a configured source. */
+  target?: string;
+}): Promise<{ ref: string; path: string; stashDir: string }> {
+  // Resolve write target via the v1 precedence chain (`--target` →
+  // `defaultWriteTarget` → working stash). Per spec §10 step 5, this is the
+  // single dispatch point — `core/write-source.ts` owns all kind-branching.
+  const cfg = loadConfig();
+  const { source, config } = resolveWriteTarget(cfg, options.target);
 
+  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   const normalizedName = normalizeMarkdownAssetName(
     options.name,
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
+  // Pre-flight: existence + force semantics. The helper itself overwrites
+  // unconditionally; the CLI surfaces a friendlier UsageError before any
+  // disk activity when --force is absent.
   const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
@@ -954,15 +963,21 @@ function writeMarkdownAsset(options: {
   if (fs.existsSync(assetPath) && !options.force) {
     throw new UsageError(
       `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+      "RESOURCE_ALREADY_EXISTS",
     );
   }
 
-  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-  fs.writeFileSync(assetPath, options.content.endsWith("\n") ? options.content : `${options.content}\n`, "utf8");
+  // Delegate the actual write (and optional git commit/push) to the helper.
+  const result = await writeAssetToSource(
+    source,
+    config,
+    { type: options.type, name: normalizedName },
+    options.content,
+  );
   return {
-    ref: `${options.type}:${normalizedName}`,
-    path: assetPath,
-    stashDir,
+    ref: result.ref,
+    path: result.path,
+    stashDir: source.path,
   };
 }
 
@@ -1230,7 +1245,7 @@ const rememberCommand = defineCommand({
       const hasStructuredArgs = rawTags.length > 0 || !!args.expires || !!args.source || args.auto || args.enrich;
 
       if (!hasStructuredArgs) {
-        const result = writeMarkdownAsset({
+        const result = await writeMarkdownAsset({
           type: "memory",
           content: body,
           name: args.name,
@@ -1302,7 +1317,7 @@ const rememberCommand = defineCommand({
 
       const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
 
-      const result = writeMarkdownAsset({
+      const result = await writeMarkdownAsset({
         type: "memory",
         content: contentWithFrontmatter,
         name: args.name,
@@ -1338,7 +1353,7 @@ const importKnowledgeCommand = defineCommand({
   async run({ args }) {
     return runWithJsonErrors(async () => {
       const { content, preferredName } = readKnowledgeContent(args.source);
-      const result = writeMarkdownAsset({
+      const result = await writeMarkdownAsset({
         type: "knowledge",
         content,
         name: args.name,
