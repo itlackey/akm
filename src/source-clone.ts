@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "./asset-ref";
 import { TYPE_DIRS } from "./asset-spec";
-import { UsageError } from "./errors";
+import { NotFoundError, UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
 import { findSourceForPath, getPrimarySource, resolveSourceEntries, type SearchSource } from "./search-source";
 import { syncFromRef } from "./source-providers/sync-from-ref";
@@ -84,8 +84,14 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     }
   }
   if (!sourcePath) {
-    const context = remoteFetched ? ` (remote package fetched but asset not found inside it)` : "";
-    throw lastError ?? new Error(`Source asset not found for ref: ${options.sourceRef}${context}`);
+    if (remoteFetched) {
+      throw new NotFoundError(
+        `Source asset not found for ref: ${options.sourceRef} (remote package fetched but asset not found inside it)`,
+        "ASSET_NOT_FOUND",
+        "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.",
+      );
+    }
+    throw lastError ?? new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
   }
 
   const sourceSource = findSourceForPath(sourcePath, allSources);

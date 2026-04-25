@@ -1376,7 +1376,10 @@ const hintsCommand = defineCommand({
   },
   run({ args }) {
     if (args.detail !== "normal" && args.detail !== "full") {
-      throw new UsageError(`Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`);
+      throw new UsageError(
+        `Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`,
+        "INVALID_DETAIL_VALUE",
+      );
     }
     process.stdout.write(loadHints(args.detail));
   },
@@ -2080,7 +2083,7 @@ try {
   initOutputMode(process.argv, loadConfig().output ?? {});
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  const hint = buildHint(message);
+  const hint = extractHint(error);
   const exitCode = classifyExitCode(error);
   const code =
     error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
@@ -2107,7 +2110,7 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
     await fn();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    const hint = buildHint(message);
+    const hint = extractHint(error);
     const exitCode = classifyExitCode(error);
     // Surface machine-readable error code from typed errors when present so
     // scripts can branch on `.code` instead of message-string matching.
@@ -2120,23 +2123,14 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
   }
 }
 
-// TODO(phase-7): surface ConfigError.hint in CLI output — prefer error.hint over
-// buildHint(message) so each throw site can carry its own actionable hint string.
-function buildHint(message: string): string | undefined {
-  if (message.includes("No stash directory found"))
-    return "Run `akm init` to create the default stash, or set stashDir in your config.";
-  if (message.includes("Either <target> or --all is required"))
-    return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`.";
-  if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`.";
-  if (message.includes("No matching source"))
-    return "Run `akm list` to view your sources, then retry with one of those values.";
-  if (message.includes("remote package fetched but asset not found"))
-    return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
-  if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
-  if (message.includes("Invalid value for --format")) return "Pick one of: json, jsonl, text, yaml.";
-  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary, agent.";
-  if (message.includes("expected JSON object with endpoint and model")) {
-    return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
+/**
+ * Extract an actionable hint from an error instance. Hints live on the error
+ * classes themselves (see src/errors.ts) — either supplied explicitly at the
+ * throw site, or derived from the error code via the per-class default mapping.
+ */
+function extractHint(error: unknown): string | undefined {
+  if (error instanceof Error && "hint" in error && typeof (error as { hint: unknown }).hint === "function") {
+    return (error as { hint: () => string | undefined }).hint();
   }
   return undefined;
 }

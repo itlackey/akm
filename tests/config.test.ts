@@ -363,7 +363,7 @@ describe("loadConfig", () => {
       throw new Error("Expected loadConfig to throw");
     } catch (err) {
       expect(err).toBeInstanceOf(ConfigError);
-      const hint = (err as ConfigError).hint;
+      const hint = (err as ConfigError).hint();
       expect(hint).toBeDefined();
       expect(hint).toContain("akm config sources remove");
       expect(hint).toContain("my-ov");
