@@ -21,11 +21,6 @@ export interface AgentPlatform {
   path: string;
 }
 
-export interface OpenVikingDetectionResult {
-  available: boolean;
-  url: string;
-}
-
 // ── Ollama Detection ────────────────────────────────────────────────────────
 
 const OLLAMA_BASE = "http://localhost:11434";
@@ -116,31 +111,4 @@ export function detectAgentPlatforms(): AgentPlatform[] {
     name: p.name,
     path: path.join(home, p.relPath),
   }));
-}
-
-// ── OpenViking Detection ────────────────────────────────────────────────────
-
-/**
- * Check if an OpenViking server is reachable at the given URL.
- * Uses the lightweight /api/v1/fs/stat endpoint (GET) rather than
- * the search endpoint which requires a running search index.
- */
-export async function detectOpenViking(url: string): Promise<OpenVikingDetectionResult> {
-  const normalized = url.replace(/\/+$/, "");
-  try {
-    // Any HTTP response (even non-2xx) from the API endpoint means the server is reachable.
-    // Only network errors / timeouts indicate the server is truly unavailable.
-    await fetch(`${normalized}/api/v1/fs/stat?uri=${encodeURIComponent("viking://")}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    return { available: true, url: normalized };
-  } catch {
-    // stat endpoint unreachable — try root URL as fallback
-    try {
-      await fetch(normalized, { signal: AbortSignal.timeout(5000) });
-      return { available: true, url: normalized };
-    } catch {
-      return { available: false, url: normalized };
-    }
-  }
 }

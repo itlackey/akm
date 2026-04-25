@@ -243,7 +243,7 @@ Validates that merging local and provider results preserves local score quality.
 - Duplicates are removed (local version wins)
 - Sort order preserved
 
-**Why this matters:** When context-hub or OpenViking providers add results, they must not flatten or displace well-ranked local results.
+**Why this matters:** When additional providers add results, they must not flatten or displace well-ranked local results.
 
 #### Cross-type Search Consistency (4 tests)
 
@@ -341,7 +341,7 @@ Final score:             1.0 × (1 + 2.14) = 3.14
 
 ### Provider merge behavior
 
-When additional providers (context-hub, OpenViking) return results:
+When additional providers return results:
 
 - **Local hits keep their original scores** from the pipeline above
 - **Provider-only hits** are scored below the lowest local hit

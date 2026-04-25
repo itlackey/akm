@@ -19,8 +19,22 @@ import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from ".
 import type { StashEntry, StashFile } from "../src/metadata";
 import { getDbPath } from "../src/paths";
 import { buildSearchText } from "../src/search-fields";
-import { akmSearch, mergeStashHits } from "../src/stash-search";
+import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
+
+// Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
+// from production code when the OpenViking provider was dropped (Phase 1).
+function mergeStashHits(
+  localHits: StashSearchHit[],
+  additionalHits: StashSearchHit[],
+  limit: number,
+): StashSearchHit[] {
+  if (additionalHits.length === 0) return localHits.slice(0, limit);
+  const localKeys = new Set<string>();
+  for (const h of localHits) localKeys.add(h.path ?? h.ref ?? h.name);
+  const providerOnly = additionalHits.filter((h) => !localKeys.has(h.path ?? h.ref ?? h.name));
+  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+}
 
 // ── Fixture path ────────────────────────────────────────────────────────────
 
@@ -403,7 +417,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "remote-skill-1",
         path: "/remote/skills/remote-1/SKILL.md",
         ref: "skill:remote-skill-1",
-        origin: "openviking",
+        origin: "remote",
         score: 0.85,
       },
     ];
@@ -444,7 +458,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "remote-1",
         path: "/remote/skills/1/SKILL.md",
         ref: "skill:remote-1",
-        origin: "openviking",
+        origin: "remote",
         score: 1.0, // Normalized provider score between local-high and local-low
       },
     ];
@@ -479,7 +493,7 @@ describe("Provider merge (score not destroyed)", () => {
         name: "shared-skill",
         path: "/test/skills/shared/SKILL.md", // Same path = duplicate
         ref: "skill:shared-skill",
-        origin: "openviking",
+        origin: "remote",
         score: 0.5,
       },
     ];

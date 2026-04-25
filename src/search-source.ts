@@ -94,8 +94,8 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
 
 /**
  * Resolve the content directory the indexer should walk for a given config
- * entry. Returns `undefined` if the entry has no walkable content (e.g. an
- * `openviking` remote stash) so the caller can skip it.
+ * entry. Returns `undefined` if the entry has no walkable content
+ * so the caller can skip it.
  */
 function resolveEntryContentDir(entry: StashConfigEntry): string | undefined {
   if (entry.type === "filesystem" && entry.path) {
@@ -125,7 +125,7 @@ function resolveEntryContentDir(entry: StashConfigEntry): string | undefined {
       return undefined;
     }
   }
-  // Remote-only providers (openviking) have no walkable directory.
+  // Entries with no walkable directory (e.g. unsupported provider types).
   return undefined;
 }
 

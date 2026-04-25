@@ -18,7 +18,7 @@ import type {
 } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadUserConfig, saveConfig } from "./config";
 import { closeDatabase, isVecAvailable, openDatabase } from "./db";
-import { detectAgentPlatforms, detectOllama, detectOpenViking } from "./detect";
+import { detectAgentPlatforms, detectOllama } from "./detect";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedder";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
@@ -690,7 +690,6 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
       p.select({
         message: "Add another stash source?",
         options: [
-          { value: "openviking", label: "OpenViking server", hint: "remote stash" },
           { value: "github-repo", label: "GitHub repository", hint: "custom URL" },
           { value: "filesystem", label: "Filesystem path", hint: "local directory" },
           { value: "done", label: "Done — no more sources" },
@@ -701,46 +700,6 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
     if (action === "done") {
       addMore = false;
       break;
-    }
-
-    if (action === "openviking") {
-      const url = await promptOrBack(() =>
-        p.text({
-          message: "Enter the OpenViking server URL:",
-          placeholder: "https://your-openviking-server.example.com",
-          validate: (v) => {
-            if (!v?.trim()) return "URL cannot be empty";
-            if (!v.startsWith("http://") && !v.startsWith("https://")) return "URL must start with http:// or https://";
-          },
-        }),
-      );
-      if (url === null) continue;
-
-      const spin = p.spinner();
-      spin.start("Checking OpenViking server...");
-      const result = await detectOpenViking(url.trim());
-      if (result.available) {
-        spin.stop("Server is reachable");
-      } else {
-        spin.stop("Server not reachable — adding anyway (it may be temporarily down)");
-      }
-
-      const name = await promptOrBack(() =>
-        p.text({
-          message: "Give this stash a name (optional):",
-          placeholder: "my-openviking",
-        }),
-      );
-      if (name === null) continue;
-
-      // Use the normalized URL from detection (trailing slashes stripped)
-      const entry: StashConfigEntry = { type: "openviking", url: result.url };
-      if (name.trim()) entry.name = name.trim();
-      if (!stashes.some((s) => s.url === entry.url)) {
-        stashes.push(entry);
-      } else {
-        p.log.warn("This URL is already configured.");
-      }
     }
 
     if (action === "github-repo") {

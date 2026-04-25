@@ -1,7 +1,6 @@
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
 import { searchLocal } from "./db-search";
-import { resolveStashProviders } from "./stash-provider-factory";
 
 // Eagerly import stash providers to trigger self-registration
 import "./stash-providers/index";
@@ -52,13 +51,6 @@ export async function akmSearch(input: {
   // stash root. Safe because the empty-sources case is handled above.
   const stashDir = sources[0].path;
 
-  // Resolve additional stash providers (e.g. OpenViking) from config.
-  // Exclude filesystem (handled by resolveStashSources) and git (content
-  // now indexed through the unified FTS5 pipeline).
-  const additionalStashProviders = resolveStashProviders(config).filter(
-    (p) => p.type !== "filesystem" && p.type !== "git",
-  );
-
   const localResult =
     source === "registry"
       ? undefined
@@ -71,41 +63,19 @@ export async function akmSearch(input: {
           config,
         });
 
-  // Pass original case to providers — FTS5 requires lowercase but remote providers handle case themselves
-  const additionalStashResults =
-    source === "registry" || additionalStashProviders.length === 0
-      ? []
-      : await Promise.all(
-          additionalStashProviders.map(async (provider) => {
-            try {
-              return await provider.search({ query, type: searchType === "any" ? undefined : searchType, limit });
-            } catch (err) {
-              return {
-                hits: [] as StashSearchHit[],
-                warnings: [`Stash ${provider.name}: ${err instanceof Error ? err.message : String(err)}`],
-              };
-            }
-          }),
-        );
-
-  // Merge stash hits from all providers
-  const additionalHits = additionalStashResults.flatMap((r) => r.hits);
-  const additionalWarnings = additionalStashResults.flatMap((r) => r.warnings ?? []);
-
   const registryResult =
     source === "stash" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
 
   if (source === "stash") {
-    const allStashHits = mergeStashHits(localResult?.hits ?? [], additionalHits, limit);
-    const localWarnings = [...(localResult?.warnings ?? []), ...additionalWarnings];
-    const hasResults = allStashHits.length > 0;
+    const localHits = localResult?.hits ?? [];
+    const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
       stashDir,
       source,
-      hits: allStashHits,
+      hits: localHits,
       tip: hasResults ? undefined : localResult?.tip,
-      warnings: localWarnings.length > 0 ? localWarnings : undefined,
+      warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
     logSearchEvent(query, response);
@@ -148,15 +118,15 @@ export async function akmSearch(input: {
   }
 
   // source === "both"
-  const allStashHits = mergeStashHits(localResult?.hits ?? [], additionalHits, limit * 2);
-  const warnings = [...(localResult?.warnings ?? []), ...additionalWarnings, ...(registryResult?.warnings ?? [])];
+  const allStashHits = (localResult?.hits ?? []).slice(0, limit);
+  const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
   const hasResults = allStashHits.length > 0 || registryHits.length > 0;
 
   const response: SearchResponse = {
     schemaVersion: 1,
     stashDir,
     source,
-    hits: allStashHits.slice(0, limit),
+    hits: allStashHits,
     registryHits,
     tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
@@ -218,42 +188,6 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Merge local and additional stash hits into a single ranked list.
- *
- * Provider hits (e.g. OpenViking) keep their original scores and compete
- * fairly alongside local hits. Duplicates are resolved in favour of the
- * local version.
- *
- * 1. Build set of local hit keys for dedup.
- * 2. Filter provider hits that aren't duplicates.
- * 3. Combine local + non-duplicate provider hits.
- * 4. Sort by score descending.
- * 5. Slice to limit.
- */
-export function mergeStashHits(
-  localHits: StashSearchHit[],
-  additionalHits: StashSearchHit[],
-  limit: number,
-): StashSearchHit[] {
-  if (additionalHits.length === 0) return localHits.slice(0, limit);
-
-  // Track local hits by a dedup key (path > ref > name)
-  const localKeys = new Set<string>();
-  for (const h of localHits) {
-    localKeys.add(h.path ?? h.ref ?? h.name);
-  }
-
-  // Keep non-duplicate provider hits with their original scores
-  const providerOnly = additionalHits.filter((h) => {
-    const key = h.path ?? h.ref ?? h.name;
-    return !localKeys.has(key);
-  });
-
-  // Combine and sort by score descending
-  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
-}
 
 function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {

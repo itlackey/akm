@@ -36,10 +36,12 @@ export type NotFoundErrorCode = "ASSET_NOT_FOUND" | "STASH_NOT_FOUND" | "WORKFLO
 /** Raised when configuration or environment is invalid or missing. */
 export class ConfigError extends Error {
   readonly code: ConfigErrorCode;
-  constructor(msg: string, code: ConfigErrorCode = "INVALID_CONFIG_FILE") {
+  hint?: string;
+  constructor(msg: string, code: ConfigErrorCode = "INVALID_CONFIG_FILE", hint?: string) {
     super(msg);
     this.name = "ConfigError";
     this.code = code;
+    if (hint !== undefined) this.hint = hint;
     // Fixes `instanceof` checks under ES5 transpilation targets.
     Object.setPrototypeOf(this, new.target.prototype);
   }

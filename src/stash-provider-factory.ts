@@ -1,7 +1,7 @@
 /**
  * Stash provider factory map.
  *
- * Maps stash source type identifiers (e.g. "filesystem", "openviking") to
+ * Maps stash source type identifiers (e.g. "filesystem", "git", "website") to
  * factory functions that create StashProvider instances from a StashConfigEntry.
  *
  * "Stash providers" are runtime data sources for the search and show commands —

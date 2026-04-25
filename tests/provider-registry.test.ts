@@ -27,8 +27,8 @@ describe("provider-registry", () => {
     expect(resolveProviderFactory("skills-sh")).not.toBeNull();
   });
 
-  test("openviking stash provider is registered after import", async () => {
-    await import("../src/stash-providers/openviking");
-    expect(resolveStashProviderFactory("openviking")).not.toBeNull();
+  test("filesystem stash provider is registered after import", async () => {
+    await import("../src/stash-providers/filesystem");
+    expect(resolveStashProviderFactory("filesystem")).not.toBeNull();
   });
 });

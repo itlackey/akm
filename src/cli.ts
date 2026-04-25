@@ -111,7 +111,7 @@ function output(command: string, result: unknown): void {
 /**
  * Module Naming:
  * - stash-*          : Asset operations (search, show, add, clone)
- * - stash-provider-* : Runtime data source providers (filesystem, openviking)
+ * - stash-provider-* : Runtime data source providers (filesystem, git, website, npm)
  * - registry-*       : Discovery from remote registries (npm, GitHub)
  * - installed-stashes   : Unified source operations (list, remove, update)
  */
@@ -239,7 +239,7 @@ const addCommand = defineCommand({
       description: "Path, URL, or registry ref (website URL, npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
-    provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
+    provider: { type: "string", description: "Provider type (e.g. website, npm). Required for URL sources." },
     options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
     name: { type: "string", description: "Human-friendly name for the source" },
     writable: {
@@ -2105,6 +2105,8 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
   }
 }
 
+// TODO(phase-7): surface ConfigError.hint in CLI output — prefer error.hint over
+// buildHint(message) so each throw site can carry its own actionable hint string.
 function buildHint(message: string): string | undefined {
   if (message.includes("No stash directory found"))
     return "Run `akm init` to create the default stash, or set stashDir in your config.";
