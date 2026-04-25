@@ -4,8 +4,17 @@ import { fetchWithRetry } from "../common";
 import type { RegistryConfigEntry } from "../config";
 import { getRegistryIndexCacheDir } from "../paths";
 import { registerProvider } from "../registry-factory";
-import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "../registry-provider";
-import type { RegistryAssetSearchHit, RegistrySearchHit } from "../registry-types";
+import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../registry-types";
+import type {
+  AssetPreview,
+  KitId,
+  KitManifest,
+  KitResult,
+  RegistryProvider,
+  RegistryProviderResult,
+  RegistryProviderSearchOptions,
+  RegistryQuery,
+} from "./types";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -49,6 +58,65 @@ class SkillsShProvider implements RegistryProvider {
       const message = err instanceof Error ? err.message : String(err);
       return { hits: [], warnings: [`Registry ${label}: ${message}`] };
     }
+  }
+
+  // ── v1-spec §3.1 surface ────────────────────────────────────────────────
+
+  async searchKits(q: RegistryQuery): Promise<KitResult[]> {
+    const result = await this.search({
+      query: q.text,
+      limit: q.limit ?? 20,
+      includeAssets: false,
+    });
+    return result.hits.map((hit) => ({
+      id: hit.id,
+      title: hit.title,
+      summary: hit.description,
+      installRef: hit.installRef,
+      score: hit.score,
+    }));
+  }
+
+  async searchAssets(q: RegistryQuery): Promise<AssetPreview[]> {
+    const result = await this.search({
+      query: q.text,
+      limit: q.limit ?? 20,
+      includeAssets: true,
+    });
+    return (result.assetHits ?? []).map((hit) => ({
+      kitId: hit.stash.id,
+      type: hit.assetType,
+      name: hit.assetName,
+      summary: hit.description,
+      cloneRef: hit.action.replace(/^akm add\s+/, ""),
+    }));
+  }
+
+  /**
+   * skills.sh has no `getKit` API — every entry corresponds to a GitHub
+   * repository whose metadata we already include in the search result. We
+   * synthesize a manifest from the search hit when the caller knows the kit
+   * id; if not present in the most recent results, return null.
+   */
+  async getKit(id: KitId): Promise<KitManifest | null> {
+    if (!id.startsWith("skills-sh:")) return null;
+    const slug = id.slice("skills-sh:".length);
+    // Best-effort: the API gives us search-by-name; extract the leaf segment.
+    const segments = slug.split("/").filter(Boolean);
+    const leaf = segments[segments.length - 1] ?? slug;
+    const result = await this.search({ query: leaf, limit: 50, includeAssets: false });
+    const match = result.hits.find((hit) => hit.id === id);
+    if (!match) return null;
+    return { id: match.id, installRef: match.installRef };
+  }
+
+  /**
+   * skills.sh entries are always GitHub repositories. Claim only refs whose
+   * parsed source is `github`; defer everything else (npm tarballs, local
+   * paths, raw git URLs) to other registries.
+   */
+  canHandle(ref: ParsedRegistryRef): boolean {
+    return ref.source === "github";
   }
 
   private async fetchSkills(query: string, limit: number): Promise<SkillsShEntry[]> {

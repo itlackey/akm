@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "akm Registry Index",
-  "description": "Static index of discoverable stashes for akm search --source registry",
+  "title": "akm Registry Index (static-index provider contract)",
+  "description": "v2 JSON index schema owned by the `static-index` registry provider (v1 architecture spec §3.3). Other registry providers implement the RegistryProvider interface natively and are not required to emit this format. Static index of discoverable stashes for akm search --source registry.",
   "type": "object",
   "required": ["version", "updatedAt", "stashes"],
   "properties": {

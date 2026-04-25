@@ -1,10 +1,20 @@
+/**
+ * Build the v2 JSON registry index consumed by the `static-index` registry
+ * provider. This module emits artifacts that conform to the v2 schema; the
+ * schema itself is the input contract owned by `src/registry-providers/static-index.ts`
+ * (see v1 architecture spec §3.3 — "the v2 JSON index schema belongs to
+ * static-index"). When the schema changes, both the parser in `static-index.ts`
+ * and the JSON Schema in `docs/technical/registry-index.schema.json` must be
+ * updated together with this builder.
+ */
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "./common";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
-import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
+import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./registry-providers/static-index";
 import { copyIncludedPaths, findNearestIncludeConfig } from "./source-include";
 import { detectStashRoot } from "./source-providers/provider-utils";
 import { extractTarGzSecure } from "./source-providers/tar-utils";

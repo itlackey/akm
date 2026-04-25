@@ -15,5 +15,9 @@ export function createProviderRegistry<TFactory>() {
     resolve(type: string): TFactory | null {
       return map.get(type) ?? null;
     },
+    /** Snapshot of all registered keys. Iteration order matches insertion order. */
+    list(): string[] {
+      return [...map.keys()];
+    },
   };
 }
