@@ -183,8 +183,21 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
     const match = configuredSources.find((s) => s.name === explicitTarget);
     if (!match) {
       throw new UsageError(
-        `No source named "${explicitTarget}" is configured. Run \`akm config sources\` to list configured sources.`,
+        `--target must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm list\` to see available sources.`,
         "INVALID_FLAG_VALUE",
+      );
+    }
+    // Up-front writable check so an explicit --target fails fast with a
+    // ConfigError (rather than the generic UsageError ensureWritable would
+    // raise after we've already started building paths). Resolve the
+    // effective writable flag (filesystem defaults to true; everything else
+    // defaults to false) so unset values are interpreted correctly.
+    const effectiveWritable = resolveWritable({ type: match.type, writable: match.writable });
+    if (!effectiveWritable) {
+      throw new ConfigError(
+        `source ${explicitTarget} is not writable`,
+        "INVALID_CONFIG_FILE",
+        `Set \`writable: true\` on the "${explicitTarget}" source in your config, or pass --target to a different source.`,
       );
     }
     return adaptConfiguredSource(match);

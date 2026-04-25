@@ -623,7 +623,9 @@ write target and returns the resulting ref.
 
 **Write target resolution:** the destination is the working stash (`stashDir`)
 unless `defaultWriteTarget` is set in config, which overrides it to a named
-source. See [Configuration](configuration.md#defaultwritetarget) for details.
+source. An explicit `--target <name>` flag overrides both. The full order is
+`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
+[Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm remember "Deployment needs VPN access"
@@ -652,6 +654,7 @@ akm remember "Long meeting notes..." --enrich
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
@@ -669,7 +672,9 @@ the configured write target and returns the resulting ref.
 
 **Write target resolution:** the destination is the working stash (`stashDir`)
 unless `defaultWriteTarget` is set in config, which overrides it to a named
-source. See [Configuration](configuration.md#defaultwritetarget) for details.
+source. An explicit `--target <name>` flag overrides both. The full order is
+`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
+[Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm import ./docs/auth-flow.md
@@ -681,6 +686,7 @@ akm import - --name scratch-notes < notes.md
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
+| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
 The source must be a readable file path, or `-` to read the document from
 stdin.

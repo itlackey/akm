@@ -1238,6 +1238,11 @@ const rememberCommand = defineCommand({
       description: "Call the configured LLM to propose tags and description (requires LLM config)",
       default: false,
     },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1257,6 +1262,7 @@ const rememberCommand = defineCommand({
           name: args.name,
           fallbackPrefix: "memory",
           force: args.force,
+          target: args.target,
         });
         output("remember", { ok: true, ...result });
         return;
@@ -1329,6 +1335,7 @@ const rememberCommand = defineCommand({
         name: args.name,
         fallbackPrefix: "memory",
         force: args.force,
+        target: args.target,
       });
       output("remember", { ok: true, ...result });
     });
@@ -1355,6 +1362,11 @@ const importKnowledgeCommand = defineCommand({
       description: "Overwrite an existing knowledge document with the same name",
       default: false,
     },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1366,6 +1378,7 @@ const importKnowledgeCommand = defineCommand({
         fallbackPrefix: "knowledge",
         preferredName,
         force: args.force,
+        target: args.target,
       });
       output("import", { ok: true, source: args.source, ...result });
     });
