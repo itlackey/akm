@@ -207,7 +207,7 @@ Same pattern.
 
 export interface RegistryProvider {
   readonly name: string;
-  readonly kind: string;                    // "static-index" | "skills-sh"
+  readonly type: string;                    // "static-index" | "skills-sh"
 
   init?(ctx: ProviderContext): Promise<void>;
 
@@ -306,7 +306,7 @@ export interface AssetPreview {
 
 export interface KitManifest {
   readonly id: KitId;
-  readonly sourceConfig: SourceConfigEntry;
+  readonly installRef: InstallRef;
   readonly assets?: readonly AssetPreview[];
 }
 
@@ -412,7 +412,7 @@ The index knows which file corresponds to each ref. Read it.
 
 1. `parseInstallRef(ref)` — distinct parser from asset refs.
 2. First registry whose `canHandle` (URL prefix / scheme / slug shape) matches owns the ref. Missing match is `UsageError` with hint.
-3. `getKit(id)` → `KitManifest.sourceConfig` → append to config → run the new source's `sync()` if present.
+3. `getKit(id)` → `KitManifest.installRef` → infer the source kind from the install-ref prefix (`github:`, `npm:`, `git+`, `file:`, …), build the corresponding `SourceConfigEntry`, append to config → run the new source's `sync()` if present.
 4. Indexer runs against the new source's path.
 
 ### 6.4 Clone (`akm clone <ref>`)
