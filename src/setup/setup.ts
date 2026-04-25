@@ -29,7 +29,7 @@ import {
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectOllama } from "./detect";
-import { createSetupContext, runSetupSteps, type SetupStep } from "./setup-steps";
+import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
