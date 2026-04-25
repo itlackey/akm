@@ -19,8 +19,22 @@ import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from ".
 import type { StashEntry, StashFile } from "../src/metadata";
 import { getDbPath } from "../src/paths";
 import { buildSearchText } from "../src/search-fields";
-import { akmSearch, mergeStashHits } from "../src/stash-search";
+import { akmSearch } from "../src/stash-search";
 import type { StashSearchHit } from "../src/stash-types";
+
+// Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
+// from production code when the OpenViking provider was dropped (Phase 1).
+function mergeStashHits(
+  localHits: StashSearchHit[],
+  additionalHits: StashSearchHit[],
+  limit: number,
+): StashSearchHit[] {
+  if (additionalHits.length === 0) return localHits.slice(0, limit);
+  const localKeys = new Set<string>();
+  for (const h of localHits) localKeys.add(h.path ?? h.ref ?? h.name);
+  const providerOnly = additionalHits.filter((h) => !localKeys.has(h.path ?? h.ref ?? h.name));
+  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+}
 
 // ── Fixture path ────────────────────────────────────────────────────────────
 

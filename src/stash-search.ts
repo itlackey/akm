@@ -118,7 +118,7 @@ export async function akmSearch(input: {
   }
 
   // source === "both"
-  const allStashHits = mergeStashHits(localResult?.hits ?? [], [], limit * 2);
+  const allStashHits = (localResult?.hits ?? []).slice(0, limit);
   const warnings = [...(localResult?.warnings ?? []), ...(registryResult?.warnings ?? [])];
   const hasResults = allStashHits.length > 0 || registryHits.length > 0;
 
@@ -126,7 +126,7 @@ export async function akmSearch(input: {
     schemaVersion: 1,
     stashDir,
     source,
-    hits: allStashHits.slice(0, limit),
+    hits: allStashHits,
     registryHits,
     tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
@@ -188,40 +188,6 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Merge local and additional stash hits into a single ranked list.
- *
- * Duplicates are resolved in favour of the local version.
- *
- * 1. Build set of local hit keys for dedup.
- * 2. Filter additional hits that aren't duplicates.
- * 3. Combine local + non-duplicate hits.
- * 4. Sort by score descending.
- * 5. Slice to limit.
- */
-export function mergeStashHits(
-  localHits: StashSearchHit[],
-  additionalHits: StashSearchHit[],
-  limit: number,
-): StashSearchHit[] {
-  if (additionalHits.length === 0) return localHits.slice(0, limit);
-
-  // Track local hits by a dedup key (path > ref > name)
-  const localKeys = new Set<string>();
-  for (const h of localHits) {
-    localKeys.add(h.path ?? h.ref ?? h.name);
-  }
-
-  // Keep non-duplicate provider hits with their original scores
-  const providerOnly = additionalHits.filter((h) => {
-    const key = h.path ?? h.ref ?? h.name;
-    return !localKeys.has(key);
-  });
-
-  // Combine and sort by score descending
-  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
-}
 
 function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {

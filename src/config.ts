@@ -873,6 +873,7 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
     throw new ConfigError(
       `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source from your config (akm\nconfig sources remove ${name}) or downgrade to 0.6.x. See docs/migration/v1.md.`,
       "INVALID_CONFIG_FILE",
+      `Run \`akm config sources remove ${name}\` then re-run.`,
     );
   }
 

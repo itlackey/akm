@@ -2105,6 +2105,8 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
   }
 }
 
+// TODO(phase-7): surface ConfigError.hint in CLI output — prefer error.hint over
+// buildHint(message) so each throw site can carry its own actionable hint string.
 function buildHint(message: string): string | undefined {
   if (message.includes("No stash directory found"))
     return "Run `akm init` to create the default stash, or set stashDir in your config.";

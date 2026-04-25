@@ -351,6 +351,25 @@ describe("loadConfig", () => {
     }
   });
 
+  test("ConfigError for openviking source carries actionable hint with source name", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    try {
+      loadConfig();
+      throw new Error("Expected loadConfig to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigError);
+      const hint = (err as ConfigError).hint;
+      expect(hint).toBeDefined();
+      expect(hint).toContain("akm config sources remove");
+      expect(hint).toContain("my-ov");
+    }
+  });
+
   test("recomputes merged config when cwd changes", () => {
     const firstProject = makeTmpDir();
     const secondProject = makeTmpDir();
