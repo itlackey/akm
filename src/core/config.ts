@@ -732,10 +732,10 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     console.warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
     return undefined;
   }
-  if (typeof obj.model !== "string" || !obj.model) return undefined;
+  const model = typeof obj.model === "string" ? obj.model : "";
   const result: LlmConnectionConfig = {
     endpoint: obj.endpoint,
-    model: obj.model,
+    model,
   };
   if (typeof obj.provider === "string" && obj.provider) {
     result.provider = obj.provider;
