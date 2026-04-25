@@ -210,6 +210,15 @@ export interface AkmConfig {
    * `akm save` will push after committing (if a remote is configured).
    */
   writable?: boolean;
+  /**
+   * Default destination for `akm remember` / `akm import` and any other write
+   * helper that does not receive an explicit `--target`. Names a configured
+   * source by `name`. Per locked decision 3 (v1 implementation plan §6) the
+   * resolution order is: explicit `--target` → `defaultWriteTarget` →
+   * `stashDir` → `ConfigError`. There is no implicit "first writable in
+   * source-array order" fallback.
+   */
+  defaultWriteTarget?: string;
 }
 
 export interface OutputConfig {
@@ -481,6 +490,10 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   if (typeof raw.writable === "boolean") {
     config.writable = raw.writable;
+  }
+
+  if (typeof raw.defaultWriteTarget === "string" && raw.defaultWriteTarget.trim()) {
+    config.defaultWriteTarget = raw.defaultWriteTarget.trim();
   }
 
   return config;
@@ -911,6 +924,18 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
   if (typeof obj.enabled === "boolean") entry.enabled = obj.enabled;
   if (typeof obj.writable === "boolean") entry.writable = obj.writable;
   if (typeof obj.primary === "boolean") entry.primary = obj.primary;
+  // Locked decision 4 (§6 v1 implementation plan): reject writable: true on
+  // website / npm sources at config load. The next sync() would clobber
+  // writes — allowing this is a footgun, not a feature. Throw early so the
+  // user sees the problem at `akm` startup, not when they try to write.
+  if (entry.writable === true && (type === "website" || type === "npm")) {
+    const label = entry.name ? ` "${entry.name}"` : "";
+    throw new ConfigError(
+      `writable: true is only supported on filesystem and git sources (got "${type}" on source${label}).`,
+      "INVALID_CONFIG_FILE",
+      "To author into a checked-out package, add the same path as a separate filesystem source.",
+    );
+  }
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
     entry.options = obj.options as Record<string, unknown>;
   }
