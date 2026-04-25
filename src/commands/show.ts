@@ -22,28 +22,28 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../asset-ref";
-import { loadConfig } from "../config";
-import { closeDatabase, openDatabase } from "../db";
-import { NotFoundError, UsageError } from "../errors";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../file-context";
-import { parseFrontmatter, toStringOrUndefined } from "../frontmatter";
-import { lookup } from "../indexer";
-import { loadStashFile } from "../metadata";
-import { resolveSourcesForOrigin } from "../origin-resolve";
-import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../search-source";
+import { type AssetRef, parseAssetRef } from "../core/asset-ref";
+import { loadConfig } from "../core/config";
+import { NotFoundError, UsageError } from "../core/errors";
+import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { closeDatabase, openDatabase } from "../indexer/db";
+import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
+import { lookup } from "../indexer/indexer";
+import { loadStashFile } from "../indexer/metadata";
+import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
+import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 // Eagerly import source providers to trigger self-registration.
-import "../source-providers/index";
-import { resolveAssetPath } from "../source-resolve";
-import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../source-types";
-import { insertUsageEvent } from "../usage-events";
+import "../sources/source-providers/index";
+import { insertUsageEvent } from "../indexer/usage-events";
+import { resolveAssetPath } from "../sources/source-resolve";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/source-types";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as
  * `akm wiki show <name>`.
  */
 async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
-  const { showWiki } = await import("../wiki.js");
+  const { showWiki } = await import("../wiki/wiki.js");
   const result = showWiki(stashDir, wikiName);
   return {
     type: "wiki",
@@ -64,7 +64,7 @@ async function showWikiRootForSource(
   source: { path: string; wikiName?: string },
   wikiName: string,
 ): Promise<ShowResponse> {
-  const { showWikiAtPath } = await import("../wiki.js");
+  const { showWikiAtPath } = await import("../wiki/wiki.js");
   if (source.wikiName === wikiName) {
     const result = showWikiAtPath(wikiName, source.path);
     return {

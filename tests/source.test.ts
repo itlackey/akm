@@ -2,13 +2,13 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmInit } from "../src/commands/init";
 import { akmSearch } from "../src/commands/search";
 import { akmShowUnified as akmShow } from "../src/commands/show";
-import { getConfigPath, saveConfig } from "../src/config";
-import { akmIndex } from "../src/indexer";
-import { akmInit } from "../src/init";
-import { getBinDir } from "../src/paths";
-import type { SearchHit, SourceSearchHit } from "../src/source-types";
+import { getConfigPath, saveConfig } from "../src/core/config";
+import { getBinDir } from "../src/core/paths";
+import { akmIndex } from "../src/indexer/indexer";
+import type { SearchHit, SourceSearchHit } from "../src/sources/source-types";
 
 const createdTmpDirs: string[] = [];
 

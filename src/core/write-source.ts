@@ -19,14 +19,14 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { AssetRef } from "../asset-ref";
-import { makeAssetRef } from "../asset-ref";
-import { resolveAssetPathFromName, TYPE_DIRS } from "../asset-spec";
-import { isWithin, resolveStashDir } from "../common";
-import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "../config";
-import { resolveConfiguredSources } from "../config";
-import { ConfigError, UsageError } from "../errors";
-import { getCachePaths, parseGitRepoUrl } from "../source-providers/git";
+import { getCachePaths, parseGitRepoUrl } from "../sources/source-providers/git";
+import type { AssetRef } from "./asset-ref";
+import { makeAssetRef } from "./asset-ref";
+import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
+import { isWithin, resolveStashDir } from "./common";
+import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config";
+import { resolveConfiguredSources } from "./config";
+import { ConfigError, UsageError } from "./errors";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

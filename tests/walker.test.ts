@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { walkStash, walkStashFlat } from "../src/walker";
+import { walkStash, walkStashFlat } from "../src/indexer/walker";
 
 const createdTmpDirs: string[] = [];
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../src/github";
+import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../src/integrations/github";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
 

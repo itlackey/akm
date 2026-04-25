@@ -11,8 +11,8 @@ import {
   resetConfigCache,
   saveConfig,
   updateConfig,
-} from "../src/config";
-import { ConfigError } from "../src/errors";
+} from "../src/core/config";
+import { ConfigError } from "../src/core/errors";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));

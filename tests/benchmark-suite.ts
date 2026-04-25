@@ -18,15 +18,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assembleInfo } from "../src/commands/info";
 import { akmSearch } from "../src/commands/search";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/db";
-import { recomputeUtilityScores } from "../src/indexer";
-import { assembleInfo } from "../src/info";
-import { getDbPath } from "../src/paths";
-import { buildSearchFields } from "../src/search-fields";
-import type { SourceSearchHit } from "../src/source-types";
-import { insertUsageEvent } from "../src/usage-events";
+import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/indexer/db";
+import { recomputeUtilityScores } from "../src/indexer/indexer";
+import { buildSearchFields } from "../src/indexer/search-fields";
+import { insertUsageEvent } from "../src/indexer/usage-events";
+import type { SourceSearchHit } from "../src/sources/source-types";
 import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
@@ -871,7 +871,7 @@ async function benchmarkIndexingPerformance(stashDir: string): Promise<{
   const cases: BenchmarkCase[] = [];
 
   // Import akmIndex locally to avoid any caching issues
-  const { akmIndex } = await import("../src/indexer.js");
+  const { akmIndex } = await import("../src/indexer/indexer.js");
 
   // Full index (fresh rebuild)
   const fullMs = await timeMsAsync(async () => {
@@ -992,7 +992,7 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   });
 
   // Manifest output size per N assets
-  const { akmManifest } = await import("../src/manifest.js");
+  const { akmManifest } = await import("../src/indexer/manifest.js");
   const manifest = await akmManifest({ stashDir });
   const manifestJson = JSON.stringify(manifest);
   const manifestBytes = Buffer.byteLength(manifestJson);
@@ -1326,7 +1326,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 3: Parameter extraction — commands with $ARGUMENTS detected
   let paramExtraction = false;
   {
-    const { extractCommandParameters, extractScriptParameters } = await import("../src/metadata.js");
+    const { extractCommandParameters, extractScriptParameters } = await import("../src/indexer/metadata.js");
 
     const cmdTemplate = "Run $ARGUMENTS tests and report results.\n$1 is the target directory.";
     const cmdParams = extractCommandParameters(cmdTemplate);
@@ -1441,7 +1441,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
 
   // Test 7: sanitizeFtsQuery handles special characters safely
   {
-    const { sanitizeFtsQuery } = await import("../src/db.js");
+    const { sanitizeFtsQuery } = await import("../src/indexer/db.js");
     const dangerous = 'code-review "OR 1=1" NEAR(test,5)';
     const sanitized = sanitizeFtsQuery(dangerous);
     const noQuotes = !sanitized.includes('"');
@@ -1532,7 +1532,7 @@ async function runBenchmarkSuite() {
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({ semanticSearchMode: "off", registries: [] });
 
-  const { akmIndex } = await import("../src/indexer.js");
+  const { akmIndex } = await import("../src/indexer/indexer.js");
   const indexResult = await akmIndex({ stashDir, full: true });
   log(`  Indexed ${indexResult.totalEntries} entries in ${indexResult.timing?.totalMs ?? "?"}ms\n\n`);
 

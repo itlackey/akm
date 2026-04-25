@@ -14,7 +14,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { UsageError } from "../src/errors";
+import { UsageError } from "../src/core/errors";
 import {
   createWiki,
   INDEX_MD,
@@ -26,7 +26,7 @@ import {
   stashRaw,
   validateWikiName,
   WIKIS_SUBDIR,
-} from "../src/wiki";
+} from "../src/wiki/wiki";
 
 const tempDirs: string[] = [];
 

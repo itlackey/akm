@@ -11,7 +11,7 @@ import {
   readBodyWithByteCap,
   resolveStashDir,
   toPosix,
-} from "../src/common";
+} from "../src/core/common";
 
 // ── resolveStashDir ──────────────────────────────────────────────────────────
 

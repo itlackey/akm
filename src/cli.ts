@@ -2,26 +2,40 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
-import { parseAssetRef } from "./asset-ref";
-import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./asset-spec";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./cli-hints";
+import { generateBashCompletions, installBashCompletions } from "./commands/completions";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
+import { akmCurate } from "./commands/curate";
+import { assembleInfo } from "./commands/info";
+import { akmInit } from "./commands/init";
+import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
+import { renderMigrationHelp } from "./commands/migration-help";
 import { searchRegistry } from "./commands/registry-search";
+import {
+  buildMemoryFrontmatter,
+  parseDuration,
+  readMemoryContent,
+  runAutoHeuristics,
+  runLlmEnrich,
+} from "./commands/remember";
 import { akmSearch, parseSearchSource } from "./commands/search";
+import { checkForUpdate, performUpgrade } from "./commands/self-update";
 import { akmShowUnified } from "./commands/show";
-import { isWithin, resolveStashDir, tryReadStdinText } from "./common";
-import { generateBashCompletions, installBashCompletions } from "./completions";
-import type { RegistryConfigEntry } from "./config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
-import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
+import { akmAdd } from "./commands/source-add";
+import { akmClone } from "./commands/source-clone";
+import { addStash } from "./commands/source-manage";
+import { parseAssetRef } from "./core/asset-ref";
+import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
+import { isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
+import type { RegistryConfigEntry } from "./core/config";
+import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import { ConfigError, NotFoundError, UsageError } from "./core/errors";
+import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
+import { setQuiet, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
-import { akmCurate } from "./curate";
-import { closeDatabase, openDatabase } from "./db";
-import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { akmIndex } from "./indexer";
-import { assembleInfo } from "./info";
-import { akmInit } from "./init";
-import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
-import { renderMigrationHelp } from "./migration-help";
+import { closeDatabase, openDatabase } from "./indexer/db";
+import { akmIndex } from "./indexer/indexer";
+import { insertUsageEvent } from "./indexer/usage-events";
+import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
   getHyphenatedArg,
   getHyphenatedBoolean,
@@ -29,28 +43,20 @@ import {
   initOutputMode,
   type OutputMode,
   parseFlagValue,
-} from "./output-context";
-import { shapeForCommand } from "./output-shapes";
-import { formatPlain, outputJsonl } from "./output-text";
-import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
-import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
-import { buildMemoryFrontmatter, parseDuration, readMemoryContent, runAutoHeuristics, runLlmEnrich } from "./remember";
-import { checkForUpdate, performUpgrade } from "./self-update";
-import { akmAdd } from "./source-add";
-import { akmClone } from "./source-clone";
-import { addStash } from "./source-manage";
-import { saveGitStash } from "./source-providers/git";
-import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./source-types";
-import { insertUsageEvent } from "./usage-events";
+} from "./output/output-context";
+import { shapeForCommand } from "./output/output-shapes";
+import { formatPlain, outputJsonl } from "./output/output-text";
+import { buildRegistryIndex, writeRegistryIndex } from "./registry/registry-build-index";
+import { saveGitStash } from "./sources/source-providers/git";
+import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/source-types";
 import { pkgVersion } from "./version";
-import { setQuiet, warn } from "./warn";
-import { createWorkflowAsset, getWorkflowTemplate } from "./workflow-authoring";
+import { createWorkflowAsset, getWorkflowTemplate } from "./workflows/workflow-authoring";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
   parseWorkflowStepState,
   WORKFLOW_STEP_STATES,
-} from "./workflow-cli";
+} from "./workflows/workflow-cli";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -58,7 +64,7 @@ import {
   listWorkflowRuns,
   resumeWorkflowRun,
   startWorkflowRun,
-} from "./workflow-runs";
+} from "./workflows/workflow-runs";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const SKILLS_SH_NAME = "skills.sh";
@@ -124,7 +130,7 @@ const setupCommand = defineCommand({
   },
   async run() {
     await runWithJsonErrors(async () => {
-      const { runSetupWizard } = await import("./setup");
+      const { runSetupWizard } = await import("./setup/setup");
       await runSetupWizard();
     });
   },
@@ -303,7 +309,7 @@ const addCommand = defineCommand({
       const websiteOptions = buildWebsiteOptions(args);
 
       if (args.type === "wiki") {
-        const { registerWikiSource } = await import("./source-add");
+        const { registerWikiSource } = await import("./commands/source-add");
         const result = await registerWikiSource({
           ref,
           name: args.name,
@@ -1578,7 +1584,7 @@ const vaultListCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./vault.js");
+      const { listKeys } = await import("./commands/vault.js");
       if (args.ref) {
         const { name, absPath } = resolveVaultPath(args.ref);
         if (!fs.existsSync(absPath)) {
@@ -1601,7 +1607,7 @@ const vaultCreateCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { createVault } = await import("./vault.js");
+      const { createVault } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.name);
       createVault(absPath);
       output("vault-create", { ref: `vault:${name}`, path: absPath });
@@ -1627,7 +1633,7 @@ const vaultSetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { setKey } = await import("./vault.js");
+      const { setKey } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
 
       let realKey: string;
@@ -1656,7 +1662,7 @@ const vaultUnsetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { unsetKey } = await import("./vault.js");
+      const { unsetKey } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: vault:${name}`);
@@ -1685,7 +1691,7 @@ const vaultLoadCommand = defineCommand({
         throw new NotFoundError(`Vault not found: vault:${name}`);
       }
 
-      const { buildShellExportScript } = await import("./vault.js");
+      const { buildShellExportScript } = await import("./commands/vault.js");
       const crypto = await import("node:crypto");
       const os = await import("node:os");
 
@@ -1719,7 +1725,7 @@ const vaultShowCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./vault.js");
+      const { listKeys } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: vault:${name}`);
@@ -1748,7 +1754,7 @@ const vaultCommand = defineCommand({
     return runWithJsonErrors(async () => {
       if (hasVaultSubcommand(args)) return;
       // Default action: list all vaults
-      const { listKeys } = await import("./vault.js");
+      const { listKeys } = await import("./commands/vault.js");
       output("vault-list", { vaults: listVaultsRecursive(listKeys) });
     });
   },
@@ -1763,7 +1769,7 @@ const wikiCreateCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { createWiki } = await import("./wiki.js");
+      const { createWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = createWiki(stashDir, args.name);
       output("wiki-create", result);
@@ -1795,7 +1801,7 @@ const wikiRegisterCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { registerWikiSource } = await import("./source-add");
+      const { registerWikiSource } = await import("./commands/source-add");
       const result = await registerWikiSource({
         ref: args.ref.trim(),
         name: args.name,
@@ -1812,7 +1818,7 @@ const wikiListCommand = defineCommand({
   meta: { name: "list", description: "List wikis with page/raw counts and last-modified timestamps" },
   run() {
     return runWithJsonErrors(async () => {
-      const { listWikis } = await import("./wiki.js");
+      const { listWikis } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const wikis = listWikis(stashDir);
       output("wiki-list", { wikis });
@@ -1827,7 +1833,7 @@ const wikiShowCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { showWiki } = await import("./wiki.js");
+      const { showWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = showWiki(stashDir, args.name);
       output("wiki-show", result);
@@ -1860,8 +1866,8 @@ const wikiRemoveCommand = defineCommand({
         throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
       }
       const withSources = getHyphenatedBoolean(args, "with-sources");
-      const { removeWiki } = await import("./wiki.js");
-      const { akmIndex } = await import("./indexer");
+      const { removeWiki } = await import("./wiki/wiki.js");
+      const { akmIndex } = await import("./indexer/indexer");
       const stashDir = resolveStashDir();
       const result = removeWiki(stashDir, args.name, { withSources });
       await akmIndex({ stashDir });
@@ -1880,7 +1886,7 @@ const wikiPagesCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listPages } = await import("./wiki.js");
+      const { listPages } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const pages = listPages(stashDir, args.name);
       output("wiki-pages", { wiki: args.name, pages });
@@ -1901,7 +1907,7 @@ const wikiSearchCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { resolveWikiSource, searchInWiki } = await import("./wiki.js");
+      const { resolveWikiSource, searchInWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       resolveWikiSource(stashDir, args.name);
       const parsedLimit = args.limit ? Number(args.limit) : undefined;
@@ -1926,7 +1932,7 @@ const wikiStashCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { stashRaw } = await import("./wiki.js");
+      const { stashRaw } = await import("./wiki/wiki.js");
       const { content, preferredName } = readKnowledgeContent(args.source);
       const stashDir = resolveStashDir();
       const result = stashRaw({
@@ -1952,7 +1958,7 @@ const wikiLintCommand = defineCommand({
   async run({ args }) {
     let findingCount = 0;
     await runWithJsonErrors(async () => {
-      const { lintWiki } = await import("./wiki.js");
+      const { lintWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const report = lintWiki(stashDir, args.name);
       output("wiki-lint", report);
@@ -1972,7 +1978,7 @@ const wikiIngestCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { buildIngestWorkflow } = await import("./wiki.js");
+      const { buildIngestWorkflow } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = buildIngestWorkflow(stashDir, args.name);
       output("wiki-ingest", result);
@@ -2002,7 +2008,7 @@ const wikiCommand = defineCommand({
     return runWithJsonErrors(async () => {
       if (hasWikiSubcommand(args)) return;
       // Default action: list wikis
-      const { listWikis } = await import("./wiki.js");
+      const { listWikis } = await import("./wiki/wiki.js");
       output("wiki-list", { wikis: listWikis(resolveStashDir()) });
     });
   },

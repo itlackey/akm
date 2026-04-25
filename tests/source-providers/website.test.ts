@@ -2,18 +2,18 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../../src/config";
-import { ConfigError, UsageError } from "../../src/errors";
-import { resolveSourceProviderFactory } from "../../src/source-provider-factory";
+import { saveConfig } from "../../src/core/config";
+import { ConfigError, UsageError } from "../../src/core/errors";
+import { resolveSourceProviderFactory } from "../../src/sources/source-provider-factory";
 import {
   ensureWebsiteMirror,
   getCachePaths,
   validateWebsiteInputUrl,
   validateWebsiteUrl,
-} from "../../src/source-providers/website";
+} from "../../src/sources/source-providers/website";
 
 // Trigger self-registration
-import "../../src/source-providers/website";
+import "../../src/sources/source-providers/website";
 
 const createdTmpDirs: string[] = [];
 

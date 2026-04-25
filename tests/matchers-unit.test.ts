@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { FileContext } from "../src/file-context";
-import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatcher, wikiMatcher } from "../src/matchers";
+import type { FileContext } from "../src/indexer/file-context";
+import {
+  directoryMatcher,
+  extensionMatcher,
+  parentDirHintMatcher,
+  smartMdMatcher,
+  wikiMatcher,
+} from "../src/indexer/matchers";
 
 /**
  * Build a synthetic FileContext for matcher unit tests. The matchers

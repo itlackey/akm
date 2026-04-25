@@ -28,9 +28,9 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/db";
-import { cosineSimilarity } from "../src/embedder";
-import type { StashEntry } from "../src/metadata";
+} from "../src/indexer/db";
+import type { StashEntry } from "../src/indexer/metadata";
+import { cosineSimilarity } from "../src/llm/embedder";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

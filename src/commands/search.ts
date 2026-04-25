@@ -9,14 +9,15 @@
  * Provider `search()` methods do not exist.
  */
 
-import { loadConfig } from "../config";
-import { closeDatabase, openDatabase } from "../db";
-import { searchLocal } from "../db-search";
-import { UsageError } from "../errors";
-import { resolveSourceEntries } from "../search-source";
+import { loadConfig } from "../core/config";
+import { UsageError } from "../core/errors";
+import { closeDatabase, openDatabase } from "../indexer/db";
+import { searchLocal } from "../indexer/db-search";
+import { resolveSourceEntries } from "../indexer/search-source";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
-import "../source-providers/index";
+import "../sources/source-providers/index";
+import { insertUsageEvent } from "../indexer/usage-events";
 import type {
   AkmSearchType,
   RegistrySearchResultHit,
@@ -24,8 +25,7 @@ import type {
   SearchResponse,
   SearchSource,
   SourceSearchHit,
-} from "../source-types";
-import { insertUsageEvent } from "../usage-events";
+} from "../sources/source-types";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;

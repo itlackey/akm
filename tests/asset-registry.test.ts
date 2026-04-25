@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
-import type { AssetSpec } from "../src/asset-spec";
-import { deregisterAssetType, registerAssetType } from "../src/asset-spec";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
+import type { AssetSpec } from "../src/core/asset-spec";
+import { deregisterAssetType, registerAssetType } from "../src/core/asset-spec";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ describe("asset-registry singleton", () => {
   });
 
   test("_setAssetTypeHooks no longer exists in asset-spec", async () => {
-    const assetSpec = await import("../src/asset-spec");
+    const assetSpec = await import("../src/core/asset-spec");
     expect("_setAssetTypeHooks" in assetSpec).toBe(false);
   });
 

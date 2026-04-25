@@ -3,10 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmShowUnified as akmShow } from "../../src/commands/show";
-import { saveConfig } from "../../src/config";
+import { saveConfig } from "../../src/core/config";
 
 // Trigger source-provider self-registration
-import "../../src/source-providers/index";
+import "../../src/sources/source-providers/index";
 
 const createdTmpDirs: string[] = [];
 

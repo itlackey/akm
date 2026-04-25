@@ -16,10 +16,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { buildFileContext, buildRenderContext } from "../src/file-context";
-import { parseFrontmatter } from "../src/frontmatter";
-import { memoryMdRenderer } from "../src/renderers";
+import { parseFrontmatter } from "../src/core/frontmatter";
+import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
+import { memoryMdRenderer } from "../src/output/renderers";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
 

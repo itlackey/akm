@@ -2,11 +2,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveProviderFactory } from "../../src/registry-factory";
-import type { RegistryProvider } from "../../src/registry-providers/types";
+import { resolveProviderFactory } from "../../src/registry/registry-factory";
+import type { RegistryProvider } from "../../src/registry/registry-providers/types";
 
 // Trigger self-registration
-import "../../src/registry-providers/skills-sh";
+import "../../src/registry/registry-providers/skills-sh";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

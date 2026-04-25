@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
 import {
   ASSET_SPECS,
   deregisterAssetType,
@@ -11,7 +11,7 @@ import {
   resolveAssetPathFromName,
   SCRIPT_EXTENSIONS,
   TYPE_DIRS,
-} from "../src/asset-spec";
+} from "../src/core/asset-spec";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 

@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveSourceProviderFactory } from "../../src/source-provider-factory";
+import { resolveSourceProviderFactory } from "../../src/sources/source-provider-factory";
 
 // Trigger self-registration
-import "../../src/source-providers/filesystem";
+import "../../src/sources/source-providers/filesystem";
 
 const createdTmpDirs: string[] = [];
 

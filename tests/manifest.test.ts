@@ -10,9 +10,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { akmIndex } from "../src/indexer";
-import { akmManifest } from "../src/manifest";
+import { saveConfig } from "../src/core/config";
+import { akmIndex } from "../src/indexer/indexer";
+import { akmManifest } from "../src/indexer/manifest";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 

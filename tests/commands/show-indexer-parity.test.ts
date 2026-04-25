@@ -16,11 +16,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseAssetRef } from "../../src/asset-ref";
 import { akmShowUnified } from "../../src/commands/show";
-import { resetConfigCache, saveConfig } from "../../src/config";
-import { akmIndex, lookup } from "../../src/indexer";
-import "../../src/source-providers/index";
+import { parseAssetRef } from "../../src/core/asset-ref";
+import { resetConfigCache, saveConfig } from "../../src/core/config";
+import { akmIndex, lookup } from "../../src/indexer/indexer";
+import "../../src/sources/source-providers/index";
 
 const createdTmpDirs: string[] = [];
 

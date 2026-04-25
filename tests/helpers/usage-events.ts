@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { ensureUsageEventsSchema } from "../../src/usage-events";
+import { ensureUsageEventsSchema } from "../../src/indexer/usage-events";
 
 /**
  * Record a usage event (test-only helper for M-2 utility scoring tests).

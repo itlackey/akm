@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listBundledReleaseVersions, renderMigrationHelp } from "../src/migration-help";
+import { listBundledReleaseVersions, renderMigrationHelp } from "../src/commands/migration-help";
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
 const RELEASE_NOTES_DIR = path.join(PROJECT_ROOT, "docs", "migration", "release-notes");

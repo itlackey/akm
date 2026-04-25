@@ -21,11 +21,11 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { akmShowUnified as akmShow } from "../src/commands/show";
-import { loadConfig, saveConfig } from "../src/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import { loadStashFile } from "../src/metadata";
-import type { SearchHit, SourceSearchHit } from "../src/source-types";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import { loadStashFile } from "../src/indexer/metadata";
+import type { SearchHit, SourceSearchHit } from "../src/sources/source-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1071,7 +1071,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("upgrade --check returns version info (mocked fetch)", async () => {
-    const { checkForUpdate } = await import("../src/self-update");
+    const { checkForUpdate } = await import("../src/commands/self-update");
     const result = await withMockedFetch(
       () => Response.json({ tag_name: "v0.0.14" }),
       () => checkForUpdate("0.0.13"),
@@ -1083,7 +1083,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("performUpgrade detects non-binary install and returns guidance", async () => {
-    const { performUpgrade } = await import("../src/self-update");
+    const { performUpgrade } = await import("../src/commands/self-update");
     const result = await performUpgrade({
       currentVersion: "0.0.13",
       latestVersion: "0.0.14",

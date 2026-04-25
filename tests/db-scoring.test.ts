@@ -3,8 +3,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openDatabase, rebuildFts, sanitizeFtsQuery, searchFts, upsertEntry } from "../src/db";
-import type { StashEntry } from "../src/metadata";
+import { closeDatabase, openDatabase, rebuildFts, sanitizeFtsQuery, searchFts, upsertEntry } from "../src/indexer/db";
+import type { StashEntry } from "../src/indexer/metadata";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

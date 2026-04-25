@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, openDatabase } from "../src/db";
-import { getUsageEvents, insertUsageEvent } from "../src/usage-events";
+import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { getUsageEvents, insertUsageEvent } from "../src/indexer/usage-events";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveAssetPath } from "../src/source-resolve";
+import { resolveAssetPath } from "../src/sources/source-resolve";
 
 const createdTmpDirs: string[] = [];
 

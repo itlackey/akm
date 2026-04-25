@@ -12,12 +12,12 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveProviderFactory } from "../../src/registry-factory";
-import type { RegistryProvider } from "../../src/registry-providers/types";
-import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry-types";
+import { resolveProviderFactory } from "../../src/registry/registry-factory";
+import type { RegistryProvider } from "../../src/registry/registry-providers/types";
+import type { ParsedGithubRef, ParsedNpmRef } from "../../src/registry/registry-types";
 
 // Trigger self-registration
-import "../../src/registry-providers/static-index";
+import "../../src/registry/registry-providers/static-index";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

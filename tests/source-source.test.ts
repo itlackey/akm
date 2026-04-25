@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
+import { saveConfig } from "../src/core/config";
 import {
   findSourceForPath,
   getPrimarySource,
   isEditable,
   resolveAllStashDirs,
   resolveSourceEntries,
-} from "../src/search-source";
+} from "../src/indexer/search-source";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;

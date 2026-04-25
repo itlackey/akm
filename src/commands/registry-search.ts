@@ -1,16 +1,16 @@
-import { toErrorMessage } from "../common";
-import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "../config";
-import { resolveProviderFactory } from "../registry-factory";
-import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../registry-types";
+import { toErrorMessage } from "../core/common";
+import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "../core/config";
+import { resolveProviderFactory } from "../registry/registry-factory";
+import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../registry/registry-types";
 
 // ── Eagerly import providers to trigger self-registration ───────────────────
 
-import "../registry-providers/index";
+import "../registry/registry-providers/index";
 
 // ── Re-exports for backward compatibility ───────────────────────────────────
 
-export type { RegistryIndex, RegistryStashEntry } from "../registry-providers/static-index";
-export type { RegistryAssetSearchHit } from "../registry-types";
+export type { RegistryIndex, RegistryStashEntry } from "../registry/registry-providers/static-index";
+export type { RegistryAssetSearchHit } from "../registry/registry-types";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

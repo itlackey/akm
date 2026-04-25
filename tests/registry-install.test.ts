@@ -5,15 +5,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
 import {
   auditInstallCandidate,
   deriveRegistryLabels,
   enforceRegistryInstallPolicy,
   formatInstallAuditFailure,
-} from "../src/install-audit";
-import { syncFromRef } from "../src/source-providers/sync-from-ref";
-import { validateTarEntries } from "../src/source-providers/tar-utils";
+} from "../src/commands/install-audit";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { syncFromRef } from "../src/sources/source-providers/sync-from-ref";
+import { validateTarEntries } from "../src/sources/source-providers/tar-utils";
 
 /**
  * Test helper that mirrors the pre-#125 `installRegistryRef()` behaviour:
@@ -54,9 +54,9 @@ async function installRegistryRef(
 }
 
 import { akmShowUnified as akmShow } from "../src/commands/show";
-import { parseRegistryRef } from "../src/registry-resolve";
-import { akmAdd, registerWikiSource } from "../src/source-add";
-import { listPages, listWikis, showWiki } from "../src/wiki";
+import { akmAdd, registerWikiSource } from "../src/commands/source-add";
+import { parseRegistryRef } from "../src/registry/registry-resolve";
+import { listPages, listWikis, showWiki } from "../src/wiki/wiki";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

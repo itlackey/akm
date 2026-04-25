@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { addStash, listStashes, removeStash } from "../src/source-manage";
+import { addStash, listStashes, removeStash } from "../src/commands/source-manage";
+import { loadConfig, saveConfig } from "../src/core/config";
 
 const createdTmpDirs: string[] = [];
 

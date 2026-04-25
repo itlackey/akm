@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseWorkflowMarkdown, WorkflowValidationError } from "../src/workflow-markdown";
+import { parseWorkflowMarkdown, WorkflowValidationError } from "../src/workflows/workflow-markdown";
 
 const VALID_WORKFLOW = `---
 description: Ship a release with validation checks

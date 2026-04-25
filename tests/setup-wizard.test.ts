@@ -63,7 +63,7 @@ describe("onCancel – escape handling", () => {
   beforeEach(reset);
 
   test("pressing Escape on the exit-confirmation stays in the wizard", async () => {
-    const { onCancel } = await import("../src/setup");
+    const { onCancel } = await import("../src/setup/setup");
     // Simulate: user already pressed Escape in a prompt (value = CANCEL),
     // then presses Escape again on the "Exit the wizard?" confirmation.
     q.confirms.push(CANCEL);
@@ -73,7 +73,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("choosing No on the exit-confirmation stays in the wizard", async () => {
-    const { onCancel } = await import("../src/setup");
+    const { onCancel } = await import("../src/setup/setup");
     q.confirms.push(false);
 
     const stayed = await onCancel(CANCEL);
@@ -81,7 +81,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("choosing Yes on the exit-confirmation calls bail (exits)", async () => {
-    const { onCancel } = await import("../src/setup");
+    const { onCancel } = await import("../src/setup/setup");
     q.confirms.push(true);
 
     // bail() calls process.exit — mock it so it throws instead of killing the runner
@@ -98,7 +98,7 @@ describe("onCancel – escape handling", () => {
   });
 
   test("non-cancel input is a no-op (returns false)", async () => {
-    const { onCancel } = await import("../src/setup");
+    const { onCancel } = await import("../src/setup/setup");
     const stayed = await onCancel("normal-value");
     expect(stayed).toBe(false);
   });
@@ -110,7 +110,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   beforeEach(reset);
 
   test("with no recommended repos configured, the multiselect prompt is skipped", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
 
     // No multiselect should be consumed because the recommended-repos array
     // is empty. Only the "Add another source?" select should be needed.
@@ -123,7 +123,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
   });
 
   test("preserves an existing git stash that points at the legacy context-hub URL", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
     const ctxHubUrl = "https://github.com/andrewyng/context-hub";
     const cfg = {
       sources: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
@@ -142,7 +142,7 @@ describe("semantic search setup", () => {
   beforeEach(reset);
 
   test("should list local model and sqlite-vec guidance when describing semantic search assets", async () => {
-    const { describeSemanticSearchAssets } = await import("../src/setup");
+    const { describeSemanticSearchAssets } = await import("../src/setup/setup");
     const assets = describeSemanticSearchAssets();
 
     expect(assets[0]).toContain("Local embedding model");
@@ -151,7 +151,7 @@ describe("semantic search setup", () => {
   });
 
   test("stepSemanticSearch returns disabled when user opts out", async () => {
-    const { stepSemanticSearch } = await import("../src/setup");
+    const { stepSemanticSearch } = await import("../src/setup/setup");
     q.confirms.push(false);
 
     const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
@@ -159,7 +159,7 @@ describe("semantic search setup", () => {
   });
 
   test("stepSemanticSearch shows assets and allows asset preparation", async () => {
-    const { stepSemanticSearch } = await import("../src/setup");
+    const { stepSemanticSearch } = await import("../src/setup/setup");
     q.confirms.push(true, true);
 
     const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
@@ -172,7 +172,7 @@ describe("stepAddSources – custom GitHub repo", () => {
   beforeEach(reset);
 
   test("adds a custom GitHub repo with type 'git'", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
 
     // multiselect recommended repos → none
     q.multiselects.push([]);
@@ -197,7 +197,7 @@ describe("stepAddSources – cancel within sub-actions", () => {
   beforeEach(reset);
 
   test("pressing Escape on a sub-action text prompt returns to menu", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
 
     // multiselect recommended → none
     q.multiselects.push([]);
@@ -214,7 +214,7 @@ describe("stepAddSources – cancel within sub-actions", () => {
   });
 
   test("pressing Escape on filesystem path returns to menu", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
 
     q.multiselects.push([]);
     q.selects.push("filesystem");
@@ -226,7 +226,7 @@ describe("stepAddSources – cancel within sub-actions", () => {
   });
 
   test("pressing Escape on name prompt returns to menu without adding", async () => {
-    const { stepAddSources } = await import("../src/setup");
+    const { stepAddSources } = await import("../src/setup/setup");
 
     q.multiselects.push([]);
     q.selects.push("github-repo");

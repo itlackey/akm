@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parse as yamlParse } from "yaml";
-import { buildMemoryFrontmatter, parseDuration, runAutoHeuristics } from "../src/remember";
+import { buildMemoryFrontmatter, parseDuration, runAutoHeuristics } from "../src/commands/remember";
 
 describe("parseDuration", () => {
   test("parses days", () => {

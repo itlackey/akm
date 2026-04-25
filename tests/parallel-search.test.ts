@@ -4,12 +4,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, searchFts, setMeta, upsertEmbedding, upsertEntry } from "../src/db";
-import { clearEmbeddingCache } from "../src/embedder";
-import { akmIndex } from "../src/indexer";
-import type { StashEntry } from "../src/metadata";
-import type { SourceSearchHit } from "../src/source-types";
+import { saveConfig } from "../src/core/config";
+import {
+  closeDatabase,
+  openDatabase,
+  rebuildFts,
+  searchFts,
+  setMeta,
+  upsertEmbedding,
+  upsertEntry,
+} from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import type { StashEntry } from "../src/indexer/metadata";
+import { clearEmbeddingCache } from "../src/llm/embedder";
+import type { SourceSearchHit } from "../src/sources/source-types";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

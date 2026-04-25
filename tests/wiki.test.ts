@@ -11,9 +11,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { buildFileContext } from "../src/file-context";
-import { wikiMatcher } from "../src/matchers";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { buildFileContext } from "../src/indexer/file-context";
+import { wikiMatcher } from "../src/indexer/matchers";
 import {
   buildIngestWorkflow,
   createWiki,
@@ -35,7 +35,7 @@ import {
   stashRaw,
   validateWikiName,
   WIKIS_SUBDIR,
-} from "../src/wiki";
+} from "../src/wiki/wiki";
 
 const tempDirs: string[] = [];
 
@@ -305,7 +305,7 @@ describe("wikiMatcher", () => {
     const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
     fs.mkdirSync(wikiDir, { recursive: true });
     const abs = writePage(wikiDir, "SKILL.md", "# not actually a skill\n");
-    const { runMatchers } = await import("../src/file-context");
+    const { runMatchers } = await import("../src/indexer/file-context");
     const ctx = buildFileContext(stash, abs);
     const result = await runMatchers(ctx);
     expect(result?.type).toBe("wiki");

@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { akmListSources, akmRemove, akmUpdate } from "../src/installed-stashes";
+import { akmListSources, akmRemove, akmUpdate } from "../src/commands/installed-stashes";
+import { loadConfig, saveConfig } from "../src/core/config";
 
 const createdTmpDirs: string[] = [];
 

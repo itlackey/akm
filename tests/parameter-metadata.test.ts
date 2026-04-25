@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import type { StashEntry } from "../src/metadata";
-import { extractCommandParameters, generateMetadataFlat } from "../src/metadata";
-import { getDbPath } from "../src/paths";
-import { buildSearchText } from "../src/search-fields";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import type { StashEntry } from "../src/indexer/metadata";
+import { extractCommandParameters, generateMetadataFlat } from "../src/indexer/metadata";
+import { buildSearchText } from "../src/indexer/search-fields";
 
 let testConfigDir = "";
 let testCacheDir = "";
@@ -325,7 +325,7 @@ describe("parameter descriptions", () => {
 
 describe("validateStashEntry with parameters", () => {
   test("validateStashEntry preserves valid parameters", async () => {
-    const { validateStashEntry } = await import("../src/metadata");
+    const { validateStashEntry } = await import("../src/indexer/metadata");
 
     const raw = {
       name: "test-cmd",
@@ -350,7 +350,7 @@ describe("validateStashEntry with parameters", () => {
   });
 
   test("validateStashEntry filters invalid parameter objects", async () => {
-    const { validateStashEntry } = await import("../src/metadata");
+    const { validateStashEntry } = await import("../src/indexer/metadata");
 
     const raw = {
       name: "test-cmd",

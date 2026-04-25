@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import type { RegistryIndex } from "../src/commands/registry-search";
 import { resolveRegistries, searchRegistry } from "../src/commands/registry-search";
-import type { RegistryConfigEntry } from "../src/config";
-import { getConfigPath, loadConfig, saveConfig } from "../src/config";
+import type { RegistryConfigEntry } from "../src/core/config";
+import { getConfigPath, loadConfig, saveConfig } from "../src/core/config";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

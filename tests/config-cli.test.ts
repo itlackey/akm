@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { AkmConfig } from "../src/config";
-import { getConfigValue, listConfig, parseConfigValue, setConfigValue, unsetConfigValue } from "../src/config-cli";
+import {
+  getConfigValue,
+  listConfig,
+  parseConfigValue,
+  setConfigValue,
+  unsetConfigValue,
+} from "../src/commands/config-cli";
+import type { AkmConfig } from "../src/core/config";
 
 describe("config CLI helpers", () => {
   test("listConfig omits unconfigured embedding and llm", () => {

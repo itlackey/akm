@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { EmbeddingConnectionConfig } from "../src/config";
-import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/embedder";
+import type { EmbeddingConnectionConfig } from "../src/core/config";
+import { cosineSimilarity, embed, embedBatch, isEmbeddingAvailable, resetLocalEmbedder } from "../src/llm/embedder";
 
 let pipelineImpl: ((task: string, model: string, options?: { dtype?: string }) => Promise<unknown>) | undefined;
 

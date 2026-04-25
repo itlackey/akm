@@ -19,7 +19,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { SourceConfigEntry } from "../../src/config";
+import type { SourceConfigEntry } from "../../src/core/config";
+import { ConfigError, UsageError } from "../../src/core/errors";
 import {
   assertWritableAllowedForKind,
   deleteAssetFromSource,
@@ -28,7 +29,6 @@ import {
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../src/core/write-source";
-import { ConfigError, UsageError } from "../../src/errors";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

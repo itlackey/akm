@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { UsageError } from "../src/errors";
-import { akmClone } from "../src/source-clone";
+import { akmClone } from "../src/commands/source-clone";
+import { saveConfig } from "../src/core/config";
+import { UsageError } from "../src/core/errors";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;

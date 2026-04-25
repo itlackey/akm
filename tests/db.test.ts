@@ -20,8 +20,8 @@ import {
   setMeta,
   upsertEmbedding,
   upsertEntry,
-} from "../src/db";
-import type { StashEntry } from "../src/metadata";
+} from "../src/indexer/db";
+import type { StashEntry } from "../src/indexer/metadata";
 
 // ── Temp directory management ───────────────────────────────────────────────
 

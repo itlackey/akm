@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseWorkflowMarkdown } from "../src/workflow-markdown";
+import { parseWorkflowMarkdown } from "../src/workflows/workflow-markdown";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];

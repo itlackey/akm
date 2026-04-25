@@ -206,7 +206,7 @@ describe("stash-add: --trust warning for local paths", () => {
     // Use a local dir with a "malicious" content to trigger the audit block.
     // We simulate by checking the install-audit error message text directly
     // via formatInstallAuditFailure (unit-level check).
-    const { formatInstallAuditFailure } = require("../src/install-audit");
+    const { formatInstallAuditFailure } = require("../src/commands/install-audit");
     const fakeReport = {
       enabled: true,
       passed: false,
@@ -234,7 +234,7 @@ describe("stash-add: --trust warning for local paths", () => {
 
 describe("install-audit: block error mentions --trust", () => {
   test("block error message includes --trust as remediation", async () => {
-    const { formatInstallAuditFailure } = await import("../src/install-audit");
+    const { formatInstallAuditFailure } = await import("../src/commands/install-audit");
     const fakeReport = {
       enabled: true,
       passed: false,
@@ -263,7 +263,7 @@ describe("install-audit: block error mentions --trust", () => {
 
 describe("config: root-level writable field", () => {
   test("writable:true in config.json is loaded correctly", async () => {
-    const { loadConfig, resetConfigCache } = await import("../src/config");
+    const { loadConfig, resetConfigCache } = await import("../src/core/config");
 
     // XDG_CONFIG_HOME -> akm subdir -> config.json
     const xdgDir = makeTempDir("akm-sqafix-cfgtest-");
@@ -291,7 +291,7 @@ describe("config: root-level writable field", () => {
   });
 
   test("writable not set defaults to undefined (falsy)", async () => {
-    const { loadConfig, resetConfigCache } = await import("../src/config");
+    const { loadConfig, resetConfigCache } = await import("../src/core/config");
 
     const xdgDir2 = makeTempDir("akm-sqafix-cfgtest2-");
     const akmConfigDir2 = path.join(xdgDir2, "akm");

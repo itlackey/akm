@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { UsageError } from "../src/errors";
-import { validateGitRef, validateGitUrl } from "../src/registry-resolve";
+import { UsageError } from "../src/core/errors";
+import { validateGitRef, validateGitUrl } from "../src/registry/registry-resolve";
 
 // ── validateGitUrl ───────────────────────────────────────────────────────────
 

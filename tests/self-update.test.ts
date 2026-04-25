@@ -7,7 +7,7 @@ import {
   getPackageManagerUpgradeCommand,
   type InstallSignals,
   performUpgrade,
-} from "../src/self-update";
+} from "../src/commands/self-update";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
 

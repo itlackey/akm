@@ -2,10 +2,18 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { closeDatabase, getAllEntries, openDatabase } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import { getDbPath } from "../src/paths";
-import { buildShellExportScript, createVault, injectIntoEnv, listKeys, loadEnv, setKey, unsetKey } from "../src/vault";
+import {
+  buildShellExportScript,
+  createVault,
+  injectIntoEnv,
+  listKeys,
+  loadEnv,
+  setKey,
+  unsetKey,
+} from "../src/commands/vault";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, getAllEntries, openDatabase } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { makeAssetRef, parseAssetRef } from "../src/asset-ref";
+import { makeAssetRef, parseAssetRef } from "../src/core/asset-ref";
 
 // ── makeAssetRef ────────────────────────────────────────────────────────────
 

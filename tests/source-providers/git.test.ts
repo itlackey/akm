@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resetConfigCache, saveConfig } from "../../src/config";
-import { resolveSourceProviderFactory } from "../../src/source-provider-factory";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/source-providers/git";
+import { resetConfigCache, saveConfig } from "../../src/core/config";
+import { resolveSourceProviderFactory } from "../../src/sources/source-provider-factory";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/sources/source-providers/git";
 
 // Trigger self-registration
-import "../../src/source-providers/git";
+import "../../src/sources/source-providers/git";
 
 const createdTmpDirs: string[] = [];
 
@@ -238,13 +238,13 @@ describe("GitSourceProvider", () => {
     });
     resetConfigCache();
 
-    const { ensureSourceCaches } = await import("../../src/search-source");
-    const { loadConfig } = await import("../../src/config");
+    const { ensureSourceCaches } = await import("../../src/indexer/search-source");
+    const { loadConfig } = await import("../../src/core/config");
     const config = loadConfig();
     await ensureSourceCaches(config);
 
     // Verify git stash content dir appears in stash sources.
-    const { resolveSourceEntries } = await import("../../src/search-source");
+    const { resolveSourceEntries } = await import("../../src/indexer/search-source");
     const sources = resolveSourceEntries(undefined, config);
     const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();

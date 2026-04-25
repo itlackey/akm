@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/frontmatter";
+import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/core/frontmatter";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 
