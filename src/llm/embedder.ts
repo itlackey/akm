@@ -19,7 +19,6 @@
  */
 
 import type { EmbeddingConnectionConfig } from "../core/config";
-import { warn } from "../core/warn";
 import { embedCacheKey, getCachedEmbedding, setCachedEmbedding } from "./embedders/cache";
 import { isTransformersAvailable, LocalEmbedder } from "./embedders/local";
 import { hasRemoteEndpoint, RemoteEmbedder } from "./embedders/remote";

@@ -54,11 +54,11 @@ export function parseDuration(s: string): number {
  */
 export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string {
   const obj: Record<string, unknown> = {};
-  if (fields.description && fields.description.trim()) obj.description = fields.description;
+  if (fields.description?.trim()) obj.description = fields.description;
   if (fields.tags && fields.tags.length > 0) obj.tags = fields.tags;
-  if (fields.source && fields.source.trim()) obj.source = fields.source;
-  if (fields.observed_at && fields.observed_at.trim()) obj.observed_at = fields.observed_at;
-  if (fields.expires && fields.expires.trim()) obj.expires = fields.expires;
+  if (fields.source?.trim()) obj.source = fields.source;
+  if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
+  if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).

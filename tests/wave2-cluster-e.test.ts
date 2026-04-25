@@ -13,8 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildMemoryFrontmatter } from "../src/commands/remember";
-import { listEntries, listKeys } from "../src/commands/vault";
-import type { AkmConfig } from "../src/core/config";
+import { listEntries } from "../src/commands/vault";
 import { shapeSearchHit, shapeShowOutput } from "../src/output/shapes";
 
 // ── #7: show shape includes path + editable ───────────────────────────────────
