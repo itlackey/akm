@@ -103,10 +103,9 @@ export function listEntries(vaultPath: string): Array<{ key: string; comment?: s
       }
       pendingComment = undefined;
     } else {
-      // Non-comment, non-assignment line resets pending comment
-      if (trimmed && !trimmed.startsWith("#")) {
-        pendingComment = undefined;
-      }
+      // Any non-comment, non-assignment line (including blank lines)
+      // breaks "nearest preceding comment line" association.
+      pendingComment = undefined;
     }
   }
   return entries;

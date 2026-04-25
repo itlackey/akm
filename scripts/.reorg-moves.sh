@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-cd "/home/founder3/code/github/itlackey/agentikit"
+cd "$(git rev-parse --show-toplevel)"
 mkdir -p src/commands
 mkdir -p src/core
 mkdir -p src/indexer

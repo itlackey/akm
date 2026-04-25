@@ -49,7 +49,8 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   const allHits: RegistrySearchHit[] = [];
   const allAssetHits: RegistryAssetSearchHit[] = [];
 
-  for (const result of results) {
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
     if (result.status === "rejected") {
       warnings.push(toErrorMessage(result.reason));
       continue;
@@ -57,6 +58,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
     const value = result.value;
     if (!value) continue;
 
+    const registryLabel = entries[i].name ? `"${entries[i].name}"` : entries[i].url;
     let dropped = 0;
     for (const hit of value.hits) {
       if (isCompleteHit(hit)) {
@@ -75,7 +77,7 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
       }
     }
     if (dropped > 0) {
-      warnings.push(`Registry returned ${dropped} incomplete hit(s); dropped from response.`);
+      warnings.push(`Registry ${registryLabel} returned ${dropped} incomplete hit(s); dropped from response.`);
     }
     if (value.warnings) warnings.push(...value.warnings);
   }

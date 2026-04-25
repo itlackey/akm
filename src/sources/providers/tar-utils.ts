@@ -124,11 +124,14 @@ function scanExtractedFiles(dir: string, root: string): void {
         throw new Error(`Post-extraction scan: symlink escapes destination directory: ${fullPath} -> ${target}`);
       }
     }
-    // Belt-and-suspenders: any regular entry whose resolved path lands outside
-    // the destination root is rejected, regardless of how its name looks. This
-    // catches anything the tar pre-validation missed.
-    if (!entry.isSymbolicLink() && !isWithin(fullPath, root)) {
-      throw new Error(`Post-extraction scan: entry escapes destination directory: ${fullPath}`);
+    // Belt-and-suspenders: check that the resolved path of regular entries
+    // stays within the destination root. This catches path traversal attempts
+    // via symlink TOCTOU, directory renames, or any other anomalies.
+    if (!entry.isSymbolicLink()) {
+      const resolved = path.resolve(fullPath);
+      if (!isWithin(resolved, root)) {
+        throw new Error(`Post-extraction scan: entry escapes destination directory: ${fullPath}`);
+      }
     }
     if (entry.isDirectory()) {
       scanExtractedFiles(fullPath, root);

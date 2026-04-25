@@ -32,7 +32,8 @@ export interface MemoryFrontmatterFields {
  */
 export function parseDuration(s: string): number {
   const match = s.trim().match(/^(\d+)([dhm])$/i);
-  if (!match) throw new UsageError(`Invalid --expires format "${s}". Use shorthand like 30d, 12h, or 6m.`);
+  if (!match)
+    throw new UsageError(`Invalid --expires format "${s}". Use shorthand like 30d, 12h, or 6m.`, "INVALID_FLAG_VALUE");
   const n = Number(match[1]);
   const unit = match[2].toLowerCase();
   if (unit === "d") return n * 24 * 60 * 60 * 1000;
@@ -172,6 +173,7 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
     return { tags: [] };
   }
 
+  const llmConfig = config.llm;
   const { chatCompletion, parseJsonResponse } = await import("../llm/client");
 
   const prompt = `You are a memory tagger for a developer knowledge base.
@@ -186,19 +188,28 @@ ${body.slice(0, 2000)}
 Return ONLY the JSON object, no prose, no markdown fences.`;
 
   try {
-    const result = await Promise.race([
-      chatCompletion(
-        config.llm,
-        [
-          { role: "system", content: "Return only valid JSON. No prose." },
-          { role: "user", content: prompt },
-        ],
-        { maxTokens: 256, temperature: 0.1 },
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("LLM enrichment timed out")), LLM_ENRICH_TIMEOUT_MS),
-      ),
-    ]);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const result = await (async () => {
+      try {
+        return await Promise.race([
+          chatCompletion(
+            llmConfig,
+            [
+              { role: "system", content: "Return only valid JSON. No prose." },
+              { role: "user", content: prompt },
+            ],
+            { maxTokens: 256, temperature: 0.1 },
+          ),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error("LLM enrichment timed out")), LLM_ENRICH_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
+      }
+    })();
 
     const parsed = parseJsonResponse<Record<string, unknown>>(result);
     if (!parsed) {

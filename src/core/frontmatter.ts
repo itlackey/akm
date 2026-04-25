@@ -12,11 +12,13 @@
  *
  * **Limitations**: This is a hand-rolled YAML-subset parser with intentional
  * constraints for simplicity and safety:
- * - **List support**: YAML block sequences (`- item`) and flow arrays
- *   (`[a, b, c]`) are both supported for top-level list-valued keys.
+ * - **Top-level values**: string, boolean, and number scalars are supported,
+ *   as well as top-level list-valued keys using YAML block sequences
+ *   (`- item`) or flow arrays (`[a, b, c]`).
+ * - **List item types**: list items must be scalar values and may be strings,
+ *   booleans, or numbers.
  * - **No nested objects beyond one level**: Only a single level of indented
  *   key-value pairs is supported.
- * - **Scalar values only**: string, boolean, and number scalars are supported.
  */
 export function parseFrontmatter(raw: string): {
   data: Record<string, unknown>;

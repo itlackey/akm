@@ -150,9 +150,19 @@ async function doSyncNpm(parsed: ParsedNpmRef, options?: SyncOptions): Promise<S
     integrity = await computeFileHash(archivePath);
     extractTarGzSecure(archivePath, extractedDir);
 
-    provisionalKitRoot = detectStashRoot(extractedDir);
+    const detectedProvisionalKitRoot = detectStashRoot(extractedDir);
+    if (!detectedProvisionalKitRoot) {
+      throw new UsageError(`Unable to detect a stash root in extracted npm package: ${resolved.ref}`);
+    }
+    provisionalKitRoot = detectedProvisionalKitRoot;
     installRoot = applyAkmIncludeConfig(provisionalKitRoot, cacheDir, extractedDir) ?? provisionalKitRoot;
-    stashRoot = detectStashRoot(installRoot);
+    const detectedStashRoot = detectStashRoot(installRoot);
+    if (!detectedStashRoot) {
+      throw new UsageError(
+        `Unable to detect a stash root after applying .akm-include configuration for npm package: ${resolved.ref}`,
+      );
+    }
+    stashRoot = detectedStashRoot;
   } catch (err) {
     // Clean up so stale or partial extractions don't cause false cache hits.
     try {
