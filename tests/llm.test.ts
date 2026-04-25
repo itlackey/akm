@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/config";
-import { enhanceMetadata } from "../src/llm";
 import type { StashEntry } from "../src/metadata";
+import { enhanceMetadata } from "../src/metadata-enhance";
 
 // These tests verify the LLM module's response parsing logic.
 // They use a mock server to simulate an OpenAI-compatible endpoint.

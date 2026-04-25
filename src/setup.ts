@@ -22,7 +22,7 @@ import { detectAgentPlatforms, detectOllama } from "./detect";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "./embedder";
 import { akmIndex } from "./indexer";
 import { akmInit } from "./init";
-import { probeLlmCapabilities } from "./llm";
+import { probeLlmCapabilities } from "./llm-client";
 import { getDefaultStashDir } from "./paths";
 import { clearSemanticStatus, deriveSemanticProviderFingerprint, writeSemanticStatus } from "./semantic-status";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./setup-steps";

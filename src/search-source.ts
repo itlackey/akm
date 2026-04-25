@@ -278,8 +278,3 @@ export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
     }
   }
 }
-
-/** @deprecated Use ensureSourceCaches instead. */
-export const ensureGitCaches = ensureSourceCaches;
-/** @deprecated Use ensureSourceCaches instead. */
-export const ensureContextHubCaches = ensureSourceCaches;

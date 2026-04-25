@@ -794,7 +794,7 @@ async function enhanceStashWithLlm(
   files: string[],
   summary: LlmEnhancementSummary,
 ): Promise<StashFile> {
-  const { enhanceMetadata } = await import("./llm.js");
+  const { enhanceMetadata } = await import("./metadata-enhance");
 
   const enhanced: StashEntry[] = [];
   for (const entry of stash.entries) {

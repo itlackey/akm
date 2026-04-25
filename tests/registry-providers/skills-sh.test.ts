@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveProviderFactory } from "../../src/registry-factory";
-import type { RegistryProvider } from "../../src/registry-provider";
+import type { RegistryProvider } from "../../src/registry-providers/types";
 
 // Trigger self-registration
 import "../../src/registry-providers/skills-sh";

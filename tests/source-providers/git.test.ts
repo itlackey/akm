@@ -221,7 +221,7 @@ describe("GitSourceProvider", () => {
     expect(fs.existsSync(docPath)).toBe(false);
   });
 
-  test("integrates with stash sources via ensureGitCaches", async () => {
+  test("integrates with stash sources via ensureSourceCaches", async () => {
     // Pre-populate the cache so ensureGitMirror returns early without cloning
     const stashUrl = "https://github.com/andrewyng/context-hub";
     const repo = parseGitRepoUrl(stashUrl);
@@ -238,10 +238,10 @@ describe("GitSourceProvider", () => {
     });
     resetConfigCache();
 
-    const { ensureGitCaches } = await import("../../src/search-source");
+    const { ensureSourceCaches } = await import("../../src/search-source");
     const { loadConfig } = await import("../../src/config");
     const config = loadConfig();
-    await ensureGitCaches(config);
+    await ensureSourceCaches(config);
 
     // Verify git stash content dir appears in stash sources.
     const { resolveSourceEntries } = await import("../../src/search-source");
