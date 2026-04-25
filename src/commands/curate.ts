@@ -11,6 +11,7 @@
  * `deriveCurateFallbackQueries`) by importing them directly.
  */
 
+import { UsageError } from "../core/errors";
 import { truncateDescription } from "../output/output-shapes";
 import type { RegistrySearchResultHit, SearchResponse, ShowResponse, SourceSearchHit } from "../sources/source-types";
 import { akmSearch, parseSearchSource } from "./search";
@@ -90,6 +91,13 @@ const DEFAULT_CURATE_LIMIT = 4;
  * `options.searchResponse` is not supplied.
  */
 export async function akmCurate(options: CurateOptions): Promise<CurateResponse> {
+  const trimmedQuery = options.query.trim();
+  if (!trimmedQuery) {
+    throw new UsageError(
+      'A curation query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
   const limit = options.limit && options.limit > 0 ? options.limit : DEFAULT_CURATE_LIMIT;
   const source = options.source ?? parseSearchSource("stash");
   const searchResponse =

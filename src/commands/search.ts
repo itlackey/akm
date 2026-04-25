@@ -38,6 +38,12 @@ export async function akmSearch(input: {
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
+  if (!query) {
+    throw new UsageError(
+      'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
   const normalizedQuery = query.toLowerCase();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);

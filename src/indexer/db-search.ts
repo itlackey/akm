@@ -472,14 +472,22 @@ async function searchDatabase(
     }
   }
 
+  // ── minScore floor ──────────────────────────────────────────────────────
+  // Drop semantic-only hits (cosine-only, no FTS match) whose score falls
+  // below the configured floor. FTS hits and hybrid hits are always kept.
+  // Default floor: 0.2. Set search.minScore = 0 in config to disable.
+  const minScore = config.search?.minScore ?? 0.2;
+  const preFilter =
+    minScore > 0 ? scored.filter((item) => item.rankingMode !== "semantic" || item.score >= minScore) : scored;
+
   // Deterministic tiebreaker on equal scores
-  scored.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
+  preFilter.sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name));
 
   // Deduplicate by file path — keep only the highest-scored entry per file.
   // Multiple .stash.json entries can map to the same file (e.g. entries without
   // a filename field all collapse to files[0]). Showing the same path/ref
   // multiple times clutters results.
-  const deduped = deduplicateByPath(scored);
+  const deduped = deduplicateByPath(preFilter);
 
   const rankMs = Date.now() - tRank0;
 

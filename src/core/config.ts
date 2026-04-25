@@ -219,6 +219,17 @@ export interface AkmConfig {
    * source-array order" fallback.
    */
   defaultWriteTarget?: string;
+  /**
+   * Search-specific tuning parameters.
+   */
+  search?: {
+    /**
+     * Minimum score floor for semantic-only hits (cosine-only, no FTS match).
+     * Hits at or above this score are kept; hits below are dropped. FTS and
+     * hybrid hits are never filtered. Default: 0.2. Set to 0 to disable.
+     */
+    minScore?: number;
+  };
 }
 
 export interface OutputConfig {
@@ -494,6 +505,15 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   if (typeof raw.defaultWriteTarget === "string" && raw.defaultWriteTarget.trim()) {
     config.defaultWriteTarget = raw.defaultWriteTarget.trim();
+  }
+
+  if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
+    const searchRaw = raw.search as Record<string, unknown>;
+    const searchConfig: AkmConfig["search"] = {};
+    if (typeof searchRaw.minScore === "number" && Number.isFinite(searchRaw.minScore) && searchRaw.minScore >= 0) {
+      searchConfig.minScore = searchRaw.minScore;
+    }
+    if (Object.keys(searchConfig).length > 0) config.search = searchConfig;
   }
 
   return config;

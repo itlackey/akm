@@ -11,10 +11,25 @@ import {
 } from "../core/config";
 import { UsageError } from "../core/errors";
 
+// ── Merge helpers for LLM/embedding subkey set ───────────────────────────────
+
+function mergeLlmLike(base: LlmConnectionConfig | undefined, patch: Partial<LlmConnectionConfig>): LlmConnectionConfig {
+  return { endpoint: "", model: "", ...(base ?? {}), ...patch };
+}
+
+function mergeLlmLikeEmbedding(
+  base: EmbeddingConnectionConfig | undefined,
+  patch: Partial<EmbeddingConnectionConfig>,
+): EmbeddingConnectionConfig {
+  return { endpoint: "", model: "", ...(base ?? {}), ...patch };
+}
+
 export function parseConfigValue(key: string, value: string): Partial<AkmConfig> {
   switch (key) {
     case "stashDir":
       return { stashDir: requireNonEmptyString(value, key) };
+    case "defaultWriteTarget":
+      return { defaultWriteTarget: requireNonEmptyString(value, key) };
     case "semanticSearchMode":
       // Accept legacy boolean-style strings from CLI
       if (value === "true") return { semanticSearchMode: "auto" };
@@ -25,8 +40,20 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { semanticSearchMode: value };
     case "embedding":
       return { embedding: parseEmbeddingConnectionValue(value) };
+    case "embedding.endpoint":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { endpoint: requireNonEmptyString(value, key) }) };
+    case "embedding.model":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { model: requireNonEmptyString(value, key) }) };
+    case "embedding.apiKey":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { apiKey: requireNonEmptyString(value, key) }) };
     case "llm":
       return { llm: parseLlmConnectionValue(value) };
+    case "llm.endpoint":
+      return { llm: mergeLlmLike(undefined, { endpoint: requireNonEmptyString(value, key) }) };
+    case "llm.model":
+      return { llm: mergeLlmLike(undefined, { model: requireNonEmptyString(value, key) }) };
+    case "llm.apiKey":
+      return { llm: mergeLlmLike(undefined, { apiKey: requireNonEmptyString(value, key) }) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
     case "sources":
@@ -58,12 +85,26 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
   switch (key) {
     case "stashDir":
       return config.stashDir ?? null;
+    case "defaultWriteTarget":
+      return config.defaultWriteTarget ?? null;
     case "semanticSearchMode":
       return config.semanticSearchMode;
     case "embedding":
       return config.embedding ?? null;
+    case "embedding.endpoint":
+      return config.embedding?.endpoint ?? null;
+    case "embedding.model":
+      return config.embedding?.model ?? null;
+    case "embedding.apiKey":
+      return config.embedding?.apiKey ?? null;
     case "llm":
       return config.llm ?? null;
+    case "llm.endpoint":
+      return config.llm?.endpoint ?? null;
+    case "llm.model":
+      return config.llm?.model ?? null;
+    case "llm.apiKey":
+      return config.llm?.apiKey ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
     case "sources":
@@ -111,6 +152,40 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
     case "security.installAudit.registryWhitelist":
     case "security.installAudit.allowedFindings":
       return mergeConfigValue(config, parseConfigValue(key, rawValue));
+    // Subkey setters use deep-merge so sibling fields are preserved
+    case "embedding.endpoint":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { endpoint: requireNonEmptyString(rawValue, key) }),
+      };
+    case "embedding.model":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { model: requireNonEmptyString(rawValue, key) }),
+      };
+    case "embedding.apiKey":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { apiKey: requireNonEmptyString(rawValue, key) }),
+      };
+    case "llm.endpoint":
+      return { ...config, llm: mergeLlmLike(config.llm, { endpoint: requireNonEmptyString(rawValue, key) }) };
+    case "llm.model":
+      return { ...config, llm: mergeLlmLike(config.llm, { model: requireNonEmptyString(rawValue, key) }) };
+    case "llm.apiKey":
+      return { ...config, llm: mergeLlmLike(config.llm, { apiKey: requireNonEmptyString(rawValue, key) }) };
+    case "defaultWriteTarget": {
+      const name = requireNonEmptyString(rawValue, key);
+      const knownNames = (config.sources ?? config.stashes ?? [])
+        .map((s) => s.name)
+        .filter((n): n is string => typeof n === "string");
+      if (knownNames.length > 0 && !knownNames.includes(name)) {
+        throw new UsageError(
+          `Unknown source name "${name}" for defaultWriteTarget; configured source names: ${knownNames.map((n) => `"${n}"`).join(", ")}`,
+        );
+      }
+      return { ...config, defaultWriteTarget: name };
+    }
     default:
       throw new UsageError(`Unknown config key: ${key}`);
   }
@@ -120,10 +195,30 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
   switch (key) {
     case "stashDir":
       return { ...config, stashDir: undefined };
+    case "defaultWriteTarget":
+      return { ...config, defaultWriteTarget: undefined };
     case "embedding":
       return { ...config, embedding: undefined };
+    case "embedding.endpoint":
+      return { ...config, embedding: mergeLlmLikeEmbedding(config.embedding, { endpoint: "" }) };
+    case "embedding.model":
+      return { ...config, embedding: mergeLlmLikeEmbedding(config.embedding, { model: "" }) };
+    case "embedding.apiKey": {
+      if (!config.embedding) return config;
+      const { apiKey: _a, ...rest } = config.embedding;
+      return { ...config, embedding: rest as EmbeddingConnectionConfig };
+    }
     case "llm":
       return { ...config, llm: undefined };
+    case "llm.endpoint":
+      return { ...config, llm: mergeLlmLike(config.llm, { endpoint: "" }) };
+    case "llm.model":
+      return { ...config, llm: mergeLlmLike(config.llm, { model: "" }) };
+    case "llm.apiKey": {
+      if (!config.llm) return config;
+      const { apiKey: _b, ...restLlm } = config.llm;
+      return { ...config, llm: restLlm as LlmConnectionConfig };
+    }
     case "registries":
       return { ...config, registries: undefined };
     case "sources":
@@ -177,6 +272,7 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
     installed: config.installed ?? [],
     sources: config.sources ?? config.stashes ?? [],
   };
+  if (config.defaultWriteTarget) result.defaultWriteTarget = config.defaultWriteTarget;
   if (config.embedding) result.embedding = config.embedding;
   if (config.llm) result.llm = config.llm;
   if (config.security) result.security = config.security;
