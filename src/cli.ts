@@ -1131,8 +1131,8 @@ const workflowCreateCommand = defineCommand({
       default: false,
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
       const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
       if (!namePattern.test(args.name)) {
         throw new UsageError(
@@ -1149,6 +1149,10 @@ const workflowCreateCommand = defineCommand({
         from: args.from,
         force: args.force,
       });
+      // Index the newly-written workflow so `akm workflow start` can resolve
+      // a workflowEntryId without requiring an explicit `akm index` call
+      // first. Uses the same incremental index path that `akm add` uses.
+      await akmIndex({ stashDir: result.stashDir });
       output("workflow-create", { ok: true, ...result });
     });
   },
