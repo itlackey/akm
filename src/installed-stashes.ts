@@ -126,7 +126,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   // Fall through to stashes[] (local/remote sources)
   const stashResult = removeStash(target);
   if (!stashResult.removed || !stashResult.entry) {
-    throw new NotFoundError(`No matching source for target: ${target}`);
+    throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
   }
 
   const removedEntry = stashResult.entry;
@@ -272,11 +272,11 @@ function selectTargets(
   all: boolean,
 ): InstalledStashEntry[] {
   if (all && target) {
-    throw new UsageError("Specify either <target> or --all, not both.");
+    throw new UsageError("Specify either <target> or --all, not both.", "MISSING_OR_AMBIGUOUS_TARGET");
   }
   if (all) return installed;
   if (!target) {
-    throw new UsageError("Either <target> or --all is required.");
+    throw new UsageError("Either <target> or --all is required.", "MISSING_OR_AMBIGUOUS_TARGET");
   }
 
   const found = tryResolveInstalledTarget(installed, target);
@@ -296,10 +296,14 @@ function selectTargets(
 
   if (stashMatch) {
     if (stashMatch.url) {
-      throw new UsageError(`"${target}" is a remote provider — it queries live data and has nothing to update.`);
+      throw new UsageError(
+        `"${target}" is a remote provider — it queries live data and has nothing to update.`,
+        "TARGET_NOT_UPDATABLE",
+      );
     }
     throw new UsageError(
       `"${target}" is a local directory — it reflects your files in place. To refresh the search index, run: akm index`,
+      "TARGET_NOT_UPDATABLE",
     );
   }
 

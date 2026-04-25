@@ -31,13 +31,19 @@ export const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary
 export function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
   if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
-  throw new UsageError(`Invalid value for --format: ${value}. Expected one of: ${OUTPUT_FORMATS.join("|")}`);
+  throw new UsageError(
+    `Invalid value for --format: ${value}. Expected one of: ${OUTPUT_FORMATS.join("|")}`,
+    "INVALID_FORMAT_VALUE",
+  );
 }
 
 export function parseDetailLevel(value: string | undefined): DetailLevel | undefined {
   if (!value) return undefined;
   if ((DETAIL_LEVELS as string[]).includes(value)) return value as DetailLevel;
-  throw new UsageError(`Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`);
+  throw new UsageError(
+    `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`,
+    "INVALID_DETAIL_VALUE",
+  );
 }
 
 export function parseFlagValue(argv: string[], flag: string): string | undefined {

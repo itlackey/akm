@@ -368,6 +368,7 @@ function parseJsonObject(
     throw new UsageError(
       `Invalid value for ${key}: expected JSON object with endpoint and model` +
         ` (e.g. '{"endpoint":"${example.endpoint}","model":"${example.model}"}')`,
+      "INVALID_JSON_CONFIG_VALUE",
     );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
