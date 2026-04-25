@@ -36,7 +36,7 @@ export interface DbVecResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 8;
+export const DB_VERSION = 9;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -153,6 +153,23 @@ function ensureSchema(db: Database, embeddingDim: number): void {
 
     CREATE INDEX IF NOT EXISTS idx_entries_dir ON entries(dir_path);
     CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(entry_type);
+  `);
+
+  // Validated WorkflowDocument JSON, one row per indexed workflow entry.
+  // Pure index data — fully rebuilt on each `akm index`. ON DELETE CASCADE
+  // means clearing entries (full rebuild or per-dir delete) drops these too.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_documents (
+      entry_id        INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+      schema_version  INTEGER NOT NULL,
+      document_json   TEXT NOT NULL,
+      source_path     TEXT NOT NULL,
+      source_hash     TEXT NOT NULL,
+      updated_at      TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_documents_source_path
+      ON workflow_documents(source_path);
   `);
 
   // Set version immediately after table creation so a crash before the end of

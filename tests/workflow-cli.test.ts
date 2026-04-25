@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseWorkflowMarkdown } from "../src/workflows/workflow-markdown";
+import { parseWorkflow } from "../src/workflows/parser";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -100,8 +100,11 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "template"], env);
 
     expect(result.status).toBe(0);
-    const workflow = parseWorkflowMarkdown(result.stdout);
-    expect(workflow.steps.length).toBeGreaterThan(0);
+    const parsed = parseWorkflow(result.stdout, { path: "<template>" });
+    if (!parsed.ok) {
+      throw new Error(`template did not parse: ${parsed.errors.map((e) => e.message).join("; ")}`);
+    }
+    expect(parsed.document.steps.length).toBeGreaterThan(0);
   });
 
   test("create writes a workflow and show returns structured step data", () => {
@@ -135,7 +138,7 @@ describe("workflow CLI", () => {
     expect(result.status).toBe(2);
 
     const error = parseLastJsonLine(result.stderr) as { error: string };
-    expect(error.error).toContain('must contain a "### Instructions" section');
+    expect(error.error).toContain('"### Instructions" section');
   });
 
   test("create --from rejects duplicate step ids", () => {
@@ -148,7 +151,8 @@ describe("workflow CLI", () => {
     expect(result.status).toBe(2);
 
     const error = parseLastJsonLine(result.stderr) as { error: string };
-    expect(error.error).toContain('Duplicate Step ID: "validate"');
+    expect(error.error).toContain('"validate"');
+    expect(error.error).toContain("already used");
   });
 
   test("start, next, complete, list, and status manage persisted workflow runs", () => {

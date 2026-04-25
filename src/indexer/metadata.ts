@@ -654,7 +654,12 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
 
 function buildMetadataSkipWarning(filePath: string, assetType: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  const warning = `Skipped malformed ${assetType} asset at ${filePath}: ${detail}`;
+  // Workflow errors are already multi-line `path:line — message` blocks; print
+  // them as-is so the author sees a flat list without a redundant prefix.
+  const warning =
+    assetType === "workflow"
+      ? `Skipped workflow ${filePath}:\n${detail}`
+      : `Skipped malformed ${assetType} asset at ${filePath}: ${detail}`;
   warn(warning);
   return warning;
 }

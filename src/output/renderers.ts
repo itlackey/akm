@@ -10,9 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listKeys as listVaultKeys } from "../commands/vault";
-import { makeAssetRef } from "../core/asset-ref";
 import { hasErrnoCode } from "../core/common";
-import { UsageError } from "../core/errors";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import {
   extractFrontmatterOnly,
@@ -26,7 +24,7 @@ import { registerRenderer } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
 import { extractDescriptionFromComments, loadStashFile } from "../indexer/metadata";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/source-types";
-import { parseWorkflowMarkdown, WorkflowValidationError } from "../workflows/workflow-markdown";
+import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 
 // ── ExecHints types ──────────────────────────────────────────────────────────
 
@@ -190,13 +188,7 @@ function deriveName(ctx: RenderContext): string {
   return ext ? ctx.relPath.slice(0, -ext.length) : ctx.relPath;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-export function buildWorkflowAction(ref: string): string {
-  return `Resume the active run or start a new run with \`akm workflow next ${shellQuote(ref)}\`.`;
-}
+export { buildWorkflowAction };
 
 /**
  * Load the matching StashEntry for a file path from the directory's .stash.json.
@@ -530,59 +522,7 @@ const memoryMdRenderer: AssetRenderer = {
 };
 
 // ── 6. workflow-md ───────────────────────────────────────────────────────────
-
-const workflowMdRenderer: AssetRenderer = {
-  name: "workflow-md",
-
-  buildShowResponse(ctx: RenderContext): ShowResponse {
-    const name = deriveName(ctx);
-    const workflow = parseWorkflowForRendering(ctx.content());
-    const ref = makeAssetRef("workflow", name, ctx.origin);
-    return {
-      type: "workflow",
-      name,
-      path: ctx.absPath,
-      action: buildWorkflowAction(ref),
-      description: workflow.description,
-      workflowTitle: workflow.title,
-      parameters: workflow.parameters?.map((parameter) => parameter.name),
-      workflowParameters: workflow.parameters,
-      steps: workflow.steps,
-    };
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    const workflow = parseWorkflowForRendering(ctx.content());
-    const hints = new Set<string>(entry.searchHints ?? []);
-    hints.add(workflow.title);
-    for (const step of workflow.steps) {
-      hints.add(step.title);
-      hints.add(step.id);
-      hints.add(step.instructions);
-      for (const criterion of step.completionCriteria ?? []) {
-        hints.add(criterion);
-      }
-    }
-    entry.searchHints = Array.from(hints).filter(Boolean);
-    if (workflow.parameters?.length) {
-      entry.parameters = workflow.parameters.map((parameter) => ({
-        name: parameter.name,
-        ...(parameter.description ? { description: parameter.description } : {}),
-      }));
-    }
-  },
-};
-
-function parseWorkflowForRendering(content: string) {
-  try {
-    return parseWorkflowMarkdown(content);
-  } catch (error) {
-    if (error instanceof WorkflowValidationError) {
-      throw new UsageError(error.message);
-    }
-    throw error;
-  }
-}
+// Defined in src/workflows/renderer.ts and imported above.
 
 // ── 7. script-source ─────────────────────────────────────────────────────────
 

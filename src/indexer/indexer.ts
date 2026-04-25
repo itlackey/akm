@@ -5,6 +5,7 @@ import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
+import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
   closeDatabase,
   type DbIndexedEntry,
@@ -484,7 +485,14 @@ async function indexEntries(
           const searchText = buildSearchText(entry);
           const entryWithSize = attachFileSize(entry, entryPath);
 
-          upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
+          const entryId = upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
+
+          if (entry.type === "workflow") {
+            const doc = takeWorkflowDocument(entry);
+            if (doc) {
+              upsertWorkflowDocument(db, entryId, doc, fs.readFileSync(entryPath));
+            }
+          }
         }
 
         // Collect dirs needing LLM enhancement during the first walk
@@ -644,6 +652,37 @@ function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {
   } catch {
     return entry;
   }
+}
+
+function upsertWorkflowDocument(
+  db: Database,
+  entryId: number,
+  doc: import("../workflows/schema").WorkflowDocument,
+  content: Buffer,
+): void {
+  const sourceHash = computeSourceHash(content);
+  db.prepare(
+    `INSERT INTO workflow_documents (entry_id, schema_version, document_json, source_path, source_hash, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(entry_id) DO UPDATE SET
+       schema_version = excluded.schema_version,
+       document_json = excluded.document_json,
+       source_path = excluded.source_path,
+       source_hash = excluded.source_hash,
+       updated_at = excluded.updated_at`,
+  ).run(entryId, doc.schemaVersion, JSON.stringify(doc), doc.source.path, sourceHash, new Date().toISOString());
+}
+
+function computeSourceHash(content: Buffer): string {
+  // Cheap, stable identity for the source markdown — used by future
+  // incremental fast-paths that skip re-validation when content is unchanged.
+  // Not security-sensitive; FNV-1a over the bytes is sufficient.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content[i];
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 function buildIndexSummaryMessage(options: {

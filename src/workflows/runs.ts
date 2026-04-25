@@ -16,8 +16,10 @@ import type {
   WorkflowRunSummary,
   WorkflowStepDefinition,
 } from "../sources/source-types";
-import { closeWorkflowDatabase, openWorkflowDatabase } from "./workflow-db";
-import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
+import { formatWorkflowErrors } from "./authoring";
+import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
+import { parseWorkflow } from "./parser";
+import type { WorkflowDocument } from "./schema";
 
 type WorkflowAsset = {
   ref: string;
@@ -355,15 +357,72 @@ async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
     throw new NotFoundError(`Workflow not found for ref: workflow:${parsed.name}`);
   }
 
+  const resolvedSourcePath = sourcePath ?? loadConfig().stashDir ?? assetPath;
+  const fullRef = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+
+  const cached = readWorkflowDocumentFromIndex(resolvedSourcePath, fullRef);
+  const document = cached ?? loadWorkflowDocumentFromDisk(assetPath);
+  return projectAsset(document, fullRef, assetPath, resolvedSourcePath);
+}
+
+function loadWorkflowDocumentFromDisk(assetPath: string): WorkflowDocument {
   const content = fs.readFileSync(assetPath, "utf8");
-  const workflow = parseWorkflowDocument(content);
+  const result = parseWorkflow(content, { path: assetPath });
+  if (!result.ok) {
+    throw new UsageError(formatWorkflowErrors(assetPath, result.errors));
+  }
+  return result.document;
+}
+
+function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): WorkflowDocument | null {
+  const dbPath = getDbPath();
+  if (!fs.existsSync(dbPath)) return null;
+
+  const db = openDatabase(dbPath);
+  try {
+    const parsed = parseAssetRef(ref);
+    const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
+    const row = db
+      .prepare(
+        `SELECT wd.document_json AS document_json
+           FROM workflow_documents wd
+           JOIN entries e ON e.id = wd.entry_id
+          WHERE e.entry_type = 'workflow' AND e.entry_key = ?
+          LIMIT 1`,
+      )
+      .get(entryKey) as { document_json: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.document_json) as WorkflowDocument;
+    } catch {
+      return null;
+    }
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function projectAsset(doc: WorkflowDocument, ref: string, assetPath: string, sourcePath: string): WorkflowAsset {
   return {
-    ref: `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`,
+    ref,
     path: assetPath,
-    sourcePath: sourcePath ?? loadConfig().stashDir ?? assetPath,
-    title: workflow.title,
-    ...(workflow.parameters ? { parameters: workflow.parameters } : {}),
-    steps: workflow.steps,
+    sourcePath,
+    title: doc.title,
+    ...(doc.parameters
+      ? {
+          parameters: doc.parameters.map((p) => ({
+            name: p.name,
+            ...(p.description ? { description: p.description } : {}),
+          })),
+        }
+      : {}),
+    steps: doc.steps.map((s) => ({
+      id: s.id,
+      title: s.title,
+      instructions: s.instructions.text,
+      ...(s.completionCriteria ? { completionCriteria: s.completionCriteria.map((c) => c.text) } : {}),
+      sequenceIndex: s.sequenceIndex,
+    })),
   };
 }
 
@@ -503,15 +562,4 @@ function parseJsonArray(value: string | null): string[] | undefined {
     /* ignore corrupt data */
   }
   return undefined;
-}
-
-function parseWorkflowDocument(content: string) {
-  try {
-    return parseWorkflowMarkdown(content);
-  } catch (error) {
-    if (error instanceof WorkflowValidationError) {
-      throw new UsageError(error.message);
-    }
-    throw error;
-  }
 }

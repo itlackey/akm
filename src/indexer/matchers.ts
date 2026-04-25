@@ -20,6 +20,7 @@
  */
 
 import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
+import { looksLikeWorkflow } from "../workflows/parser";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";
 
@@ -171,12 +172,7 @@ export function smartMdMatcher(ctx: FileContext): MatchResult | null {
   if (ctx.ext !== ".md") return null;
 
   const body = ctx.content();
-  const hasWorkflowSignals =
-    /^#\s+Workflow:\s+/m.test(body) &&
-    /^##\s+Step:\s+/m.test(body) &&
-    /^Step ID:\s+/m.test(body) &&
-    /^###\s+Instructions\s*$/m.test(body);
-  if (hasWorkflowSignals) {
+  if (looksLikeWorkflow(body)) {
     return { type: "workflow", specificity: 19, renderer: "workflow-md" };
   }
 

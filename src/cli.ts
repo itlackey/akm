@@ -34,6 +34,7 @@ import { setQuiet, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, openDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
+import { resolveSourceEntries } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
@@ -46,17 +47,24 @@ import {
 } from "./output/output-context";
 import { shapeForCommand } from "./output/output-shapes";
 import { formatPlain, outputJsonl } from "./output/output-text";
+import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry/registry-build-index";
 import { saveGitStash } from "./sources/source-providers/git";
+import { resolveAssetPath } from "./sources/source-resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/source-types";
 import { pkgVersion } from "./version";
-import { createWorkflowAsset, getWorkflowTemplate } from "./workflows/workflow-authoring";
+import {
+  createWorkflowAsset,
+  formatWorkflowErrors,
+  getWorkflowTemplate,
+  validateWorkflowSource,
+} from "./workflows/authoring";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
   parseWorkflowStepState,
   WORKFLOW_STEP_STATES,
-} from "./workflows/workflow-cli";
+} from "./workflows/cli";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -64,7 +72,7 @@ import {
   listWorkflowRuns,
   resumeWorkflowRun,
   startWorkflowRun,
-} from "./workflows/workflow-runs";
+} from "./workflows/runs";
 
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const SKILLS_SH_NAME = "skills.sh";
@@ -1168,6 +1176,55 @@ const workflowTemplateCommand = defineCommand({
   },
 });
 
+const workflowValidateCommand = defineCommand({
+  meta: {
+    name: "validate",
+    description: "Validate a workflow markdown file or ref and print any errors",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
+      const filePath = await resolveWorkflowFilePath(args.target);
+      const { parse } = validateWorkflowSource(filePath);
+      if (parse.ok) {
+        output("workflow-validate", {
+          ok: true,
+          path: filePath,
+          title: parse.document.title,
+          stepCount: parse.document.steps.length,
+        });
+        return;
+      }
+      throw new UsageError(formatWorkflowErrors(filePath, parse.errors));
+    });
+  },
+});
+
+async function resolveWorkflowFilePath(target: string): Promise<string> {
+  if (!target.startsWith("workflow:")) return target;
+  const parsed = parseAssetRef(target);
+  if (parsed.type !== "workflow") {
+    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
+  }
+  const config = loadConfig();
+  const allSources = resolveSourceEntries(undefined, config);
+  const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
+  for (const source of searchSources) {
+    try {
+      return await resolveAssetPath(source.path, "workflow", parsed.name);
+    } catch {
+      /* try next source */
+    }
+  }
+  throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
+}
+
 const workflowResumeCommand = defineCommand({
   meta: {
     name: "resume",
@@ -1198,6 +1255,7 @@ const workflowCommand = defineCommand({
     create: workflowCreateCommand,
     template: workflowTemplateCommand,
     resume: workflowResumeCommand,
+    validate: workflowValidateCommand,
   },
   run({ args }) {
     return runWithJsonErrors(() => {

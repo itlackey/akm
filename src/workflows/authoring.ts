@@ -4,7 +4,8 @@ import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isWithin, resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
-import { parseWorkflowMarkdown, WorkflowValidationError } from "./workflow-markdown";
+import { parseWorkflow } from "./parser";
+import type { WorkflowError } from "./schema";
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
   title: "Example Workflow",
@@ -26,7 +27,10 @@ export function buildWorkflowTemplate(name?: string): string {
     firstStepTitle: `${title} Setup`,
     firstStepId: `${stepId}-setup`,
   });
-  parseWorkflowMarkdown(customized);
+  const result = parseWorkflow(customized, { path: `<template:${name}>` });
+  if (!result.ok) {
+    throw new UsageError(formatWorkflowErrors(`<template:${name}>`, result.errors));
+  }
   return customized;
 }
 
@@ -54,13 +58,10 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   const content = input.from
     ? readWorkflowSource(input.from, stashDir)
     : (input.content ?? buildWorkflowTemplate(normalizedName));
-  try {
-    parseWorkflowMarkdown(content);
-  } catch (error) {
-    if (error instanceof WorkflowValidationError) {
-      throw new UsageError(error.message);
-    }
-    throw error;
+  const sourcePath = input.from ?? `workflows/${normalizedName}.md`;
+  const result = parseWorkflow(content, { path: sourcePath });
+  if (!result.ok) {
+    throw new UsageError(formatWorkflowErrors(sourcePath, result.errors));
   }
 
   fs.mkdirSync(path.dirname(assetPath), { recursive: true });
@@ -132,6 +133,37 @@ function slugifyWorkflowStepId(name: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "workflow"
   );
+}
+
+export function formatWorkflowErrors(path: string, errors: WorkflowError[]): string {
+  const lines = errors.map((e) => `  ${path}:${e.line} — ${e.message}`);
+  const heading = errors.length === 1 ? "Workflow has 1 error:" : `Workflow has ${errors.length} errors:`;
+  return [heading, ...lines].join("\n");
+}
+
+/**
+ * Validate a workflow by ref (`workflow:<name>`) or filesystem path.
+ *
+ * Returns the parse result plus the source-relative path used. Throws
+ * `UsageError` only when the target cannot be located on disk; parse
+ * failures are returned as `{ ok: false, errors }` so callers can
+ * format them however they like.
+ */
+export function validateWorkflowSource(target: string): {
+  path: string;
+  parse: ReturnType<typeof parseWorkflow>;
+} {
+  if (target.startsWith("workflow:")) {
+    throw new UsageError(
+      `validateWorkflowSource expects a filesystem path; resolve refs to paths in the caller before invoking.`,
+    );
+  }
+  const resolved = path.resolve(target);
+  if (!fs.existsSync(resolved)) {
+    throw new UsageError(`Workflow file not found: "${target}".`);
+  }
+  const content = fs.readFileSync(resolved, "utf8");
+  return { path: target, parse: parseWorkflow(content, { path: target }) };
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {

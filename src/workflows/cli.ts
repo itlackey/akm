@@ -17,6 +17,7 @@ export const WORKFLOW_SUBCOMMANDS = new Set([
   "create",
   "template",
   "resume",
+  "validate",
 ]);
 
 export function parseWorkflowJsonObject(
