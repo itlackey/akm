@@ -1,90 +1,44 @@
 import { resolveStashDir } from "../common";
 import type { SourceConfigEntry } from "../config";
-import { loadConfig } from "../config";
-import { searchLocal } from "../db-search";
 import { ConfigError } from "../errors";
-import { resolveSourceEntries } from "../search-source";
-import type {
-  SourceLockData,
-  SourceSearchOptions,
-  SourceSearchResult,
-  SyncableSourceProvider,
-  SyncOptions,
-} from "../source-provider";
+import type { ProviderContext, SourceProvider } from "../source-provider";
 import { registerSourceProvider } from "../source-provider-factory";
-import { showLocal } from "../source-show";
-import type { KnowledgeView, ShowResponse } from "../source-types";
-import { detectStashRoot } from "./provider-utils";
 
-class FilesystemSourceProvider implements SyncableSourceProvider {
-  readonly type = "filesystem";
-  readonly kind = "syncable" as const;
+/**
+ * Filesystem source — points at a directory the user already manages.
+ *
+ * Implements the v1 {@link SourceProvider} interface (spec §2.1, §2.4):
+ * just `{ name, kind, init, path }`. No `sync()` — content is the user's
+ * own directory, never refreshed by akm.
+ */
+class FilesystemSourceProvider implements SourceProvider {
+  readonly kind = "filesystem" as const;
   readonly name: string;
-  private readonly stashDir: string;
+  readonly #stashDir: string;
 
   constructor(entry: SourceConfigEntry) {
-    this.stashDir = entry.path ?? resolveStashDir();
-    this.name = entry.name ?? this.stashDir;
-  }
-
-  async search(options: SourceSearchOptions): Promise<SourceSearchResult> {
-    const config = loadConfig();
-    const sources = resolveSourceEntries(this.stashDir, config);
-    const result = await searchLocal({
-      query: options.query.toLowerCase(),
-      searchType: options.type ?? "any",
-      limit: options.limit,
-      stashDir: this.stashDir,
-      sources,
-      config,
-    });
-    return {
-      hits: result.hits,
-      warnings: result.warnings,
-      embedMs: result.embedMs,
-      rankMs: result.rankMs,
-    };
-  }
-
-  async show(ref: string, view?: KnowledgeView): Promise<ShowResponse> {
-    return showLocal({ ref, view });
-  }
-
-  canShow(ref: string): boolean {
-    return !ref.includes("://");
-  }
-
-  /** No-op: a filesystem stash already lives on disk. */
-  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
-    if (!config.path) {
-      throw new ConfigError("filesystem stash entry must include a `path`");
+    if (entry.type !== "filesystem") {
+      throw new ConfigError(`FilesystemSourceProvider invoked with type="${entry.type}"`);
     }
-    const stashRoot = detectStashRoot(config.path);
-    const syncedAt = (options?.now ?? new Date()).toISOString();
-    return {
-      id: stashRoot,
-      source: "local",
-      ref: stashRoot,
-      artifactUrl: stashRoot,
-      contentDir: stashRoot,
-      cacheDir: stashRoot,
-      extractedDir: stashRoot,
-      syncedAt,
-    };
-  }
-
-  getContentDir(config: SourceConfigEntry): string {
-    if (!config.path) {
-      throw new ConfigError("filesystem stash entry must include a `path`");
+    this.#stashDir = entry.path ?? resolveStashDir();
+    if (!this.#stashDir) {
+      throw new ConfigError("filesystem source requires a `path`");
     }
-    return config.path;
+    this.name = entry.name ?? this.#stashDir;
   }
 
-  async remove(_config: SourceConfigEntry): Promise<void> {
-    // Filesystem stashes are user-managed; never delete the source on `akm remove`.
+  async init(_ctx: ProviderContext): Promise<void> {
+    // Filesystem sources resolve their path eagerly in the constructor;
+    // init has nothing to do beyond letting the registry know we're ready.
+  }
+
+  path(): string {
+    return this.#stashDir;
   }
 }
 
 // ── Self-register ───────────────────────────────────────────────────────────
 
 registerSourceProvider("filesystem", (config) => new FilesystemSourceProvider(config));
+
+export { FilesystemSourceProvider };

@@ -19,12 +19,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
+import { akmShowUnified as akmShow } from "../src/commands/show";
 import { loadConfig, saveConfig } from "../src/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { loadStashFile } from "../src/metadata";
-import { akmSearch } from "../src/source-search";
-import { akmShowUnified as akmShow } from "../src/source-show";
 import type { SearchHit, SourceSearchHit } from "../src/source-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

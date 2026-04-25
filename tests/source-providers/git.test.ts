@@ -120,7 +120,7 @@ describe("GitSourceProvider", () => {
     expect(resolveSourceProviderFactory("github")).toBeNull();
   });
 
-  test("search() returns empty hits (content indexed via FTS5 pipeline)", async () => {
+  test("provider exposes only the v1 SourceProvider surface (no search/show stubs)", () => {
     const factory = resolveSourceProviderFactory("git");
     expect(factory).toBeTruthy();
     // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
@@ -130,11 +130,17 @@ describe("GitSourceProvider", () => {
       name: "context-hub",
     });
 
-    const result = await provider.search({ query: "openai chat", limit: 10 });
-    expect(result.hits).toEqual([]);
+    expect(provider.kind).toBe("git");
+    expect(provider.name).toBe("context-hub");
+    expect(typeof provider.path).toBe("function");
+    expect(typeof provider.sync).toBe("function");
+    // The v1 interface intentionally drops these stubs.
+    expect((provider as unknown as { search?: unknown }).search).toBeUndefined();
+    expect((provider as unknown as { show?: unknown }).show).toBeUndefined();
+    expect((provider as unknown as { canShow?: unknown }).canShow).toBeUndefined();
   });
 
-  test("canShow() returns false (content is local)", () => {
+  test("path() returns the same value across calls (lifetime stability)", () => {
     const factory = resolveSourceProviderFactory("git");
     expect(factory).toBeTruthy();
     // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
@@ -143,7 +149,9 @@ describe("GitSourceProvider", () => {
       url: "https://github.com/andrewyng/context-hub",
       name: "test",
     });
-    expect(provider.canShow("skill:foo")).toBe(false);
+    const first = provider.path();
+    const second = provider.path();
+    expect(second).toBe(first);
   });
 
   test("getCachePaths uses 'git-' prefix (not legacy 'context-hub-')", () => {

@@ -875,6 +875,95 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
 // from `./search-fields` to avoid loading the indexer's full dependency
 // graph (LLM client, embedder facade) when only the text builder is needed.
 
+// ── lookup ─────────────────────────────────────────────────────────────────
+
+import type { AssetRef } from "./asset-ref";
+
+export interface IndexEntry {
+  /** Absolute path of the indexed file on disk. */
+  filePath: string;
+  /** Source root (the directory the walker rooted at). */
+  stashDir: string;
+  /** Raw entry_key from the entries table — `${stashDir}:${type}:${name}`. */
+  entryKey: string;
+  /** Asset type (skill, command, knowledge, ...). */
+  type: string;
+  /** Asset name as recorded by the indexer. */
+  name: string;
+}
+
+/**
+ * Look up a single asset by ref. Spec §6.2 — `akm show` queries this and
+ * reads the file from disk. The index is the source of truth for which
+ * file corresponds to which ref; the indexer walks `provider.path()` for
+ * every configured source, so this query covers all source kinds.
+ *
+ * Match rules:
+ *   - `ref.origin === undefined` → first match across all sources (primary
+ *     source first, then in declared order — same priority as the indexer's
+ *     write order).
+ *   - `ref.origin === "local"`   → primary source only (entry_key prefix is
+ *     the primary stash dir).
+ *   - `ref.origin === <name>`    → restrict to the matching source name. We
+ *     resolve the source's directory and match on `entry_key` prefix.
+ *
+ * Returns `null` when no row matches — callers translate that into a
+ * `NotFoundError` with their own messaging.
+ */
+export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
+  const { loadConfig } = await import("./config.js");
+  const { resolveSourceEntries } = await import("./search-source.js");
+  const config = loadConfig();
+  const sources = resolveSourceEntries(undefined, config);
+  if (sources.length === 0) return null;
+
+  const dbPath = getDbPath();
+  const db = openDatabase(dbPath);
+  try {
+    // entry_key shape: `${stashDir}:${type}:${name}`. Suffix-match on
+    // `:type:name` so we can scope by source dir as a prefix when origin is
+    // supplied. Use parameterised queries throughout — names may include
+    // user-supplied glob characters.
+    const escapeLike = (value: string): string =>
+      value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const suffix = `:${ref.type}:${ref.name}`;
+    const escapedSuffix = escapeLike(suffix);
+
+    const candidateDirs: string[] = (() => {
+      if (!ref.origin) return sources.map((s) => s.path);
+      if (ref.origin === "local") return [sources[0].path];
+      const named = sources.find((s) => s.registryId === ref.origin);
+      return named ? [named.path] : [];
+    })();
+
+    if (candidateDirs.length === 0) return null;
+
+    for (const dir of candidateDirs) {
+      const escapedDir = escapeLike(dir);
+      const row = db
+        .prepare(
+          "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type FROM entries " +
+            "WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1",
+        )
+        .get(`${escapedDir}${escapedSuffix}`, ref.type) as
+        | { entryKey: string; filePath: string; stashDir: string; type: string }
+        | undefined;
+      if (row) {
+        return {
+          entryKey: row.entryKey,
+          filePath: row.filePath,
+          stashDir: row.stashDir,
+          type: row.type,
+          name: ref.name,
+        };
+      }
+    }
+    return null;
+  } finally {
+    closeDatabase(db);
+  }
+}
+
 // ── Utility score recomputation ──────────────────────────────────────────────
 
 /** Retention window for usage events: events older than this are purged. */

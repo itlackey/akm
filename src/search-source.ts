@@ -3,8 +3,12 @@ import path from "node:path";
 import { resolveStashDir } from "./common";
 import type { AkmConfig, SourceConfigEntry } from "./config";
 import { loadConfig } from "./config";
+import { resolveSourceProviderFactory } from "./source-provider-factory";
+// Eager side-effect imports so all built-in source providers self-register
+// before resolveEntryContentDir() runs.
+import "./source-providers/index";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./source-providers/git";
-import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./source-providers/website";
+import { ensureWebsiteMirror } from "./source-providers/website";
 import { warn } from "./warn";
 
 // Legacy "context-hub" / "github" type aliases are normalized to "git" at
@@ -96,37 +100,54 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
  * Resolve the content directory the indexer should walk for a given config
  * entry. Returns `undefined` if the entry has no walkable content
  * so the caller can skip it.
+ *
+ * Single source of truth: each provider owns its own path. We instantiate the
+ * registered {@link import("./source-provider").SourceProvider} for the entry
+ * and call `provider.path()`. This replaces the old per-kind switch ladder
+ * (filesystem path / git cache / website cache) that lived here in 0.6.0 —
+ * see spec §10 step 4 and §7 "Removed from 0.6.0".
+ *
+ * The git case still does one extra step: the provider returns the cloned
+ * repo dir, but the indexer walks the `content/` subdirectory inside it.
+ * That convention is part of the akm content layout, not a provider concern,
+ * so it stays here.
  */
 function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
-  if (entry.type === "filesystem" && entry.path) {
-    return entry.path;
+  const factory = resolveSourceProviderFactory(entry.type);
+  if (!factory) return undefined;
+
+  let provider: import("./source-provider").SourceProvider;
+  try {
+    provider = factory(entry);
+  } catch (err) {
+    warn(
+      `Warning: failed to construct ${entry.type} source provider for "${entry.name ?? entry.url ?? entry.path}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return undefined;
   }
-  if (GIT_STASH_TYPES.has(entry.type) && entry.url) {
-    try {
-      const repo = parseGitRepoUrl(entry.url);
-      const cachePaths = getCachePaths(repo.canonicalUrl);
-      // The content/ subdirectory inside the extracted repo is the actual
-      // stash root containing DOC.md / SKILL.md files that the walker indexes.
-      return path.join(cachePaths.repoDir, "content");
-    } catch (err) {
-      warn(
-        `Warning: failed to resolve git stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return undefined;
-    }
+
+  let dir: string;
+  try {
+    dir = provider.path();
+  } catch (err) {
+    warn(
+      `Warning: failed to resolve ${entry.type} source path for "${entry.name ?? entry.url ?? entry.path}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return undefined;
   }
-  if (entry.type === "website" && entry.url) {
-    try {
-      return getWebsiteCachePaths(entry.url).stashDir;
-    } catch (err) {
-      warn(
-        `Warning: failed to resolve website stash cache for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return undefined;
-    }
+
+  // Git providers expose the cloned repo root as their path. The akm content
+  // layout puts indexable files under `<repo>/content/`, so the walker needs
+  // that subdirectory. This is a content-layout convention, not a provider
+  // capability — keep it here.
+  if (GIT_STASH_TYPES.has(entry.type)) {
+    return path.join(dir, "content");
   }
-  // Entries with no walkable directory (e.g. unsupported provider types).
-  return undefined;
+  return dir;
 }
 
 /**

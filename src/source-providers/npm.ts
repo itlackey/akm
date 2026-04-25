@@ -18,15 +18,9 @@ import { ConfigError, UsageError } from "../errors";
 import { getRegistryCacheDir } from "../paths";
 import { parseRegistryRef, resolveRegistryArtifact } from "../registry-resolve";
 import type { ParsedNpmRef } from "../registry-types";
-import type {
-  SourceLockData,
-  SourceSearchOptions,
-  SourceSearchResult,
-  SyncableSourceProvider,
-  SyncOptions,
-} from "../source-provider";
+import type { ProviderContext, SourceProvider } from "../source-provider";
 import { registerSourceProvider } from "../source-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../source-types";
+import type { SourceLockData, SyncOptions } from "./install-types";
 import {
   applyAkmIncludeConfig,
   buildInstallCacheDir,
@@ -37,49 +31,42 @@ import {
 } from "./provider-utils";
 import { extractTarGzSecure, verifyArchiveIntegrity } from "./tar-utils";
 
-class NpmSourceProvider implements SyncableSourceProvider {
-  readonly type = "npm";
-  readonly kind = "syncable" as const;
+/**
+ * NPM source provider — fetches a tarball from the npm registry and extracts
+ * it into a local cache. Implements the v1 {@link SourceProvider} interface
+ * (spec §2.1): `{ name, kind, init, path, sync }`.
+ *
+ * The install-time pipeline (`syncNpmRef`) lives below as a standalone
+ * function used by `akm add` / `akm update` — that path produces a
+ * {@link SourceLockData} record for lockfile bookkeeping. The provider's own
+ * `sync()` is a void refresh (delegates to the install pipeline but discards
+ * the lock data, which is owned by `lockfile.ts`).
+ */
+class NpmSourceProvider implements SourceProvider {
+  readonly kind = "npm" as const;
   readonly name: string;
+  readonly #config: SourceConfigEntry;
 
   constructor(config: SourceConfigEntry) {
+    this.#config = config;
     this.name = config.name ?? config.url ?? "npm";
   }
 
-  /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
-    return { hits: [] };
+  async init(_ctx: ProviderContext): Promise<void> {
+    // Resolution happens lazily in path(): until `sync()` runs there's no
+    // reliable on-disk path. Init is the registration handshake.
   }
 
-  /** Content is local files, shown via showLocal. */
-  async show(_ref: string, _view?: KnowledgeView): Promise<ShowResponse> {
-    throw new Error("NPM provider content is shown via local index");
+  path(): string {
+    if (this.#config.path) return this.#config.path;
+    throw new ConfigError(
+      `npm source "${this.name}" has no resolved content path — run \`akm update\` to sync it before indexing.`,
+    );
   }
 
-  canShow(_ref: string): boolean {
-    return false;
-  }
-
-  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
-    const ref = npmRefFromConfig(config);
-    return syncNpmRef(ref, options);
-  }
-
-  getContentDir(config: SourceConfigEntry): string {
-    if (config.path) return config.path;
-    throw new ConfigError("npm stash entry missing resolved content path");
-  }
-
-  async remove(config: SourceConfigEntry): Promise<void> {
-    if (config.path && isDirectory(config.path)) {
-      // Remove the whole versioned cache dir if we know the parent layout.
-      const parent = path.dirname(config.path);
-      try {
-        fs.rmSync(parent, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    }
+  async sync(): Promise<void> {
+    const ref = npmRefFromConfig(this.#config);
+    await syncNpmRef(ref);
   }
 }
 

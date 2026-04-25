@@ -18,13 +18,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/config";
 import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/db";
 import { recomputeUtilityScores } from "../src/indexer";
 import { assembleInfo } from "../src/info";
 import { getDbPath } from "../src/paths";
 import { buildSearchFields } from "../src/search-fields";
-import { akmSearch } from "../src/source-search";
 import type { SourceSearchHit } from "../src/source-types";
 import { insertUsageEvent } from "../src/usage-events";
 import { recordUsageEvent } from "./helpers/usage-events";

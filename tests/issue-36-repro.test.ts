@@ -12,10 +12,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/config";
 import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/db";
 import { akmIndex } from "../src/indexer";
-import { akmSearch } from "../src/source-search";
 import type { SourceSearchHit } from "../src/source-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────

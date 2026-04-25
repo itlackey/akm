@@ -1,12 +1,23 @@
-import { loadConfig } from "./config";
-import { closeDatabase, openDatabase } from "./db";
-import { searchLocal } from "./db-search";
+/**
+ * `akm search` — entry point.
+ *
+ * Spec §6.1: search consults the local FTS5 index. There is one query path
+ * because there is one data store. Provider fan-out is gone.
+ *
+ * The orchestration here is thin: build the FTS query, optionally interleave
+ * a registry search behind `--source registry|both`, and log a usage event.
+ * Provider `search()` methods do not exist.
+ */
 
-// Eagerly import stash providers to trigger self-registration
-import "./source-providers/index";
-import { UsageError } from "./errors";
-import { searchRegistry } from "./registry-search";
-import { resolveSourceEntries } from "./search-source";
+import { loadConfig } from "../config";
+import { closeDatabase, openDatabase } from "../db";
+import { searchLocal } from "../db-search";
+import { UsageError } from "../errors";
+import { searchRegistry } from "../registry-search";
+import { resolveSourceEntries } from "../search-source";
+// Eagerly import source providers to trigger self-registration before the
+// indexer or path-resolution code runs.
+import "../source-providers/index";
 import type {
   AkmSearchType,
   RegistrySearchResultHit,
@@ -14,8 +25,8 @@ import type {
   SearchResponse,
   SearchSource,
   SourceSearchHit,
-} from "./source-types";
-import { insertUsageEvent } from "./usage-events";
+} from "../source-types";
+import { insertUsageEvent } from "../usage-events";
 
 const DEFAULT_LIMIT = 20;
 

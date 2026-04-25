@@ -3,12 +3,12 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/config";
 import { closeDatabase, openDatabase, rebuildFts, searchFts, setMeta, upsertEmbedding, upsertEntry } from "../src/db";
 import { clearEmbeddingCache } from "../src/embedder";
 import { akmIndex } from "../src/indexer";
 import type { StashEntry } from "../src/metadata";
-import { akmSearch } from "../src/source-search";
 import type { SourceSearchHit } from "../src/source-types";
 
 // ── Temp directory management ───────────────────────────────────────────────

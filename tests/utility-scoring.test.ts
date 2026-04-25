@@ -10,11 +10,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/config";
 import { closeDatabase, getUtilityScore, openDatabase, upsertUtilityScore } from "../src/db";
 import { akmIndex, recomputeUtilityScores } from "../src/indexer";
 import { getDbPath } from "../src/paths";
-import { akmSearch } from "../src/source-search";
 import type { SourceSearchHit } from "../src/source-types";
 import { recordUsageEvent } from "./helpers/usage-events";
 

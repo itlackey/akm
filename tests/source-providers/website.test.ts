@@ -56,7 +56,7 @@ describe("WebsiteSourceProvider", () => {
     expect(resolveSourceProviderFactory("website")).toBeTruthy();
   });
 
-  test("search() returns empty hits because content is indexed locally", async () => {
+  test("provider exposes only the v1 SourceProvider surface (no search/show stubs)", () => {
     const factory = resolveSourceProviderFactory("website");
     expect(factory).toBeTruthy();
     if (!factory) throw new Error("expected website factory to be registered");
@@ -66,9 +66,27 @@ describe("WebsiteSourceProvider", () => {
       name: "example",
     });
 
-    const result = await provider.search({ query: "docs", limit: 5 });
-    expect(result.hits).toEqual([]);
-    expect(provider.canShow("knowledge:example-com")).toBe(false);
+    expect(provider.kind).toBe("website");
+    expect(provider.name).toBe("example");
+    expect(typeof provider.path).toBe("function");
+    expect(typeof provider.sync).toBe("function");
+    expect((provider as unknown as { search?: unknown }).search).toBeUndefined();
+    expect((provider as unknown as { show?: unknown }).show).toBeUndefined();
+    expect((provider as unknown as { canShow?: unknown }).canShow).toBeUndefined();
+  });
+
+  test("path() returns the same value across calls (lifetime stability)", () => {
+    const factory = resolveSourceProviderFactory("website");
+    expect(factory).toBeTruthy();
+    if (!factory) throw new Error("expected website factory to be registered");
+    const provider = factory({
+      type: "website",
+      url: "https://example.com/docs",
+      name: "example",
+    });
+    const first = provider.path();
+    const second = provider.path();
+    expect(second).toBe(first);
   });
 
   test("scrapes a website into cached markdown files", async () => {

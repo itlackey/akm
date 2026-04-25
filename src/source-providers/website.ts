@@ -5,17 +5,10 @@ import { fetchWithRetry, ResponseTooLargeError, readBodyWithByteCap } from "../c
 import type { SourceConfigEntry } from "../config";
 import { ConfigError, UsageError } from "../errors";
 import { getRegistryIndexCacheDir } from "../paths";
-import type {
-  SourceLockData,
-  SourceSearchOptions,
-  SourceSearchResult,
-  SyncableSourceProvider,
-  SyncOptions,
-} from "../source-provider";
+import type { ProviderContext, SourceProvider } from "../source-provider";
 import { registerSourceProvider } from "../source-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../source-types";
 import { warn } from "../warn";
-import { isDirectory, isExpired, sanitizeString } from "./provider-utils";
+import { isExpired, sanitizeString } from "./provider-utils";
 
 /** Refresh website snapshots every 12 hours to balance freshness with scraping load. */
 const CACHE_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -50,70 +43,35 @@ interface WebsitePage {
 }
 
 /**
- * Website stash provider. Implements {@link SyncableSourceProvider} (which
- * extends LiveSourceProvider) — scrapes pages into a local mirror so the FTS5
- * indexer can walk them.
+ * Website source provider — scrapes pages into a local mirror so the FTS5
+ * indexer can walk them. Implements the v1 {@link SourceProvider} interface
+ * (spec §2.1): `{ name, kind, init, path, sync }`.
+ *
+ * Reading is the indexer's job — this class doesn't implement `search` or
+ * `show`.
  */
-class WebsiteSourceProvider implements SyncableSourceProvider {
-  readonly type = "website";
-  readonly kind = "syncable" as const;
+class WebsiteSourceProvider implements SourceProvider {
+  readonly kind = "website" as const;
   readonly name: string;
-  private readonly config: SourceConfigEntry;
+  readonly #config: SourceConfigEntry;
+  readonly #url: string;
 
   constructor(config: SourceConfigEntry) {
-    this.config = config;
+    this.#config = config;
     this.name = config.name ?? "website";
-    validateWebsiteUrl(config.url ?? "");
+    this.#url = validateWebsiteUrl(config.url ?? "");
   }
 
-  /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
-    return { hits: [] };
+  async init(_ctx: ProviderContext): Promise<void> {
+    // URL validation already happens in the constructor; nothing else to do.
   }
 
-  /** Content is local files, shown via showLocal. */
-  async show(_ref: string, _view?: KnowledgeView): Promise<ShowResponse> {
-    throw new Error("Website provider content is shown via local index");
+  path(): string {
+    return getCachePaths(this.#url).stashDir;
   }
 
-  /** Content is local; no remote show needed. */
-  canShow(_ref: string): boolean {
-    return false;
-  }
-
-  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
-    const cachePaths = await ensureWebsiteMirror(config, { requireStashDir: true, force: options?.force });
-    const syncedAt = (options?.now ?? new Date()).toISOString();
-    const url = config.url ?? "";
-    // #123 added "website" to the SourceSpec union, so we can use it directly.
-    return {
-      id: url,
-      source: "website",
-      ref: url,
-      artifactUrl: url,
-      contentDir: cachePaths.stashDir,
-      cacheDir: cachePaths.rootDir,
-      extractedDir: cachePaths.stashDir,
-      syncedAt,
-    };
-  }
-
-  getContentDir(config: SourceConfigEntry): string {
-    const url = config.url ?? "";
-    return getCachePaths(url).stashDir;
-  }
-
-  async remove(config: SourceConfigEntry): Promise<void> {
-    const url = config.url;
-    if (!url) return;
-    const paths = getCachePaths(url);
-    if (isDirectory(paths.rootDir)) {
-      try {
-        fs.rmSync(paths.rootDir, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    }
+  async sync(): Promise<void> {
+    await ensureWebsiteMirror(this.#config, { requireStashDir: true });
   }
 }
 

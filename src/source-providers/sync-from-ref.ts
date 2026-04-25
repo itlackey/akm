@@ -14,7 +14,7 @@ import type { SourceSpec } from "../config";
 import { UsageError } from "../errors";
 import { parseRegistryRef } from "../registry-resolve";
 import type { ParsedLocalRef } from "../registry-types";
-import type { SourceLockData, SyncOptions } from "../source-provider";
+import type { SourceLockData, SyncOptions } from "./install-types";
 import { detectStashRoot } from "./provider-utils";
 
 export async function syncFromRef(ref: string, options?: SyncOptions): Promise<SourceLockData> {

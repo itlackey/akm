@@ -1,33 +1,50 @@
+/**
+ * `akm show` — entry point.
+ *
+ * Spec §6.2:
+ *
+ *   show(ref) → indexer.lookup(ref) → readFile(entry.filePath)
+ *
+ * The richer presentation logic (matchers, renderers, wiki-root handling,
+ * edit-hints, summary-detail truncation) lives below in this file. The flow:
+ *
+ *   1. Special-case wiki-root refs (`wiki:<name>` with no page path).
+ *   2. Ask `indexer.lookup(ref)` for the row in the FTS index.
+ *   3. Fall back to the on-disk type-dir resolver only when the index has
+ *      no matching row — covers the "indexed yet?" gap when the user has
+ *      just added a file and not run `akm index`.
+ *   4. Render the file via the matcher/renderer pipeline.
+ *
+ * Step (2) is the v1 spec change: reading is the indexer's job. Step (3) is a
+ * pragmatic safety net (NOT remote provider fallback, which the spec
+ * forbids — "Show: Local FTS5 index only. No remote provider fallback.").
+ */
+
 import fs from "node:fs";
 import path from "node:path";
-import { parseAssetRef } from "./asset-ref";
-import { loadConfig } from "./config";
-import { closeDatabase, openDatabase } from "./db";
-import { NotFoundError, UsageError } from "./errors";
-import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
-import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
-import { loadStashFile } from "./metadata";
-import { resolveSourcesForOrigin } from "./origin-resolve";
-import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "./search-source";
-import { resolveAssetPath } from "./source-resolve";
-import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./source-types";
-import { insertUsageEvent } from "./usage-events";
-
-// Eagerly import stash providers to trigger self-registration
-import "./source-providers/index";
+import { type AssetRef, parseAssetRef } from "../asset-ref";
+import { loadConfig } from "../config";
+import { closeDatabase, openDatabase } from "../db";
+import { NotFoundError, UsageError } from "../errors";
+import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../file-context";
+import { parseFrontmatter, toStringOrUndefined } from "../frontmatter";
+import { lookup } from "../indexer";
+import { loadStashFile } from "../metadata";
+import { resolveSourcesForOrigin } from "../origin-resolve";
+import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../search-source";
+// Eagerly import source providers to trigger self-registration.
+import "../source-providers/index";
+import { resolveAssetPath } from "../source-resolve";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../source-types";
+import { insertUsageEvent } from "../usage-events";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as
  * `akm wiki show <name>`.
- *
- * Called when `parseAssetRef` yields `type === "wiki"` and the name has no
- * `/`, e.g. `wiki:research`.
  */
 async function showWikiRoot(stashDir: string, wikiName: string): Promise<ShowResponse> {
-  const { showWiki } = await import("./wiki.js");
+  const { showWiki } = await import("../wiki.js");
   const result = showWiki(stashDir, wikiName);
-  // Shape the WikiShowResult into a ShowResponse-compatible object.
-  // The payload mirrors what `akm wiki show <name>` returns.
   return {
     type: "wiki",
     name: result.ref,
@@ -47,7 +64,7 @@ async function showWikiRootForSource(
   source: { path: string; wikiName?: string },
   wikiName: string,
 ): Promise<ShowResponse> {
-  const { showWikiAtPath } = await import("./wiki.js");
+  const { showWikiAtPath } = await import("../wiki.js");
   if (source.wikiName === wikiName) {
     const result = showWikiAtPath(wikiName, source.path);
     return {
@@ -87,7 +104,9 @@ function resolveRegisteredWikiAssetPath(wikiRoot: string, wikiName: string, asse
 }
 
 /**
- * Unified show: tries local FTS5 index first, then remote providers.
+ * Unified show: queries the local FTS5 index, then falls back to on-disk
+ * type-dir resolution if the index has no row. Spec §6.2; no remote provider
+ * fallback.
  *
  * When `detail` is `"summary"`, the response omits content/template/prompt and
  * returns only compact metadata (name, type, description, tags, parameters).
@@ -124,16 +143,12 @@ export async function akmShowUnified(input: {
     }
   }
 
-  // Try local filesystem (FTS5 index lookup)
+  // Try local filesystem (FTS5 index lookup, then on-disk fallback)
   const result = await showLocal(input);
   logShowEvent(ref);
   return result;
 }
 
-/**
- * Fire-and-forget: log a show event to the usage_events table.
- * Never blocks the caller; errors are silently ignored.
- */
 function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
   try {
     const db = existingDb ?? openDatabase();
@@ -154,6 +169,43 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   } catch {
     /* fire-and-forget */
   }
+}
+
+/**
+ * Resolve an asset path to a file via:
+ *   1. `indexer.lookup(ref)` — the spec's primary path (§6.2).
+ *   2. On-disk type-dir traversal — fallback for files not yet indexed.
+ *
+ * Returns `undefined` if neither path finds a match.
+ */
+async function resolvePathViaIndexThenDisk(
+  parsed: AssetRef,
+  searchSourceDirs: string[],
+): Promise<{ assetPath: string; lastError?: Error } | undefined> {
+  // Step 1: indexer
+  try {
+    const entry = await lookup(parsed);
+    if (entry) {
+      return { assetPath: entry.filePath };
+    }
+  } catch (err) {
+    // Index unavailable (e.g. DB doesn't exist yet) — fall back to disk walk.
+    if (!(err instanceof NotFoundError)) {
+      // continue to disk fallback
+    }
+  }
+
+  // Step 2: on-disk type-dir traversal
+  let lastError: Error | undefined;
+  for (const dir of searchSourceDirs) {
+    try {
+      const assetPath = await resolveAssetPath(dir, parsed.type, parsed.name);
+      return { assetPath, lastError };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  return lastError ? { assetPath: "", lastError } : undefined;
 }
 
 /** @internal Use akmShowUnified() for all external callers. */
@@ -182,13 +234,12 @@ export async function showLocal(input: {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
-  for (const dir of allSourceDirs) {
-    if (assetPath) break;
-    try {
-      assetPath = await resolveAssetPath(dir, parsed.type, parsed.name);
-      break;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+  if (!assetPath) {
+    const resolved = await resolvePathViaIndexThenDisk(parsed, allSourceDirs);
+    if (resolved?.assetPath) {
+      assetPath = resolved.assetPath;
+    } else if (resolved?.lastError) {
+      lastError = resolved.lastError;
     }
   }
 
@@ -256,32 +307,40 @@ export async function showLocal(input: {
 }
 
 /**
+ * Minimal `show`: ref → indexer lookup → file contents. Used by callers that
+ * just need the raw file (e.g. clone, write-source) and don't want the full
+ * renderer graph. Spec §6.2's literal flow.
+ */
+export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
+  const parsed = parseAssetRef(ref);
+  const entry = await lookup(parsed);
+  if (!entry) {
+    throw new NotFoundError(`Asset not found for ref: ${parsed.type}:${parsed.name}`);
+  }
+  const body = await fs.promises.readFile(entry.filePath, "utf8");
+  return { filePath: entry.filePath, body };
+}
+
+/**
  * Build a compact summary response from a full ShowResponse.
  *
  * Strips content/template/prompt and returns only metadata fields:
  * type, name, path, description, tags, parameters, action.
  * Enriches description and tags from frontmatter or .stash.json when available.
  *
- * Enrichment via frontmatter and .stash.json is only performed when `assetPath`
- * is supplied. Callers that construct a response without a local file path
- * must populate description and tags themselves.
- *
  * The resulting JSON should be under 200 tokens.
  */
 function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowResponse {
-  // Try to enrich metadata from .stash.json if description or tags are missing
   let description = full.description;
   let tags = full.tags;
 
   if (assetPath) {
-    // Try frontmatter extraction from content fields
     const textContent = full.content ?? full.template ?? full.prompt;
     if (textContent && !description) {
       const parsed = parseFrontmatter(textContent);
       description = toStringOrUndefined(parsed.data.description);
     }
 
-    // Try .stash.json for richer metadata (tags especially)
     const dir = path.dirname(assetPath);
     const stashFile = loadStashFile(dir);
     if (stashFile) {

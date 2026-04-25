@@ -1,16 +1,18 @@
 /**
- * Stash provider factory map.
+ * Source provider factory map.
  *
- * Maps stash source type identifiers (e.g. "filesystem", "git", "website") to
- * factory functions that create SourceProvider instances from a SourceConfigEntry.
+ * Maps source kind identifiers (e.g. "filesystem", "git", "website", "npm")
+ * to factory functions that build {@link SourceProvider} instances from a
+ * {@link SourceConfigEntry}.
  *
- * "Stash providers" are runtime data sources for the search and show commands —
- * distinct from the stash-discovery registries (registry-factory.ts) and the
- * installed-stash operations (installed-stashes.ts).
+ * Distinct from the registry-discovery factory (`registry-factory.ts`).
+ * Both share `create-provider-registry.ts` for the underlying string→factory
+ * map.
  */
 
+import type { AkmConfig } from "./config";
 import { createProviderRegistry } from "./create-provider-registry";
-import type { SourceProviderFactory } from "./source-provider";
+import type { SourceProvider, SourceProviderFactory } from "./source-provider";
 
 // ── Factory map ─────────────────────────────────────────────────────────────
 
@@ -25,13 +27,11 @@ export function resolveSourceProviderFactory(type: string): SourceProviderFactor
 }
 
 /**
- * Resolve all non-filesystem stash providers from config.
- * Filesystem entries are excluded — they are handled by resolveSourceEntries().
+ * Build a {@link SourceProvider} for every enabled source in the config that
+ * has a registered factory.
  */
-export function resolveSourceProviders(
-  config: import("./config").AkmConfig,
-): import("./source-provider").LiveSourceProvider[] {
-  const providers: import("./source-provider").LiveSourceProvider[] = [];
+export function resolveSourceProviders(config: AkmConfig): SourceProvider[] {
+  const providers: SourceProvider[] = [];
 
   for (const entry of config.sources ?? config.stashes ?? []) {
     if (entry.enabled === false) continue;

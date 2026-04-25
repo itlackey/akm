@@ -9,15 +9,9 @@ import { ConfigError, UsageError } from "../errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../paths";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../registry-resolve";
 import type { ParsedGitRef } from "../registry-types";
-import type {
-  SourceLockData,
-  SourceSearchOptions,
-  SourceSearchResult,
-  SyncableSourceProvider,
-  SyncOptions,
-} from "../source-provider";
+import type { ProviderContext, SourceProvider } from "../source-provider";
 import { registerSourceProvider } from "../source-provider-factory";
-import type { KnowledgeView, ShowResponse } from "../source-types";
+import type { SourceLockData, SyncOptions } from "./install-types";
 import {
   applyAkmIncludeConfig,
   buildInstallCacheDir,
@@ -43,74 +37,64 @@ interface ParsedRepoUrl {
 }
 
 /**
- * Git stash provider. Implements {@link SyncableSourceProvider} (which extends
- * the LiveSourceProvider surface) — the indexer walks the cloned repo, and
- * `sync()` clones/pulls into a local mirror.
+ * Git source provider — clones (and re-pulls) a remote repo into a local
+ * cache directory. Implements the v1 {@link SourceProvider} interface (spec
+ * §2.1, §2.5): `{ name, kind, init, path, sync }`.
+ *
+ * Reading is the indexer's job — this class doesn't implement `search` or
+ * `show`. The install-time helpers `syncRegistryGitRef` / `syncMirroredRepo`
+ * live below as standalone functions used by `akm add` / `akm update`.
  */
-class GitSourceProvider implements SyncableSourceProvider {
-  readonly type = "git";
-  readonly kind = "syncable" as const;
+class GitSourceProvider implements SourceProvider {
+  readonly kind = "git" as const;
   readonly name: string;
-  private readonly config: SourceConfigEntry;
+  readonly #config: SourceConfigEntry;
+  #path: string | null = null;
 
   constructor(config: SourceConfigEntry) {
-    this.config = config;
+    this.#config = config;
     this.name = config.name ?? "git";
   }
 
-  /** Content is indexed through the standard FTS5 pipeline. */
-  async search(_options: SourceSearchOptions): Promise<SourceSearchResult> {
-    return { hits: [] };
+  async init(_ctx: ProviderContext): Promise<void> {
+    // Resolve the on-disk content directory once. For configured git sources
+    // this is the cached working tree; for one-shot install refs it's the
+    // path the install pipeline materialised.
+    this.#path = resolveGitContentDir(this.#config);
   }
 
-  /** Content is local files, shown via showLocal. */
-  async show(_ref: string, _view?: KnowledgeView): Promise<ShowResponse> {
-    throw new Error("Git provider content is shown via local index");
+  path(): string {
+    if (this.#path == null) {
+      // Lazy resolution: providers are sometimes constructed without an
+      // explicit init() call (e.g. by legacy callers that just want the
+      // path). Resolve on demand and cache.
+      this.#path = resolveGitContentDir(this.#config);
+    }
+    return this.#path;
   }
 
-  /** Content is local; no remote show needed. */
-  canShow(_ref: string): boolean {
-    return false;
-  }
-
-  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
+  async sync(): Promise<void> {
     // Two execution modes:
-    //   1. Long-lived configured stash (config.url) — mirror into the
+    //   1. Long-lived configured source (config.url) — mirror into the
     //      registry-index cache and serve as a read-only working tree.
-    //   2. One-shot install ref (config.options.ref like "git:..." / "github:...") —
-    //      run the historical clone-into-cache flow used by `akm add`.
-    if (typeof config.options?.ref === "string" && config.options.ref) {
-      return syncRegistryGitRef(String(config.options.ref), options);
+    //   2. One-shot install ref (options.ref like "git:..." / "github:...") —
+    //      delegate to the install-time pipeline.
+    if (typeof this.#config.options?.ref === "string" && this.#config.options.ref) {
+      await syncRegistryGitRef(String(this.#config.options.ref));
+      return;
     }
-    return syncMirroredRepo(config, options);
+    await syncMirroredRepo(this.#config);
   }
+}
 
-  getContentDir(config: SourceConfigEntry): string {
-    if (config.path) return config.path;
-    if (config.url) {
-      const repo = parseGitRepoUrl(config.url);
-      return getCachePaths(repo.canonicalUrl).repoDir;
-    }
-    throw new ConfigError("git stash entry must have either `path` or `url`");
+/** Resolve the on-disk content directory for a configured git source. */
+function resolveGitContentDir(config: SourceConfigEntry): string {
+  if (config.path) return config.path;
+  if (config.url) {
+    const repo = parseGitRepoUrl(config.url);
+    return getCachePaths(repo.canonicalUrl).repoDir;
   }
-
-  async remove(config: SourceConfigEntry): Promise<void> {
-    if (config.path && isDirectory(config.path)) {
-      try {
-        fs.rmSync(path.dirname(config.path), { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    } else if (config.url) {
-      const repo = parseGitRepoUrl(config.url);
-      const paths = getCachePaths(repo.canonicalUrl);
-      try {
-        fs.rmSync(paths.rootDir, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    }
-  }
+  throw new ConfigError("git source entry must have either `path` or `url`");
 }
 
 // ── Self-register ───────────────────────────────────────────────────────────
