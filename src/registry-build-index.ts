@@ -5,9 +5,9 @@ import { fetchWithRetry, jsonWithByteCap } from "./common";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "./github";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
-import { copyIncludedPaths, findNearestIncludeConfig } from "./stash-include";
-import { detectStashRoot } from "./stash-providers/provider-utils";
-import { extractTarGzSecure } from "./stash-providers/tar-utils";
+import { copyIncludedPaths, findNearestIncludeConfig } from "./source-include";
+import { detectStashRoot } from "./source-providers/provider-utils";
+import { extractTarGzSecure } from "./source-providers/tar-utils";
 import { walkStashFlat } from "./walker";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";

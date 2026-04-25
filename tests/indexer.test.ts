@@ -212,7 +212,7 @@ test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash so
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: wikiSource, wikiName: "research" }],
+      sources: [{ type: "filesystem", path: wikiSource, wikiName: "research" }],
     });
 
     await akmIndex({ stashDir: primaryStash, full: true });
@@ -517,7 +517,7 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   // Write a config that includes the same directory twice via stashes
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: secondStash }] });
+  saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: secondStash }] });
 
   const result = await akmIndex({ stashDir: primaryStash });
 
@@ -545,7 +545,7 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
 
   const { saveConfig } = await import("../src/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: stash2 }] });
+  saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: stash2 }] });
 
   await akmIndex({ stashDir: stash1, full: true });
 

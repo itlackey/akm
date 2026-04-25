@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractTarGzSecure } from "../src/stash-providers/tar-utils";
+import { extractTarGzSecure } from "../src/source-providers/tar-utils";
 
 /**
  * Regression tests for the post-extraction scanner in `tar-utils.ts`.

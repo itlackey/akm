@@ -325,7 +325,7 @@ describe("workflow CLI", () => {
 
     writeConfig(env, {
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: extraStash, name: "extra" }],
+      sources: [{ type: "filesystem", path: extraStash, name: "extra" }],
     });
 
     expect(runCli(["index", "--full"], env).status).toBe(0);

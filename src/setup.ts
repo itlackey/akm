@@ -14,7 +14,7 @@ import type {
   EmbeddingConnectionConfig,
   LlmConnectionConfig,
   RegistryConfigEntry,
-  StashConfigEntry,
+  SourceConfigEntry,
 } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadUserConfig, saveConfig } from "./config";
 import { closeDatabase, isVecAvailable, openDatabase } from "./db";
@@ -633,8 +633,8 @@ async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[]
 /**
  * @internal Exported for testing only.
  */
-export async function stepStashSources(current: AkmConfig): Promise<StashConfigEntry[]> {
-  const stashes: StashConfigEntry[] = [...(current.stashes ?? [])];
+export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEntry[]> {
+  const stashes: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
 
   if (stashes.length > 0) {
     p.log.info(`You have ${stashes.length} existing stash source(s).`);
@@ -722,7 +722,7 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
       );
       if (name === null) continue;
 
-      const entry: StashConfigEntry = { type: "git", url: url.trim() };
+      const entry: SourceConfigEntry = { type: "git", url: url.trim() };
       if (name.trim()) entry.name = name.trim();
       if (!stashes.some((s) => s.url === entry.url)) {
         stashes.push(entry);
@@ -752,7 +752,7 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
       );
       if (name === null) continue;
 
-      const entry: StashConfigEntry = { type: "filesystem", path: resolved };
+      const entry: SourceConfigEntry = { type: "filesystem", path: resolved };
       if (name.trim()) entry.name = name.trim();
       if (!stashes.some((s) => s.path === entry.path)) {
         stashes.push(entry);
@@ -765,7 +765,7 @@ export async function stepStashSources(current: AkmConfig): Promise<StashConfigE
   return stashes;
 }
 
-async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[]> {
+async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry[]> {
   const platforms = detectAgentPlatforms();
 
   if (platforms.length === 0) {
@@ -795,7 +795,7 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<StashConfigEntry[
     }),
   );
 
-  const entries: StashConfigEntry[] = [];
+  const entries: SourceConfigEntry[] = [];
   for (const selectedPath of selected) {
     const platform = newPlatforms.find((pl) => pl.path === selectedPath);
     if (platform) {
@@ -890,13 +890,13 @@ export function buildSetupSteps(options: {
       id: "stash-sources",
       label: "Stash Sources",
       async run(ctx) {
-        const stashes = await stepStashSources(ctx.config);
+        const stashes = await stepAddSources(ctx.config);
         const platforms = await stepAgentPlatforms(ctx.config);
         const merged = [...stashes];
         for (const ps of platforms) {
           if (!merged.some((s) => s.path === ps.path)) merged.push(ps);
         }
-        ctx.apply({ stashes: merged.length > 0 ? merged : undefined });
+        ctx.apply({ sources: merged.length > 0 ? merged : undefined });
       },
     },
   ];

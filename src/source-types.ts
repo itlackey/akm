@@ -5,7 +5,7 @@ export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
 
-export interface StashSearchHit {
+export interface SourceSearchHit {
   type: string;
   name: string;
   path: string;
@@ -41,7 +41,7 @@ export interface RegistrySearchResultHit {
   registryName?: string;
 }
 
-export type SearchHit = StashSearchHit | RegistrySearchResultHit;
+export type SearchHit = SourceSearchHit | RegistrySearchResultHit;
 
 export interface SearchResponse {
   schemaVersion: number;
@@ -110,7 +110,7 @@ export interface AddResponse {
     audit?: InstallAuditReport;
   };
   /** Present for local directory adds (routed to stashes config) */
-  stashSource?:
+  sourceAdded?:
     | {
         type: "filesystem";
         path: string;
@@ -126,7 +126,7 @@ export interface AddResponse {
         wiki?: string;
       };
   config: {
-    stashCount: number;
+    sourceCount: number;
     installedKitCount: number;
   };
   index: {
@@ -138,7 +138,7 @@ export interface AddResponse {
   };
 }
 
-export interface StashInstallStatus extends InstalledStashEntry {
+export interface SourceInstallStatus extends InstalledStashEntry {
   extractedDir: string;
   audit?: InstallAuditReport;
 }
@@ -177,7 +177,7 @@ export interface RemoveResponse {
     stashRoot: string;
   };
   config: {
-    stashCount: number;
+    sourceCount: number;
     installedKitCount: number;
   };
   index: {
@@ -197,7 +197,7 @@ export interface UpdateResultItem {
     resolvedRevision?: string;
     cacheDir: string;
   };
-  installed: StashInstallStatus;
+  installed: SourceInstallStatus;
   changed: {
     version: boolean;
     revision: boolean;
@@ -212,7 +212,7 @@ export interface UpdateResponse {
   all: boolean;
   processed: UpdateResultItem[];
   config: {
-    stashCount: number;
+    sourceCount: number;
     installedKitCount: number;
   };
   index: {
@@ -332,7 +332,7 @@ export interface InfoResponse {
     message?: string;
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
-  stashProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
+  sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;
     lastBuiltAt: string | null;

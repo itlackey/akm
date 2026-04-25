@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
+import { parseAssetRef } from "./asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./asset-spec";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./cli-hints";
 import { isWithin, resolveStashDir, tryReadStdinText } from "./common";
@@ -32,14 +33,13 @@ import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
 import { searchRegistry } from "./registry-search";
 import { buildMemoryFrontmatter, parseDuration, readMemoryContent, runAutoHeuristics, runLlmEnrich } from "./remember";
 import { checkForUpdate, performUpgrade } from "./self-update";
-import { akmAdd } from "./stash-add";
-import { akmClone } from "./stash-clone";
-import { saveGitStash } from "./stash-providers/git";
-import { parseAssetRef } from "./stash-ref";
-import { akmSearch, parseSearchSource } from "./stash-search";
-import { akmShowUnified } from "./stash-show";
-import { addStash } from "./stash-source-manage";
-import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./stash-types";
+import { akmAdd } from "./source-add";
+import { akmClone } from "./source-clone";
+import { addStash } from "./source-manage";
+import { saveGitStash } from "./source-providers/git";
+import { akmSearch, parseSearchSource } from "./source-search";
+import { akmShowUnified } from "./source-show";
+import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./source-types";
 import { insertUsageEvent } from "./usage-events";
 import { pkgVersion } from "./version";
 import { setQuiet, warn } from "./warn";
@@ -110,8 +110,8 @@ function output(command: string, result: unknown): void {
 }
 /**
  * Module Naming:
- * - stash-*          : Asset operations (search, show, add, clone)
- * - stash-provider-* : Runtime data source providers (filesystem, git, website, npm)
+ * - source-*          : Asset operations (search, show, add, clone)
+ * - source-provider-* : Runtime data source providers (filesystem, git, website, npm)
  * - registry-*       : Discovery from remote registries (npm, GitHub)
  * - installed-stashes   : Unified source operations (list, remove, update)
  */
@@ -302,7 +302,7 @@ const addCommand = defineCommand({
       const websiteOptions = buildWebsiteOptions(args);
 
       if (args.type === "wiki") {
-        const { registerWikiSource } = await import("./stash-add");
+        const { registerWikiSource } = await import("./source-add");
         const result = await registerWikiSource({
           ref,
           name: args.name,
@@ -1777,7 +1777,7 @@ const wikiRegisterCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { registerWikiSource } = await import("./stash-add");
+      const { registerWikiSource } = await import("./source-add");
       const result = await registerWikiSource({
         ref: args.ref.trim(),
         name: args.name,

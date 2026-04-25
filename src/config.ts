@@ -5,6 +5,7 @@ import { filterNonEmptyStrings } from "./common";
 import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import type { InstalledStashEntry, KitSource } from "./registry-types";
+import { warn } from "./warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,16 +66,16 @@ export interface RegistryConfigEntry {
 }
 
 /**
- * StashSource — discriminated union describing *where* a stash comes from.
+ * SourceSpec — discriminated union describing *where* a stash comes from.
  *
  * This is the canonical runtime model. The on-disk config keeps using the
- * flat `{ type, path, url, ... }` shape (see {@link StashConfigEntry}); a
- * {@link StashSource} value is constructed from those fields by
- * {@link parseStashEntrySource} at load time and attached to the runtime
- * {@link StashEntry}. `StashSource` values are not serialized in this shape —
+ * flat `{ type, path, url, ... }` shape (see {@link SourceConfigEntry}); a
+ * {@link SourceSpec} value is constructed from those fields by
+ * {@link parseSourceSpec} at load time and attached to the runtime
+ * {@link ConfiguredSource}. `SourceSpec` values are not serialized in this shape —
  * they are derived.
  */
-export type StashSource =
+export type SourceSpec =
   | { type: "filesystem"; path: string }
   | { type: "git"; url: string; ref?: string }
   | { type: "npm"; package: string; version?: string }
@@ -83,26 +84,26 @@ export type StashSource =
   | { type: "local"; path: string };
 
 /**
- * StashEntry — runtime representation of a configured stash.
+ * ConfiguredSource — runtime representation of a configured stash.
  *
  * Unifies the four overlapping types this codebase used to carry
- * (`StashConfigEntry`, `InstalledStashEntry`, `SourceEntry`, `SearchSource`)
- * into one value. Persisted on disk via {@link StashConfigEntry}; the
+ * (`SourceConfigEntry`, `InstalledStashEntry`, `SourceEntry`, `SearchSource`)
+ * into one value. Persisted on disk via {@link SourceConfigEntry}; the
  * `source` field is derived at load time and never written back out.
  *
- * Iteration order convention (see `resolveStashEntries()`):
+ * Iteration order convention (see `resolveConfiguredSources()`):
  *   1. The entry marked `primary: true` (or, as a backwards-compat shim,
  *      a synthetic filesystem entry built from the top-level `stashDir`).
  *   2. Remaining `stashes[]` entries in declared order.
  *   3. Legacy `installed[]` entries last.
  */
-export interface StashEntry {
+export interface ConfiguredSource {
   /** Stable identifier. Generated from `type+hash` when absent in legacy configs. */
   name: string;
   /** Provider type discriminator (mirrors `source.type`). */
   type: string;
   /** Internal derived field — not persisted to disk. */
-  source: StashSource;
+  source: SourceSpec;
   /** Default true. When false, the entry is loaded but skipped at runtime. */
   enabled?: boolean;
   /** Whether the underlying repo accepts writes (e.g. git push). */
@@ -116,11 +117,11 @@ export interface StashEntry {
 }
 
 /**
- * @deprecated Use {@link StashEntry} (runtime) and let the loader derive
- * {@link StashSource} from the persisted fields. `StashConfigEntry` describes
+ * @deprecated Use {@link ConfiguredSource} (runtime) and let the loader derive
+ * {@link SourceSpec} from the persisted fields. `SourceConfigEntry` describes
  * the on-disk JSON shape; new code should not reach for it directly.
  */
-export interface StashConfigEntry {
+export interface SourceConfigEntry {
   /** Provider type (e.g. "filesystem", "git", "website", "npm") */
   type: string;
   /** Filesystem path (for type: "filesystem") */
@@ -192,8 +193,14 @@ export interface AkmConfig {
    * coerces this boolean into `stashInheritance` when the new field is absent.
    */
   disableGlobalStashes?: boolean;
-  /** Additional stash sources (filesystem paths and remote providers) */
-  stashes?: StashConfigEntry[];
+  /** Additional asset sources (filesystem paths and remote providers) */
+  sources?: SourceConfigEntry[];
+  /**
+   * @deprecated Use `sources` instead. Legacy key retained for one release cycle
+   * so existing configs load without manual edits. The loader migrates `stashes`
+   * to `sources` in-memory and persists the new key on the next `akm config` write.
+   */
+  stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
   security?: SecurityConfig;
   /** Output defaults for CLI rendering */
@@ -413,16 +420,16 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
     config.semanticSearchMode = legacySemanticSearch ? "auto" : "off";
   }
 
-  // Migrate legacy searchPaths into stashes
+  // Migrate legacy searchPaths into sources
   if (Array.isArray(raw.searchPaths)) {
     const legacyPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
     if (legacyPaths.length > 0) {
-      const existing = config.stashes ?? [];
-      const migrated: StashConfigEntry[] = legacyPaths
+      const existing = config.sources ?? [];
+      const migrated: SourceConfigEntry[] = legacyPaths
         .filter((p) => !existing.some((s) => s.type === "filesystem" && s.path === p))
         .map((p) => ({ type: "filesystem", path: p }));
       if (migrated.length > 0) {
-        config.stashes = [...existing, ...migrated];
+        config.sources = [...existing, ...migrated];
       }
     }
   }
@@ -448,8 +455,23 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
     config.disableGlobalStashes = raw.disableGlobalStashes;
   }
 
-  const stashes = parseStashesConfig(raw.stashes);
-  if (stashes) config.stashes = stashes;
+  // Load `sources` (new key) first, then fall back to legacy `stashes` key.
+  const sources = parseStashesConfig(raw.sources);
+  if (sources) {
+    config.sources = sources;
+  } else {
+    const legacyStashes = parseStashesConfig(raw.stashes);
+    if (legacyStashes) {
+      // Backwards-compat migration: `stashes[]` → `sources[]` in-memory.
+      // Emit a one-time deprecation warning and carry the value forward as
+      // `sources`. The renamed key is persisted on the next `akm config` write.
+      warn(
+        'Config key "stashes" is deprecated; rename it to "sources" in your config file (akm config edit). ' +
+          "Your configuration has been loaded successfully — no manual action is required right now.",
+      );
+      config.sources = legacyStashes;
+    }
+  }
 
   const security = parseSecurityConfig(raw.security);
   if (security) config.security = security;
@@ -791,12 +813,12 @@ function parseRegistriesConfig(value: unknown): RegistryConfigEntry[] | undefine
   return entries;
 }
 
-function parseStashesConfig(value: unknown): StashConfigEntry[] | undefined {
+function parseStashesConfig(value: unknown): SourceConfigEntry[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
   const entries = value
-    .map((entry) => parseStashConfigEntry(entry))
-    .filter((entry): entry is StashConfigEntry => entry !== undefined);
+    .map((entry) => parseSourceConfigEntry(entry))
+    .filter((entry): entry is SourceConfigEntry => entry !== undefined);
 
   return entries;
 }
@@ -861,7 +883,7 @@ const STASH_TYPE_ALIASES: Record<string, string> = {
   github: "git",
 };
 
-function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
+function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
 
@@ -879,7 +901,7 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
 
   const type = STASH_TYPE_ALIASES[rawType] ?? rawType;
 
-  const entry: StashConfigEntry = { type };
+  const entry: SourceConfigEntry = { type };
   const entryPath = asNonEmptyString(obj.path);
   if (entryPath) entry.path = entryPath;
   const url = asNonEmptyString(obj.url);
@@ -897,14 +919,14 @@ function parseStashConfigEntry(value: unknown): StashConfigEntry | undefined {
   return entry;
 }
 
-// ── StashEntry runtime construction ─────────────────────────────────────────
+// ── ConfiguredSource runtime construction ─────────────────────────────────────────
 
 /**
- * Synthesize a stable identifier when a {@link StashConfigEntry} omits its
+ * Synthesize a stable identifier when a {@link SourceConfigEntry} omits its
  * `name`. Uses a short hash of the discriminating fields so two equivalent
  * entries collapse to the same generated name.
  */
-function deriveStashEntryName(entry: StashConfigEntry): string {
+function deriveStashEntryName(entry: SourceConfigEntry): string {
   if (entry.name) return entry.name;
   const seed = JSON.stringify({
     type: entry.type,
@@ -916,8 +938,8 @@ function deriveStashEntryName(entry: StashConfigEntry): string {
 }
 
 /**
- * Convert a persisted {@link StashConfigEntry} into the runtime
- * {@link StashSource} discriminated union. Returns `undefined` when the
+ * Convert a persisted {@link SourceConfigEntry} into the runtime
+ * {@link SourceSpec} discriminated union. Returns `undefined` when the
  * entry is missing the fields its provider type requires (e.g. a
  * `filesystem` entry with no `path`); callers should drop or warn for those.
  *
@@ -925,7 +947,7 @@ function deriveStashEntryName(entry: StashConfigEntry): string {
  * legacy aliases (`"context-hub"`, `"github"` for git) still produce a usable
  * runtime value when a path/url is supplied.
  */
-export function parseStashEntrySource(entry: StashConfigEntry): StashSource | undefined {
+export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefined {
   switch (entry.type) {
     case "filesystem":
       return entry.path ? { type: "filesystem", path: entry.path } : undefined;
@@ -953,22 +975,24 @@ export function parseStashEntrySource(entry: StashConfigEntry): StashSource | un
 }
 
 /**
- * Build the full ordered list of runtime {@link StashEntry} values from a
+ * Build the full ordered list of runtime {@link ConfiguredSource} values from a
  * loaded {@link AkmConfig}. Order is the canonical iteration order:
  *
  *   1. The entry marked `primary: true` (or, as a backwards-compat shim,
  *      a synthetic filesystem entry built from the top-level `stashDir`).
- *   2. Remaining `stashes[]` entries in declared order.
+ *   2. Remaining `sources[]` entries in declared order.
  *   3. Legacy `installed[]` entries, mapped into runtime entries.
  *
  * Entries with `enabled: false` are still emitted — callers decide whether
  * to honour the flag (mirrors how `installed[]` entries have always been
- * unconditional). Entries that fail {@link parseStashEntrySource} are
+ * unconditional). Entries that fail {@link parseSourceSpec} are
  * dropped silently.
  */
-export function resolveStashEntries(config: AkmConfig): StashEntry[] {
-  const entries: StashEntry[] = [];
-  const stashes = config.stashes ?? [];
+export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] {
+  const entries: ConfiguredSource[] = [];
+  // `sources` is the canonical key. `stashes` is the legacy key that the loader
+  // migrates in-memory; only one of the two should be set at runtime.
+  const stashes = config.sources ?? config.stashes ?? [];
 
   // (1) Primary entry: explicit `primary: true` wins; fall back to top-level stashDir.
   let primary = stashes.find((entry) => entry.primary === true);
@@ -976,14 +1000,14 @@ export function resolveStashEntries(config: AkmConfig): StashEntry[] {
     primary = { type: "filesystem", path: config.stashDir, primary: true };
   }
   if (primary) {
-    const runtime = toStashEntry(primary, true);
+    const runtime = toConfiguredSource(primary, true);
     if (runtime) entries.push(runtime);
   }
 
   // (2) Declared stashes (skip the primary entry — already added).
   for (const entry of stashes) {
     if (entry === primary) continue;
-    const runtime = toStashEntry(entry, false);
+    const runtime = toConfiguredSource(entry, false);
     if (runtime) entries.push(runtime);
   }
 
@@ -1002,8 +1026,8 @@ export function resolveStashEntries(config: AkmConfig): StashEntry[] {
   return entries;
 }
 
-function toStashEntry(persisted: StashConfigEntry, isPrimary: boolean): StashEntry | undefined {
-  const source = parseStashEntrySource(persisted);
+function toConfiguredSource(persisted: SourceConfigEntry, isPrimary: boolean): ConfiguredSource | undefined {
+  const source = parseSourceSpec(persisted);
   if (!source) return undefined;
   return {
     name: deriveStashEntryName(persisted),
@@ -1088,11 +1112,19 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   const replaceStashes =
     override.stashInheritance === "replace" ||
     (override.stashInheritance === undefined && override.disableGlobalStashes === true);
+  // Merge `sources` (canonical key). Legacy `stashes` key is handled via the
+  // pickKnownKeys migration which promotes it to `sources` at load time.
+  const overrideSources = override.sources ?? override.stashes ?? [];
+  const baseSources = base.sources ?? base.stashes ?? [];
   if (replaceStashes) {
-    merged.stashes = [...(override.stashes ?? [])];
-  } else if (override.stashes) {
-    merged.stashes = [...(base.stashes ?? []), ...override.stashes];
+    merged.sources = [...overrideSources];
+  } else if (overrideSources.length > 0) {
+    merged.sources = [...baseSources, ...overrideSources];
+  } else if (baseSources.length > 0) {
+    merged.sources = [...baseSources];
   }
+  // Clear deprecated stashes field on the merged result — sources is canonical.
+  delete merged.stashes;
 
   return merged;
 }

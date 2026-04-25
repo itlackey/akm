@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "./common";
-import type { StashConfigEntry, StashSource } from "./config";
+import type { SourceConfigEntry, SourceSpec } from "./config";
 import { loadConfig, loadUserConfig, saveConfig } from "./config";
 import { UsageError } from "./errors";
 import { akmIndex } from "./indexer";
@@ -14,10 +14,10 @@ import {
 import { upsertLockEntry } from "./lockfile";
 import { parseRegistryRef } from "./registry-resolve";
 import type { InstalledStashEntry } from "./registry-types";
-import { detectStashRoot } from "./stash-providers/provider-utils";
-import { syncFromRef } from "./stash-providers/sync-from-ref";
-import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./stash-providers/website";
-import type { AddResponse } from "./stash-types";
+import { detectStashRoot } from "./source-providers/provider-utils";
+import { syncFromRef } from "./source-providers/sync-from-ref";
+import { ensureWebsiteMirror, validateWebsiteInputUrl } from "./source-providers/website";
+import type { AddResponse } from "./source-types";
 import { warn } from "./warn";
 import { ensureWikiNameAvailable, validateWikiName } from "./wiki";
 
@@ -56,7 +56,7 @@ export async function akmAdd(input: {
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteStashSource(ref, stashDir, input.name ?? wikiName, input.options, wikiName);
+    return addWebsiteSource(ref, stashDir, input.name ?? wikiName, input.options, wikiName);
   }
 
   // Detect local directory refs and route them to stashes[] instead of installed[]
@@ -66,7 +66,7 @@ export async function akmAdd(input: {
       if (input.trustThisInstall) {
         warn("--trust has no effect on local directory sources; the install audit is not run for local paths.");
       }
-      return addLocalStashSource(ref, parsed.sourcePath, stashDir, wikiName);
+      return addLocalSource(ref, parsed.sourcePath, stashDir, wikiName);
     }
   } catch {
     // Not a local ref — fall through to registry install
@@ -100,7 +100,7 @@ export async function registerWikiSource(input: {
  * Add a local directory as a filesystem stash source.
  * Creates a stashes[] entry instead of an installed[] entry.
  */
-async function addLocalStashSource(
+async function addLocalSource(
   ref: string,
   sourcePath: string,
   stashDir: string,
@@ -110,10 +110,10 @@ async function addLocalStashSource(
   const resolvedPath = path.resolve(stashRoot);
   const config = loadUserConfig();
 
-  // Check for duplicates in stashes[]
-  const stashes = [...(config.stashes ?? [])];
-  const existing = stashes.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
-  let persistedEntry: StashConfigEntry;
+  // Check for duplicates in sources[]
+  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const existing = sources.find((s) => s.type === "filesystem" && s.path && path.resolve(s.path) === resolvedPath);
+  let persistedEntry: SourceConfigEntry;
   if (!existing) {
     persistedEntry = {
       type: "filesystem",
@@ -121,12 +121,12 @@ async function addLocalStashSource(
       name: wikiName ?? toReadableId(resolvedPath),
       ...(wikiName ? { wikiName } : {}),
     };
-    stashes.push(persistedEntry);
-    saveConfig({ ...config, stashes });
+    sources.push(persistedEntry);
+    saveConfig({ ...config, sources, stashes: undefined });
   } else {
     if (wikiName && existing.wikiName !== wikiName) {
       existing.wikiName = wikiName;
-      saveConfig({ ...config, stashes });
+      saveConfig({ ...config, sources, stashes: undefined });
     }
     persistedEntry = existing;
   }
@@ -138,7 +138,7 @@ async function addLocalStashSource(
     schemaVersion: 1,
     stashDir,
     ref: wikiName ?? ref,
-    stashSource: {
+    sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
       name: persistedEntry.name ?? toReadableId(resolvedPath),
@@ -146,7 +146,7 @@ async function addLocalStashSource(
       ...(persistedEntry.wikiName ? { wiki: persistedEntry.wikiName } : {}),
     },
     config: {
-      stashCount: updatedConfig.stashes?.length ?? 0,
+      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -159,7 +159,7 @@ async function addLocalStashSource(
   };
 }
 
-async function addWebsiteStashSource(
+async function addWebsiteSource(
   ref: string,
   stashDir: string,
   name?: string,
@@ -168,9 +168,9 @@ async function addWebsiteStashSource(
 ): Promise<AddResponse> {
   const normalizedUrl = validateWebsiteInputUrl(ref);
   const config = loadUserConfig();
-  const stashes = [...(config.stashes ?? [])];
-  let entry = stashes.find(
-    (stash): stash is StashConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
+  const sources = [...(config.sources ?? config.stashes ?? [])];
+  let entry = sources.find(
+    (stash): stash is SourceConfigEntry => stash.type === "website" && stash.url === normalizedUrl,
   );
 
   if (!entry) {
@@ -181,8 +181,8 @@ async function addWebsiteStashSource(
       ...(options && Object.keys(options).length > 0 ? { options } : {}),
       ...(wikiName ? { wikiName } : {}),
     };
-    stashes.push(entry);
-    saveConfig({ ...config, stashes });
+    sources.push(entry);
+    saveConfig({ ...config, sources, stashes: undefined });
   } else {
     let changed = false;
     if (options && Object.keys(options).length > 0) {
@@ -193,7 +193,7 @@ async function addWebsiteStashSource(
       entry.wikiName = wikiName;
       changed = true;
     }
-    if (changed) saveConfig({ ...config, stashes });
+    if (changed) saveConfig({ ...config, sources, stashes: undefined });
   }
 
   const cachePaths = await ensureWebsiteMirror(entry, { requireStashDir: true });
@@ -204,7 +204,7 @@ async function addWebsiteStashSource(
     schemaVersion: 1,
     stashDir,
     ref: wikiName ?? ref,
-    stashSource: {
+    sourceAdded: {
       type: "website",
       url: normalizedUrl,
       name: entry.name,
@@ -212,7 +212,7 @@ async function addWebsiteStashSource(
       ...(entry.wikiName ? { wiki: entry.wikiName } : {}),
     },
     config: {
-      stashCount: updatedConfig.stashes?.length ?? 0,
+      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -316,7 +316,7 @@ async function addRegistryStash(
       audit,
     },
     config: {
-      stashCount: updatedConfig.stashes?.length ?? 0,
+      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -436,7 +436,7 @@ export function deriveWikiNameFromRef(ref: string): string {
     .slice(0, 64);
 }
 
-// Re-export StashSource (the discriminated union from #123) so existing
+// Re-export SourceSpec (the discriminated union from #123) so existing
 // importers of `upsertInstalledRegistryEntry` (formerly from registry-install)
 // resolve the same nominal type.
-export type { StashSource };
+export type { SourceSpec };

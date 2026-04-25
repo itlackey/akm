@@ -1,5 +1,5 @@
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
-import type { WorkflowParameter, WorkflowStepDefinition } from "./stash-types";
+import type { WorkflowParameter, WorkflowStepDefinition } from "./source-types";
 
 const ALLOWED_FRONTMATTER_KEYS = new Set(["description", "tags", "params"]);
 const STEP_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;

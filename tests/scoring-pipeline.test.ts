@@ -12,8 +12,8 @@ import path from "node:path";
 import { saveConfig } from "../src/config";
 import { buildDbHit, buildWhyMatched } from "../src/db-search";
 import { akmIndex } from "../src/indexer";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import type { SourceSearchHit } from "../src/source-types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "deployment utility", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const alphaHit = localHits.find((h) => h.name === "alpha-tool");
     const betaHit = localHits.find((h) => h.name === "beta-tool");
 
@@ -238,7 +238,7 @@ describe("Issue #3: NaN guard on vector distance", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "testing NaN safety", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     for (const hit of localHits) {
       if (hit.score !== undefined) {
@@ -284,7 +284,7 @@ describe("Issue #4: deduplicateByPath enforces sort precondition", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "deploy infra", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Only one hit per file path should appear
     const pathCounts = new Map<string, number>();
@@ -346,7 +346,7 @@ describe("Issue #7: Boost accumulation caps", () => {
     // Use a simple query that both entries match on via FTS (description),
     // with tokens that also match tags in both entries
     const result = await akmSearch({ query: "deploy server", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const manyTagsHit = localHits.find((h) => h.name === "many-tags");
     const fewTagsHit = localHits.find((h) => h.name === "few-tags");
 
@@ -406,7 +406,7 @@ describe("Issue #7: Boost accumulation caps", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "deploy", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const manyHintsHit = localHits.find((h) => h.name === "many-hints");
     const fewHintsHit = localHits.find((h) => h.name === "few-hints");
 
@@ -463,7 +463,7 @@ describe("Issue #8: Score rounding precision", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "widget", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hitA = localHits.find((h) => h.name === "precise-a");
     const hitB = localHits.find((h) => h.name === "precise-b");
 
@@ -497,7 +497,7 @@ describe("Issue #8: Score rounding precision", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "rounding behavior", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "round-check");
     const resolved = expectDefined(hit);
 
@@ -532,7 +532,7 @@ describe("Issue #12: buildWhyMatched includes description matches", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "kubernetes", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hit = localHits.find((h) => h.name === "desc-match");
 
     const resolved = expectDefined(hit);
@@ -607,7 +607,7 @@ describe("Issue #14: Deterministic sort on tied scores", () => {
     const results: string[][] = [];
     for (let i = 0; i < 5; i++) {
       const result = await akmSearch({ query: "widget factory", source: "local" });
-      const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       const order = localHits.filter((h) => names.includes(h.name)).map((h) => h.name);
       results.push(order);
     }
@@ -735,12 +735,12 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 
     const result = await akmSearch({ query: "github", source: "stash" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Filter to just the "github" platform adapter hits
     const githubHits = localHits.filter(
@@ -792,12 +792,12 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 
     const result = await akmSearch({ query: "github adapter", source: "stash" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Filter to just the adapter hits (same description from different roots)
     const adapterHits = localHits.filter((h) => h.description?.includes("GitHub Platform Adapter"));
@@ -829,12 +829,12 @@ describe("Cross-stash deduplication at index time", () => {
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+      sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
     });
     await akmIndex({ stashDir: primaryStash, full: true });
 
     const result = await akmSearch({ query: "helper", source: "stash" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const helperHits = localHits.filter((h) => h.name.includes("helper"));
 
     // Different descriptions = different assets — both should be indexed

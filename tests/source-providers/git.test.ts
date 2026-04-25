@@ -4,11 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache, saveConfig } from "../../src/config";
-import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/stash-providers/git";
+import { resolveSourceProviderFactory } from "../../src/source-provider-factory";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/source-providers/git";
 
 // Trigger self-registration
-import "../../src/stash-providers/git";
+import "../../src/source-providers/git";
 
 const createdTmpDirs: string[] = [];
 
@@ -113,15 +113,15 @@ afterAll(() => {
   }
 });
 
-describe("GitStashProvider", () => {
+describe("GitSourceProvider", () => {
   test("self-registers as 'git' only (legacy aliases removed)", () => {
-    expect(resolveStashProviderFactory("git")).toBeTruthy();
-    expect(resolveStashProviderFactory("context-hub")).toBeNull();
-    expect(resolveStashProviderFactory("github")).toBeNull();
+    expect(resolveSourceProviderFactory("git")).toBeTruthy();
+    expect(resolveSourceProviderFactory("context-hub")).toBeNull();
+    expect(resolveSourceProviderFactory("github")).toBeNull();
   });
 
   test("search() returns empty hits (content indexed via FTS5 pipeline)", async () => {
-    const factory = resolveStashProviderFactory("git");
+    const factory = resolveSourceProviderFactory("git");
     expect(factory).toBeTruthy();
     // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
     const provider = factory!({
@@ -135,7 +135,7 @@ describe("GitStashProvider", () => {
   });
 
   test("canShow() returns false (content is local)", () => {
-    const factory = resolveStashProviderFactory("git");
+    const factory = resolveSourceProviderFactory("git");
     expect(factory).toBeTruthy();
     // biome-ignore lint/style/noNonNullAssertion: factory is guaranteed by the expect above
     const provider = factory!({
@@ -236,8 +236,8 @@ describe("GitStashProvider", () => {
     await ensureGitCaches(config);
 
     // Verify git stash content dir appears in stash sources.
-    const { resolveStashSources } = await import("../../src/search-source");
-    const sources = resolveStashSources(undefined, config);
+    const { resolveSourceEntries } = await import("../../src/search-source");
+    const sources = resolveSourceEntries(undefined, config);
     const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();
   });

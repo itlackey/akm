@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, IS_WINDOWS } from "./common";
 import { githubHeaders } from "./github";
-import type { UpgradeCheckResponse, UpgradeResponse } from "./stash-types";
+import type { UpgradeCheckResponse, UpgradeResponse } from "./source-types";
 
 const REPO = "itlackey/akm";
 const DEFAULT_PACKAGE_NAME = "akm-cli";

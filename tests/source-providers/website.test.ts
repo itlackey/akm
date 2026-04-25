@@ -4,16 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { saveConfig } from "../../src/config";
 import { ConfigError, UsageError } from "../../src/errors";
-import { resolveStashProviderFactory } from "../../src/stash-provider-factory";
+import { resolveSourceProviderFactory } from "../../src/source-provider-factory";
 import {
   ensureWebsiteMirror,
   getCachePaths,
   validateWebsiteInputUrl,
   validateWebsiteUrl,
-} from "../../src/stash-providers/website";
+} from "../../src/source-providers/website";
 
 // Trigger self-registration
-import "../../src/stash-providers/website";
+import "../../src/source-providers/website";
 
 const createdTmpDirs: string[] = [];
 
@@ -51,13 +51,13 @@ afterAll(() => {
   }
 });
 
-describe("WebsiteStashProvider", () => {
+describe("WebsiteSourceProvider", () => {
   test("self-registers as 'website'", () => {
-    expect(resolveStashProviderFactory("website")).toBeTruthy();
+    expect(resolveSourceProviderFactory("website")).toBeTruthy();
   });
 
   test("search() returns empty hits because content is indexed locally", async () => {
-    const factory = resolveStashProviderFactory("website");
+    const factory = resolveSourceProviderFactory("website");
     expect(factory).toBeTruthy();
     if (!factory) throw new Error("expected website factory to be registered");
     const provider = factory({

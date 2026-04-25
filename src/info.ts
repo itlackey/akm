@@ -5,7 +5,7 @@ import { loadConfig } from "./config";
 import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openDatabase } from "./db";
 import { getDbPath } from "./paths";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "./semantic-status";
-import type { InfoResponse } from "./stash-types";
+import type { InfoResponse } from "./source-types";
 import { pkgVersion } from "./version";
 
 /**
@@ -38,7 +38,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
   }));
 
   // Stash providers
-  const stashProviders = (config.stashes ?? []).map((s) => ({
+  const sourceProviders = (config.sources ?? config.stashes ?? []).map((s) => ({
     type: s.type,
     ...(s.name ? { name: s.name } : {}),
     ...(s.path ? { path: s.path } : {}),
@@ -61,7 +61,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
       ...(semanticRuntime?.message ? { message: semanticRuntime.message } : {}),
     },
     registries,
-    stashProviders,
+    sourceProviders,
     indexStats,
   };
 }

@@ -9,15 +9,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { makeAssetRef } from "./asset-ref";
 import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import { resolveStashDir } from "./common";
 import { type AkmConfig, loadConfig } from "./config";
 import { closeDatabase, getAllEntries, getEntryCount, getMeta, openDatabase } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
-import { resolveStashSources, type SearchSource as StashSource } from "./search-source";
-import { makeAssetRef } from "./stash-ref";
-import type { ManifestEntry, ManifestResponse } from "./stash-types";
+import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search-source";
+import type { ManifestEntry, ManifestResponse } from "./source-types";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -74,7 +74,7 @@ function toManifestEntry(
 function getManifestFromDb(
   stashDir: string,
   config: AkmConfig,
-  sources: StashSource[],
+  sources: SourceSpec[],
   type?: string,
 ): ManifestEntry[] | null {
   const dbPath = getDbPath();
@@ -120,12 +120,12 @@ function getManifestFromDb(
 /**
  * Get the manifest by walking the stash directory (fallback when no index).
  */
-async function getManifestFromWalker(sources: StashSource[], type?: string): Promise<ManifestEntry[]> {
-  const allStashDirs = sources.map((s) => s.path);
+async function getManifestFromWalker(sources: SourceSpec[], type?: string): Promise<ManifestEntry[]> {
+  const allSourceDirs = sources.map((s) => s.path);
 
   const entries: ManifestEntry[] = [];
 
-  for (const currentStashDir of allStashDirs) {
+  for (const currentStashDir of allSourceDirs) {
     const fileContexts = walkStashFlat(currentStashDir);
 
     // Group by parent directory
@@ -179,7 +179,7 @@ export async function akmManifest(options?: { stashDir?: string; type?: string }
   const stashDir = options?.stashDir ?? resolveStashDir();
   const type = options?.type;
   const config = loadConfig();
-  const sources = resolveStashSources(stashDir, config);
+  const sources = resolveSourceEntries(stashDir, config);
 
   // Fast path: try database
   const dbEntries = getManifestFromDb(stashDir, config, sources, type);

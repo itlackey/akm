@@ -20,9 +20,9 @@ import { isWithin } from "./common";
 import { loadUserConfig, saveConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "./frontmatter";
-import { resolveStashSources, type SearchSource } from "./search-source";
-import { akmSearch } from "./stash-search";
-import type { SearchResponse, StashSearchHit } from "./stash-types";
+import { resolveSourceEntries, type SearchSource } from "./search-source";
+import { akmSearch } from "./source-search";
+import type { SearchResponse, SourceSearchHit } from "./source-types";
 import { buildIndexMd, buildLogMd, buildSchemaMd } from "./templates/wiki-templates";
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ function wikiNotFoundMessage(name: string): string {
 }
 
 function registeredWikiSources(stashDir: string): ResolvedWikiSource[] {
-  return resolveStashSources(stashDir)
+  return resolveSourceEntries(stashDir)
     .filter((source): source is SearchSource & { wikiName: string } => typeof source.wikiName === "string")
     .map((source) => ({
       name: source.wikiName,
@@ -436,11 +436,12 @@ export function removeWiki(stashDir: string, name: string, options: RemoveOption
   const wikiDir = resolved.path;
   if (resolved.mode === "external") {
     const config = loadUserConfig();
-    const stashes = (config.stashes ?? []).filter((entry) => entry.wikiName !== name);
+    const filteredSources = (config.sources ?? config.stashes ?? []).filter((entry) => entry.wikiName !== name);
     const installed = (config.installed ?? []).filter((entry) => entry.wikiName !== name);
     saveConfig({
       ...config,
-      stashes: stashes.length > 0 ? stashes : undefined,
+      sources: filteredSources.length > 0 ? filteredSources : undefined,
+      stashes: undefined,
       installed: installed.length > 0 ? installed : undefined,
     });
     return {
@@ -628,12 +629,12 @@ export async function searchInWiki(input: WikiSearchInput): Promise<SearchRespon
     throw err;
   }
   const rawDir = path.join(wikiDir, RAW_SUBDIR);
-  const filtered: StashSearchHit[] = [];
+  const filtered: SourceSearchHit[] = [];
   for (const hit of response.hits) {
-    // hits can be StashSearchHit or RegistrySearchResultHit (union); filter
+    // hits can be SourceSearchHit or RegistrySearchResultHit (union); filter
     // by path inclusion. Registry hits have no path and are dropped.
     if (hit.type === "registry") continue;
-    const stashHit = hit as StashSearchHit;
+    const stashHit = hit as SourceSearchHit;
     if (!stashHit.path) continue;
     if (!isWithin(stashHit.path, wikiDir)) continue;
     // Exclude infrastructure files: schema.md, index.md, log.md at wiki root

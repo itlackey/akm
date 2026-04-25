@@ -12,8 +12,8 @@ import {
   enforceRegistryInstallPolicy,
   formatInstallAuditFailure,
 } from "../src/install-audit";
-import { syncFromRef } from "../src/stash-providers/sync-from-ref";
-import { validateTarEntries } from "../src/stash-providers/tar-utils";
+import { syncFromRef } from "../src/source-providers/sync-from-ref";
+import { validateTarEntries } from "../src/source-providers/tar-utils";
 
 /**
  * Test helper that mirrors the pre-#125 `installRegistryRef()` behaviour:
@@ -54,8 +54,8 @@ async function installRegistryRef(
 }
 
 import { parseRegistryRef } from "../src/registry-resolve";
-import { akmAdd, registerWikiSource } from "../src/stash-add";
-import { akmShowUnified as akmShow } from "../src/stash-show";
+import { akmAdd, registerWikiSource } from "../src/source-add";
+import { akmShowUnified as akmShow } from "../src/source-show";
 import { listPages, listWikis, showWiki } from "../src/wiki";
 
 function makeTempDir(prefix: string): string {
@@ -235,21 +235,21 @@ describe("local directory installs", () => {
       );
 
       // Local adds now create stash sources, not installed entries
-      expect(result.stashSource).toBeDefined();
-      expect(result.stashSource?.type).toBe("filesystem");
-      expect(result.stashSource?.stashRoot).toBe(stashDir2);
+      expect(result.sourceAdded).toBeDefined();
+      expect(result.sourceAdded?.type).toBe("filesystem");
+      expect(result.sourceAdded?.stashRoot).toBe(stashDir2);
       expect(result.installed).toBeUndefined();
-      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
 
       const config = loadConfig();
-      const stashPaths = (config.stashes ?? []).map((s) => s.path);
-      expect(stashPaths).toContain(result.stashSource?.stashRoot);
+      const stashPaths = (config.sources ?? []).map((s) => s.path);
+      expect(stashPaths).toContain(result.sourceAdded?.stashRoot);
 
       const shown = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
         akmShow({ ref: "script:hello.sh" }),
       );
       expect(shown.type).toBe("script");
-      expect(shown.path).toContain(result.stashSource?.stashRoot);
+      expect(shown.path).toContain(result.sourceAdded?.stashRoot);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -268,11 +268,11 @@ describe("local directory installs", () => {
         akmAdd({ ref: stashDir2 }),
       );
 
-      expect(result.stashSource).toBeDefined();
-      expect(result.stashSource?.type).toBe("filesystem");
+      expect(result.sourceAdded).toBeDefined();
+      expect(result.sourceAdded?.type).toBe("filesystem");
       // stashRoot points directly at the source, no cache directory
-      expect(result.stashSource?.stashRoot).toBe(stashDir2);
-      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(result.sourceAdded?.stashRoot).toBe(stashDir2);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -294,11 +294,11 @@ describe("local directory installs", () => {
         akmAdd({ ref: projectDir }),
       );
 
-      expect(result.stashSource).toBeDefined();
+      expect(result.sourceAdded).toBeDefined();
       // stashRoot should point to the nested my-stash dir, not the project root
-      expect(result.stashSource?.stashRoot).toBe(path.join(projectDir, "my-stash"));
-      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "scripts", "hello.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.stashSource?.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
+      expect(result.sourceAdded?.stashRoot).toBe(path.join(projectDir, "my-stash"));
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -321,9 +321,9 @@ describe("local directory installs", () => {
         akmAdd({ ref: srcDir }),
       );
 
-      expect(result.stashSource).toBeDefined();
+      expect(result.sourceAdded).toBeDefined();
       // stashRoot is the source dir itself — indexer detects basename "knowledge" matches a type dir
-      expect(result.stashSource?.stashRoot).toBe(srcDir);
+      expect(result.sourceAdded?.stashRoot).toBe(srcDir);
       expect(result.index.totalEntries).toBeGreaterThanOrEqual(3);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
@@ -345,11 +345,11 @@ describe("local directory installs", () => {
         akmAdd({ ref: wikiDir, name: "ics-docs", overrideType: "wiki" }),
       );
 
-      expect(result.stashSource?.type).toBe("filesystem");
-      expect(result.stashSource?.stashRoot).toBe(wikiDir);
+      expect(result.sourceAdded?.type).toBe("filesystem");
+      expect(result.sourceAdded?.stashRoot).toBe(wikiDir);
 
       const config = loadConfig();
-      const entry = (config.stashes ?? []).find((stash) => stash.path === wikiDir);
+      const entry = (config.sources ?? []).find((stash) => stash.path === wikiDir);
       expect(entry?.wikiName).toBe("ics-docs");
 
       const wikis = listWikis(stashDir);

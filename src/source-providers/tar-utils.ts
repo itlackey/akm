@@ -6,7 +6,7 @@
  * and verify integrity hashes (SRI or hex shasum) before extraction.
  *
  * Extracted from `registry-install.ts` and shared by all syncable
- * providers that fetch tarballs (currently `NpmStashProvider` and the
+ * providers that fetch tarballs (currently `NpmSourceProvider` and the
  * registry index builder).
  */
 
@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin } from "../common";
-import type { StashSource } from "../config";
+import type { SourceSpec } from "../config";
 import { warn } from "../warn";
 
 /**
@@ -29,7 +29,7 @@ import { warn } from "../warn";
 export function verifyArchiveIntegrity(
   archivePath: string,
   expected: string | undefined,
-  source?: StashSource["type"],
+  source?: SourceSpec["type"],
 ): void {
   if (!expected) return;
 

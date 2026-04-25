@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/config";
-import { addStash, listStashes, removeStash } from "../src/stash-source-manage";
+import { addStash, listStashes, removeStash } from "../src/source-manage";
 
 const createdTmpDirs: string[] = [];
 
@@ -60,9 +60,9 @@ describe("addStash", () => {
 
     // Verify persisted
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(1);
-    expect(config.stashes?.[0].type).toBe("filesystem");
-    expect(config.stashes?.[0].path).toBe(path.resolve(stashPath));
+    expect(config.sources).toHaveLength(1);
+    expect(config.sources?.[0].type).toBe("filesystem");
+    expect(config.sources?.[0].path).toBe(path.resolve(stashPath));
   });
 
   test("adds a filesystem path with a name", () => {
@@ -110,9 +110,9 @@ describe("addStash", () => {
     expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(1);
-    expect(config.stashes?.[0].type).toBe("website");
-    expect(config.stashes?.[0].url).toBe(url);
+    expect(config.sources).toHaveLength(1);
+    expect(config.sources?.[0].type).toBe("website");
+    expect(config.sources?.[0].url).toBe(url);
   });
 
   test("adds a URL source with name and options", () => {
@@ -178,8 +178,8 @@ describe("addStash", () => {
     const fsPath = createTmpDir("akm-stashes-return-");
     const result = addStash({ target: fsPath, name: "ret-test" });
 
-    expect(result.stashes).toHaveLength(1);
-    expect(result.stashes[0].name).toBe("ret-test");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].name).toBe("ret-test");
   });
 
   test("can add multiple sources of different types", () => {
@@ -189,26 +189,26 @@ describe("addStash", () => {
     addStash({ target: "https://custom.example.com", providerType: "custom-provider" });
 
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(3);
-    expect(config.stashes?.[0].type).toBe("filesystem");
-    expect(config.stashes?.[1].type).toBe("website");
-    expect(config.stashes?.[2].type).toBe("custom-provider");
+    expect(config.sources).toHaveLength(3);
+    expect(config.sources?.[0].type).toBe("filesystem");
+    expect(config.sources?.[1].type).toBe("website");
+    expect(config.sources?.[2].type).toBe("custom-provider");
   });
 
-  test("preserves existing stashes when adding", () => {
+  test("preserves existing sources when adding", () => {
     const config = loadConfig();
     saveConfig({
       ...config,
-      stashes: [{ type: "website", url: "https://existing.example.com", name: "existing" }],
+      sources: [{ type: "website", url: "https://existing.example.com", name: "existing" }],
     });
 
     const fsPath = createTmpDir("akm-preserve-");
     addStash({ target: fsPath });
 
     const updated = loadConfig();
-    expect(updated.stashes).toHaveLength(2);
-    expect(updated.stashes?.[0].url).toBe("https://existing.example.com");
-    expect(updated.stashes?.[1].type).toBe("filesystem");
+    expect(updated.sources).toHaveLength(2);
+    expect(updated.sources?.[0].url).toBe("https://existing.example.com");
+    expect(updated.sources?.[1].type).toBe("filesystem");
   });
 });
 
@@ -225,7 +225,7 @@ describe("removeStash", () => {
     expect(result.entry?.path).toBe(path.resolve(fsPath));
 
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(0);
+    expect(config.sources).toHaveLength(0);
   });
 
   test("removes a URL source by URL", () => {
@@ -237,7 +237,7 @@ describe("removeStash", () => {
     expect(result.entry?.url).toBe(url);
 
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(0);
+    expect(config.sources).toHaveLength(0);
   });
 
   test("removes a source by name", () => {
@@ -263,8 +263,8 @@ describe("removeStash", () => {
     removeStash(fsPath);
 
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(1);
-    expect(config.stashes?.[0].type).toBe("website");
+    expect(config.sources).toHaveLength(1);
+    expect(config.sources?.[0].type).toBe("website");
   });
 
   test("prefers URL match over name match", () => {
@@ -279,8 +279,8 @@ describe("removeStash", () => {
 
     // The second entry (whose name matches the URL) should still exist
     const config = loadConfig();
-    expect(config.stashes).toHaveLength(1);
-    expect(config.stashes?.[0].name).toBe(url);
+    expect(config.sources).toHaveLength(1);
+    expect(config.sources?.[0].name).toBe(url);
   });
 
   test("prefers path match over name match", () => {
@@ -309,8 +309,8 @@ describe("removeStash", () => {
     addStash({ target: "https://keep.example.com", providerType: "website", name: "keep" });
 
     const result = removeStash("rm-ret-test");
-    expect(result.stashes).toHaveLength(1);
-    expect(result.stashes[0].name).toBe("keep");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].name).toBe("keep");
   });
 
   test("removes filesystem source by relative path that resolves correctly", () => {
@@ -330,7 +330,7 @@ describe("listStashes", () => {
     const result = listStashes();
 
     expect(result.localSources).toBeDefined();
-    expect(result.stashes).toEqual([]);
+    expect(result.sources).toEqual([]);
     expect(result.remoteSources).toBeUndefined();
   });
 
@@ -339,17 +339,17 @@ describe("listStashes", () => {
     addStash({ target: fsPath });
 
     const result = listStashes();
-    expect(result.stashes).toHaveLength(1);
-    expect(result.stashes[0].type).toBe("filesystem");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].type).toBe("filesystem");
   });
 
   test("lists URL stash sources", () => {
     addStash({ target: "https://example.com", providerType: "website" });
 
     const result = listStashes();
-    expect(result.stashes).toHaveLength(1);
-    expect(result.stashes[0].type).toBe("website");
-    expect(result.stashes[0].url).toBe("https://example.com");
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].type).toBe("website");
+    expect(result.sources[0].url).toBe("https://example.com");
   });
 
   test("lists mixed source types", () => {
@@ -359,7 +359,7 @@ describe("listStashes", () => {
     addStash({ target: "https://custom.example.com", providerType: "custom" });
 
     const result = listStashes();
-    expect(result.stashes).toHaveLength(3);
+    expect(result.sources).toHaveLength(3);
   });
 
   test("includes primary stash dir in localSources", () => {
@@ -378,11 +378,11 @@ describe("round-trip integration", () => {
     addStash({ target: fsPath, name: "roundtrip-test" });
 
     const listed = listStashes();
-    expect(listed.stashes.some((s) => s.name === "roundtrip-test")).toBe(true);
+    expect(listed.sources.some((s) => s.name === "roundtrip-test")).toBe(true);
 
     removeStash("roundtrip-test");
     const afterRemove = listStashes();
-    expect(afterRemove.stashes.some((s) => s.name === "roundtrip-test")).toBe(false);
+    expect(afterRemove.sources.some((s) => s.name === "roundtrip-test")).toBe(false);
   });
 
   test("add then list then remove URL source", () => {
@@ -390,11 +390,11 @@ describe("round-trip integration", () => {
     addStash({ target: url, providerType: "website", name: "rt-source" });
 
     const listed = listStashes();
-    expect(listed.stashes.some((s) => s.name === "rt-source")).toBe(true);
+    expect(listed.sources.some((s) => s.name === "rt-source")).toBe(true);
 
     removeStash(url);
     const afterRemove = listStashes();
-    expect(afterRemove.stashes.some((s) => s.url === url)).toBe(false);
+    expect(afterRemove.sources.some((s) => s.url === url)).toBe(false);
   });
 
   test("add then list then remove custom provider source", () => {
@@ -407,14 +407,14 @@ describe("round-trip integration", () => {
     });
 
     const listed = listStashes();
-    const entry = listed.stashes.find((s) => s.name === "custom-rt");
+    const entry = listed.sources.find((s) => s.name === "custom-rt");
     expect(entry).toBeDefined();
     expect(entry?.type).toBe("my-custom");
     expect(entry?.options).toEqual({ key: "value" });
 
     removeStash("custom-rt");
     const afterRemove = listStashes();
-    expect(afterRemove.stashes.some((s) => s.name === "custom-rt")).toBe(false);
+    expect(afterRemove.sources.some((s) => s.name === "custom-rt")).toBe(false);
   });
 
   test("multiple adds and removes maintain order and integrity", () => {
@@ -428,20 +428,20 @@ describe("round-trip integration", () => {
     addStash({ target: fs2, name: "fs2" });
     addStash({ target: url2, providerType: "website", name: "v2" });
 
-    let stashes = listStashes().stashes;
-    expect(stashes).toHaveLength(4);
-    expect(stashes.map((s) => s.name)).toEqual(["fs1", "v1", "fs2", "v2"]);
+    let sources = listStashes().sources;
+    expect(sources).toHaveLength(4);
+    expect(sources.map((s) => s.name)).toEqual(["fs1", "v1", "fs2", "v2"]);
 
     // Remove middle entry
     removeStash("v1");
-    stashes = listStashes().stashes;
-    expect(stashes).toHaveLength(3);
-    expect(stashes.map((s) => s.name)).toEqual(["fs1", "fs2", "v2"]);
+    sources = listStashes().sources;
+    expect(sources).toHaveLength(3);
+    expect(sources.map((s) => s.name)).toEqual(["fs1", "fs2", "v2"]);
 
     // Remove first entry
     removeStash("fs1");
-    stashes = listStashes().stashes;
-    expect(stashes).toHaveLength(2);
-    expect(stashes.map((s) => s.name)).toEqual(["fs2", "v2"]);
+    sources = listStashes().sources;
+    expect(sources).toHaveLength(2);
+    expect(sources.map((s) => s.name)).toEqual(["fs2", "v2"]);
   });
 });

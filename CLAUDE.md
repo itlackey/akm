@@ -22,11 +22,12 @@ bun run tests/benchmark-suite.ts      # Scoring benchmarks
 
 See `docs/technical/architecture.md` for full details. These constraints are inviolable:
 
-### Provider types
-- Only two stash provider types exist: **filesystem**, **git**
+### Source provider types
+- Only two source provider types exist: **filesystem**, **git** (website and npm for cache-backed sources)
 - MUST NOT create a `context-hub` type. It is just a git repo.
 - MUST NOT recreate `openviking`. It was removed in v1 (see `docs/migration/v1.md`).
-- All providers are indexed locally. No remote-only providers.
+- All providers materialise files to local disk. The FTS5 indexer walks the disk path.
+- The internal type is `SourceProvider`; the config entry type is `SourceConfigEntry`.
 
 ### Refs
 - Asset refs are `type:name` (e.g., `skill:deploy`). Nothing else.
@@ -48,6 +49,6 @@ See `docs/technical/architecture.md` for full details. These constraints are inv
 - Do not create new URI schemes for refs
 - Do not add parallel scoring systems for different provider types
 - Do not make `context-hub` a provider type
-- Do not re-introduce `openviking` or any remote-only stash provider
-- Do not merge registry results into stash hits
+- Do not re-introduce `openviking` or any remote-only source provider
+- Do not merge registry results into source search hits
 - Do not skip `bunx biome check --write` before committing

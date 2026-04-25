@@ -24,8 +24,8 @@ import { recomputeUtilityScores } from "../src/indexer";
 import { assembleInfo } from "../src/info";
 import { getDbPath } from "../src/paths";
 import { buildSearchFields } from "../src/search-fields";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import type { SourceSearchHit } from "../src/source-types";
 import { insertUsageEvent } from "../src/usage-events";
 import { recordUsageEvent } from "./helpers/usage-events";
 
@@ -756,7 +756,7 @@ async function benchmarkSearchQuality(_stashDir: string): Promise<{
 
   for (const q of QUALITY_QUERIES) {
     const result = await akmSearch({ query: q.query, source: "stash", limit: 20 });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const idx = hits.findIndex((h) => h.name === q.expectedName);
     const rank = idx >= 0 ? idx + 1 : null;
     const rr = rank !== null ? 1 / rank : 0;
@@ -968,12 +968,12 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   const summaryResult = {
     ...fullResult,
     hits: fullResult.hits.map((h) => {
-      const { path: _p, ...minimal } = h as StashSearchHit;
+      const { path: _p, ...minimal } = h as SourceSearchHit;
       return {
         name: minimal.name,
         type: minimal.type,
         description: minimal.description,
-        ref: (h as StashSearchHit).ref,
+        ref: (h as SourceSearchHit).ref,
       };
     }),
   };
@@ -1009,7 +1009,7 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   });
 
   // --for-agent output size vs normal: for-agent strips paths, editHints, etc.
-  const normalHits = fullResult.hits as StashSearchHit[];
+  const normalHits = fullResult.hits as SourceSearchHit[];
   const normalJson = JSON.stringify(normalHits);
   const forAgentHits = normalHits.map((h) => ({
     type: h.type,
@@ -1077,7 +1077,7 @@ async function benchmarkUtilityScoring(_stashDir: string): Promise<{
   // Test 1: Fresh index with no usage data — all scores should be baseline (no utility boost)
   {
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hasUtilityBoost = localHits.some((h) => h.whyMatched?.includes("usage history boost"));
     cases.push({
       id: "us-01",
@@ -1215,7 +1215,7 @@ async function benchmarkUtilityScoring(_stashDir: string): Promise<{
 
     // Search and check scores
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     if (localHits.length >= 2) {
       const maxScore = localHits[0].score ?? 0;
       const minScore = localHits[localHits.length - 1].score ?? 0;
@@ -1273,7 +1273,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   {
     // "certb" has no exact FTS match but prefix "certb*" should match "certbot" (tag of ssl-renew)
     const exactResult = await akmSearch({ query: "certb", source: "stash", limit: 10 });
-    const exactHits = exactResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const exactHits = exactResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     // FTS5 porter stemmer + prefix fallback should find ssl-renew via "certbot" tag
     fuzzyWorks = exactHits.some((h) => h.name === "ssl-renew");
 
@@ -1292,7 +1292,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
     // Query "deploy" — assets with "deploy" in their name should rank above
     // those that only have "deploy" in description/tags
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Assets with "deploy" in name or aliases: k8s-deploy, deploy-helper, deploy-status, deploy-checklist
     const nameMatchAssets = ["k8s-deploy", "deploy-helper", "deploy-status", "deploy-checklist"];
@@ -1461,7 +1461,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 8: Empty query returns all entries
   {
     const result = await akmSearch({ query: "", source: "stash", limit: 100 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     // Should return all or most of the 35 assets
     const allEntriesReturned = localHits.length >= 25;
 
@@ -1478,7 +1478,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 9: Type filtering works
   {
     const result = await akmSearch({ query: "", type: "skill", source: "stash", limit: 50 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const allSkills = localHits.every((h) => h.type === "skill");
     const hasMultiple = localHits.length >= 3;
 
@@ -1497,8 +1497,8 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   {
     const r1 = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
     const r2 = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const h1 = r1.hits.filter((h): h is StashSearchHit => h.type !== "registry").map((h) => h.name);
-    const h2 = r2.hits.filter((h): h is StashSearchHit => h.type !== "registry").map((h) => h.name);
+    const h1 = r1.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
+    const h2 = r2.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
     const deterministic = JSON.stringify(h1) === JSON.stringify(h2);
 
     cases.push({

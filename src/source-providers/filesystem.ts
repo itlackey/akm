@@ -1,35 +1,35 @@
 import { resolveStashDir } from "../common";
-import type { StashConfigEntry } from "../config";
+import type { SourceConfigEntry } from "../config";
 import { loadConfig } from "../config";
 import { searchLocal } from "../db-search";
 import { ConfigError } from "../errors";
-import { resolveStashSources } from "../search-source";
+import { resolveSourceEntries } from "../search-source";
 import type {
-  StashLockData,
-  StashSearchOptions,
-  StashSearchResult,
-  SyncableStashProvider,
+  SourceLockData,
+  SourceSearchOptions,
+  SourceSearchResult,
+  SyncableSourceProvider,
   SyncOptions,
-} from "../stash-provider";
-import { registerStashProvider } from "../stash-provider-factory";
-import { showLocal } from "../stash-show";
-import type { KnowledgeView, ShowResponse } from "../stash-types";
+} from "../source-provider";
+import { registerSourceProvider } from "../source-provider-factory";
+import { showLocal } from "../source-show";
+import type { KnowledgeView, ShowResponse } from "../source-types";
 import { detectStashRoot } from "./provider-utils";
 
-class FilesystemStashProvider implements SyncableStashProvider {
+class FilesystemSourceProvider implements SyncableSourceProvider {
   readonly type = "filesystem";
   readonly kind = "syncable" as const;
   readonly name: string;
   private readonly stashDir: string;
 
-  constructor(entry: StashConfigEntry) {
+  constructor(entry: SourceConfigEntry) {
     this.stashDir = entry.path ?? resolveStashDir();
     this.name = entry.name ?? this.stashDir;
   }
 
-  async search(options: StashSearchOptions): Promise<StashSearchResult> {
+  async search(options: SourceSearchOptions): Promise<SourceSearchResult> {
     const config = loadConfig();
-    const sources = resolveStashSources(this.stashDir, config);
+    const sources = resolveSourceEntries(this.stashDir, config);
     const result = await searchLocal({
       query: options.query.toLowerCase(),
       searchType: options.type ?? "any",
@@ -55,7 +55,7 @@ class FilesystemStashProvider implements SyncableStashProvider {
   }
 
   /** No-op: a filesystem stash already lives on disk. */
-  async sync(config: StashConfigEntry, options?: SyncOptions): Promise<StashLockData> {
+  async sync(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
     if (!config.path) {
       throw new ConfigError("filesystem stash entry must include a `path`");
     }
@@ -73,18 +73,18 @@ class FilesystemStashProvider implements SyncableStashProvider {
     };
   }
 
-  getContentDir(config: StashConfigEntry): string {
+  getContentDir(config: SourceConfigEntry): string {
     if (!config.path) {
       throw new ConfigError("filesystem stash entry must include a `path`");
     }
     return config.path;
   }
 
-  async remove(_config: StashConfigEntry): Promise<void> {
+  async remove(_config: SourceConfigEntry): Promise<void> {
     // Filesystem stashes are user-managed; never delete the source on `akm remove`.
   }
 }
 
 // ── Self-register ───────────────────────────────────────────────────────────
 
-registerStashProvider("filesystem", (config) => new FilesystemStashProvider(config));
+registerSourceProvider("filesystem", (config) => new FilesystemSourceProvider(config));

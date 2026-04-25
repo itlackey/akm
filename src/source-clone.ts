@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import { makeAssetRef, parseAssetRef } from "./asset-ref";
 import { TYPE_DIRS } from "./asset-spec";
 import { UsageError } from "./errors";
 import { isRemoteOrigin, resolveSourcesForOrigin } from "./origin-resolve";
-import { findSourceForPath, getPrimarySource, resolveStashSources, type SearchSource } from "./search-source";
-import { syncFromRef } from "./stash-providers/sync-from-ref";
-import { makeAssetRef, parseAssetRef } from "./stash-ref";
-import { resolveAssetPath } from "./stash-resolve";
+import { findSourceForPath, getPrimarySource, resolveSourceEntries, type SearchSource } from "./search-source";
+import { syncFromRef } from "./source-providers/sync-from-ref";
+import { resolveAssetPath } from "./source-resolve";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
@@ -38,7 +38,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   // When --dest is provided, the working stash is optional
   let allSources: SearchSource[];
   try {
-    allSources = resolveStashSources();
+    allSources = resolveSourceEntries();
   } catch (err) {
     if (options.dest) {
       allSources = [];

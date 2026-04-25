@@ -23,9 +23,9 @@ import { loadConfig, saveConfig } from "../src/config";
 import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
 import { akmIndex } from "../src/indexer";
 import { loadStashFile } from "../src/metadata";
-import { akmSearch } from "../src/stash-search";
-import { akmShowUnified as akmShow } from "../src/stash-show";
-import type { SearchHit, StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/source-search";
+import { akmShowUnified as akmShow } from "../src/source-show";
+import type { SearchHit, SourceSearchHit } from "../src/source-types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ function expectDefined<T>(value: T | null | undefined): T {
   return value;
 }
 
-function isLocalHit(hit: SearchHit): hit is StashSearchHit {
+function isLocalHit(hit: SearchHit): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
@@ -333,7 +333,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("show a script returns run", async () => {
     const searchResult = await akmSearch({ query: "deploy", type: "script" });
-    const deployHit = searchResult.hits.find((h): h is StashSearchHit => isLocalHit(h) && h.name.includes("deploy"));
+    const deployHit = searchResult.hits.find((h): h is SourceSearchHit => isLocalHit(h) && h.name.includes("deploy"));
     const resolvedDeployHit = expectDefined(deployHit);
 
     const openResult = await akmShow({ ref: expectDefined(resolvedDeployHit.ref) });
@@ -428,7 +428,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     const searchResult = await akmSearch({ query: "run tests" });
     expect(searchResult.hits.length).toBeGreaterThan(0);
     const testScript = searchResult.hits.find(
-      (h): h is StashSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
+      (h): h is SourceSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
     );
     const resolvedTestScript = expectDefined(testScript);
 
@@ -860,7 +860,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(registerResult.exitCode).toBe(0);
       const registerJson = parseJson(registerResult.stdout);
       expect(registerJson.ref).toBe("ics-docs");
-      expect(registerJson.stashSource).toEqual(
+      expect(registerJson.sourceAdded).toEqual(
         expect.objectContaining({
           type: "filesystem",
           name: "ics-docs",

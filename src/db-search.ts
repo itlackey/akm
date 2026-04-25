@@ -1,11 +1,11 @@
 /**
- * Database-backed (SQLite + FTS5/vector) stash search implementation.
+ * Database-backed (SQLite + FTS5/vector) source search implementation.
  *
- * Extracted from stash-search.ts to break the circular import:
- *   stash-search.ts → stash-providers/filesystem.ts → db-search.ts (no cycle)
+ * Extracted from source-search.ts to break the circular import:
+ *   source-search.ts → source-providers/filesystem.ts → db-search.ts (no cycle)
  *
- * stash-search.ts imports this module for the `searchLocal` export.
- * stash-providers/filesystem.ts also imports `searchLocal` from here.
+ * source-search.ts imports this module for the `searchLocal` export.
+ * source-providers/filesystem.ts also imports `searchLocal` from here.
  *
  * Renamed from `local-search.ts` to signal that this is the DB-layer search
  * implementation, not a "local vs. remote" distinction.
@@ -14,6 +14,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { makeAssetRef } from "./asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "./asset-registry";
 import { deriveCanonicalAssetNameFromStashRoot } from "./asset-spec";
 import type { AkmConfig } from "./config";
@@ -40,8 +41,7 @@ import {
   isSemanticRuntimeReady,
   readSemanticStatus,
 } from "./semantic-status";
-import { makeAssetRef } from "./stash-ref";
-import type { AkmSearchType, SearchHitSize, StashSearchHit } from "./stash-types";
+import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "./source-types";
 import { walkStashFlat } from "./walker";
 import { warn } from "./warn";
 
@@ -87,7 +87,7 @@ export async function searchLocal(input: {
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
 }): Promise<{
-  hits: StashSearchHit[];
+  hits: SourceSearchHit[];
   tip?: string;
   warnings?: string[];
   embedMs?: number;
@@ -95,7 +95,7 @@ export async function searchLocal(input: {
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
-  const allStashDirs = sources.map((s) => s.path);
+  const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
   const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
   const warnings: string[] = [];
@@ -146,7 +146,7 @@ export async function searchLocal(input: {
             searchType,
             limit,
             stashDir,
-            allStashDirs,
+            allSourceDirs,
             config,
             sources,
             rendererRegistry,
@@ -174,7 +174,7 @@ export async function searchLocal(input: {
   }
 
   const hitArrays = await Promise.all(
-    allStashDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry)),
+    allSourceDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry)),
   );
   const hits = hitArrays.flat().slice(0, limit);
   return {
@@ -192,12 +192,12 @@ async function searchDatabase(
   searchType: AkmSearchType,
   limit: number,
   stashDir: string,
-  allStashDirs: string[],
+  allSourceDirs: string[],
   config: AkmConfig,
   sources: SearchSource[],
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
 ): Promise<{
-  hits: StashSearchHit[];
+  hits: SourceSearchHit[];
   embedMs?: number;
   rankMs?: number;
 }> {
@@ -222,7 +222,7 @@ async function searchDatabase(
           query,
           rankingMode: "fts",
           defaultStashDir: stashDir,
-          allStashDirs,
+          allSourceDirs,
           sources,
           config,
           rendererRegistry,
@@ -494,7 +494,7 @@ async function searchDatabase(
         query,
         rankingMode,
         defaultStashDir: stashDir,
-        allStashDirs,
+        allSourceDirs,
         sources,
         config,
         utilityBoosted,
@@ -548,7 +548,7 @@ async function substringSearch(
   sources: SearchSource[],
   config?: AkmConfig,
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
-): Promise<StashSearchHit[]> {
+): Promise<SourceSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType, sources);
   const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
@@ -615,13 +615,13 @@ export async function buildDbHit(input: {
   query: string;
   rankingMode: "hybrid" | "semantic" | "fts";
   defaultStashDir: string;
-  allStashDirs: string[];
+  allSourceDirs: string[];
   sources: SearchSource[];
   config?: AkmConfig;
   utilityBoosted?: boolean;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
-}): Promise<StashSearchHit> {
+}): Promise<SourceSearchHit> {
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
   const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
@@ -653,7 +653,7 @@ export async function buildDbHit(input: {
   const editable = isEditable(input.path, input.config);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
 
-  const hit: StashSearchHit = {
+  const hit: SourceSearchHit = {
     type: input.entry.type,
     name: input.entry.name,
     path: input.path,
@@ -736,14 +736,14 @@ async function assetToSearchHit(
   config?: AkmConfig,
   score?: number,
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
-): Promise<StashSearchHit> {
+): Promise<SourceSearchHit> {
   const source = findSourceForPath(asset.path, sources);
   const editable = isEditable(asset.path, config);
   const ref = resolveSearchHitRef(asset.entry, asset.entry.name, source);
   const fileSize = readFileSize(asset.path);
   const size = deriveSize(fileSize);
   const estimatedTokens = typeof fileSize === "number" ? Math.round(fileSize / 4) : undefined;
-  const hit: StashSearchHit = {
+  const hit: SourceSearchHit = {
     type: asset.entry.type,
     name: asset.entry.name,
     path: asset.path,

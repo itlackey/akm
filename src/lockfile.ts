@@ -4,7 +4,7 @@ import { getConfigDir } from "./config";
 import type { KitSource } from "./registry-types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
-// `StashSource["type"]` via `src/config.ts`.
+// `SourceSpec["type"]` via `src/config.ts`.
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

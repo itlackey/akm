@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "./common";
-import type { AkmConfig, StashConfigEntry } from "./config";
+import type { AkmConfig, SourceConfigEntry } from "./config";
 import { loadConfig } from "./config";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./stash-providers/git";
-import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./stash-providers/website";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "./source-providers/git";
+import { ensureWebsiteMirror, getCachePaths as getWebsiteCachePaths } from "./source-providers/website";
 import { warn } from "./warn";
 
 // Legacy "context-hub" / "github" type aliases are normalized to "git" at
@@ -31,7 +31,7 @@ export interface SearchSource {
  *   1. The primary stash directory (the entry marked `primary: true`, or the
  *      legacy top-level `stashDir`). Always emitted, even when the directory
  *      does not yet exist on disk, so callers can use it as the clone target.
- *   2. Each entry in `config.stashes[]` (in declared order), excluding the
+ *   2. Each entry in `config.sources ?? config.stashes[]` (in declared order), excluding the
  *      one already emitted as the primary.
  *   3. Each entry in `config.installed[]` (registry-managed stashes).
  *
@@ -39,7 +39,7 @@ export interface SearchSource {
  * for each provider kind. Disabled entries (`enabled: false`) and entries
  * whose disk path doesn't exist are filtered after deduplication.
  */
-export function resolveStashSources(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
+export function resolveSourceEntries(overrideStashDir?: string, existingConfig?: AkmConfig): SearchSource[] {
   const stashDir = overrideStashDir ?? resolveStashDir();
   const config = existingConfig ?? loadConfig();
 
@@ -65,9 +65,9 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
   // (1) + (2) Single pass over declared stashes — primary first if present,
   // then the rest in declared order. The primary's directory is already
   // injected as `sources[0]` above, so we only need to dedupe the source set.
-  const stashes = config.stashes ?? [];
+  const stashes = config.sources ?? config.stashes ?? [];
   const primaryIdx = stashes.findIndex((entry) => entry.primary === true);
-  const ordered: StashConfigEntry[] = [];
+  const ordered: SourceConfigEntry[] = [];
   if (primaryIdx >= 0) {
     ordered.push(stashes[primaryIdx]);
     stashes.forEach((entry, i) => {
@@ -97,7 +97,7 @@ export function resolveStashSources(overrideStashDir?: string, existingConfig?: 
  * entry. Returns `undefined` if the entry has no walkable content
  * so the caller can skip it.
  */
-function resolveEntryContentDir(entry: StashConfigEntry): string | undefined {
+function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   if (entry.type === "filesystem" && entry.path) {
     return entry.path;
   }
@@ -133,7 +133,7 @@ function resolveEntryContentDir(entry: StashConfigEntry): string | undefined {
  * Convenience: returns just the directory paths, preserving priority order.
  */
 export function resolveAllStashDirs(overrideStashDir?: string): string[] {
-  return resolveStashSources(overrideStashDir).map((s) => s.path);
+  return resolveSourceEntries(overrideStashDir).map((s) => s.path);
 }
 
 /**
@@ -229,10 +229,10 @@ function isValidDirectory(dir: string): boolean {
 /**
  * Ensure all cache-backed stash providers are refreshed so their cache
  * directories exist on disk. Must be called (async) before
- * `resolveStashSources()` so the content directories pass the
+ * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
  */
-export async function ensureStashCaches(config?: AkmConfig): Promise<void> {
+export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
   const cfg = config ?? loadConfig();
   for (const entry of cfg.stashes ?? []) {
     if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
@@ -258,7 +258,7 @@ export async function ensureStashCaches(config?: AkmConfig): Promise<void> {
   }
 }
 
-/** @deprecated Use ensureStashCaches instead. */
-export const ensureGitCaches = ensureStashCaches;
-/** @deprecated Use ensureStashCaches instead. */
-export const ensureContextHubCaches = ensureStashCaches;
+/** @deprecated Use ensureSourceCaches instead. */
+export const ensureGitCaches = ensureSourceCaches;
+/** @deprecated Use ensureSourceCaches instead. */
+export const ensureContextHubCaches = ensureSourceCaches;

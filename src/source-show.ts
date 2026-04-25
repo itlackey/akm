@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "./asset-ref";
 import { loadConfig } from "./config";
 import { closeDatabase, openDatabase } from "./db";
 import { NotFoundError, UsageError } from "./errors";
@@ -7,14 +8,13 @@ import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
 import { loadStashFile } from "./metadata";
 import { resolveSourcesForOrigin } from "./origin-resolve";
-import { buildEditHint, findSourceForPath, isEditable, resolveStashSources } from "./search-source";
-import { parseAssetRef } from "./stash-ref";
-import { resolveAssetPath } from "./stash-resolve";
-import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./stash-types";
+import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "./search-source";
+import { resolveAssetPath } from "./source-resolve";
+import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "./source-types";
 import { insertUsageEvent } from "./usage-events";
 
 // Eagerly import stash providers to trigger self-registration
-import "./stash-providers/index";
+import "./source-providers/index";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as
@@ -106,7 +106,7 @@ export async function akmShowUnified(input: {
   {
     const parsed = parseAssetRef(ref);
     if (parsed.type === "wiki" && !parsed.name.includes("/")) {
-      const allSources = resolveStashSources();
+      const allSources = resolveSourceEntries();
       const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
       let lastError: NotFoundError | undefined;
       for (const source of searchSources) {
@@ -166,10 +166,10 @@ export async function showLocal(input: {
   const parsed = parseAssetRef(input.ref);
   const displayType = parsed.type;
   const config = loadConfig();
-  const allSources = resolveStashSources(input.stashDir);
+  const allSources = resolveSourceEntries(input.stashDir);
   const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
 
-  const allStashDirs = searchSources.map((s) => s.path);
+  const allSourceDirs = searchSources.map((s) => s.path);
 
   let assetPath: string | undefined;
   const matchedSource =
@@ -182,7 +182,7 @@ export async function showLocal(input: {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
-  for (const dir of allStashDirs) {
+  for (const dir of allSourceDirs) {
     if (assetPath) break;
     try {
       assetPath = await resolveAssetPath(dir, parsed.type, parsed.name);
@@ -211,7 +211,7 @@ export async function showLocal(input: {
   }
 
   const source = matchedSource ?? findSourceForPath(assetPath, allSources);
-  const sourceStashDir = source?.path ?? allStashDirs[0];
+  const sourceStashDir = source?.path ?? allSourceDirs[0];
 
   if (!sourceStashDir) {
     throw new UsageError(
@@ -238,7 +238,7 @@ export async function showLocal(input: {
     throw new UsageError(`Renderer "${match.renderer}" not found for asset: ${displayType}:${parsed.name}`);
   }
 
-  const renderCtx = buildRenderContext(fileCtx, match, allStashDirs, source?.registryId);
+  const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
   const editable = isEditable(assetPath, config);
   const fullResponse: ShowResponse = {

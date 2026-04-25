@@ -3,18 +3,18 @@ import { closeDatabase, openDatabase } from "./db";
 import { searchLocal } from "./db-search";
 
 // Eagerly import stash providers to trigger self-registration
-import "./stash-providers/index";
+import "./source-providers/index";
 import { UsageError } from "./errors";
 import { searchRegistry } from "./registry-search";
-import { resolveStashSources } from "./search-source";
+import { resolveSourceEntries } from "./search-source";
 import type {
   AkmSearchType,
   RegistrySearchResultHit,
   SearchHit,
   SearchResponse,
   SearchSource,
-  StashSearchHit,
-} from "./stash-types";
+  SourceSearchHit,
+} from "./source-types";
 import { insertUsageEvent } from "./usage-events";
 
 const DEFAULT_LIMIT = 20;
@@ -32,7 +32,7 @@ export async function akmSearch(input: {
   const limit = normalizeLimit(input.limit);
   const source = parseSearchSource(input.source ?? "stash");
   const config = loadConfig();
-  const sources = resolveStashSources(undefined, config);
+  const sources = resolveSourceEntries(undefined, config);
   if (sources.length === 0) {
     // stashDir: "" is a safe sentinel here — the response carries zero hits
     // and a warning, so no downstream code will try to use the empty path.
@@ -141,7 +141,7 @@ export async function akmSearch(input: {
  */
 function resolveEntryIds(
   db: import("bun:sqlite").Database,
-  hits: StashSearchHit[],
+  hits: SourceSearchHit[],
 ): Array<{ entryId: number; ref: string }> {
   const results: Array<{ entryId: number; ref: string }> = [];
   const stmt = db.prepare("SELECT id FROM entries WHERE file_path = ? LIMIT 1");
@@ -164,7 +164,7 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
   try {
     const db = existingDb ?? openDatabase();
     try {
-      const stashHits = response.hits.filter((h): h is StashSearchHit => h.type !== "registry").slice(0, 50);
+      const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry").slice(0, 50);
       const resolved = resolveEntryIds(db, stashHits);
       for (const { entryId, ref } of resolved) {
         insertUsageEvent(db, {
@@ -208,7 +208,7 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
  * Merge stash hits and registry hits via simple concatenation.
  */
 export function mergeSearchHits(
-  localHits: StashSearchHit[],
+  localHits: SourceSearchHit[],
   registryHits: RegistrySearchResultHit[],
   limit: number,
 ): SearchHit[] {
