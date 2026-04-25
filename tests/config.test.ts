@@ -716,9 +716,12 @@ describe("llm config", () => {
     });
   });
 
-  test("ignores invalid llm config", () => {
+  test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
+    // After QA #36, `akm config set llm.endpoint <url>` persists a partial
+    // llm config with `model: ""`. The loader must accept this so the value
+    // round-trips; downstream callers decide if it's usable.
     writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }));
-    expect(loadConfig().llm).toBeUndefined();
+    expect(loadConfig().llm).toEqual({ endpoint: "http://localhost", model: "" });
   });
 
   test("ignores llm config with non-integer maxTokens", () => {
