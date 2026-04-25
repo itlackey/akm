@@ -26,8 +26,8 @@ import {
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
 } from "../indexer/semantic-status";
+import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
-import { probeLlmCapabilities } from "../llm/llm-client";
 import { detectAgentPlatforms, detectOllama } from "./detect";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./setup-steps";
 

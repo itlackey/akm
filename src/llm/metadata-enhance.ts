@@ -3,12 +3,12 @@
  *
  * Split out of `llm.ts` so the higher-level workflow (prompting the LLM to
  * improve descriptions/tags/searchHints) lives separately from the low-level
- * transport client in `llm-client.ts`.
+ * transport client in `client.ts`.
  */
 
 import type { LlmConnectionConfig } from "../core/config";
 import type { StashEntry } from "../indexer/metadata";
-import { chatCompletion, parseJsonResponse } from "./llm-client";
+import { chatCompletion, parseJsonResponse } from "./client";
 
 const SYSTEM_PROMPT = `You are a metadata generator for a developer asset registry. Given a script/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
 

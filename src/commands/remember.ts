@@ -172,7 +172,7 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
     return { tags: [] };
   }
 
-  const { chatCompletion, parseJsonResponse } = await import("../llm/llm-client");
+  const { chatCompletion, parseJsonResponse } = await import("../llm/client");
 
   const prompt = `You are a memory tagger for a developer knowledge base.
 Given the memory text below, return ONLY a JSON object with these fields:
