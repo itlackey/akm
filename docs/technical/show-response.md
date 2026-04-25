@@ -102,8 +102,14 @@ Two shapes exist:
 - scripts: may keep `run`
 - vaults: may keep `keys` and `comments`
 
-## Remote Show
+## Resolution
 
-Remote providers can still return full payloads, but local lookup always tries
-filesystem resolution first and only falls back to remote providers on
-not-found.
+`akm show` is local-only. The flow (`src/commands/show.ts`):
+
+1. Wiki-root shortcut: `wiki:<name>` with no page path returns the wiki summary.
+2. `lookup(ref)` against the local FTS5 index (`src/indexer/indexer.ts`).
+3. Fallback to on-disk type-dir traversal when the index has no row (covers
+   the "indexed yet?" gap before `akm index` runs).
+
+There is no remote provider fallback. If the asset is not on disk under a
+configured source, show returns `NotFoundError`.

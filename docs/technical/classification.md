@@ -19,7 +19,7 @@ Built-in types today are:
 
 ## Built-in Matchers
 
-`src/matchers.ts` currently registers **five** built-in matchers:
+`src/indexer/matchers.ts` currently registers **five** built-in matchers:
 
 1. `extensionMatcher`
 2. `directoryMatcher`

@@ -5,7 +5,7 @@
 ## High-Level Flow
 
 ```text
-Resolve all stash sources
+Resolve all sources (filesystem, git, website, npm) and materialise caches
         ↓
 Walk files and classify assets
         ↓
@@ -24,9 +24,12 @@ Recompute utility scores
 Refresh semantic status / embeddings when enabled
 ```
 
+Cache materialisation runs through each source's `sync()` method
+(`src/sources/source-providers/`) before the indexer walks `path()`.
+
 ## Search Field Mapping
 
-`src/search-fields.ts` builds five FTS columns:
+`src/indexer/search-fields.ts` builds five FTS columns:
 
 | Column | Contents |
 | --- | --- |

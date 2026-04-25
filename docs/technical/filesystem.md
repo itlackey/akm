@@ -1,8 +1,12 @@
 # Filesystem Layout
 
-Quick reference for where akm stores stash data, config, and cache state.
+Quick reference for where akm stores source data, config, and cache state.
 
 ## Working Stash
+
+The working stash is the user's primary writable filesystem source, created by
+`akm init`. It's just a filesystem source — the same path can be referenced by
+`config.stashDir` and as a `sources[]` entry of kind `filesystem`.
 
 | Env / Default | Path |
 | --- | --- |
@@ -10,10 +14,11 @@ Quick reference for where akm stores stash data, config, and cache state.
 | Linux / macOS | `~/akm` |
 | Windows | `%USERPROFILE%\Documents\akm` |
 
-Canonical built-in type directories come from `TYPE_DIRS`:
+Canonical built-in type directories come from `TYPE_DIRS` in
+`src/core/asset-spec.ts`:
 
 ```text
-<stash>/
+<source>/
   scripts/
   skills/
   commands/
@@ -111,10 +116,13 @@ entry to the right on-disk file.
 
 ## Cache-Backed Sources
 
-Some configured stash sources are mirrored into cache before indexing:
+Some configured sources are materialised into cache before indexing:
 
-- git-backed stash sources
-- website sources
-- installed stashes from registries
+- `git` sources (cloned/pulled into `cacheDir`)
+- `website` sources (recrawled and converted to markdown)
+- `npm` sources (installed into `cacheDir`)
 
-Once mirrored, they are indexed like local stash directories.
+Once materialised, they are indexed like local filesystem sources. Cache
+materialisation is driven by each provider's `sync()` method
+(`src/sources/source-providers/`), invoked through `ensureSourceCaches()` in
+`src/indexer/search-source.ts`.
