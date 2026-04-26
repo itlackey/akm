@@ -1681,7 +1681,7 @@ function listVaultsRecursive(
   return result;
 }
 
-function wasVaultListFlagValueConsumedAsRef(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
+function isVaultListRefActuallyFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
   const argv = process.argv.slice(2);
   const vaultIndex = argv.indexOf("vault");
   const listIndex = vaultIndex >= 0 ? argv.indexOf("list", vaultIndex + 1) : -1;
@@ -1705,7 +1705,9 @@ function wasVaultListFlagValueConsumedAsRef(ref: string, flag: "--format" | "--d
   if (flagIndex === -1) return false;
   if (tokens.slice(0, flagIndex).includes(ref)) return false;
 
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
+  const SPACE_SEPARATED_FLAG_TOKENS = 2;
+  const EQUALS_FLAG_TOKENS = 1;
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? SPACE_SEPARATED_FLAG_TOKENS : EQUALS_FLAG_TOKENS);
   if (tokens.slice(firstTokenAfterFlag).includes(ref)) return false;
 
   return true;
@@ -1725,10 +1727,10 @@ const vaultListCommand = defineCommand({
         args.ref !== undefined &&
         ((parsedFormat !== undefined &&
           args.ref === parsedFormat &&
-          wasVaultListFlagValueConsumedAsRef(args.ref, "--format", parsedFormat)) ||
+          isVaultListRefActuallyFlagValue(args.ref, "--format", parsedFormat)) ||
           (parsedDetail !== undefined &&
             args.ref === parsedDetail &&
-            wasVaultListFlagValueConsumedAsRef(args.ref, "--detail", parsedDetail)))
+            isVaultListRefActuallyFlagValue(args.ref, "--detail", parsedDetail)))
           ? undefined
           : args.ref;
 
