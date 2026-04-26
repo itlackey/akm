@@ -359,7 +359,7 @@ describe("local directory installs", () => {
       expect(shownWiki.path).toBe(wikiDir);
 
       const pages = listPages(stashDir, "ics-docs");
-      expect(pages.map((page) => page.ref)).toEqual(["wiki:ics-docs/overview"]);
+      expect(pages.map((page) => page.ref)).toEqual(["wiki:ics-docs/overview", "wiki:ics-docs/raw/paper"]);
 
       const shownPage = await withEnv({ AKM_STASH_DIR: stashDir, XDG_CACHE_HOME: cacheHome }, () =>
         akmShow({ ref: "wiki:ics-docs/overview" }),
