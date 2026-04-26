@@ -1260,6 +1260,18 @@ describe("Scenario: CLI knowledge view modes (positional)", () => {
     expect(json.content).toContain("Getting Started");
     expect(json.content).toContain("Authentication");
   });
+
+  test("cli: show knowledge --detail brief omits full content", async () => {
+    const result = runCli("show", "knowledge:guide.md", "--detail", "brief");
+    expect(result.exitCode).toBe(0);
+
+    const json = parseJson(result.stdout);
+    expect(json.type).toBe("knowledge");
+    expect(json.name).toBe("guide.md");
+    expect(json.description).toBe("Comprehensive guide for the example API");
+    expect(json.action).toContain("Reference material");
+    expect(json.content).toBeUndefined();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -108,8 +108,8 @@ function resolveRegisteredWikiAssetPath(wikiRoot: string, wikiName: string, asse
  * type-dir resolution if the index has no row. Spec §6.2; no remote provider
  * fallback.
  *
- * When `detail` is `"summary"`, the response omits content/template/prompt and
- * returns only compact metadata (name, type, description, tags, parameters).
+ * When `detail` is `"brief"` or `"summary"`, the response omits
+ * content/template/prompt and returns compact metadata.
  */
 export async function akmShowUnified(input: {
   ref: string;
@@ -294,6 +294,10 @@ export async function showLocal(input: {
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
   };
 
+  if (input.detail === "brief") {
+    return buildBriefResponse(fullResponse, assetPath);
+  }
+
   if (input.detail === "summary") {
     return buildSummaryResponse(fullResponse, assetPath);
   }
@@ -314,6 +318,25 @@ export async function showByRef(ref: string): Promise<{ filePath: string; body: 
   }
   const body = await fs.promises.readFile(entry.filePath, "utf8");
   return { filePath: entry.filePath, body };
+}
+
+/**
+ * Build a reduced brief response from a full ShowResponse.
+ *
+ * Keeps routing/identification fields while omitting content/template/prompt.
+ */
+function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowResponse {
+  const summary = buildSummaryResponse(full, assetPath);
+  return {
+    type: summary.type,
+    name: summary.name,
+    path: summary.path,
+    ...(summary.description ? { description: summary.description } : {}),
+    ...(summary.action ? { action: summary.action } : {}),
+    ...(summary.run ? { run: summary.run } : {}),
+    ...(summary.origin !== undefined ? { origin: summary.origin } : {}),
+    ...(full.editable !== undefined ? { editable: full.editable } : {}),
+  };
 }
 
 /**

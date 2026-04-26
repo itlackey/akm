@@ -510,7 +510,9 @@ const showCommand = defineCommand({
         }
       }
       const cliDetail = getOutputMode().detail;
-      const showDetail: ShowDetailLevel | undefined = cliDetail === "summary" ? "summary" : undefined;
+      const explicitDetail = parseFlagValue(process.argv, "--detail");
+      const showDetail: ShowDetailLevel | undefined =
+        explicitDetail === "brief" ? "brief" : cliDetail === "summary" ? "summary" : undefined;
       const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
       output("show", result);
     });
