@@ -411,7 +411,7 @@ export function formatWikiRemovePlain(r: Record<string, unknown>): string {
   const preserved = r.preservedRaw === true;
   const removed = Array.isArray(r.removed) ? (r.removed as string[]).length : 0;
   const base = `Removed wiki ${String(r.name ?? "?")} (${removed} path(s))`;
-  return preserved ? `${base}; preserved ${String(r.rawPath ?? "raw/")}` : base;
+  return preserved ? `${base}; raw/ preserved at ${String(r.rawPath ?? "raw/")}` : base;
 }
 
 export function formatWikiPagesPlain(r: Record<string, unknown>): string {

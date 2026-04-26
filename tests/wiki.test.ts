@@ -168,6 +168,17 @@ describe("listWikis", () => {
     const result = listWikis(stash);
     expect(result.map((w) => w.name)).toEqual(["research"]);
   });
+
+  test("skips raw-only leftovers from a removed stash wiki", () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    fs.writeFileSync(path.join(wikiDir, "raw", "kept.md"), "keep me", "utf8");
+
+    removeWiki(stash, "research");
+
+    expect(listWikis(stash)).toEqual([]);
+  });
 });
 
 describe("showWiki", () => {
@@ -216,6 +227,21 @@ describe("removeWiki", () => {
     expect(fs.existsSync(path.join(wikiDir, SCHEMA_MD))).toBe(false);
     expect(fs.existsSync(path.join(wikiDir, INDEX_MD))).toBe(false);
     expect(fs.existsSync(path.join(wikiDir, LOG_MD))).toBe(false);
+  });
+
+  test("a preserved raw-only directory is no longer treated as a wiki, but can be deleted with withSources", () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    fs.writeFileSync(path.join(wikiDir, "raw", "kept.md"), "keep me", "utf8");
+
+    removeWiki(stash, "research");
+
+    expect(() => showWiki(stash, "research")).toThrow(/not found/i);
+
+    const cleanup = removeWiki(stash, "research", { withSources: true });
+    expect(cleanup.preservedRaw).toBe(false);
+    expect(fs.existsSync(wikiDir)).toBe(false);
   });
 
   test("with withSources: true, deletes everything including the wiki dir", () => {

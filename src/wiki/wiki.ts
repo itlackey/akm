@@ -137,7 +137,7 @@ function registeredWikiSources(stashDir: string): ResolvedWikiSource[] {
 export function resolveWikiSource(stashDir: string, name: string): ResolvedWikiSource {
   validateWikiName(name);
   const wikiDir = resolveWikiDir(stashDir, name);
-  if (fs.existsSync(wikiDir)) {
+  if (fs.existsSync(wikiDir) && isRecognizedStashWiki(wikiDir)) {
     return { name, path: wikiDir, mode: "stash" };
   }
   const external = registeredWikiSources(stashDir).find((source) => source.name === name);
@@ -148,7 +148,7 @@ export function resolveWikiSource(stashDir: string, name: string): ResolvedWikiS
 export function ensureWikiNameAvailable(stashDir: string, name: string): void {
   validateWikiName(name);
   const wikiDir = resolveWikiDir(stashDir, name);
-  if (fs.existsSync(wikiDir)) {
+  if (fs.existsSync(wikiDir) && isRecognizedStashWiki(wikiDir)) {
     throw new UsageError(`Wiki already exists: ${name}.`, "RESOURCE_ALREADY_EXISTS");
   }
   const external = registeredWikiSources(stashDir).find((source) => source.name === name);
@@ -234,6 +234,17 @@ function scanWikiFiles(wikiDir: string): WikiFileBuckets {
   return { pages, raws, lastModifiedMs, pagesLastModifiedMs };
 }
 
+function hasWikiInfrastructure(wikiDir: string): boolean {
+  for (const file of WIKI_SPECIAL_FILES) {
+    if (fs.existsSync(path.join(wikiDir, file))) return true;
+  }
+  return false;
+}
+
+function isRecognizedStashWiki(wikiDir: string, buckets = scanWikiFiles(wikiDir)): boolean {
+  return buckets.pages.length > 0 || hasWikiInfrastructure(wikiDir);
+}
+
 function readSchemaDescription(wikiDir: string): string | undefined {
   const schemaPath = path.join(wikiDir, SCHEMA_MD);
   let raw: string;
@@ -279,6 +290,7 @@ export function listWikis(stashDir: string): WikiSummary[] {
 
   const summarize = (name: string, dir: string) => {
     const buckets = scanWikiFiles(dir);
+    if (!isRecognizedStashWiki(dir, buckets)) return;
     const summary: WikiSummary = {
       name,
       path: dir,
@@ -432,9 +444,11 @@ export interface RemoveOptions {
  * ignore that (e.g. idempotent cleanup) by catching.
  */
 export function removeWiki(stashDir: string, name: string, options: RemoveOptions = {}): WikiRemoveResult {
-  const resolved = resolveWikiSource(stashDir, name);
-  const wikiDir = resolved.path;
-  if (resolved.mode === "external") {
+  validateWikiName(name);
+  const wikiDir = resolveWikiDir(stashDir, name);
+  const external = registeredWikiSources(stashDir).find((source) => source.name === name);
+  const isStashWiki = fs.existsSync(wikiDir) && isRecognizedStashWiki(wikiDir);
+  if (!isStashWiki && external) {
     const config = loadUserConfig();
     const filteredSources = (config.sources ?? config.stashes ?? []).filter((entry) => entry.wikiName !== name);
     const installed = (config.installed ?? []).filter((entry) => entry.wikiName !== name);
@@ -452,8 +466,8 @@ export function removeWiki(stashDir: string, name: string, options: RemoveOption
       unregistered: true,
     };
   }
-  if (!fs.existsSync(wikiDir)) {
-    throw new NotFoundError(`Wiki not found: ${name}.`, "STASH_NOT_FOUND");
+  if (!fs.existsSync(wikiDir) || (!isStashWiki && !options.withSources)) {
+    throw new NotFoundError(wikiNotFoundMessage(name), "STASH_NOT_FOUND");
   }
   const wikisRoot = resolveWikisRoot(stashDir);
   if (!isWithin(wikiDir, wikisRoot)) {
