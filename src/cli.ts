@@ -1681,7 +1681,7 @@ function listVaultsRecursive(
   return result;
 }
 
-function isVaultListRefActuallyFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
+function isVaultListRefMisparsedFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
   const argv = process.argv.slice(2);
   const vaultIndex = argv.indexOf("vault");
   const listIndex = vaultIndex >= 0 ? argv.indexOf("list", vaultIndex + 1) : -1;
@@ -1705,12 +1705,36 @@ function isVaultListRefActuallyFlagValue(ref: string, flag: "--format" | "--deta
   if (flagIndex === -1) return false;
   if (tokens.slice(0, flagIndex).includes(ref)) return false;
 
-  const SPACE_SEPARATED_FLAG_TOKENS = 2;
-  const EQUALS_FLAG_TOKENS = 1;
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? SPACE_SEPARATED_FLAG_TOKENS : EQUALS_FLAG_TOKENS);
+  const SPACE_SEPARATED_FLAG_OFFSET = 2;
+  const EQUALS_FLAG_OFFSET = 1;
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? SPACE_SEPARATED_FLAG_OFFSET : EQUALS_FLAG_OFFSET);
   if (tokens.slice(firstTokenAfterFlag).includes(ref)) return false;
 
   return true;
+}
+
+function resolveVaultListRef(ref: string | undefined): string | undefined {
+  if (ref === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    ref === parsedFormat &&
+    isVaultListRefMisparsedFlagValue(ref, "--format", parsedFormat)
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    ref === parsedDetail &&
+    isVaultListRefMisparsedFlagValue(ref, "--detail", parsedDetail)
+  ) {
+    return undefined;
+  }
+
+  return ref;
 }
 
 const vaultListCommand = defineCommand({
@@ -1721,18 +1745,7 @@ const vaultListCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { listKeys, listEntries } = await import("./commands/vault.js");
-      const parsedFormat = parseFlagValue(process.argv, "--format");
-      const parsedDetail = parseFlagValue(process.argv, "--detail");
-      const effectiveRef =
-        args.ref !== undefined &&
-        ((parsedFormat !== undefined &&
-          args.ref === parsedFormat &&
-          isVaultListRefActuallyFlagValue(args.ref, "--format", parsedFormat)) ||
-          (parsedDetail !== undefined &&
-            args.ref === parsedDetail &&
-            isVaultListRefActuallyFlagValue(args.ref, "--detail", parsedDetail)))
-          ? undefined
-          : args.ref;
+      const effectiveRef = resolveVaultListRef(args.ref);
 
       if (effectiveRef) {
         const { name, absPath } = resolveVaultPath(effectiveRef);
