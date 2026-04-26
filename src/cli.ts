@@ -154,7 +154,10 @@ const initCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmInit({ dir: args.dir });
+      // Accept both historical spellings for backwards compatibility with
+      // older docs/scripts that used `--stashDir`.
+      const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
+      const result = await akmInit({ dir: args.dir ?? legacyDir });
       output("init", result);
     });
   },

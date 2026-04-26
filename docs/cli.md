@@ -75,6 +75,7 @@ config.
 ```sh
 akm init                         # Initialize at the default location
 akm init --dir ~/custom-stash    # Initialize at a custom location
+akm init --stashDir ~/custom-stash # Legacy alias for --dir
 ```
 
 Creates one subdirectory per asset type under the stash path — currently
