@@ -310,10 +310,9 @@ const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
  * Apply wiki-specific index exclusions while leaving all other stash files
  * untouched.
  *
- * - In a normal stash, excludes `wikis/<name>/raw/**` and wiki-root
- *   `schema.md`, `index.md`, `log.md`.
- * - In a wiki-root stash source (`wikiName`), excludes `raw/**` and those same
- *   root-level infrastructure files.
+ * - In a normal stash, excludes wiki-root `schema.md`, `index.md`, `log.md`.
+ * - In a wiki-root stash source (`wikiName`), excludes those same root-level
+ *   infrastructure files.
  */
 export function shouldIndexStashFile(
   stashRoot: string,
@@ -327,7 +326,6 @@ export function shouldIndexStashFile(
   if (segments.length === 0) return true;
 
   if (options?.treatStashRootAsWikiRoot) {
-    if (segments[0] === "raw") return false;
     return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
   }
 
@@ -336,7 +334,6 @@ export function shouldIndexStashFile(
 
   const wikiRelativeSegments = segments.slice(wikisIdx + 2);
   if (wikiRelativeSegments.length === 0) return true;
-  if (wikiRelativeSegments[0] === "raw") return false;
   return !(wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]));
 }
 

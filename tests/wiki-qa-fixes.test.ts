@@ -2,7 +2,7 @@
  * Regression tests for the 0.5.0 QA wiki fixes.
  *
  * Covers:
- *   1. searchInWiki excludes schema.md, index.md, log.md, and raw/ files.
+ *   1. searchInWiki excludes schema.md, index.md, and log.md.
  *   2. stashRaw with explicitSlug: true throws UsageError on collision;
  *      with explicitSlug: false auto-increments.
  *   3. lintWiki emits broken-source findings for dangling sources: refs.
@@ -20,7 +20,6 @@ import {
   INDEX_MD,
   LOG_MD,
   lintWiki,
-  RAW_SUBDIR,
   SCHEMA_MD,
   searchInWiki,
   stashRaw,
@@ -94,8 +93,6 @@ describe("searchInWiki — infrastructure file exclusion", () => {
         if (!stashHit.path) continue;
         const basename = path.basename(stashHit.path);
         expect([SCHEMA_MD, INDEX_MD, LOG_MD]).not.toContain(basename);
-        // Must not be under raw/
-        expect(stashHit.path).not.toContain(`${path.sep}${RAW_SUBDIR}${path.sep}`);
       }
     } finally {
       cleanup();

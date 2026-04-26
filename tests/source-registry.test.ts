@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmListSources, akmRemove, akmUpdate } from "../src/commands/installed-stashes";
 import { loadConfig, saveConfig } from "../src/core/config";
+import { createWiki } from "../src/wiki/wiki";
 
 const createdTmpDirs: string[] = [];
 
@@ -118,6 +119,25 @@ describe("akmListSources", () => {
     expect(managed.ref).toBe("test-pkg");
     expect(managed.status.exists).toBe(true);
     expect(managed.writable).toBe(false);
+  });
+
+  test("includes stash-owned wikis as filesystem wiki sources", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    createWiki(stashDir, "research");
+
+    const result = await akmListSources({ stashDir });
+
+    expect(result.totalSources).toBe(1);
+    expect(result.sources).toEqual([
+      expect.objectContaining({
+        name: "research",
+        kind: "filesystem",
+        wiki: "research",
+        path: path.join(stashDir, "wikis", "research"),
+        writable: true,
+        status: { exists: true },
+      }),
+    ]);
   });
 
   test("reports missing directories in status", async () => {

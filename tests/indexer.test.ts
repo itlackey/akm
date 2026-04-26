@@ -175,7 +175,7 @@ test("akmIndex handles markdown assets", async () => {
   expect(result.totalEntries).toBe(2);
 });
 
-test("akmIndex excludes wiki raw and infrastructure files from the primary stash index", async () => {
+test("akmIndex includes wiki raw files but excludes infrastructure files from the primary stash index", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "wikis", "research", "schema.md"), "---\ndescription: Schema\n---\n# Schema\n");
   writeFile(path.join(stashDir, "wikis", "research", "index.md"), "---\ndescription: Index\n---\n# Index\n");
@@ -192,11 +192,11 @@ test("akmIndex excludes wiki raw and infrastructure files from the primary stash
   const wikiEntries = getAllEntries(db, "wiki")
     .map((row) => row.entry.name)
     .sort();
-  expect(wikiEntries).toEqual(["research/page"]);
+  expect(wikiEntries).toEqual(["research/page", "research/raw/paper"]);
   closeDatabase(db);
 });
 
-test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash sources", async () => {
+test("akmIndex includes wiki raw files but excludes infrastructure files for wiki-root stash sources", async () => {
   const primaryStash = tmpStash();
   const wikiSource = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-wiki-source-"));
   writeFile(path.join(wikiSource, "schema.md"), "---\ndescription: Schema\n---\n# Schema\n");
@@ -221,7 +221,7 @@ test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash so
     const wikiEntries = getAllEntries(db, "wiki")
       .map((row) => row.entry.name)
       .sort();
-    expect(wikiEntries).toEqual(["research/page", "research/sub/page-two"]);
+    expect(wikiEntries).toEqual(["research/page", "research/raw/paper", "research/sub/page-two"]);
     closeDatabase(db);
   } finally {
     if (origStash === undefined) delete process.env.AKM_STASH_DIR;

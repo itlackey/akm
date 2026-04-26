@@ -172,8 +172,9 @@ interface WikiFileBuckets {
  * Walk a wiki directory and bucket files into pages vs raws.
  *
  * "Pages" are any `.md` files under the wiki root EXCEPT `schema.md`,
- * `index.md`, `log.md`, or anything under `raw/`. This matches the set the
- * agent edits, and the set `akm wiki pages` exposes.
+ * `index.md`, or `log.md`. Raw sources are bucketed separately so callers can
+ * distinguish authored pages from ingested source material while still
+ * surfacing both.
  *
  * Returns two mtime signals:
  *   - `lastModifiedMs` — newest across all .md files. Used for the `show` /
@@ -589,15 +590,16 @@ function readPageFrontmatter(absPath: string): {
 }
 
 /**
- * List the pages in a wiki, excluding `schema.md`, `index.md`, `log.md`, and
- * anything under `raw/`. Each entry carries its ref (`wiki:<name>/<page>`),
- * path, and frontmatter-derived fields for orientation.
+ * List the addressable markdown entries in a wiki, excluding only the
+ * infrastructure files `schema.md`, `index.md`, and `log.md`. This includes
+ * both authored pages and `raw/` sources so `wiki pages` can inventory content
+ * written via `akm wiki stash`.
  */
 export function listPages(stashDir: string, name: string): WikiPageEntry[] {
   const wikiDir = resolveWikiSource(stashDir, name).path;
-  const { pages } = scanWikiFiles(wikiDir);
+  const { pages, raws } = scanWikiFiles(wikiDir);
   const result: WikiPageEntry[] = [];
-  for (const abs of pages) {
+  for (const abs of [...pages, ...raws]) {
     const pageName = pageNameFromPath(wikiDir, abs);
     const ref = `wiki:${name}/${pageName}`;
     const fm = readPageFrontmatter(abs);
@@ -643,7 +645,6 @@ export async function searchInWiki(input: WikiSearchInput): Promise<SearchRespon
     }
     throw err;
   }
-  const rawDir = path.join(wikiDir, RAW_SUBDIR);
   const filtered: SourceSearchHit[] = [];
   for (const hit of response.hits) {
     // hits can be SourceSearchHit or RegistrySearchResultHit (union); filter
@@ -655,8 +656,6 @@ export async function searchInWiki(input: WikiSearchInput): Promise<SearchRespon
     // Exclude infrastructure files: schema.md, index.md, log.md at wiki root
     const basename = path.basename(stashHit.path);
     if (WIKI_SPECIAL_FILES.has(basename) && path.dirname(stashHit.path) === wikiDir) continue;
-    // Exclude anything under raw/
-    if (isWithin(stashHit.path, rawDir)) continue;
     filtered.push(stashHit);
   }
   return { ...response, hits: filtered, registryHits: undefined };
