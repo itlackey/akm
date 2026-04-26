@@ -616,6 +616,7 @@ function maybeAutoMigrateLegacyStashes(configPath: string, raw: Record<string, u
     warn('Config migrated: "stashes" → "sources" in config.json');
     return migrated;
   } catch {
+    warn('Failed to migrate "stashes" → "sources" in config.json; continuing with the legacy key in memory');
     return raw;
   }
 }
