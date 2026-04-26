@@ -30,6 +30,7 @@ import {
   getMeta,
   getUtilityScoresByIds,
   openDatabase,
+  sanitizeFtsQuery,
   searchFts,
   searchVec,
 } from "./db";
@@ -201,8 +202,12 @@ async function searchDatabase(
   embedMs?: number;
   rankMs?: number;
 }> {
-  // Empty query: return all entries
-  if (!query) {
+  const hasSearchableTokens = query.length > 0 && sanitizeFtsQuery(query).length > 0;
+
+  // Empty queries — including ones that sanitize down to no searchable FTS
+  // tokens such as "." — should enumerate matching entries instead of
+  // returning an empty result set from FTS.
+  if (!hasSearchableTokens) {
     const typeFilter = searchType === "any" ? undefined : searchType;
     const allEntries = getAllEntries(db, typeFilter);
     // Deduplicate by file path — multiple entries can share the same file
