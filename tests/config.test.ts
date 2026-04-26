@@ -557,7 +557,7 @@ describe("legacy stashes → sources migration", () => {
       );
       loadConfig();
       resetConfigCache();
-      loadConfig();
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/legacy-path" }]);
       expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
     } finally {
       console.warn = originalWarn;
