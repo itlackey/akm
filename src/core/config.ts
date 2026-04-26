@@ -198,7 +198,7 @@ export interface AkmConfig {
   /**
    * @deprecated Use `sources` instead. Legacy key retained for one release cycle
    * so existing configs load without manual edits. The loader migrates `stashes`
-   * to `sources` in-memory and persists the new key on the next `akm config` write.
+   * to `sources` on first load and rewrites the config file in place.
    */
   stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
@@ -357,18 +357,7 @@ export function saveConfig(config: AkmConfig): void {
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
   const sanitized = sanitizeConfigForWrite(config);
-  const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, configPath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeConfigObject(configPath, sanitized);
 }
 
 /**
@@ -482,14 +471,9 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   } else {
     const legacyStashes = parseStashesConfig(raw.stashes);
     if (legacyStashes) {
-      // Backwards-compat migration: `stashes[]` → `sources[]` in-memory.
-      // Emit a one-time deprecation warning and carry the value forward as
-      // `sources`. The renamed key is persisted on the next `akm config` write.
-      warn(
-        'Config key "stashes" is deprecated; rename it to "sources" in your config file ' +
-          `(edit it directly at ${_getConfigPath()}). ` +
-          "Your configuration has been loaded successfully — no manual action is required right now.",
-      );
+      // Backwards-compat fallback: configs that still carry `stashes[]` are
+      // normalized to `sources[]` after the raw file loader has had a chance to
+      // auto-migrate the on-disk key.
       config.sources = legacyStashes;
     }
   }
@@ -522,19 +506,16 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
 function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
   const raw = readConfigObject(configPath);
-  const expanded = raw ? expandEnvVars(raw) : undefined;
+  const migrated = raw ? maybeAutoMigrateLegacyStashes(configPath, raw) : undefined;
+  const expanded = migrated ? expandEnvVars(migrated) : undefined;
   return expanded ? pickKnownKeys(expanded) : undefined;
 }
 
-function readNormalizedConfigFromText(_configPath: string, text: string): Partial<AkmConfig> | undefined {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(stripJsonComments(text));
-  } catch {
-    return undefined;
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-  const expanded = expandEnvVars(raw as Record<string, unknown>);
+function readNormalizedConfigFromText(configPath: string, text: string): Partial<AkmConfig> | undefined {
+  const raw = parseConfigObjectFromText(text);
+  if (!raw) return undefined;
+  const migrated = maybeAutoMigrateLegacyStashes(configPath, raw);
+  const expanded = expandEnvVars(migrated);
   return pickKnownKeys(expanded);
 }
 
@@ -605,11 +586,65 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
 function readConfigObject(configPath: string): Record<string, unknown> | undefined {
   try {
     const text = fs.readFileSync(configPath, "utf8");
-    const raw = JSON.parse(stripJsonComments(text));
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-    return raw;
+    return parseConfigObjectFromText(text);
   } catch {
     return undefined;
+  }
+}
+
+function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
+  try {
+    const raw = JSON.parse(stripJsonComments(text));
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+    return raw as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort on-disk config migration for the legacy `stashes` key.
+ *
+ * When a config file still uses `stashes` and does not already define
+ * `sources`, rewrite the file in place with `sources` replacing `stashes`,
+ * emit a one-time notice on success, and return the migrated object. If the
+ * rewrite fails, emit a warning and return the original object so the loader
+ * can still continue with an in-memory fallback.
+ */
+function maybeAutoMigrateLegacyStashes(configPath: string, raw: Record<string, unknown>): Record<string, unknown> {
+  if (Object.hasOwn(raw, "sources") || !Object.hasOwn(raw, "stashes")) {
+    return raw;
+  }
+
+  const migrated = Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => (key === "stashes" ? ["sources", value] : [key, value])),
+  );
+
+  try {
+    writeConfigObject(configPath, migrated);
+    warn('Config migrated: "stashes" → "sources" in config.json');
+    return migrated;
+  } catch {
+    warn(
+      'Failed to migrate "stashes" → "sources" in config.json; continuing with the legacy key in memory. ' +
+        "Check file permissions or rename the key manually if this persists.",
+    );
+    return raw;
+  }
+}
+
+function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
+  const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    fs.renameSync(tmpPath, configPath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore cleanup failure */
+    }
+    throw err;
   }
 }
 
