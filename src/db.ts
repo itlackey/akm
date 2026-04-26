@@ -6,6 +6,7 @@ import { cosineSimilarity, type EmbeddingVector } from "./embedder";
 import type { StashEntry } from "./metadata";
 import { getDbPath } from "./paths";
 import { buildSearchFields } from "./search-fields";
+import { parseAssetRef } from "./stash-ref";
 import { ensureUsageEventsSchema } from "./usage-events";
 import { warn } from "./warn";
 
@@ -693,6 +694,17 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     });
   }
   return entries;
+}
+
+export function findEntryIdByRef(db: Database, ref: string): number | undefined {
+  const parsed = parseAssetRef(ref);
+  const suffix = `${parsed.type}:${parsed.name}`;
+  const row = db
+    .prepare(
+      "SELECT id FROM entries WHERE entry_type = ? AND substr(entry_key, length(entry_key) - length(?) + 1) = ? LIMIT 1",
+    )
+    .get(parsed.type, suffix, suffix) as { id: number } | undefined;
+  return row?.id;
 }
 
 export function getEntryCount(db: Database): number {

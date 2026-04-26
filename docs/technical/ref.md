@@ -20,7 +20,7 @@ Refs currently use this wire format:
 | Part | Required | Description |
 | --- | --- | --- |
 | `origin` | no | Identifies which installed kit or source owns the asset. Separated from the rest of the ref by `//`. |
-| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, or `memory`. |
+| `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `vault`, or `wiki`. |
 | `name` | yes | Asset filename or path relative to the type directory. |
 
 ## Examples
@@ -30,6 +30,9 @@ Refs currently use this wire format:
 - `knowledge:api-guide`
 - `command:release`
 - `agent:reviewer`
+- `memory:deployment-notes`
+- `vault:prod`
+- `wiki:research/index`
 - `npm:@scope/pkg//script:deploy.sh`
 
 ## Origin

@@ -8,7 +8,7 @@ import { generateBashCompletions, installBashCompletions } from "./completions";
 import type { RegistryConfigEntry } from "./config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
-import { closeDatabase, openDatabase } from "./db";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "./db";
 import { ConfigError, NotFoundError, UsageError } from "./errors";
 import { akmIndex, type IndexResponse } from "./indexer";
 import { assembleInfo } from "./info";
@@ -1867,7 +1867,7 @@ const registryCommand = defineCommand({
 const feedbackCommand = defineCommand({
   meta: {
     name: "feedback",
-    description: "Record positive or negative feedback for a stash asset",
+    description: "Record positive or negative feedback for any indexed stash asset",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
@@ -1881,6 +1881,7 @@ const feedbackCommand = defineCommand({
       if (!ref) {
         throw new UsageError("Asset ref is required. Usage: akm feedback <ref> --positive|--negative");
       }
+      parseAssetRef(ref);
       if (args.positive && args.negative) {
         throw new UsageError("Specify either --positive or --negative, not both.");
       }
@@ -1892,9 +1893,14 @@ const feedbackCommand = defineCommand({
 
       const db = openDatabase();
       try {
+        const entryId = findEntryIdByRef(db, ref);
+        if (entryId === undefined) {
+          throw new UsageError(`Ref "${ref}" is not in the current index. Run "akm index" and try again.`);
+        }
         insertUsageEvent(db, {
           event_type: "feedback",
           entry_ref: ref,
+          entry_id: entryId,
           signal,
           metadata,
         });
@@ -3286,6 +3292,8 @@ akm workflow create ship-release               # Create a workflow asset in the 
 akm workflow next workflow:ship-release        # Start or resume the next workflow step
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
+akm feedback memory:deployment-notes --positive # Works for memories too
+akm feedback vault:prod --positive             # Records vault feedback without surfacing values
 \`\`\`
 
 Use \`akm feedback\` whenever an asset materially helps or fails so future search
