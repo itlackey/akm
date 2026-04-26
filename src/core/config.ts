@@ -471,9 +471,9 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   } else {
     const legacyStashes = parseStashesConfig(raw.stashes);
     if (legacyStashes) {
-      // Backwards-compat migration: `stashes[]` → `sources[]` in-memory.
-      // Emit a one-time deprecation warning and carry the value forward as
-      // `sources`. The renamed key is persisted on the next `akm config` write.
+      // Backwards-compat fallback: configs that still carry `stashes[]` are
+      // normalized to `sources[]` after the raw file loader has had a chance to
+      // auto-migrate the on-disk key.
       config.sources = legacyStashes;
     }
   }
@@ -602,6 +602,15 @@ function parseConfigObjectFromText(text: string): Record<string, unknown> | unde
   }
 }
 
+/**
+ * Best-effort on-disk config migration for the legacy `stashes` key.
+ *
+ * When a config file still uses `stashes` and does not already define
+ * `sources`, rewrite the file in place with `sources` replacing `stashes`,
+ * emit a one-time notice on success, and return the migrated object. If the
+ * rewrite fails, emit a warning and return the original object so the loader
+ * can still continue with an in-memory fallback.
+ */
 function maybeAutoMigrateLegacyStashes(configPath: string, raw: Record<string, unknown>): Record<string, unknown> {
   if (Object.hasOwn(raw, "sources") || !Object.hasOwn(raw, "stashes")) {
     return raw;
@@ -616,7 +625,10 @@ function maybeAutoMigrateLegacyStashes(configPath: string, raw: Record<string, u
     warn('Config migrated: "stashes" → "sources" in config.json');
     return migrated;
   } catch {
-    warn('Failed to migrate "stashes" → "sources" in config.json; continuing with the legacy key in memory');
+    warn(
+      'Failed to migrate "stashes" → "sources" in config.json; continuing with the legacy key in memory. ' +
+        "Check file permissions or rename the key manually if this persists.",
+    );
     return raw;
   }
 }
