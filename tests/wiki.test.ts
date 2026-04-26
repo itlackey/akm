@@ -595,10 +595,9 @@ describe("searchInWiki", () => {
       await akmIndex({ stashDir: stash, full: true });
 
       const response = await searchInWiki({ stashDir: stash, wikiName: "alpha", query: "hello world" });
+      const rawHit = response.hits.find((hit) => hit.type !== "registry" && hit.ref === "wiki:alpha/raw/hello-world");
 
-      expect(response.hits.some((hit) => hit.type !== "registry" && hit.ref === "wiki:alpha/raw/hello-world")).toBe(
-        true,
-      );
+      expect(rawHit).toBeDefined();
     } finally {
       if (origStash === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = origStash;

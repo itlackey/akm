@@ -80,6 +80,8 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
         .map((sourcePath) => path.resolve(sourcePath)),
     );
     for (const wiki of listWikis(stashDir)) {
+      // `listWikis()` also includes externally-registered wikis. `akm list`
+      // should synthesize source entries here only for stash-owned wiki dirs.
       if (!isWithin(wiki.path, wikisRoot)) continue;
       const resolvedPath = path.resolve(wiki.path);
       if (seenPaths.has(resolvedPath)) continue;
