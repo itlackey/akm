@@ -26,15 +26,15 @@ import { type AssetRef, parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
-import { closeDatabase, openDatabase } from "../indexer/db";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
 import { loadStashFile } from "../indexer/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
+import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 // Eagerly import source providers to trigger self-registration.
 import "../sources/providers/index";
-import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveAssetPath } from "../sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
 
@@ -153,15 +153,10 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   try {
     const db = existingDb ?? openDatabase();
     try {
-      const parsed = parseAssetRef(ref);
-      const safeName = parsed.name.replace(/%/g, "\\%").replace(/_/g, "\\_");
-      const row = db
-        .prepare("SELECT id FROM entries WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1")
-        .get(`%:${parsed.type}:${safeName}`, parsed.type) as { id: number } | undefined;
       insertUsageEvent(db, {
         event_type: "show",
         entry_ref: ref,
-        entry_id: row?.id,
+        entry_id: findEntryIdByRef(db, ref),
       });
     } finally {
       if (!existingDb) closeDatabase(db);

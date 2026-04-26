@@ -1014,8 +1014,10 @@ const USAGE_EVENT_RETENTION_DAYS = 90;
  * For each entry:
  *   - Count search appearances (event_type = 'search')
  *   - Count show events (event_type = 'show')
+ *   - Count positive/negative feedback events
  *   - Compute select_rate = showCount / searchCount, clamped to [0, 1]
- *   - Update utility via EMA: utility = previousUtility * 0.7 + selectRate * 0.3
+ *   - Convert feedback counts into a positive-only feedback_rate
+ *   - Update utility via EMA from the stronger of select_rate / feedback_rate
  *
  * Also purges usage_events older than 90 days and ensures the M-1
  * usage_events table exists before querying.
@@ -1049,6 +1051,8 @@ export function recomputeUtilityScores(db: Database): void {
       SELECT entry_id,
              SUM(CASE WHEN event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
              SUM(CASE WHEN event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
+             SUM(CASE WHEN event_type = 'feedback' AND signal = 'positive' THEN 1 ELSE 0 END) AS positive_feedback_count,
+             SUM(CASE WHEN event_type = 'feedback' AND signal = 'negative' THEN 1 ELSE 0 END) AS negative_feedback_count,
              MAX(created_at) AS last_used_at
       FROM usage_events
       WHERE entry_id IS NOT NULL
@@ -1058,6 +1062,8 @@ export function recomputeUtilityScores(db: Database): void {
     entry_id: number;
     search_count: number;
     show_count: number;
+    positive_feedback_count: number;
+    negative_feedback_count: number;
     last_used_at: string | null;
   }>;
 
@@ -1078,8 +1084,12 @@ export function recomputeUtilityScores(db: Database): void {
 
   for (const row of usageRows) {
     const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
+    const feedbackTotal = row.positive_feedback_count + row.negative_feedback_count;
+    const feedbackRate =
+      feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
+    const effectiveRate = Math.max(selectRate, feedbackRate);
     const prevUtility = existingScores.get(row.entry_id) ?? 0;
-    const utility = prevUtility * emaDecay + selectRate * emaNew;
+    const utility = prevUtility * emaDecay + effectiveRate * emaNew;
 
     upsertUtilityScore(db, row.entry_id, {
       utility,

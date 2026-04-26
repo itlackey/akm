@@ -697,13 +697,15 @@ stdin.
 
 ### feedback
 
-Record positive or negative feedback for a stash asset. Feedback influences
-utility scores during the next index run, causing highly-rated assets to rank
-higher in search results over time.
+Record positive or negative feedback for any indexed stash asset. Feedback
+influences utility scores during the next index run, causing highly-rated
+assets to rank higher in search results over time.
 
 ```sh
 akm feedback script:deploy.sh --positive
 akm feedback agent:reviewer --negative
+akm feedback memory:deployment-notes --positive
+akm feedback vault:prod --positive
 akm feedback skill:code-review --positive --note "Worked perfectly for PR reviews"
 ```
 
@@ -713,7 +715,8 @@ akm feedback skill:code-review --positive --note "Worked perfectly for PR review
 | `--negative` | Record negative feedback (use when an asset was not useful) |
 | `--note` | Optional text note to attach to the feedback event |
 
-Specify exactly one of `--positive` or `--negative`.
+Specify exactly one of `--positive` or `--negative`. The ref must already be
+present in the current local index.
 
 ### registry
 

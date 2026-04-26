@@ -32,7 +32,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
-import { closeDatabase, openDatabase } from "./indexer/db";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { resolveSourceEntries } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
@@ -858,7 +858,7 @@ const registryCommand = defineCommand({
 const feedbackCommand = defineCommand({
   meta: {
     name: "feedback",
-    description: "Record positive or negative feedback for a stash asset",
+    description: "Record positive or negative feedback for any indexed stash asset",
   },
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
@@ -872,6 +872,7 @@ const feedbackCommand = defineCommand({
       if (!ref) {
         throw new UsageError("Asset ref is required. Usage: akm feedback <ref> --positive|--negative");
       }
+      parseAssetRef(ref);
       if (args.positive && args.negative) {
         throw new UsageError("Specify either --positive or --negative, not both.");
       }
@@ -883,9 +884,14 @@ const feedbackCommand = defineCommand({
 
       const db = openDatabase();
       try {
+        const entryId = findEntryIdByRef(db, ref);
+        if (entryId === undefined) {
+          throw new UsageError(`Ref "${ref}" is not in the current index. Run "akm index" and try again.`);
+        }
         insertUsageEvent(db, {
           event_type: "feedback",
           entry_ref: ref,
+          entry_id: entryId,
           signal,
           metadata,
         });

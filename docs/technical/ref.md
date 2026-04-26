@@ -19,7 +19,7 @@ Asset refs use this wire format:
 
 | Part | Required | Description |
 | --- | --- | --- |
-| `origin` | no | Configured source name (e.g. `team`, `local`). Separated from the rest of the ref by `//`. |
+| `origin` | no | Configured source name (e.g. `team`, `local`) that owns the asset. Separated from the rest of the ref by `//`. |
 | `type` | yes | Asset type: `script`, `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `vault`, or `wiki`. |
 | `name` | yes | Asset filename or path relative to the type directory. |
 
@@ -40,7 +40,11 @@ name      := [^\x00/\\:]+
 - `knowledge:api-guide`
 - `command:release`
 - `agent:reviewer`
+- `memory:deployment-notes`
+- `vault:prod`
+- `wiki:research/index`
 - `team//script:deploy.sh`
+- `npm:@scope/pkg//script:deploy.sh`
 
 ### Rejected
 
@@ -52,7 +56,7 @@ name      := [^\x00/\\:]+
 
 `akm add` and one-shot `akm clone` accept a different ref grammar. Install
 refs locate an upstream kit to fetch; they are **not** asset refs and are
-parsed by `parseRegistryRef` in `src/registry/registry-resolve.ts`.
+parsed by `parseRegistryRef` in `src/registry/resolve.ts`.
 
 ```text
 install-ref := github-ref | git-url | npm-pkg | https-url | skills-sh-slug | local-path

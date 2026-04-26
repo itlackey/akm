@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { parseAssetRef } from "../core/asset-ref";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { cosineSimilarity, type EmbeddingVector } from "../llm/embedders/types";
@@ -840,6 +841,17 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
     });
   }
   return entries;
+}
+
+export function findEntryIdByRef(db: Database, ref: string): number | undefined {
+  const parsed = parseAssetRef(ref);
+  const suffix = `${parsed.type}:${parsed.name}`;
+  const row = db
+    .prepare(
+      "SELECT id FROM entries WHERE entry_type = ? AND substr(entry_key, length(entry_key) - length(?) + 1) = ? LIMIT 1",
+    )
+    .get(parsed.type, suffix, suffix) as { id: number } | undefined;
+  return row?.id;
 }
 
 export function getEntryCount(db: Database): number {

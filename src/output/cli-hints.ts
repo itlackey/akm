@@ -127,6 +127,8 @@ akm workflow validate workflows/foo.md         # Validate a workflow file or ref
 akm workflow next workflow:ship-release        # Start or resume the next workflow step
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
+akm feedback memory:deployment-notes --positive # Works for memories too
+akm feedback vault:prod --positive             # Records vault feedback without surfacing values
 \`\`\`
 
 Use \`akm feedback\` whenever an asset materially helps or fails so future search
