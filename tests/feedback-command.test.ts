@@ -155,7 +155,8 @@ describe("akm feedback", () => {
 
     const before = await akmSearch({ query: "shared deployment incident", source: "local" });
     const beforeMemories = before.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
-    expect(beforeMemories[0]?.ref).toBe("memory:alpha");
+    expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memory:alpha", "memory:omega"]);
+    expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
 
     const feedback = runCli(["feedback", "memory:omega", "--positive", "--format=json"]);
     expect(feedback.status).toBe(0);
