@@ -75,7 +75,7 @@ describe("ensureRg", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const result = ensureRg(binDir);
       expect(result.rgPath).toBe(rgPath);
       expect(result.installed).toBe(false);
@@ -102,7 +102,7 @@ describe("platform detection", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       // This will try to actually download, so we expect a network error or curl error,
       // NOT an "Unsupported platform" error.
       try {
@@ -142,7 +142,7 @@ describe("getRgVersion", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const result = ensureRg(binDir);
       expect(result.version).toBe("14.1.1");
       expect(result.installed).toBe(false);
@@ -165,7 +165,7 @@ describe("getRgVersion", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const result = ensureRg(binDir);
       expect(result.version).toBe("unknown");
     } finally {
@@ -191,7 +191,7 @@ describe("EnsureRgResult", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const result = ensureRg(binDir);
       expect(typeof result.rgPath).toBe("string");
       expect(typeof result.installed).toBe("boolean");
@@ -222,7 +222,7 @@ describe("download error handling", () => {
     process.env.XDG_CACHE_HOME = makeTmpDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const result = ensureRg(binDir);
       expect(result.rgPath).toBe(rgPath);
       expect(result.installed).toBe(false);
@@ -243,7 +243,7 @@ describe("download error handling", () => {
     process.env.PATH = makeToolchainDir();
 
     try {
-      const { ensureRg } = await import("../src/ripgrep-install");
+      const { ensureRg } = await import("../src/setup/ripgrep-install");
       const rgInBin = path.join(binDir, "rg");
       if (fs.existsSync(rgInBin)) fs.unlinkSync(rgInBin);
 

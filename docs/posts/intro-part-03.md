@@ -145,7 +145,7 @@ The OpenViking integration solves a class of problems that local-only management
 
 **Persistent memory across sessions.** OpenViking's memory system stores recalled context fragments that survive across conversations. When your agent starts a new session, it can search for memories from previous work — `akm search "sprint planning decisions" --type memory` — and get back what it learned last week. That's a fundamentally different capability than loading the same static skills every time.
 
-**Unified search across everything.** This is the compounding effect of the whole series. Part one gave you progressive disclosure for local skills. Part two unified your multi-platform assets into one searchable stash. Now part three adds remote context to the same search surface. One `akm search` query, one result set, one `akm show` command — regardless of whether the asset is a Claude Code skill in `~/.claude/skills/`, a script from an npm kit, or a knowledge document on an OpenViking server across the network.
+**Unified search across everything.** This is the compounding effect of the whole series. Part one gave you progressive disclosure for local skills. Part two unified your multi-platform assets into one searchable stash. Now part three adds remote context to the same search surface. One `akm search` query, one result set, one `akm show` command — regardless of whether the asset is a Claude Code skill in `~/.claude/skills/`, a script from an npm stash, or a knowledge document on an OpenViking server across the network.
 
 ## The Full Picture
 
@@ -161,7 +161,7 @@ akm add ~/.claude/skills
 akm add .opencode/skills
 akm add .cursor/rules
 
-# Community and team kits
+# Community and team stashes
 akm add github:your-org/team-agent-toolkit
 akm add @scope/deploy-skills
 
@@ -184,10 +184,15 @@ You have access to a searchable library of scripts, skills, commands, agents,
 knowledge, and memories via the `akm` CLI. Use `akm -h` for details.
 ```
 
-Local skills, remote knowledge, team kits, community registries, persistent memories. One search, one interface, every agent.
+Local skills, remote knowledge, team stashes, community registries, persistent memories. One search, one interface, every agent.
 
 The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). OpenViking is at [github.com/volcengine/OpenViking](https://github.com/volcengine/OpenViking). Both are open source, both are moving fast, and the combination is genuinely useful infrastructure for anyone running agents in production.
 
 ---
 
 *__Update (March 2026):__ This post was updated to reflect akm's current CLI. `akm add` replaces the earlier `akm stash add` for adding sources (including OpenViking providers), `akm setup` replaces `akm init`, and `akm list` replaces `akm stash list`. Sources (formerly "stash sources") are now managed through a single `akm add` / `akm remove` interface. If you're following along with an older version, `akm upgrade` will get you current.*
+
+
+---
+
+> **Note (2026-04-23):** This post has been updated to align with akm 0.6.0 terminology. Earlier wording referred to a *kit* and the *Kit Maker's Guide*; those terms have been renamed to *stash* and *Stash Maker's Guide* throughout. The pre-rename text is preserved in this repository's git history.

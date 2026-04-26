@@ -2,20 +2,20 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { RegistryIndex } from "../src/registry-search";
-import { searchRegistry } from "../src/registry-search";
+import type { RegistryIndex } from "../src/commands/registry-search";
+import { searchRegistry } from "../src/commands/registry-search";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 const V1_INDEX: RegistryIndex = {
-  version: 1,
+  version: 3,
   updatedAt: "2026-03-01T00:00:00Z",
-  kits: [
+  stashes: [
     {
-      id: "npm:legacy-kit",
-      name: "Legacy Kit",
-      description: "A v1 kit without assets",
-      ref: "legacy-kit",
+      id: "npm:legacy-stash",
+      name: "Legacy Stash",
+      description: "A v1 stash without assets",
+      ref: "legacy-stash",
       source: "npm",
       tags: ["legacy", "deploy"],
     },
@@ -23,14 +23,14 @@ const V1_INDEX: RegistryIndex = {
 };
 
 const V2_INDEX: RegistryIndex = {
-  version: 2,
+  version: 3,
   updatedAt: "2026-03-12T00:00:00Z",
-  kits: [
+  stashes: [
     {
-      id: "github:owner/my-kit",
-      name: "My Kit",
-      description: "A kit with assets",
-      ref: "owner/my-kit",
+      id: "github:owner/my-stash",
+      name: "My Stash",
+      description: "A stash with assets",
+      ref: "owner/my-stash",
       source: "github",
       tags: ["automation", "deploy"],
       assets: [
@@ -51,18 +51,18 @@ const V2_INDEX: RegistryIndex = {
       ],
     },
     {
-      id: "npm:no-assets-kit",
-      name: "No Assets Kit",
-      description: "A v2 kit without asset-level metadata",
-      ref: "no-assets-kit",
+      id: "npm:no-assets-stash",
+      name: "No Assets Stash",
+      description: "A v2 stash without asset-level metadata",
+      ref: "no-assets-stash",
       source: "npm",
       tags: ["utility"],
     },
     {
-      id: "github:owner/empty-assets-kit",
-      name: "Empty Assets Kit",
-      description: "A kit with an empty assets array",
-      ref: "owner/empty-assets-kit",
+      id: "github:owner/empty-assets-stash",
+      name: "Empty Assets Stash",
+      description: "A stash with an empty assets array",
+      ref: "owner/empty-assets-stash",
       source: "github",
       tags: ["test"],
       assets: [],
@@ -132,8 +132,8 @@ describe("parser: v1 index compatibility", () => {
       const result = await searchRegistry("legacy", { registries: [{ url: srv.url }] });
       expect(result.warnings).toEqual([]);
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:legacy-kit");
-      expect(result.hits[0].title).toBe("Legacy Kit");
+      expect(result.hits[0].id).toBe("npm:legacy-stash");
+      expect(result.hits[0].title).toBe("Legacy Stash");
     } finally {
       srv.close();
     }
@@ -154,13 +154,13 @@ describe("parser: v1 index compatibility", () => {
 // ── Parser: v2 index with assets ────────────────────────────────────────────
 
 describe("parser: v2 index with assets", () => {
-  test("v2 index parses kits with assets", async () => {
+  test("v2 index parses stashes with assets", async () => {
     const srv = serveIndex(V2_INDEX);
     try {
       const result = await searchRegistry("automation", { registries: [{ url: srv.url }] });
       expect(result.warnings).toEqual([]);
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0].id).toBe("github:owner/my-kit");
+      expect(result.hits[0].id).toBe("github:owner/my-stash");
     } finally {
       srv.close();
     }
@@ -180,9 +180,9 @@ describe("parser: v2 index with assets", () => {
       expect(deployHit?.assetType).toBe("script");
       expect(deployHit?.description).toBe("Deploy the application");
       expect(deployHit?.estimatedTokens).toBe(64);
-      expect(deployHit?.kit.id).toBe("github:owner/my-kit");
-      expect(deployHit?.kit.name).toBe("My Kit");
-      expect(deployHit?.action).toBe("akm add github:owner/my-kit");
+      expect(deployHit?.stash.id).toBe("github:owner/my-stash");
+      expect(deployHit?.stash.name).toBe("My Stash");
+      expect(deployHit?.action).toBe("akm add github:owner/my-stash");
     } finally {
       srv.close();
     }
@@ -192,7 +192,7 @@ describe("parser: v2 index with assets", () => {
 // ── Asset-level search ──────────────────────────────────────────────────────
 
 describe("asset-level search", () => {
-  test("asset search returns hits with kit provenance", async () => {
+  test("asset search returns hits with stash provenance", async () => {
     const srv = serveIndex(V2_INDEX);
     try {
       const result = await searchRegistry("code-review", {
@@ -203,36 +203,36 @@ describe("asset-level search", () => {
       expect(result.assetHits).toBeDefined();
       const reviewHit = result.assetHits?.find((h) => h.assetName === "code-review");
       expect(reviewHit).toBeDefined();
-      expect(reviewHit?.kit.id).toBe("github:owner/my-kit");
+      expect(reviewHit?.stash.id).toBe("github:owner/my-stash");
       expect(reviewHit?.registryName).toBe("test-reg");
     } finally {
       srv.close();
     }
   });
 
-  test("kits without assets are silently skipped in asset search", async () => {
+  test("stashes without assets are silently skipped in asset search", async () => {
     const srv = serveIndex(V2_INDEX);
     try {
       const result = await searchRegistry("utility", {
         registries: [{ url: srv.url }],
         includeAssets: true,
       });
-      // "utility" matches the no-assets-kit but not any asset
-      // Asset hits should not include anything from kits without assets
+      // "utility" matches the no-assets-stash but not any asset
+      // Asset hits should not include anything from stashes without assets
       expect(result.assetHits).toBeUndefined();
     } finally {
       srv.close();
     }
   });
 
-  test("kits with empty assets array are silently skipped in asset search", async () => {
+  test("stashes with empty assets array are silently skipped in asset search", async () => {
     const srv = serveIndex(V2_INDEX);
     try {
       const result = await searchRegistry("test", {
         registries: [{ url: srv.url }],
         includeAssets: true,
       });
-      // "test" only matches the empty-assets-kit tag, which has no assets
+      // "test" only matches the empty-assets-stash tag, which has no assets
       expect(result.assetHits).toBeUndefined();
     } finally {
       srv.close();
@@ -265,16 +265,16 @@ describe("asset-level search", () => {
     }
   });
 
-  test("local source kit uses file: prefix in action string", async () => {
+  test("local source stash uses file: prefix in action string", async () => {
     const localIndex: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "local:my-local-kit",
-          name: "Local Kit",
-          description: "A kit from a local path",
-          ref: "/home/user/kits/my-local-kit",
+          id: "local:my-local-stash",
+          name: "Local Stash",
+          description: "A stash from a local path",
+          ref: "/home/user/stashes/my-local-stash",
           source: "local",
           tags: ["local", "dev"],
           assets: [
@@ -300,9 +300,9 @@ describe("asset-level search", () => {
       const hit = result.assetHits?.[0];
       expect(hit).toBeDefined();
       expect(hit?.assetName).toBe("setup.sh");
-      expect(hit?.kit.id).toBe("local:my-local-kit");
+      expect(hit?.stash.id).toBe("local:my-local-stash");
       // Local source should use file: prefix, not "github:"
-      expect(hit?.action).toBe("akm add file:/home/user/kits/my-local-kit");
+      expect(hit?.action).toBe("akm add file:/home/user/stashes/my-local-stash");
       expect(hit?.action).not.toContain("github:");
     } finally {
       srv.close();
@@ -330,13 +330,13 @@ describe("asset-level search", () => {
 describe("edge cases", () => {
   test("missing assets field parsed as undefined", async () => {
     const index: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:plain-kit",
-          name: "Plain Kit",
-          ref: "plain-kit",
+          id: "npm:plain-stash",
+          name: "Plain Stash",
+          ref: "plain-stash",
           source: "npm",
         },
       ],
@@ -348,7 +348,7 @@ describe("edge cases", () => {
         includeAssets: true,
       });
       expect(result.hits.length).toBe(1);
-      // No asset hits because the kit has no assets
+      // No asset hits because the stash has no assets
       expect(result.assetHits).toBeUndefined();
     } finally {
       srv.close();
@@ -357,9 +357,9 @@ describe("edge cases", () => {
 
   test("empty assets array parsed correctly", async () => {
     const index: RegistryIndex = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
-      kits: [
+      stashes: [
         {
           id: "npm:empty-assets",
           name: "Empty Assets",
@@ -385,12 +385,12 @@ describe("edge cases", () => {
   test("asset with invalid structure is skipped", async () => {
     // biome-ignore lint/suspicious/noExplicitAny: testing invalid input
     const index: any = {
-      version: 2,
+      version: 3,
       updatedAt: "2026-03-12T00:00:00Z",
-      kits: [
+      stashes: [
         {
           id: "npm:bad-assets",
-          name: "Bad Assets Kit",
+          name: "Bad Assets Stash",
           ref: "bad-assets",
           source: "npm",
           assets: [
@@ -428,16 +428,16 @@ describe("edge cases", () => {
         ],
         includeAssets: true,
       });
-      // Both v1 kit hits and v2 kit hits should be present
+      // Both v1 stash hits and v2 stash hits should be present
       const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:legacy-kit");
-      expect(ids).toContain("github:owner/my-kit");
+      expect(ids).toContain("npm:legacy-stash");
+      expect(ids).toContain("github:owner/my-stash");
 
       // Asset hits should come only from v2
       expect(result.assetHits).toBeDefined();
-      const assetKitIds = result.assetHits?.map((h) => h.kit.id);
-      expect(assetKitIds).toContain("github:owner/my-kit");
-      expect(assetKitIds).not.toContain("npm:legacy-kit");
+      const assetKitIds = result.assetHits?.map((h) => h.stash.id);
+      expect(assetKitIds).toContain("github:owner/my-stash");
+      expect(assetKitIds).not.toContain("npm:legacy-stash");
     } finally {
       srv1.close();
       srv2.close();

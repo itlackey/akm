@@ -11,9 +11,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { buildFileContext } from "../src/file-context";
-import { wikiMatcher } from "../src/matchers";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { buildFileContext } from "../src/indexer/file-context";
+import { wikiMatcher } from "../src/indexer/matchers";
 import {
   buildIngestWorkflow,
   createWiki,
@@ -35,7 +35,7 @@ import {
   stashRaw,
   validateWikiName,
   WIKIS_SUBDIR,
-} from "../src/wiki";
+} from "../src/wiki/wiki";
 
 const tempDirs: string[] = [];
 
@@ -134,7 +134,7 @@ describe("createWiki", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
       expect(() => createWiki(stash, "ics-docs")).toThrow("Wiki already registered: ics-docs.");
     } finally {
@@ -167,6 +167,17 @@ describe("listWikis", () => {
     createWiki(stash, "research");
     const result = listWikis(stash);
     expect(result.map((w) => w.name)).toEqual(["research"]);
+  });
+
+  test("skips raw-only leftovers from a removed stash wiki", () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    fs.writeFileSync(path.join(wikiDir, "raw", "kept.md"), "keep me", "utf8");
+
+    removeWiki(stash, "research");
+
+    expect(listWikis(stash)).toEqual([]);
   });
 });
 
@@ -218,6 +229,21 @@ describe("removeWiki", () => {
     expect(fs.existsSync(path.join(wikiDir, LOG_MD))).toBe(false);
   });
 
+  test("a preserved raw-only directory is no longer treated as a wiki, but can be deleted with withSources", () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
+    fs.writeFileSync(path.join(wikiDir, "raw", "kept.md"), "keep me", "utf8");
+
+    removeWiki(stash, "research");
+
+    expect(() => showWiki(stash, "research")).toThrow(/not found/i);
+
+    const cleanup = removeWiki(stash, "research", { withSources: true });
+    expect(cleanup.preservedRaw).toBe(false);
+    expect(fs.existsSync(wikiDir)).toBe(false);
+  });
+
   test("with withSources: true, deletes everything including the wiki dir", () => {
     const stash = makeStash();
     createWiki(stash, "research");
@@ -237,7 +263,7 @@ describe("removeWiki", () => {
     try {
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
 
       const result = removeWiki(stash, "ics-docs");
@@ -245,7 +271,7 @@ describe("removeWiki", () => {
       expect(result.unregistered).toBe(true);
       expect(fs.existsSync(path.join(externalWiki, "overview.md"))).toBe(true);
       expect(listWikis(stash).map((wiki) => wiki.name)).not.toContain("ics-docs");
-      expect((loadConfig().stashes ?? []).some((entry) => entry.wikiName === "ics-docs")).toBe(false);
+      expect((loadConfig().sources ?? []).some((entry) => entry.wikiName === "ics-docs")).toBe(false);
     } finally {
       if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = origHome;
@@ -305,7 +331,7 @@ describe("wikiMatcher", () => {
     const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
     fs.mkdirSync(wikiDir, { recursive: true });
     const abs = writePage(wikiDir, "SKILL.md", "# not actually a skill\n");
-    const { runMatchers } = await import("../src/file-context");
+    const { runMatchers } = await import("../src/indexer/file-context");
     const ctx = buildFileContext(stash, abs);
     const result = await runMatchers(ctx);
     expect(result?.type).toBe("wiki");
@@ -533,7 +559,7 @@ describe("searchInWiki", () => {
       writePage(externalWiki, "attention.md", "---\ndescription: External attention page\n---\n# Attention\n");
       saveConfig({
         semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
+        sources: [{ type: "filesystem", path: externalWiki, name: "ics-docs", wikiName: "ics-docs" }],
       });
 
       const response = await searchInWiki({ stashDir: stash, wikiName: "ics-docs", query: "attention" });

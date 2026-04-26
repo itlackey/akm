@@ -1,0 +1,192 @@
+import fs from "node:fs";
+import path from "node:path";
+import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
+import { TYPE_DIRS } from "../core/asset-spec";
+import { NotFoundError, UsageError } from "../core/errors";
+import { findSourceForPath, getPrimarySource, resolveSourceEntries, type SearchSource } from "../indexer/search-source";
+import { isRemoteOrigin, resolveSourcesForOrigin } from "../registry/origin-resolve";
+import { syncFromRef } from "../sources/providers/sync-from-ref";
+import { resolveAssetPath } from "../sources/resolve";
+
+export interface CloneOptions {
+  /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
+  sourceRef: string;
+  /** Optional new name for the cloned asset */
+  newName?: string;
+  /** If true, overwrite existing asset in working stash */
+  force?: boolean;
+  /** Destination directory (default: working stash) */
+  dest?: string;
+}
+
+export interface CloneResponse {
+  source: {
+    path: string;
+    registryId?: string;
+  };
+  destination: {
+    path: string;
+    ref: string;
+  };
+  overwritten: boolean;
+  remoteFetched?: { origin: string; stashRoot: string; cacheDir: string };
+}
+
+export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
+  const parsed = parseAssetRef(options.sourceRef);
+
+  // When --dest is provided, the working stash is optional
+  let allSources: SearchSource[];
+  try {
+    allSources = resolveSourceEntries();
+  } catch (err) {
+    if (options.dest) {
+      allSources = [];
+    } else {
+      throw err;
+    }
+  }
+
+  const primarySource = getPrimarySource(allSources);
+  const destRoot = options.dest ? path.resolve(options.dest) : primarySource?.path;
+
+  if (!destRoot) {
+    throw new Error("No working stash configured and no --dest provided. Run `akm init` or pass --dest.");
+  }
+
+  let searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
+
+  // Remote fetch fallback: if no local source matched and origin looks remote, fetch it
+  let remoteFetched: CloneResponse["remoteFetched"] | undefined;
+  if (searchSources.length === 0 && parsed.origin && isRemoteOrigin(parsed.origin, allSources)) {
+    const installResult = await syncFromRef(parsed.origin);
+    const syntheticSource: SearchSource = {
+      path: installResult.contentDir,
+      registryId: installResult.id,
+    };
+    searchSources = [syntheticSource];
+    allSources = [...allSources, syntheticSource];
+    remoteFetched = {
+      origin: parsed.origin,
+      stashRoot: installResult.contentDir,
+      cacheDir: installResult.cacheDir,
+    };
+  }
+
+  let sourcePath: string | undefined;
+  let lastError: Error | undefined;
+  for (const source of searchSources) {
+    try {
+      sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
+      break;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  if (!sourcePath) {
+    if (remoteFetched) {
+      throw new NotFoundError(
+        `Source asset not found for ref: ${options.sourceRef} (remote package fetched but asset not found inside it)`,
+        "ASSET_NOT_FOUND",
+        "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.",
+      );
+    }
+    throw lastError ?? new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
+  }
+
+  const sourceSource = findSourceForPath(sourcePath, allSources);
+
+  const destName = options.newName ?? parsed.name;
+  const typeDir = TYPE_DIRS[parsed.type];
+
+  // Validate destName to prevent path traversal (parsed.name is already
+  // validated by parseAssetRef, but newName comes directly from user input).
+  // Run whenever newName is provided, including empty string.
+  if (options.newName !== undefined) {
+    if (destName === "") {
+      throw new UsageError("Clone name must not be empty.");
+    }
+    const normalized = path.posix.normalize(destName.replace(/\\/g, "/"));
+    if (
+      path.isAbsolute(destName) ||
+      normalized === "." ||
+      normalized.startsWith("../") ||
+      normalized === ".." ||
+      destName.includes("\0")
+    ) {
+      throw new UsageError(`Unsafe clone name "${destName}": must not contain path traversal or absolute paths.`);
+    }
+    // Ensure the resolved destination is strictly inside the type directory,
+    // not equal to it (which can happen with crafted multi-segment names).
+    // path.relative() is used instead of startsWith() for cross-platform safety.
+    const destTypeDir = path.resolve(path.join(destRoot, typeDir));
+    const resolvedDest = path.resolve(path.join(destRoot, typeDir, destName));
+    const rel = path.relative(destTypeDir, resolvedDest);
+    if (rel === "" || rel.startsWith("..")) {
+      throw new UsageError(`Unsafe clone name "${destName}": resolves outside the target type directory.`);
+    }
+  }
+  const destLabel = options.dest ? "at destination" : "in working stash";
+
+  // Guard against self-clone
+  if (parsed.type === "skill") {
+    const sourceSkillDir = path.resolve(path.dirname(sourcePath));
+    const destSkillDir = path.resolve(path.join(destRoot, typeDir, destName));
+    if (sourceSkillDir === destSkillDir) {
+      throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
+    }
+  } else {
+    const resolvedSource = path.resolve(sourcePath);
+    const sourceExt = path.extname(sourcePath);
+    const effectiveDestName = !path.extname(destName) && sourceExt ? destName + sourceExt : destName;
+    const resolvedDest = path.resolve(path.join(destRoot, typeDir, effectiveDestName));
+    if (resolvedSource === resolvedDest) {
+      throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
+    }
+  }
+
+  let destPath: string;
+  if (parsed.type === "skill") {
+    const sourceSkillDir = path.dirname(sourcePath);
+    const destSkillDir = path.join(destRoot, typeDir, destName);
+    const overwritten = fs.existsSync(destSkillDir);
+
+    if (overwritten && !options.force) {
+      throw new Error(`Asset already exists ${destLabel}: ${destSkillDir}. Use --force to overwrite.`);
+    }
+
+    if (overwritten) {
+      fs.rmSync(destSkillDir, { recursive: true, force: true });
+    }
+    fs.cpSync(sourceSkillDir, destSkillDir, { recursive: true });
+
+    destPath = path.join(destSkillDir, "SKILL.md");
+    const ref = makeAssetRef(parsed.type, destName, "local");
+
+    return {
+      source: { path: sourcePath, registryId: sourceSource?.registryId },
+      destination: { path: destPath, ref },
+      overwritten,
+      ...(remoteFetched ? { remoteFetched } : {}),
+    };
+  }
+
+  destPath = path.join(destRoot, typeDir, destName);
+  const overwritten = fs.existsSync(destPath);
+
+  if (overwritten && !options.force) {
+    throw new Error(`Asset already exists ${destLabel}: ${destPath}. Use --force to overwrite.`);
+  }
+
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  fs.copyFileSync(sourcePath, destPath);
+
+  const ref = makeAssetRef(parsed.type, destName, "local");
+
+  return {
+    source: { path: sourcePath, registryId: sourceSource?.registryId },
+    destination: { path: destPath, ref },
+    overwritten,
+    ...(remoteFetched ? { remoteFetched } : {}),
+  };
+}

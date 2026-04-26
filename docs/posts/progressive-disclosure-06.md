@@ -104,7 +104,7 @@ Total context cost: ~4,000 tokens. Without progressive disclosure, the agent wou
 The agent integration is a two-line addition to your `AGENTS.md`:
 
 ```markdown
-## Agent Kit
+## Agent Stash
 
 Search for skills, commands, and knowledge using `akm search <query>`.
 View full details with `akm show <ref>`.
@@ -119,3 +119,8 @@ Progressive disclosure becomes even more valuable at team scale. When your team 
 In the [next post](https://dev.to/itlackey), I'll cover how teams can share skills across a group while preserving individual customization. The progressive disclosure pattern is the foundation that makes team-scale skill management work.
 
 If you want to see this in action, the repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). Point it at your skill directories, run a search, and see how much context you've been wasting.
+
+
+---
+
+> **Note (2026-04-23):** This post has been updated to align with akm 0.6.0 terminology. Earlier wording referred to a *kit* and the *Kit Maker's Guide*; those terms have been renamed to *stash* and *Stash Maker's Guide* throughout. The pre-rename text is preserved in this repository's git history.

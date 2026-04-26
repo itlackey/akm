@@ -12,11 +12,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import { closeDatabase, getAllEntries, openDatabase, searchFts } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -144,7 +144,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await akmSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -162,7 +162,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await akmSearch({ query: "provision", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("provision") || h.name.includes("foundry"));
@@ -180,7 +180,7 @@ describe("Issue #36: Script search and index", () => {
     await buildTestIndex(stashDir);
 
     const result = await akmSearch({ query: "ai", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find(
@@ -228,7 +228,7 @@ describe("Issue #36: Script search and index", () => {
     expect(result.totalEntries).toBeGreaterThanOrEqual(1);
 
     const searchResult = await akmSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
@@ -327,7 +327,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Step 4: Verify the new script is searchable
     const searchResult = await akmSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const foundryHit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -358,7 +358,7 @@ describe("Issue #36: Stale .stash.json prevents new files from being indexed", (
 
     // Search should find the new script
     const searchResult = await akmSearch({ query: "provision", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -375,11 +375,11 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: searchPathStash }] });
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathStash }] });
     await akmIndex({ stashDir: workingStash, full: true });
 
     const result = await akmSearch({ query: "foundry", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const hit = localHits.find((h) => h.name.includes("foundry") || h.name.includes("provision"));
@@ -406,7 +406,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
     );
 
     process.env.AKM_STASH_DIR = workingStash;
-    saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: searchPathStash }] });
+    saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: searchPathStash }] });
     const indexResult = await akmIndex({ stashDir: workingStash, full: true });
 
     // All 4 assets from the search path should be indexed
@@ -414,7 +414,7 @@ describe("Issue #36: Search path and installed source indexing", () => {
 
     // Verify search finds the script
     const searchResult = await akmSearch({ query: "foundry", source: "local" });
-    const localHits = searchResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = searchResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThanOrEqual(1);
   });
 });

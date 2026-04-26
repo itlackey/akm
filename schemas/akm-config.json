@@ -39,6 +39,18 @@
         "$ref": "#/$defs/StashConfigEntry"
       }
     },
+    "sources": {
+      "type": "array",
+      "description": "Canonical key for additional sources (filesystem paths and remote providers). Replaces the legacy `stashes` field — both load for one release cycle, but new configs should use `sources`.",
+      "items": {
+        "$ref": "#/$defs/StashConfigEntry"
+      }
+    },
+    "defaultWriteTarget": {
+      "type": "string",
+      "description": "Default destination for `akm remember` / `akm import` and any other write helper that does not receive an explicit `--target`. Names a configured source by `name`. Resolution order: explicit `--target` → `defaultWriteTarget` → working stash (`stashDir`).",
+      "minLength": 1
+    },
     "installed": {
       "type": "array",
       "description": "Installed kit metadata. Managed automatically by akm install/uninstall commands — do not edit manually.",
@@ -196,13 +208,13 @@
     },
     "StashConfigEntry": {
       "type": "object",
-      "description": "Configuration for an additional stash source (filesystem or remote).",
+      "description": "Configuration for an additional source (filesystem or remote).",
       "properties": {
         "type": {
           "type": "string",
-          "description": "Provider type for this stash (e.g. \"filesystem\", \"openviking\").",
+          "description": "Provider type for this source (e.g. \"filesystem\", \"git\", \"website\", \"npm\").",
           "minLength": 1,
-          "examples": ["filesystem", "openviking"]
+          "examples": ["filesystem", "git", "website", "npm"]
         },
         "path": {
           "type": "string",
@@ -211,23 +223,36 @@
         },
         "url": {
           "type": "string",
-          "description": "Remote URL. Used for remote providers like \"openviking\".",
+          "description": "Remote URL. Used for remote providers (\"git\", \"website\").",
           "minLength": 1
         },
         "name": {
           "type": "string",
-          "description": "Human-friendly label for this stash.",
+          "description": "Human-friendly label for this source.",
           "minLength": 1
         },
         "enabled": {
           "type": "boolean",
-          "description": "Whether this stash is active.",
+          "description": "Whether this source is active.",
           "default": true
+        },
+        "writable": {
+          "type": "boolean",
+          "description": "Whether akm may write assets to this source. Defaults to true for filesystem sources and false otherwise. Setting `writable: true` on `website` or `npm` sources is rejected at config load — `sync()` would clobber local edits on the next refresh."
+        },
+        "primary": {
+          "type": "boolean",
+          "description": "Marks this entry as the primary working stash (replaces the top-level `stashDir`)."
         },
         "options": {
           "type": "object",
-          "description": "Arbitrary provider-specific options.",
+          "description": "Arbitrary provider-specific options. For `git` sources, `pushOnCommit: true` causes write-source to `git push` after each successful commit.",
           "additionalProperties": true
+        },
+        "wikiName": {
+          "type": "string",
+          "description": "When set, .md files in this source are indexed as wiki pages under this name.",
+          "minLength": 1
         }
       },
       "required": ["type"],

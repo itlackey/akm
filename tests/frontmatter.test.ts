@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/frontmatter";
+import { parseFrontmatter, parseFrontmatterBlock, parseYamlScalar, toStringOrUndefined } from "../src/core/frontmatter";
 
 // ── parseFrontmatter ────────────────────────────────────────────────────────
 
@@ -80,6 +80,67 @@ describe("parseFrontmatter", () => {
     const result = parseFrontmatter(raw);
     expect(result.data.title).toBe("Test");
     expect(result.content).toContain("Body");
+  });
+
+  // ── List / array support ───────────────────────────────────────────────────
+
+  test("parses flow array (inline style)", () => {
+    const raw = "---\ntags: [ops, networking, deploy]\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["ops", "networking", "deploy"]);
+  });
+
+  test("parses block-sequence (- item style)", () => {
+    const raw = "---\ntags:\n- ops\n- networking\n- deploy\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["ops", "networking", "deploy"]);
+  });
+
+  test("parses block-sequence with 2-space indent", () => {
+    const raw = "---\ntags:\n  - ops\n  - networking\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["ops", "networking"]);
+  });
+
+  test("parses block-sequence with scalar values (bool, number)", () => {
+    const raw = "---\nvalues:\n- true\n- 42\n- hello\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.values).toEqual([true, 42, "hello"]);
+  });
+
+  test("parses empty flow array", () => {
+    const raw = "---\ntags: []\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual([]);
+  });
+
+  test("block sequence followed by another top-level key", () => {
+    const raw = "---\ntags:\n- ops\n- networking\ndescription: A test\n---\nBody\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["ops", "networking"]);
+    expect(result.data.description).toBe("A test");
+  });
+
+  test("mixed styles: flow array and block sequence in same document", () => {
+    const raw = "---\ntags: [ops, networking]\naliases:\n- op\n- net\ndescription: test\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["ops", "networking"]);
+    expect(result.data.aliases).toEqual(["op", "net"]);
+    expect(result.data.description).toBe("test");
+  });
+
+  test("empty value with no continuation becomes empty string (backward compat)", () => {
+    const raw = "---\ntitle: Hello\nempty:\ndescription: test\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.title).toBe("Hello");
+    expect(result.data.empty).toBe("");
+    expect(result.data.description).toBe("test");
+  });
+
+  test("single-item block sequence", () => {
+    const raw = "---\ntags:\n- solo\n---\n";
+    const result = parseFrontmatter(raw);
+    expect(result.data.tags).toEqual(["solo"]);
   });
 });
 

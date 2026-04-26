@@ -139,12 +139,15 @@ describe("output baseline", () => {
     const output = runCli(stashDir, ["show", "command:release.md", "--format=json"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
+    // QA #7: path and editable are now always projected in JSON shape
     expect(Object.keys(json).sort()).toEqual([
       "action",
       "description",
+      "editable",
       "name",
       "origin",
       "parameters",
+      "path",
       "template",
       "type",
     ]);
@@ -216,14 +219,14 @@ describe("output baseline", () => {
     writeFile(
       path.join(registryDir, "index.json"),
       JSON.stringify({
-        version: 1,
+        version: 3,
         updatedAt: "2026-03-11T00:00:00Z",
-        kits: [
+        stashes: [
           {
-            id: "npm:@scope/deploy-kit",
-            name: "deploy-kit",
-            description: "Registry deploy kit",
-            ref: "@scope/deploy-kit",
+            id: "npm:@scope/deploy-stash",
+            name: "deploy-stash",
+            description: "Registry deploy stash",
+            ref: "@scope/deploy-stash",
             source: "npm",
             tags: ["deploy"],
           },
@@ -259,10 +262,11 @@ describe("output baseline", () => {
       };
       // Brief local hits have type; registry hits are in registryHits
       const localHit = json.hits.find((hit) => hit.type === "script");
-      const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-kit");
+      const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
       expect(localHit?.action).toBeTruthy();
-      expect(registryHit?.action).toBeTruthy();
+      // QA #28: registry brief no longer includes action (use installRef instead)
+      expect(registryHit?.name).toBeTruthy();
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

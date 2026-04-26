@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isRgAvailable, resolveRg } from "../src/ripgrep";
+import { isRgAvailable, resolveRg } from "../src/setup/ripgrep-resolve";
 
 const createdTmpDirs: string[] = [];
 
@@ -164,11 +164,11 @@ test("search pipeline returns ranked results when index exists", async () => {
   try {
     // Build index
     process.env.AKM_STASH_DIR = stashDir;
-    const { akmIndex } = await import("../src/indexer");
+    const { akmIndex } = await import("../src/indexer/indexer");
     await akmIndex({ stashDir });
 
     // Search — TF-IDF should rank docker-related results first
-    const { akmSearch } = await import("../src/stash-search");
+    const { akmSearch } = await import("../src/commands/search");
     const result = await akmSearch({ query: "docker", type: "any" });
 
     expect(result.hits.length).toBeGreaterThan(0);

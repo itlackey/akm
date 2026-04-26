@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseWorkflowMarkdown } from "../src/workflow-markdown";
+import { parseWorkflow } from "../src/workflows/parser";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -30,6 +30,27 @@ function writeConfig(env: NodeJS.ProcessEnv, config: Record<string, unknown>) {
   const configDir = path.join(String(env.XDG_CONFIG_HOME), "akm");
   fs.mkdirSync(configDir, { recursive: true });
   fs.writeFileSync(path.join(configDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Pull the JSON error envelope out of stderr. Stderr may contain
+ * preceding `warn(...)` lines (e.g. the "Importing workflow content
+ * from outside the stash" notice) before the (possibly multi-line) JSON
+ * envelope. We slice from the last `{` at column 0 to the end and parse
+ * that.
+ */
+function parseLastJsonLine(stderr: string): unknown {
+  const lines = stderr.split("\n");
+  let startIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].startsWith("{")) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx === -1) throw new Error(`stderr did not contain a JSON envelope: ${stderr}`);
+  const tail = lines.slice(startIdx).join("\n").trim();
+  return JSON.parse(tail);
 }
 
 function runCli(args: string[], env: NodeJS.ProcessEnv) {
@@ -79,8 +100,11 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "template"], env);
 
     expect(result.status).toBe(0);
-    const workflow = parseWorkflowMarkdown(result.stdout);
-    expect(workflow.steps.length).toBeGreaterThan(0);
+    const parsed = parseWorkflow(result.stdout, { path: "<template>" });
+    if (!parsed.ok) {
+      throw new Error(`template did not parse: ${parsed.errors.map((e) => e.message).join("; ")}`);
+    }
+    expect(parsed.document.steps.length).toBeGreaterThan(0);
   });
 
   test("create writes a workflow and show returns structured step data", () => {
@@ -113,8 +137,8 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "create", "broken", "--from", sourcePath], env);
     expect(result.status).toBe(2);
 
-    const error = JSON.parse(result.stderr) as { error: string };
-    expect(error.error).toContain('must contain a "### Instructions" section');
+    const error = parseLastJsonLine(result.stderr) as { error: string };
+    expect(error.error).toContain('"### Instructions" section');
   });
 
   test("create --from rejects duplicate step ids", () => {
@@ -126,8 +150,9 @@ describe("workflow CLI", () => {
     const result = runCli(["workflow", "create", "duplicate", "--from", sourcePath], env);
     expect(result.status).toBe(2);
 
-    const error = JSON.parse(result.stderr) as { error: string };
-    expect(error.error).toContain('Duplicate Step ID: "validate"');
+    const error = parseLastJsonLine(result.stderr) as { error: string };
+    expect(error.error).toContain('"validate"');
+    expect(error.error).toContain("already used");
   });
 
   test("start, next, complete, list, and status manage persisted workflow runs", () => {
@@ -304,7 +329,7 @@ describe("workflow CLI", () => {
 
     writeConfig(env, {
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: extraStash, name: "extra" }],
+      sources: [{ type: "filesystem", path: extraStash, name: "extra" }],
     });
 
     expect(runCli(["index", "--full"], env).status).toBe(0);

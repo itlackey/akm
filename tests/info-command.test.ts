@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/db";
-import { assembleInfo } from "../src/info";
-import type { StashEntry } from "../src/metadata";
+import { assembleInfo } from "../src/commands/info";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import type { StashEntry } from "../src/indexer/metadata";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -148,13 +148,13 @@ describe("assembleInfo", () => {
     expect(typeof info.indexStats.vecAvailable).toBe("boolean");
   });
 
-  test("returns stashProviders from config", () => {
+  test("returns sourceProviders from config", () => {
     const stashDir = makeStashDir();
     process.env.AKM_STASH_DIR = stashDir;
 
     const info = assembleInfo();
 
-    expect(Array.isArray(info.stashProviders)).toBe(true);
+    expect(Array.isArray(info.sourceProviders)).toBe(true);
   });
 
   test("output is valid JSON-serializable", () => {

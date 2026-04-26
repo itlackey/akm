@@ -2,13 +2,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { buildDbHit } from "../src/local-search";
-import type { StashEntry } from "../src/metadata";
-import { akmShowUnified as akmShow } from "../src/stash-show";
+import { akmShowUnified as akmShow } from "../src/commands/show";
+import { saveConfig } from "../src/core/config";
+import { buildDbHit } from "../src/indexer/db-search";
+import type { StashEntry } from "../src/indexer/metadata";
 
-// Trigger stash-provider self-registration
-import "../src/stash-providers/index";
+// Trigger source-provider self-registration
+import "../src/sources/providers/index";
 
 const createdTmpDirs: string[] = [];
 

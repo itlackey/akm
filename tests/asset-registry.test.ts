@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
-import type { AssetSpec } from "../src/asset-spec";
-import { ASSET_SPECS, ASSET_TYPES, registerAssetType, TYPE_DIRS } from "../src/asset-spec";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
+import type { AssetSpec } from "../src/core/asset-spec";
+import { deregisterAssetType, registerAssetType } from "../src/core/asset-spec";
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
@@ -23,12 +23,9 @@ function makeWidgetSpec(overrides: Partial<AssetSpec> = {}) {
 describe("asset-registry singleton", () => {
   afterEach(() => {
     // Clean up the test type to avoid polluting other tests
-    delete ASSET_SPECS[TEST_TYPE];
-    delete TYPE_DIRS[TEST_TYPE];
+    deregisterAssetType(TEST_TYPE);
     delete TYPE_TO_RENDERER[TEST_TYPE];
     delete ACTION_BUILDERS[TEST_TYPE];
-    const idx = ASSET_TYPES.indexOf(TEST_TYPE);
-    if (idx !== -1) ASSET_TYPES.splice(idx, 1);
   });
 
   test("registerAssetType populates TYPE_TO_RENDERER when rendererName is set", () => {
@@ -90,23 +87,16 @@ describe("asset-registry singleton", () => {
       expect(ACTION_BUILDERS[type1]("r")).toBe("action1 r");
       expect(ACTION_BUILDERS[type2]("r")).toBe("action2 r");
     } finally {
-      delete ASSET_SPECS[type1];
-      delete ASSET_SPECS[type2];
-      delete TYPE_DIRS[type1];
-      delete TYPE_DIRS[type2];
-      delete TYPE_TO_RENDERER[type1];
-      delete TYPE_TO_RENDERER[type2];
-      delete ACTION_BUILDERS[type1];
-      delete ACTION_BUILDERS[type2];
       for (const t of [type1, type2]) {
-        const idx = ASSET_TYPES.indexOf(t);
-        if (idx !== -1) ASSET_TYPES.splice(idx, 1);
+        deregisterAssetType(t);
+        delete TYPE_TO_RENDERER[t];
+        delete ACTION_BUILDERS[t];
       }
     }
   });
 
   test("_setAssetTypeHooks no longer exists in asset-spec", async () => {
-    const assetSpec = await import("../src/asset-spec");
+    const assetSpec = await import("../src/core/asset-spec");
     expect("_setAssetTypeHooks" in assetSpec).toBe(false);
   });
 

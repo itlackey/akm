@@ -18,14 +18,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/db";
-import { buildSearchFields, recomputeUtilityScores } from "../src/indexer";
-import { assembleInfo } from "../src/info";
-import { getDbPath } from "../src/paths";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
-import { insertUsageEvent } from "../src/usage-events";
+import { assembleInfo } from "../src/commands/info";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, openDatabase, rebuildFts, upsertUtilityScore } from "../src/indexer/db";
+import { recomputeUtilityScores } from "../src/indexer/indexer";
+import { buildSearchFields } from "../src/indexer/search-fields";
+import { insertUsageEvent } from "../src/indexer/usage-events";
+import type { SourceSearchHit } from "../src/sources/types";
 import { recordUsageEvent } from "./helpers/usage-events";
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
@@ -755,7 +756,7 @@ async function benchmarkSearchQuality(_stashDir: string): Promise<{
 
   for (const q of QUALITY_QUERIES) {
     const result = await akmSearch({ query: q.query, source: "stash", limit: 20 });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const idx = hits.findIndex((h) => h.name === q.expectedName);
     const rank = idx >= 0 ? idx + 1 : null;
     const rr = rank !== null ? 1 / rank : 0;
@@ -870,7 +871,7 @@ async function benchmarkIndexingPerformance(stashDir: string): Promise<{
   const cases: BenchmarkCase[] = [];
 
   // Import akmIndex locally to avoid any caching issues
-  const { akmIndex } = await import("../src/indexer.js");
+  const { akmIndex } = await import("../src/indexer/indexer.js");
 
   // Full index (fresh rebuild)
   const fullMs = await timeMsAsync(async () => {
@@ -967,12 +968,12 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   const summaryResult = {
     ...fullResult,
     hits: fullResult.hits.map((h) => {
-      const { path: _p, ...minimal } = h as StashSearchHit;
+      const { path: _p, ...minimal } = h as SourceSearchHit;
       return {
         name: minimal.name,
         type: minimal.type,
         description: minimal.description,
-        ref: (h as StashSearchHit).ref,
+        ref: (h as SourceSearchHit).ref,
       };
     }),
   };
@@ -991,7 +992,7 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   });
 
   // Manifest output size per N assets
-  const { akmManifest } = await import("../src/manifest.js");
+  const { akmManifest } = await import("../src/indexer/manifest.js");
   const manifest = await akmManifest({ stashDir });
   const manifestJson = JSON.stringify(manifest);
   const manifestBytes = Buffer.byteLength(manifestJson);
@@ -1008,7 +1009,7 @@ async function benchmarkTokenEfficiency(stashDir: string): Promise<{
   });
 
   // --for-agent output size vs normal: for-agent strips paths, editHints, etc.
-  const normalHits = fullResult.hits as StashSearchHit[];
+  const normalHits = fullResult.hits as SourceSearchHit[];
   const normalJson = JSON.stringify(normalHits);
   const forAgentHits = normalHits.map((h) => ({
     type: h.type,
@@ -1076,7 +1077,7 @@ async function benchmarkUtilityScoring(_stashDir: string): Promise<{
   // Test 1: Fresh index with no usage data — all scores should be baseline (no utility boost)
   {
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const hasUtilityBoost = localHits.some((h) => h.whyMatched?.includes("usage history boost"));
     cases.push({
       id: "us-01",
@@ -1214,7 +1215,7 @@ async function benchmarkUtilityScoring(_stashDir: string): Promise<{
 
     // Search and check scores
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     if (localHits.length >= 2) {
       const maxScore = localHits[0].score ?? 0;
       const minScore = localHits[localHits.length - 1].score ?? 0;
@@ -1272,7 +1273,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   {
     // "certb" has no exact FTS match but prefix "certb*" should match "certbot" (tag of ssl-renew)
     const exactResult = await akmSearch({ query: "certb", source: "stash", limit: 10 });
-    const exactHits = exactResult.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const exactHits = exactResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     // FTS5 porter stemmer + prefix fallback should find ssl-renew via "certbot" tag
     fuzzyWorks = exactHits.some((h) => h.name === "ssl-renew");
 
@@ -1291,7 +1292,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
     // Query "deploy" — assets with "deploy" in their name should rank above
     // those that only have "deploy" in description/tags
     const result = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Assets with "deploy" in name or aliases: k8s-deploy, deploy-helper, deploy-status, deploy-checklist
     const nameMatchAssets = ["k8s-deploy", "deploy-helper", "deploy-status", "deploy-checklist"];
@@ -1325,7 +1326,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 3: Parameter extraction — commands with $ARGUMENTS detected
   let paramExtraction = false;
   {
-    const { extractCommandParameters, extractScriptParameters } = await import("../src/metadata.js");
+    const { extractCommandParameters, extractScriptParameters } = await import("../src/indexer/metadata.js");
 
     const cmdTemplate = "Run $ARGUMENTS tests and report results.\n$1 is the target directory.";
     const cmdParams = extractCommandParameters(cmdTemplate);
@@ -1440,7 +1441,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
 
   // Test 7: sanitizeFtsQuery handles special characters safely
   {
-    const { sanitizeFtsQuery } = await import("../src/db.js");
+    const { sanitizeFtsQuery } = await import("../src/indexer/db.js");
     const dangerous = 'code-review "OR 1=1" NEAR(test,5)';
     const sanitized = sanitizeFtsQuery(dangerous);
     const noQuotes = !sanitized.includes('"');
@@ -1460,7 +1461,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 8: Empty query returns all entries
   {
     const result = await akmSearch({ query: "", source: "stash", limit: 100 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     // Should return all or most of the 35 assets
     const allEntriesReturned = localHits.length >= 25;
 
@@ -1477,7 +1478,7 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   // Test 9: Type filtering works
   {
     const result = await akmSearch({ query: "", type: "skill", source: "stash", limit: 50 });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const allSkills = localHits.every((h) => h.type === "skill");
     const hasMultiple = localHits.length >= 3;
 
@@ -1496,8 +1497,8 @@ async function benchmarkFeatureCorrectness(_stashDir: string): Promise<{
   {
     const r1 = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
     const r2 = await akmSearch({ query: "deploy", source: "stash", limit: 20 });
-    const h1 = r1.hits.filter((h): h is StashSearchHit => h.type !== "registry").map((h) => h.name);
-    const h2 = r2.hits.filter((h): h is StashSearchHit => h.type !== "registry").map((h) => h.name);
+    const h1 = r1.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
+    const h2 = r2.hits.filter((h): h is SourceSearchHit => h.type !== "registry").map((h) => h.name);
     const deterministic = JSON.stringify(h1) === JSON.stringify(h2);
 
     cases.push({
@@ -1531,7 +1532,7 @@ async function runBenchmarkSuite() {
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({ semanticSearchMode: "off", registries: [] });
 
-  const { akmIndex } = await import("../src/indexer.js");
+  const { akmIndex } = await import("../src/indexer/indexer.js");
   const indexResult = await akmIndex({ stashDir, full: true });
   log(`  Indexed ${indexResult.totalEntries} entries in ${indexResult.timing?.totalMs ?? "?"}ms\n\n`);
 

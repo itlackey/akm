@@ -13,7 +13,7 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function runCli(args: string[], options?: { stashDir?: string; input?: string }) {
+function runCli(args: string[], options?: { stashDir?: string; input?: string; env?: NodeJS.ProcessEnv }) {
   const stashDir = options?.stashDir ?? makeTempDir("akm-capture-stash-");
   const xdgCache = makeTempDir("akm-capture-cache-");
   const xdgConfig = makeTempDir("akm-capture-config-");
@@ -26,6 +26,7 @@ function runCli(args: string[], options?: { stashDir?: string; input?: string })
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      ...options?.env,
     },
   });
   return { stashDir, result };
@@ -38,6 +39,31 @@ afterEach(() => {
 });
 
 describe("capture commands", () => {
+  function expectInitFlagUsesCustomDir(flag: "--dir" | "--stashDir") {
+    const parentDir = makeTempDir("akm-init-parent-");
+    const customDir = path.join(parentDir, "custom-stash");
+    const homeDir = makeTempDir("akm-init-home-");
+    const { result } = runCli(["init", flag, customDir], { env: { HOME: homeDir } });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { stashDir: string; configPath: string; created: boolean };
+    expect(json.created).toBe(true);
+    expect(json.stashDir).toBe(path.resolve(customDir));
+    expect(fs.existsSync(path.join(customDir, "knowledge"))).toBe(true);
+    expect(fs.existsSync(path.join(homeDir, "akm"))).toBe(false);
+
+    const config = JSON.parse(fs.readFileSync(json.configPath, "utf8")) as { stashDir?: string };
+    expect(config.stashDir).toBe(path.resolve(customDir));
+  }
+
+  test("init honors --dir for a custom stash path", () => {
+    expectInitFlagUsesCustomDir("--dir");
+  });
+
+  test("init honors legacy --stashDir as an alias for --dir", () => {
+    expectInitFlagUsesCustomDir("--stashDir");
+  });
+
   test("remember stores a memory in the stash and returns its ref", () => {
     const { stashDir, result } = runCli(["remember", "Deployment needs VPN access"]);
     expect(result.status).toBe(0);

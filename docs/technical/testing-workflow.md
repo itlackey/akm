@@ -16,7 +16,6 @@ CLI coverage, then Docker-based deployment and upgrade validation.
 - managed-source lifecycle: `akm add`, `akm list`, `akm update`, `akm remove`
 - binary lifecycle: install, run, `akm upgrade --check`, `akm upgrade`
 - cross-environment behavior on Ubuntu, Debian, Alpine, and Fedora containers
-- provider integration that depends on Docker Compose, especially OpenViking
 
 ## Test Layers In This Repo
 
@@ -295,7 +294,7 @@ There are two different upgrade paths and both matter.
 
 ### 1. Managed-source upgrades: `akm update`
 
-`akm update` refreshes managed kits, not the `akm` binary itself.
+`akm update` refreshes managed stashes, not the `akm` binary itself.
 
 Automated coverage already exists in:
 
@@ -382,37 +381,6 @@ Also run one negative-path check in automation or staging:
 - permission failure when install directory is not writable
 
 Most of those negative cases are already covered by `tests/self-update.test.ts`.
-
-## Docker Compose Provider Validation
-
-The repo includes `tests/fixtures/openviking/docker-compose.yml` for manual
-OpenViking provider validation.
-
-Bring it up:
-
-```sh
-docker compose -f tests/fixtures/openviking/docker-compose.yml up -d
-```
-
-Then validate provider wiring:
-
-```sh
-akm add http://localhost:1933 --provider openviking --name openviking
-akm list
-akm search "project context" --source both --detail full
-```
-
-Validate:
-
-- the remote provider is listed as a source
-- `--source both` returns local hits plus remote provider results
-- remote-provider failures surface as warnings instead of crashing the CLI
-
-Tear it down when done:
-
-```sh
-docker compose -f tests/fixtures/openviking/docker-compose.yml down
-```
 
 ## Evidence To Capture For A Release
 

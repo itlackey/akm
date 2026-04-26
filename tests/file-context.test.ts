@@ -3,9 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { buildFileContext, buildRenderContext, getAllRenderers, getRenderer, runMatchers } from "../src/file-context";
-import { directoryMatcher, smartMdMatcher } from "../src/matchers";
-import { walkStashFlat } from "../src/walker";
+import {
+  buildFileContext,
+  buildRenderContext,
+  getAllRenderers,
+  getRenderer,
+  runMatchers,
+} from "../src/indexer/file-context";
+import { directoryMatcher, smartMdMatcher } from "../src/indexer/matchers";
+import { walkStashFlat } from "../src/indexer/walker";
 
 // ── Temp directory helpers ──────────────────────────────────────────────────
 

@@ -12,8 +12,8 @@ These flags are accepted by all commands:
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level |
-| `--for-agent` | boolean | `false` | Agent-optimized output: strips non-actionable fields, overrides `--detail` |
+| `--detail` | `brief`, `normal`, `full`, `summary`, `agent` | `brief` | Output detail level |
+| `--for-agent` | boolean | `false` | **Deprecated alias** for `--detail=agent`; kept for one release cycle. Prefer `--detail=agent` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 
 ### `--format jsonl`
@@ -22,14 +22,16 @@ Outputs one JSON object per line. For `search` and `registry search`, each hit
 is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--for-agent`
+### `--detail=agent` (was `--for-agent`)
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
 - **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`
 
-Takes precedence over `--detail`.
+Prefer `--detail=agent` going forward. The `--for-agent` boolean is kept as
+a deprecated alias for one release cycle and will be removed in a future
+minor release — see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md).
 
 ### `--detail summary`
 
@@ -73,6 +75,7 @@ config.
 ```sh
 akm init                         # Initialize at the default location
 akm init --dir ~/custom-stash    # Initialize at a custom location
+akm init --stashDir ~/custom-stash # Legacy alias for --dir
 ```
 
 Creates one subdirectory per asset type under the stash path — currently
@@ -127,7 +130,7 @@ Returns a JSON object with:
 | `searchModes` | Active search modes (`fts`, optionally `semantic` and `hybrid`) |
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
-| `stashProviders` | Configured stash sources |
+| `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `lastBuiltAt`, `hasEmbeddings`, `vecAvailable` |
 
 `semanticSearch.status` values:
@@ -141,7 +144,7 @@ Use `akm info` to verify that semantic search is working after setup.
 
 ### search
 
-Search stash assets, registry kits, or both.
+Search stash assets, registry stashes, or both.
 
 ```sh
 akm search "deploy"
@@ -163,15 +166,22 @@ search results:
 
 - **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
 - **`name`** -- The asset's filename or identifier
-- **`origin`** -- The source kit (e.g. `npm:@scope/pkg`), present only for managed source assets
-- **`id`** -- Registry-level kit identifier (registry hits only)
+- **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for managed source assets
+- **`id`** -- Registry-level stash identifier (registry hits only)
 
-The default brief shape is intentionally small: local hits expose `type`,
-`name`, `description`, and `action`; registry hits expose `type`, `name`,
-`id`, `description`, `action`, and `curated`. `--detail normal` adds commonly
-useful fields like `ref`, `origin`, `size`, and `tags`. `--detail full`
-includes debug-oriented fields such as scores, match explanations, timings,
-and stash metadata.
+The default brief shape is intentionally small. The exact field set per
+detail level matches `src/output/shapes.ts`:
+
+| Level | Local stash hits | Registry hits |
+| --- | --- | --- |
+| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` |
+| `normal` | adds `description` and `score` | adds `score` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, timings, stash metadata) | full hit object |
+| `summary` | metadata-only view (no content), under 200 tokens | — |
+| `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+
+If you want a `ref` handle without the rest of the `full` payload, use
+`--detail=agent`.
 
 ### curate
 
@@ -193,7 +203,7 @@ akm curate "learn the release workflow" --source both --format text
 
 `akm curate` selects high-signal results, prefers one strong match per asset
 type by default, and includes direct follow-up commands such as `akm show <ref>`
-or `akm add <kit>` so you can immediately inspect or install what it found.
+or `akm add <stash>` so you can immediately inspect or install what it found.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
 
@@ -234,11 +244,10 @@ Returns type-specific payloads:
 | memory | `content` |
 | vault | `keys`, `comments` |
 
-Assets from OpenViking sources use standard `type:name` refs like
-everything else, and always return `editable: false`.
-
-If the ref points to a package origin that is not installed, `akm show`
-returns guidance to run `akm add <origin>` first.
+Assets from non-writable sources (git clones, npm packages, websites) return
+`editable: false`. `akm show` queries the local FTS5 index directly — there
+is no remote-provider fallback. If the ref points to a package origin that
+is not installed, `akm show` returns guidance to run `akm add <origin>` first.
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>` —
 path, description from `schema.md`, page and raw counts, and the last 3
@@ -252,6 +261,8 @@ Author, inspect, and execute structured workflow assets.
 akm workflow template
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
+akm workflow validate workflow:ship-release    # Validate a workflow ref
+akm workflow validate ./workflows/release.md   # Validate a workflow file
 akm workflow start workflow:ship-release --params '{"version":"1.2.3"}'
 akm workflow next workflow:ship-release
 akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
@@ -268,6 +279,7 @@ Subcommands:
 | --- | --- |
 | `template` | Print a valid starter workflow markdown document |
 | `create <name>` | Validate and write a workflow under `workflows/<name>.md` |
+| `validate <ref\|path>` | Validate a workflow markdown file or ref and print any errors |
 | `start <ref>` | Create a new persisted workflow run |
 | `next <run-id\|ref>` | Return the current actionable step; resumes active runs and starts a new run when the ref has no active run |
 | `complete <run-id> --step <step-id>` | Update the current pending step on an active run and persist status, notes, and evidence |
@@ -373,17 +385,17 @@ Workflow markdown contract:
 
 | Input | What happens |
 | --- | --- |
-| `akm add ~/.claude/skills` | Registers a local directory as a source |
-| `akm add github:owner/repo` | Fetches and caches a managed source |
-| `akm add @scope/kit` | Fetches and caches a managed source from npm |
-| `akm add https://docs.example.com` | Crawls and caches a website as knowledge |
+| `akm add ~/.claude/skills` | Registers a local directory as a `filesystem` source |
+| `akm add github:owner/repo` | Clones the repo into akm's cache as a `git` source |
+| `akm add @scope/stash` | Installs the npm package as a `git`/`npm` source |
+| `akm add https://docs.example.com` | Crawls and caches a website as a `website` source |
 | `akm registry add <url>` | Adds a discovery registry (separate concept) |
 
 `akm add` also supports a per-install audit bypass when you intentionally trust
 the source:
 
 ```sh
-akm add github:owner/private-kit --trust
+akm add github:owner/private-stash --trust
 ```
 
 Use `--trust` only for one-off installs you have manually reviewed. It does not
@@ -400,13 +412,13 @@ Add a source — a local directory, npm package, GitHub repo, git URL, or websit
 
 ```sh
 akm add ~/.claude/skills              # Local directory
-akm add @scope/kit                    # npm package
-akm add npm:@scope/kit@latest         # npm with version
+akm add @scope/stash                    # npm package
+akm add npm:@scope/stash@latest         # npm with version
 akm add github:owner/repo#v1.2.3     # GitHub with tag
 akm add https://github.com/owner/repo
-akm add git+https://gitlab.com/org/kit
-akm add ./path/to/local/kit
-akm add context-hub
+akm add git+https://gitlab.com/org/stash
+akm add ./path/to/local/stash
+akm add github:andrewyng/context-hub --name context-hub  # context-hub as a git stash
 akm add https://docs.example.com --name docs              # Website
 akm add https://docs.example.com --max-pages 100 --max-depth 5
 ```
@@ -414,9 +426,11 @@ akm add https://docs.example.com --max-pages 100 --max-depth 5
 | Flag | Description |
 | --- | --- |
 | `--name` | Human-friendly name for the source |
-| `--provider` | Provider type (e.g. `git`, `openviking`). Required for remote provider sources |
-| `--writable` | Mark a git stash as writable so `akm save` also pushes (default: false) |
-| `--options` | Provider options as JSON (e.g. `'{"apiKey":"key"}'`) |
+| `--provider` | Provider type (e.g. `website`, `npm`). Required for URL sources where inference would be ambiguous |
+| `--writable` | Mark a git source as writable so `akm save` also pushes (default: false) |
+| `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
+| `--type` | Override asset type for all files in this source (currently supports: `wiki`) |
+| `--trust` | Bypass install-audit blocking for this add invocation only |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 
@@ -441,8 +455,12 @@ config so subsequent re-indexes use the same limits.
 
 See [registry.md](registry.md) for the full install flow for managed sources.
 
-`akm add context-hub` is a convenience alias that adds the context-hub
-GitHub repo as a git provider source.
+> **0.6.0 note:** the pre-0.6.0 `akm add context-hub` convenience alias and
+> the `akm enable context-hub` / `akm disable context-hub` commands were
+> removed. Add it explicitly as a git stash:
+> `akm add github:andrewyng/context-hub --name context-hub`. The legacy
+> stash *type* string `"context-hub"` in existing configs still normalizes
+> to `"git"` at load time, so you don't need to edit your config files.
 
 ### list
 
@@ -465,7 +483,7 @@ akm list --kind local,remote        # Multiple kinds
 Remove a source by id, ref, path, URL, or name and reindex.
 
 ```sh
-akm remove npm:@scope/kit           # Managed source by id
+akm remove npm:@scope/stash           # Managed source by id
 akm remove owner/repo               # Managed source by ref
 akm remove ~/.claude/skills         # Local source by path
 akm remove my-provider              # Any source by name
@@ -477,7 +495,7 @@ Update one or all managed sources to the latest available version. Local and
 remote sources are not updatable — akm explains why if you target one.
 
 ```sh
-akm update npm:@scope/kit
+akm update npm:@scope/stash
 akm update --all
 akm update --all --force   # Force fresh download even if version is unchanged
 ```
@@ -505,7 +523,7 @@ akm upgrade --force      # Force upgrade even if already on latest
 | --- | --- |
 | `--check` | Check for updates without installing |
 | `--force` | Force upgrade even if on latest version |
-| `--skipChecksum` | Skip checksum verification during upgrade (not recommended) |
+| `--skip-checksum` | Skip checksum verification during upgrade (not recommended) |
 
 ### clone
 
@@ -536,11 +554,11 @@ requested asset. The package is **not** registered as a managed source --
 use `akm add` for that.
 
 ```sh
-# Clone a single script from a remote package without installing the full kit
+# Clone a single script from a remote package without installing the full stash
 akm clone "npm:@scope/pkg//script:deploy.sh"
 
 # Clone from a local directory that isn't configured as a search path
-akm clone "/path/to/kit//skill:code-review" --dest ./project/.claude
+akm clone "/path/to/stash//skill:code-review" --dest ./project/.claude
 ```
 
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
@@ -604,27 +622,63 @@ akm add git@github.com:org/skills.git --provider git --name my-skills --writable
 
 ### remember
 
-Record a memory in the default stash. This writes a markdown file into
-`memories/` and returns the resulting ref.
+Record a memory. This writes a markdown file into `memories/` in the configured
+write target and returns the resulting ref.
+
+**Write target resolution:** the destination is the working stash (`stashDir`)
+unless `defaultWriteTarget` is set in config, which overrides it to a named
+source. An explicit `--target <name>` flag overrides both. The full order is
+`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
+[Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm remember "Deployment needs VPN access"
 akm remember --name release-retro < notes.md
 akm remember "Pair with ops before rotating prod secrets" --name ops/prod-secrets
+
+# With structured frontmatter (0.6.0+):
+akm remember "VPN required for staging deploys" \
+  --tag ops --tag networking \
+  --expires 90d \
+  --source "skill:deploy"
+
+# Opt-in heuristic tagging — derives `code`, `source`, `observed_at`, `subjective`:
+akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
+
+# Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
+akm remember "Long meeting notes..." --enrich
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--force` | Overwrite an existing memory with the same name |
+| `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
+| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
+| `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
+| `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
+| `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
+**Zero-flag form** (`akm remember "body"`) writes a bare memory with no
+frontmatter — existing agent scripts keep working unchanged. Any use of
+`--tag` / `--expires` / `--source` / `--auto` / `--enrich` triggers a
+required-field check: if `tags` cannot be derived, the command rejects
+*before* writing the file, so you never end up with an orphan.
+
 ### import
 
-Import a knowledge document into the default stash. This writes a markdown file
-into `knowledge/` and returns the resulting ref.
+Import a knowledge document. This writes a markdown file into `knowledge/` in
+the configured write target and returns the resulting ref.
+
+**Write target resolution:** the destination is the working stash (`stashDir`)
+unless `defaultWriteTarget` is set in config, which overrides it to a named
+source. An explicit `--target <name>` flag overrides both. The full order is
+`--target` → `defaultWriteTarget` → `stashDir` → `ConfigError`. See
+[Configuration](configuration.md#defaultwritetarget) for details.
 
 ```sh
 akm import ./docs/auth-flow.md
@@ -636,6 +690,7 @@ akm import - --name scratch-notes < notes.md
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
+| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
 The source must be a readable file path, or `-` to read the document from
 stdin.
@@ -665,7 +720,7 @@ present in the current local index.
 
 ### registry
 
-Manage kit registries. The `registry` command has four subcommands:
+Manage stash registries. The `registry` command has four subcommands:
 
 #### registry list
 
@@ -690,10 +745,7 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
 | `--options` | Provider-specific options as JSON (e.g. `'{"apiKey":"key"}'`) |
-
-```sh
-akm add http://localhost:1933 --provider openviking --options '{"apiKey":"key"}'
-```
+| `--allow-insecure` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
 
@@ -718,14 +770,13 @@ akm registry build-index --out dist/index.json
 | Flag | Description |
 | --- | --- |
 | `--out` | Output path for the generated index (default: `./index.json`) |
-| `--manual` | Path to a JSON file with manual kit entries |
-| `--npmRegistry` | npm registry base URL (default: `https://registry.npmjs.org`) |
-| `--githubApi` | GitHub API base URL (default: `https://api.github.com`) |
-| `--format` | Output format: `json` or `text` (default: `json`) |
+| `--manual` | Path to a JSON file with manual stash entries |
+| `--npm-registry` | Override npm registry base URL |
+| `--github-api` | Override GitHub API base URL |
 
 #### registry search
 
-Search all enabled registries for kits.
+Search all enabled registries for stashes.
 
 ```sh
 akm registry search "deploy"
@@ -753,6 +804,26 @@ akm config path --all               # Print all config-related paths
 ```
 
 See [configuration.md](configuration.md) for details.
+
+### help
+
+Print focused help topics. Currently the only subcommand is `migrate`, which
+prints release notes and migration guidance for a specific version so you can
+review what changed — and what to do about it — without leaving the terminal.
+
+```sh
+akm help migrate 0.6.0         # Notes for a specific release
+akm help migrate v0.6.0        # v-prefix accepted
+akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
+akm help migrate latest        # Resolve against the most recent CHANGELOG entry
+```
+
+Migration notes live as one markdown file per release in
+[`docs/migration/release-notes/`](migration/release-notes/). Adding notes for a
+future version is a one-file drop — no code edit required. Requesting an
+unknown version prints the list of bundled notes so you can pick one that
+exists. See [`CONTRIBUTING.md`](../.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
+for the per-release workflow.
 
 ### hints
 

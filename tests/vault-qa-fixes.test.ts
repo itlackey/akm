@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadEnv, setKey } from "../src/vault";
+import { loadEnv, setKey } from "../src/commands/vault";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

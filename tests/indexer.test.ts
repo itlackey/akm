@@ -2,11 +2,12 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EmbeddingConnectionConfig } from "../src/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/db";
-import * as embedderModule from "../src/embedder";
-import { akmIndex, buildFileBasenameMap, buildSearchText, matchEntryToFile } from "../src/indexer";
-import { getDbPath } from "../src/paths";
+import type { EmbeddingConnectionConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/indexer/db";
+import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer/indexer";
+import { buildSearchText } from "../src/indexer/search-fields";
+import * as embedderModule from "../src/llm/embedder";
 
 let testConfigDir = "";
 let testCacheDir = "";
@@ -207,11 +208,11 @@ test("akmIndex excludes wiki raw and infrastructure files for wiki-root stash so
 
   const origStash = process.env.AKM_STASH_DIR;
   try {
-    const { saveConfig } = await import("../src/config");
+    const { saveConfig } = await import("../src/core/config");
     process.env.AKM_STASH_DIR = primaryStash;
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "filesystem", path: wikiSource, wikiName: "research" }],
+      sources: [{ type: "filesystem", path: wikiSource, wikiName: "research" }],
     });
 
     await akmIndex({ stashDir: primaryStash, full: true });
@@ -247,16 +248,14 @@ test("akmIndex skips malformed workflow assets and reports warnings", async () =
       "",
     ].join("\n"),
   );
+  // Truly malformed: no `# Workflow:` heading at all. (Intro prose between
+  // the title and the first step is now permitted — see #158.)
   writeFile(
     path.join(stashDir, "workflows", "bad.md"),
     [
       "---",
       "description: Bad workflow",
       "---",
-      "",
-      "# Workflow: Bad",
-      "",
-      "This prose breaks the parser.",
       "",
       "## Step: First",
       "Step ID: first",
@@ -350,7 +349,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     const stashDir = tmpStash();
     writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-    const { saveConfig } = await import("../src/config");
+    const { saveConfig } = await import("../src/core/config");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({
       semanticSearchMode: "auto",
@@ -392,7 +391,7 @@ test("akmIndex verifies semantic search when remote embeddings succeed", async (
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");
 
-  const { saveConfig } = await import("../src/config");
+  const { saveConfig } = await import("../src/core/config");
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
     semanticSearchMode: "auto",
@@ -516,9 +515,9 @@ test("akmIndex deduplicates overlapping directories across multiple stash dirs",
   const secondStash = primaryStash;
 
   // Write a config that includes the same directory twice via stashes
-  const { saveConfig } = await import("../src/config");
+  const { saveConfig } = await import("../src/core/config");
   process.env.AKM_STASH_DIR = primaryStash;
-  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: secondStash }] });
+  saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: secondStash }] });
 
   const result = await akmIndex({ stashDir: primaryStash });
 
@@ -544,9 +543,9 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
   const stash1 = sharedDir;
   const stash2 = sharedDir;
 
-  const { saveConfig } = await import("../src/config");
+  const { saveConfig } = await import("../src/core/config");
   process.env.AKM_STASH_DIR = stash1;
-  saveConfig({ semanticSearchMode: "off", stashes: [{ type: "filesystem", path: stash2 }] });
+  saveConfig({ semanticSearchMode: "off", sources: [{ type: "filesystem", path: stash2 }] });
 
   await akmIndex({ stashDir: stash1, full: true });
 

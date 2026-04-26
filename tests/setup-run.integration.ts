@@ -149,11 +149,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -182,7 +181,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
@@ -260,11 +259,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -298,7 +296,7 @@ describe("runSetupWizard", () => {
       message: "download blocked",
     };
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
@@ -376,11 +374,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => setupState.transformersAvailable,
+      isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
     mock.module("../src/init", () => ({
@@ -410,7 +407,7 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
     setupState.indexError = new Error("index exploded");
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
@@ -478,11 +475,10 @@ describe("runSetupWizard", () => {
         models: ["nomic-embed-text", "llama3.2"],
       }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "remote-unreachable",
@@ -513,7 +509,7 @@ describe("runSetupWizard", () => {
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
     promptState.texts.push("384");
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("remote embedding endpoint is not reachable"))).toBe(true);
@@ -568,11 +564,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => false,
+      isTransformersAvailable: () => false,
       checkEmbeddingAvailability: async () => ({
         available: false,
         reason: "missing-package",
@@ -602,7 +597,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(promptState.logs.some((entry) => entry.includes("Install it with: bun add @huggingface/transformers"))).toBe(
@@ -659,11 +654,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -691,7 +685,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
@@ -745,11 +739,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -775,7 +768,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(true, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await runSetupWizard();
 
     expect(setupState.savedConfigs).toHaveLength(1);
@@ -824,11 +817,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -851,7 +843,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await expect(runSetupWizard()).rejects.toThrow("EACCES config.json");
     expect(saveCalls).toBe(1);
     expect(setupState.initCalls).toHaveLength(0);
@@ -897,11 +889,10 @@ describe("runSetupWizard", () => {
     mock.module("../src/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
-      detectOpenViking: async (url: string) => ({ available: true, url }),
     }));
     mock.module("../src/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
-      isTransformersAvailable: async () => true,
+      isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
     mock.module("../src/init", () => ({
@@ -924,7 +915,7 @@ describe("runSetupWizard", () => {
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
-    const { runSetupWizard } = await import("../src/setup");
+    const { runSetupWizard } = await import("../src/setup/setup");
     await expect(runSetupWizard()).rejects.toThrow("EACCES stash init");
     expect(setupState.savedConfigs).toHaveLength(1);
     expect(setupState.savedConfigs[0]?.stashDir).toBe(DEFAULT_STASH_DIR);

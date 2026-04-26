@@ -116,31 +116,31 @@ describe("akm add website", () => {
       expect(exitCode).toBe(0);
       expect(stderr.trim()).toBe("");
       const parsed = JSON.parse(stdout.trim()) as {
-        stashSource?: { type?: string; url?: string; name?: string; stashRoot?: string };
+        sourceAdded?: { type?: string; url?: string; name?: string; stashRoot?: string };
         index?: { totalEntries?: number };
       };
       const normalizedWebsiteUrl = `${websiteUrl}/`;
-      expect(parsed.stashSource).toBeDefined();
-      expect(parsed.stashSource?.type).toBe("website");
-      expect(parsed.stashSource?.url).toBe(normalizedWebsiteUrl);
-      expect(parsed.stashSource?.name).toBe("docs-site");
+      expect(parsed.sourceAdded).toBeDefined();
+      expect(parsed.sourceAdded?.type).toBe("website");
+      expect(parsed.sourceAdded?.url).toBe(normalizedWebsiteUrl);
+      expect(parsed.sourceAdded?.name).toBe("docs-site");
       expect(parsed.index?.totalEntries).toBeGreaterThanOrEqual(2);
 
       const configPath = path.join(xdgConfig, "akm", "config.json");
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
         stashes?: Array<{ type?: string; url?: string; name?: string }>;
       };
-      expect(config.stashes).toContainEqual({
+      expect(config.sources).toContainEqual({
         type: "website",
         url: normalizedWebsiteUrl,
         name: "docs-site",
       });
 
-      expect(parsed.stashSource?.stashRoot).toBeDefined();
-      const knowledgeFiles = fs.readdirSync(path.join(parsed.stashSource?.stashRoot as string, "knowledge")).sort();
+      expect(parsed.sourceAdded?.stashRoot).toBeDefined();
+      const knowledgeFiles = fs.readdirSync(path.join(parsed.sourceAdded?.stashRoot as string, "knowledge")).sort();
       expect(knowledgeFiles).toEqual(["getting-started.md", "index.md"]);
       const homeDoc = fs.readFileSync(
-        path.join(parsed.stashSource?.stashRoot as string, "knowledge", "index.md"),
+        path.join(parsed.sourceAdded?.stashRoot as string, "knowledge", "index.md"),
         "utf8",
       );
       expect(homeDoc).toContain("Example Docs");

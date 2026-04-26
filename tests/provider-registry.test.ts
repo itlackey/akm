@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { registerProvider, resolveProviderFactory } from "../src/registry-factory";
-import { resolveStashProviderFactory } from "../src/stash-provider-factory";
+import { registerProvider, resolveProviderFactory } from "../src/registry/factory";
+import { resolveSourceProviderFactory } from "../src/sources/provider-factory";
 
 describe("provider-registry", () => {
   test("resolveProviderFactory returns null for unknown type", () => {
@@ -18,17 +18,17 @@ describe("provider-registry", () => {
 
   test("static-index is registered after import", async () => {
     // Importing triggers self-registration
-    await import("../src/providers/static-index");
+    await import("../src/registry/providers/static-index");
     expect(resolveProviderFactory("static-index")).not.toBeNull();
   });
 
   test("skills-sh is registered after import", async () => {
-    await import("../src/providers/skills-sh");
+    await import("../src/registry/providers/skills-sh");
     expect(resolveProviderFactory("skills-sh")).not.toBeNull();
   });
 
-  test("openviking stash provider is registered after import", async () => {
-    await import("../src/stash-providers/openviking");
-    expect(resolveStashProviderFactory("openviking")).not.toBeNull();
+  test("filesystem stash provider is registered after import", async () => {
+    await import("../src/sources/providers/filesystem");
+    expect(resolveSourceProviderFactory("filesystem")).not.toBeNull();
   });
 });

@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import { getDbPath } from "../src/paths";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import type { SourceSearchHit } from "../src/sources/types";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -47,7 +47,7 @@ function parseJsonOutput(result: { stdout: string; stderr: string }): Record<str
   return JSON.parse(payload) as Record<string, unknown>;
 }
 
-function isLocalHit(hit: { type: string }): hit is StashSearchHit {
+function isLocalHit(hit: { type: string }): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 

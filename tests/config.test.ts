@@ -11,7 +11,8 @@ import {
   resetConfigCache,
   saveConfig,
   updateConfig,
-} from "../src/config";
+} from "../src/core/config";
+import { ConfigError } from "../src/core/errors";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -119,7 +120,7 @@ describe("loadConfig", () => {
 
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("off");
-    expect(config.stashes).toBeUndefined();
+    expect(config.sources).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
     expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
   });
@@ -128,7 +129,7 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("off");
-    expect(config.stashes).toBeUndefined();
+    expect(config.sources).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
   });
 
@@ -151,7 +152,7 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", futureKey: "hello", anotherKey: 42 }));
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("off");
-    expect(config.stashes).toBeUndefined();
+    expect(config.sources).toBeUndefined();
     expect(config.output).toEqual({ format: "json", detail: "brief" });
     expect(config.registries).toEqual(DEFAULT_CONFIG.registries);
     expect((config as unknown as Record<string, unknown>).futureKey).toBeUndefined();
@@ -161,7 +162,7 @@ describe("loadConfig", () => {
   test("converts legacy searchPaths into stashes with type filesystem", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ searchPaths: ["/valid", 123, null, "/also-valid"] }));
     const config = loadConfig();
-    expect(config.stashes).toEqual([
+    expect(config.sources).toEqual([
       { type: "filesystem", path: "/valid" },
       { type: "filesystem", path: "/also-valid" },
     ]);
@@ -171,7 +172,7 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "yes", searchPaths: "not-an-array" }));
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("auto");
-    expect(config.stashes).toBeUndefined();
+    expect(config.sources).toBeUndefined();
   });
 
   test("coerces boolean true to 'auto' for semanticSearchMode", () => {
@@ -236,21 +237,21 @@ describe("loadConfig", () => {
         JSON.stringify({
           semanticSearchMode: "auto",
           output: { format: "text" },
-          stashes: [{ type: "filesystem", path: "/user-stash" }],
+          sources: [{ type: "filesystem", path: "/user-stash" }],
         }),
       );
       writeRawConfig(
         path.join(workspaceRoot, ".akm", "config.json"),
         JSON.stringify({
           output: { detail: "full" },
-          stashes: [{ type: "filesystem", path: "/workspace-stash" }],
+          sources: [{ type: "filesystem", path: "/workspace-stash" }],
         }),
       );
       writeRawConfig(
         path.join(workspaceRoot, "apps", ".akm", "config.json"),
         JSON.stringify({
           semanticSearchMode: "off",
-          stashes: [{ type: "filesystem", path: "/apps-stash" }],
+          sources: [{ type: "filesystem", path: "/apps-stash" }],
         }),
       );
 
@@ -260,7 +261,7 @@ describe("loadConfig", () => {
         ...DEFAULT_CONFIG,
         semanticSearchMode: "off",
         output: { format: "text", detail: "full" },
-        stashes: [
+        sources: [
           { type: "filesystem", path: "/user-stash" },
           { type: "filesystem", path: "/workspace-stash" },
           { type: "filesystem", path: "/apps-stash" },
@@ -271,40 +272,40 @@ describe("loadConfig", () => {
     }
   });
 
-  test("project config can disable inherited stashes while keeping project stashes", () => {
+  test("project config can disable inherited sources while keeping project sources", () => {
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
         getConfigPath(),
         JSON.stringify({
           semanticSearchMode: "auto",
-          stashes: [{ type: "filesystem", path: "/user-stash" }],
+          sources: [{ type: "filesystem", path: "/user-stash" }],
         }),
       );
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
           disableGlobalStashes: true,
-          stashes: [{ type: "filesystem", path: "/project-stash" }],
+          sources: [{ type: "filesystem", path: "/project-stash" }],
         }),
       );
 
       process.chdir(projectDir);
 
-      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
     } finally {
       cleanup(projectDir);
     }
   });
 
-  test("project config can disable inherited stashes without defining replacements", () => {
+  test("project config can disable inherited sources without defining replacements", () => {
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
         getConfigPath(),
         JSON.stringify({
           semanticSearchMode: "auto",
-          stashes: [{ type: "filesystem", path: "/user-stash" }],
+          sources: [{ type: "filesystem", path: "/user-stash" }],
         }),
       );
       writeRawConfig(
@@ -316,9 +317,57 @@ describe("loadConfig", () => {
 
       process.chdir(projectDir);
 
-      expect(loadConfig().stashes).toEqual([]);
+      expect(loadConfig().sources).toEqual([]);
     } finally {
       cleanup(projectDir);
+    }
+  });
+
+  test("throws ConfigError when config contains an openviking-typed source", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow("openviking is not supported in akm v1");
+    expect(() => loadConfig()).toThrow("docs/migration/v1.md");
+  });
+
+  test("throws ConfigError with INVALID_CONFIG_FILE code for openviking source", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    try {
+      loadConfig();
+      throw new Error("Expected loadConfig to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as ConfigError).code).toBe("INVALID_CONFIG_FILE");
+    }
+  });
+
+  test("ConfigError for openviking source carries actionable hint with source name", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+      }),
+    );
+    try {
+      loadConfig();
+      throw new Error("Expected loadConfig to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigError);
+      const hint = (err as ConfigError).hint();
+      expect(hint).toBeDefined();
+      // QA #38: hint now uses real commands (akm remove, not akm config sources remove)
+      expect(hint).toContain("my-ov");
+      expect(hint).toContain("akm remove");
     }
   });
 
@@ -328,20 +377,20 @@ describe("loadConfig", () => {
     try {
       writeRawConfig(
         path.join(firstProject, ".akm", "config.json"),
-        JSON.stringify({ stashes: [{ type: "filesystem", path: "/first-project-stash" }] }),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/first-project-stash" }] }),
       );
       writeRawConfig(
         path.join(secondProject, ".akm", "config.json"),
-        JSON.stringify({ stashes: [{ type: "filesystem", path: "/second-project-stash" }] }),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/second-project-stash" }] }),
       );
 
       process.chdir(firstProject);
-      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/first-project-stash" }]);
 
       // Intentionally do not reset the cache here; loadConfig() should notice
       // the cwd change because the discovered project config path set changes.
       process.chdir(secondProject);
-      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/second-project-stash" }]);
     } finally {
       cleanup(firstProject);
       cleanup(secondProject);
@@ -353,7 +402,7 @@ describe("loadConfig", () => {
 
 describe("saveConfig", () => {
   test("writes formatted JSON to config.json", () => {
-    const config = { semanticSearchMode: "off" as const, stashes: [{ type: "filesystem" as const, path: "/extra" }] };
+    const config = { semanticSearchMode: "off" as const, sources: [{ type: "filesystem" as const, path: "/extra" }] };
     saveConfig(config);
     const raw = fs.readFileSync(getConfigPath(), "utf8");
     expect(JSON.parse(raw)).toEqual(config);
@@ -364,7 +413,7 @@ describe("saveConfig", () => {
   test("roundtrips with loadConfig", () => {
     const config = {
       semanticSearchMode: "off" as const,
-      stashes: [
+      sources: [
         { type: "filesystem" as const, path: "/a" },
         { type: "filesystem" as const, path: "/b" },
       ],
@@ -372,7 +421,7 @@ describe("saveConfig", () => {
     saveConfig(config);
     const loaded = loadConfig();
     expect(loaded.semanticSearchMode).toBe("off");
-    expect(loaded.stashes).toEqual([
+    expect(loaded.sources).toEqual([
       { type: "filesystem", path: "/a" },
       { type: "filesystem", path: "/b" },
     ]);
@@ -382,7 +431,7 @@ describe("saveConfig", () => {
   test("roundtrips output config", () => {
     const config = {
       semanticSearchMode: "off" as const,
-      stashes: [{ type: "filesystem" as const, path: "/a" }],
+      sources: [{ type: "filesystem" as const, path: "/a" }],
       output: { format: "yaml" as const, detail: "full" as const },
     };
     saveConfig(config);
@@ -394,17 +443,17 @@ describe("saveConfig", () => {
 
 describe("updateConfig", () => {
   test("merges partial update over existing config", () => {
-    saveConfig({ semanticSearchMode: "auto", stashes: [{ type: "filesystem", path: "/a" }] });
+    saveConfig({ semanticSearchMode: "auto", sources: [{ type: "filesystem", path: "/a" }] });
     const updated = updateConfig({ semanticSearchMode: "off" });
     expect(updated.semanticSearchMode).toBe("off");
-    expect(updated.stashes).toEqual([{ type: "filesystem", path: "/a" }]);
+    expect(updated.sources).toEqual([{ type: "filesystem", path: "/a" }]);
     expect(loadConfig()).toEqual(updated);
   });
 
   test("creates config.json if it does not exist", () => {
     const updated = updateConfig({ semanticSearchMode: "off" });
     expect(updated.semanticSearchMode).toBe("off");
-    expect(updated.stashes).toBeUndefined();
+    expect(updated.sources).toBeUndefined();
     expect(updated.output).toEqual({ format: "json", detail: "brief" });
     expect(fs.existsSync(getConfigPath())).toBe(true);
   });
@@ -414,14 +463,14 @@ describe("updateConfig", () => {
     try {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
-        JSON.stringify({ stashes: [{ type: "filesystem", path: "/project-stash" }] }),
+        JSON.stringify({ sources: [{ type: "filesystem", path: "/project-stash" }] }),
       );
 
       process.chdir(projectDir);
       updateConfig({ semanticSearchMode: "off" });
 
-      expect(loadConfig().stashes).toEqual([{ type: "filesystem", path: "/project-stash" }]);
-      expect(loadUserConfig().stashes).toBeUndefined();
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/project-stash" }]);
+      expect(loadUserConfig().sources).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).not.toHaveProperty("stashes");
       expect(loadUserConfig().semanticSearchMode).toBe("off");
     } finally {
@@ -439,6 +488,98 @@ describe("output config", () => {
   test("ignores invalid output config values", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "xml", detail: "max" } }));
     expect(loadConfig().output).toEqual({ format: "json", detail: "brief" });
+  });
+});
+
+// ── stashes → sources migration ─────────────────────────────────────────────
+
+describe("legacy stashes → sources migration", () => {
+  test("loads legacy config with stashes key and maps to sources in-memory", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "off",
+        stashes: [{ type: "filesystem", path: "/legacy-path" }],
+      }),
+    );
+    const config = loadConfig();
+    // The loader migrates the legacy `stashes` key to `sources` in-memory.
+    expect(config.sources).toEqual([{ type: "filesystem", path: "/legacy-path" }]);
+    // The deprecated `stashes` field should NOT be present on the loaded config.
+    expect(config.stashes).toBeUndefined();
+  });
+
+  test("prefers sources over stashes when both are present in raw config", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "off",
+        sources: [{ type: "filesystem", path: "/new-path" }],
+        stashes: [{ type: "filesystem", path: "/old-path" }],
+      }),
+    );
+    const config = loadConfig();
+    expect(config.sources).toEqual([{ type: "filesystem", path: "/new-path" }]);
+    expect(config.stashes).toBeUndefined();
+  });
+
+  test("migration rewrites legacy stashes key on first load and emits a notice", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          stashes: [{ type: "filesystem", path: "/legacy-path" }],
+        }),
+      );
+      loadConfig();
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).toEqual({
+        sources: [{ type: "filesystem", path: "/legacy-path" }],
+      });
+      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("migration notice is not repeated after the config file has been rewritten", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          stashes: [{ type: "filesystem", path: "/legacy-path" }],
+        }),
+      );
+      loadConfig();
+      resetConfigCache();
+      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/legacy-path" }]);
+      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("no migration notice when config already uses the sources key", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          sources: [{ type: "filesystem", path: "/new-path" }],
+        }),
+      );
+      loadConfig();
+      expect(warnings).toEqual([]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });
 
@@ -598,9 +739,12 @@ describe("llm config", () => {
     });
   });
 
-  test("ignores invalid llm config", () => {
+  test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
+    // After QA #36, `akm config set llm.endpoint <url>` persists a partial
+    // llm config with `model: ""`. The loader must accept this so the value
+    // round-trips; downstream callers decide if it's usable.
     writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost" } }));
-    expect(loadConfig().llm).toBeUndefined();
+    expect(loadConfig().llm).toEqual({ endpoint: "http://localhost", model: "" });
   });
 
   test("ignores llm config with non-integer maxTokens", () => {
@@ -661,5 +805,56 @@ describe("stashDir config", () => {
   test("ignores empty stashDir", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "   " }));
     expect(loadConfig().stashDir).toBeUndefined();
+  });
+});
+
+describe("stash type alias normalization", () => {
+  test('normalizes legacy type "context-hub" to "git" at load time', () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "auto",
+        // Uses legacy `stashes` key — migrated to `sources` in-memory at load time.
+        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
+      }),
+    );
+
+    const loaded = loadConfig();
+    expect(loaded.sources).toHaveLength(1);
+    expect(loaded.sources?.[0].type).toBe("git");
+    expect(loaded.sources?.[0].url).toBe("https://github.com/andrewyng/context-hub");
+    expect(loaded.sources?.[0].name).toBe("context-hub");
+  });
+
+  test('normalizes legacy type "github" to "git" at load time', () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        semanticSearchMode: "auto",
+        // Uses legacy `stashes` key — migrated to `sources` in-memory at load time.
+        stashes: [{ type: "github", url: "https://github.com/example/repo", name: "example" }],
+      }),
+    );
+
+    const loaded = loadConfig();
+    expect(loaded.sources).toHaveLength(1);
+    expect(loaded.sources?.[0].type).toBe("git");
+  });
+
+  test("rewrites stashes to sources without rewriting alias types on disk", () => {
+    const raw = JSON.stringify(
+      {
+        semanticSearchMode: "auto",
+        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
+      },
+      null,
+      2,
+    );
+    writeRawConfig(getConfigPath(), raw);
+
+    loadConfig();
+
+    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(onDisk.sources?.[0]?.type).toBe("context-hub");
   });
 });

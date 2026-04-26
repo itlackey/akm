@@ -19,13 +19,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, saveConfig } from "../src/config";
-import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/db";
-import { akmIndex } from "../src/indexer";
-import { loadStashFile } from "../src/metadata";
-import { akmSearch } from "../src/stash-search";
-import { akmShowUnified as akmShow } from "../src/stash-show";
-import type { SearchHit, StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { akmShowUnified as akmShow } from "../src/commands/show";
+import { loadConfig, saveConfig } from "../src/core/config";
+import { closeDatabase, DB_VERSION, getAllEntries, getMeta, openDatabase } from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import { loadStashFile } from "../src/indexer/metadata";
+import type { SearchHit, SourceSearchHit } from "../src/sources/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ function expectDefined<T>(value: T | null | undefined): T {
   return value;
 }
 
-function isLocalHit(hit: SearchHit): hit is StashSearchHit {
+function isLocalHit(hit: SearchHit): hit is SourceSearchHit {
   return hit.type !== "registry";
 }
 
@@ -333,7 +333,7 @@ describe("Scenario: Full lifecycle (index → search → show)", () => {
 
   test("show a script returns run", async () => {
     const searchResult = await akmSearch({ query: "deploy", type: "script" });
-    const deployHit = searchResult.hits.find((h): h is StashSearchHit => isLocalHit(h) && h.name.includes("deploy"));
+    const deployHit = searchResult.hits.find((h): h is SourceSearchHit => isLocalHit(h) && h.name.includes("deploy"));
     const resolvedDeployHit = expectDefined(deployHit);
 
     const openResult = await akmShow({ ref: expectDefined(resolvedDeployHit.ref) });
@@ -428,7 +428,7 @@ describe("Scenario: Agent discovers capabilities for task", () => {
     const searchResult = await akmSearch({ query: "run tests" });
     expect(searchResult.hits.length).toBeGreaterThan(0);
     const testScript = searchResult.hits.find(
-      (h): h is StashSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
+      (h): h is SourceSearchHit => isLocalHit(h) && h.type === "script" && h.name.includes("test"),
     );
     const resolvedTestScript = expectDefined(testScript);
 
@@ -493,33 +493,33 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
   test("registry source returns install guidance", async () => {
     const registryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-03-09T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:@scope/kit",
-          name: "@scope/kit",
-          description: "Example registry kit",
-          ref: "@scope/kit",
+          id: "npm:@scope/stash",
+          name: "@scope/stash",
+          description: "Example registry stash",
+          ref: "@scope/stash",
           source: "npm",
-          homepage: "https://www.npmjs.com/package/@scope/kit",
-          tags: ["kit"],
+          homepage: "https://www.npmjs.com/package/@scope/stash",
+          tags: ["stash"],
           latestVersion: "1.2.3",
         },
         {
-          id: "github:itlackey/example-kit",
-          name: "Example Kit",
-          description: "Example GitHub kit",
-          ref: "itlackey/example-kit",
+          id: "github:itlackey/example-stash",
+          name: "Example Stash",
+          description: "Example GitHub stash",
+          ref: "itlackey/example-stash",
           source: "github",
-          homepage: "https://github.com/itlackey/example-kit",
-          tags: ["kit"],
+          homepage: "https://github.com/itlackey/example-stash",
+          tags: ["stash"],
         },
       ],
     };
     const result = await withMockedFetch(
       () => new Response(JSON.stringify(registryIndex), { status: 200 }),
-      () => akmSearch({ query: "kit", source: "registry" }),
+      () => akmSearch({ query: "stash", source: "registry" }),
     );
 
     expect(result.source).toBe("registry");
@@ -537,14 +537,14 @@ describe("Scenario: Mixed local + registry search compatibility", () => {
 
   test("both source includes local and registry hits", async () => {
     const registryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-03-09T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:docker-kit",
-          name: "docker-kit",
+          id: "npm:docker-stash",
+          name: "docker-stash",
           description: "Registry docker helper",
-          ref: "docker-kit",
+          ref: "docker-stash",
           source: "npm",
           tags: ["docker"],
           latestVersion: "0.1.0",
@@ -619,7 +619,8 @@ describe("Scenario: CLI subprocess execution", () => {
   });
 
   test("cli: akm search --limit 2 respects limit", async () => {
-    const result = runCli("search", "", "--limit", "2");
+    // QA #14: empty query now throws UsageError (exit 2); use a real query
+    const result = runCli("search", "docker", "--limit", "2");
     expect(result.exitCode).toBe(0);
 
     const json = parseJson(result.stdout);
@@ -736,7 +737,8 @@ describe("Scenario: CLI subprocess execution", () => {
     const json = parseJson(result.stdout);
     expect(json.type).toBe("skill");
     expect(json.content).toContain("Code Review Skill");
-    expect(json.path).toBeUndefined();
+    // QA #7: path is now always included in the JSON shape (not just --detail full)
+    expect(json.path).toBeDefined();
   });
 
   test("cli: akm show --detail full includes schemaVersion and path", async () => {
@@ -860,7 +862,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       expect(registerResult.exitCode).toBe(0);
       const registerJson = parseJson(registerResult.stdout);
       expect(registerJson.ref).toBe("ics-docs");
-      expect(registerJson.stashSource).toEqual(
+      expect(registerJson.sourceAdded).toEqual(
         expect.objectContaining({
           type: "filesystem",
           name: "ics-docs",
@@ -875,7 +877,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
         expect.arrayContaining([
           expect.objectContaining({
             name: "ics-docs",
-            kind: "local",
+            kind: "filesystem",
             wiki: "ics-docs",
           }),
         ]),
@@ -915,6 +917,40 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   });
 
+  test("cli: wiki remove --force hides preserved raw-only leftovers from wiki list", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-wiki-remove-");
+    const rawSource = path.join(stashDir, "source.md");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.writeFileSync(rawSource, "# Test\n", "utf8");
+
+    try {
+      const createResult = runCli("wiki", "create", "my-notes", "--format", "json");
+      expect(createResult.exitCode).toBe(0);
+
+      const stashResult = runCli("wiki", "stash", "my-notes", rawSource, "--as", "test-page", "--format", "json");
+      expect(stashResult.exitCode).toBe(0);
+
+      const removeResult = runCli("wiki", "remove", "my-notes", "--force", "--format", "text");
+      expect(removeResult.exitCode).toBe(0);
+      expect(removeResult.stdout).toContain("raw/ preserved at");
+
+      const listResult = runCli("wiki", "list", "--format", "json");
+      expect(listResult.exitCode).toBe(0);
+      const listJson = parseJson(listResult.stdout);
+      expect(listJson.wikis).toEqual([]);
+
+      const showResult = runCli("wiki", "show", "my-notes", "--format", "json");
+      expect(showResult.exitCode).not.toBe(0);
+      expect(showResult.stderr).toContain("Wiki not found: my-notes");
+
+      const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
+      expect(cleanupResult.exitCode).toBe(0);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+    }
+  });
+
   test("cli: akm index text output surfaces skipped-asset warnings", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-index-warn-");
     process.env.AKM_STASH_DIR = stashDir;
@@ -937,16 +973,14 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       ].join("\n"),
       "utf8",
     );
+    // Truly malformed: no `# Workflow:` heading. Intro prose between the
+    // title and the first step is now permitted (#158).
     fs.writeFileSync(
       path.join(stashDir, "workflows", "bad.md"),
       [
         "---",
         "description: Bad workflow",
         "---",
-        "",
-        "# Workflow: Bad",
-        "",
-        "This prose breaks the parser.",
         "",
         "## Step: First",
         "Step ID: first",
@@ -969,7 +1003,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
 
   test("cli: akm remove resolves parsed ref id and removes cache directory", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-registry-remove-");
-    const stashRoot = path.join(stashDir, "registry-kit");
+    const stashRoot = path.join(stashDir, "registry-stash");
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-remove-"));
     fs.mkdirSync(path.join(stashRoot, "scripts"), { recursive: true });
     process.env.AKM_STASH_DIR = stashDir;
@@ -978,10 +1012,10 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       semanticSearchMode: "off",
       installed: [
         {
-          id: "npm:@scope/kit",
+          id: "npm:@scope/stash",
           source: "npm",
-          ref: "npm:@scope/kit@1.0.0",
-          artifactUrl: "https://registry.npmjs.org/@scope/kit/-/kit-1.0.0.tgz",
+          ref: "npm:@scope/stash@1.0.0",
+          artifactUrl: "https://registry.npmjs.org/@scope/stash/-/stash-1.0.0.tgz",
           resolvedVersion: "1.0.0",
           resolvedRevision: "abc123",
           stashRoot,
@@ -992,11 +1026,11 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     });
 
     try {
-      const result = runCli("remove", "npm:@scope/kit@latest");
+      const result = runCli("remove", "npm:@scope/stash@latest");
       expect(result.exitCode).toBe(0);
 
       const json = parseJson(result.stdout);
-      expect(expectDefined(json.removed).id).toBe("npm:@scope/kit");
+      expect(expectDefined(json.removed).id).toBe("npm:@scope/stash");
 
       const config = loadConfig();
       expect(config.installed).toBeUndefined();
@@ -1028,7 +1062,7 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     try {
-      const result = runCli("update", "npm:@scope/kit", "--all");
+      const result = runCli("update", "npm:@scope/stash", "--all");
       expect(result.exitCode).not.toBe(0);
       const output = result.stdout + result.stderr;
       expect(output).toContain("Specify either <target> or --all, not both.");
@@ -1043,10 +1077,10 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     saveConfig({ semanticSearchMode: "off" });
 
     try {
-      const result = runCli("update", "npm:@scope/kit");
+      const result = runCli("update", "npm:@scope/stash");
       expect(result.exitCode).not.toBe(0);
       const output = result.stdout + result.stderr;
-      expect(output).toContain("No matching source for target: npm:@scope/kit");
+      expect(output).toContain("No matching source for target: npm:@scope/stash");
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
     }
@@ -1073,7 +1107,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("upgrade --check returns version info (mocked fetch)", async () => {
-    const { checkForUpdate } = await import("../src/self-update");
+    const { checkForUpdate } = await import("../src/commands/self-update");
     const result = await withMockedFetch(
       () => Response.json({ tag_name: "v0.0.14" }),
       () => checkForUpdate("0.0.13"),
@@ -1085,7 +1119,7 @@ describe("Scenario: upgrade and update --force (no network)", () => {
   });
 
   test("performUpgrade detects non-binary install and returns guidance", async () => {
-    const { performUpgrade } = await import("../src/self-update");
+    const { performUpgrade } = await import("../src/commands/self-update");
     const result = await performUpgrade({
       currentVersion: "0.0.13",
       latestVersion: "0.0.14",

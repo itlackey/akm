@@ -2,7 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { hasErrnoCode, isAssetType, isWithin, resolveStashDir, toPosix } from "../src/common";
+import {
+  hasErrnoCode,
+  isAssetType,
+  isWithin,
+  jsonWithByteCap,
+  ResponseTooLargeError,
+  readBodyWithByteCap,
+  resolveStashDir,
+  toPosix,
+} from "../src/core/common";
 
 // ── resolveStashDir ──────────────────────────────────────────────────────────
 
@@ -218,5 +227,85 @@ describe("isWithin", () => {
 
   test("returns false for sibling directory with similar prefix", () => {
     expect(isWithin("/root-other/file.txt", "/root")).toBe(false);
+  });
+});
+
+// ── readBodyWithByteCap / jsonWithByteCap ────────────────────────────────────
+
+describe("readBodyWithByteCap", () => {
+  function makeResponse(body: BodyInit, init?: { headers?: HeadersInit; url?: string }): Response {
+    const res = new Response(body, { headers: init?.headers });
+    if (init?.url) Object.defineProperty(res, "url", { value: init.url });
+    return res;
+  }
+
+  test("reads small bodies verbatim", async () => {
+    const text = await readBodyWithByteCap(makeResponse("hello world"), 1024);
+    expect(text).toBe("hello world");
+  });
+
+  test("handles empty bodies", async () => {
+    const text = await readBodyWithByteCap(makeResponse(""), 1024);
+    expect(text).toBe("");
+  });
+
+  test("refuses before reading if Content-Length exceeds cap", async () => {
+    const body = "x".repeat(1000);
+    const response = makeResponse(body, {
+      headers: { "content-length": "1000" },
+      url: "http://example.invalid/too-big",
+    });
+    await expect(readBodyWithByteCap(response, 100)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  test("aborts mid-stream when Content-Length is absent but body exceeds cap", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // 5 chunks of 1000 bytes each = 5000 bytes; cap at 2500.
+        for (let i = 0; i < 5; i++) {
+          controller.enqueue(new TextEncoder().encode("x".repeat(1000)));
+        }
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+    await expect(readBodyWithByteCap(response, 2500)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  test("accepts body right at the cap", async () => {
+    const body = "x".repeat(100);
+    const text = await readBodyWithByteCap(makeResponse(body), 100);
+    expect(text.length).toBe(100);
+  });
+
+  test("decodes multi-chunk UTF-8 bodies correctly", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello "));
+        controller.enqueue(new TextEncoder().encode("world"));
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+    const text = await readBodyWithByteCap(response, 1024);
+    expect(text).toBe("hello world");
+  });
+});
+
+describe("jsonWithByteCap", () => {
+  test("parses small JSON bodies", async () => {
+    const data = await jsonWithByteCap<{ hello: string }>(new Response(JSON.stringify({ hello: "world" })), 1024);
+    expect(data.hello).toBe("world");
+  });
+
+  test("rejects oversized JSON before parse", async () => {
+    const big = JSON.stringify({ data: "x".repeat(2000) });
+    const response = new Response(big, { headers: { "content-length": String(big.length) } });
+    await expect(jsonWithByteCap(response, 500)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  test("propagates JSON.parse errors for malformed input", async () => {
+    const response = new Response("{not json");
+    await expect(jsonWithByteCap(response, 1024)).rejects.toThrow();
   });
 });

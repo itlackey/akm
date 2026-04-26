@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { extractFrontmatterOnly, extractLineRange, extractSection, formatToc, parseMarkdownToc } from "../src/markdown";
+import {
+  extractFrontmatterOnly,
+  extractLineRange,
+  extractSection,
+  formatToc,
+  parseMarkdownToc,
+} from "../src/core/markdown";
 
 const SAMPLE_DOC = `---
 title: Guide

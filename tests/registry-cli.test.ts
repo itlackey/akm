@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { RegistryConfigEntry } from "../src/config";
-import { getConfigPath, loadConfig, saveConfig } from "../src/config";
-import type { RegistryIndex } from "../src/registry-search";
-import { resolveRegistries, searchRegistry } from "../src/registry-search";
+import type { RegistryIndex } from "../src/commands/registry-search";
+import { resolveRegistries, searchRegistry } from "../src/commands/registry-search";
+import type { RegistryConfigEntry } from "../src/core/config";
+import { getConfigPath, loadConfig, saveConfig } from "../src/core/config";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -198,14 +198,14 @@ describe("resolveRegistries", () => {
 describe("registry search with config entries", () => {
   test("basic query against mock index", async () => {
     const index: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:test-kit",
-          name: "Test Kit",
-          description: "A test kit for deploy",
-          ref: "test-kit",
+          id: "npm:test-stash",
+          name: "Test Stash",
+          description: "A test stash for deploy",
+          ref: "test-stash",
           source: "npm",
           tags: ["deploy"],
         },
@@ -218,7 +218,7 @@ describe("registry search with config entries", () => {
         registries: [{ url: srv.url, name: "test-reg" }],
       });
       expect(result.hits.length).toBe(1);
-      expect(result.hits[0].id).toBe("npm:test-kit");
+      expect(result.hits[0].id).toBe("npm:test-stash");
       expect(result.hits[0].registryName).toBe("test-reg");
     } finally {
       srv.close();
@@ -227,28 +227,28 @@ describe("registry search with config entries", () => {
 
   test("multi-registry search merges results from multiple URLs", async () => {
     const index1: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "npm:kit-one",
-          name: "Kit One",
-          description: "First kit for build",
-          ref: "kit-one",
+          id: "npm:stash-one",
+          name: "Stash One",
+          description: "First stash for build",
+          ref: "stash-one",
           source: "npm",
           tags: ["build"],
         },
       ],
     };
     const index2: RegistryIndex = {
-      version: 1,
+      version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
-      kits: [
+      stashes: [
         {
-          id: "github:org/kit-two",
-          name: "Kit Two",
-          description: "Second kit for build automation",
-          ref: "org/kit-two",
+          id: "github:org/stash-two",
+          name: "Stash Two",
+          description: "Second stash for build automation",
+          ref: "org/stash-two",
           source: "github",
           tags: ["build"],
         },
@@ -266,14 +266,14 @@ describe("registry search with config entries", () => {
       });
       expect(result.hits.length).toBe(2);
       const ids = result.hits.map((h) => h.id);
-      expect(ids).toContain("npm:kit-one");
-      expect(ids).toContain("github:org/kit-two");
+      expect(ids).toContain("npm:stash-one");
+      expect(ids).toContain("github:org/stash-two");
 
       // Verify provenance
-      const kit1Hit = result.hits.find((h) => h.id === "npm:kit-one");
-      const kit2Hit = result.hits.find((h) => h.id === "github:org/kit-two");
-      expect(kit1Hit?.registryName).toBe("primary");
-      expect(kit2Hit?.registryName).toBe("secondary");
+      const stash1Hit = result.hits.find((h) => h.id === "npm:stash-one");
+      const stash2Hit = result.hits.find((h) => h.id === "github:org/stash-two");
+      expect(stash1Hit?.registryName).toBe("primary");
+      expect(stash2Hit?.registryName).toBe("secondary");
     } finally {
       srv1.close();
       srv2.close();

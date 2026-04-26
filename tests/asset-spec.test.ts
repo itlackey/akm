@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
-import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/asset-registry";
+import { ACTION_BUILDERS, TYPE_TO_RENDERER } from "../src/core/asset-registry";
 import {
   ASSET_SPECS,
-  ASSET_TYPES,
+  deregisterAssetType,
   deriveCanonicalAssetName,
+  getAssetTypes,
   isRelevantAssetFile,
   registerAssetType,
   resolveAssetPathFromName,
   SCRIPT_EXTENSIONS,
   TYPE_DIRS,
-} from "../src/asset-spec";
+} from "../src/core/asset-spec";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -28,18 +29,19 @@ describe("SCRIPT_EXTENSIONS", () => {
   });
 });
 
-describe("ASSET_TYPES", () => {
+describe("getAssetTypes", () => {
   test("contains all built-in types", () => {
-    expect(ASSET_TYPES).toContain("skill");
-    expect(ASSET_TYPES).toContain("command");
-    expect(ASSET_TYPES).toContain("agent");
-    expect(ASSET_TYPES).toContain("knowledge");
-    expect(ASSET_TYPES).toContain("workflow");
-    expect(ASSET_TYPES).toContain("script");
-    expect(ASSET_TYPES).toContain("memory");
-    expect(ASSET_TYPES).toContain("vault");
-    expect(ASSET_TYPES).toContain("wiki");
-    expect(ASSET_TYPES).toHaveLength(9);
+    const types = getAssetTypes();
+    expect(types).toContain("skill");
+    expect(types).toContain("command");
+    expect(types).toContain("agent");
+    expect(types).toContain("knowledge");
+    expect(types).toContain("workflow");
+    expect(types).toContain("script");
+    expect(types).toContain("memory");
+    expect(types).toContain("vault");
+    expect(types).toContain("wiki");
+    expect(types).toHaveLength(9);
   });
 });
 
@@ -226,12 +228,9 @@ describe("registerAssetType", () => {
 
   afterEach(() => {
     // Clean up the test type to avoid polluting other tests
-    delete ASSET_SPECS[TEST_TYPE];
-    delete TYPE_DIRS[TEST_TYPE];
+    deregisterAssetType(TEST_TYPE);
     delete TYPE_TO_RENDERER[TEST_TYPE];
     delete ACTION_BUILDERS[TEST_TYPE];
-    const idx = ASSET_TYPES.indexOf(TEST_TYPE);
-    if (idx !== -1) ASSET_TYPES.splice(idx, 1);
   });
 
   test("adds the new type to ASSET_SPECS and TYPE_DIRS", () => {
@@ -244,7 +243,7 @@ describe("registerAssetType", () => {
 
     expect(ASSET_SPECS[TEST_TYPE]).toBeDefined();
     expect(TYPE_DIRS[TEST_TYPE]).toBe("widgets");
-    expect(ASSET_TYPES).toContain(TEST_TYPE);
+    expect(getAssetTypes()).toContain(TEST_TYPE);
   });
 
   test("automatically registers rendererName into TYPE_TO_RENDERER", () => {

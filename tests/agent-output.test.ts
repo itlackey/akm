@@ -176,11 +176,13 @@ describe("--format jsonl", () => {
 
   test("JSONL format outputs one JSON object per line for search hits", () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "", "--format=jsonl"]);
+    // QA #14: empty query now rejects; use a real keyword that matches stash assets.
+    // Use "architect" since architect.md has that word in both name and content.
+    const output = runCli(stashDir, ["search", "architect", "--format=jsonl"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
-    // Should have at least 2 hits (architect + deploy)
-    expect(lines.length).toBeGreaterThanOrEqual(2);
+    // Should have at least 1 hit
+    expect(lines.length).toBeGreaterThanOrEqual(1);
 
     // Each line must be its own object, not wrapped in an envelope
     for (const line of lines) {
@@ -192,7 +194,7 @@ describe("--format jsonl", () => {
 
   test("each JSONL line is valid parseable JSON", () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "", "--format=jsonl"]);
+    const output = runCli(stashDir, ["search", "deploy", "--format=jsonl"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {
@@ -205,7 +207,7 @@ describe("--format jsonl", () => {
 
   test("JSONL combined with --for-agent uses agent shaping", () => {
     const stashDir = makeStash();
-    const output = runCli(stashDir, ["search", "", "--format=jsonl", "--for-agent"]);
+    const output = runCli(stashDir, ["search", "deploy", "--format=jsonl", "--for-agent"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {

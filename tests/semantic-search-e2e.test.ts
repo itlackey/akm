@@ -12,13 +12,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AkmConfig } from "../src/config";
-import { resetConfigCache, saveConfig } from "../src/config";
-import { closeDatabase, EMBEDDING_DIM, getEmbeddingCount, getEntryCount, getMeta, openDatabase } from "../src/db";
-import { clearEmbeddingCache } from "../src/embedder";
-import { akmIndex } from "../src/indexer";
-import { searchLocal } from "../src/local-search";
-import { getDbPath } from "../src/paths";
+import type { AkmConfig } from "../src/core/config";
+import { resetConfigCache, saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import {
+  closeDatabase,
+  EMBEDDING_DIM,
+  getEmbeddingCount,
+  getEntryCount,
+  getMeta,
+  openDatabase,
+} from "../src/indexer/db";
+import { searchLocal } from "../src/indexer/db-search";
+import { akmIndex } from "../src/indexer/indexer";
+import { clearEmbeddingCache } from "../src/llm/embedder";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
 

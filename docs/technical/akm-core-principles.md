@@ -5,9 +5,10 @@ it with minimal context overhead.
 
 ## What akm Does
 
-An agent has a task. Across local stashes, installed kits, mirrored sources, and
-registries, akm helps it discover assets such as scripts, skills, commands,
-agents, knowledge docs, workflows, vaults, and wiki pages.
+An agent has a task. Across configured sources (local filesystem paths and
+cache-backed git/website/npm mirrors) and registry catalogs, akm helps it
+discover assets such as scripts, skills, commands, agents, knowledge docs,
+workflows, vaults, and wiki pages.
 
 Core flow:
 
@@ -28,7 +29,7 @@ current CLI that usually means:
 
 - `brief`: `type`, `name`, `action`, `estimatedTokens`
 - `normal`: adds `description` and `score`
-- `for-agent`: includes `ref`
+- `agent` (0.6.0+; `--for-agent` is the deprecated alias): includes `ref`
 
 Richer provenance/debug fields belong behind fuller detail modes.
 
@@ -55,12 +56,12 @@ show delivers
 filesystem is optional depth
 ```
 
-### 5. Registries, stashes, and mirrored sources stay conceptually separate
+### 5. Registries and sources stay conceptually separate
 
-- registries are catalogs of installable kits
-- stashes are locally searchable directories
-- mirrored git/website sources become local searchable stash roots
-- installed kits behave like additional stash roots once materialized
+- registries are read-only catalogs of installable kits
+- sources are locally indexed directories (filesystem, or cache-backed
+  git/website/npm mirrors)
+- registry results live in `registryHits`, never merged into source `hits`
 
 ### 6. Refs are plumbing
 
@@ -75,12 +76,12 @@ detail levels are the right defaults.
 
 ### 8. Complexity belongs behind indexing and source management
 
-The hard parts should stay inside indexing, stash resolution, registry install,
-and provider plumbing, not in the hot path from `search` to `show`.
+The hard parts should stay inside indexing, source resolution, registry
+install, and provider plumbing, not in the hot path from `search` to `show`.
 
 ## What akm Does Not Do
 
 - execute assets itself
 - expose vault secret values through `show`
 - replace live-service integrations such as MCP
-- require agents to understand stash layouts or provider internals
+- require agents to understand source layouts or provider internals

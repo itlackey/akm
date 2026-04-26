@@ -10,7 +10,7 @@ import {
   getRegistryCacheDir,
   getRegistryIndexCacheDir,
   getWorkflowDbPath,
-} from "../src/paths";
+} from "../src/core/paths";
 
 // ── Environment helpers ─────────────────────────────────────────────────────
 

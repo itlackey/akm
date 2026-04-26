@@ -17,10 +17,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { akmIndex } from "../src/indexer";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import { akmIndex } from "../src/indexer/indexer";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 
@@ -565,7 +565,7 @@ async function runBenchmark(): Promise<BenchmarkResults> {
     }
 
     const result = await akmSearch({ query: bq.query, source: "stash", limit: 20 });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Find rank of expected result
     const expectedIndex = hits.findIndex((h) => h.name === bq.expectedName);

@@ -169,37 +169,25 @@ communicates which result is more useful.
 
 ## Result Merging
 
-### Local + provider merge (stash providers)
+There is one scoring pipeline because there is one data store. All sources —
+filesystem, git, website, npm — are materialised to local directories and
+indexed together. The indexer holds every searchable asset, so source results
+do not need cross-merging.
 
-When additional stash providers (git, OpenViking) return results:
+### Source + registry results (`--source both`)
 
-- **Local hits keep their original scores** from the pipeline above
-- **Provider hits keep their original scores** and sort fairly alongside
-  local hits by score descending
-- **Duplicates** (same file path): local version wins, provider copy dropped
-- **No score suppression** — provider results compete on equal footing
+When registry results (static-index, skills.sh) are included:
 
-### Local + registry merge
-
-When registry results (npm, skills.sh) are included (`--source both`):
-
-- Same score-preserving approach as provider merge
-- Local hits always rank above registry hits of equal apparent relevance
+- Source hits and registry hits stay in **separate response fields**:
+  `hits` and `registryHits`
+- Registry results are never rank-merged into `hits`
 - Registry raw scores (which may be on a 0-100 scale) do not leak through
-
-**Design decision — why not RRF for merging?** RRF was originally used here
-to handle incompatible score scales between local and provider/registry
-results. The problem is that RRF replaces ALL scores with rank-based values
-(0.0164, 0.0161, 0.0159...), which destroys the differentiation from the
-scoring pipeline. A skill scoring 3.14 and a noise result scoring 0.28 would
-both become ~0.016 after RRF. The score-preserving merge keeps the 3.14 and
-places provider noise below 0.28.
 
 ## Substring Fallback
 
-When no index is available, search falls back to scanning stash and kit
-directories and filtering by substring match. This ensures search always works,
-even before `akm index` has been run.
+When no index is available, search falls back to scanning the primary stash
+and installed stash roots, filtering by substring match. This ensures search
+always works, even before `akm index` has been run.
 
 ## Output Modes
 
@@ -214,8 +202,9 @@ By default (`--format json`, `--detail brief`), search emits minimal fields:
 
 ### Agent-optimized output
 
-`--for-agent` strips non-actionable fields, keeping only: `name`, `ref`,
-`type`, `description`, `action`, `score`. Takes precedence over `--detail`.
+`--detail=agent` strips non-actionable fields, keeping only: `name`, `ref`,
+`type`, `description`, `action`, `score`. (The pre-0.6.0 `--for-agent`
+boolean is kept as a deprecated alias for one release cycle.)
 
 `--format jsonl` outputs one JSON object per line for streaming consumption.
 

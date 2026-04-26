@@ -2,50 +2,69 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand, runMain } from "citty";
-import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./asset-spec";
-import { isWithin, resolveStashDir } from "./common";
-import { generateBashCompletions, installBashCompletions } from "./completions";
-import type { RegistryConfigEntry } from "./config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./config";
-import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./config-cli";
-import { closeDatabase, findEntryIdByRef, openDatabase } from "./db";
-import { ConfigError, NotFoundError, UsageError } from "./errors";
-import { akmIndex, type IndexResponse } from "./indexer";
-import { assembleInfo } from "./info";
-import { akmInit } from "./init";
-import { formatInstallAuditSummary } from "./install-audit";
-import { akmListSources, akmRemove, akmUpdate } from "./installed-kits";
-import { renderMigrationHelp } from "./migration-help";
-import { getCacheDir, getDbPath, getDefaultStashDir } from "./paths";
-import { buildRegistryIndex, writeRegistryIndex } from "./registry-build-index";
-import { searchRegistry } from "./registry-search";
-import { checkForUpdate, performUpgrade } from "./self-update";
-import { akmAdd } from "./stash-add";
-import { akmClone } from "./stash-clone";
-import { saveGitStash } from "./stash-providers/git";
-import { parseAssetRef } from "./stash-ref";
-import { akmSearch, parseSearchSource } from "./stash-search";
-import { akmShowUnified } from "./stash-show";
-import { addStash } from "./stash-source-manage";
-import type {
-  KnowledgeView,
-  RegistrySearchResultHit,
-  SearchResponse,
-  ShowDetailLevel,
-  ShowResponse,
-  SourceKind,
-  StashSearchHit,
-} from "./stash-types";
-import { insertUsageEvent } from "./usage-events";
+import { generateBashCompletions, installBashCompletions } from "./commands/completions";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
+import { akmCurate } from "./commands/curate";
+import { assembleInfo } from "./commands/info";
+import { akmInit } from "./commands/init";
+import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
+import { renderMigrationHelp } from "./commands/migration-help";
+import { searchRegistry } from "./commands/registry-search";
+import {
+  buildMemoryFrontmatter,
+  parseDuration,
+  readMemoryContent,
+  runAutoHeuristics,
+  runLlmEnrich,
+} from "./commands/remember";
+import { akmSearch, parseSearchSource } from "./commands/search";
+import { checkForUpdate, performUpgrade } from "./commands/self-update";
+import { akmShowUnified } from "./commands/show";
+import { akmAdd } from "./commands/source-add";
+import { akmClone } from "./commands/source-clone";
+import { addStash } from "./commands/source-manage";
+import { parseAssetRef } from "./core/asset-ref";
+import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
+import { isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
+import type { RegistryConfigEntry } from "./core/config";
+import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import { ConfigError, NotFoundError, UsageError } from "./core/errors";
+import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
+import { setQuiet, warn } from "./core/warn";
+import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "./indexer/db";
+import { akmIndex } from "./indexer/indexer";
+import { resolveSourceEntries } from "./indexer/search-source";
+import { insertUsageEvent } from "./indexer/usage-events";
+import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
+import {
+  getHyphenatedArg,
+  getHyphenatedBoolean,
+  getOutputMode,
+  initOutputMode,
+  type OutputMode,
+  parseFlagValue,
+} from "./output/context";
+import { shapeForCommand } from "./output/shapes";
+import { formatPlain, outputJsonl } from "./output/text";
+import { buildRegistryIndex, writeRegistryIndex } from "./registry/build-index";
+import { resolveSourcesForOrigin } from "./registry/origin-resolve";
+import { saveGitStash } from "./sources/providers/git";
+import { resolveAssetPath } from "./sources/resolve";
+import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
 import { pkgVersion } from "./version";
-import { setQuiet, warn } from "./warn";
-import { createWorkflowAsset, getWorkflowTemplate } from "./workflow-authoring";
+import {
+  createWorkflowAsset,
+  formatWorkflowErrors,
+  getWorkflowTemplate,
+  validateWorkflowSource,
+} from "./workflows/authoring";
 import {
   hasWorkflowSubcommand,
   parseWorkflowJsonObject,
   parseWorkflowStepState,
   WORKFLOW_STEP_STATES,
-} from "./workflow-cli";
+} from "./workflows/cli";
 import {
   completeWorkflowStep,
   getNextWorkflowStep,
@@ -53,66 +72,36 @@ import {
   listWorkflowRuns,
   resumeWorkflowRun,
   startWorkflowRun,
-} from "./workflow-runs";
+} from "./workflows/runs";
 
-type OutputFormat = "json" | "yaml" | "text" | "jsonl";
-type DetailLevel = "brief" | "normal" | "full" | "summary";
-
-interface OutputMode {
-  format: OutputFormat;
-  detail: DetailLevel;
-  forAgent: boolean;
-}
-
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl"];
-const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full", "summary"];
-const NORMAL_DESCRIPTION_LIMIT = 250;
 const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
-const CONTEXT_HUB_ALIAS_REF = "context-hub";
-const CONTEXT_HUB_ALIAS_URL = "https://github.com/andrewyng/context-hub";
 const SKILLS_SH_NAME = "skills.sh";
 const SKILLS_SH_URL = "https://skills.sh";
 const SKILLS_SH_PROVIDER = "skills-sh";
 
 import { stringify as yamlStringify } from "yaml";
 
-function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
-  if (!value) return undefined;
-  if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
-  throw new UsageError(`Invalid value for --format: ${value}. Expected one of: ${OUTPUT_FORMATS.join("|")}`);
-}
-
-function parseDetailLevel(value: string | undefined): DetailLevel | undefined {
-  if (!value) return undefined;
-  if ((DETAIL_LEVELS as string[]).includes(value)) return value as DetailLevel;
-  throw new UsageError(`Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`);
-}
-
-function parseFlagValue(flag: string): string | undefined {
+/**
+ * Collect all occurrences of a repeatable flag from process.argv.
+ * Citty's StringArgDef only exposes the last value when a flag is repeated,
+ * so for repeatable CLI args (like `--tag foo --tag bar`) we read argv directly.
+ * Supports both `--flag value` and `--flag=value` forms.
+ */
+function parseAllFlagValues(flag: string): string[] {
+  const values: string[] = [];
   for (let i = 0; i < process.argv.length; i++) {
     const arg = process.argv[i];
-    if (arg === flag) return process.argv[i + 1];
-    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
+    if (arg === flag && i + 1 < process.argv.length) {
+      values.push(process.argv[i + 1] as string);
+    } else if (arg.startsWith(`${flag}=`)) {
+      values.push(arg.slice(flag.length + 1));
+    }
   }
-  return undefined;
-}
-
-// Uses process.argv directly because the global output() function (called by all
-// commands) needs this flag but doesn't have access to citty's parsed args.
-function hasBooleanFlag(flag: string): boolean {
-  return process.argv.some((arg) => arg === flag || arg === `${flag}=true`);
-}
-
-function resolveOutputMode(): OutputMode {
-  const config = loadConfig();
-  const format = parseOutputFormat(parseFlagValue("--format")) ?? config.output?.format ?? "json";
-  const detail = parseDetailLevel(parseFlagValue("--detail")) ?? config.output?.detail ?? "brief";
-  const forAgent = hasBooleanFlag("--for-agent");
-  return { format, detail, forAgent };
+  return values;
 }
 
 function output(command: string, result: unknown): void {
-  const mode = resolveOutputMode();
+  const mode: OutputMode = getOutputMode();
   const shaped = shapeForCommand(command, result, mode.detail, mode.forAgent);
 
   if (mode.format === "jsonl") {
@@ -134,1016 +123,12 @@ function output(command: string, result: unknown): void {
     }
   }
 }
-
-function outputJsonl(command: string, shaped: unknown): void {
-  if (command === "search" || command === "registry-search") {
-    const r = shaped as Record<string, unknown>;
-    const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
-    for (const hit of hits) {
-      console.log(JSON.stringify(hit));
-    }
-    const registryHits = Array.isArray(r.registryHits) ? (r.registryHits as Record<string, unknown>[]) : [];
-    for (const hit of registryHits) {
-      console.log(JSON.stringify(hit));
-    }
-    return;
-  }
-  // For non-search commands, output the whole object as a single JSONL line
-  console.log(JSON.stringify(shaped));
-}
-
-function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
-  switch (command) {
-    case "search":
-      return shapeSearchOutput(result as Record<string, unknown>, detail, forAgent);
-    case "registry-search":
-      return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
-    case "show":
-      return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
-    default:
-      return result;
-  }
-}
-
-function shapeSearchOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  forAgent = false,
-): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const registryHits = Array.isArray(result.registryHits) ? (result.registryHits as Record<string, unknown>[]) : [];
-  const shapedHits = forAgent
-    ? hits.map((hit) => shapeSearchHitForAgent(hit))
-    : hits.map((hit) => shapeSearchHit(hit, detail));
-  const shapedRegistryHits = forAgent
-    ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
-    : registryHits.map((hit) => shapeSearchHit(hit, detail));
-
-  if (forAgent) {
-    return {
-      hits: shapedHits,
-      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-      ...(result.tip ? { tip: result.tip } : {}),
-    };
-  }
-
-  if (detail === "full") {
-    return {
-      schemaVersion: result.schemaVersion,
-      stashDir: result.stashDir,
-      source: result.source,
-      hits: shapedHits,
-      ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-      ...(result.semanticSearch ? { semanticSearch: result.semanticSearch } : {}),
-      ...(result.tip ? { tip: result.tip } : {}),
-      ...(result.warnings ? { warnings: result.warnings } : {}),
-      ...(result.timing ? { timing: result.timing } : {}),
-    };
-  }
-
-  return {
-    hits: shapedHits,
-    ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-    ...(result.tip ? { tip: result.tip } : {}),
-  };
-}
-
-function shapeRegistrySearchOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  const hits = Array.isArray(result.hits) ? (result.hits as Record<string, unknown>[]) : [];
-  const assetHits = Array.isArray(result.assetHits) ? (result.assetHits as Record<string, unknown>[]) : [];
-
-  // Shape kit hits as registry type
-  const shapedKitHits = hits.map((hit) => shapeSearchHit({ ...hit, type: "registry" }, detail));
-
-  // Shape asset hits by detail level
-  const shapedAssetHits = assetHits.map((hit) => shapeAssetHit(hit, detail));
-
-  const shaped: Record<string, unknown> = {
-    hits: shapedKitHits,
-    ...(shapedAssetHits.length > 0 ? { assetHits: shapedAssetHits } : {}),
-    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-  };
-
-  if (detail === "full") {
-    shaped.query = result.query;
-  }
-
-  return shaped;
-}
-
-function shapeAssetHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") return pickFields(hit, ["assetName", "assetType", "action", "estimatedTokens"]);
-  if (detail === "normal") {
-    return capDescription(
-      pickFields(hit, ["assetName", "assetType", "description", "kit", "action", "estimatedTokens"]),
-      NORMAL_DESCRIPTION_LIMIT,
-    );
-  }
-  return hit;
-}
-
-function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (hit.type === "registry") {
-    if (detail === "brief") return pickFields(hit, ["name", "action"]);
-    if (detail === "normal") {
-      return capDescription(pickFields(hit, ["name", "description", "action", "curated"]), NORMAL_DESCRIPTION_LIMIT);
-    }
-    return hit;
-  }
-
-  // Stash hit (local or remote)
-  if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
-  if (detail === "normal") {
-    return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens"]),
-      NORMAL_DESCRIPTION_LIMIT,
-    );
-  }
-  return hit;
-}
-
-/** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
-function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
-  return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
-}
-
-function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
-  if (typeof hit.description !== "string") return hit;
-  return { ...hit, description: truncateDescription(hit.description, limit) };
-}
-
-function truncateDescription(description: string, limit: number): string {
-  const normalized = description.replace(/\s+/g, " ").trim();
-  if (normalized.length <= limit) return normalized;
-
-  const truncated = normalized.slice(0, limit - 1);
-  const lastSpace = truncated.lastIndexOf(" ");
-  const safe = lastSpace >= Math.floor(limit * 0.6) ? truncated.slice(0, lastSpace) : truncated;
-  return `${safe.trimEnd()}...`;
-}
-
-function shapeShowOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  forAgent = false,
-): Record<string, unknown> {
-  if (forAgent) {
-    return pickFields(result, [
-      "type",
-      "name",
-      "description",
-      "action",
-      "content",
-      "template",
-      "prompt",
-      "run",
-      "setup",
-      "cwd",
-      "toolPolicy",
-      "modelHint",
-      "agent",
-      "parameters",
-      "workflowTitle",
-      "workflowParameters",
-      "steps",
-      "keys",
-      "comments",
-    ]);
-  }
-  if (detail === "summary") {
-    return pickFields(result, [
-      "type",
-      "name",
-      "description",
-      "tags",
-      "parameters",
-      "workflowTitle",
-      "action",
-      "run",
-      "origin",
-      "keys",
-      "comments",
-    ]);
-  }
-
-  const base = pickFields(result, [
-    "type",
-    "name",
-    "origin",
-    "action",
-    "description",
-    "tags",
-    "content",
-    "template",
-    "prompt",
-    "toolPolicy",
-    "modelHint",
-    "agent",
-    "parameters",
-    "workflowTitle",
-    "workflowParameters",
-    "steps",
-    "run",
-    "setup",
-    "cwd",
-    "keys",
-    "comments",
-  ]);
-
-  if (detail !== "full") {
-    return base;
-  }
-
-  return {
-    schemaVersion: 1,
-    ...base,
-    ...pickFields(result, ["path", "editable", "editHint"]),
-  };
-}
-
-function pickFields(source: Record<string, unknown>, fields: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const field of fields) {
-    if (source[field] !== undefined) {
-      result[field] = source[field];
-    }
-  }
-  return result;
-}
-
-/**
- * Return a plain-text string for commands that are better as short messages,
- * or null to fall through to YAML output.
- */
-function formatPlain(command: string, result: unknown, detail: DetailLevel): string | null {
-  const r = result as Record<string, unknown>;
-
-  switch (command) {
-    case "init": {
-      let out = `Stash initialized at ${r.stashDir ?? "unknown"}`;
-      if (r.configPath) out += `\nConfig saved to ${r.configPath}`;
-      return out;
-    }
-    case "index": {
-      const indexResult = result as Partial<IndexResponse>;
-      let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
-      const warnings = indexResult.warnings;
-      if (Array.isArray(warnings) && warnings.length > 0) {
-        out += `\nWarnings (${warnings.length}):`;
-        for (const message of warnings) out += `\n  - ${String(message)}`;
-      }
-      const verification = indexResult.verification;
-      if (verification?.ok === false && verification.message) {
-        out += `\nVerification: ${String(verification.message)}`;
-      }
-      return out;
-    }
-    case "show": {
-      const lines: string[] = [];
-      if (r.type || r.name) {
-        lines.push(`# ${String(r.type ?? "asset")}: ${String(r.name ?? "unknown")}`);
-      }
-      if (r.origin !== undefined) lines.push(`# origin: ${String(r.origin)}`);
-      if (r.action) lines.push(`# ${String(r.action)}`);
-      if (r.description) lines.push(`description: ${String(r.description)}`);
-      if (r.workflowTitle) lines.push(`workflowTitle: ${String(r.workflowTitle)}`);
-      if (r.agent) lines.push(`agent: ${String(r.agent)}`);
-      if (Array.isArray(r.parameters) && r.parameters.length > 0) lines.push(`parameters: ${r.parameters.join(", ")}`);
-      if (Array.isArray(r.workflowParameters) && r.workflowParameters.length > 0) {
-        lines.push("workflowParameters:");
-        for (const parameter of r.workflowParameters as Array<Record<string, unknown>>) {
-          const name = typeof parameter.name === "string" ? parameter.name : "unknown";
-          const description =
-            typeof parameter.description === "string" && parameter.description.trim()
-              ? `: ${parameter.description}`
-              : "";
-          lines.push(`  - ${name}${description}`);
-        }
-      }
-      if (r.modelHint != null) lines.push(`modelHint: ${String(r.modelHint)}`);
-      if (r.toolPolicy != null) lines.push(`toolPolicy: ${JSON.stringify(r.toolPolicy)}`);
-      if (r.run) lines.push(`run: ${String(r.run)}`);
-      if (r.setup) lines.push(`setup: ${String(r.setup)}`);
-      if (r.cwd) lines.push(`cwd: ${String(r.cwd)}`);
-      if (detail === "full") {
-        if (r.path) lines.push(`path: ${String(r.path)}`);
-        if (r.editable !== undefined) lines.push(`editable: ${String(r.editable)}`);
-        if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
-        if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
-      }
-      const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
-      if (Array.isArray(r.steps) && r.steps.length > 0) {
-        if (lines.length > 0) lines.push("");
-        lines.push("steps:");
-        for (const [index, step] of (r.steps as Array<Record<string, unknown>>).entries()) {
-          const title = typeof step.title === "string" ? step.title : "Untitled step";
-          const id = typeof step.id === "string" ? step.id : "unknown";
-          lines.push(`  ${index + 1}. ${title} [${id}]`);
-          if (typeof step.instructions === "string" && step.instructions.trim()) {
-            lines.push(`     instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
-          }
-          if (Array.isArray(step.completionCriteria) && step.completionCriteria.length > 0) {
-            lines.push("     completion:");
-            for (const criterion of step.completionCriteria) {
-              lines.push(`       - ${String(criterion)}`);
-            }
-          }
-        }
-      }
-      if (payloads.length > 0) {
-        if (lines.length > 0) lines.push("");
-        lines.push(...payloads);
-      }
-      return lines.length > 0 ? lines.join("\n") : null;
-    }
-    case "search": {
-      return formatSearchPlain(r, detail);
-    }
-    case "curate": {
-      return formatCuratePlain(r, detail);
-    }
-    case "wiki-list": {
-      return formatWikiListPlain(r);
-    }
-    case "wiki-show": {
-      return formatWikiShowPlain(r);
-    }
-    case "wiki-create": {
-      return formatWikiCreatePlain(r);
-    }
-    case "wiki-remove": {
-      return formatWikiRemovePlain(r);
-    }
-    case "wiki-pages": {
-      return formatWikiPagesPlain(r);
-    }
-    case "wiki-stash": {
-      return formatWikiStashPlain(r);
-    }
-    case "wiki-lint": {
-      return formatWikiLintPlain(r);
-    }
-    case "wiki-ingest": {
-      return formatWikiIngestPlain(r);
-    }
-    case "workflow-start":
-    case "workflow-status":
-    case "workflow-complete": {
-      return formatWorkflowStatusPlain(r);
-    }
-    case "workflow-next": {
-      return formatWorkflowNextPlain(r);
-    }
-    case "workflow-list": {
-      return formatWorkflowListPlain(r);
-    }
-    case "workflow-create": {
-      if (r.ref && r.path) {
-        return `Created ${String(r.ref)} at ${String(r.path)}`;
-      }
-      return null;
-    }
-    case "list": {
-      const sources = Array.isArray(r.sources) ? (r.sources as Record<string, unknown>[]) : [];
-      if (sources.length === 0) return "No sources configured. Use `akm add` to add a source.";
-      const lines: string[] = [];
-      for (const src of sources) {
-        const kind = typeof src.kind === "string" ? src.kind : "unknown";
-        const name = typeof src.name === "string" ? src.name : "unnamed";
-        const ver = typeof src.version === "string" ? ` v${src.version}` : "";
-        const prov = typeof src.provider === "string" ? ` (${src.provider})` : "";
-        const flags: string[] = [];
-        if (typeof src.wiki === "string") flags.push(`wiki:${src.wiki}`);
-        if (src.updatable === true) flags.push("updatable");
-        if (src.writable === true) flags.push("writable");
-        const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-        lines.push(`[${kind}] ${name}${ver}${prov}${flagText}`);
-      }
-      return lines.join("\n");
-    }
-    case "add": {
-      const index = r.index as Record<string, unknown> | undefined;
-      const scanned = index?.directoriesScanned ?? 0;
-      const total = index?.totalEntries ?? 0;
-      const lines = [`Installed ${r.ref} (${scanned} directories scanned, ${total} total assets indexed)`];
-      const warnings = index?.warnings;
-      if (Array.isArray(warnings) && warnings.length > 0) {
-        lines.push(`Warnings (${warnings.length}):`);
-        for (const message of warnings) lines.push(`  - ${String(message)}`);
-      }
-      const installed = r.installed as Record<string, unknown> | undefined;
-      const audit = installed?.audit;
-      if (audit && typeof audit === "object") {
-        lines.push(formatInstallAuditSummary(audit as Parameters<typeof formatInstallAuditSummary>[0]));
-      }
-      return lines.join("\n");
-    }
-    case "remove": {
-      const target = r.target ?? r.ref ?? "";
-      const ok = r.ok !== false ? "OK" : "FAILED";
-      return `remove: ${target} ${ok}`;
-    }
-    case "update": {
-      const processed = r.processed as Array<Record<string, unknown>> | undefined;
-      if (!processed?.length) return `update: nothing to update`;
-      const lines = processed.map((item) => {
-        const changed = item.changed as Record<string, unknown> | undefined;
-        const installed = item.installed as Record<string, unknown> | undefined;
-        const previous = item.previous as Record<string, unknown> | undefined;
-        if (changed?.any) {
-          const prev = previous?.resolvedVersion ?? "unknown";
-          const next = installed?.resolvedVersion ?? "unknown";
-          return `update: ${item.id} v${prev} → v${next}`;
-        }
-        return `update: ${item.id} (unchanged)`;
-      });
-      return lines.join("\n");
-    }
-    case "upgrade": {
-      if (r.upgraded === true) {
-        return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`;
-      }
-      if (r.updateAvailable === true) {
-        return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade' to install)`;
-      }
-      if (r.updateAvailable === false && r.latestVersion) {
-        return `akm v${r.currentVersion} is already the latest version`;
-      }
-      if (r.message) return String(r.message);
-      return null;
-    }
-    case "clone": {
-      const dst = (r.destination as Record<string, unknown>)?.path ?? "unknown";
-      const remote = r.remoteFetched ? " (fetched from remote)" : "";
-      const over = r.overwritten ? " (overwritten)" : "";
-      return `Cloned${remote} → ${dst}${over}`;
-    }
-    default:
-      return null; // fall through to YAML
-  }
-}
-
-function formatWorkflowListPlain(result: Record<string, unknown>): string {
-  const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
-  if (runs.length === 0) return "No workflow runs found.";
-
-  return runs
-    .map((run) => {
-      const id = typeof run.id === "string" ? run.id : "unknown";
-      const ref = typeof run.workflowRef === "string" ? run.workflowRef : "workflow:unknown";
-      const status = typeof run.status === "string" ? run.status : "unknown";
-      const currentStep = typeof run.currentStepId === "string" ? ` (current: ${run.currentStepId})` : "";
-      return `${id} ${ref} [${status}]${currentStep}`;
-    })
-    .join("\n");
-}
-
-function formatWorkflowStatusPlain(result: Record<string, unknown>): string | null {
-  const run =
-    typeof result.run === "object" && result.run !== null ? (result.run as Record<string, unknown>) : undefined;
-  const workflow =
-    typeof result.workflow === "object" && result.workflow !== null
-      ? (result.workflow as Record<string, unknown>)
-      : undefined;
-  if (!run || !workflow) return null;
-
-  const lines = [
-    `workflow: ${String(workflow.ref ?? "workflow:unknown")}`,
-    `run: ${String(run.id ?? "unknown")}`,
-    `title: ${String(run.workflowTitle ?? workflow.title ?? "Workflow")}`,
-    `status: ${String(run.status ?? "unknown")}`,
-  ];
-  if (run.currentStepId) lines.push(`currentStep: ${String(run.currentStepId)}`);
-
-  const steps = Array.isArray(workflow.steps) ? (workflow.steps as Array<Record<string, unknown>>) : [];
-  if (steps.length > 0) {
-    lines.push("steps:");
-    for (const step of steps) {
-      const title = typeof step.title === "string" ? step.title : "Untitled step";
-      const id = typeof step.id === "string" ? step.id : "unknown";
-      const status = typeof step.status === "string" ? step.status : "unknown";
-      lines.push(`  - ${title} [${id}] (${status})`);
-      if (typeof step.notes === "string" && step.notes.trim()) {
-        lines.push(`    notes: ${step.notes}`);
-      }
-    }
-  }
-  return lines.join("\n");
-}
-
-function formatWorkflowNextPlain(result: Record<string, unknown>): string | null {
-  const base = formatWorkflowStatusPlain(result);
-  const step =
-    typeof result.step === "object" && result.step !== null ? (result.step as Record<string, unknown>) : undefined;
-  if (!step) return base;
-
-  const lines = base ? [base, "", "next:"] : ["next:"];
-  lines.push(`  ${String(step.title ?? "Untitled step")} [${String(step.id ?? "unknown")}]`);
-  if (typeof step.instructions === "string" && step.instructions.trim()) {
-    lines.push(`  instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
-  }
-  const completion = Array.isArray(step.completionCriteria) ? step.completionCriteria : [];
-  if (completion.length > 0) {
-    lines.push("  completion:");
-    for (const criterion of completion) {
-      lines.push(`    - ${String(criterion)}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  const hits = (r.hits as Record<string, unknown>[]) ?? [];
-  const registryHits = (r.registryHits as Record<string, unknown>[]) ?? [];
-  const allHits = [...hits, ...registryHits];
-
-  if (allHits.length === 0) {
-    return r.tip ? String(r.tip) : "No results found.";
-  }
-
-  const lines: string[] = [];
-
-  for (const hit of allHits) {
-    const type = hit.type ?? "unknown";
-    const name = hit.name ?? "unnamed";
-    const score = hit.score != null ? ` (score: ${hit.score})` : "";
-    const desc = hit.description ? `  ${hit.description}` : "";
-
-    lines.push(`${type}: ${name}${score}`);
-    if (desc) lines.push(desc);
-
-    if (hit.id) lines.push(`  id: ${String(hit.id)}`);
-    if (hit.ref) lines.push(`  ref: ${String(hit.ref)}`);
-    if (hit.origin !== undefined) lines.push(`  origin: ${String(hit.origin)}`);
-    if (hit.size) lines.push(`  size: ${String(hit.size)}`);
-    if (hit.action) lines.push(`  action: ${String(hit.action)}`);
-    if (hit.run) lines.push(`  run: ${String(hit.run)}`);
-    if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
-    if (hit.curated !== undefined) lines.push(`  curated: ${String(hit.curated)}`);
-
-    if (detail === "full") {
-      if (hit.path) lines.push(`  path: ${String(hit.path)}`);
-      if (hit.editable != null) lines.push(`  editable: ${String(hit.editable)}`);
-      if (hit.editHint) lines.push(`  editHint: ${String(hit.editHint)}`);
-      const whyMatched = hit.whyMatched as string[] | undefined;
-      if (whyMatched && whyMatched.length > 0) {
-        lines.push(`  whyMatched: ${whyMatched.join(", ")}`);
-      }
-    }
-
-    lines.push(""); // blank line between hits
-  }
-
-  if (detail === "full" && r.timing) {
-    const timing = r.timing as Record<string, unknown>;
-    const parts: string[] = [];
-    if (timing.totalMs != null) parts.push(`total: ${timing.totalMs}ms`);
-    if (timing.rankMs != null) parts.push(`rank: ${timing.rankMs}ms`);
-    if (timing.embedMs != null) parts.push(`embed: ${timing.embedMs}ms`);
-    if (parts.length > 0) lines.push(`timing: ${parts.join(", ")}`);
-  }
-
-  return lines.join("\n").trimEnd();
-}
-
-function formatWikiListPlain(r: Record<string, unknown>): string {
-  const wikis = Array.isArray(r.wikis) ? (r.wikis as Array<Record<string, unknown>>) : [];
-  if (wikis.length === 0)
-    return "No wikis. Create one with `akm wiki create <name>` or register one with `akm wiki register <name> <path-or-repo>`.";
-  const lines = ["NAME\tPAGES\tRAWS\tLAST-MODIFIED"];
-  for (const w of wikis) {
-    const name = typeof w.name === "string" ? w.name : "?";
-    const pages = typeof w.pages === "number" ? w.pages : 0;
-    const raws = typeof w.raws === "number" ? w.raws : 0;
-    const modified = typeof w.lastModified === "string" ? w.lastModified : "-";
-    lines.push(`${name}\t${pages}\t${raws}\t${modified}`);
-  }
-  return lines.join("\n");
-}
-
-function formatWikiShowPlain(r: Record<string, unknown>): string {
-  const lines: string[] = [];
-  if (r.name) lines.push(`# wiki: ${String(r.name)}`);
-  if (r.path) lines.push(`path: ${String(r.path)}`);
-  if (r.description) lines.push(`description: ${String(r.description)}`);
-  if (typeof r.pages === "number") lines.push(`pages: ${r.pages}`);
-  if (typeof r.raws === "number") lines.push(`raws: ${r.raws}`);
-  if (r.lastModified) lines.push(`lastModified: ${String(r.lastModified)}`);
-  const recentLog = Array.isArray(r.recentLog) ? (r.recentLog as string[]) : [];
-  if (recentLog.length > 0) {
-    lines.push("", "recent log:");
-    for (const entry of recentLog) {
-      lines.push(entry);
-      lines.push("");
-    }
-  }
-  return lines.join("\n").trimEnd();
-}
-
-function formatWikiCreatePlain(r: Record<string, unknown>): string {
-  const created = Array.isArray(r.created) ? (r.created as string[]) : [];
-  const skipped = Array.isArray(r.skipped) ? (r.skipped as string[]) : [];
-  const lines = [`Created wiki ${String(r.ref ?? r.name)} at ${String(r.path ?? "?")}`];
-  if (created.length > 0) lines.push(`  created: ${created.length} file(s)`);
-  if (skipped.length > 0) lines.push(`  skipped: ${skipped.length} existing file(s)`);
-  return lines.join("\n");
-}
-
-function formatWikiRemovePlain(r: Record<string, unknown>): string {
-  const preserved = r.preservedRaw === true;
-  const removed = Array.isArray(r.removed) ? (r.removed as string[]).length : 0;
-  const base = `Removed wiki ${String(r.name ?? "?")} (${removed} path(s))`;
-  return preserved ? `${base}; preserved ${String(r.rawPath ?? "raw/")}` : base;
-}
-
-function formatWikiPagesPlain(r: Record<string, unknown>): string {
-  const pages = Array.isArray(r.pages) ? (r.pages as Array<Record<string, unknown>>) : [];
-  if (pages.length === 0) return `No pages in wiki:${String(r.wiki ?? "?")}.`;
-  const lines: string[] = [];
-  for (const p of pages) {
-    const ref = String(p.ref ?? "?");
-    const kind = typeof p.pageKind === "string" ? ` [${p.pageKind}]` : "";
-    const desc = typeof p.description === "string" && p.description ? ` — ${p.description}` : "";
-    lines.push(`${ref}${kind}${desc}`);
-  }
-  return lines.join("\n");
-}
-
-function formatWikiStashPlain(r: Record<string, unknown>): string {
-  const slug = String(r.slug ?? "?");
-  const pathValue = String(r.path ?? "?");
-  return `Stashed ${slug} → ${pathValue}`;
-}
-
-function formatWikiLintPlain(r: Record<string, unknown>): string {
-  const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
-  const pagesScanned = typeof r.pagesScanned === "number" ? r.pagesScanned : 0;
-  const rawsScanned = typeof r.rawsScanned === "number" ? r.rawsScanned : 0;
-  const header = `${findings.length} finding(s) in wiki:${String(r.wiki ?? "?")} (${pagesScanned} page(s), ${rawsScanned} raw(s))`;
-  if (findings.length === 0) return `${header} — clean.`;
-  const lines = [header];
-  for (const f of findings) {
-    const kind = String(f.kind ?? "?");
-    const message = String(f.message ?? "");
-    lines.push(`- [${kind}] ${message}`);
-  }
-  return lines.join("\n");
-}
-
-function formatWikiIngestPlain(r: Record<string, unknown>): string {
-  if (typeof r.workflow === "string") return r.workflow;
-  return JSON.stringify(r, null, 2);
-}
-
-function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  const query = typeof r.query === "string" ? r.query : "";
-  const summary = typeof r.summary === "string" ? r.summary : "";
-  const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
-
-  const lines: string[] = [`Curated results for "${query}"`];
-  if (summary) lines.push(summary);
-  if (items.length === 0) {
-    if (r.tip) lines.push(String(r.tip));
-    return lines.join("\n");
-  }
-
-  for (const item of items) {
-    const type = typeof item.type === "string" ? item.type : "unknown";
-    const name = typeof item.name === "string" ? item.name : "unnamed";
-    lines.push("");
-    lines.push(`[${type}] ${name}`);
-    if (item.description) lines.push(`  ${String(item.description)}`);
-    if (item.preview) lines.push(`  preview: ${String(item.preview)}`);
-    if (item.ref) lines.push(`  ref: ${String(item.ref)}`);
-    if (item.id) lines.push(`  id: ${String(item.id)}`);
-    if (Array.isArray(item.parameters) && item.parameters.length > 0) {
-      lines.push(`  parameters: ${item.parameters.join(", ")}`);
-    }
-    if (item.run) lines.push(`  run: ${String(item.run)}`);
-    if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
-    if (detail !== "brief" && item.reason) lines.push(`  why: ${String(item.reason)}`);
-  }
-
-  const warnings = Array.isArray(r.warnings) ? r.warnings : [];
-  if (warnings.length > 0) {
-    lines.push("");
-    lines.push("Warnings:");
-    for (const warning of warnings) {
-      lines.push(`- ${String(warning)}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-type CuratedStashItem = {
-  source: "stash";
-  type: string;
-  name: string;
-  ref: string;
-  description?: string;
-  preview?: string;
-  parameters?: string[];
-  run?: string;
-  followUp: string;
-  reason: string;
-  score?: number;
-};
-
-type CuratedRegistryItem = {
-  source: "registry";
-  type: "registry";
-  name: string;
-  id: string;
-  description?: string;
-  followUp: string;
-  reason: string;
-  score?: number;
-};
-
-type CuratedItem = CuratedStashItem | CuratedRegistryItem;
-
-const CURATE_FALLBACK_FILTER_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "for",
-  "how",
-  "i",
-  "in",
-  "of",
-  "or",
-  "the",
-  "to",
-  "with",
-]);
-const CURATED_TYPE_FALLBACK_ORDER = ["skill", "command", "script", "knowledge", "agent", "memory"];
-const CURATED_TYPE_FALLBACK_INDEX = new Map(CURATED_TYPE_FALLBACK_ORDER.map((type, index) => [type, index]));
-const MIN_CURATE_FALLBACK_TOKEN_LENGTH = 3;
-const MAX_CURATE_FALLBACK_KEYWORDS = 6;
-const CURATE_SEARCH_LIMIT_MULTIPLIER = 4;
-const MIN_CURATE_SEARCH_LIMIT = 12;
-
-async function curateSearchResults(
-  query: string,
-  result: SearchResponse,
-  limit: number,
-  selectedType?: string,
-): Promise<{
-  query: string;
-  summary: string;
-  items: CuratedItem[];
-  warnings?: string[];
-  tip?: string;
-}> {
-  const stashHits = result.hits.filter((hit): hit is StashSearchHit => hit.type !== "registry");
-  const registryHits = result.registryHits ?? [];
-
-  let selectedStashHits: StashSearchHit[];
-  if (selectedType && selectedType !== "any") {
-    selectedStashHits = stashHits.slice(0, limit);
-  } else {
-    const bestByType = new Map<string, StashSearchHit>();
-    for (const hit of stashHits) {
-      if (!bestByType.has(hit.type)) bestByType.set(hit.type, hit);
-    }
-    const orderedTypes = orderCuratedTypes(query, Array.from(bestByType.keys()));
-    selectedStashHits = orderedTypes
-      .map((type) => bestByType.get(type))
-      .filter((hit): hit is StashSearchHit => Boolean(hit));
-  }
-
-  const selectedRegistryHits =
-    selectedStashHits.length >= limit ? [] : registryHits.slice(0, Math.min(2, limit - selectedStashHits.length));
-
-  const items = [
-    ...(await Promise.all(selectedStashHits.slice(0, limit).map((hit) => enrichCuratedStashHit(query, hit)))),
-    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
-  ].slice(0, limit);
-
-  return {
-    query,
-    summary: buildCurateSummary(query, items),
-    items,
-    ...(result.warnings?.length ? { warnings: result.warnings } : {}),
-    ...(result.tip ? { tip: result.tip } : {}),
-  };
-}
-
-function orderCuratedTypes(query: string, types: string[]): string[] {
-  const lower = query.toLowerCase();
-  const boosts = new Map<string, number>();
-  const addBoost = (type: string, amount: number) => boosts.set(type, (boosts.get(type) ?? 0) + amount);
-
-  if (/(run|script|bash|shell|cli|execute|automation|deploy|build|test|lint)/.test(lower)) {
-    addBoost("script", 6);
-    addBoost("command", 4);
-  }
-  if (/(guide|docs?|readme|reference|how|explain|learn|why)/.test(lower)) {
-    addBoost("knowledge", 6);
-    addBoost("skill", 4);
-  }
-  if (/(agent|assistant|planner|review|analy[sz]e|architect|prompt)/.test(lower)) {
-    addBoost("agent", 6);
-    addBoost("skill", 3);
-  }
-  if (/(config|template|release|generate|command)/.test(lower)) {
-    addBoost("command", 5);
-  }
-  if (/(memory|context|recall|remember)/.test(lower)) {
-    addBoost("memory", 6);
-  }
-
-  return [...types].sort((a, b) => {
-    const boostDiff = (boosts.get(b) ?? 0) - (boosts.get(a) ?? 0);
-    if (boostDiff !== 0) return boostDiff;
-    return (
-      (CURATED_TYPE_FALLBACK_INDEX.get(a) ?? Number.MAX_SAFE_INTEGER) -
-      (CURATED_TYPE_FALLBACK_INDEX.get(b) ?? Number.MAX_SAFE_INTEGER)
-    );
-  });
-}
-
-async function enrichCuratedStashHit(query: string, hit: StashSearchHit): Promise<CuratedStashItem> {
-  let shown: ShowResponse | undefined;
-  try {
-    shown = await akmShowUnified({ ref: hit.ref });
-  } catch {
-    shown = undefined;
-  }
-
-  const description = shown?.description ?? hit.description;
-  const preview = buildCuratedPreview(shown, hit);
-  return {
-    source: "stash",
-    type: shown?.type ?? hit.type,
-    name: shown?.name ?? hit.name,
-    ref: hit.ref,
-    ...(description ? { description } : {}),
-    ...(preview ? { preview } : {}),
-    ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
-    ...(shown?.run ? { run: shown.run } : {}),
-    followUp: `akm show ${hit.ref}`,
-    reason: buildCuratedReason(query, shown?.type ?? hit.type),
-    ...(hit.score !== undefined ? { score: hit.score } : {}),
-  };
-}
-
-function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {
-  return {
-    source: "registry",
-    type: "registry",
-    name: hit.name,
-    id: hit.id,
-    ...(hit.description ? { description: hit.description } : {}),
-    followUp: hit.action ?? `akm add ${hit.id}`,
-    reason: `Useful external source to explore for ${query}.`,
-    ...(hit.score !== undefined ? { score: hit.score } : {}),
-  };
-}
-
-function firstNonEmpty(values: Array<string | undefined>): string | undefined {
-  return values.find((value) => typeof value === "string" && value.trim().length > 0);
-}
-
-function buildCuratedPreview(shown: ShowResponse | undefined, hit: StashSearchHit): string | undefined {
-  if (shown?.run) return truncateDescription(`run ${shown.run}`, 160);
-  const payload = firstNonEmpty([shown?.template, shown?.prompt, shown?.content, hit.description])
-    ?.replace(/\s+/g, " ")
-    .trim();
-  return payload ? truncateDescription(payload, 160) : undefined;
-}
-
-function buildCuratedReason(query: string, type: string): string {
-  switch (type) {
-    case "script":
-      return `Best runnable script match for "${query}".`;
-    case "command":
-      return `Best reusable command/template match for "${query}".`;
-    case "knowledge":
-      return `Best reference document match for "${query}".`;
-    case "skill":
-      return `Best instructions/workflow match for "${query}".`;
-    case "agent":
-      return `Best specialized agent prompt match for "${query}".`;
-    case "memory":
-      return `Best saved context match for "${query}".`;
-    default:
-      return `Best ${type} match for "${query}".`;
-  }
-}
-
-function buildCurateSummary(query: string, items: CuratedItem[]): string {
-  if (items.length === 0) {
-    return `No curated assets were selected for "${query}".`;
-  }
-  const labels = items.map((item) => `${item.type}:${item.name}`);
-  return `Selected ${items.length} high-signal result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
-}
-
-function hasSearchResults(result: SearchResponse): boolean {
-  return result.hits.length > 0 || (result.registryHits?.length ?? 0) > 0;
-}
-
-/**
- * Extract a small set of fallback keywords when a prompt-style curate query
- * returns no hits as a whole phrase.
- *
- * We keep up to MAX_CURATE_FALLBACK_KEYWORDS distinct keywords and drop short
- * or common filler words so follow-up searches stay inexpensive while focusing
- * on higher-signal terms.
- */
-function deriveCurateFallbackQueries(query: string): string[] {
-  return Array.from(
-    new Set(
-      query
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .map((token) => token.trim())
-        // Keep longer tokens so fallback stays focused on higher-signal terms
-        // and avoids broad one- and two-letter matches that overwhelm curation.
-        .filter(
-          (token) => token.length >= MIN_CURATE_FALLBACK_TOKEN_LENGTH && !CURATE_FALLBACK_FILTER_WORDS.has(token),
-        ),
-    ),
-  ).slice(0, MAX_CURATE_FALLBACK_KEYWORDS);
-}
-
-function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
-  const hitsByRef = new Map<string, StashSearchHit>();
-  for (const hit of base.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
-    hitsByRef.set(hit.ref, hit);
-  }
-  for (const result of extras) {
-    for (const hit of result.hits.filter((entry): entry is StashSearchHit => entry.type !== "registry")) {
-      const existing = hitsByRef.get(hit.ref);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
-        hitsByRef.set(hit.ref, hit);
-      }
-    }
-  }
-
-  const registryById = new Map<string, RegistrySearchResultHit>();
-  for (const hit of base.registryHits ?? []) {
-    registryById.set(hit.id, hit);
-  }
-  for (const result of extras) {
-    for (const hit of result.registryHits ?? []) {
-      const existing = registryById.get(hit.id);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) {
-        registryById.set(hit.id, hit);
-      }
-    }
-  }
-
-  const warnings = Array.from(
-    new Set([...(base.warnings ?? []), ...extras.flatMap((result) => result.warnings ?? [])]),
-  );
-  const mergedHits = [...hitsByRef.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const mergedRegistryHits = [...registryById.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-
-  return {
-    ...base,
-    hits: mergedHits,
-    ...(mergedRegistryHits.length > 0 ? { registryHits: mergedRegistryHits } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
-    ...(mergedHits.length > 0 || mergedRegistryHits.length > 0 ? { tip: undefined } : {}),
-  };
-}
-
-async function searchForCuration(input: {
-  query: string;
-  type?: string;
-  limit: number;
-  source: ReturnType<typeof parseSearchSource>;
-}): Promise<SearchResponse> {
-  const initial = await akmSearch(input);
-  if (hasSearchResults(initial)) return initial;
-
-  const fallbackQueries = deriveCurateFallbackQueries(input.query);
-  if (fallbackQueries.length <= 1) return initial;
-
-  const fallbackResults = await Promise.all(
-    fallbackQueries.map((token) =>
-      akmSearch({
-        query: token,
-        type: input.type,
-        limit: input.limit,
-        source: input.source,
-      }),
-    ),
-  );
-  return mergeCurateSearchResponses(initial, fallbackResults);
-}
-
 /**
  * Module Naming:
- * - stash-*          : Asset operations (search, show, add, clone)
- * - stash-provider-* : Runtime data source providers (filesystem, openviking)
- * - registry-*       : Discovery from remote registries (npm, GitHub)
- * - installed-kits   : Unified source operations (list, remove, update)
+ * - sources/*           : Asset operations (search, show, add, clone)
+ * - sources/providers/* : Runtime data source providers (filesystem, git, website, npm)
+ * - registry/*          : Discovery from remote registries (npm, GitHub)
+ * - installed-stashes   : Unified source operations (list, remove, update)
  */
 
 const setupCommand = defineCommand({
@@ -1153,7 +138,7 @@ const setupCommand = defineCommand({
   },
   async run() {
     await runWithJsonErrors(async () => {
-      const { runSetupWizard } = await import("./setup");
+      const { runSetupWizard } = await import("./setup/setup");
       await runSetupWizard();
     });
   },
@@ -1169,7 +154,10 @@ const initCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = await akmInit({ dir: args.dir });
+      // Accept both historical spellings for backwards compatibility with
+      // older docs/scripts that used `--stashDir`.
+      const legacyDir = parseFlagValue(process.argv, "--stashDir") ?? parseFlagValue(process.argv, "--stash-dir");
+      const result = await akmInit({ dir: args.dir ?? legacyDir });
       output("init", result);
     });
   },
@@ -1214,10 +202,17 @@ const searchCommand = defineCommand({
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const query = (args.query ?? "").trim();
+      if (!query) {
+        throw new UsageError(
+          'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
       const type = args.type as string | undefined;
       const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
       if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
@@ -1225,7 +220,7 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await akmSearch({ query: args.query, type, limit, source });
+      const result = await akmSearch({ query, type, limit, source });
       output("search", result);
     });
   },
@@ -1252,15 +247,7 @@ const curateCommand = defineCommand({
       }
       const limit = limitRaw && limitRaw > 0 ? limitRaw : 4;
       const source = parseSearchSource(args.source ?? "stash");
-      const searchResult = await searchForCuration({
-        query: args.query,
-        type,
-        // Search deeper than the final curated count so we can pick one strong
-        // match per type and still have room for fallback retries.
-        limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
-        source,
-      });
-      const curated = await curateSearchResults(args.query, searchResult, limit, type);
+      const curated = await akmCurate({ query: args.query, type, limit, source });
       output("curate", curated);
     });
   },
@@ -1277,7 +264,7 @@ const addCommand = defineCommand({
       description: "Path, URL, or registry ref (website URL, npm package, owner/repo, git URL, or local directory)",
       required: true,
     },
-    provider: { type: "string", description: "Provider type (e.g. openviking). Required for URL sources." },
+    provider: { type: "string", description: "Provider type (e.g. website, npm). Required for URL sources." },
     options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
     name: { type: "string", description: "Human-friendly name for the source" },
     writable: {
@@ -1300,17 +287,6 @@ const addCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
-
-      // Context-hub convenience alias
-      if (ref === CONTEXT_HUB_ALIAS_REF) {
-        const result = addStash({
-          target: CONTEXT_HUB_ALIAS_URL,
-          providerType: "git",
-          name: "context-hub",
-        });
-        output("stash-add", result);
-        return;
-      }
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
@@ -1339,7 +315,7 @@ const addCommand = defineCommand({
           options: parsedOptions,
           writable: args.writable,
         });
-        output("stash-add", result);
+        output("add", result);
         return;
       }
 
@@ -1351,7 +327,7 @@ const addCommand = defineCommand({
       const websiteOptions = buildWebsiteOptions(args);
 
       if (args.type === "wiki") {
-        const { registerWikiSource } = await import("./stash-add");
+        const { registerWikiSource } = await import("./commands/source-add");
         const result = await registerWikiSource({
           ref,
           name: args.name,
@@ -1462,9 +438,15 @@ const upgradeCommand = defineCommand({
   args: {
     check: { type: "boolean", description: "Check for updates without installing", default: false },
     force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
-    skipChecksum: {
+    "skip-checksum": {
       type: "boolean",
       description: "Skip checksum verification (not recommended)",
+      default: false,
+    },
+    "skip-post-upgrade": {
+      type: "boolean",
+      description:
+        "Skip the post-upgrade `akm index` rebuild (config auto-migration still runs on next `akm` invocation)",
       default: false,
     },
   },
@@ -1475,7 +457,9 @@ const upgradeCommand = defineCommand({
         output("upgrade", check);
         return;
       }
-      const result = await performUpgrade(check, { force: args.force, skipChecksum: args.skipChecksum });
+      const skipChecksum = getHyphenatedBoolean(args, "skip-checksum");
+      const skipPostUpgrade = getHyphenatedBoolean(args, "skip-post-upgrade");
+      const result = await performUpgrade(check, { force: args.force, skipChecksum, skipPostUpgrade });
       output("upgrade", result);
     });
   },
@@ -1490,40 +474,42 @@ const showCommand = defineCommand({
   args: {
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
-    akmView: { type: "string", description: "Internal positional knowledge view mode parser" },
-    akmHeading: { type: "string", description: "Internal positional section heading parser" },
-    akmStart: { type: "string", description: "Internal positional start-line parser" },
-    akmEnd: { type: "string", description: "Internal positional end-line parser" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
+      // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
+      // by `normalizeShowArgv` before citty parses argv. We read those values
+      // directly via `parseFlagValue` so the flags don't surface as user-facing
+      // options in `akm show --help`.
+      const akmView = parseFlagValue(process.argv, "--akmView");
+      const akmHeading = parseFlagValue(process.argv, "--akmHeading");
+      const akmStart = parseFlagValue(process.argv, "--akmStart");
+      const akmEnd = parseFlagValue(process.argv, "--akmEnd");
       let view: KnowledgeView | undefined;
-      if (args.akmView) {
-        switch (args.akmView) {
+      if (akmView) {
+        switch (akmView) {
           case "section":
-            view = { mode: "section", heading: args.akmHeading ?? "" };
+            view = { mode: "section", heading: akmHeading ?? "" };
             break;
           case "lines":
             view = {
               mode: "lines",
-              start: Number(args.akmStart ?? "1"),
-              end: args.akmEnd ? parseInt(args.akmEnd, 10) : Number.MAX_SAFE_INTEGER,
+              start: Number(akmStart ?? "1"),
+              end: akmEnd ? parseInt(akmEnd, 10) : Number.MAX_SAFE_INTEGER,
             };
             break;
           case "toc":
           case "frontmatter":
           case "full":
-            view = { mode: args.akmView };
+            view = { mode: akmView };
             break;
           default:
-            throw new UsageError(
-              `Unknown view mode: ${args.akmView}. Expected one of: full|toc|frontmatter|section|lines`,
-            );
+            throw new UsageError(`Unknown view mode: ${akmView}. Expected one of: full|toc|frontmatter|section|lines`);
         }
       }
-      // Map CLI detail level to ShowDetailLevel for the show function
-      const cliDetail = resolveOutputMode().detail;
+      const cliDetail = getOutputMode().detail;
       const showDetail: ShowDetailLevel | undefined = cliDetail === "summary" ? "summary" : undefined;
       const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
       output("show", result);
@@ -1652,7 +638,7 @@ const saveCommand = defineCommand({
       // before any standalone occurrence of the same value in the save
       // subcommand's argv slice. This preserves legitimate invocations
       // like `akm save json --format json`.
-      const parsedFormat = parseFlagValue("--format");
+      const parsedFormat = parseFlagValue(process.argv, "--format");
       const effectiveName =
         args.name !== undefined &&
         parsedFormat !== undefined &&
@@ -1743,7 +729,7 @@ const cloneCommand = defineCommand({
 });
 
 const registryCommand = defineCommand({
-  meta: { name: "registry", description: "Manage kit registries" },
+  meta: { name: "registry", description: "Manage stash registries" },
   subCommands: {
     list: defineCommand({
       meta: { name: "list", description: "List configured registries" },
@@ -1762,6 +748,11 @@ const registryCommand = defineCommand({
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
         options: { type: "string", description: 'Provider options as JSON (e.g. \'{"apiKey":"key"}\').' },
+        "allow-insecure": {
+          type: "boolean",
+          description: "Allow a plain HTTP registry URL (otherwise rejected)",
+          default: false,
+        },
       },
       run({ args }) {
         return runWithJsonErrors(() => {
@@ -1769,8 +760,15 @@ const registryCommand = defineCommand({
             throw new UsageError("Registry URL must start with http:// or https://");
           }
           if (args.url.startsWith("http://")) {
+            const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
+            if (!allowInsecure) {
+              throw new UsageError(
+                "Registry URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious index. " +
+                  "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+              );
+            }
             warn(
-              "Warning: registry URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+              "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious index.",
             );
           }
           const config = loadUserConfig();
@@ -1817,7 +815,7 @@ const registryCommand = defineCommand({
       },
     }),
     search: defineCommand({
-      meta: { name: "search", description: "Search enabled registries for kits" },
+      meta: { name: "search", description: "Search enabled registries for stashes" },
       args: {
         query: { type: "positional", description: "Search query", required: true },
         limit: { type: "string", description: "Maximum number of results" },
@@ -1839,15 +837,15 @@ const registryCommand = defineCommand({
       args: {
         out: { type: "string", description: "Output path for the generated index", default: "index.json" },
         manual: { type: "string", description: "Manual entries JSON file", default: "manual-entries.json" },
-        npmRegistry: { type: "string", description: "Override npm registry base URL" },
-        githubApi: { type: "string", description: "Override GitHub API base URL" },
+        "npm-registry": { type: "string", description: "Override npm registry base URL" },
+        "github-api": { type: "string", description: "Override GitHub API base URL" },
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
           const result = await buildRegistryIndex({
             manualEntriesPath: args.manual,
-            npmRegistryBase: args.npmRegistry,
-            githubApiBase: args.githubApi,
+            npmRegistryBase: getHyphenatedArg<string>(args, "npm-registry"),
+            githubApiBase: getHyphenatedArg<string>(args, "github-api"),
           });
           const outPath = writeRegistryIndex(result.index, args.out);
           output("registry-build-index", {
@@ -1913,12 +911,6 @@ const feedbackCommand = defineCommand({
   },
 });
 
-function tryReadStdinText(): string | undefined {
-  if (process.stdin.isTTY) return undefined;
-  const input = fs.readFileSync(0, "utf8");
-  return input.length > 0 ? input : undefined;
-}
-
 function normalizeMarkdownAssetName(name: string | undefined, fallback: string): string {
   const trimmed = (name ?? fallback)
     .trim()
@@ -1952,14 +944,6 @@ function inferAssetName(content: string, fallbackPrefix: string, preferred?: str
   return slugifyAssetName(basis, fallbackPrefix);
 }
 
-function readMemoryContent(contentArg: string | undefined): string {
-  const content = contentArg ?? tryReadStdinText();
-  if (!content?.trim()) {
-    throw new UsageError("Memory content is required. Pass quoted text or pipe markdown into stdin.");
-  }
-  return content;
-}
-
 function readKnowledgeContent(source: string): { content: string; preferredName?: string } {
   if (source === "-") {
     const content = tryReadStdinText();
@@ -1985,22 +969,30 @@ function readKnowledgeContent(source: string): { content: string; preferredName?
   };
 }
 
-function writeMarkdownAsset(options: {
+async function writeMarkdownAsset(options: {
   type: "knowledge" | "memory";
   content: string;
   name?: string;
   fallbackPrefix: string;
   preferredName?: string;
   force?: boolean;
-}): { ref: string; path: string; stashDir: string } {
-  const stashDir = resolveStashDir();
-  const typeRoot = path.join(stashDir, options.type === "knowledge" ? "knowledge" : "memories");
-  fs.mkdirSync(typeRoot, { recursive: true });
+  /** Optional explicit `--target` override naming a configured source. */
+  target?: string;
+}): Promise<{ ref: string; path: string; stashDir: string }> {
+  // Resolve write target via the v1 precedence chain (`--target` →
+  // `defaultWriteTarget` → working stash). Per spec §10 step 5, this is the
+  // single dispatch point — `core/write-source.ts` owns all kind-branching.
+  const cfg = loadConfig();
+  const { source, config } = resolveWriteTarget(cfg, options.target);
 
+  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
   const normalizedName = normalizeMarkdownAssetName(
     options.name,
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
+  // Pre-flight: existence + force semantics. The helper itself overwrites
+  // unconditionally; the CLI surfaces a friendlier UsageError before any
+  // disk activity when --force is absent.
   const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
@@ -2008,15 +1000,21 @@ function writeMarkdownAsset(options: {
   if (fs.existsSync(assetPath) && !options.force) {
     throw new UsageError(
       `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+      "RESOURCE_ALREADY_EXISTS",
     );
   }
 
-  fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-  fs.writeFileSync(assetPath, options.content.endsWith("\n") ? options.content : `${options.content}\n`, "utf8");
+  // Delegate the actual write (and optional git commit/push) to the helper.
+  const result = await writeAssetToSource(
+    source,
+    config,
+    { type: options.type, name: normalizedName },
+    options.content,
+  );
   return {
-    ref: `${options.type}:${normalizedName}`,
-    path: assetPath,
-    stashDir,
+    ref: result.ref,
+    path: result.path,
+    stashDir: source.path,
   };
 }
 
@@ -2107,10 +1105,10 @@ const workflowStatusCommand = defineCommand({
         const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
         const { runs } = listWorkflowRuns({ workflowRef: ref });
         if (runs.length === 0) {
-          throw new NotFoundError(`No workflow runs found for ${ref}`);
+          throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         }
         const mostRecent = runs[0];
-        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`);
+        if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         const result = getWorkflowStatus(mostRecent.id);
         output("workflow-status", result);
       } else {
@@ -2157,8 +1155,8 @@ const workflowCreateCommand = defineCommand({
       default: false,
     },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
       const namePattern = /^[a-z0-9][a-z0-9._/-]*$/;
       if (!namePattern.test(args.name)) {
         throw new UsageError(
@@ -2175,6 +1173,10 @@ const workflowCreateCommand = defineCommand({
         from: args.from,
         force: args.force,
       });
+      // Index the newly-written workflow so `akm workflow start` can resolve
+      // a workflowEntryId without requiring an explicit `akm index` call
+      // first. Uses the same incremental index path that `akm add` uses.
+      await akmIndex({ stashDir: result.stashDir });
       output("workflow-create", { ok: true, ...result });
     });
   },
@@ -2190,6 +1192,55 @@ const workflowTemplateCommand = defineCommand({
   },
 });
 
+const workflowValidateCommand = defineCommand({
+  meta: {
+    name: "validate",
+    description: "Validate a workflow markdown file or ref and print any errors",
+  },
+  args: {
+    target: {
+      type: "positional",
+      description: "Workflow ref (workflow:<name>) or filesystem path to a workflow .md",
+      required: true,
+    },
+  },
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
+      const filePath = await resolveWorkflowFilePath(args.target);
+      const { parse } = validateWorkflowSource(filePath);
+      if (parse.ok) {
+        output("workflow-validate", {
+          ok: true,
+          path: filePath,
+          title: parse.document.title,
+          stepCount: parse.document.steps.length,
+        });
+        return;
+      }
+      throw new UsageError(formatWorkflowErrors(filePath, parse.errors));
+    });
+  },
+});
+
+async function resolveWorkflowFilePath(target: string): Promise<string> {
+  if (!target.startsWith("workflow:")) return target;
+  const parsed = parseAssetRef(target);
+  if (parsed.type !== "workflow") {
+    throw new UsageError(`Expected a workflow ref (workflow:<name>), got "${target}".`);
+  }
+  const config = loadConfig();
+  const allSources = resolveSourceEntries(undefined, config);
+  const searchSources = resolveSourcesForOrigin(parsed.origin, allSources);
+  for (const source of searchSources) {
+    try {
+      return await resolveAssetPath(source.path, "workflow", parsed.name);
+    } catch {
+      /* try next source */
+    }
+  }
+  throw new UsageError(`Workflow not found for ref: workflow:${parsed.name}`);
+}
+
 const workflowResumeCommand = defineCommand({
   meta: {
     name: "resume",
@@ -2201,7 +1252,7 @@ const workflowResumeCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       const result = resumeWorkflowRun(args.runId);
-      output("workflow-run", result);
+      output("workflow-resume", result);
     });
   },
 });
@@ -2220,6 +1271,7 @@ const workflowCommand = defineCommand({
     create: workflowCreateCommand,
     template: workflowTemplateCommand,
     resume: workflowResumeCommand,
+    validate: workflowValidateCommand,
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2249,15 +1301,132 @@ const rememberCommand = defineCommand({
       description: "Overwrite an existing memory with the same name",
       default: false,
     },
+    description: {
+      type: "string",
+      description: "Short description written to frontmatter (persisted as the memory's description field)",
+    },
+    tag: {
+      type: "string",
+      description: "Tag to add to the memory (repeatable: --tag foo --tag bar)",
+    },
+    expires: {
+      type: "string",
+      description: "Expiry duration shorthand (e.g. 30d, 12h, 6m). Resolved to an ISO date.",
+    },
+    source: {
+      type: "string",
+      description: "Source reference (URL, asset ref, file path, or any free-form string)",
+    },
+    auto: {
+      type: "boolean",
+      description: "Apply heuristic tagging (code, subjective, source, observed_at) from the body",
+      default: false,
+    },
+    enrich: {
+      type: "boolean",
+      description: "Call the configured LLM to propose tags and description (requires LLM config)",
+      default: false,
+    },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = writeMarkdownAsset({
+  async run({ args }) {
+    return runWithJsonErrors(async () => {
+      const body = readMemoryContent(args.content);
+
+      // Determine if the user has requested any structured metadata mode.
+      // Collect all --tag occurrences directly from process.argv because citty
+      // only exposes the last value for repeated string flags.
+      const rawTags = parseAllFlagValues("--tag");
+
+      const hasStructuredArgs =
+        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.auto || args.enrich;
+
+      if (!hasStructuredArgs) {
+        const result = await writeMarkdownAsset({
+          type: "memory",
+          content: body,
+          name: args.name,
+          fallbackPrefix: "memory",
+          force: args.force,
+          target: args.target,
+        });
+        output("remember", { ok: true, ...result });
+        return;
+      }
+
+      // ── Accumulate metadata from all three modes ──────────────────────────
+
+      // Start with CLI args (Mode 1: always)
+      const tags = [...rawTags];
+      // --description is persisted as-is; LLM enrichment may fill it if absent.
+      let description: string | undefined = args.description || undefined;
+      let source: string | undefined = args.source;
+      let observed_at: string | undefined;
+      let expires: string | undefined;
+      let subjective: boolean | undefined;
+
+      // Resolve --expires to an ISO date string
+      if (args.expires) {
+        const durationMs = parseDuration(args.expires);
+        const expiresDate = new Date(Date.now() + durationMs);
+        expires = expiresDate.toISOString().slice(0, 10);
+      }
+
+      // Mode 2: --auto heuristics
+      if (args.auto) {
+        const auto = runAutoHeuristics(body);
+        for (const t of auto.tags) {
+          if (!tags.includes(t)) tags.push(t);
+        }
+        if (!source && auto.source) source = auto.source;
+        if (!observed_at && auto.observed_at) observed_at = auto.observed_at;
+        if (!subjective && auto.subjective) subjective = auto.subjective;
+      }
+
+      // Mode 3: --enrich LLM (fail-soft)
+      if (args.enrich) {
+        const enriched = await runLlmEnrich(body);
+        for (const t of enriched.tags) {
+          if (!tags.includes(t)) tags.push(t);
+        }
+        if (!description && enriched.description) description = enriched.description;
+        if (!observed_at && enriched.observed_at) observed_at = enriched.observed_at;
+      }
+
+      // ── Required-field check (before any write) ───────────────────────────
+      const missing: string[] = [];
+      if (tags.length === 0) missing.push("tags");
+
+      if (missing.length > 0) {
+        throw new UsageError(
+          `Memory is missing required frontmatter field(s): ${missing.join(", ")}. ` +
+            "Provide them via --tag <value>, --auto (heuristics), or --enrich (LLM).",
+        );
+      }
+
+      // ── Build frontmatter and write ───────────────────────────────────────
+      const frontmatterBlock = buildMemoryFrontmatter({
+        description,
+        tags,
+        source,
+        observed_at,
+        expires,
+        subjective,
+      });
+
+      const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
+
+      const result = await writeMarkdownAsset({
         type: "memory",
-        content: readMemoryContent(args.content),
+        content: contentWithFrontmatter,
         name: args.name,
         fallbackPrefix: "memory",
         force: args.force,
+        target: args.target,
       });
       output("remember", { ok: true, ...result });
     });
@@ -2284,17 +1453,23 @@ const importKnowledgeCommand = defineCommand({
       description: "Overwrite an existing knowledge document with the same name",
       default: false,
     },
+    target: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
       const { content, preferredName } = readKnowledgeContent(args.source);
-      const result = writeMarkdownAsset({
+      const result = await writeMarkdownAsset({
         type: "knowledge",
         content,
         name: args.name,
         fallbackPrefix: "knowledge",
         preferredName,
         force: args.force,
+        target: args.target,
       });
       output("import", { ok: true, source: args.source, ...result });
     });
@@ -2310,8 +1485,13 @@ const hintsCommand = defineCommand({
     detail: { type: "string", description: "Detail level (normal|full)", default: "normal" },
   },
   run({ args }) {
-    const detail = args.detail === "full" ? "full" : "normal";
-    process.stdout.write(loadHints(detail));
+    if (args.detail !== "normal" && args.detail !== "full") {
+      throw new UsageError(
+        `Invalid value for --detail: ${args.detail}. Expected one of: normal|full.`,
+        "INVALID_DETAIL_VALUE",
+      );
+    }
+    process.stdout.write(loadHints(args.detail));
   },
 });
 
@@ -2324,12 +1504,13 @@ const helpCommand = defineCommand({
     migrate: defineCommand({
       meta: {
         name: "migrate",
-        description: "Print release notes and migration guidance for a version",
+        description:
+          "Print release notes and migration guidance for a version. Bundled notes live in docs/migration/release-notes/<version>.md; an unknown version lists what's available.",
       },
       args: {
         version: {
           type: "positional",
-          description: "Version to review (for example 0.5.0, v0.5.0, or latest)",
+          description: "Version to review (for example 0.6.0, v0.6.0, 0.6.0-rc1, or latest)",
           required: true,
         },
       },
@@ -2372,11 +1553,15 @@ const completionsCommand = defineCommand({
   },
 });
 
-function normalizeToggleTarget(target: string): "skills.sh" | "context-hub" {
+function normalizeToggleTarget(target: string): "skills.sh" {
   const normalized = target.trim().toLowerCase();
   if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
-  if (normalized === "context-hub") return "context-hub";
-  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh, context-hub`);
+  if (normalized === "context-hub") {
+    throw new UsageError(
+      'The "context-hub" component is no longer toggleable. Run `akm add github:andrewyng/context-hub --name context-hub` to add it as a git stash.',
+    );
+  }
+  throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
 }
 
 function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
@@ -2407,41 +1592,20 @@ function toggleSkillsShRegistry(enabled: boolean): { changed: boolean; component
   return { changed: true, component: SKILLS_SH_NAME, enabled: true };
 }
 
-function toggleContextHubStash(enabled: boolean): { changed: boolean; component: string; enabled: boolean } {
-  const config = loadUserConfig();
-  const stashes = [...(config.stashes ?? [])];
-  const idx = stashes.findIndex((stash) => stash.name === CONTEXT_HUB_ALIAS_REF || stash.url === CONTEXT_HUB_ALIAS_URL);
-
-  if (idx >= 0) {
-    const existing = stashes[idx];
-    const wasEnabled = existing.enabled !== false;
-    existing.enabled = enabled;
-    saveConfig({ ...config, stashes });
-    return { changed: wasEnabled !== enabled, component: CONTEXT_HUB_ALIAS_REF, enabled };
-  }
-
-  if (!enabled) {
-    return { changed: false, component: CONTEXT_HUB_ALIAS_REF, enabled: false };
-  }
-
-  stashes.push({ type: "git", url: CONTEXT_HUB_ALIAS_URL, name: CONTEXT_HUB_ALIAS_REF, enabled: true });
-  saveConfig({ ...config, stashes });
-  return { changed: true, component: CONTEXT_HUB_ALIAS_REF, enabled: true };
-}
-
 function toggleComponent(
   targetRaw: string,
   enabled: boolean,
 ): { changed: boolean; component: string; enabled: boolean } {
   const target = normalizeToggleTarget(targetRaw);
   if (target === "skills.sh") return toggleSkillsShRegistry(enabled);
-  return toggleContextHubStash(enabled);
+  // normalizeToggleTarget throws for any unsupported target; this is unreachable.
+  throw new UsageError(`Unsupported target "${targetRaw}". Supported targets: skills.sh`);
 }
 
 const enableCommand = defineCommand({
-  meta: { name: "enable", description: "Enable an optional component (skills.sh or context-hub)" },
+  meta: { name: "enable", description: "Enable an optional component (skills.sh)" },
   args: {
-    target: { type: "positional", description: "Component to enable (skills.sh|context-hub)", required: true },
+    target: { type: "positional", description: "Component to enable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2452,9 +1616,9 @@ const enableCommand = defineCommand({
 });
 
 const disableCommand = defineCommand({
-  meta: { name: "disable", description: "Disable an optional component (skills.sh or context-hub)" },
+  meta: { name: "disable", description: "Disable an optional component (skills.sh)" },
   args: {
-    target: { type: "positional", description: "Component to disable (skills.sh|context-hub)", required: true },
+    target: { type: "positional", description: "Component to disable (skills.sh)", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2524,14 +1688,14 @@ const vaultListCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./vault.js");
+      const { listKeys, listEntries } = await import("./commands/vault.js");
       if (args.ref) {
         const { name, absPath } = resolveVaultPath(args.ref);
         if (!fs.existsSync(absPath)) {
           throw new NotFoundError(`Vault not found: vault:${name}`);
         }
-        const { keys, comments } = listKeys(absPath);
-        output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+        const entries = listEntries(absPath);
+        output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
         return;
       }
       const vaults = listVaultsRecursive(listKeys);
@@ -2547,7 +1711,7 @@ const vaultCreateCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { createVault } = await import("./vault.js");
+      const { createVault } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.name);
       createVault(absPath);
       output("vault-create", { ref: `vault:${name}`, path: absPath });
@@ -2573,7 +1737,7 @@ const vaultSetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { setKey } = await import("./vault.js");
+      const { setKey } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
 
       let realKey: string;
@@ -2602,7 +1766,7 @@ const vaultUnsetCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { unsetKey } = await import("./vault.js");
+      const { unsetKey } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: vault:${name}`);
@@ -2631,7 +1795,7 @@ const vaultLoadCommand = defineCommand({
         throw new NotFoundError(`Vault not found: vault:${name}`);
       }
 
-      const { buildShellExportScript } = await import("./vault.js");
+      const { buildShellExportScript } = await import("./commands/vault.js");
       const crypto = await import("node:crypto");
       const os = await import("node:os");
 
@@ -2665,13 +1829,13 @@ const vaultShowCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listKeys } = await import("./vault.js");
+      const { listEntries } = await import("./commands/vault.js");
       const { name, absPath } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
         throw new NotFoundError(`Vault not found: vault:${name}`);
       }
-      const { keys, comments } = listKeys(absPath);
-      output("vault-list", { ref: `vault:${name}`, path: absPath, keys, comments });
+      const entries = listEntries(absPath);
+      output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
     });
   },
 });
@@ -2694,7 +1858,7 @@ const vaultCommand = defineCommand({
     return runWithJsonErrors(async () => {
       if (hasVaultSubcommand(args)) return;
       // Default action: list all vaults
-      const { listKeys } = await import("./vault.js");
+      const { listKeys } = await import("./commands/vault.js");
       output("vault-list", { vaults: listVaultsRecursive(listKeys) });
     });
   },
@@ -2709,7 +1873,7 @@ const wikiCreateCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { createWiki } = await import("./wiki.js");
+      const { createWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = createWiki(stashDir, args.name);
       output("wiki-create", result);
@@ -2741,7 +1905,7 @@ const wikiRegisterCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { registerWikiSource } = await import("./stash-add");
+      const { registerWikiSource } = await import("./commands/source-add");
       const result = await registerWikiSource({
         ref: args.ref.trim(),
         name: args.name,
@@ -2758,7 +1922,7 @@ const wikiListCommand = defineCommand({
   meta: { name: "list", description: "List wikis with page/raw counts and last-modified timestamps" },
   run() {
     return runWithJsonErrors(async () => {
-      const { listWikis } = await import("./wiki.js");
+      const { listWikis } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const wikis = listWikis(stashDir);
       output("wiki-list", { wikis });
@@ -2773,7 +1937,7 @@ const wikiShowCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { showWiki } = await import("./wiki.js");
+      const { showWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = showWiki(stashDir, args.name);
       output("wiki-show", result);
@@ -2805,9 +1969,9 @@ const wikiRemoveCommand = defineCommand({
       if (!args.force) {
         throw new UsageError("Refusing to remove without --force. Pass `--force` to confirm.");
       }
-      const withSources = Boolean((args as Record<string, unknown>)["with-sources"]);
-      const { removeWiki } = await import("./wiki.js");
-      const { akmIndex } = await import("./indexer");
+      const withSources = getHyphenatedBoolean(args, "with-sources");
+      const { removeWiki } = await import("./wiki/wiki.js");
+      const { akmIndex } = await import("./indexer/indexer");
       const stashDir = resolveStashDir();
       const result = removeWiki(stashDir, args.name, { withSources });
       await akmIndex({ stashDir });
@@ -2826,7 +1990,7 @@ const wikiPagesCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listPages } = await import("./wiki.js");
+      const { listPages } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const pages = listPages(stashDir, args.name);
       output("wiki-pages", { wiki: args.name, pages });
@@ -2847,7 +2011,7 @@ const wikiSearchCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { resolveWikiSource, searchInWiki } = await import("./wiki.js");
+      const { resolveWikiSource, searchInWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       resolveWikiSource(stashDir, args.name);
       const parsedLimit = args.limit ? Number(args.limit) : undefined;
@@ -2872,7 +2036,7 @@ const wikiStashCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { stashRaw } = await import("./wiki.js");
+      const { stashRaw } = await import("./wiki/wiki.js");
       const { content, preferredName } = readKnowledgeContent(args.source);
       const stashDir = resolveStashDir();
       const result = stashRaw({
@@ -2898,7 +2062,7 @@ const wikiLintCommand = defineCommand({
   async run({ args }) {
     let findingCount = 0;
     await runWithJsonErrors(async () => {
-      const { lintWiki } = await import("./wiki.js");
+      const { lintWiki } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const report = lintWiki(stashDir, args.name);
       output("wiki-lint", report);
@@ -2918,7 +2082,7 @@ const wikiIngestCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { buildIngestWorkflow } = await import("./wiki.js");
+      const { buildIngestWorkflow } = await import("./wiki/wiki.js");
       const stashDir = resolveStashDir();
       const result = buildIngestWorkflow(stashDir, args.name);
       output("wiki-ingest", result);
@@ -2948,7 +2112,7 @@ const wikiCommand = defineCommand({
     return runWithJsonErrors(async () => {
       if (hasWikiSubcommand(args)) return;
       // Default action: list wikis
-      const { listWikis } = await import("./wiki.js");
+      const { listWikis } = await import("./wiki/wiki.js");
       output("wiki-list", { wikis: listWikis(resolveStashDir()) });
     });
   },
@@ -2962,7 +2126,7 @@ const main = defineCommand({
   },
   args: {
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary)" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
   },
   subCommands: {
@@ -3012,15 +2176,33 @@ const WIKI_SUBCOMMAND_SET = new Set([
 ]);
 const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
 
-// citty reads process.argv directly and does not accept a custom argv array,
-// so we must replace process.argv with the normalized version before runMain.
-process.argv = normalizeShowArgv(process.argv);
-runMain(main);
-
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
 const EXIT_CONFIG = 78;
+
+// citty reads process.argv directly and does not accept a custom argv array,
+// so we must replace process.argv with the normalized version before runMain.
+process.argv = normalizeShowArgv(process.argv);
+// Resolve output mode once at startup from the (normalized) argv and persisted
+// config. All subsequent output() calls read from this in-memory singleton.
+// `initOutputMode` can throw a UsageError when --format/--detail values are
+// invalid; surface it through the same JSON-error path the rest of the CLI uses
+// rather than letting the raw exception escape with a stack trace.
+try {
+  initOutputMode(process.argv, loadConfig().output ?? {});
+} catch (error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const hint = extractHint(error);
+  const exitCode = classifyExitCode(error);
+  const code =
+    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+      ? error.code
+      : undefined;
+  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
+  process.exit(exitCode);
+}
+runMain(main);
 
 function classifyExitCode(error: unknown): number {
   if (error instanceof UsageError) return EXIT_USAGE;
@@ -3038,28 +2220,27 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
     await fn();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    const hint = buildHint(message);
+    const hint = extractHint(error);
     const exitCode = classifyExitCode(error);
-    console.error(JSON.stringify({ ok: false, error: message, hint }, null, 2));
+    // Surface machine-readable error code from typed errors when present so
+    // scripts can branch on `.code` instead of message-string matching.
+    const code =
+      error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+        ? error.code
+        : undefined;
+    console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
     process.exit(exitCode);
   }
 }
 
-function buildHint(message: string): string | undefined {
-  if (message.includes("No stash directory found"))
-    return "Run `akm init` to create the default stash, or set stashDir in your config.";
-  if (message.includes("Either <target> or --all is required"))
-    return "Use `akm update --all` or pass a target like `akm update npm:@scope/pkg`.";
-  if (message.includes("Specify either <target> or --all")) return "Use only one: a positional target or `--all`.";
-  if (message.includes("No matching source"))
-    return "Run `akm list` to view your sources, then retry with one of those values.";
-  if (message.includes("remote package fetched but asset not found"))
-    return "The remote package was fetched but doesn't contain the requested asset. Check the asset name and type.";
-  if (message.includes("Invalid value for --source")) return "Pick one of: stash, registry, both.";
-  if (message.includes("Invalid value for --format")) return "Pick one of: json, jsonl, text, yaml.";
-  if (message.includes("Invalid value for --detail")) return "Pick one of: brief, normal, full, summary.";
-  if (message.includes("expected JSON object with endpoint and model")) {
-    return 'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.';
+/**
+ * Extract an actionable hint from an error instance. Hints live on the error
+ * classes themselves (see src/errors.ts) — either supplied explicitly at the
+ * throw site, or derived from the error code via the per-class default mapping.
+ */
+function extractHint(error: unknown): string | undefined {
+  if (error instanceof Error && "hint" in error && typeof (error as { hint: unknown }).hint === "function") {
+    return (error as { hint: () => string | undefined }).hint();
   }
   return undefined;
 }
@@ -3173,298 +2354,3 @@ function loadHints(detail: "normal" | "full" = "normal"): string {
   // Fallback for compiled binary — inline content
   return fallback;
 }
-
-const EMBEDDED_HINTS = `# akm CLI
-
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via \`akm\`. Search your sources first before writing something from scratch.
-
-## Quick Reference
-
-\`\`\`sh
-akm search "<query>"                          # Search all sources
-akm curate "<task>"                          # Curate the best matches for a task
-akm search "<query>" --type workflow          # Filter to workflow assets
-akm search "<query>" --source both            # Also search registries
-akm show <ref>                                # View asset details
-akm workflow next <ref>                       # Start or resume a workflow
-akm remember "Deployment needs VPN access"    # Record a memory in your stash
-akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
-akm wiki list                                 # List available wikis
-akm wiki ingest <name>                        # Print the ingest workflow for a wiki
-akm feedback <ref> --positive|--negative      # Record whether an asset helped
-akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
-akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)
-akm save                                      # Commit (and push if writable remote) changes in the primary stash
-akm registry search "<query>"                 # Search all registries
-\`\`\`
-
-## Primary Asset Types
-
-| Type | What \`akm show\` returns |
-| --- | --- |
-| script | A \`run\` command you can execute directly |
-| skill | Instructions to follow (read the full content) |
-| command | A prompt template with placeholders to fill in |
-| agent | A system prompt with model and tool hints |
-| knowledge | A reference doc (use \`toc\` or \`section "..."\` to navigate) |
-| workflow | Parsed steps plus workflow-specific execution commands |
-| memory | Recalled context (read the content for background information) |
-| vault | Key names only; use vault commands to inspect or load values safely |
-| wiki | A page in a multi-wiki knowledge base. For any wiki task, start with \`akm wiki list\`, then \`akm wiki ingest <name>\` for the workflow. Run \`akm wiki -h\` for the full surface. |
-
-When an asset meaningfully helps or fails, record that with \`akm feedback\` so
-future search ranking can learn from real usage.
-
-Run \`akm -h\` for the full command reference.
-`;
-
-const EMBEDDED_HINTS_FULL = `# akm CLI — Full Reference
-
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via \`akm\`. Search your sources first before writing something from scratch.
-
-## Search
-
-\`\`\`sh
-akm search "<query>"                          # Search all sources
-akm curate "<task>"                          # Curate the best matches for a task
-akm search "<query>" --type workflow          # Filter by asset type
-akm search "<query>" --source both            # Also search registries
-akm search "<query>" --source registry        # Search registries only
-akm search "<query>" --limit 10               # Limit results
-akm search "<query>" --detail full            # Include scores, paths, timing
-\`\`\`
-
-| Flag | Values | Default |
-| --- | --- | --- |
-| \`--type\` | \`skill\`, \`command\`, \`agent\`, \`knowledge\`, \`workflow\`, \`script\`, \`memory\`, \`vault\`, \`wiki\`, \`any\` | \`any\` |
-| \`--source\` | \`stash\`, \`registry\`, \`both\` | \`stash\` |
-| \`--limit\` | number | \`20\` |
-| \`--format\` | \`json\`, \`jsonl\`, \`text\`, \`yaml\` | \`json\` |
-| \`--detail\` | \`brief\`, \`normal\`, \`full\`, \`summary\` | \`brief\` |
-| \`--for-agent\` | boolean | \`false\` |
-
-## Curate
-
-Combine search + follow-up hints into a dense summary for a task or prompt.
-
-\`\`\`sh
-akm curate "plan a release"                   # Pick top matches across asset types
-akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
-akm curate "review architecture" --type workflow # Restrict to one asset type
-\`\`\`
-
-## Show
-
-Display an asset by ref. Knowledge assets support view modes as positional arguments.
-
-\`\`\`sh
-akm show script:deploy.sh                     # Show script (returns run command)
-akm show skill:code-review                    # Show skill (returns full content)
-akm show command:release                      # Show command (returns template)
-akm show agent:architect                      # Show agent (returns system prompt)
-akm show workflow:ship-release                # Show parsed workflow steps
-akm show knowledge:guide toc                  # Table of contents
-akm show knowledge:guide section "Auth"       # Specific section
-akm show knowledge:guide lines 10 30          # Line range
-akm show knowledge:my-doc                    # Show content (local or remote)
-\`\`\`
-
-| Type | Key fields returned |
-| --- | --- |
-| script | \`run\`, \`setup\`, \`cwd\` |
-| skill | \`content\` (full SKILL.md) |
-| command | \`template\`, \`description\`, \`parameters\` |
-| agent | \`prompt\`, \`description\`, \`modelHint\`, \`toolPolicy\` |
-| knowledge | \`content\` (with view modes: \`full\`, \`toc\`, \`frontmatter\`, \`section\`, \`lines\`) |
-| workflow | \`workflowTitle\`, \`workflowParameters\`, \`steps\` |
-| memory | \`content\` (recalled context) |
-| vault | \`keys\`, \`comments\` |
-| wiki | \`content\` (same view modes as knowledge). For any wiki task, run \`akm wiki list\` then \`akm wiki ingest <name>\` for the workflow. |
-
-## Capture Knowledge While You Work
-
-\`\`\`sh
-akm remember "Deployment needs VPN access"     # Record a memory in your stash
-akm remember --name release-retro < notes.md   # Save multiline memory from stdin
-akm import ./docs/auth-flow.md                 # Import a file as knowledge
-akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
-akm workflow create ship-release               # Create a workflow asset in the stash
-akm workflow next workflow:ship-release        # Start or resume the next workflow step
-akm feedback skill:code-review --positive      # Record that an asset helped
-akm feedback agent:reviewer --negative         # Record that an asset missed the mark
-akm feedback memory:deployment-notes --positive # Works for memories too
-akm feedback vault:prod --positive             # Records vault feedback without surfacing values
-\`\`\`
-
-Use \`akm feedback\` whenever an asset materially helps or fails so future search
-ranking can learn from actual usage.
-
-## Wikis
-
-Multi-wiki knowledge bases (Karpathy-style). A stash-owned wiki lives at
-\`<stashDir>/wikis/<name>/\`; external directories or repos can also be registered
-as first-class wikis. akm owns lifecycle + raw-slug + lint + index regeneration
-for stash-owned wikis; page edits use your native Read/Write/Edit tools.
-
-\`\`\`sh
-akm wiki list                                  # List wikis (name, pages, raws, last-modified)
-akm wiki create research                       # Scaffold a new wiki
-akm wiki register ics-docs ~/code/ics-documentation # Register an external wiki
-akm wiki show research                         # Path, description, counts, last 3 log entries
-akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log/raw)
-akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
-akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
-echo "..." | akm wiki stash research -         # stdin form
-akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
-akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
-akm wiki remove research --force               # Delete pages/schema/index/log; preserves raw/
-akm wiki remove research --force --with-sources # Full nuke, including raw/
-\`\`\`
-
-**For any wiki task, start with \`akm wiki list\`, then \`akm wiki ingest <name>\`
-to get the step-by-step workflow.** Wiki pages are also addressable as
-\`wiki:<name>/<page-path>\` and show up in stash-wide \`akm search\` as
-\`type: wiki\`. Files under \`raw/\` and the wiki root infrastructure files
-\`schema.md\`, \`index.md\`, and \`log.md\` are not indexed and do not appear in
-search results. No \`--llm\` anywhere — akm never reasons about page content.
-
-## Vaults
-
-Encrypted-at-rest key/value stores for secrets. Each vault is a \`.env\`-format
-file at \`<stashDir>/vaults/<name>.env\`.
-
-\`\`\`sh
-akm vault create prod                         # Create a new vault
-akm vault set prod DB_URL postgres://...      # Set a key (or KEY=VALUE combined form)
-akm vault set prod DB_URL=postgres://...      # Combined KEY=VALUE form also works
-akm vault unset prod DB_URL                   # Remove a key
-akm vault list vault:prod                     # List key names (no values)
-akm vault show vault:prod                     # Same as list (alias)
-akm vault load vault:prod                     # Print export statements to source
-\`\`\`
-
-## Workflows
-
-Step-based workflows stored as \`<stashDir>/workflows/<name>.md\`.
-
-\`\`\`sh
-akm workflow template                         # Print a starter workflow template
-akm workflow create ship-release             # Scaffold a new workflow asset
-akm workflow start workflow:ship-release     # Start a new run
-akm workflow next workflow:ship-release      # Advance to the next step (or auto-start)
-akm workflow complete <run-id>               # Mark a step complete and advance
-akm workflow status <run-id>                 # Show current run status
-akm workflow resume <run-id>                 # Resume a blocked or failed run
-akm workflow list                            # List all workflow runs
-\`\`\`
-
-## Clone
-
-Copy an asset to the working stash or a custom destination for editing.
-
-\`\`\`sh
-akm clone <ref>                               # Clone to working stash
-akm clone <ref> --name new-name               # Rename on clone
-akm clone <ref> --dest ./project/.claude       # Clone to custom location
-akm clone <ref> --force                       # Overwrite existing
-akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
-\`\`\`
-
-When \`--dest\` is provided, \`akm init\` is not required first.
-
-## Save
-
-Commit local changes in a git-backed stash. Behaviour adapts automatically:
-
-- **Not a git repo** — no-op (silent skip)
-- **Git repo, no remote** — stage and commit only (the default stash always falls here)
-- **Git repo, has remote, not writable** — stage and commit only
-- **Git repo, has remote, \`writable: true\`** — stage, commit, and push
-
-\`\`\`sh
-akm save                                      # Save primary stash (timestamp message)
-akm save -m "Add deploy skill"               # Save with explicit message
-akm save my-skills                            # Save a named writable git stash
-akm save my-skills -m "Update patterns"      # Save named stash with message
-\`\`\`
-
-The \`--writable\` flag on \`akm add\` opts a remote git stash into push-on-save:
-
-\`\`\`sh
-akm add git@github.com:org/skills.git --provider git --name my-skills --writable
-\`\`\`
-
-## Add & Manage Sources
-
-\`\`\`sh
-akm add <ref>                                 # Add a source
-akm add @scope/kit                            # From npm (managed)
-akm add owner/repo                            # From GitHub (managed)
-akm add ./path/to/local/kit                   # Local directory
-akm add git@github.com:org/repo.git --provider git --name my-skills --writable
-akm enable skills.sh                          # Enable the skills.sh registry
-akm disable skills.sh                         # Disable the skills.sh registry
-akm enable context-hub                        # Add/enable the context-hub source
-akm disable context-hub                       # Disable the context-hub source
-akm list                                      # List all sources
-akm list --kind managed                       # List managed sources only
-akm remove <target>                           # Remove by id, ref, path, or name
-akm update --all                              # Update all managed sources
-akm update <target> --force                   # Force re-download
-\`\`\`
-
-## Registries
-
-\`\`\`sh
-akm registry list                             # List configured registries
-akm registry add <url>                        # Add a registry
-akm registry add <url> --name my-team         # Add with label
-akm registry add <url> --provider skills-sh   # Specify provider type
-akm registry remove <url-or-name>             # Remove a registry
-akm registry search "<query>"                 # Search all registries
-akm registry search "<query>" --assets        # Include asset-level results
-akm registry build-index                      # Build ./index.json
-akm registry build-index --out dist/index.json # Build to a custom path
-\`\`\`
-
-## Configuration
-
-\`\`\`sh
-akm config list                               # Show current config
-akm config get <key>                          # Read a value
-akm config set <key> <value>                  # Set a value
-akm config unset <key>                        # Remove a key
-akm config path --all                         # Show all config paths
-\`\`\`
-
-## Other Commands
-
-\`\`\`sh
-akm init                                      # Initialize working stash
-akm index                                     # Rebuild search index
-akm index --full                              # Full reindex
-akm list                                      # List all sources
-akm upgrade                                   # Upgrade akm using its install method
-akm upgrade --check                           # Check for updates
-akm help migrate 0.5.0                        # Print migration notes for a release
-akm hints                                     # Print this reference
-akm completions                               # Print bash completion script
-akm completions --install                     # Install completions
-\`\`\`
-
-## Output Control
-
-All commands accept \`--format\` and \`--detail\` flags:
-
-- \`--format json\` (default) — structured JSON
-- \`--format jsonl\` — one JSON object per line (streaming-friendly)
-- \`--format text\` — human-readable plain text
-- \`--format yaml\` — YAML output
-- \`--detail brief\` (default) — compact output
-- \`--detail normal\` — adds tags, refs, origins
-- \`--detail full\` — includes scores, paths, timing, debug info
-- \`--detail summary\` — metadata only (no content/template/prompt), under 200 tokens
-- \`--for-agent\` — agent-optimized output: strips non-actionable fields (takes precedence over \`--detail\`)
-
-Run \`akm -h\` or \`akm <command> -h\` for per-command help.
-`;

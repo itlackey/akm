@@ -93,6 +93,30 @@ that updated implementation without updating end-to-end expectations. The fix is
 to treat `bun run check` as the pre-push gate and to use `bun run check:changed`
 while iterating on output-related changes.
 
+## Shipping a release — migration notes
+
+`akm help migrate <version>` prints a per-release migration note to the
+terminal. Each note lives as its own markdown file under
+[`docs/migration/release-notes/<version>.md`](../docs/migration/release-notes/)
+and is bundled with the published npm package via `package.json` `files[]`.
+
+When you tag a new release:
+
+1. Create `docs/migration/release-notes/<version>.md`. Lead with
+   `Migration notes for akm v<version>` so the text matches the pattern the
+   tests enforce.
+2. Keep the note self-contained — automatic migrations, manual actions,
+   publisher changes, breaking CLI/flag moves. Link to the longform guide
+   (e.g. `docs/migration/v0.5-to-v0.6.md`) in the last paragraph if one
+   exists.
+3. Extend the `for ... of` list in `tests/migration-help.test.ts`
+   (`"every bundled release-notes file is surfaced by the loader"`) so the
+   new version is explicitly exercised.
+4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
+
+No code change is required in `src/migration-help.ts` — the loader discovers
+files at runtime from the release-notes directory.
+
 ## Submitting Changes
 
 1. Fork the repository and create a feature branch from `main`.

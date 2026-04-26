@@ -14,13 +14,27 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/db";
-import { buildSearchText } from "../src/indexer";
-import type { StashEntry, StashFile } from "../src/metadata";
-import { getDbPath } from "../src/paths";
-import { akmSearch, mergeStashHits } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
+import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import type { StashEntry, StashFile } from "../src/indexer/metadata";
+import { buildSearchText } from "../src/indexer/search-fields";
+import type { SourceSearchHit } from "../src/sources/types";
+
+// Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
+// from production code when the OpenViking provider was dropped (Phase 1).
+function mergeStashHits(
+  localHits: SourceSearchHit[],
+  additionalHits: SourceSearchHit[],
+  limit: number,
+): SourceSearchHit[] {
+  if (additionalHits.length === 0) return localHits.slice(0, limit);
+  const localKeys = new Set<string>();
+  for (const h of localHits) localKeys.add(h.path ?? h.ref ?? h.name);
+  const providerOnly = additionalHits.filter((h) => !localKeys.has(h.path ?? h.ref ?? h.name));
+  return [...localHits, ...providerOnly].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, limit);
+}
 
 // ── Fixture path ────────────────────────────────────────────────────────────
 
@@ -57,7 +71,7 @@ beforeAll(async () => {
 
   saveConfig({
     semanticSearchMode: "off",
-    stashes: [{ type: "filesystem", path: FIXTURE_STASH }],
+    sources: [{ type: "filesystem", path: FIXTURE_STASH }],
     registries: [],
   });
 
@@ -140,17 +154,17 @@ function findStashJsonFiles(dir: string): string[] {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function search(query: string, limit = 20): Promise<StashSearchHit[]> {
+async function search(query: string, limit = 20): Promise<SourceSearchHit[]> {
   const result = await akmSearch({ query, source: "stash", limit });
-  return result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+  return result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 }
 
-function findHit(hits: StashSearchHit[], name: string): StashSearchHit | undefined {
+function findHit(hits: SourceSearchHit[], name: string): SourceSearchHit | undefined {
   return hits.find((h) => h.name === name);
 }
 
 /** Assert that a hit exists and return it (avoids non-null assertions). */
-function expectHit(hits: StashSearchHit[], name: string): StashSearchHit {
+function expectHit(hits: SourceSearchHit[], name: string): SourceSearchHit {
   const hit = findHit(hits, name);
   expect(hit).toBeDefined();
   // biome-ignore lint/style/noNonNullAssertion: guarded by expect above
@@ -158,12 +172,12 @@ function expectHit(hits: StashSearchHit[], name: string): StashSearchHit {
 }
 
 /** Get the score of a hit, asserting it is defined. */
-function scoreOf(hit: StashSearchHit): number {
+function scoreOf(hit: SourceSearchHit): number {
   expect(hit.score).toBeDefined();
   return hit.score ?? 0;
 }
 
-function rankOf(hits: StashSearchHit[], name: string): number {
+function rankOf(hits: SourceSearchHit[], name: string): number {
   const idx = hits.findIndex((h) => h.name === name);
   return idx === -1 ? Infinity : idx + 1; // 1-based rank
 }
@@ -370,7 +384,7 @@ describe("Score preservation (not RRF-flattened)", () => {
 
 describe("Provider merge (score not destroyed)", () => {
   test("when additional provider hits exist, local scores are preserved", () => {
-    const localHits: StashSearchHit[] = [
+    const localHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "local-skill-1",
@@ -397,13 +411,13 @@ describe("Provider merge (score not destroyed)", () => {
       },
     ];
 
-    const additionalHits: StashSearchHit[] = [
+    const additionalHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "remote-skill-1",
         path: "/remote/skills/remote-1/SKILL.md",
         ref: "skill:remote-skill-1",
-        origin: "openviking",
+        origin: "remote",
         score: 0.85,
       },
     ];
@@ -419,7 +433,7 @@ describe("Provider merge (score not destroyed)", () => {
   });
 
   test("provider hits sort fairly by score alongside local hits", () => {
-    const localHits: StashSearchHit[] = [
+    const localHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "local-high",
@@ -438,13 +452,13 @@ describe("Provider merge (score not destroyed)", () => {
       },
     ];
 
-    const additionalHits: StashSearchHit[] = [
+    const additionalHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "remote-1",
         path: "/remote/skills/1/SKILL.md",
         ref: "skill:remote-1",
-        origin: "openviking",
+        origin: "remote",
         score: 1.0, // Normalized provider score between local-high and local-low
       },
     ];
@@ -462,7 +476,7 @@ describe("Provider merge (score not destroyed)", () => {
   });
 
   test("duplicate provider hits are deduplicated (local version wins)", () => {
-    const localHits: StashSearchHit[] = [
+    const localHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "shared-skill",
@@ -473,13 +487,13 @@ describe("Provider merge (score not destroyed)", () => {
       },
     ];
 
-    const additionalHits: StashSearchHit[] = [
+    const additionalHits: SourceSearchHit[] = [
       {
         type: "skill",
         name: "shared-skill",
         path: "/test/skills/shared/SKILL.md", // Same path = duplicate
         ref: "skill:shared-skill",
-        origin: "openviking",
+        origin: "remote",
         score: 0.5,
       },
     ];
@@ -494,11 +508,11 @@ describe("Provider merge (score not destroyed)", () => {
   });
 
   test("merge preserves sort order by score descending", () => {
-    const localHits: StashSearchHit[] = [
+    const localHits: SourceSearchHit[] = [
       { type: "skill", name: "a", path: "/a", ref: "skill:a", origin: null, score: 3.0 },
       { type: "skill", name: "b", path: "/b", ref: "skill:b", origin: null, score: 1.0 },
     ];
-    const additionalHits: StashSearchHit[] = [
+    const additionalHits: SourceSearchHit[] = [
       { type: "skill", name: "c", path: "/c", ref: "skill:c", origin: "remote", score: 2.0 },
     ];
 
@@ -589,7 +603,7 @@ describe("Empty and edge case queries", () => {
 
   test("query with no matches returns empty results with tip", async () => {
     const result = await akmSearch({ query: "xyznonexistent123", source: "stash" });
-    const hits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits.length).toBe(0);
   });
 

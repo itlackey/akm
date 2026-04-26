@@ -7,7 +7,7 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ```sh
 akm search "<query>"                          # Search your sources
 akm search "<query>" --type workflow          # Filter by asset type
-akm search "<query>" --source both            # Also search registries for installable kits
+akm search "<query>" --source both            # Also search registries for installable stashes
 akm search "<query>" --source registry        # Search registries only
 akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
@@ -63,6 +63,7 @@ akm remember --name release-retro < notes.md   # Save multiline memory from stdi
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm workflow create ship-release               # Create a workflow asset in the stash
+akm workflow validate workflow:ship-release    # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Resume the active run or start a new one
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark
@@ -109,9 +110,9 @@ See [wikis.md](wikis.md) for the full guide.
 
 ```sh
 akm add <ref>                                 # Add a source
-akm add @scope/kit                            # From npm (managed)
+akm add @scope/stash                            # From npm (managed)
 akm add owner/repo                            # From GitHub (managed)
-akm add ./path/to/local/kit                   # Local directory
+akm add ./path/to/local/stash                   # Local directory
 akm list                                      # List all sources
 akm list --kind managed                       # List managed sources only
 akm remove <target>                           # Remove by id, ref, path, or name

@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { type LockfileEntry, readLockfile, removeLockEntry, upsertLockEntry, writeLockfile } from "../src/lockfile";
+import {
+  type LockfileEntry,
+  readLockfile,
+  removeLockEntry,
+  upsertLockEntry,
+  writeLockfile,
+} from "../src/integrations/lockfile";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -15,7 +21,7 @@ function makeTmpDir(): string {
 }
 
 function getLockfilePath(): string {
-  return path.join(testConfigDir, "akm", "stash.lock");
+  return path.join(testConfigDir, "akm", "akm.lock");
 }
 
 function writeRawLockfile(content: string): void {

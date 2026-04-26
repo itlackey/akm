@@ -105,7 +105,7 @@ akm workflow list
 akm workflow template
 ```
 
-Workflows live in the stash like any other asset, so `akm search workflow:…` finds them and `akm show workflow:release-checklist` renders the current step. They can be shared in a kit and versioned in a git stash.
+Workflows live in the stash like any other asset, so `akm search workflow:…` finds them and `akm show workflow:release-checklist` renders the current step. They can be shared in a stash and versioned in a git stash.
 
 ---
 
@@ -165,10 +165,10 @@ The git stash provider also switches from HTTP tarball download to `git clone`, 
 
 ## `--trust` flag for installs
 
-akm 0.4.0 added a pre-install audit that scans kit contents for dangerous patterns. By default, installs from unrecognized sources require confirmation. For sources you know and trust, you can skip the audit entirely:
+akm 0.4.0 added a pre-install audit that scans stash contents for dangerous patterns. By default, installs from unrecognized sources require confirmation. For sources you know and trust, you can skip the audit entirely:
 
 ```sh
-akm add github:your-org/internal-kit --trust
+akm add github:your-org/internal-stash --trust
 ```
 
 `--trust` is a one-off bypass — it does not add the source to any persistent allowlist. Use it when you control the source and do not want to step through the audit prompt in a non-interactive context (a CI script, an automated agent workflow, a container build).
@@ -234,3 +234,8 @@ curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 ```
 
 Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).
+
+
+---
+
+> **Note (2026-04-23):** This post has been updated to align with akm 0.6.0 terminology. Earlier wording referred to a *kit* and the *Kit Maker's Guide*; those terms have been renamed to *stash* and *Stash Maker's Guide* throughout. The pre-rename text is preserved in this repository's git history.

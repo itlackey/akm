@@ -1,15 +1,35 @@
 name: CI
 
+# `release/*` is intentionally listed only under `pull_request`. Every change
+# to a release branch goes through a PR, and the pre-merge pull_request run
+# already validates the merged state (pull_request CI runs against the
+# `refs/pull/N/merge` ref, which is the PR head merged into its base). Adding
+# `release/*` to `push` duplicated every merge with a second redundant run.
+# Direct pushes to `release/*` are not an expected flow; if one is ever needed,
+# re-add the pattern and trust the human operator to read the resulting run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, "fix/*"]
     paths-ignore:
       - "docs/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "schemas/**"
+      - "CLAUDE.md"
+      - "LICENSE"
   pull_request:
-    branches: [main]
+    branches: [main, "release/*"]
     paths-ignore:
       - "docs/**"
-
+      - "README.md"
+      - "CHANGELOG.md"
+      - "schemas/**"
+      - "CLAUDE.md"
+      - "LICENSE"
 jobs:
   check:
     runs-on: ubuntu-latest

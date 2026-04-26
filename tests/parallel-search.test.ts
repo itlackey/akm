@@ -3,13 +3,21 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveConfig } from "../src/config";
-import { closeDatabase, openDatabase, rebuildFts, searchFts, setMeta, upsertEmbedding, upsertEntry } from "../src/db";
-import { clearEmbeddingCache } from "../src/embedder";
-import { akmIndex } from "../src/indexer";
-import type { StashEntry } from "../src/metadata";
-import { akmSearch } from "../src/stash-search";
-import type { StashSearchHit } from "../src/stash-types";
+import { akmSearch } from "../src/commands/search";
+import { saveConfig } from "../src/core/config";
+import {
+  closeDatabase,
+  openDatabase,
+  rebuildFts,
+  searchFts,
+  setMeta,
+  upsertEmbedding,
+  upsertEntry,
+} from "../src/indexer/db";
+import { akmIndex } from "../src/indexer/indexer";
+import type { StashEntry } from "../src/indexer/metadata";
+import { clearEmbeddingCache } from "../src/llm/embedder";
+import type { SourceSearchHit } from "../src/sources/types";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -175,8 +183,8 @@ describe("Parallel search: result parity", () => {
     // Run the same query twice and verify identical results
     const result1 = await akmSearch({ query: "deploy", source: "local" });
     const result2 = await akmSearch({ query: "deploy", source: "local" });
-    const localHits1 = result1.hits.filter((h): h is StashSearchHit => h.type !== "registry");
-    const localHits2 = result2.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits1.length).toBeGreaterThan(0);
     expect(localHits1.length).toBe(localHits2.length);
@@ -229,7 +237,7 @@ describe("Parallel search: vector unavailable", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "lint", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const lintHit = localHits.find((h) => h.name === "lint");
@@ -265,7 +273,7 @@ describe("Parallel search: FTS empty", () => {
 
     // Query for something that won't match any FTS tokens
     const result = await akmSearch({ query: "zzzznonexistent", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Should return 0 results without crashing
     expect(localHits.length).toBe(0);
@@ -344,7 +352,7 @@ describe("Parallel search: FTS result ordering", () => {
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "build compile", source: "local" });
-    const localHits = result.hits.filter((h): h is StashSearchHit => h.type !== "registry");
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // Both entries should be found
     expect(localHits.length).toBeGreaterThanOrEqual(1);
