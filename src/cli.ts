@@ -443,6 +443,12 @@ const upgradeCommand = defineCommand({
       description: "Skip checksum verification (not recommended)",
       default: false,
     },
+    "skip-post-upgrade": {
+      type: "boolean",
+      description:
+        "Skip the post-upgrade `akm index` rebuild (config auto-migration still runs on next `akm` invocation)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -452,7 +458,8 @@ const upgradeCommand = defineCommand({
         return;
       }
       const skipChecksum = getHyphenatedBoolean(args, "skip-checksum");
-      const result = await performUpgrade(check, { force: args.force, skipChecksum });
+      const skipPostUpgrade = getHyphenatedBoolean(args, "skip-post-upgrade");
+      const result = await performUpgrade(check, { force: args.force, skipChecksum, skipPostUpgrade });
       output("upgrade", result);
     });
   },

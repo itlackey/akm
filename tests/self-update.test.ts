@@ -313,6 +313,85 @@ describe("performUpgrade", () => {
     expect(result.message).toContain("already the latest");
   });
 
+  test("runs `akm index` post-upgrade after a successful pkg-manager install", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "npm",
+    });
+
+    expect(result.upgraded).toBe(true);
+    expect(result.postUpgrade).toBeDefined();
+    expect(result.postUpgrade?.ok).toBe(true);
+    expect(result.postUpgrade?.skipped).toBe(false);
+    expect(result.postUpgrade?.exitCode).toBe(0);
+    // First spawnSync = the install; second spawnSync = the post-upgrade `akm index`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
+    expect(spawnSyncSpy).toHaveBeenLastCalledWith(
+      "akm",
+      ["index"],
+      expect.objectContaining({ encoding: "utf8", stdio: "pipe" }),
+    );
+  });
+
+  test("skips the post-upgrade `akm index` when skipPostUpgrade is set", async () => {
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    } as never);
+
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "npm",
+      },
+      { skipPostUpgrade: true },
+    );
+
+    expect(result.upgraded).toBe(true);
+    expect(result.postUpgrade).toBeDefined();
+    expect(result.postUpgrade?.skipped).toBe(true);
+    expect(result.postUpgrade?.ok).toBe(true);
+    // Only the install spawnSync ran — no second call for `akm index`.
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("captures post-upgrade failure without failing the upgrade", async () => {
+    let call = 0;
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation((() => {
+      call++;
+      if (call === 1) {
+        // The install itself succeeds.
+        return { status: 0, stdout: "", stderr: "" } as never;
+      }
+      // The post-upgrade `akm index` fails with a non-zero exit.
+      return { status: 1, stdout: "", stderr: "no embedding model configured" } as never;
+    }) as never);
+
+    const result = await performUpgrade({
+      currentVersion: "0.0.13",
+      latestVersion: "0.0.14",
+      updateAvailable: true,
+      installMethod: "npm",
+    });
+
+    expect(result.upgraded).toBe(true); // upgrade itself succeeded
+    expect(result.postUpgrade?.ok).toBe(false);
+    expect(result.postUpgrade?.exitCode).toBe(1);
+    expect(result.postUpgrade?.message).toContain("no embedding model configured");
+    expect(spawnSyncSpy).toHaveBeenCalledTimes(2);
+  });
+
   test("throws when latestVersion is empty and force is used", async () => {
     await expect(
       performUpgrade(
@@ -349,13 +428,18 @@ describe("performUpgrade", () => {
     } as never);
 
     await expect(
-      performUpgrade({
-        currentVersion: "0.0.13",
-        latestVersion: "0.0.14",
-        updateAvailable: true,
-        installMethod: "npm",
-      }),
+      performUpgrade(
+        {
+          currentVersion: "0.0.13",
+          latestVersion: "0.0.14",
+          updateAvailable: true,
+          installMethod: "npm",
+        },
+        { skipPostUpgrade: true },
+      ),
     ).resolves.toMatchObject({ upgraded: true, installMethod: "npm" });
+    // Only the install spawnSync ran; skipPostUpgrade keeps the test focused
+    // on the checksum-bypass behavior, not the new post-upgrade hook.
     expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -393,8 +477,10 @@ describe("performUpgrade", () => {
         updateAvailable: true,
         installMethod: "npm",
       },
-      { skipChecksum: true },
+      { skipChecksum: true, skipPostUpgrade: true },
     );
+    // Only the install spawnSync ran; skipPostUpgrade keeps the test focused
+    // on the skipChecksum option, not the new post-upgrade hook.
     expect(spawnSyncSpy).toHaveBeenCalledTimes(1);
     expect(result.upgraded).toBe(true);
     expect(result.installMethod).toBe("npm");

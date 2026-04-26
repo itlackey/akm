@@ -322,6 +322,18 @@ export interface UpgradeResponse {
   binaryPath?: string;
   checksumVerified?: boolean;
   message?: string;
+  /**
+   * Result of the post-upgrade tasks (config auto-migration via loadConfig +
+   * `akm index` rebuild). Spawned as a child process running the *new* binary
+   * because the running process still has the old code in memory. Absent when
+   * the upgrade was a no-op or the user passed `--skip-post-upgrade`.
+   */
+  postUpgrade?: {
+    ok: boolean;
+    skipped: boolean;
+    exitCode?: number | null;
+    message: string;
+  };
 }
 
 export interface InfoResponse {

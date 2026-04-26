@@ -99,10 +99,11 @@ export async function checkForUpdate(currentVersion: string): Promise<UpgradeChe
 
 export async function performUpgrade(
   check: UpgradeCheckResponse,
-  opts?: { force?: boolean; skipChecksum?: boolean },
+  opts?: { force?: boolean; skipChecksum?: boolean; skipPostUpgrade?: boolean },
 ): Promise<UpgradeResponse> {
   const { currentVersion, latestVersion, installMethod } = check;
   const force = opts?.force === true;
+  const skipPostUpgrade = opts?.skipPostUpgrade === true;
 
   // All install methods can short-circuit here unless the user explicitly forces an upgrade.
   if (!check.updateAvailable && !force) {
@@ -146,6 +147,7 @@ export async function performUpgrade(
       upgraded: true,
       installMethod,
       message: `akm upgraded via ${installMethod}`,
+      postUpgrade: runPostUpgradeTasks("akm", { skip: skipPostUpgrade }),
     };
   }
 
@@ -333,7 +335,71 @@ export async function performUpgrade(
     installMethod,
     binaryPath: execPath,
     checksumVerified,
+    // For binary installs, the new binary now lives at execPath; spawn it
+    // directly so the post-upgrade work runs against the new code.
+    postUpgrade: runPostUpgradeTasks(execPath, { skip: skipPostUpgrade }),
   };
+}
+
+/**
+ * Run the post-upgrade tasks against the *new* binary as a child process.
+ *
+ * Why a child process: the running akm process still has the old code in
+ * memory. Calling loadConfig()/akmIndex() in-process would use the old
+ * implementations and miss any DB_VERSION / config-key changes the new
+ * release introduces.
+ *
+ * The new binary's `akm index` does the work for us:
+ *   1. loadConfig() runs at startup — auto-migrates legacy `stashes` →
+ *      `sources` if the on-disk config still uses the old key.
+ *   2. ensureSchema() detects DB_VERSION mismatch and rebuilds index.db
+ *      tables (preserving usage_events).
+ *   3. The full reindex repopulates entries + workflow_documents + FTS.
+ */
+function runPostUpgradeTasks(akmBin: string, opts: { skip: boolean }): NonNullable<UpgradeResponse["postUpgrade"]> {
+  if (opts.skip) {
+    return {
+      ok: true,
+      skipped: true,
+      message: "Skipped post-upgrade tasks. Run `akm index` manually to migrate config and rebuild the index.",
+    };
+  }
+  try {
+    const result = childProcess.spawnSync(akmBin, ["index"], {
+      encoding: "utf8",
+      env: process.env,
+      stdio: "pipe",
+    });
+    if (result.error) {
+      return {
+        ok: false,
+        skipped: false,
+        message: `Post-upgrade tasks could not start: ${result.error.message}. Run \`akm index\` manually.`,
+      };
+    }
+    if (result.status !== 0) {
+      const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim() || `exit code ${result.status}`;
+      return {
+        ok: false,
+        skipped: false,
+        exitCode: result.status,
+        message: `Post-upgrade \`akm index\` failed (${detail}). Run \`akm index\` manually.`,
+      };
+    }
+    return {
+      ok: true,
+      skipped: false,
+      exitCode: 0,
+      message: "Config migrated (if needed) and index rebuilt against the new binary.",
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      skipped: false,
+      message: `Post-upgrade tasks failed: ${detail}. Run \`akm index\` manually.`,
+    };
+  }
 }
 
 function parseChecksumForFile(checksumsText: string, filename: string): string | undefined {
