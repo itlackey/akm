@@ -62,6 +62,7 @@ If you consume only the public registry and do not maintain your own, the publis
 
 A few additive improvements rode along with the cleanup.
 
+- **`akm workflow validate <ref|path>`** — new subcommand for validating a workflow markdown file or ref; lists every error in one pass (without running a full reindex). A workflow debugging tool to surface issues before they bite at run time.
 - **Memory frontmatter on `akm remember`** — `--tag` (repeatable), `--expires 30d`, `--source <any-string>`, plus opt-in `--auto` (heuristics) and `--enrich` (LLM) for deriving tags from the body. Zero-flag `akm remember "body"` still writes a flat memory, so existing agent scripts are unchanged. Issue [#169](https://github.com/itlackey/akm/issues/169).
 
   ```sh

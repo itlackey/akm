@@ -95,7 +95,7 @@ Examples:
 URI schemes (`viking://...`, `github://...`) are **not** asset refs. Install
 locators like `github:owner/repo`, `git+https://...`, `npm:@scope/pkg`,
 `skills.sh:slug`, and `./local/path` are a separate grammar parsed by
-`parseRegistryRef` in `src/registry/registry-resolve.ts` and consumed by
+`parseRegistryRef` in `src/registry/resolve.ts` and consumed by
 `akm add` / `akm clone`.
 
 ---

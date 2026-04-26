@@ -61,8 +61,33 @@ ref.
 | `usage_events` | search/show/feedback telemetry |
 | `utility_scores` | recomputed utility boost state |
 | `index_meta` | schema/version/runtime metadata |
+| `workflow_documents` | validated `WorkflowDocument` JSON for indexed workflows |
 
 Workflow runtime state lives separately in `workflow.db`, not this index.
+
+## Schema Versioning
+
+`index.db` is ephemeral — fully rebuildable from sources by `akm index`.
+The schema is gated by a single `DB_VERSION` constant (currently 9). When
+the stored version differs, `ensureSchema()` (in `src/indexer/db.ts`)
+drops + recreates every table in `index.db` (preserving `usage_events`
+via a typed backup); the next `akm index` repopulates. `workflow.db`
+(durable run state) is never touched by this path.
+
+The `workflow_documents` table (introduced in v0.6.0 with `DB_VERSION = 9`)
+caches the validated `WorkflowDocument` JSON output of `parseWorkflow()` for
+each indexed workflow asset, keyed by `entry_id` with `ON DELETE CASCADE`:
+
+```sql
+CREATE TABLE workflow_documents (
+  entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+  schema_version INTEGER NOT NULL,
+  document_json TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
 
 ## Metadata Sources
 

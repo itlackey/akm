@@ -63,6 +63,7 @@ akm remember --name release-retro < notes.md   # Save multiline memory from stdi
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm workflow create ship-release               # Create a workflow asset in the stash
+akm workflow validate workflow:ship-release    # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Resume the active run or start a new one
 akm feedback skill:code-review --positive      # Record that an asset helped
 akm feedback agent:reviewer --negative         # Record that an asset missed the mark

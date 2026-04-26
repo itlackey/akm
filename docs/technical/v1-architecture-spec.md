@@ -431,6 +431,20 @@ The index knows which file corresponds to each ref. Read it.
 
 Writes a utility signal keyed to the asset ref into akm's local DB. Feeds the scorer's `utility` weight. Independent of source.
 
+### 6.7 Index DB schema versioning
+
+`index.db` is ephemeral — fully rebuildable from sources by `akm index`.
+The schema is gated by a single `DB_VERSION` constant (currently 9). When
+the stored version differs, `ensureSchema()` drops + recreates every table
+in `index.db` (preserving `usage_events` via a typed backup); the next
+`akm index` repopulates. `workflow.db` (durable run state) is never
+touched by this path.
+
+The `workflow_documents` table caches the validated `WorkflowDocument`
+JSON for each indexed workflow asset (keyed by `entries.id`, FK-cascaded).
+Defined in `src/indexer/db.ts`; produced by `parseWorkflow()` in
+`src/workflows/parser.ts`.
+
 ---
 
 ## 7. Module layout
