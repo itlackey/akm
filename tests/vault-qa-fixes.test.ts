@@ -136,10 +136,49 @@ describe("vault show: alias for vault list <ref>", () => {
   });
 });
 
+describe("vault list: output flags with optional ref", () => {
+  test("6. vault list --format json returns the vault list, not a vault:json error", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
+
+    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("Vault not found: vault:json");
+
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed.vaults).toEqual([
+      expect.objectContaining({
+        ref: "vault:prod",
+        path: path.join(stashDir, "vaults", "prod.env"),
+        keyCount: 1,
+      }),
+    ]);
+  });
+
+  test("7. vault list json --format json still treats json as the ref", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "json.env"), "# json vault\nAPI_KEY=secret\n", "utf8");
+
+    const result = runCli(["vault", "list", "json", "--format", "json"], { AKM_STASH_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+
+    const parsed = JSON.parse(result.stdout.trim());
+    expect(parsed).toMatchObject({
+      ref: "vault:json",
+      path: path.join(stashDir, "vaults", "json.env"),
+      entries: [expect.objectContaining({ key: "API_KEY" })],
+    });
+  });
+});
+
 // ── vault set combined KEY=VALUE form (CLI tests) ────────────────────────────
 
 describe("vault set: KEY=VALUE combined form", () => {
-  test("6. vault set prod KEY=value succeeds and writes KEY=value", () => {
+  test("8. vault set prod KEY=value succeeds and writes KEY=value", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
@@ -151,7 +190,7 @@ describe("vault set: KEY=VALUE combined form", () => {
     expect(loadEnv(vaultPath).MY_KEY).toBe("myvalue");
   });
 
-  test("7. vault set prod KEY value (3-arg form) still works", () => {
+  test("9. vault set prod KEY value (3-arg form) still works", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
@@ -163,7 +202,7 @@ describe("vault set: KEY=VALUE combined form", () => {
     expect(loadEnv(vaultPath).ANOTHER_KEY).toBe("anothervalue");
   });
 
-  test("8. vault set prod KEY=val1=val2 writes KEY with value val1=val2 (split on first =)", () => {
+  test("10. vault set prod KEY=val1=val2 writes KEY with value val1=val2 (split on first =)", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
@@ -179,7 +218,7 @@ describe("vault set: KEY=VALUE combined form", () => {
 // ── vault set --comment flag (CLI tests) ─────────────────────────────────────
 
 describe("vault set: --comment flag", () => {
-  test("9. vault set prod KEY val --comment writes a comment line above the key", () => {
+  test("11. vault set prod KEY val --comment writes a comment line above the key", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
