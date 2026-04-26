@@ -1681,7 +1681,7 @@ function listVaultsRecursive(
   return result;
 }
 
-function isVaultListRefMisparsedFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
+function wasRefMisparsedAsFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
   const argv = process.argv.slice(2);
   const vaultIndex = argv.indexOf("vault");
   const listIndex = vaultIndex >= 0 ? argv.indexOf("list", vaultIndex + 1) : -1;
@@ -1703,11 +1703,15 @@ function isVaultListRefMisparsedFlagValue(ref: string, flag: "--format" | "--det
   }
 
   if (flagIndex === -1) return false;
+  // If the same token appeared before the flag, the user explicitly passed it
+  // as the positional ref and it was not consumed by the output flag.
   if (tokens.slice(0, flagIndex).includes(ref)) return false;
 
-  const SPACE_SEPARATED_FLAG_OFFSET = 2;
-  const EQUALS_FLAG_OFFSET = 1;
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? SPACE_SEPARATED_FLAG_OFFSET : EQUALS_FLAG_OFFSET);
+  // Skip past either `--flag value` (2 tokens) or `--flag=value` (1 token)
+  // before checking whether the ref appears elsewhere as a real positional.
+  const TOKENS_AFTER_SPACE_FLAG = 2;
+  const TOKENS_AFTER_EQUALS_FLAG = 1;
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? TOKENS_AFTER_SPACE_FLAG : TOKENS_AFTER_EQUALS_FLAG);
   if (tokens.slice(firstTokenAfterFlag).includes(ref)) return false;
 
   return true;
@@ -1717,20 +1721,12 @@ function resolveVaultListRef(ref: string | undefined): string | undefined {
   if (ref === undefined) return undefined;
 
   const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (
-    parsedFormat !== undefined &&
-    ref === parsedFormat &&
-    isVaultListRefMisparsedFlagValue(ref, "--format", parsedFormat)
-  ) {
+  if (parsedFormat !== undefined && ref === parsedFormat && wasRefMisparsedAsFlagValue(ref, "--format", parsedFormat)) {
     return undefined;
   }
 
   const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (
-    parsedDetail !== undefined &&
-    ref === parsedDetail &&
-    isVaultListRefMisparsedFlagValue(ref, "--detail", parsedDetail)
-  ) {
+  if (parsedDetail !== undefined && ref === parsedDetail && wasRefMisparsedAsFlagValue(ref, "--detail", parsedDetail)) {
     return undefined;
   }
 
