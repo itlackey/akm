@@ -241,8 +241,9 @@ function hasWikiInfrastructure(wikiDir: string): boolean {
   return false;
 }
 
-function isRecognizedStashWiki(wikiDir: string, buckets = scanWikiFiles(wikiDir)): boolean {
-  return buckets.pages.length > 0 || hasWikiInfrastructure(wikiDir);
+function isRecognizedStashWiki(wikiDir: string, buckets?: WikiFileBuckets): boolean {
+  const scanned = buckets ?? scanWikiFiles(wikiDir);
+  return scanned.pages.length > 0 || hasWikiInfrastructure(wikiDir);
 }
 
 function readSchemaDescription(wikiDir: string): string | undefined {

@@ -940,6 +940,10 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
       const listJson = parseJson(listResult.stdout);
       expect(listJson.wikis).toEqual([]);
 
+      const showResult = runCli("wiki", "show", "my-notes", "--format", "json");
+      expect(showResult.exitCode).not.toBe(0);
+      expect(showResult.stderr).toContain("Wiki not found: my-notes");
+
       const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
       expect(cleanupResult.exitCode).toBe(0);
     } finally {
