@@ -289,7 +289,10 @@ describe("Database search path (FTS scoring)", () => {
       "skills/plugins/dotnet-msbuild/agents/msbuild.agent",
     ]);
     expect(localHits.every((hit) => hit.type === "agent")).toBe(true);
-    expect(localHits.every((hit) => hit.ref.startsWith("agent:skills/plugins/dotnet-msbuild/agents/"))).toBe(true);
+    expect(localHits.every((hit) => hit.ref.startsWith("agent:"))).toBe(true);
+    expect(localHits.map((hit) => hit.ref.slice("agent:".length)).sort()).toEqual(
+      localHits.map((hit) => hit.name).sort(),
+    );
     expect(localHits.every((hit) => hit.path.endsWith(".agent.md"))).toBe(true);
   });
 
