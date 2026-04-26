@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveStashDir } from "../core/common";
+import { isWithin, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
@@ -17,6 +17,7 @@ import type { InstalledStashEntry } from "../registry/types";
 import { syncFromRef } from "../sources/providers/sync-from-ref";
 import { ensureWebsiteMirror } from "../sources/providers/website";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../sources/types";
+import { listWikis, resolveWikisRoot } from "../wiki/wiki";
 import {
   auditInstallCandidate,
   deriveRegistryLabels,
@@ -68,6 +69,30 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
       writable: entry.writable === true,
       status: { exists: directoryExists(entry.stashRoot) },
     });
+  }
+
+  if (!kindFilter || kindFilter.includes("filesystem")) {
+    const wikisRoot = resolveWikisRoot(stashDir);
+    const seenPaths = new Set(
+      sources
+        .map((source) => source.path)
+        .filter((sourcePath): sourcePath is string => typeof sourcePath === "string")
+        .map((sourcePath) => path.resolve(sourcePath)),
+    );
+    for (const wiki of listWikis(stashDir)) {
+      if (!isWithin(wiki.path, wikisRoot)) continue;
+      const resolvedPath = path.resolve(wiki.path);
+      if (seenPaths.has(resolvedPath)) continue;
+      seenPaths.add(resolvedPath);
+      sources.push({
+        name: wiki.name,
+        kind: "filesystem",
+        wiki: wiki.name,
+        path: wiki.path,
+        writable: true,
+        status: { exists: directoryExists(wiki.path) },
+      });
+    }
   }
 
   return {

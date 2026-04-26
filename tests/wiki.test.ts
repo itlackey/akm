@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/core/config";
 import { buildFileContext } from "../src/indexer/file-context";
+import { akmIndex } from "../src/indexer/indexer";
 import { wikiMatcher } from "../src/indexer/matchers";
 import {
   buildIngestWorkflow,
@@ -282,7 +283,7 @@ describe("removeWiki", () => {
 // ── Pages ───────────────────────────────────────────────────────────────────
 
 describe("listPages", () => {
-  test("excludes schema.md, index.md, log.md, and raw/**", () => {
+  test("includes raw sources but excludes schema.md, index.md, and log.md", () => {
     const stash = makeStash();
     createWiki(stash, "research");
     const wikiDir = path.join(stash, WIKIS_SUBDIR, "research");
@@ -291,7 +292,7 @@ describe("listPages", () => {
     writePage(wikiDir, "raw/paper.md", "# raw doc\n");
     const pages = listPages(stash, "research");
     const refs = pages.map((p) => p.ref).sort();
-    expect(refs).toEqual(["wiki:research/page-a", "wiki:research/sub/page-b"]);
+    expect(refs).toEqual(["wiki:research/page-a", "wiki:research/raw/paper", "wiki:research/sub/page-b"]);
     expect(pages.find((p) => p.ref === "wiki:research/page-a")?.description).toBe("Page A");
     expect(pages.find((p) => p.ref === "wiki:research/page-a")?.pageKind).toBe("concept");
   });
@@ -565,6 +566,37 @@ describe("searchInWiki", () => {
       const response = await searchInWiki({ stashDir: stash, wikiName: "ics-docs", query: "attention" });
 
       expect(response.hits.some((hit) => hit.type !== "registry" && hit.ref.includes("wiki:ics-docs/attention"))).toBe(
+        true,
+      );
+    } finally {
+      if (origStash === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = origStash;
+      if (origHome === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = origHome;
+    }
+  });
+
+  test("includes raw hits for stash-owned wiki sources after indexing", async () => {
+    const stash = makeStash();
+    const origStash = process.env.AKM_STASH_DIR;
+    const origHome = process.env.XDG_CONFIG_HOME;
+    process.env.AKM_STASH_DIR = stash;
+    process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wiki-search-raw-home-"));
+    tempDirs.push(process.env.XDG_CONFIG_HOME);
+    try {
+      createWiki(stash, "alpha");
+      stashRaw({
+        stashDir: stash,
+        wikiName: "alpha",
+        content: "# Hello World\n\nRaw source content.\n",
+        preferredName: "hello-world",
+      });
+      saveConfig({ semanticSearchMode: "off" });
+      await akmIndex({ stashDir: stash, full: true });
+
+      const response = await searchInWiki({ stashDir: stash, wikiName: "alpha", query: "hello world" });
+
+      expect(response.hits.some((hit) => hit.type !== "registry" && hit.ref === "wiki:alpha/raw/hello-world")).toBe(
         true,
       );
     } finally {

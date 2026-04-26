@@ -6,6 +6,7 @@ import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
+import { createWiki, stashRaw } from "../../src/wiki/wiki";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -136,6 +137,26 @@ describe("Database search path (FTS scoring)", () => {
     expect(wikiHit.action).toBe(
       "akm show wiki:ics-docs/tools/documentation/how-to/001-get-started-with-ics-documentation -> read the wiki page",
     );
+  });
+
+  test("stash-owned raw wiki pages are discoverable in global wiki search", async () => {
+    const stashDir = tmpStash();
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    createWiki(stashDir, "notes");
+    stashRaw({
+      stashDir,
+      wikiName: "notes",
+      content: "# Hello World\n\nThis raw page should be searchable.\n",
+      preferredName: "hello-world",
+    });
+
+    await akmIndex({ stashDir, full: true });
+
+    const result = await akmSearch({ query: "hello world", type: "wiki", source: "stash" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    expect(localHits.some((hit) => hit.ref === "wiki:notes/raw/hello-world")).toBe(true);
   });
 
   test("FTS search returns scored results for matching query", async () => {
