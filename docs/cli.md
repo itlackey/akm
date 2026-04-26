@@ -224,12 +224,13 @@ akm show knowledge:guide lines 10 30
 akm show knowledge:guide frontmatter
 ```
 
-The default JSON shape includes only action-relevant fields. For `show`,
-`--detail normal` currently matches `brief`; `--detail full` adds verbose
-metadata such as `schemaVersion`, `path`, `editable`, and `editHint`;
-`--detail summary` returns a compact view with only `type`, `name`,
-`description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`,
-`origin`, `keys`, and `comments`.
+The default `show` JSON includes the asset body when applicable. Use
+`--detail brief` for a reduced metadata-first view without
+`content`/`template`/`prompt`; `--detail full` adds verbose metadata such as
+`schemaVersion`, `path`, `editable`, and `editHint`; `--detail summary`
+returns a compact view with only `type`, `name`, `description`, `tags`,
+`parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, and
+`comments`.
 
 Returns type-specific payloads:
 

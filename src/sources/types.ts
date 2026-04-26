@@ -230,12 +230,11 @@ export interface UpdateResponse {
 /**
  * Detail level for show responses.
  *
+ * - `"brief"` — returns a reduced metadata-first view without content/template/prompt.
  * - `"summary"` — returns compact metadata only (no content/template/prompt), under 200 tokens.
  * - `"normal"` and `"full"` — both return the complete show response with full content.
- *   The show function treats all non-"summary" values identically; these variants exist
- *   so callers can forward the detail level to output formatting without translation.
  */
-export type ShowDetailLevel = "summary" | "normal" | "full";
+export type ShowDetailLevel = "brief" | "summary" | "normal" | "full";
 
 export interface ShowResponse {
   schemaVersion?: number;
