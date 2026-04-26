@@ -270,6 +270,32 @@ describe("Database search path (FTS scoring)", () => {
     expect(localHits.length).toBe(3);
   });
 
+  test('query "." enumerates indexed agent assets when the type filter is agent', async () => {
+    const stashDir = tmpStash();
+
+    await buildTestIndex(stashDir, {
+      "skills/plugins/dotnet-msbuild/agents/msbuild-code-review.agent.md":
+        "---\ndescription: MSBuild code review agent\nmodel: gpt-5\n---\nReview MSBuild files\n",
+      "skills/plugins/dotnet-msbuild/agents/msbuild.agent.md":
+        "---\ndescription: MSBuild agent\nmodel: gpt-5\n---\nHelp with MSBuild\n",
+    });
+
+    const result = await akmSearch({ query: ".", type: "agent", source: "local" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    expect(localHits).toHaveLength(2);
+    expect(localHits.map((hit) => hit.name).sort()).toEqual([
+      "skills/plugins/dotnet-msbuild/agents/msbuild-code-review.agent",
+      "skills/plugins/dotnet-msbuild/agents/msbuild.agent",
+    ]);
+    expect(localHits.every((hit) => hit.type === "agent")).toBe(true);
+    expect(localHits.every((hit) => hit.ref.startsWith("agent:"))).toBe(true);
+    expect(localHits.map((hit) => hit.ref.slice("agent:".length)).sort()).toEqual(
+      localHits.map((hit) => hit.name).sort(),
+    );
+    expect(localHits.every((hit) => hit.path.endsWith(".agent.md"))).toBe(true);
+  });
+
   test("limit parameter caps results", async () => {
     const stashDir = tmpStash();
 
