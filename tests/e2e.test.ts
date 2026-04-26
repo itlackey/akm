@@ -917,6 +917,40 @@ describe("Scenario: Registry lifecycle CLI (no network)", () => {
     }
   });
 
+  test("cli: wiki remove --force hides preserved raw-only leftovers from wiki list", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-wiki-remove-");
+    const rawSource = path.join(stashDir, "source.md");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.writeFileSync(rawSource, "# Test\n", "utf8");
+
+    try {
+      const createResult = runCli("wiki", "create", "my-notes", "--format", "json");
+      expect(createResult.exitCode).toBe(0);
+
+      const stashResult = runCli("wiki", "stash", "my-notes", rawSource, "--as", "test-page", "--format", "json");
+      expect(stashResult.exitCode).toBe(0);
+
+      const removeResult = runCli("wiki", "remove", "my-notes", "--force", "--format", "text");
+      expect(removeResult.exitCode).toBe(0);
+      expect(removeResult.stdout).toContain("raw/ preserved at");
+
+      const listResult = runCli("wiki", "list", "--format", "json");
+      expect(listResult.exitCode).toBe(0);
+      const listJson = parseJson(listResult.stdout);
+      expect(listJson.wikis).toEqual([]);
+
+      const showResult = runCli("wiki", "show", "my-notes", "--format", "json");
+      expect(showResult.exitCode).not.toBe(0);
+      expect(showResult.stderr).toContain("Wiki not found: my-notes");
+
+      const cleanupResult = runCli("wiki", "remove", "my-notes", "--force", "--with-sources", "--format", "json");
+      expect(cleanupResult.exitCode).toBe(0);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+    }
+  });
+
   test("cli: akm index text output surfaces skipped-asset warnings", async () => {
     const stashDir = createEmptyStashDir("akm-e2e-index-warn-");
     process.env.AKM_STASH_DIR = stashDir;
