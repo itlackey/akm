@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config";
-import { closeDatabase, openDatabase } from "./db";
+import { closeDatabase, findEntryIdByRef, openDatabase } from "./db";
 import { NotFoundError, UsageError } from "./errors";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 import { parseFrontmatter, toStringOrUndefined } from "./frontmatter";
@@ -165,15 +165,10 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   try {
     const db = existingDb ?? openDatabase();
     try {
-      const parsed = parseAssetRef(ref);
-      const safeName = parsed.name.replace(/%/g, "\\%").replace(/_/g, "\\_");
-      const row = db
-        .prepare("SELECT id FROM entries WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1")
-        .get(`%:${parsed.type}:${safeName}`, parsed.type) as { id: number } | undefined;
       insertUsageEvent(db, {
         event_type: "show",
         entry_ref: ref,
-        entry_id: row?.id,
+        entry_id: findEntryIdByRef(db, ref),
       });
     } finally {
       if (!existingDb) closeDatabase(db);
