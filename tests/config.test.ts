@@ -523,7 +523,7 @@ describe("legacy stashes → sources migration", () => {
     expect(config.stashes).toBeUndefined();
   });
 
-  test("migration emits a deprecation warning for legacy stashes key", () => {
+  test("migration rewrites legacy stashes key on first load and emits a notice", () => {
     const warnings: string[] = [];
     const originalWarn = console.warn.bind(console);
     console.warn = (msg: string) => warnings.push(msg);
@@ -535,13 +535,36 @@ describe("legacy stashes → sources migration", () => {
         }),
       );
       loadConfig();
-      expect(warnings.some((w) => w.includes('"stashes"') && w.includes('"sources"'))).toBe(true);
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).toEqual({
+        sources: [{ type: "filesystem", path: "/legacy-path" }],
+      });
+      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
     } finally {
       console.warn = originalWarn;
     }
   });
 
-  test("no deprecation warning when config uses the sources key", () => {
+  test("migration notice is not repeated after the config file has been rewritten", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          stashes: [{ type: "filesystem", path: "/legacy-path" }],
+        }),
+      );
+      loadConfig();
+      resetConfigCache();
+      loadConfig();
+      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("no migration notice when config already uses the sources key", () => {
     const warnings: string[] = [];
     const originalWarn = console.warn.bind(console);
     console.warn = (msg: string) => warnings.push(msg);
@@ -553,7 +576,7 @@ describe("legacy stashes → sources migration", () => {
         }),
       );
       loadConfig();
-      expect(warnings.some((w) => w.includes('"stashes"') && w.includes('"sources"'))).toBe(false);
+      expect(warnings).toEqual([]);
     } finally {
       console.warn = originalWarn;
     }
@@ -818,7 +841,7 @@ describe("stash type alias normalization", () => {
     expect(loaded.sources?.[0].type).toBe("git");
   });
 
-  test("does not rewrite config.json on disk when normalizing aliases", () => {
+  test("rewrites stashes to sources without rewriting alias types on disk", () => {
     const raw = JSON.stringify(
       {
         semanticSearchMode: "auto",
@@ -832,6 +855,6 @@ describe("stash type alias normalization", () => {
     loadConfig();
 
     const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(onDisk.stashes?.[0]?.type).toBe("context-hub");
+    expect(onDisk.sources?.[0]?.type).toBe("context-hub");
   });
 });
