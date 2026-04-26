@@ -1681,6 +1681,36 @@ function listVaultsRecursive(
   return result;
 }
 
+function wasVaultListFlagValueConsumedAsRef(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
+  const argv = process.argv.slice(2);
+  const vaultIndex = argv.indexOf("vault");
+  const listIndex = vaultIndex >= 0 ? argv.indexOf("list", vaultIndex + 1) : -1;
+  const tokens = listIndex >= 0 ? argv.slice(listIndex + 1) : argv;
+
+  let flagIndex = -1;
+  let flagConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === flag) {
+      flagIndex = i;
+      flagConsumesNextToken = true;
+      break;
+    }
+    if (token === `${flag}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (tokens.slice(0, flagIndex).includes(ref)) return false;
+
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFlag).includes(ref)) return false;
+
+  return true;
+}
+
 const vaultListCommand = defineCommand({
   meta: { name: "list", description: "List vaults, or list keys (no values) inside one vault" },
   args: {
@@ -1689,8 +1719,21 @@ const vaultListCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { listKeys, listEntries } = await import("./commands/vault.js");
-      if (args.ref) {
-        const { name, absPath } = resolveVaultPath(args.ref);
+      const parsedFormat = parseFlagValue(process.argv, "--format");
+      const parsedDetail = parseFlagValue(process.argv, "--detail");
+      const effectiveRef =
+        args.ref !== undefined &&
+        ((parsedFormat !== undefined &&
+          args.ref === parsedFormat &&
+          wasVaultListFlagValueConsumedAsRef(args.ref, "--format", parsedFormat)) ||
+          (parsedDetail !== undefined &&
+            args.ref === parsedDetail &&
+            wasVaultListFlagValueConsumedAsRef(args.ref, "--detail", parsedDetail)))
+          ? undefined
+          : args.ref;
+
+      if (effectiveRef) {
+        const { name, absPath } = resolveVaultPath(effectiveRef);
         if (!fs.existsSync(absPath)) {
           throw new NotFoundError(`Vault not found: vault:${name}`);
         }
