@@ -42,6 +42,12 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
     case "proposal-diff":
       return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm distill <ref>` (#228). The shape is
+    // simple — outcome + ids + optional payload — so `brief` strips the full
+    // proposal blob, `normal` keeps the headline fields, and `full` projects
+    // everything for downstream automation.
+    case "distill":
+      return shapeDistillOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
@@ -123,6 +129,27 @@ export function shapeProposalRejectOutput(
     ref: result.ref,
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeDistillOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposal = result.proposal as Record<string, unknown> | undefined;
+  if (detail === "brief") {
+    return pickFields(result, ["ok", "outcome", "inputRef", "lessonRef", "proposalId", "message"]);
+  }
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    outcome: result.outcome,
+    inputRef: result.inputRef,
+    lessonRef: result.lessonRef,
+    ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}),
+    ...(result.message !== undefined ? { message: result.message } : {}),
+    ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
+    ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
   };
   if (detail === "full") {
     return { schemaVersion: result.schemaVersion ?? 1, ...base };

@@ -5,6 +5,7 @@ import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
+import { akmDistill } from "./commands/distill";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
 import { assembleInfo } from "./commands/info";
@@ -2540,6 +2541,32 @@ const proposalCommand = defineCommand({
   },
 });
 
+// ── distill (#228) ──────────────────────────────────────────────────────────
+
+const distillCommand = defineCommand({
+  meta: {
+    name: "distill",
+    description:
+      "Distil feedback for an asset into a queued lesson proposal (gated on llm.features.feedback_distillation)",
+  },
+  args: {
+    ref: { type: "positional", description: "Asset ref (type:name) to distil from", required: true },
+    "source-run": {
+      type: "string",
+      description: "Optional run id propagated onto the queued proposal for traceability",
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmDistill({
+        ref: args.ref,
+        sourceRun: getHyphenatedArg(args, "source-run"),
+      });
+      output("distill", result);
+    });
+  },
+});
+
 function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
@@ -2588,6 +2615,7 @@ const main = defineCommand({
     history: historyCommand,
     events: eventsCommand,
     proposal: proposalCommand,
+    distill: distillCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
