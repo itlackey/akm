@@ -205,6 +205,16 @@ surface an optional `warnings: string[]` field on hits when a provider has
 non-fatal issues to report; the field is omitted otherwise. Per spec §4.2,
 populating `warnings` does not affect ranking.
 
+> **Score ranges differ between local and registry hits.** Local
+> `SearchHit.score` is the locked v1 contract value in `[0, 1]`, higher = better
+> (CLAUDE.md and v1-architecture-spec §4). Registry `RegistrySearchHit.score`
+> is registry-native: provider-defined and may exceed `1` (the bundled
+> `static-index` provider can emit values up to ~1.85 from `scoreStash()`).
+> Use registry scores only for ranking within a single registry — do **not**
+> compare them numerically against local `SearchHit.score` values or across
+> registries with different scoring formulas. See
+> `docs/technical/v1-architecture-spec.md` §4 for the type-level distinction.
+
 If you want a `ref` handle without the rest of the `full` payload, use
 `--detail=agent`.
 
