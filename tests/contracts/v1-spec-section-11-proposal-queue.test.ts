@@ -3,7 +3,7 @@ import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §11 — Proposal queue (Planned for v1).
 
-const REQUIRED_PROPOSAL_FIELDS = ["id", "ref", "status", "source", "source_run", "created_at", "updated_at"];
+const REQUIRED_PROPOSAL_FIELDS = ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt"];
 
 const REQUIRED_PROPOSAL_COMMANDS = ["list", "show", "diff", "accept", "reject"];
 
@@ -18,21 +18,25 @@ describe("v1 spec §11 — proposal queue", () => {
     expect(section).toContain("Planned for v1");
   });
 
-  test("§11.1 names `proposal.db` as the durable store", () => {
-    expect(section).toContain("proposal.db");
+  test("§11.1 names the per-id proposal directory layout as the durable store", () => {
+    // Storage is one directory per proposal under <stashRoot>/.akm/proposals/<id>/
+    // containing a single proposal.json (queue state, not asset state).
+    expect(section).toContain(".akm/proposals/<id>/");
+    expect(section).toContain("proposal.json");
   });
 
-  test("§11.1 declares each required proposal row field", () => {
+  test("§11.1 declares each required proposal field", () => {
     for (const field of REQUIRED_PROPOSAL_FIELDS) {
       expect(section).toContain(`\`${field}\``);
     }
   });
 
-  test("§11.1 declares pending/accepted/rejected/archived statuses", () => {
+  test("§11.1 declares pending/accepted/rejected statuses + archive-by-move", () => {
     expect(section).toContain("`pending`");
     expect(section).toContain("`accepted`");
     expect(section).toContain("`rejected`");
-    expect(section).toContain("`archived`");
+    // Archival is a directory move, not a separate status (see §11.1 prose).
+    expect(section).toMatch(/archive\/<id>\/|archive-by-move|moved to.*archive/i);
   });
 
   test("§11.2 lists every proposal subcommand", () => {
@@ -54,9 +58,10 @@ describe("v1 spec §11 — proposal queue", () => {
   });
 
   test("§11.1 says multiple proposals per `ref` coexist", () => {
-    // The id is per-row; the ref isn't unique. The queue must hold N proposals
-    // for the same target ref without filesystem collisions.
-    expect(section).toMatch(/Multiple proposals for\s*the same `ref`/i);
+    // The id is per-proposal; the ref isn't unique. The queue must hold N
+    // proposals for the same target ref without filesystem collisions.
+    // Directory-per-id is the mechanism the spec calls out for this.
+    expect(section).toMatch(/multiple proposals.*for the same `ref`|coexist for the same `ref`/i);
   });
 
   test("§11.2 names a `--reason` flag on `reject`", () => {
