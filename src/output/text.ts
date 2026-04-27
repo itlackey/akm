@@ -190,9 +190,94 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "events-tail": {
       return formatEventsPlain(r);
     }
+    // Output shape registration for `akm proposal *` (#225).
+    case "proposal-list": {
+      return formatProposalListPlain(r);
+    }
+    case "proposal-show": {
+      return formatProposalShowPlain(r);
+    }
+    case "proposal-accept": {
+      return formatProposalAcceptPlain(r);
+    }
+    case "proposal-reject": {
+      return formatProposalRejectPlain(r);
+    }
+    case "proposal-diff": {
+      return formatProposalDiffPlain(r);
+    }
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatProposalListPlain(r: Record<string, unknown>): string {
+  const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
+  const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
+  if (proposals.length === 0) return `${total} proposal(s).\nNo proposals.`;
+  const lines = [`${total} proposal(s)`, ""];
+  for (const p of proposals) {
+    const id = String(p.id ?? "?");
+    const ref = String(p.ref ?? "?");
+    const status = String(p.status ?? "?");
+    const source = String(p.source ?? "?");
+    const created = String(p.createdAt ?? "?");
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}`);
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatProposalShowPlain(r: Record<string, unknown>): string {
+  const p = (r.proposal as Record<string, unknown>) ?? {};
+  const lines: string[] = [];
+  lines.push(`# proposal ${String(p.id ?? "?")}`);
+  lines.push(`ref: ${String(p.ref ?? "?")}`);
+  lines.push(`status: ${String(p.status ?? "?")}`);
+  lines.push(`source: ${String(p.source ?? "?")}`);
+  if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
+  if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
+  if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  const review = p.review as Record<string, unknown> | undefined;
+  if (review) {
+    lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
+    if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
+    if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
+  }
+  const validation = r.validation as Record<string, unknown> | undefined;
+  if (validation) {
+    const ok = validation.ok === true;
+    const findings = Array.isArray(validation.findings) ? (validation.findings as Array<Record<string, unknown>>) : [];
+    lines.push("");
+    lines.push(`validation: ${ok ? "ok" : `${findings.length} finding(s)`}`);
+    for (const f of findings) {
+      lines.push(`  - [${String(f.kind)}] ${String(f.message)}`);
+    }
+  }
+  const payload = p.payload as Record<string, unknown> | undefined;
+  if (payload && typeof payload.content === "string") {
+    lines.push("");
+    lines.push("payload:");
+    lines.push(payload.content);
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
+  return `Accepted proposal ${String(r.id ?? "?")} → ${String(r.ref ?? "?")} at ${String(r.assetPath ?? "?")}`;
+}
+
+export function formatProposalRejectPlain(r: Record<string, unknown>): string {
+  const reason = r.reason ? ` (${String(r.reason)})` : "";
+  return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
+}
+
+export function formatProposalDiffPlain(r: Record<string, unknown>): string {
+  const header = r.isNew
+    ? `# proposal ${String(r.id ?? "?")} (new asset: ${String(r.ref ?? "?")})`
+    : `# proposal ${String(r.id ?? "?")} (update: ${String(r.ref ?? "?")})`;
+  const unified = typeof r.unified === "string" ? r.unified : "";
+  if (!unified) return `${header}\n(no changes)`;
+  return `${header}\n${unified}`;
 }
 
 export function formatEventsPlain(r: Record<string, unknown>): string {

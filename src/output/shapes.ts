@@ -27,9 +27,121 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "events-list":
     case "events-tail":
       return shapeEventsOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm proposal {list,show,accept,reject,diff}`
+    // (#225). Each verb gets its own arm so the registry stays exhaustive (no
+    // silent JSON.stringify fallback). The proposal payload is reshaped per
+    // detail level — `brief` strips the content body and review notes;
+    // `full`/`agent` includes everything.
+    case "proposal-list":
+      return shapeProposalListOutput(result as Record<string, unknown>, detail);
+    case "proposal-show":
+      return shapeProposalShowOutput(result as Record<string, unknown>, detail);
+    case "proposal-accept":
+      return shapeProposalAcceptOutput(result as Record<string, unknown>, detail);
+    case "proposal-reject":
+      return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
+    case "proposal-diff":
+      return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
+}
+
+export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+  }
+  // full / agent: project everything including the payload.
+  return pickFields(entry, [
+    "id",
+    "ref",
+    "status",
+    "source",
+    "sourceRun",
+    "createdAt",
+    "updatedAt",
+    "payload",
+    "review",
+  ]);
+}
+
+export function shapeProposalListOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposals = Array.isArray(result.proposals) ? (result.proposals as Record<string, unknown>[]) : [];
+  const shaped = proposals.map((p) => shapeProposalEntry(p, detail));
+  const base: Record<string, unknown> = {
+    totalCount: result.totalCount ?? shaped.length,
+    proposals: shaped,
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const validation = result.validation as Record<string, unknown> | undefined;
+  const base: Record<string, unknown> = {
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+    ...(validation ? { validation } : {}),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalAcceptOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    assetPath: result.assetPath,
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalRejectOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    ...(result.reason !== undefined ? { reason: result.reason } : {}),
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalDiffOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    id: result.id,
+    ref: result.ref,
+    isNew: result.isNew,
+    unified: result.unified,
+    ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
 }
 
 export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
