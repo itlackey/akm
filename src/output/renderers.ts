@@ -450,6 +450,67 @@ const wikiMdRenderer: AssetRenderer = {
   },
 };
 
+// ── 4c. lesson-md ────────────────────────────────────────────────────────────
+
+/**
+ * Renderer for the `lesson` asset type (v1 spec §13).
+ *
+ * Lessons are markdown files with required `description` and `when_to_use`
+ * frontmatter. The renderer projects both fields explicitly so consumers can
+ * decide whether to apply a lesson without reading the full body. Lint
+ * (see `src/core/lesson-lint.ts`) is the contract enforcer; the renderer is
+ * intentionally tolerant — a lesson missing required fields will still render
+ * its body so the user has something to work with while they fix the file.
+ */
+const lessonMdRenderer: AssetRenderer = {
+  name: "lesson-md",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    const parsed = parseFrontmatter(ctx.content());
+    const description = toStringOrUndefined(parsed.data.description);
+    const whenToUse = toStringOrUndefined(parsed.data.when_to_use);
+    const action = whenToUse
+      ? `Apply this lesson when: ${whenToUse}`
+      : "Apply this lesson when its `when_to_use` trigger matches the current task.";
+    return {
+      type: "lesson",
+      name,
+      path: ctx.absPath,
+      action,
+      description,
+      content: parsed.content,
+    };
+  },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    try {
+      const parsed = parseFrontmatter(ctx.content());
+      const fm = parsed.data;
+      const desc = toStringOrUndefined(fm.description);
+      if (desc && !entry.description) {
+        entry.description = desc;
+        entry.source = "frontmatter";
+        entry.confidence = 0.9;
+      }
+      const whenToUse = toStringOrUndefined(fm.when_to_use);
+      if (whenToUse) {
+        const hints = new Set<string>(entry.searchHints ?? []);
+        hints.add(`when_to_use:${whenToUse}`);
+        entry.searchHints = Array.from(hints).filter(Boolean);
+      }
+      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+        if (fmTags.length > 0) {
+          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+        }
+      }
+    } catch {
+      // Non-fatal: skip metadata extraction on parse error
+    }
+  },
+};
+
 // ── 5. memory-md ─────────────────────────────────────────────────────────────
 
 const memoryMdRenderer: AssetRenderer = {
@@ -637,6 +698,7 @@ const builtinRenderers: AssetRenderer[] = [
   agentMdRenderer,
   knowledgeMdRenderer,
   wikiMdRenderer,
+  lessonMdRenderer,
   memoryMdRenderer,
   workflowMdRenderer,
   scriptSourceRenderer,
@@ -660,6 +722,7 @@ export {
   commandMdRenderer,
   INTERPRETER_MAP,
   knowledgeMdRenderer,
+  lessonMdRenderer,
   memoryMdRenderer,
   SETUP_SIGNALS,
   scriptSourceRenderer,

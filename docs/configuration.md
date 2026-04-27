@@ -485,3 +485,12 @@ are locked and cannot be renamed after v1.0.
 bounded request/response cycle with a hard timeout. There are no caches
 keyed on prior responses, no streaming sessions, and no persistent
 connections. Long-lived state belongs in the agent path, not here.
+
+**Graceful-fallback contract.** Each gated feature uses the
+`tryLlmFeature(feature, config, fn, fallback)` wrapper from
+`src/llm/feature-gate.ts`. The wrapper returns `fallback` on disablement
+(`llm.features.<key>` not `true`), on timeout (default 30s; the wrapper
+raises `LlmFeatureTimeoutError`), or on any thrown error from `fn`. Call
+sites may pass an `onFallback` sink to surface a structured `warnings`
+entry per spec §14.2 — the gate itself never throws and never blocks the
+caller's command.

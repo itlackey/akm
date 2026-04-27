@@ -112,6 +112,18 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     rendererName: "wiki-md",
     actionBuilder: (ref) => `akm show ${ref} -> read the wiki page`,
   },
+  // v1 spec §13 — `lesson` asset type. Required frontmatter fields are
+  // `description` and `when_to_use`; lint enforces both (see
+  // `src/core/lesson-lint.ts`). Lessons normally arrive as proposals via
+  // `akm distill <ref>` (§14.5) and are promoted via `akm proposal accept`,
+  // but they can also be authored directly with `akm import` /
+  // `akm remember`-style flows.
+  lesson: {
+    stashDir: "lessons",
+    ...markdownSpec,
+    rendererName: "lesson-md",
+    actionBuilder: (ref) => `akm show ${ref} -> read the lesson and apply when_to_use`,
+  },
 };
 
 export const ASSET_SPECS: Record<string, AssetSpec> = ASSET_SPECS_INTERNAL;

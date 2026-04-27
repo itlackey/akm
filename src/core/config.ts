@@ -74,11 +74,31 @@ export interface LlmFeatureFlags {
    * regardless of any per-pass setting.
    */
   graph_extraction?: boolean;
-  // Other locked feature keys (curate_rerank, tag_dedup,
-  // memory_consolidation, feedback_distillation, embedding_fallback_score)
-  // are accepted in the on-disk JSON via warn-and-ignore tolerance until
-  // their respective call sites land. They are intentionally not modelled
-  // here yet — adding them is a non-breaking schema extension.
+  /**
+   * Gates the `akm curate` LLM-rerank pass (#227). Default: false.
+   * When false (or absent) curate falls back to the deterministic pipeline.
+   */
+  curate_rerank?: boolean;
+  /**
+   * Gates indexer LLM tag de-duplication (#227). Default: false.
+   * When false, dedup uses a deterministic string-equality pass.
+   */
+  tag_dedup?: boolean;
+  /**
+   * Gates `akm remember --enrich` consolidation (#227). Default: false.
+   * When false, `--enrich` is a no-op and a warning is printed.
+   */
+  memory_consolidation?: boolean;
+  /**
+   * Gates `akm distill <ref>` (§14.5, #227). Default: false.
+   * When false, `akm distill` exits with `ConfigError` and a hint.
+   */
+  feedback_distillation?: boolean;
+  /**
+   * Gates the scorer LLM fallback when no embeddings are available (#227).
+   * Default: false. When false, the scorer uses lexical-only score.
+   */
+  embedding_fallback_score?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -923,14 +943,32 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
       console.warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
       continue;
     }
-    if (key === "memory_inference") {
-      out.memory_inference = value;
-    } else if (key === "graph_extraction") {
-      out.graph_extraction = value;
+    switch (key) {
+      case "memory_inference":
+        out.memory_inference = value;
+        break;
+      case "graph_extraction":
+        out.graph_extraction = value;
+        break;
+      case "curate_rerank":
+        out.curate_rerank = value;
+        break;
+      case "tag_dedup":
+        out.tag_dedup = value;
+        break;
+      case "memory_consolidation":
+        out.memory_consolidation = value;
+        break;
+      case "feedback_distillation":
+        out.feedback_distillation = value;
+        break;
+      case "embedding_fallback_score":
+        out.embedding_fallback_score = value;
+        break;
+      // No default: LOCKED_LLM_FEATURE_KEYS is the source of truth for which
+      // keys are accepted. Adding a new locked key requires an arm here AND a
+      // field on LlmFeatureFlags above.
     }
-    // Other locked keys are accepted but not yet modelled in
-    // LlmFeatureFlags (see comment on the interface). They roundtrip
-    // through `sanitizeConfigForLogging` only if we add fields later.
   }
   return out;
 }
