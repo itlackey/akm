@@ -691,6 +691,29 @@ Crossing this boundary in either direction (calling out to a CLI from the
 in-tree LLM path; calling vendor SDKs from the agent path) is a contract
 violation.
 
+#### Tested at
+
+The boundary is locked by three seam-level tests under
+`tests/architecture/`. They assert the integration **seams**, not the
+implementation:
+
+- `llm-stateless-seam.test.ts` — every export of `src/llm/*` is either a
+  pure function or a factory returning a one-shot client. No module-level
+  state holds session/conversation data across calls. The single
+  module-level singleton (`localEmbedder` in `src/llm/embedder.ts`) is a
+  stateless pipeline handle and exposes `resetLocalEmbedder()` for tests.
+- `agent-spawn-seam.test.ts` — `runAgent(profile, prompt, options)` from
+  `src/integrations/agent/spawn.ts` exposes the `AgentRunResult` envelope,
+  the `AgentFailureReason` discriminated union (`"timeout" |
+  "spawn_failed" | "non_zero_exit" | "parse_error"`), and the
+  captured/interactive stdio modes documented in §12.2.
+- `agent-no-llm-sdk-guard.test.ts` — regression-only file-content guard.
+  It scans `src/integrations/agent/**` for known LLM SDK package names
+  (e.g. `@anthropic-ai/sdk`, `openai`, `@google/generative-ai`) and
+  fails if any are imported. **This guard is defence-in-depth**: the
+  primary enforcement is the seam tests above and code review. The guard
+  exists to surface accidental regressions in PRs.
+
 ---
 
 ## 10. Refactor plan from 0.6.0
@@ -921,6 +944,28 @@ to the schema is itself a non-event.
 | `memory_consolidation` | `akm remember --enrich` consolidation pass | `--enrich` is a no-op; warning printed |
 | `feedback_distillation` | `akm distill <ref>` (§14.5) | `akm distill` exits with `ConfigError` and a hint |
 | `embedding_fallback_score` | scorer fallback when no embeddings available | Scorer uses lexical-only score |
+| `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
+| `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during `akm index`, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
+
+#### `llm.features.<key>` and `index.<pass>.llm` are orthogonal
+
+Some indexer LLM call sites are also addressable by the per-pass opt-out
+key documented in §9 / `index.<pass>.llm` (e.g. `memory_inference`
+corresponds to the `index.memory.llm` per-pass key, and `graph_extraction`
+corresponds to `index.graph.llm`). The two surfaces are deliberately
+orthogonal:
+
+- `llm.features.<key>` governs whether the call is **permitted at all**.
+  It is the locked feature gate (§14) — disabling it prevents every call
+  site under that key from issuing a network request, regardless of any
+  per-pass setting.
+- `index.<pass>.llm` governs whether the indexer should **run that pass
+  during this index** (§9). It is a runtime opt-out for the indexer's
+  per-pass orchestration.
+
+A pass runs iff `llm.features.<key> !== false` **AND** the per-pass
+`index.<pass>.llm` is not `false`. Either flag set to `false` short-circuits
+the pass to its disabled fallback.
 
 ### 14.2 Failure modes
 

@@ -171,6 +171,10 @@ akm search "deploy"
 akm search "deploy" --type script --limit 10
 akm search "lint" --source registry
 akm search "docker" --source both --detail full
+
+# Multi-tenant scope filtering (0.7.0+):
+akm search "deploy" --filter user=alice
+akm search "deploy" --filter user=alice --filter agent=claude
 ```
 
 | Flag | Values | Default | Description |
@@ -178,8 +182,15 @@ akm search "docker" --source both --detail full
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
+| `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level (`summary` returns metadata-only, under 200 tokens) |
+
+`--filter` flags AND-join: every supplied key must match the entry's
+`scope` for the entry to appear in the result set. Entries without any scope
+are excluded as soon as a filter is supplied. With no `--filter` (the
+default), unfiltered queries continue to surface all entries — including
+legacy memories that pre-date the scope contract.
 
 Local hits include a `ref` handle for use with `akm show`. Key fields in
 search results:
@@ -257,7 +268,17 @@ akm show knowledge:guide toc
 akm show knowledge:guide section "Authentication"
 akm show knowledge:guide lines 10 30
 akm show knowledge:guide frontmatter
+
+# Multi-tenant scope filtering (0.7.0+):
+akm show memory:retro --scope user=alice
+akm show memory:retro --scope user=alice --scope agent=claude
 ```
+
+`--scope` accepts the same `<key>=<value>` shape as `akm search --filter`
+(repeatable; valid keys: `user`, `agent`, `run`, `channel`). When supplied,
+the resolved asset's frontmatter `scope_*` keys must match every supplied
+filter. A mismatch (or absent scope) returns `NotFoundError` so the caller
+cannot accidentally read out-of-scope content.
 
 The default `show` JSON includes the asset body when applicable. Use
 `--detail brief` for a reduced metadata-first view without
@@ -683,6 +704,10 @@ akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
 
 # Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
 akm remember "Long meeting notes..." --enrich
+
+# Multi-tenant / multi-agent scope (0.7.0+):
+akm remember "Use staging cluster for blue-green" \
+  --user alice --agent claude --run run-42 --channel "#ops"
 ```
 
 | Flag | Description |
@@ -694,6 +719,10 @@ akm remember "Long meeting notes..." --enrich
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
+| `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
+| `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
+| `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
@@ -704,6 +733,15 @@ frontmatter — existing agent scripts keep working unchanged. Any use of
 `--tag` / `--expires` / `--source` / `--auto` / `--enrich` triggers a
 required-field check: if `tags` cannot be derived, the command rejects
 *before* writing the file, so you never end up with an orphan.
+
+**Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
+of the tag-required check. They write the four canonical top-level
+frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
+and a memory with only scope flags is valid (no tags required). Scope is the
+multi-tenant / multi-agent contract; the same shape is read back by
+`akm search --filter` and `akm show --scope`. See
+[Configuration → Memory scope](configuration.md#memory-scope) for the
+frontmatter schema and round-trip rules.
 
 ### import
 
@@ -753,6 +791,114 @@ akm feedback skill:code-review --positive --note "Worked perfectly for PR review
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
+
+### history
+
+Surface per-asset state changes recorded in the local `usage_events` log
+(searches, shows, feedback, and any other mutations the indexer has captured).
+Use it for audit trails, lifecycle inspection, and debugging utility-score
+shifts without re-deriving an audit log from raw SQL.
+
+`history` is the *per-asset state-change* view. It complements the realtime
+events stream proposed in [#204](https://github.com/itlackey/agentikit/issues/204):
+events emit at the moment a mutation happens; `history` is the durable replay
+of what was recorded for an asset (or for the whole stash).
+
+```sh
+akm history                                    # Stash-wide, oldest first
+akm history --ref skill:deploy                 # Filter to one asset ref
+akm history --since 2026-04-01T00:00:00Z       # Filter by ISO timestamp
+akm history --since 1717200000000              # Filter by epoch ms
+akm history --ref skill:deploy --format jsonl  # One entry per line
+akm history --format text                      # Human-readable trail
+```
+
+| Flag | Description |
+| --- | --- |
+| `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
+| `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
+| `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
+
+Output envelope (JSON):
+
+```json
+{
+  "schemaVersion": 1,
+  "ref": "skill:deploy",
+  "since": "2026-04-01 00:00:00",
+  "totalCount": 3,
+  "entries": [
+    {
+      "id": 17,
+      "eventType": "feedback",
+      "ref": "skill:deploy",
+      "entryId": 42,
+      "query": null,
+      "signal": "positive",
+      "metadata": null,
+      "createdAt": "2026-04-12 14:03:21"
+    }
+  ],
+  "warnings": []
+}
+```
+
+`schemaVersion` is always `1` for this release. `ref` and `since` are echoed
+back only when the corresponding flags were supplied. `totalCount` matches
+`entries.length` (no server-side pagination yet). `warnings` is omitted when
+empty. Entries are returned in chronological order (oldest first).
+
+If the stash has never been indexed, the `usage_events` schema is created
+on demand and the command returns an empty `entries` array rather than
+erroring.
+
+### events
+
+Append-only realtime events stream (#204). Every mutating CLI verb appends
+a JSON line to `<cacheDir>/events.jsonl`; `akm events list` reads it and
+`akm events tail` follows it via polling.
+
+```sh
+akm events list                                   # All events, oldest first
+akm events list --type feedback                   # Filter by event type
+akm events list --ref skill:deploy                # Filter by asset ref
+akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
+akm events list --since '@offset:12345'           # Resume from a byte cursor
+akm events tail --max-events 10                   # Follow until 10 events
+akm events tail --format jsonl                    # Stream as JSONL
+```
+
+| Flag | Description |
+| --- | --- |
+| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
+| `--type` | Filter by event type (`add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`). |
+| `--ref` | Filter by asset ref (`[origin//]type:name`). |
+| `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
+| `--max-events` | (`tail` only) Stop after this many events. |
+| `--max-duration-ms` | (`tail` only) Stop after this many ms. |
+
+The list/tail envelope echoes a `nextOffset` byte cursor — persist it and
+pass it back as `--since '@offset:<nextOffset>'` to resume from exactly
+where you stopped, with no duplicates and no losses, even across process
+boundaries.
+
+Streaming output (`--format jsonl` / `--format text`) emits each event as
+a single line on stdout, then a trailer:
+
+- `--format jsonl` ends with a final discriminated row on stdout:
+  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<bytes>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
+- `--format text` writes the trailer to stderr to keep stdout pristine for
+  line-oriented parsers: `[events-tail] reason=<r> nextOffset=<n> total=<t>`.
+
+#### Environment isolation
+
+`events.jsonl` lives at `<cacheDir>/events.jsonl`, where `<cacheDir>` is
+derived from `XDG_CACHE_HOME` at the time of each call. Two processes with
+different inherited `XDG_CACHE_HOME` values write to different files; if
+the events stream is being used as a shared bus between cooperating
+processes, set `XDG_CACHE_HOME` consistently across them. This is the same
+env-isolation behaviour the rest of akm uses for config, caches, and
+indexes.
 
 ### registry
 

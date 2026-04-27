@@ -179,9 +179,85 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
       const over = r.overwritten ? " (overwritten)" : "";
       return `Cloned${remote} → ${dst}${over}`;
     }
+    // Output shape registration for `akm history` — paired with the shape function in shapes.ts.
+    case "history": {
+      return formatHistoryPlain(r);
+    }
+    // Output shape registration for `akm events list` / `akm events tail`
+    // (#204). Both share a renderer; `events-tail` is also called per-event
+    // by the streaming code path via `formatEventLine`.
+    case "events-list":
+    case "events-tail": {
+      return formatEventsPlain(r);
+    }
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatEventsPlain(r: Record<string, unknown>): string {
+  const events = Array.isArray(r.events) ? (r.events as Array<Record<string, unknown>>) : [];
+  const headerParts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
+  if (typeof r.type === "string" && r.type) headerParts.push(`type: ${r.type}`);
+  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
+  const totalCount = typeof r.totalCount === "number" ? r.totalCount : events.length;
+  headerParts.push(`${totalCount} event(s)`);
+  const header = headerParts.join("  ");
+  if (events.length === 0) {
+    return `${header}\nNo events.`;
+  }
+  const lines = [header, ""];
+  for (const event of events) {
+    lines.push(formatEventLine(event));
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatEventLine(event: Record<string, unknown>): string {
+  const ts = String(event.ts ?? "?");
+  const eventType = String(event.eventType ?? "?");
+  const ref = event.ref ? String(event.ref) : null;
+  const head = ref ? `${ts}  [${eventType}] ${ref}` : `${ts}  [${eventType}]`;
+  if (event.metadata != null && event.metadata !== "") {
+    const meta = typeof event.metadata === "string" ? event.metadata : JSON.stringify(event.metadata);
+    return `${head}\n  metadata: ${meta}`;
+  }
+  return head;
+}
+
+export function formatHistoryPlain(r: Record<string, unknown>): string {
+  const entries = Array.isArray(r.entries) ? (r.entries as Array<Record<string, unknown>>) : [];
+  const headerParts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
+  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
+  const totalCount = typeof r.totalCount === "number" ? r.totalCount : entries.length;
+  headerParts.push(`${totalCount} event(s)`);
+  const header = headerParts.join("  ");
+
+  if (entries.length === 0) {
+    const scope = typeof r.ref === "string" && r.ref ? ` for ${r.ref}` : "";
+    return `${header}\nNo history${scope}.`;
+  }
+
+  const lines: string[] = [header, ""];
+  for (const entry of entries) {
+    const created = String(entry.createdAt ?? "?");
+    const eventType = String(entry.eventType ?? "?");
+    const ref = entry.ref ? String(entry.ref) : null;
+    const signal = entry.signal ? String(entry.signal) : null;
+    const query = entry.query ? String(entry.query) : null;
+
+    const head = ref ? `${created}  [${eventType}] ${ref}` : `${created}  [${eventType}]`;
+    lines.push(head);
+    if (signal) lines.push(`  signal: ${signal}`);
+    if (query) lines.push(`  query: ${query}`);
+    if (entry.metadata != null && entry.metadata !== "") {
+      const meta = typeof entry.metadata === "string" ? entry.metadata : JSON.stringify(entry.metadata);
+      lines.push(`  metadata: ${meta}`);
+    }
+  }
+  return lines.join("\n").trimEnd();
 }
 
 function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): string | null {

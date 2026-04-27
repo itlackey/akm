@@ -116,6 +116,46 @@ and other write commands when `--target` is omitted. Resolution order:
 If none of those are configured, write commands raise a `ConfigError` that
 points at `akm init`.
 
+## Memory scope
+
+Multi-tenant / multi-agent deployments scope memories with four canonical
+top-level frontmatter keys. The `akm remember --user --agent --run --channel`
+flags write these keys; `akm search --filter` and `akm show --scope` read
+them back.
+
+| Frontmatter key | CLI flag | Meaning |
+| --- | --- | --- |
+| `scope_user` | `--user <id>` | User id this memory belongs to |
+| `scope_agent` | `--agent <id>` | Agent id that produced or consumes this memory |
+| `scope_run` | `--run <id>` | Run id (single agent invocation / chat session) |
+| `scope_channel` | `--channel <name>` | Channel / conversation name |
+
+All four are independent and optional. A memory may carry any subset; absent
+keys are simply not emitted. Example:
+
+```yaml
+---
+tags: [ops]
+scope_user: alice
+scope_agent: claude
+---
+Use staging cluster for blue-green deploys.
+```
+
+**Round-trip rules** (carried by spec contract):
+
+- Memories without any `scope_*` key (legacy content written before 0.7.0)
+  load and re-serialize unchanged. They match unfiltered `akm search`
+  queries — but a query with any `--filter` excludes them, since they have
+  no scope key to satisfy the filter.
+- Each scope key is an opaque string (no validation beyond non-empty +
+  trimmed). Use whatever id shape your host system already uses (UUID,
+  email, `@handle`, etc.).
+- The keys are stored flat (top-level) so the existing one-level frontmatter
+  parser reads them without nested-object handling.
+- The four canonical keys are the locked v1 wire contract for scope. Adding
+  new scope keys after v1.0 is a major version bump.
+
 ## Embedding Configuration
 
 Two backends are supported for generating search embeddings.
@@ -195,8 +235,9 @@ for a single pass while keeping it on for others, set
     "model": "llama3.2"
   },
   "index": {
-    "enrichment": { "llm": false }   // skip LLM metadata enrichment
-    // future passes (memory, graph, …) inherit `llm` automatically
+    "enrichment": { "llm": false },  // skip LLM metadata enrichment
+    "memory": { "llm": false },      // skip memory inference (see below)
+    "graph": { "llm": false }        // skip graph extraction (see below)
   }
 }
 ```
@@ -207,6 +248,48 @@ provider configuration under `index.<pass>` (e.g. `endpoint`, `model`,
 `ConfigError("INVALID_CONFIG_FILE")` so that there is exactly one place to
 configure the LLM. To use a different model entirely, change the top-level
 `llm` block.
+
+### Memory inference pass (`index.memory`)
+
+When `akm.llm` is configured, `akm index` runs an opt-in memory inference
+pass that splits each pending memory in `<stashDir>/memories/` into atomic
+facts. Each atomic fact is written as a new sibling memory with frontmatter
+`inferred: true` and `source: memory:<parent-name>`, and the parent is
+marked `inferenceProcessed: true` so subsequent index runs are idempotent.
+
+The pass is disabled when:
+
+- No `akm.llm` block is configured (the default), or
+- `index.memory.llm = false` is set explicitly.
+
+Disabling the pass after a previous run never deletes existing inferred
+children — they remain on disk and continue to be searchable.
+
+### Graph extraction pass (`index.graph`)
+
+When `akm.llm` is configured, `akm index` runs an opt-in graph-extraction
+pass that walks the primary stash for `memory:` and `knowledge:` markdown
+files, asks the configured LLM to surface entities and relations from each
+body, and persists the result to `<stashRoot>/.akm/graph.json`. The
+search-time scorer reads this artifact and contributes a single additive
+boost component inside the existing FTS5+boosts loop.
+
+Three preconditions must ALL hold for the pass to run:
+
+- `akm.llm` must be configured (no provider configured → no extraction);
+- `llm.features.graph_extraction` must not be `false` (locked v1 spec §14
+  feature flag — defaults to `true`);
+- `index.graph.llm` must not be `false` (per-pass opt-out — defaults to
+  `true`).
+
+To skip just the graph pass while leaving other LLM-using passes enabled,
+set `index.graph.llm = false`. To block graph extraction entirely at the
+feature-flag layer (e.g. air-gapped environments), set
+`llm.features.graph_extraction = false`.
+
+Disabling either layer after a previous run never deletes the existing
+`<stashRoot>/.akm/graph.json` artifact — it stays on disk and continues to
+contribute to ranking, it just stops refreshing on subsequent index runs.
 
 ## Install Security Audit
 
@@ -377,7 +460,9 @@ in, per feature." See v1 spec §14 for the boundary rules.
       "tag_dedup":                false,
       "memory_consolidation":     false,
       "feedback_distillation":    false,
-      "embedding_fallback_score": false
+      "embedding_fallback_score": false,
+      "memory_inference":         true,
+      "graph_extraction":         false
     }
   }
 }
@@ -390,8 +475,10 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
 | `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
 | `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
+| `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
+| `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 
-Unknown keys under `llm.features` are warn-and-ignore. The five keys above
+Unknown keys under `llm.features` are warn-and-ignore. The keys above
 are locked and cannot be renamed after v1.0.
 
 **Statelessness invariant.** Every in-tree LLM call site is a single,

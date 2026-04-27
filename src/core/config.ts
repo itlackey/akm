@@ -53,6 +53,32 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   contextWindow?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
+  /**
+   * v1 spec §14 — bounded in-tree LLM feature gates. Each call site is
+   * gated behind exactly one key. Unknown keys are warn-and-ignored at
+   * config-load time. Currently only `memory_inference` is parsed by this
+   * loader; remaining locked keys are accepted into the schema as later
+   * issues wire them in.
+   */
+  features?: LlmFeatureFlags;
+}
+
+export interface LlmFeatureFlags {
+  /** Gates the `akm index` memory-inference pass (#201). Default: true. */
+  memory_inference?: boolean;
+  /**
+   * Gates the `akm index` graph-extraction pass (#207). Default: true (the
+   * pass is still off by default unless `akm.llm` is configured AND
+   * `index.graph.llm !== false`, per the orthogonal-gates rule in v1
+   * spec §14). Set to `false` to block every graph_extraction call site
+   * regardless of any per-pass setting.
+   */
+  graph_extraction?: boolean;
+  // Other locked feature keys (curate_rerank, tag_dedup,
+  // memory_consolidation, feedback_distillation, embedding_fallback_score)
+  // are accepted in the on-disk JSON via warn-and-ignore tolerance until
+  // their respective call sites land. They are intentionally not modelled
+  // here yet — adding them is a non-breaking schema extension.
 }
 
 export interface RegistryConfigEntry {
@@ -862,7 +888,51 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     if (typeof capsRaw.toolUse === "boolean") caps.toolUse = capsRaw.toolUse;
     if (Object.keys(caps).length > 0) result.capabilities = caps;
   }
+  if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
+    const features = parseLlmFeatures(obj.features as Record<string, unknown>);
+    if (Object.keys(features).length > 0) result.features = features;
+  }
   return result;
+}
+
+/**
+ * v1 spec §14 — locked feature keys. Defined here so unknown keys can
+ * be warn-and-ignored at load time (per spec §14.3 / §9.2). The set is
+ * deliberately the *full* locked table even though only a subset has
+ * runtime parsing today; this lets users author future-flagged configs
+ * without spurious warnings.
+ */
+const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
+  "curate_rerank",
+  "tag_dedup",
+  "memory_consolidation",
+  "feedback_distillation",
+  "embedding_fallback_score",
+  "memory_inference",
+  "graph_extraction",
+]);
+
+function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
+  const out: LlmFeatureFlags = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!LOCKED_LLM_FEATURE_KEYS.has(key)) {
+      console.warn(`[akm] Ignoring unknown llm.features key "${key}".`);
+      continue;
+    }
+    if (typeof value !== "boolean") {
+      console.warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
+      continue;
+    }
+    if (key === "memory_inference") {
+      out.memory_inference = value;
+    } else if (key === "graph_extraction") {
+      out.graph_extraction = value;
+    }
+    // Other locked keys are accepted but not yet modelled in
+    // LlmFeatureFlags (see comment on the interface). They roundtrip
+    // through `sanitizeConfigForLogging` only if we add fields later.
+  }
+  return out;
 }
 
 /**

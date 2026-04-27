@@ -29,7 +29,7 @@ import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
-import { loadStashFile } from "../indexer/metadata";
+import { loadStashFile, type StashEntryScope } from "../indexer/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -115,6 +115,14 @@ export async function akmShowUnified(input: {
   ref: string;
   view?: KnowledgeView;
   detail?: ShowDetailLevel;
+  /**
+   * Optional scope filter. When supplied, the resolved asset's frontmatter
+   * `scope_user`/`scope_agent`/`scope_run`/`scope_channel` keys must match
+   * every supplied filter value. A mismatch (or no scope on disk) raises a
+   * {@link NotFoundError} so callers can distinguish "asset exists but is
+   * out of scope" from "asset truly absent" via the standard error envelope.
+   */
+  scope?: StashEntryScope;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
 
@@ -145,8 +153,52 @@ export async function akmShowUnified(input: {
 
   // Try local filesystem (FTS5 index lookup, then on-disk fallback)
   const result = await showLocal(input);
+  // Scope filter narrows resolution: if --scope was supplied, the asset's
+  // frontmatter scope must satisfy every supplied key. We re-read the file
+  // (cheap — already on the show hot path) so we don't have to thread scope
+  // through the renderer chain just for one verification step.
+  if (input.scope && hasAnyScopeKey(input.scope) && result.path) {
+    enforceScopeOrThrow(result.path, ref, input.scope);
+  }
   logShowEvent(ref);
   return result;
+}
+
+function hasAnyScopeKey(scope: StashEntryScope): boolean {
+  return Boolean(scope.user || scope.agent || scope.run || scope.channel);
+}
+
+/**
+ * Read the asset file's frontmatter and verify its `scope_*` keys satisfy
+ * every supplied filter. Throws a {@link NotFoundError} on mismatch so the
+ * caller surfaces a uniform "not found in this scope" envelope rather than
+ * leaking out-of-scope content.
+ */
+function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntryScope): void {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch {
+    // The file path was just resolved by the indexer/disk-walk — a read
+    // failure here means the on-disk state moved out from under us. Treat
+    // that as "not found in this scope" so the caller does not learn the
+    // file's prior contents.
+    throw new NotFoundError(`Asset not found for scope filter: ${ref}`);
+  }
+  const fm = parseFrontmatter(raw).data;
+  const expected: Array<[keyof StashEntryScope, string | undefined]> = [
+    ["user", scope.user],
+    ["agent", scope.agent],
+    ["run", scope.run],
+    ["channel", scope.channel],
+  ];
+  for (const [key, expectedValue] of expected) {
+    if (expectedValue === undefined) continue;
+    const actual = toStringOrUndefined(fm[`scope_${key}`]);
+    if (actual !== expectedValue) {
+      throw new NotFoundError(`Asset "${ref}" exists but is out of scope (expected scope_${key}="${expectedValue}").`);
+    }
+  }
 }
 
 function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {

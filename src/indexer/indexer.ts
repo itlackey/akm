@@ -25,6 +25,8 @@ import {
   upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
+import { runGraphExtractionPass } from "./graph-extraction";
+import { runMemoryInferencePass } from "./memory-inference";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile, shouldIndexStashFile } from "./metadata";
 import { buildSearchText } from "./search-fields";
 import type { SearchSource } from "./search-source";
@@ -150,6 +152,49 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
           }
         }
       }
+    }
+
+    // Memory inference pass (#201). Runs before the walk so any atomic-fact
+    // children that get written are picked up by the walker in this same run
+    // and don't have to wait for the next `akm index`. Gated entirely by
+    // `resolveIndexPassLLM("memory", config)` — when the user has no
+    // `akm.llm` block or has set `index.memory.llm = false`, this is a no-op
+    // and existing inferred children are left in place.
+    try {
+      const inferenceResult = await runMemoryInferencePass(config, allSourceEntries);
+      if (inferenceResult.writtenFacts > 0) {
+        onProgress({
+          phase: "llm",
+          message: `Memory inference wrote ${inferenceResult.writtenFacts} atomic fact${inferenceResult.writtenFacts === 1 ? "" : "s"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
+        });
+      }
+    } catch (err) {
+      // Defensive — runMemoryInferencePass swallows per-memory failures.
+      // A thrown error here would only come from an unexpected programming
+      // bug; surface it as a warning rather than aborting the index run.
+      warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Graph extraction pass (#207). Runs after memory inference so any
+    // atomic-fact children that just got written are visible to the graph
+    // walk. Persists `<stashRoot>/.akm/graph.json` — an indexer artifact,
+    // NOT a user-visible asset, so it is not routed through
+    // writeAssetToSource. The artifact feeds the existing FTS5+boosts
+    // pipeline as a single boost component (see graph-boost.ts); there is
+    // no parallel scoring track. Disabled when either gate (the locked
+    // `llm.features.graph_extraction` feature flag or the per-pass
+    // `index.graph.llm` toggle) is off; the existing graph file is
+    // preserved on disk in that case.
+    try {
+      const graphResult = await runGraphExtractionPass(config, allSourceEntries);
+      if (graphResult.written) {
+        onProgress({
+          phase: "llm",
+          message: `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}.`,
+        });
+      }
+    } catch (err) {
+      warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const tWalkStart = Date.now();

@@ -35,7 +35,14 @@ import {
   searchVec,
 } from "./db";
 import { getRenderer } from "./file-context";
-import { generateMetadataFlat, loadStashFile, type StashEntry, shouldIndexStashFile } from "./metadata";
+import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
+import {
+  generateMetadataFlat,
+  loadStashFile,
+  type StashEntry,
+  type StashEntryScope,
+  shouldIndexStashFile,
+} from "./metadata";
 import { buildSearchText } from "./search-fields";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
@@ -87,6 +94,13 @@ export async function searchLocal(input: {
   config: AkmConfig;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
+  /**
+   * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
+   * hits whose `entry.scope` does not satisfy every supplied key are dropped
+   * AFTER ranking — filtering narrows the result set, it does not alter the
+   * single FTS5+boosts scoring pipeline.
+   */
+  filters?: StashEntryScope;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -95,6 +109,7 @@ export async function searchLocal(input: {
   rankMs?: number;
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
+  const filters = input.filters;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -151,6 +166,7 @@ export async function searchLocal(input: {
             config,
             sources,
             rendererRegistry,
+            filters,
           );
           return {
             hits,
@@ -175,7 +191,9 @@ export async function searchLocal(input: {
   }
 
   const hitArrays = await Promise.all(
-    allSourceDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry)),
+    allSourceDirs.map((dir) =>
+      substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry, filters),
+    ),
   );
   const hits = hitArrays.flat().slice(0, limit);
   return {
@@ -197,6 +215,7 @@ async function searchDatabase(
   config: AkmConfig,
   sources: SearchSource[],
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
+  filters?: StashEntryScope,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -217,7 +236,13 @@ async function searchDatabase(
       seenFilePaths.add(ie.filePath);
       return true;
     });
-    const selected = uniqueEntries.slice(0, limit);
+    // Scope filter: drop entries whose stored scope does not satisfy every
+    // supplied scope key. Filtering happens BEFORE the limit slice so a
+    // restrictive filter still returns up to `limit` results.
+    const scopeFiltered = filters
+      ? uniqueEntries.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
+      : uniqueEntries;
+    const selected = scopeFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -338,6 +363,23 @@ async function searchDatabase(
   const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
   const queryLower = query.toLowerCase().trim();
 
+  // Graph boost context (#207). Built once per query and reused across
+  // every scored entry so the disk read + JSON parse only happens once
+  // per search invocation. `null` when no graph file is present, when
+  // the schema doesn't match, or when no query token matches a graph
+  // entity — in all of those cases the per-entry call is skipped and
+  // graph contributes nothing. The graph signal feeds this single
+  // FTS5+boosts loop as ONE additive component (CLAUDE.md / spec §6:
+  // one scoring pipeline, no parallel SearchHit scorer).
+  const graphContext: GraphBoostContext | null = (() => {
+    // Search across all source dirs; the graph file lives next to the
+    // primary source root. Cache misses are silent — the helper handles
+    // missing files internally and returns `null` instead of throwing.
+    const primaryDir = allSourceDirs[0];
+    if (!primaryDir) return null;
+    return loadGraphBoostContext(primaryDir, query);
+  })();
+
   for (const item of scored) {
     const entry = item.entry;
     let boostSum = 0;
@@ -442,6 +484,20 @@ async function searchDatabase(
       typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
     boostSum += confidenceBoost;
 
+    // ── 8. Graph signal (opt-in, #207) ──
+    // When the graph-extraction pass has produced a `graph.json`,
+    // contribute an additive boost based on how many of this entry's
+    // extracted entities match the query (or are one hop away from a
+    // match). Computed inside the same loop so all boosts are in one
+    // place and the per-call cost is one map lookup when the graph is
+    // absent. There is no parallel scoring track — `boostSum` is the
+    // single accumulator and the existing `MAX_BOOST_SUM` cap below
+    // applies to graph contributions exactly as it does to every other
+    // boost.
+    if (graphContext) {
+      boostSum += computeGraphBoost(graphContext, item.filePath);
+    }
+
     const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
     item.score = item.score * (1 + cappedBoost);
   }
@@ -494,16 +550,26 @@ async function searchDatabase(
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
+  // Scope filter: drop hits whose stored scope does not satisfy every supplied
+  // key. Applied AFTER ranking — filtering narrows the result set without
+  // touching the single FTS5+boosts scoring pipeline.
+  const scopeFiltered = filters ? deduped.filter((item) => entryMatchesScope(item.entry.scope, filters)) : deduped;
+
   const rankMs = Date.now() - tRank0;
 
-  const selected = deduped.slice(0, limit);
+  const selected = scopeFiltered.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
-      buildDbHit({
+    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
+      // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
+      // exceed 1.0 (this was a pre-existing breach that #207's graph boost
+      // — up to ~1.05 additive contribution — made detectable); clamp here
+      // so the score handed to buildDbHit always satisfies the spec.
+      const finalScore = Math.min(1, Math.max(0, score));
+      return buildDbHit({
         entry,
         path: filePath,
         // Round to 4 decimal places
-        score: Math.round(score * 10000) / 10000,
+        score: Math.round(finalScore * 10000) / 10000,
         query,
         rankingMode,
         defaultStashDir: stashDir,
@@ -512,8 +578,8 @@ async function searchDatabase(
         config,
         utilityBoosted,
         rendererRegistry,
-      }),
-    ),
+      });
+    }),
   );
 
   return { embedMs, rankMs, hits };
@@ -561,9 +627,11 @@ async function substringSearch(
   sources: SearchSource[],
   config?: AkmConfig,
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
+  filters?: StashEntryScope,
 ): Promise<SourceSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType, sources);
-  const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
+  const scopeMatched = filters ? assets.filter((asset) => entryMatchesScope(asset.entry.scope, filters)) : assets;
+  const matched = scopeMatched.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
   if (!query) {
     const sorted = matched.sort(compareAssets);
@@ -914,6 +982,20 @@ function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
     seen.add(asset.path);
     return true;
   });
+}
+
+/**
+ * Exact-match scope filter check. Legacy entries without a `scope` object only
+ * match when no filter is supplied — which is what the caller guards on
+ * before invoking this helper.
+ */
+function entryMatchesScope(scope: StashEntryScope | undefined, filters: StashEntryScope): boolean {
+  for (const key of ["user", "agent", "run", "channel"] as const) {
+    const expected = filters[key];
+    if (expected === undefined) continue;
+    if (!scope || scope[key] !== expected) return false;
+  }
+  return true;
 }
 
 function realpathOrResolve(targetPath: string): string {

@@ -18,9 +18,87 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
       return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
+    // Output shape registration for `akm history` — paired with the textRenderer in text.ts.
+    case "history":
+      return shapeHistoryOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm events list` and `akm events tail`
+    // (#204). Both share the same envelope; the renderer in text.ts uses
+    // distinct command names so it can format streaming differently.
+    case "events-list":
+    case "events-tail":
+      return shapeEventsOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
+}
+
+export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const events = Array.isArray(result.events) ? (result.events as Record<string, unknown>[]) : [];
+  const shapedEvents = events.map((event) => shapeEventEntry(event, detail));
+  const base: Record<string, unknown> = {
+    ...(result.ref !== undefined ? { ref: result.ref } : {}),
+    ...(result.type !== undefined ? { type: result.type } : {}),
+    ...(result.since !== undefined ? { since: result.since } : {}),
+    ...(typeof result.sinceOffset === "number" ? { sinceOffset: result.sinceOffset } : {}),
+    totalCount: result.totalCount ?? shapedEvents.length,
+    events: shapedEvents,
+  };
+  if (typeof result.nextOffset === "number") {
+    base.nextOffset = result.nextOffset;
+  }
+  if (typeof result.reason === "string") {
+    base.reason = result.reason;
+  }
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    return pickFields(entry, ["eventType", "ref", "ts"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["eventType", "ref", "ts"]);
+  }
+  // full / agent: project everything the reader emits.
+  return pickFields(entry, ["id", "schemaVersion", "eventType", "ref", "ts", "metadata"]);
+}
+
+export function shapeHistoryOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const entries = Array.isArray(result.entries) ? (result.entries as Record<string, unknown>[]) : [];
+  const shapedEntries = entries.map((entry) => shapeHistoryEntry(entry, detail));
+  if (detail === "full") {
+    return {
+      schemaVersion: result.schemaVersion ?? 1,
+      ...(result.ref !== undefined ? { ref: result.ref } : {}),
+      ...(result.since !== undefined ? { since: result.since } : {}),
+      totalCount: result.totalCount ?? shapedEntries.length,
+      entries: shapedEntries,
+      ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    };
+  }
+  return {
+    ...(result.ref !== undefined ? { ref: result.ref } : {}),
+    ...(result.since !== undefined ? { since: result.since } : {}),
+    totalCount: result.totalCount ?? shapedEntries.length,
+    entries: shapedEntries,
+    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+  };
+}
+
+export function shapeHistoryEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    // signal is load-bearing for feedback rows (positive/negative) so we
+    // project it even at brief — without it the entry is ambiguous.
+    return pickFields(entry, ["eventType", "ref", "signal", "createdAt"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["eventType", "ref", "signal", "query", "createdAt"]);
+  }
+  // full / agent: return everything the reader emits.
+  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "metadata", "createdAt"]);
 }
 
 export function shapeSearchOutput(
