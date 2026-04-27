@@ -209,9 +209,11 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
-    // visible without forcing callers up to `--detail full`.
+    // visible without forcing callers up to `--detail full`. Optional
+    // `quality` (v1 spec §4.2) is also surfaced when present so callers
+    // can see why a `proposed` entry showed up under `--include-proposed`.
     return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings"]),
+      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }

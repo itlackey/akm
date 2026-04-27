@@ -38,6 +38,7 @@ import { getRenderer } from "./file-context";
 import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import {
   generateMetadataFlat,
+  isProposedQuality,
   loadStashFile,
   type StashEntry,
   type StashEntryScope,
@@ -101,6 +102,13 @@ export async function searchLocal(input: {
    * single FTS5+boosts scoring pipeline.
    */
   filters?: StashEntryScope;
+  /**
+   * When true, entries with `quality === "proposed"` are kept in the result
+   * set. By default (false) they are filtered out post-ranking per v1
+   * spec §4.2. Filtering happens AFTER scoring — there is still one
+   * scoring pipeline.
+   */
+  includeProposed?: boolean;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -110,6 +118,7 @@ export async function searchLocal(input: {
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const filters = input.filters;
+  const includeProposed = input.includeProposed === true;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -167,6 +176,7 @@ export async function searchLocal(input: {
             sources,
             rendererRegistry,
             filters,
+            includeProposed,
           );
           return {
             hits,
@@ -192,7 +202,7 @@ export async function searchLocal(input: {
 
   const hitArrays = await Promise.all(
     allSourceDirs.map((dir) =>
-      substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry, filters),
+      substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry, filters, includeProposed),
     ),
   );
   const hits = hitArrays.flat().slice(0, limit);
@@ -216,6 +226,7 @@ async function searchDatabase(
   sources: SearchSource[],
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
   filters?: StashEntryScope,
+  includeProposed = false,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -242,7 +253,12 @@ async function searchDatabase(
     const scopeFiltered = filters
       ? uniqueEntries.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
       : uniqueEntries;
-    const selected = scopeFiltered.slice(0, limit);
+    // Proposed-quality filter (v1 spec §4.2): exclude entries with
+    // `quality: "proposed"` unless the caller explicitly opts in.
+    const qualityFiltered = includeProposed
+      ? scopeFiltered
+      : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
+    const selected = qualityFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -477,7 +493,10 @@ async function searchDatabase(
     }
 
     // ── 7. Metadata quality signals ──
-    const qualityBoost = entry.quality === "generated" ? 0 : 0.05;
+    // Curated metadata is the only boost-bearing quality marker. `generated`
+    // and `proposed` (and unknown values) get no boost. `proposed` is also
+    // filtered out by default downstream (v1 spec §4.2).
+    const qualityBoost = entry.quality === "curated" ? 0.05 : 0;
     boostSum += qualityBoost;
 
     const confidenceBoost =
@@ -555,9 +574,16 @@ async function searchDatabase(
   // touching the single FTS5+boosts scoring pipeline.
   const scopeFiltered = filters ? deduped.filter((item) => entryMatchesScope(item.entry.scope, filters)) : deduped;
 
+  // Proposed-quality filter (v1 spec §4.2): exclude entries with
+  // `quality: "proposed"` unless the caller passed `--include-proposed`.
+  // Applied AFTER ranking for the same reason as scope filtering.
+  const qualityFiltered = includeProposed
+    ? scopeFiltered
+    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+
   const rankMs = Date.now() - tRank0;
 
-  const selected = scopeFiltered.slice(0, limit);
+  const selected = qualityFiltered.slice(0, limit);
   const hits = await Promise.all(
     selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
       // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
@@ -628,10 +654,14 @@ async function substringSearch(
   config?: AkmConfig,
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
   filters?: StashEntryScope,
+  includeProposed = false,
 ): Promise<SourceSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType, sources);
   const scopeMatched = filters ? assets.filter((asset) => entryMatchesScope(asset.entry.scope, filters)) : assets;
-  const matched = scopeMatched.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
+  const qualityMatched = includeProposed
+    ? scopeMatched
+    : scopeMatched.filter((asset) => !isProposedQuality(asset.entry.quality));
+  const matched = qualityMatched.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
   if (!query) {
     const sorted = matched.sort(compareAssets);
@@ -713,7 +743,9 @@ export async function buildDbHit(input: {
   // phase (searchDatabase). buildDbHit receives the already-final score and
   // passes it through without further multiplication. We still compute the
   // boost values here for buildWhyMatched reporting.
-  const qualityBoost = input.entry.quality === "generated" ? 0 : 0.05;
+  // Mirrors the boost computation in `searchDatabase`; only `curated`
+  // contributes a positive boost. Used for `whyMatched` reporting only.
+  const qualityBoost = input.entry.quality === "curated" ? 0.05 : 0;
   const confidenceBoost =
     typeof input.entry.confidence === "number" ? Math.min(0.05, Math.max(0, input.entry.confidence) * 0.05) : 0;
   // Round to 4 decimal places, no boost multiplication
@@ -749,6 +781,9 @@ export async function buildDbHit(input: {
     score,
     whyMatched,
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
+    // Surface optional quality (v1 spec §4.2). Omitted when entry has
+    // no `quality` field so payloads stay compact for the common case.
+    ...(input.entry.quality ? { quality: input.entry.quality } : {}),
   };
 
   const renderer = await rendererForType(input.entry.type, rendererRegistry);
@@ -840,6 +875,7 @@ async function assetToSearchHit(
     action: buildLocalAction(asset.entry.type, ref, rendererRegistry),
     ...(score !== undefined ? { score } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
+    ...(asset.entry.quality ? { quality: asset.entry.quality } : {}),
   };
   const renderer = await rendererForType(asset.entry.type, rendererRegistry);
   if (renderer?.enrichSearchHit) {

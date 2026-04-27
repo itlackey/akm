@@ -209,6 +209,11 @@ const searchCommand = defineCommand({
       description:
         "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
     },
+    "include-proposed": {
+      type: "boolean",
+      description: 'Include entries with quality:"proposed" in the result set. Excluded by default (v1 spec §4.2).',
+      default: false,
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
@@ -232,7 +237,8 @@ const searchCommand = defineCommand({
       // occurrences directly from argv (same pattern as `--tag`).
       const filterTokens = parseAllFlagValues("--filter");
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
-      const result = await akmSearch({ query, type, limit, source, filters });
+      const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
+      const result = await akmSearch({ query, type, limit, source, filters, includeProposed });
       output("search", result);
     });
   },

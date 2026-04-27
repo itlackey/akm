@@ -60,7 +60,14 @@ export interface StashEntry {
   searchHints?: string[];
   intent?: StashIntent;
   filename?: string;
-  quality?: "generated" | "curated";
+  /**
+   * Asset quality marker (v1 spec §4.2). Three values are well-known:
+   * `"generated"` and `"curated"` are included in default search;
+   * `"proposed"` is excluded from default search and surfaced only with
+   * `--include-proposed`. Unknown string values parse with a one-time
+   * `console.warn` and remain searchable (treated as included-by-default).
+   */
+  quality?: "generated" | "curated" | "proposed" | (string & {});
   confidence?: number;
   source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm";
   aliases?: string[];
@@ -109,6 +116,51 @@ export interface StashFile {
 // ── Load / Write ────────────────────────────────────────────────────────────
 
 const STASH_FILENAME = ".stash.json";
+
+// ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
+
+/**
+ * Well-known quality values. `generated` and `curated` are included in
+ * default search; `proposed` is excluded by default and opt-in via
+ * `--include-proposed`. Unknown values warn once and remain searchable.
+ */
+export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "proposed"]);
+
+/** Tracks unknown quality values we've already warned about (one warn per value per process). */
+const warnedUnknownQualityValues = new Set<string>();
+
+/**
+ * Normalize a `quality` string off a stash entry. Known values pass through
+ * untouched. Unknown values are accepted as-is (preserved verbatim on the
+ * entry) but trigger a one-time `console.warn` per unique value.
+ */
+export function normalizeQuality(raw: string): string {
+  if (KNOWN_QUALITY_VALUES.has(raw)) return raw;
+  if (!warnedUnknownQualityValues.has(raw)) {
+    warnedUnknownQualityValues.add(raw);
+    // eslint-disable-next-line no-console
+    console.warn(
+      `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed" (v1 spec §4.2).`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * Test-only: clear the per-process unknown-quality warning memo so a test
+ * can re-trigger the warning. Not part of the public API.
+ */
+export function _resetUnknownQualityWarnings(): void {
+  warnedUnknownQualityValues.clear();
+}
+
+/**
+ * Returns true if an entry's quality marks it as "proposed". Proposed
+ * entries are excluded from default search per v1 spec §4.2.
+ */
+export function isProposedQuality(quality: string | undefined): boolean {
+  return quality === "proposed";
+}
 
 export function stashFilePath(dirPath: string): string {
   return path.join(dirPath, STASH_FILENAME);
@@ -188,7 +240,9 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
     if (typeof intent.output === "string") result.intent.output = intent.output;
   }
   if (typeof e.filename === "string" && e.filename) result.filename = e.filename;
-  if (e.quality === "generated" || e.quality === "curated") result.quality = e.quality;
+  if (typeof e.quality === "string" && e.quality.length > 0) {
+    result.quality = normalizeQuality(e.quality);
+  }
   if (typeof e.confidence === "number" && Number.isFinite(e.confidence))
     result.confidence = Math.max(0, Math.min(1, e.confidence));
   if (

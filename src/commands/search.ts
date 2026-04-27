@@ -46,6 +46,12 @@ export async function akmSearch(input: {
    * one scoring pipeline.
    */
   filters?: StashEntryScope;
+  /**
+   * When true, hits with `quality === "proposed"` are kept in the result
+   * set (v1 spec §4.2). Default behavior excludes them. The flag has no
+   * effect on registry hits.
+   */
+  includeProposed?: boolean;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -74,6 +80,7 @@ export async function akmSearch(input: {
   const stashDir = sources[0].path;
 
   const filters = normalizeScopeFilters(input.filters);
+  const includeProposed = input.includeProposed === true;
   const localResult =
     source === "registry"
       ? undefined
@@ -85,6 +92,7 @@ export async function akmSearch(input: {
           sources,
           config,
           filters,
+          includeProposed,
         });
 
   const registryResult =

@@ -175,6 +175,9 @@ akm search "docker" --source both --detail full
 # Multi-tenant scope filtering (0.7.0+):
 akm search "deploy" --filter user=alice
 akm search "deploy" --filter user=alice --filter agent=claude
+
+# Include proposal-queue entries (v1 spec §4.2):
+akm search "deploy" --include-proposed
 ```
 
 | Flag | Values | Default | Description |
@@ -183,6 +186,7 @@ akm search "deploy" --filter user=alice --filter agent=claude
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
+| `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level (`summary` returns metadata-only, under 200 tokens) |
 
@@ -206,8 +210,8 @@ detail level matches `src/output/shapes.ts`:
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
 | `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
-| `normal` | adds `description`, `score`, and optional `warnings` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, timings, stash metadata) | full hit object |
+| `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
 | `summary` | metadata-only view (no content), under 200 tokens | — |
 | `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
