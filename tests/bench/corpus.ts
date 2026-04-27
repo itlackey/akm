@@ -1,0 +1,215 @@
+/**
+ * akm-bench corpus loader (spec §5.4 + §13.1).
+ *
+ * Tasks live at `tests/fixtures/bench/tasks/<domain>/<task-id>/task.yaml`. Each
+ * task is a flat YAML record (see §13.1). The schema lands in #237 and grows
+ * over time; #236 only ships the loader and one sample task fixture.
+ *
+ * The `tests/fixtures/bench/tasks/` directory may not exist on `release/1.0.0`
+ * yet — that's #237's deliverable. `listTasks()` MUST return `[]` cleanly when
+ * the directory is missing rather than throwing, so consumers degrade gracefully.
+ */
+
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import { parse as parseYaml } from "yaml";
+
+export type TaskSlice = "train" | "eval";
+export type TaskDifficulty = "easy" | "medium" | "hard";
+export type TaskVerifier = "script" | "pytest" | "regex";
+
+export interface TaskMetadata {
+  /** `<domain>/<task-name>`, kebab-case. */
+  id: string;
+  title: string;
+  domain: string;
+  difficulty: TaskDifficulty;
+  /** When omitted in `task.yaml`, partitionSlice() assigns one. */
+  slice?: TaskSlice;
+  goldRef?: string;
+  /** Required: name of a fixture stash under `tests/fixtures/stashes/`. */
+  stash: string;
+  /** Optional: path to extra assets layered on top of the named fixture. */
+  stashOverlay?: string;
+  verifier: TaskVerifier;
+  /** Required when `verifier === "regex"`. */
+  expectedMatch?: string;
+  budget: { tokens: number; wallMs: number };
+  /** Absolute path to the directory containing `task.yaml`. */
+  taskDir: string;
+}
+
+const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
+
+/** Public for tests; resolves the corpus root in case callers need to assert it. */
+export function getTasksRoot(): string {
+  return TASKS_ROOT;
+}
+
+/**
+ * Load a single task by id. Walks the tasks tree until a directory whose
+ * `task.yaml` carries the requested `id` is found.
+ *
+ * Throws if the corpus directory is missing or no task matches.
+ */
+export function loadTask(taskId: string): TaskMetadata {
+  if (!fs.existsSync(TASKS_ROOT)) {
+    throw new Error(`bench corpus directory missing: ${TASKS_ROOT}`);
+  }
+  for (const candidate of walkTaskDirs(TASKS_ROOT)) {
+    const meta = readTask(candidate);
+    if (meta && meta.id === taskId) return meta;
+  }
+  throw new Error(`task not found: ${taskId}`);
+}
+
+export interface ListTasksOptions {
+  slice?: TaskSlice;
+}
+
+/**
+ * Return every task in the corpus, optionally filtered by `slice`. When the
+ * corpus directory is missing this returns `[]` (the corpus is built in #237).
+ */
+export function listTasks(options: ListTasksOptions = {}): TaskMetadata[] {
+  if (!fs.existsSync(TASKS_ROOT)) return [];
+  const out: TaskMetadata[] = [];
+  for (const dir of walkTaskDirs(TASKS_ROOT)) {
+    const meta = readTask(dir);
+    if (!meta) continue;
+    if (options.slice && meta.slice && meta.slice !== options.slice) continue;
+    out.push(meta);
+  }
+  out.sort((a, b) => a.id.localeCompare(b.id));
+  return out;
+}
+
+/**
+ * Partition a list of tasks into train/eval slices. Tasks declaring an explicit
+ * `slice:` are honoured; tasks that don't are placed by `id-hash mod 2 === 0`
+ * → train, else eval. The hash is SHA-1 of the id (deterministic across hosts).
+ */
+export function partitionSlice(tasks: TaskMetadata[]): { train: TaskMetadata[]; eval: TaskMetadata[] } {
+  const train: TaskMetadata[] = [];
+  const evalSlice: TaskMetadata[] = [];
+  for (const task of tasks) {
+    const slice = task.slice ?? assignSliceByHash(task.id);
+    if (slice === "train") train.push(task);
+    else evalSlice.push(task);
+  }
+  return { train, eval: evalSlice };
+}
+
+function assignSliceByHash(id: string): TaskSlice {
+  // SHA-1 first byte parity is stable, fast, and uniformly distributed enough
+  // for slice partitioning. We avoid `node:crypto.randomInt` (non-deterministic).
+  const digest = createHash("sha1").update(id).digest();
+  return digest[0] % 2 === 0 ? "train" : "eval";
+}
+
+/** Walk the corpus tree depth-first, yielding every directory containing a `task.yaml`. */
+function* walkTaskDirs(root: string): Generator<string> {
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    if (entries.some((e) => e.isFile() && e.name === "task.yaml")) {
+      yield dir;
+      continue; // Don't recurse beneath a task directory.
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) stack.push(path.join(dir, entry.name));
+    }
+  }
+}
+
+interface RawTask {
+  id?: unknown;
+  title?: unknown;
+  domain?: unknown;
+  difficulty?: unknown;
+  slice?: unknown;
+  gold_ref?: unknown;
+  stash?: unknown;
+  stash_overlay?: unknown;
+  verifier?: unknown;
+  expected_match?: unknown;
+  budget?: { tokens?: unknown; wallMs?: unknown };
+}
+
+function readTask(taskDir: string): TaskMetadata | undefined {
+  const yamlPath = path.join(taskDir, "task.yaml");
+  let text: string;
+  try {
+    text = fs.readFileSync(yamlPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  let raw: RawTask;
+  try {
+    raw = parseYaml(text) as RawTask;
+  } catch {
+    return undefined;
+  }
+  if (!raw || typeof raw !== "object") return undefined;
+
+  const id = asString(raw.id);
+  const title = asString(raw.title);
+  const domain = asString(raw.domain);
+  const difficulty = asEnum<TaskDifficulty>(raw.difficulty, ["easy", "medium", "hard"]);
+  const stash = asString(raw.stash);
+  const verifier = asEnum<TaskVerifier>(raw.verifier, ["script", "pytest", "regex"]);
+  const tokens = asNumber(raw.budget?.tokens);
+  const wallMs = asNumber(raw.budget?.wallMs);
+
+  if (!id || !title || !domain || !difficulty || !stash || !verifier || tokens === undefined || wallMs === undefined) {
+    return undefined;
+  }
+
+  const slice = raw.slice === undefined ? undefined : asEnum<TaskSlice>(raw.slice, ["train", "eval"]);
+  const goldRef = asString(raw.gold_ref);
+  const stashOverlay = asString(raw.stash_overlay);
+  const expectedMatch = asString(raw.expected_match);
+
+  const meta: TaskMetadata = {
+    id,
+    title,
+    domain,
+    difficulty,
+    stash,
+    verifier,
+    budget: { tokens, wallMs },
+    taskDir,
+  };
+  if (slice !== undefined) meta.slice = slice;
+  if (goldRef !== undefined) meta.goldRef = goldRef;
+  if (stashOverlay !== undefined) meta.stashOverlay = stashOverlay;
+  if (expectedMatch !== undefined) meta.expectedMatch = expectedMatch;
+  return meta;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function asEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  if (typeof value !== "string") return undefined;
+  return (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
