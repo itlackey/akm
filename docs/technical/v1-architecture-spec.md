@@ -989,17 +989,40 @@ Failure is observable but never blocks unrelated commands.
     "temperature": 0.3,
     "maxTokens": 512,
     "features": {
-      "curate_rerank": true,
-      "tag_dedup": true,
-      "memory_consolidation": false,
-      "feedback_distillation": false,
-      "embedding_fallback_score": false
+      "curate_rerank":            false,
+      "tag_dedup":                false,
+      "memory_consolidation":     false,
+      "feedback_distillation":    false,
+      "embedding_fallback_score": false,
+      "memory_inference":         true,
+      "graph_extraction":         false
     }
   }
 }
 ```
 
+All seven keys are configurable, default `false`, and must be set to the
+literal boolean `true` to opt in. (`memory_inference` and `graph_extraction`
+were the first two to ship; the remaining five — `curate_rerank`,
+`tag_dedup`, `memory_consolidation`, `feedback_distillation`,
+`embedding_fallback_score` — landed alongside the lesson asset type.)
 Unknown keys under `llm.features` warn and are ignored (§9.2).
+
+#### Graceful-fallback contract
+
+Every gated call site must use the `tryLlmFeature(feature, config, fn,
+fallback, opts?)` wrapper (`src/llm/feature-gate.ts`) or follow the
+equivalent inline pattern. The wrapper guarantees:
+
+- **Disabled** → `fallback` is returned without ever calling `fn`.
+- **Throw** → `fn`'s error is swallowed; `fallback` is returned. The
+  caller may pass `onFallback` to surface a structured `warnings` entry.
+- **Timeout** → a hard timeout (default 30s, override via `timeoutMs`)
+  produces an `LlmFeatureTimeoutError`; `fallback` is returned.
+
+Pure-predicate access is via `isLlmFeatureEnabled(config, feature)` — used
+when the call site needs to branch on the gate without invoking the wrapper
+(for example, to short-circuit before assembling the prompt).
 
 ### 14.4 Statelessness invariant
 
