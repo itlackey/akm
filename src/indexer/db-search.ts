@@ -559,12 +559,17 @@ async function searchDatabase(
 
   const selected = scopeFiltered.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
-      buildDbHit({
+    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
+      // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
+      // exceed 1.0 (this was a pre-existing breach that #207's graph boost
+      // — up to ~1.05 additive contribution — made detectable); clamp here
+      // so the score handed to buildDbHit always satisfies the spec.
+      const finalScore = Math.min(1, Math.max(0, score));
+      return buildDbHit({
         entry,
         path: filePath,
         // Round to 4 decimal places
-        score: Math.round(score * 10000) / 10000,
+        score: Math.round(finalScore * 10000) / 10000,
         query,
         rankingMode,
         defaultStashDir: stashDir,
@@ -573,8 +578,8 @@ async function searchDatabase(
         config,
         utilityBoosted,
         rendererRegistry,
-      }),
-    ),
+      });
+    }),
   );
 
   return { embedMs, rankMs, hits };

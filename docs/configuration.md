@@ -236,8 +236,8 @@ for a single pass while keeping it on for others, set
   },
   "index": {
     "enrichment": { "llm": false },  // skip LLM metadata enrichment
-    "memory": { "llm": false }       // skip memory inference (see below)
-    // future passes (graph, …) inherit `llm` automatically
+    "memory": { "llm": false },      // skip memory inference (see below)
+    "graph": { "llm": false }        // skip graph extraction (see below)
   }
 }
 ```
@@ -264,6 +264,32 @@ The pass is disabled when:
 
 Disabling the pass after a previous run never deletes existing inferred
 children — they remain on disk and continue to be searchable.
+
+### Graph extraction pass (`index.graph`)
+
+When `akm.llm` is configured, `akm index` runs an opt-in graph-extraction
+pass that walks the primary stash for `memory:` and `knowledge:` markdown
+files, asks the configured LLM to surface entities and relations from each
+body, and persists the result to `<stashRoot>/.akm/graph.json`. The
+search-time scorer reads this artifact and contributes a single additive
+boost component inside the existing FTS5+boosts loop.
+
+Three preconditions must ALL hold for the pass to run:
+
+- `akm.llm` must be configured (no provider configured → no extraction);
+- `llm.features.graph_extraction` must not be `false` (locked v1 spec §14
+  feature flag — defaults to `true`);
+- `index.graph.llm` must not be `false` (per-pass opt-out — defaults to
+  `true`).
+
+To skip just the graph pass while leaving other LLM-using passes enabled,
+set `index.graph.llm = false`. To block graph extraction entirely at the
+feature-flag layer (e.g. air-gapped environments), set
+`llm.features.graph_extraction = false`.
+
+Disabling either layer after a previous run never deletes the existing
+`<stashRoot>/.akm/graph.json` artifact — it stays on disk and continues to
+contribute to ranking, it just stops refreshing on subsequent index runs.
 
 ## Install Security Audit
 

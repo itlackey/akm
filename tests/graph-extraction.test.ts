@@ -206,6 +206,31 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     expect(result.extracted).toBe(1);
   });
 
+  test("no-op cleanly when feature + per-pass gates allow but akm.llm is absent (third precondition)", async () => {
+    // Three preconditions must ALL hold for the pass to run:
+    //   1. `akm.llm` configured  (this test removes it)
+    //   2. `llm.features.graph_extraction !== false`  (true here)
+    //   3. `index.graph.llm !== false`  (true here)
+    // With #1 missing, the pass must short-circuit silently — no error
+    // thrown, no graph.json written, no existing graph.json modified.
+    writeFile("memories/m1.md", {}, "Body.");
+    extractor = () => {
+      throw new Error("must not be called when akm.llm is absent");
+    };
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      // No `llm` block at all.
+      index: { graph: { llm: true } },
+    };
+    const graphPath = getGraphFilePath(tmpStash);
+    expect(fs.existsSync(graphPath)).toBe(false);
+    const result = await runGraphExtractionPass(cfg, sources());
+    expect(result.written).toBe(false);
+    expect(result.considered).toBe(0);
+    expect(result.extracted).toBe(0);
+    expect(fs.existsSync(graphPath)).toBe(false);
+  });
+
   test("either gate set to false short-circuits", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["E"], relations: [] });

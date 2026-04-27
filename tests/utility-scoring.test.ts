@@ -299,8 +299,15 @@ describe("Utility boost in search scoring", () => {
     const resolvedBoosted = expectDefined(boostedHit);
     const resolvedPlain = expectDefined(plainHit);
 
-    // The boosted entry should score higher due to utility boost
-    expect(resolvedBoosted.score).toBeGreaterThan(expectDefined(resolvedPlain.score));
+    // The boosted entry should rank ahead of the plain one due to utility
+    // boost. Per CLAUDE.md / spec §9, displayed scores are clamped to [0,1];
+    // both hits may clamp to the ceiling on a strong-match query, so the
+    // observable contract is rank order, not raw score magnitude. The
+    // boosted score must still be at least as high as the plain one.
+    const boostedIdx = localHits.indexOf(resolvedBoosted);
+    const plainIdx = localHits.indexOf(resolvedPlain);
+    expect(boostedIdx).toBeLessThan(plainIdx);
+    expect(resolvedBoosted.score ?? 0).toBeGreaterThanOrEqual(resolvedPlain.score ?? 0);
   });
 });
 
@@ -492,8 +499,14 @@ describe("Recency decay on utility boost", () => {
     const resolvedRecent = expectDefined(recentHit);
     const resolvedOld = expectDefined(oldHit);
 
-    // Recent usage should produce a higher score than old usage
-    expect(resolvedRecent.score).toBeGreaterThan(expectDefined(resolvedOld.score));
+    // Recent usage should rank ahead of old usage. Per CLAUDE.md / spec §9
+    // the displayed score is clamped to [0,1]; on a strong-match query both
+    // hits may clamp to the ceiling, so rank ordering is the observable
+    // contract for the recency signal.
+    const recentIdx = localHits.indexOf(resolvedRecent);
+    const oldIdx = localHits.indexOf(resolvedOld);
+    expect(recentIdx).toBeLessThan(oldIdx);
+    expect(resolvedRecent.score ?? 0).toBeGreaterThanOrEqual(resolvedOld.score ?? 0);
   });
 });
 

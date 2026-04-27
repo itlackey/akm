@@ -9,14 +9,19 @@
  * inside the existing FTS5+boosts loop — there is NO second SearchHit
  * scorer and no parallel ranking track.
  *
- * Disabling — two orthogonal gates per v1 spec §14:
- *   1. `llm.features.graph_extraction = false` blocks the pass at the
- *      locked feature-flag layer (no network call may ever issue).
- *   2. `index.graph.llm = false` (or no `akm.llm` block at all) opts the
- *      pass out at the per-pass layer (#208).
- *   A pass runs iff both layers allow it. Toggling either off does NOT
- *   delete the existing `graph.json` — the user keeps the boost component
- *   they already have, it just stops refreshing.
+ * Disabling — three preconditions must ALL hold for the pass to run:
+ *   1. `akm.llm` must be configured (no provider = no extraction). When
+ *      absent, `resolveIndexPassLLM("graph", config)` returns `undefined`
+ *      and the pass short-circuits.
+ *   2. `llm.features.graph_extraction !== false` — the locked v1 spec §14
+ *      feature-flag layer. Set to `false` to block the pass at the
+ *      feature-gate layer (no network call may ever issue).
+ *   3. `index.graph.llm !== false` — the per-pass opt-out layer (#208).
+ *      Set to `false` to skip just this pass while leaving other passes
+ *      that share the same `llm` block enabled.
+ *   Toggling any one off does NOT delete the existing `graph.json` — the
+ *   user keeps the boost component they already have, it just stops
+ *   refreshing.
  *
  * Locked v1 contract:
  *   - LLM access is exclusively via `resolveIndexPassLLM("graph", config)`.
@@ -98,18 +103,20 @@ const EMPTY_RESULT: GraphExtractionResult = {
 /**
  * Top-level entry point. Returns a no-op result when the pass is disabled.
  *
- * Two orthogonal gates per v1 spec §14:
+ * Three preconditions — ALL must hold for the pass to run:
  *
- *   1. **Feature gate** — `llm.features.graph_extraction` (defaults to
+ *   1. **Provider configured** — `akm.llm` must be present. Without a
+ *      configured provider, `resolveIndexPassLLM("graph", config)` returns
+ *      `undefined` (the pass cannot run because there is no model to call).
+ *   2. **Feature gate** — `llm.features.graph_extraction` (defaults to
  *      `true`). When `false`, no network call may issue regardless of
  *      per-pass settings. This is the locked spec-§14 gate.
- *   2. **Per-pass gate** — `resolveIndexPassLLM("graph", config)` (which
- *      reads `index.graph.llm`). When `false`, the indexer simply skips
- *      this pass for the current run.
+ *   3. **Per-pass gate** — `index.graph.llm` (defaults to `true`). When
+ *      `false`, the indexer simply skips this pass for the current run.
  *
- * Both must allow the call for the pass to run. Either set to `false`
- * short-circuits to a no-op result, leaving any existing `graph.json`
- * untouched on disk.
+ * If any of the three is missing or `false`, this function short-circuits
+ * to an empty no-op result, leaving any existing `graph.json` untouched on
+ * disk.
  */
 export async function runGraphExtractionPass(
   config: AkmConfig,
