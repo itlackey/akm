@@ -19,7 +19,7 @@ import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/search";
 import { akmShowUnified } from "../../src/commands/show";
 import { saveConfig } from "../../src/core/config";
-import { NotFoundError } from "../../src/core/errors";
+import { NotFoundError, UsageError } from "../../src/core/errors";
 import { parseFrontmatter } from "../../src/core/frontmatter";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
@@ -117,8 +117,31 @@ describe("parseScopeFilterFlags", () => {
     expect(filters).toEqual({ user: "alice", channel: "ops" });
   });
 
-  test("rejects unknown keys", () => {
-    expect(() => parseScopeFilterFlags(["foo=bar"], "--filter")).toThrow(/Unknown scope key/);
+  test("rejects unknown keys with UsageError", () => {
+    let captured: unknown;
+    try {
+      parseScopeFilterFlags(["foo=bar"], "--filter");
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(UsageError);
+    expect((captured as UsageError).message).toMatch(/Unknown scope key/);
+    // Spec: UsageError → exit 2 and {ok:false, error, code} envelope on stderr.
+    const result = spawnSync("bun", [CLI, "search", "foo", "--filter", "foo=bar"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        AKM_STASH_DIR: tmpStash(),
+        AKM_CONFIG_DIR: path.join(createTmpDir("akm-scope-config-"), "akm"),
+        XDG_CACHE_HOME: createTmpDir("akm-scope-cache-"),
+      },
+    });
+    expect(result.status).toBe(2); // EXIT_USAGE
+    const envelope = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
+    expect(envelope.ok).toBe(false);
+    expect(typeof envelope.error).toBe("string");
+    expect(envelope.error).toMatch(/Unknown scope key/);
   });
 
   test("rejects malformed tokens", () => {
@@ -252,21 +275,35 @@ describe("akm show --scope narrows resolution", () => {
     expect(result.name).toBe("scoped");
   });
 
-  test("throws NotFoundError when scope does not match", async () => {
+  test("throws NotFoundError when scope does not match and body content is not leaked", async () => {
     const stashDir = tmpStash();
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
+    const SECRET_BODY = "ALICE_SECRET_DEPLOY_TOKEN_XYZ123";
     writeFile(
       path.join(stashDir, "memories", "scoped.md"),
-      "---\ntags: [scoped]\nscope_user: alice\n---\nAlice's note\n",
+      `---\ntags: [scoped]\nscope_user: alice\n---\n${SECRET_BODY}\n`,
     );
 
     await akmIndex({ stashDir, full: true });
 
-    await expect(akmShowUnified({ ref: "memory:scoped", scope: { user: "bob" } })).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    let thrown: unknown;
+    let returned: unknown;
+    try {
+      returned = await akmShowUnified({ ref: "memory:scoped", scope: { user: "bob" } });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(returned).toBeUndefined();
+    expect(thrown).toBeInstanceOf(NotFoundError);
+    // Crucial leak-prevention guarantee: the out-of-scope body must NOT appear
+    // anywhere in the thrown error's message, name, or stack.
+    const err = thrown as Error;
+    expect(err.message).not.toContain(SECRET_BODY);
+    expect(err.name).not.toContain(SECRET_BODY);
+    expect(String(err.stack ?? "")).not.toContain(SECRET_BODY);
+    expect(JSON.stringify({ ok: false, error: err.message })).not.toContain(SECRET_BODY);
   });
 
   test("throws NotFoundError when asset has no scope but a scope filter is supplied", async () => {
