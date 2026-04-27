@@ -93,6 +93,15 @@ export interface RunResult {
   events: EventEnvelope[];
   verifierStdout: string;
   verifierExitCode: number;
+  /**
+   * Unique asset refs the agent loaded during this run, extracted post-hoc by
+   * scanning `events[]` and `verifierStdout` for `akm show <ref>` invocations.
+   * Populated by the runner; the driver always emits an empty array. Field is
+   * additive — older RunResult JSON without it remains valid (callers that
+   * read older artefacts should default to `[]`). See spec §6.5 (per-asset
+   * attribution).
+   */
+  assetsLoaded: string[];
 }
 
 /** Operator-config env names that MUST NOT leak into per-run children. */
@@ -255,6 +264,7 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     events: [],
     verifierStdout: "",
     verifierExitCode: -1,
+    assetsLoaded: [],
   };
 
   // Look up the built-in opencode profile defensively. The lookup is a pure

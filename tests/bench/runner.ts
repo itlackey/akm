@@ -32,7 +32,9 @@ import {
   aggregatePerTask,
   aggregateTrajectory,
   computeCorpusDelta,
+  computePerAssetAttribution,
   computePerTaskDelta,
+  extractAssetLoads,
   type PerTaskMetrics,
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
@@ -195,7 +197,11 @@ async function runOneIsolated(args: {
     const trajectory = computeTrajectory({ goldRef: args.task.goldRef }, result, {
       warnings: args.warnings,
     });
-    return { ...result, trajectory };
+    // Per-asset attribution is post-processing on the trace; it's free, so we
+    // run it on every (task, arm, seed) result. The driver emits an empty
+    // assetsLoaded[]; this is where the real refs get filled. Spec §6.5.
+    const assetsLoaded = extractAssetLoads(result);
+    return { ...result, trajectory, assetsLoaded };
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
@@ -264,7 +270,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const commit = args.options.commit ?? resolveGitCommit();
   const timestamp = args.options.timestamp ?? new Date().toISOString();
 
-  return {
+  const baseReport: UtilityRunReport = {
     timestamp,
     branch,
     commit,
@@ -281,5 +287,12 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     trajectoryAkm,
     tasks,
     warnings: args.warnings,
+    akmRuns: akmRunsAll,
+    taskMetadata: args.options.tasks,
   };
+  // Compute per-asset attribution as post-processing on the akm-arm runs
+  // we just collected. This is the §6.5 "free" diagnostic — it runs on every
+  // utility invocation, no extra spawns.
+  baseReport.perAsset = computePerAssetAttribution(baseReport);
+  return baseReport;
 }
