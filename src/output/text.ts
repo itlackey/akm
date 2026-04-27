@@ -337,7 +337,11 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
-    if (hit.curated !== undefined) lines.push(`  curated: ${String(hit.curated)}`);
+    // Surface optional hit-level warnings (v1 spec §4.2). The legacy
+    // `curated` boolean was removed in v1.
+    if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
+      lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);
+    }
 
     if (detail === "full") {
       if (hit.path) lines.push(`  path: ${String(hit.path)}`);

@@ -385,7 +385,9 @@ async function loadManualEntries(manualEntriesPath: string): Promise<RegistrySta
     const candidateKits = Array.isArray(raw) ? raw : asRecord(raw).stashes;
     const parsed = parseRegistryIndex({ version: 3, updatedAt: new Date().toISOString(), stashes: candidateKits });
     if (!parsed) return [];
-    return parsed.stashes.map((stash) => normalizeStash({ ...stash, curated: stash.curated ?? true }));
+    // Legacy `curated` flag on input entries is ignored (v1 spec §4.2). The
+    // builder no longer emits it on the resulting index.
+    return parsed.stashes.map((stash) => normalizeStash(stash));
   } catch {
     return [];
   }
@@ -432,7 +434,6 @@ function mergeEntries(a: RegistryStashEntry, b: RegistryStashEntry): RegistrySta
     author: a.author ?? b.author,
     license: a.license ?? b.license,
     latestVersion: a.latestVersion ?? b.latestVersion,
-    curated: a.curated || b.curated || undefined,
   });
 }
 

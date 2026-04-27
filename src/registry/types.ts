@@ -96,10 +96,14 @@ export interface RegistrySearchHit {
   homepage?: string;
   score?: number;
   metadata?: Record<string, string>;
-  /** Whether this entry was manually reviewed and approved */
-  curated?: boolean;
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
+  /**
+   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
+   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * here MUST NOT change ranking — warnings are informational only.
+   */
+  warnings?: string[];
 }
 
 export interface RegistryAssetSearchHit {

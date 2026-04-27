@@ -63,6 +63,7 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
 // ── #28: registry brief projects name + installRef + score ───────────────────
 
 describe("shapeSearchHit — registry brief projects name + score (#28)", () => {
+  // v1 spec §4.2: registry hits no longer carry the legacy `curated` boolean.
   const registryHit = {
     type: "registry",
     title: "deploy-stash",
@@ -71,7 +72,6 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
     description: "A deployment stash",
     action: "akm add npm:@myorg/deploy-stash -> then search again",
     score: 0.85,
-    curated: true,
   };
 
   test("brief includes name, installRef, score", () => {
@@ -98,11 +98,12 @@ describe("shapeSearchHit — registry brief projects name + score (#28)", () => 
     expect(Object.keys(out).length).toBeGreaterThan(0);
   });
 
-  test("normal mode keeps description, action, installRef, score, curated", () => {
+  test("normal mode keeps description, action, installRef, score (curated removed in v1)", () => {
     const out = shapeSearchHit(registryHit as Record<string, unknown>, "normal") as Record<string, unknown>;
     expect(out.description).toBeDefined();
     expect(out.installRef).toBeDefined();
     expect(out.score).toBe(0.85);
+    expect(out).not.toHaveProperty("curated");
   });
 });
 

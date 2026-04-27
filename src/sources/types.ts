@@ -24,6 +24,12 @@ export interface SourceSearchHit {
   run?: string;
   /** Approximate token count derived from fileSize (fileSize / 4). Helps agents decide whether to load full content. */
   estimatedTokens?: number;
+  /**
+   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
+   * (v1 spec §4.2). Optional; absent when there is nothing to surface. Adding
+   * a value here MUST NOT change ranking — warnings are informational only.
+   */
+  warnings?: string[];
 }
 
 export interface RegistrySearchResultHit {
@@ -35,10 +41,14 @@ export interface RegistrySearchResultHit {
   action?: string;
   score?: number;
   whyMatched?: string[];
-  /** Whether this entry was manually reviewed and approved */
-  curated?: boolean;
   /** Name of the registry that provided this hit (provenance tracking) */
   registryName?: string;
+  /**
+   * Non-fatal hit-level warnings surfaced by the registry provider (v1 spec
+   * §4.2). Optional; absent when there is nothing to surface. Adding a value
+   * here MUST NOT change ranking — warnings are informational only.
+   */
+  warnings?: string[];
 }
 
 export type SearchHit = SourceSearchHit | RegistrySearchResultHit;

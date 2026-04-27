@@ -115,8 +115,10 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
       return out;
     }
     if (detail === "normal") {
+      // `curated` was removed in v1 (spec §4.2). Renderers project optional
+      // hit-level `warnings` instead so providers can surface non-fatal issues.
       const out = capDescription(
-        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "curated"]),
+        pickFields(hit, ["title", "name", "description", "action", "installRef", "score", "warnings"]),
         NORMAL_DESCRIPTION_LIMIT,
       );
       if (out.title && !out.name) out.name = out.title;
@@ -128,8 +130,10 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   // Stash hit (local or remote)
   if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
   if (detail === "normal") {
+    // `warnings` is projected at `normal` so non-fatal hit-level issues are
+    // visible without forcing callers up to `--detail full`.
     return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens"]),
+      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }
