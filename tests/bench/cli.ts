@@ -16,10 +16,12 @@
  * hand-rolled parser keeps the dependency graph tight.
  */
 
+import fs from "node:fs";
 import process from "node:process";
 
 import { listTasks } from "./corpus";
-import { renderUtilityReport } from "./report";
+import { compareReports, type ParsedReportJson } from "./metrics";
+import { renderCompareMarkdown, renderUtilityReport } from "./report";
 import { runUtility } from "./runner";
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
@@ -42,6 +44,14 @@ utility flags:
                            Without --json, JSON still goes to stdout and the markdown
                            summary is also written to stderr for human-friendly reads.
   -h, --help               show this message.
+
+compare flags:
+  --base <path>            path to baseline UtilityRunReport JSON file. REQUIRED.
+  --current <path>         path to current  UtilityRunReport JSON file. REQUIRED.
+  --json                   emit the structured CompareResult JSON to stdout instead
+                           of a markdown diff.
+  Exit codes: 0 on successful diff, 1 on refusal (model/hash/schema/track mismatch),
+              2 on input errors (missing files, malformed JSON, unknown flags).
 
 Environment:
   BENCH_OPENCODE_MODEL   model id stamped into every RunResult. REQUIRED for utility.
@@ -158,6 +168,79 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   return { exitCode: 0, stdout, stderr };
 }
 
+export interface CompareCliOptions {
+  basePath: string;
+  currentPath: string;
+  json: boolean;
+}
+
+/**
+ * `compare` subcommand. Reads two UtilityRunReport JSON files from disk,
+ * dispatches to `compareReports`, and renders either markdown (default) or
+ * the structured JSON envelope to stdout.
+ *
+ * Exit-code shape:
+ *   • 0 on a successful diff (regardless of whether the diff shows wins).
+ *   • 1 on a refusal (model/hash/schema/track mismatch).
+ *   • 2 on input errors (file missing, malformed JSON).
+ *
+ * Returned `UtilityCliResult` keeps this unit-testable; the `main()` driver
+ * splices the result onto the actual process.
+ */
+export function runCompareCli(options: CompareCliOptions): UtilityCliResult {
+  let baseRaw: string;
+  let currentRaw: string;
+  try {
+    baseRaw = fs.readFileSync(options.basePath, "utf8");
+  } catch (err) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `bench compare: cannot read --base ${options.basePath}: ${(err as Error).message}\n`,
+    };
+  }
+  try {
+    currentRaw = fs.readFileSync(options.currentPath, "utf8");
+  } catch (err) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `bench compare: cannot read --current ${options.currentPath}: ${(err as Error).message}\n`,
+    };
+  }
+
+  let base: ParsedReportJson;
+  let current: ParsedReportJson;
+  try {
+    base = JSON.parse(baseRaw) as ParsedReportJson;
+  } catch (err) {
+    return { exitCode: 2, stdout: "", stderr: `bench compare: malformed JSON in --base: ${(err as Error).message}\n` };
+  }
+  try {
+    current = JSON.parse(currentRaw) as ParsedReportJson;
+  } catch (err) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `bench compare: malformed JSON in --current: ${(err as Error).message}\n`,
+    };
+  }
+
+  const result = compareReports(base, current);
+  const stdout = options.json ? `${JSON.stringify(result, null, 2)}\n` : `${renderCompareMarkdown(result)}\n`;
+  let stderr = "";
+  if (!result.ok) {
+    stderr = `bench compare: ${result.message}\n`;
+    return { exitCode: 1, stdout, stderr };
+  }
+  // One-line summary on stderr so an interactive operator sees it without
+  // having to scan the markdown body.
+  const agg = result.aggregate;
+  stderr = `bench compare: pass_rate Δ=${agg.passRateDelta.toFixed(2)} (${agg.passRateSign}); ${result.perTask.length} tasks compared.\n`;
+  for (const w of result.warnings) stderr += `warning: ${w}\n`;
+  return { exitCode: 0, stdout, stderr };
+}
+
 function getEnv(name: string): string | undefined {
   const value = process.env[name];
   return value && value.length > 0 ? value : undefined;
@@ -207,8 +290,22 @@ async function main(argv: string[]): Promise<number> {
     }
     case "evolve":
       return notImplemented("evolve", "#239");
-    case "compare":
-      return notImplemented("compare", "#240");
+    case "compare": {
+      const basePath = parsed.flags.get("base");
+      const currentPath = parsed.flags.get("current");
+      if (!basePath || !currentPath) {
+        process.stderr.write("bench compare: --base and --current are both required.\n");
+        return 2;
+      }
+      const result = runCompareCli({
+        basePath,
+        currentPath,
+        json: parsed.bool.has("json"),
+      });
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      return result.exitCode;
+    }
     case "attribute":
       return notImplemented("attribute", "#243");
     default:
