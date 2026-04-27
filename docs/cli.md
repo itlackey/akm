@@ -754,6 +754,66 @@ akm feedback skill:code-review --positive --note "Worked perfectly for PR review
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
 
+### history
+
+Surface per-asset state changes recorded in the local `usage_events` log
+(searches, shows, feedback, and any other mutations the indexer has captured).
+Use it for audit trails, lifecycle inspection, and debugging utility-score
+shifts without re-deriving an audit log from raw SQL.
+
+`history` is the *per-asset state-change* view. It complements the realtime
+events stream proposed in [#204](https://github.com/itlackey/agentikit/issues/204):
+events emit at the moment a mutation happens; `history` is the durable replay
+of what was recorded for an asset (or for the whole stash).
+
+```sh
+akm history                                    # Stash-wide, oldest first
+akm history --ref skill:deploy                 # Filter to one asset ref
+akm history --since 2026-04-01T00:00:00Z       # Filter by ISO timestamp
+akm history --since 1717200000000              # Filter by epoch ms
+akm history --ref skill:deploy --format jsonl  # One entry per line
+akm history --format text                      # Human-readable trail
+```
+
+| Flag | Description |
+| --- | --- |
+| `--ref` | Filter to a single asset ref (`[origin//]type:name`). Omit for stash-wide history. |
+| `--since` | Lower bound on `createdAt`. Accepts ISO 8601, `YYYY-MM-DD`, or epoch milliseconds. |
+| `--format` | Standard global flag. `text` renders a chronological trail; `json`/`jsonl`/`yaml` emit the envelope. |
+
+Output envelope (JSON):
+
+```json
+{
+  "schemaVersion": 1,
+  "ref": "skill:deploy",
+  "since": "2026-04-01 00:00:00",
+  "totalCount": 3,
+  "entries": [
+    {
+      "id": 17,
+      "eventType": "feedback",
+      "ref": "skill:deploy",
+      "entryId": 42,
+      "query": null,
+      "signal": "positive",
+      "metadata": null,
+      "createdAt": "2026-04-12 14:03:21"
+    }
+  ],
+  "warnings": []
+}
+```
+
+`schemaVersion` is always `1` for this release. `ref` and `since` are echoed
+back only when the corresponding flags were supplied. `totalCount` matches
+`entries.length` (no server-side pagination yet). `warnings` is omitted when
+empty. Entries are returned in chronological order (oldest first).
+
+If the stash has never been indexed, the `usage_events` schema is created
+on demand and the command returns an empty `entries` array rather than
+erroring.
+
 ### registry
 
 Manage stash registries. The `registry` command has four subcommands:

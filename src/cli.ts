@@ -5,6 +5,7 @@ import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
+import { akmHistory } from "./commands/history";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
@@ -909,6 +910,28 @@ const feedbackCommand = defineCommand({
       }
 
       output("feedback", { ok: true, ref, signal, note: args.note ?? null });
+    });
+  },
+});
+
+const historyCommand = defineCommand({
+  meta: {
+    name: "history",
+    description:
+      "Show mutation/usage history for a single asset (--ref) or stash-wide. Backed by the internal usage_events log.",
+  },
+  args: {
+    ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
+    since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      const result = await akmHistory({
+        ref: args.ref,
+        since: args.since,
+      });
+      output("history", result);
     });
   },
 });
@@ -2208,6 +2231,7 @@ const main = defineCommand({
     enable: enableCommand,
     disable: disableCommand,
     feedback: feedbackCommand,
+    history: historyCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
