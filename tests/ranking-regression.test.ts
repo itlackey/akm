@@ -68,11 +68,11 @@ beforeAll(async () => {
   testCacheDir = createTmpDir("akm-ranking-cache-");
   testConfigDir = createTmpDir("akm-ranking-config-");
 
-  // Materialise the shared ranking-baseline fixture into a tmp dir. The
-  // helper also runs `akm index` once against it, but this test rebuilds the
-  // index from scratch via `buildFixtureIndex()` below using the test's own
-  // XDG_CACHE_HOME so the helper's index is harmless.
-  const loaded = loadFixtureStash("ranking-baseline");
+  // Materialise the shared ranking-baseline fixture into a tmp dir. This
+  // test rebuilds the index from scratch via `buildFixtureIndex()` below
+  // against its own XDG_CACHE_HOME, so we skip the helper's `akm index`
+  // spawn (~200-300ms saved per run).
+  const loaded = loadFixtureStash("ranking-baseline", { skipIndex: true });
   FIXTURE_STASH = loaded.stashDir;
   fixtureCleanup = loaded.cleanup;
 

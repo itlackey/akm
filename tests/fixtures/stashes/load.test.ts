@@ -32,6 +32,12 @@ describe("loadFixtureStash", () => {
 
       // The helper set AKM_STASH_DIR to the materialised path.
       expect(process.env.AKM_STASH_DIR).toBe(stashDir);
+
+      // Default behaviour runs `akm index`, which writes the SQLite DB into
+      // the helper's isolated XDG_CACHE_HOME (sibling of stashDir).
+      const tmpRoot = path.dirname(stashDir);
+      const dbPath = path.join(tmpRoot, "cache", "akm", "index.db");
+      expect(fs.existsSync(dbPath)).toBe(true);
     } finally {
       cleanup();
     }
@@ -41,6 +47,29 @@ describe("loadFixtureStash", () => {
     expect(process.env.AKM_STASH_DIR).toBe(sentinel);
 
     // Restore the test's own prior value rather than the synthetic sentinel.
+    if (priorAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
+    else process.env.AKM_STASH_DIR = priorAkmStashDir;
+  });
+
+  test("with { skipIndex: true } does not invoke akm index", () => {
+    const priorAkmStashDir = process.env.AKM_STASH_DIR;
+
+    const { stashDir, cleanup } = loadFixtureStash("minimal", { skipIndex: true });
+
+    try {
+      // The fixture is still materialised and AKM_STASH_DIR is still set.
+      expect(fs.existsSync(stashDir)).toBe(true);
+      expect(process.env.AKM_STASH_DIR).toBe(stashDir);
+
+      // But the index DB the helper would otherwise have created in the
+      // isolated XDG_CACHE_HOME is absent — proving no `akm index` ran.
+      const tmpRoot = path.dirname(stashDir);
+      const dbPath = path.join(tmpRoot, "cache", "akm", "index.db");
+      expect(fs.existsSync(dbPath)).toBe(false);
+    } finally {
+      cleanup();
+    }
+
     if (priorAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
     else process.env.AKM_STASH_DIR = priorAkmStashDir;
   });

@@ -65,11 +65,28 @@ export function fixtureContentHash(name: string): string {
 }
 
 /**
+ * Options for `loadFixtureStash`.
+ */
+export interface LoadFixtureStashOptions {
+  /**
+   * If true, skip the `akm index` invocation. The fixture is still copied to
+   * a tmp dir and `AKM_STASH_DIR` is still set, but no SQLite DB is created
+   * in the isolated XDG cache. Useful for callers that build their own index
+   * directly via the internal indexer DB API and would otherwise pay ~200-
+   * 300ms for a wasted spawn. Defaults to false.
+   */
+  skipIndex?: boolean;
+}
+
+/**
  * Copy the named fixture into a fresh tmp dir, set `AKM_STASH_DIR`, and run
  * `akm index` against it. Returns the tmp path plus a cleanup function that
  * restores the prior env value and recursively removes the tmp dir.
+ *
+ * Pass `{ skipIndex: true }` if the caller will build its own index and the
+ * helper's `akm index` spawn would be wasted work.
  */
-export function loadFixtureStash(name: string): LoadedFixtureStash {
+export function loadFixtureStash(name: string, options: LoadFixtureStashOptions = {}): LoadedFixtureStash {
   const sourceDir = fixtureSourceDir(name);
   const contentHash = fixtureContentHash(name);
 
@@ -84,30 +101,32 @@ export function loadFixtureStash(name: string): LoadedFixtureStash {
   const priorAkmStashDir = process.env.AKM_STASH_DIR;
   process.env.AKM_STASH_DIR = stashDir;
 
-  // Use isolated XDG dirs for the index invocation so the helper never
-  // touches the operator's real ~/.cache/akm or pulls in their configured
-  // registries / sources. The shipped fixture is the only thing indexed.
-  const result = Bun.spawnSync({
-    cmd: ["bun", "run", CLI_ENTRY, "index"],
-    cwd: stashDir,
-    env: {
-      ...process.env,
-      AKM_STASH_DIR: stashDir,
-      XDG_CACHE_HOME: cacheHome,
-      XDG_CONFIG_HOME: configHome,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  if (!options.skipIndex) {
+    // Use isolated XDG dirs for the index invocation so the helper never
+    // touches the operator's real ~/.cache/akm or pulls in their configured
+    // registries / sources. The shipped fixture is the only thing indexed.
+    const result = Bun.spawnSync({
+      cmd: ["bun", "run", CLI_ENTRY, "index"],
+      cwd: stashDir,
+      env: {
+        ...process.env,
+        AKM_STASH_DIR: stashDir,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_CONFIG_HOME: configHome,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  if (result.exitCode !== 0) {
-    // Restore env and clean up before throwing so the caller is not left with
-    // a leaked tmp dir or mutated process state.
-    if (priorAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
-    else process.env.AKM_STASH_DIR = priorAkmStashDir;
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
-    const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : "";
-    throw new Error(`akm index failed for fixture "${name}" (exit ${result.exitCode}): ${stderr}`);
+    if (result.exitCode !== 0) {
+      // Restore env and clean up before throwing so the caller is not left
+      // with a leaked tmp dir or mutated process state.
+      if (priorAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = priorAkmStashDir;
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+      const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : "";
+      throw new Error(`akm index failed for fixture "${name}" (exit ${result.exitCode}): ${stderr}`);
+    }
   }
 
   const cleanup = (): void => {
