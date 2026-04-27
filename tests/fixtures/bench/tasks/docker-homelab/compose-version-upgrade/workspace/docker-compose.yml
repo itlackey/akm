@@ -1,0 +1,8 @@
+version: "2"
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports: ["80:80"]
+    mem_limit: 256m
+    cpu_shares: 512
+    volume_driver: local

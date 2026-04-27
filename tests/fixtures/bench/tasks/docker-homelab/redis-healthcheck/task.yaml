@@ -1,0 +1,11 @@
+id: docker-homelab/redis-healthcheck
+title: "Add a Redis healthcheck to the homelab compose stack"
+domain: docker-homelab
+difficulty: easy
+slice: eval
+gold_ref: skill:docker-homelab
+stash: docker-homelab
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000
