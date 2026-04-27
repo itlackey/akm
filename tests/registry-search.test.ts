@@ -7,6 +7,9 @@ import { searchRegistry } from "../src/commands/registry-search";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
+// One entry intentionally carries the legacy `curated` boolean to exercise
+// the v1 parse-and-ignore rule (spec §4.2). The cast is necessary because
+// `curated` was removed from `RegistryStashEntry` in v1.
 const FIXTURE_INDEX: RegistryIndex = {
   version: 3,
   updatedAt: "2026-03-09T00:00:00Z",
@@ -34,8 +37,9 @@ const FIXTURE_INDEX: RegistryIndex = {
       assetTypes: ["skill", "command", "knowledge"],
       author: "itlackey",
       license: "CC-BY-4.0",
+      // Legacy v0.6.x field — kept here to verify v1 parse-and-ignore.
       curated: true,
-    },
+    } as RegistryIndex["stashes"][number] & { curated: boolean },
     {
       id: "github:someone/azure-ops-stash",
       name: "Azure Ops Stash",
@@ -449,17 +453,20 @@ describe("hit shape", () => {
     }
   });
 
-  test("curated field is true for manual entries and undefined for auto-discovered", async () => {
+  test("legacy `curated` key in registry JSON parses and is silently ignored", async () => {
+    // Spec §4.2: the legacy registry boolean `curated` is removed in v1.
+    // Legacy index JSON containing it MUST parse without error and the key
+    // MUST NOT appear on emitted hits.
     const srv = serveIndex(FIXTURE_INDEX);
     try {
       const result = await searchRegistry("itlackey", { registries: [{ url: srv.url }] });
-      const curatedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
-      expect(curatedHit).toBeDefined();
-      expect(curatedHit?.curated).toBe(true);
+      const legacyCuratedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
+      expect(legacyCuratedHit).toBeDefined();
+      expect(legacyCuratedHit as Record<string, unknown>).not.toHaveProperty("curated");
 
       const autoHit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
       expect(autoHit).toBeDefined();
-      expect(autoHit?.curated).toBeUndefined();
+      expect(autoHit as Record<string, unknown>).not.toHaveProperty("curated");
     } finally {
       srv.close();
     }

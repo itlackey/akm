@@ -123,12 +123,14 @@ describe("shapeSearchHit — local stash hits", () => {
 });
 
 describe("shapeSearchHit — registry hits", () => {
+  // v1 spec §4.2: registry hits no longer surface a `curated` boolean. They
+  // may surface optional `warnings` when a provider has non-fatal issues.
   const registryHit = {
     type: "registry",
     name: "azure-ops",
     description: "Azure ops kit",
     action: "akm add npm:azure-ops",
-    curated: true,
+    warnings: ["registry rate limit hit, results may be stale"],
     id: "npm:azure-ops",
     score: 0.7,
   };
@@ -140,19 +142,26 @@ describe("shapeSearchHit — registry hits", () => {
     expect(result.name).toBe("azure-ops");
     expect(result.score).toBe(0.7);
     // action is no longer in brief output — use installRef to act
+    expect(result).not.toHaveProperty("curated");
+    // brief intentionally omits warnings to keep payloads small
+    expect(result).not.toHaveProperty("warnings");
   });
 
-  test("normal adds description and curated", () => {
-    expect(shapeSearchHit(registryHit, "normal")).toMatchObject({
+  test("normal adds description and surfaces optional warnings", () => {
+    const out = shapeSearchHit(registryHit, "normal");
+    expect(out).toMatchObject({
       name: "azure-ops",
       description: "Azure ops kit",
       action: "akm add npm:azure-ops",
-      curated: true,
+      warnings: ["registry rate limit hit, results may be stale"],
     });
+    expect(out).not.toHaveProperty("curated");
   });
 
-  test("full passes through", () => {
-    expect(shapeSearchHit(registryHit, "full")).toEqual(registryHit);
+  test("full passes through and never re-adds curated", () => {
+    const out = shapeSearchHit(registryHit, "full");
+    expect(out).toEqual(registryHit);
+    expect(out).not.toHaveProperty("curated");
   });
 });
 
@@ -331,7 +340,7 @@ describe("shapeRegistrySearchOutput", () => {
           name: "azure-ops",
           description: "Azure ops kit",
           action: "akm add npm:azure-ops",
-          curated: true,
+          // v1 §4.2: no more `curated` key.
           score: 0.5,
           id: "npm:azure-ops",
         },

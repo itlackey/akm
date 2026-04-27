@@ -99,6 +99,8 @@ export async function akmSearch(input: {
     const installRef =
       hit.installRef ??
       (hit.source === "npm" ? `npm:${hit.ref}` : hit.source === "git" ? `git+${hit.ref}` : `github:${hit.ref}`);
+    // The legacy registry boolean `curated` was removed in v1 (spec §4.2).
+    // Hit-level `warnings` are forwarded when the provider surfaced any.
     return {
       type: "registry",
       name: hit.title,
@@ -106,8 +108,8 @@ export async function akmSearch(input: {
       description: hit.description,
       action: `akm add ${installRef} -> then search again`,
       score: hit.score,
-      curated: hit.curated,
       registryName: hit.registryName,
+      ...(hit.warnings && hit.warnings.length > 0 ? { warnings: hit.warnings } : {}),
     };
   });
 
