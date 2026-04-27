@@ -4,7 +4,7 @@
 **Target:** v1.0 freeze
 **Audience:** akm core contributors
 
-> **Status note (2026-04-27):** This spec is being revised to align with the Agent Reflection and Self-Evolution proposal (2026-04-26). Until that rewrite lands, treat proposal-queue, agent-CLI, and lesson/distill requirements as authoritative and use `docs/reviews/v1-agent-reflection-issues.md` for execution tracking.
+> **Status note (2026-04-27):** This spec is partially stale and is being revised under the consolidated pre-release v1 plan. The next implementation wave updates the locked CLI/config/type sections early rather than deferring that sync to the end. Until those edits land, treat proposal-queue, agent-CLI, `quality: "proposed"`, `lesson`, and `llm.features.*` as intended v1 surfaces, and use `docs/reviews/v1-implementation-plan.md` plus `docs/reviews/v1-agent-reflection-issues.md` for sequencing and execution tracking.
 
 ---
 
