@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { filterNonEmptyStrings } from "./common";
 import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import { warn } from "./warn";
+
+export type { AgentConfig } from "../integrations/agent/config";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -219,6 +222,14 @@ export interface AkmConfig {
    * source-array order" fallback.
    */
   defaultWriteTarget?: string;
+  /**
+   * Optional agent CLI integration block (v1 spec §12). Configures
+   * external agent CLIs that akm can shell out to. Missing block disables
+   * agent commands; unknown nested keys are warn-and-ignored. Built-in
+   * profiles ship for opencode, claude, codex, gemini, aider — users can
+   * override or add profiles via `agent.profiles[<name>]`.
+   */
+  agent?: AgentConfig;
   /**
    * Search-specific tuning parameters.
    */
@@ -490,6 +501,11 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   if (typeof raw.defaultWriteTarget === "string" && raw.defaultWriteTarget.trim()) {
     config.defaultWriteTarget = raw.defaultWriteTarget.trim();
+  }
+
+  if ("agent" in raw) {
+    const agent = parseAgentConfig(raw.agent);
+    if (agent) config.agent = agent;
   }
 
   if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
@@ -1141,6 +1157,21 @@ function parseRegistryConfigEntry(value: unknown): RegistryConfigEntry | undefin
   return entry;
 }
 
+function mergeAgentConfig(base: AgentConfig, override: AgentConfig): AgentConfig {
+  const merged: AgentConfig = { ...base, ...override };
+  const baseProfiles = base.profiles;
+  const overrideProfiles = override.profiles;
+  if (baseProfiles && overrideProfiles) {
+    const profiles: NonNullable<AgentConfig["profiles"]> = { ...baseProfiles };
+    for (const [name, entry] of Object.entries(overrideProfiles)) {
+      const existing = baseProfiles[name];
+      profiles[name] = existing ? { ...existing, ...entry } : entry;
+    }
+    merged.profiles = profiles;
+  }
+  return merged;
+}
+
 function mergeSecurityConfig(base?: SecurityConfig, override?: SecurityConfig): SecurityConfig | undefined {
   if (!base && !override) return undefined;
   const installAudit = mergeInstallAuditConfig(base?.installAudit, override?.installAudit);
@@ -1187,6 +1218,9 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   }
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
+  }
+  if (base.agent && override.agent) {
+    merged.agent = mergeAgentConfig(base.agent, override.agent);
   }
   // The new `stashInheritance` field wins; fall back to the legacy
   // `disableGlobalStashes` boolean so old config files behave identically.
