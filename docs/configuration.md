@@ -9,7 +9,13 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-> **Status note (2026-04-27):** This page documents the currently shipped pre-release config surface. Planned v1 additions such as the `agent` config block and `llm.features.*` map are being staged through the consolidated v1 plan and are not part of the live config contract until they land. See `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md` for pending work.
+> **Status legend.** Sections below are tagged either **Pre-release
+> (shipping)** or **Planned for v1**. Planned-for-v1 keys are part of the
+> locked v1.0 surface declared in
+> [`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+> §9.2; the loader will accept them once their milestone lands. Until then,
+> the loader treats unknown top-level keys as warn-and-ignore — your config
+> will not break either way.
 
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
@@ -275,3 +281,93 @@ akm info
 
 If `searchModes` includes `"semantic"` with `"ready-vec"`, the native extension
 is working. If it shows `"ready-js"`, the JS fallback is in use.
+
+---
+
+## Planned for v1 — `agent.*` block
+
+**Status: Planned for v1.**
+Configures external agent CLI integration (see
+[CLI: agent / reflect / propose](cli.md#planned-for-v1--agent-proposal-lesson-and-distill)
+and v1 spec §12).
+
+```jsonc
+{
+  "agent": {
+    "default": "opencode",
+    "timeoutMs": 60000,
+    "profiles": {
+      "opencode": {
+        "bin": "opencode",
+        "args": ["--non-interactive"],
+        "stdio": "captured",
+        "parseOutput": "text"
+      },
+      "claude": {
+        "bin": "claude",
+        "args": [],
+        "stdio": "interactive"
+      }
+    }
+  }
+}
+```
+
+Per-key contract:
+
+| Key | Required | Description |
+| --- | --- | --- |
+| `agent.default` | optional | Default profile name. If unset, agent commands require an explicit `--profile` flag |
+| `agent.timeoutMs` | optional | Hard timeout for spawned agent CLIs (default 60_000) |
+| `agent.profiles[<name>]` | optional | Per-profile overrides on top of built-in defaults for `opencode`, `claude`, `codex`, `gemini`, `aider` |
+| `agent.profiles[<name>].bin` | required if profile defined | Command to spawn |
+| `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
+| `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
+| `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
+| `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
+| `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
+
+Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
+disables all agent commands with a `ConfigError` whose hint points at this
+section.
+
+## Planned for v1 — `llm.features.*` map
+
+**Status: Planned for v1.**
+Gates the small set of bounded in-tree LLM call sites. All defaults are
+`false` — the v1 contract is "the in-tree LLM does nothing unless you opt
+in, per feature." See v1 spec §14 for the boundary rules.
+
+```jsonc
+{
+  "llm": {
+    "endpoint": "http://localhost:11434/v1/chat/completions",
+    "model": "llama3.2",
+    "temperature": 0.3,
+    "maxTokens": 512,
+    "features": {
+      "curate_rerank":            false,
+      "tag_dedup":                false,
+      "memory_consolidation":     false,
+      "feedback_distillation":    false,
+      "embedding_fallback_score": false
+    }
+  }
+}
+```
+
+| Feature flag | Use site | Behaviour when disabled |
+| --- | --- | --- |
+| `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
+| `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
+| `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
+| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
+| `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
+
+Unknown keys under `llm.features` are warn-and-ignore. The five keys above
+are locked and cannot be renamed after v1.0.
+
+**Statelessness invariant.** Every in-tree LLM call site is a single,
+bounded request/response cycle with a hard timeout. There are no caches
+keyed on prior responses, no streaming sessions, and no persistent
+connections. Long-lived state belongs in the agent path, not here.
