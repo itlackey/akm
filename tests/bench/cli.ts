@@ -4,25 +4,23 @@
  *
  * Subcommands:
  *   • `utility`    — paired noakm vs akm utility benchmark (Track A).
- *   • `evolve`     — longitudinal evolution loop (Track B). Stub in #236.
- *   • `compare`    — diff two report JSON files. Stub in #236.
- *   • `attribute`  — per-asset marginal contribution. Stub in #236.
+ *   • `evolve`     — longitudinal evolution loop (Track B). Stub.
+ *   • `compare`    — diff two report JSON files. Stub.
+ *   • `attribute`  — per-asset marginal contribution. Stub.
  *
- * #236 implements `--help` and a thin `utility` skeleton that walks the
- * corpus and produces an empty report. The other three subcommands print a
- * pointer to their tracking issue and exit 2.
+ * #238 wires `utility` to the K-seed runner and §13.3 report renderer. The
+ * other three subcommands stay as "not yet implemented" pointers.
  *
- * NOTE: This file is intentionally argv-light. citty is the project's CLI
- * framework but the bench binary is not part of the public CLI surface, so
- * a hand-rolled parser keeps the dependency graph tight.
+ * NOTE: The bench binary is intentionally argv-light. citty is the project's
+ * CLI framework but the bench is not part of the public CLI surface, so a
+ * hand-rolled parser keeps the dependency graph tight.
  */
 
 import process from "node:process";
 
 import { listTasks } from "./corpus";
-import type { RunResult } from "./driver";
-import { computeOutcomeAggregate, type OutcomeAggregate } from "./metrics";
-import { renderJsonReport, renderMarkdownSummary } from "./report";
+import { renderUtilityReport } from "./report";
+import { runUtility } from "./runner";
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
 
@@ -35,13 +33,18 @@ Subcommands:
   compare       Diff two report JSON files (refuses cross-model diffs).
   attribute     Per-asset marginal pass-rate contribution.
 
-Common flags:
-  --tasks <slice>     train | eval | all  (default: eval)
-  --json              Emit JSON to stdout; markdown summary to stderr.
-  -h, --help          Show this message.
+utility flags:
+  --tasks <slice>          train | eval | all  (default: all)
+  --seeds <N>              seeds per arm  (default: 5)
+  --budget-tokens <N>      per-run token cap (default: 30000)
+  --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
+  --json                   suppress the markdown summary on stderr (machine-readable only).
+                           Without --json, JSON still goes to stdout and the markdown
+                           summary is also written to stderr for human-friendly reads.
+  -h, --help               show this message.
 
 Environment:
-  BENCH_OPENCODE_MODEL   model id stamped into every RunResult.
+  BENCH_OPENCODE_MODEL   model id stamped into every RunResult. REQUIRED for utility.
 
 See tests/bench/BENCH.md for the operator guide.
 `;
@@ -89,65 +92,85 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function notImplemented(name: string, issueRef: string): never {
-  process.stderr.write(`bench ${name}: not yet implemented in #236; see ${issueRef}.\n`);
+  process.stderr.write(`bench ${name}: not yet implemented; see ${issueRef}.\n`);
   process.exit(2);
 }
 
-interface UtilityOptions {
+export interface UtilityCliOptions {
   slice: "train" | "eval" | "all";
   json: boolean;
+  seedsPerArm: number;
+  budgetTokens: number;
+  budgetWallMs: number;
   model: string;
-  branch: string;
-  commit: string;
-  timestamp: string;
+  branch?: string;
+  commit?: string;
+  timestamp?: string;
+}
+
+export interface UtilityCliResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 /**
- * `utility` subcommand skeleton. #236 walks the corpus and emits an empty
- * report. Real run execution lands in #238 once the corpus has tasks.
+ * `utility` subcommand. Walks the corpus, runs K seeds per arm per task,
+ * and produces the §13.3 report.
+ *
+ * Returns rather than mutates process to keep this unit-testable. The
+ * `main()` driver below maps the result onto the actual stdout/stderr/exit.
  */
-export function runUtility(options: UtilityOptions): { exitCode: number; stdout: string; stderr: string } {
+export async function runUtilityCli(options: UtilityCliOptions): Promise<UtilityCliResult> {
   const sliceFilter = options.slice === "all" ? undefined : options.slice;
   const tasks = listTasks(sliceFilter ? { slice: sliceFilter } : {});
 
-  const empty: RunResult[] = [];
-  const arms: Record<string, OutcomeAggregate> = {
-    noakm: computeOutcomeAggregate(empty),
-    akm: computeOutcomeAggregate(empty),
-  };
-
-  const reportInput = {
-    timestamp: options.timestamp,
-    branch: options.branch,
-    commit: options.commit,
+  const report = await runUtility({
+    tasks,
+    arms: ["noakm", "akm"],
     model: options.model,
-    track: "utility" as const,
-    arms,
-  };
-  const json = renderJsonReport(reportInput);
-  const md = renderMarkdownSummary(reportInput);
+    seedsPerArm: options.seedsPerArm,
+    budgetTokens: options.budgetTokens,
+    budgetWallMs: options.budgetWallMs,
+    slice: options.slice,
+    ...(options.branch !== undefined ? { branch: options.branch } : {}),
+    ...(options.commit !== undefined ? { commit: options.commit } : {}),
+    ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
+  });
 
-  let stdout = "";
-  let stderr = "";
-  if (options.json) {
-    stdout = `${json}\n`;
-    stderr = `${md}\n`;
-  } else {
-    stdout = `${md}\n`;
-  }
+  const { json, markdown } = renderUtilityReport(report);
+  const jsonText = `${JSON.stringify(json, null, 2)}\n`;
+  const markdownText = `${markdown}\n`;
+
+  // JSON ALWAYS goes to stdout. This is the bench's machine-readable
+  // contract (matches `tests/benchmark-suite.ts` and the future `bench
+  // compare`/`attribute` subcommands). The `--json` flag means
+  // "suppress the human-friendly markdown summary on stderr"; without it,
+  // both the JSON envelope (stdout) and the markdown summary (stderr) are
+  // emitted so an operator running it interactively gets both views.
+  const stdout = jsonText;
+  let stderr = options.json ? "" : markdownText;
   stderr += `tasks discovered: ${tasks.length} (slice=${options.slice})\n`;
   if (tasks.length === 0) {
-    stderr += "no tasks found — corpus is built in #237\n";
+    stderr += "no tasks found — corpus is empty or the slice filter excluded all tasks\n";
   }
+
   return { exitCode: 0, stdout, stderr };
 }
 
-function getEnv(name: string, fallback: string): string {
+function getEnv(name: string): string | undefined {
   const value = process.env[name];
-  return value && value.length > 0 ? value : fallback;
+  return value && value.length > 0 ? value : undefined;
 }
 
-function main(argv: string[]): number {
+function parseInt32(text: string | undefined, fallback: number): number {
+  if (text === undefined) return fallback;
+  const n = Number.parseInt(text, 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
 
   if (parsed.bool.has("help") || parsed.subcommand === "" || parsed.subcommand === "help") {
@@ -157,18 +180,26 @@ function main(argv: string[]): number {
 
   switch (parsed.subcommand) {
     case "utility": {
-      const sliceRaw = parsed.flags.get("tasks") ?? "eval";
-      const slice =
-        sliceRaw === "train" || sliceRaw === "eval" || sliceRaw === "all"
-          ? (sliceRaw as "train" | "eval" | "all")
-          : "eval";
-      const result = runUtility({
+      const sliceRaw = parsed.flags.get("tasks") ?? "all";
+      if (sliceRaw !== "train" && sliceRaw !== "eval" && sliceRaw !== "all") {
+        process.stderr.write(
+          `bench utility: invalid --tasks value "${sliceRaw}"; expected one of: all, train, eval.\n`,
+        );
+        return 2;
+      }
+      const slice = sliceRaw as "train" | "eval" | "all";
+      const model = getEnv("BENCH_OPENCODE_MODEL");
+      if (!model) {
+        process.stderr.write("bench utility: BENCH_OPENCODE_MODEL environment variable is required.\n");
+        return 2;
+      }
+      const result = await runUtilityCli({
         slice,
         json: parsed.bool.has("json"),
-        model: getEnv("BENCH_OPENCODE_MODEL", "unset"),
-        branch: getEnv("BENCH_BRANCH", "unknown"),
-        commit: getEnv("BENCH_COMMIT", "unknown"),
-        timestamp: new Date().toISOString(),
+        seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
+        budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
+        budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
+        model,
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
@@ -187,9 +218,9 @@ function main(argv: string[]): number {
   }
 }
 
-// Only execute when invoked directly. The exported `runUtility` is callable
+// Only execute when invoked directly. The exported `runUtilityCli` is callable
 // from tests without triggering process.exit.
 if (import.meta.main) {
-  const code = main(process.argv.slice(2));
+  const code = await main(process.argv.slice(2));
   process.exit(code);
 }

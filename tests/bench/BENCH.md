@@ -36,9 +36,35 @@ Subcommands:
 - `compare` — diff two report JSON files. Stub in #236; lands in #240.
 - `attribute` — per-asset marginal contribution. Stub in #236; lands in #243.
 
-`--tasks` accepts `train | eval | all`. `--json` emits the JSON envelope on
-stdout and the markdown summary on stderr; without `--json`, only the markdown
-summary goes to stdout.
+`--tasks` accepts `train | eval | all`; any other value exits 2 with a clear
+error rather than silently coercing. The JSON envelope is **always** written
+to stdout — that is the bench's machine-readable contract and matches
+`tests/benchmark-suite.ts`. The `--json` flag means "machine-readable only":
+it suppresses the human-friendly markdown summary that is otherwise written to
+stderr alongside the JSON. Without `--json`, both stdout (JSON) and stderr
+(markdown summary) get content; with `--json`, stderr only carries minor trace
+lines (e.g. the `tasks discovered: …` line).
+
+## Trajectory metrics — what the v1 contract emits
+
+`docs/technical/benchmark.md` §6.2 is the normative list of trajectory
+metrics. It defines two booleans that the v1 utility report emits today:
+
+- `correct_asset_loaded` — did the agent invoke `akm show <goldRef>`?
+- `feedback_recorded` — did the agent emit any `feedback` event?
+
+The §13.3 sample envelope shows two additional illustrative fields
+(`searched_before_acting` and `irrelevant_assets_loaded`). Those were
+aspirational sketches, not part of the v1 commitment, and computing them
+well requires tool-call tracing that #238 deliberately deferred. The JSON
+`trajectory.akm` object therefore carries **only** the two §6.2 fields in
+v1; if a future PR wants to land them, it can extend the shape additively
+without breaking the v1 contract.
+
+Per-run inputs (events.jsonl bytes-read and verifierStdout substring scan)
+are capped at 16 MiB each. A runaway agent that produces more than that does
+not OOM the bench; trajectory is computed from the prefix and a warning is
+appended to the report's top-level `warnings[]`.
 
 ## Per-run isolation
 
