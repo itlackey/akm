@@ -21,9 +21,48 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     // Output shape registration for `akm history` — paired with the textRenderer in text.ts.
     case "history":
       return shapeHistoryOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm events list` and `akm events tail`
+    // (#204). Both share the same envelope; the renderer in text.ts uses
+    // distinct command names so it can format streaming differently.
+    case "events-list":
+    case "events-tail":
+      return shapeEventsOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
+}
+
+export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const events = Array.isArray(result.events) ? (result.events as Record<string, unknown>[]) : [];
+  const shapedEvents = events.map((event) => shapeEventEntry(event, detail));
+  const base: Record<string, unknown> = {
+    ...(result.ref !== undefined ? { ref: result.ref } : {}),
+    ...(result.type !== undefined ? { type: result.type } : {}),
+    ...(result.since !== undefined ? { since: result.since } : {}),
+    totalCount: result.totalCount ?? shapedEvents.length,
+    events: shapedEvents,
+  };
+  if (typeof result.nextOffset === "number") {
+    base.nextOffset = result.nextOffset;
+  }
+  if (typeof result.reason === "string") {
+    base.reason = result.reason;
+  }
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    return pickFields(entry, ["eventType", "ref", "ts"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["eventType", "ref", "ts"]);
+  }
+  // full / agent: project everything the reader emits.
+  return pickFields(entry, ["id", "schemaVersion", "eventType", "ref", "ts", "metadata"]);
 }
 
 export function shapeHistoryOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {

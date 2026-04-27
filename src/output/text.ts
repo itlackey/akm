@@ -183,9 +183,47 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "history": {
       return formatHistoryPlain(r);
     }
+    // Output shape registration for `akm events list` / `akm events tail`
+    // (#204). Both share a renderer; `events-tail` is also called per-event
+    // by the streaming code path via `formatEventLine`.
+    case "events-list":
+    case "events-tail": {
+      return formatEventsPlain(r);
+    }
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatEventsPlain(r: Record<string, unknown>): string {
+  const events = Array.isArray(r.events) ? (r.events as Array<Record<string, unknown>>) : [];
+  const headerParts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
+  if (typeof r.type === "string" && r.type) headerParts.push(`type: ${r.type}`);
+  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
+  const totalCount = typeof r.totalCount === "number" ? r.totalCount : events.length;
+  headerParts.push(`${totalCount} event(s)`);
+  const header = headerParts.join("  ");
+  if (events.length === 0) {
+    return `${header}\nNo events.`;
+  }
+  const lines = [header, ""];
+  for (const event of events) {
+    lines.push(formatEventLine(event));
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatEventLine(event: Record<string, unknown>): string {
+  const ts = String(event.ts ?? "?");
+  const eventType = String(event.eventType ?? "?");
+  const ref = event.ref ? String(event.ref) : null;
+  const head = ref ? `${ts}  [${eventType}] ${ref}` : `${ts}  [${eventType}]`;
+  if (event.metadata != null && event.metadata !== "") {
+    const meta = typeof event.metadata === "string" ? event.metadata : JSON.stringify(event.metadata);
+    return `${head}\n  metadata: ${meta}`;
+  }
+  return head;
 }
 
 export function formatHistoryPlain(r: Record<string, unknown>): string {

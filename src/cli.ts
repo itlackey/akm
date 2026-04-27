@@ -5,6 +5,7 @@ import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
+import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
@@ -30,6 +31,7 @@ import { isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
+import { appendEvent } from "./core/events";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
@@ -47,7 +49,7 @@ import {
   parseFlagValue,
 } from "./output/context";
 import { shapeForCommand } from "./output/shapes";
-import { formatPlain, outputJsonl } from "./output/text";
+import { formatEventLine, formatPlain, outputJsonl } from "./output/text";
 import { buildRegistryIndex, writeRegistryIndex } from "./registry/build-index";
 import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { saveGitStash } from "./sources/providers/git";
@@ -325,6 +327,10 @@ const addCommand = defineCommand({
           options: parsedOptions,
           writable: args.writable,
         });
+        appendEvent({
+          eventType: "add",
+          metadata: { target: ref, provider: args.provider, name: args.name ?? null, writable: args.writable === true },
+        });
         output("add", result);
         return;
       }
@@ -345,6 +351,10 @@ const addCommand = defineCommand({
           trustThisInstall: args.trust,
           writable: args.writable,
         });
+        appendEvent({
+          eventType: "add",
+          metadata: { target: ref, type: "wiki", name: args.name ?? null, writable: args.writable === true },
+        });
         output("add", result);
         return;
       }
@@ -356,6 +366,15 @@ const addCommand = defineCommand({
         options: Object.keys(websiteOptions).length > 0 ? websiteOptions : undefined,
         trustThisInstall: args.trust,
         writable: args.writable,
+      });
+      appendEvent({
+        eventType: "add",
+        metadata: {
+          target: ref,
+          name: args.name ?? null,
+          overrideType: args.type ?? null,
+          writable: args.writable === true,
+        },
       });
       output("add", result);
     });
@@ -423,6 +442,14 @@ const removeCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const result = await akmRemove({ target: args.target });
+      appendEvent({
+        eventType: "remove",
+        metadata: {
+          target: args.target,
+          ref: typeof result.removed?.ref === "string" ? result.removed.ref : null,
+          id: typeof result.removed?.id === "string" ? result.removed.id : null,
+        },
+      });
       output("remove", result);
     });
   },
@@ -438,6 +465,17 @@ const updateCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const result = await akmUpdate({ target: args.target, all: args.all, force: args.force });
+      appendEvent({
+        eventType: "update",
+        metadata: {
+          target: args.target ?? null,
+          all: args.all === true,
+          force: args.force === true,
+          processed: Array.isArray((result as { processed?: unknown[] }).processed)
+            ? (result as { processed: unknown[] }).processed.length
+            : 0,
+        },
+      });
       output("update", result);
     });
   },
@@ -676,6 +714,14 @@ const saveCommand = defineCommand({
       }
 
       const result = saveGitStash(effectiveName, args.message, writable);
+      appendEvent({
+        eventType: "save",
+        metadata: {
+          name: effectiveName ?? null,
+          message: args.message ?? null,
+          ok: (result as { ok?: boolean }).ok !== false,
+        },
+      });
       output("save", result);
     });
   },
@@ -927,6 +973,11 @@ const feedbackCommand = defineCommand({
         closeDatabase(db);
       }
 
+      appendEvent({
+        eventType: "feedback",
+        ref,
+        metadata: { signal, ...(args.note ? { note: args.note } : {}) },
+      });
       output("feedback", { ok: true, ref, signal, note: args.note ?? null });
     });
   },
@@ -1424,6 +1475,11 @@ const rememberCommand = defineCommand({
           force: args.force,
           target: args.target,
         });
+        appendEvent({
+          eventType: "remember",
+          ref: result.ref,
+          metadata: { path: result.path, force: args.force === true },
+        });
         output("remember", { ok: true, ...result });
         return;
       }
@@ -1503,6 +1559,18 @@ const rememberCommand = defineCommand({
         force: args.force,
         target: args.target,
       });
+      appendEvent({
+        eventType: "remember",
+        ref: result.ref,
+        metadata: {
+          path: result.path,
+          force: args.force === true,
+          tagCount: tags.length,
+          enriched: args.enrich === true,
+          auto: args.auto === true,
+          ...(hasScope ? { scope: scopeFields } : {}),
+        },
+      });
       output("remember", { ok: true, ...result });
     });
   },
@@ -1545,6 +1613,11 @@ const importKnowledgeCommand = defineCommand({
         preferredName,
         force: args.force,
         target: args.target,
+      });
+      appendEvent({
+        eventType: "import",
+        ref: result.ref,
+        metadata: { source: args.source, path: result.path, force: args.force === true },
       });
       output("import", { ok: true, source: args.source, ...result });
     });
@@ -2247,6 +2320,96 @@ const wikiCommand = defineCommand({
   },
 });
 
+// ── `akm events` ────────────────────────────────────────────────────────────
+// Append-only events stream surface (#204). `list` reads `events.jsonl`
+// with optional --since/--type/--ref filters; `tail` follows the file via
+// a polling loop and prints each event as a single JSONL line.
+
+const eventsListCommand = defineCommand({
+  meta: { name: "list", description: "List events from the append-only events.jsonl stream" },
+  args: {
+    since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmEventsList({ since: args.since, type: args.type, ref: args.ref });
+      output("events-list", result);
+    });
+  },
+});
+
+const eventsTailCommand = defineCommand({
+  meta: { name: "tail", description: "Follow the append-only events.jsonl stream (polling)" },
+  args: {
+    since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    type: { type: "string", description: "Filter by event type" },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    "interval-ms": { type: "string", description: "Polling interval in ms (default: 75)" },
+    "max-duration-ms": { type: "string", description: "Stop after this many ms (default: never)" },
+    "max-events": { type: "string", description: "Stop after observing this many events" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const intervalMs = parsePositiveInt(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
+      const maxDurationMs = parsePositiveInt(getHyphenatedArg<string>(args, "max-duration-ms"), "--max-duration-ms");
+      const maxEvents = parsePositiveInt(getHyphenatedArg<string>(args, "max-events"), "--max-events");
+      const mode = getOutputMode();
+      // In streaming text mode we want each event to print as soon as it
+      // arrives. The polling loop emits via `onEvent`; the final result is
+      // also rendered through the standard output() pipeline so JSON
+      // consumers always get the canonical envelope.
+      const stream = mode.format === "text" || mode.format === "jsonl";
+      const result = await akmEventsTail({
+        since: args.since,
+        type: args.type,
+        ref: args.ref,
+        intervalMs,
+        maxDurationMs,
+        maxEvents,
+        onEvent: stream
+          ? (event) => {
+              if (mode.format === "jsonl") {
+                console.log(JSON.stringify(event));
+              } else {
+                console.log(formatEventLine(event as unknown as Record<string, unknown>));
+              }
+            }
+          : undefined,
+      });
+      // Emit the canonical envelope last (JSON/YAML modes rely on this;
+      // streaming modes already printed each event but we still emit the
+      // summary so the exit signal carries a structured payload).
+      if (!stream) {
+        output("events-tail", result);
+      }
+    });
+  },
+});
+
+function parsePositiveInt(raw: string | undefined, flag: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const value = Number.parseInt(trimmed, 10);
+  if (Number.isNaN(value) || value <= 0) {
+    throw new UsageError(`Invalid ${flag} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
+  }
+  return value;
+}
+
+const eventsCommand = defineCommand({
+  meta: {
+    name: "events",
+    description: "Read or follow the append-only events.jsonl stream (mutations, feedback, indexing)",
+  },
+  subCommands: {
+    list: eventsListCommand,
+    tail: eventsTailCommand,
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -2282,6 +2445,7 @@ const main = defineCommand({
     disable: disableCommand,
     feedback: feedbackCommand,
     history: historyCommand,
+    events: eventsCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
