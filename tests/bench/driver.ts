@@ -61,6 +61,12 @@ export interface RunOptions {
    * this `undefined` so each phase uses `Bun.spawn` directly.
    */
   spawn?: SpawnFn;
+  /**
+   * Optional collector for run-scoped warnings (e.g. events.jsonl truncated
+   * because it exceeded the read cap). The runner threads this in so the
+   * top-level report's `warnings[]` aggregates every cap hit.
+   */
+  warnings?: string[];
 }
 
 /**
@@ -146,13 +152,58 @@ export function parseTokenUsage(stdout: string): { input: number; output: number
 }
 
 /**
+ * Maximum bytes read from events.jsonl per run. A runaway agent producing
+ * GBs of structured-log output would otherwise OOM the bench. Trajectory
+ * parsing operates on the prefix; a warning is appended when the cap is
+ * hit so the report surfaces the truncation.
+ */
+export const EVENTS_READ_CAP_BYTES = 16 * 1024 * 1024;
+
+/**
  * Read the events.jsonl file produced by this run, if any. The path is
  * `<XDG_CACHE_HOME>/akm/events.jsonl` per `src/core/events.ts`.
+ *
+ * Caps the number of bytes read at `EVENTS_READ_CAP_BYTES` (16 MiB). When the
+ * file is larger, the prefix is parsed and a warning is appended to
+ * `opts.warnings` (when supplied). The trailing partial line after a
+ * truncation is dropped, since `JSON.parse` would reject it anyway.
  */
-export function readRunEvents(cacheHome: string): EventEnvelope[] {
+export function readRunEvents(cacheHome: string, opts?: { warnings?: string[] }): EventEnvelope[] {
   const eventsPath = path.join(cacheHome, "akm", "events.jsonl");
   if (!fs.existsSync(eventsPath)) return [];
-  const text = fs.readFileSync(eventsPath, "utf8");
+
+  // Read up to the cap. We open the file rather than `readFileSync` so we
+  // don't allocate an arbitrarily large buffer just to throw most of it away.
+  let totalSize = 0;
+  try {
+    totalSize = fs.statSync(eventsPath).size;
+  } catch {
+    return [];
+  }
+  const cap = EVENTS_READ_CAP_BYTES;
+  const truncated = totalSize > cap;
+  let text: string;
+  if (truncated) {
+    const buf = Buffer.alloc(cap);
+    const fd = fs.openSync(eventsPath, "r");
+    try {
+      fs.readSync(fd, buf, 0, cap, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    text = buf.toString("utf8");
+    // Drop the partial trailing line so we don't try to parse half a record.
+    const lastNl = text.lastIndexOf("\n");
+    if (lastNl !== -1) text = text.slice(0, lastNl);
+    if (opts?.warnings) {
+      opts.warnings.push(
+        `events.jsonl truncated: ${totalSize} bytes exceeds ${cap}-byte cap; trajectory computed from the prefix.`,
+      );
+    }
+  } else {
+    text = fs.readFileSync(eventsPath, "utf8");
+  }
+
   const out: EventEnvelope[] = [];
   let id = 0;
   for (const line of text.split("\n")) {
@@ -236,7 +287,7 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
 
     result.wallclockMs = agentResult.durationMs;
     result.tokens = parseTokenUsage(agentResult.stdout);
-    result.events = readRunEvents(dirs.cacheHome);
+    result.events = readRunEvents(dirs.cacheHome, { warnings: options.warnings });
 
     if (!agentResult.ok) {
       if (agentResult.reason === "timeout") {

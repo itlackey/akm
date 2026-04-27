@@ -14,6 +14,7 @@ import {
   _ISOLATED_ENV_NAMES,
   buildIsolatedEnv,
   createIsolationDirs,
+  EVENTS_READ_CAP_BYTES,
   parseTokenUsage,
   type RunOptions,
   readRunEvents,
@@ -243,6 +244,50 @@ describe("driver helpers", () => {
       const events = readRunEvents(tmp);
       expect(events.length).toBe(1);
       expect(events[0]?.eventType).toBe("feedback");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("readRunEvents caps reads at EVENTS_READ_CAP_BYTES and records a warning when exceeded", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-events-cap-"));
+    try {
+      const akm = path.join(tmp, "akm");
+      fs.mkdirSync(akm, { recursive: true });
+      const eventsPath = path.join(akm, "events.jsonl");
+      // Write a leading parseable record, then a giant filler line that
+      // pushes total size past the cap.
+      const firstLine = `${JSON.stringify({ schemaVersion: 1, ts: "2026-04-27T00:00:00Z", eventType: "feedback" })}\n`;
+      const fd = fs.openSync(eventsPath, "w");
+      try {
+        fs.writeSync(fd, firstLine);
+        // Filler line: a single very long line that — combined with the
+        // first — exceeds the cap. We cap at 16MiB so write 17MiB of 'x'.
+        const fillerSize = EVENTS_READ_CAP_BYTES + 1024 * 1024;
+        const chunk = Buffer.alloc(64 * 1024, "x".charCodeAt(0));
+        let written = 0;
+        while (written < fillerSize) {
+          const remaining = fillerSize - written;
+          const toWrite = remaining < chunk.length ? chunk.subarray(0, remaining) : chunk;
+          fs.writeSync(fd, toWrite);
+          written += toWrite.length;
+        }
+        fs.writeSync(fd, "\n");
+      } finally {
+        fs.closeSync(fd);
+      }
+      const totalSize = fs.statSync(eventsPath).size;
+      expect(totalSize).toBeGreaterThan(EVENTS_READ_CAP_BYTES);
+
+      const warnings: string[] = [];
+      const events = readRunEvents(tmp, { warnings });
+      // The first parseable record should still be returned from the prefix.
+      expect(events.length).toBe(1);
+      expect(events[0]?.eventType).toBe("feedback");
+      // A warning was appended that mentions the cap and the actual size.
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain("events.jsonl truncated");
+      expect(warnings[0]).toContain(String(EVENTS_READ_CAP_BYTES));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
