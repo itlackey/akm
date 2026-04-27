@@ -42,9 +42,60 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
     case "proposal-diff":
       return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm reflect` and `akm propose` (#226).
+    // Both share the proposal-producer envelope shape (success carries a
+    // proposal entry; failure carries an AgentFailureReason discriminant).
+    case "reflect":
+    case "propose":
+      return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
+}
+
+/**
+ * Shape the result of `akm reflect` / `akm propose`. On success we surface
+ * the queued proposal entry (using the standard proposal-entry shaper so
+ * detail levels behave uniformly with `akm proposal show`). On failure we
+ * surface the structured failure-reason envelope as-is — the failure
+ * surface is small and the reason / error text is always load-bearing.
+ */
+export function shapeProposalProducerOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  if (result.ok === false) {
+    const base: Record<string, unknown> = {
+      ok: false,
+      reason: result.reason,
+      error: result.error,
+      ...(result.ref !== undefined ? { ref: result.ref } : {}),
+      ...(result.type !== undefined ? { type: result.type } : {}),
+      ...(result.name !== undefined ? { name: result.name } : {}),
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+    };
+    if (detail === "full") {
+      return {
+        schemaVersion: result.schemaVersion ?? 1,
+        ...base,
+        ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
+        ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
+      };
+    }
+    return base;
+  }
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: true,
+    ref: result.ref,
+    ...(result.agentProfile !== undefined ? { agentProfile: result.agentProfile } : {}),
+    ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
 }
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {

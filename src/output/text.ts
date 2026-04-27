@@ -206,9 +206,33 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "proposal-diff": {
       return formatProposalDiffPlain(r);
     }
+    // Output shape registration for `akm reflect` / `akm propose` (#226).
+    case "reflect":
+    case "propose": {
+      return formatProposalProducerPlain(command, r);
+    }
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {
+  if (r.ok === false) {
+    const reason = String(r.reason ?? "unknown");
+    const error = typeof r.error === "string" ? r.error : "";
+    const lines = [`${command}: failed (${reason})`];
+    if (error) lines.push(`  error: ${error}`);
+    if (r.ref) lines.push(`  ref: ${String(r.ref)}`);
+    if (r.exitCode !== undefined && r.exitCode !== null) {
+      lines.push(`  exitCode: ${String(r.exitCode)}`);
+    }
+    return lines.join("\n");
+  }
+  const proposal = (r.proposal as Record<string, unknown>) ?? {};
+  const id = String(proposal.id ?? "?");
+  const ref = String(r.ref ?? proposal.ref ?? "?");
+  const status = String(proposal.status ?? "pending");
+  return `${command}: queued proposal ${id} (${ref}) [${status}]`;
 }
 
 export function formatProposalListPlain(r: Record<string, unknown>): string {
