@@ -1,0 +1,12 @@
+id: az-cli/storage-account-create
+title: "Produce the az command to create a Standard_LRS storage account"
+domain: az-cli
+difficulty: medium
+slice: eval
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: regex
+expected_match: "az storage account create.*--name mystorage.*--sku Standard_LRS.*-g myrg"
+budget:
+  tokens: 25000
+  wallMs: 90000

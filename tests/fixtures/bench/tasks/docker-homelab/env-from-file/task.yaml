@@ -1,0 +1,11 @@
+id: docker-homelab/env-from-file
+title: "Load environment for the app service from ./app.env"
+domain: docker-homelab
+difficulty: easy
+slice: train
+gold_ref: skill:docker-homelab
+stash: docker-homelab
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000

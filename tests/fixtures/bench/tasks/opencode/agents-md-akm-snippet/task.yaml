@@ -1,0 +1,11 @@
+id: opencode/agents-md-akm-snippet
+title: "Write AGENTS.md telling the agent to akm search before coding"
+domain: opencode
+difficulty: easy
+slice: eval
+gold_ref: skill:opencode
+stash: multi-domain
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000

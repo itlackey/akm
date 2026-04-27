@@ -1,0 +1,4 @@
+services:
+  app:
+    image: ghcr.io/example/app:1.0.0
+    ports: ["3000:3000"]
