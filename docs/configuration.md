@@ -181,6 +181,33 @@ Both `embedding` and `llm` accept an optional `apiKey` field, but API keys
 should preferably be provided via environment variables `AKM_EMBED_API_KEY`
 and `AKM_LLM_API_KEY` rather than stored in the config file.
 
+### Per-pass LLM opt-out (`index.<pass>.llm`)
+
+Every LLM-using pass inside `akm index` shares the same top-level `llm`
+block — there is exactly one provider/model configuration. To skip the LLM
+for a single pass while keeping it on for others, set
+`index.<passName>.llm = false`:
+
+```jsonc
+{
+  "llm": {
+    "endpoint": "http://localhost:11434/v1/chat/completions",
+    "model": "llama3.2"
+  },
+  "index": {
+    "enrichment": { "llm": false }   // skip LLM metadata enrichment
+    // future passes (memory, graph, …) inherit `llm` automatically
+  }
+}
+```
+
+Per-pass entries only support the boolean `llm` flag. Supplying a parallel
+provider configuration under `index.<pass>` (e.g. `endpoint`, `model`,
+`apiKey`, `temperature`) is rejected at config-load time with
+`ConfigError("INVALID_CONFIG_FILE")` so that there is exactly one place to
+configure the LLM. To use a different model entirely, change the top-level
+`llm` block.
+
 ## Install Security Audit
 
 akm audits managed installs before they are registered. The audit scans code,

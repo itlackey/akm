@@ -5,6 +5,7 @@ import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
+import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
   closeDatabase,
@@ -114,7 +115,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         sourcesCount: allSourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
-        llmEnabled: !!config.llm,
+        // Surface "llm enabled" only when at least one pass would actually
+        // run. Today that means the enrichment pass; future passes plug in
+        // via `resolveIndexPassLLM`.
+        llmEnabled: !!resolveIndexPassLLM("enrichment", config),
         vecAvailable: isVecAvailable(db),
       }),
     });
@@ -172,7 +176,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     await enhanceDirsWithLlm(db, config, dirsNeedingLlm);
     onProgress({
       phase: "llm",
-      message: config.llm
+      message: resolveIndexPassLLM("enrichment", config)
         ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
         : "LLM enhancement disabled.",
     });
@@ -518,7 +522,11 @@ async function enhanceDirsWithLlm(
     stash: StashFile;
   }>,
 ): Promise<void> {
-  if (!config.llm || dirsNeedingLlm.length === 0) return;
+  // Resolve per-pass LLM config via the unified shim. Returns undefined when
+  // either no `akm.llm` is configured or the user opted this pass out via
+  // `index.enrichment.llm = false`. (#208)
+  const llmConfig = resolveIndexPassLLM("enrichment", config);
+  if (!llmConfig || dirsNeedingLlm.length === 0) return;
 
   // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
   // as a single visible warning instead of silently degrading every entry
@@ -530,7 +538,7 @@ async function enhanceDirsWithLlm(
     const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
     if (generatedEntries.length === 0) continue;
     const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(config.llm, generatedStash, files, summary);
+    const enhanced = await enhanceStashWithLlm(llmConfig, generatedStash, files, summary);
 
     // Re-upsert the enhanced entries in a single transaction so a crash
     // cannot leave half the entries updated and the rest stale.

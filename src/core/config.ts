@@ -171,6 +171,13 @@ export interface AkmConfig {
   embedding?: EmbeddingConnectionConfig;
   /** OpenAI-compatible LLM endpoint config for metadata generation. If not set, uses heuristic generation */
   llm?: LlmConnectionConfig;
+  /**
+   * Per-pass `akm index` configuration. See {@link IndexPassConfig}. Each
+   * pass defaults to the top-level `akm.llm` block; setting
+   * `index.<pass>.llm = false` opts a pass out. Per-pass alternative provider
+   * configuration is intentionally not supported (#208).
+   */
+  index?: IndexConfig;
   /** Installed stashes (from npm, GitHub, git, or local sources) */
   installed?: InstalledStashEntry[];
   /**
@@ -236,6 +243,26 @@ export interface OutputConfig {
   format?: "json" | "yaml" | "text";
   detail?: "brief" | "normal" | "full";
 }
+
+/**
+ * Per-pass index configuration. Each named pass that uses an LLM defaults to
+ * the top-level `akm.llm` block; setting `llm: false` opts a single pass out.
+ *
+ * v1 contract (#208): boolean opt-out only. Per-pass alternative provider
+ * configuration is deliberately out of scope — any non-boolean value for
+ * `llm`, or any other key, fails at config load with a `ConfigError`.
+ */
+export interface IndexPassConfig {
+  /** When `false`, the pass skips its LLM call even if `akm.llm` is set. */
+  llm?: boolean;
+}
+
+/**
+ * Index-time configuration. The keys are pass names; values are
+ * {@link IndexPassConfig}. Unknown pass names are accepted (so future passes
+ * configure via the same shape) but their entries are validated for shape.
+ */
+export type IndexConfig = Record<string, IndexPassConfig>;
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -395,6 +422,14 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   if (current.llm && partial.llm && partial.llm !== current.llm) {
     merged.llm = { ...current.llm, ...partial.llm };
   }
+  // Deep-merge index per-pass entries so partial updates don't wipe siblings.
+  if (current.index && partial.index && partial.index !== current.index) {
+    const mergedIndex: IndexConfig = { ...current.index };
+    for (const [passName, passOverride] of Object.entries(partial.index)) {
+      mergedIndex[passName] = { ...(mergedIndex[passName] ?? {}), ...passOverride };
+    }
+    merged.index = mergedIndex;
+  }
   if (current.security && partial.security && partial.security !== current.security) {
     merged.security = mergeSecurityConfig(current.security, partial.security);
   }
@@ -448,6 +483,9 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
   const llm = parseLlmConfig(raw.llm);
   if (llm) config.llm = llm;
+
+  const index = parseIndexConfig(raw.index);
+  if (index) config.index = index;
 
   const installed = parseInstalledEntries(raw.installed);
   if (installed) config.installed = installed;
@@ -809,6 +847,85 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     if (Object.keys(caps).length > 0) result.capabilities = caps;
   }
   return result;
+}
+
+/**
+ * Keys that, if present anywhere under `index.<pass>`, indicate the user is
+ * trying to supply a parallel LLM provider configuration. Per #208 this is
+ * deliberately rejected at load time so there is exactly one place to
+ * configure the LLM (`akm.llm`).
+ */
+const PROVIDER_CONFIG_KEYS = new Set([
+  "endpoint",
+  "model",
+  "provider",
+  "apiKey",
+  "baseUrl",
+  "temperature",
+  "maxTokens",
+  "contextWindow",
+  "capabilities",
+]);
+
+/**
+ * Parse the `index` config block. Each entry is a pass name → small object
+ * `{ llm?: boolean }`. Anything richer (a parallel provider config, unknown
+ * keys, non-boolean `llm`) throws `ConfigError("INVALID_CONFIG_FILE")` at
+ * load time so the failure is visible at startup, not on the next index run.
+ */
+function parseIndexConfig(value: unknown): IndexConfig | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigError(
+      'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "llm": false } }`).',
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
+  const out: IndexConfig = {};
+  for (const [passName, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new ConfigError(
+        `Invalid \`index.${passName}\` config: expected an object like \`{ "llm": false }\`.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    const passRaw = raw as Record<string, unknown>;
+
+    // Reject any provider-shaped key — there must be exactly one place to
+    // configure the LLM (#208). This is the duplicate-provider guard.
+    for (const key of Object.keys(passRaw)) {
+      if (PROVIDER_CONFIG_KEYS.has(key)) {
+        throw new ConfigError(
+          `Duplicate LLM provider configuration: \`index.${passName}.${key}\` is not allowed. ` +
+            "Configure provider/model/endpoint under top-level `llm` only; per-pass entries support `{ llm: false }` opt-out.",
+          "INVALID_CONFIG_FILE",
+          'Move provider settings to the top-level "llm" block, then set `index.<pass>.llm = false` to opt a single pass out.',
+        );
+      }
+      if (key !== "llm") {
+        throw new ConfigError(
+          `Unknown key \`index.${passName}.${key}\`. Per-pass entries only support \`llm\` (boolean opt-out).`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+    }
+
+    const passConfig: IndexPassConfig = {};
+    if ("llm" in passRaw) {
+      const llmFlag = passRaw.llm;
+      if (typeof llmFlag !== "boolean") {
+        throw new ConfigError(
+          `Invalid \`index.${passName}.llm\`: expected a boolean (true to use \`akm.llm\`, false to opt out). Got ${typeof llmFlag}.`,
+          "INVALID_CONFIG_FILE",
+          "Per-pass alternative provider config is intentionally unsupported in v1 (#208). Use `false` to disable LLM for this pass.",
+        );
+      }
+      passConfig.llm = llmFlag;
+    }
+    out[passName] = passConfig;
+  }
+  return out;
 }
 
 function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
@@ -1184,6 +1301,15 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   }
   if (base.llm && override.llm) {
     merged.llm = { ...base.llm, ...override.llm };
+  }
+  if (base.index || override.index) {
+    // Deep-merge per-pass entries so a project layer can opt one pass out
+    // without dropping siblings configured in user config.
+    const mergedIndex: IndexConfig = { ...(base.index ?? {}) };
+    for (const [passName, passOverride] of Object.entries(override.index ?? {})) {
+      mergedIndex[passName] = { ...(mergedIndex[passName] ?? {}), ...passOverride };
+    }
+    if (Object.keys(mergedIndex).length > 0) merged.index = mergedIndex;
   }
   if (base.security && override.security) {
     merged.security = mergeSecurityConfig(base.security, override.security);
