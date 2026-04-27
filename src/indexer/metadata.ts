@@ -27,6 +27,30 @@ export interface AssetParameter {
   default?: string;
 }
 
+/**
+ * Multi-tenant / multi-agent scope keys. All four fields are optional;
+ * persisted as the canonical top-level frontmatter keys
+ * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`.
+ *
+ * This shape is the wire-level scope contract — the CLI's `--user`,
+ * `--agent`, `--run`, `--channel` flags map into these fields, and
+ * `akm search --filter user=…` queries against them.
+ *
+ * Memories written before scope flags shipped have no scope keys at all;
+ * unfiltered queries continue to surface them.
+ */
+export interface StashEntryScope {
+  user?: string;
+  agent?: string;
+  run?: string;
+  channel?: string;
+}
+
+/** Allowed keys in `--filter k=v` and `--scope k=v` flags. */
+export type ScopeKey = keyof StashEntryScope;
+
+export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
+
 export interface StashEntry {
   name: string;
   type: string;
@@ -52,6 +76,13 @@ export interface StashEntry {
   fileSize?: number;
   /** Structured parameter definitions extracted from the asset content */
   parameters?: AssetParameter[];
+  /**
+   * Multi-tenant / multi-agent scope. Populated from the canonical
+   * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`
+   * frontmatter keys. Used by `akm search --filter` and
+   * `akm show --scope`.
+   */
+  scope?: StashEntryScope;
   /**
    * Wiki role for knowledge pages following the LLM Wiki pattern.
    * `schema` / `index` / `log` are the special files at the top of the wiki;
@@ -210,6 +241,10 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
       .map((s) => s.trim());
     if (filtered.length > 0) result.sources = filtered;
   }
+  if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
+    const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
+    if (scope) result.scope = scope;
+  }
   if (Array.isArray(e.parameters)) {
     const validated = e.parameters
       .filter((p: unknown): p is AssetParameter => {
@@ -230,6 +265,44 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   }
 
   return result;
+}
+
+/**
+ * Coerce a raw `{ user, agent, run, channel }` object into a clean
+ * `StashEntryScope`, dropping non-string and empty values. Returns
+ * `undefined` when no recognized keys carry a value.
+ */
+function normalizeScopeObject(raw: Record<string, unknown>): StashEntryScope | undefined {
+  const out: StashEntryScope = {};
+  for (const key of SCOPE_KEYS) {
+    const value = raw[key];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) out[key] = trimmed;
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      out[key] = String(value);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Pull `scope_user` / `scope_agent` / `scope_run` / `scope_channel` out of
+ * a parsed frontmatter block and attach them as `entry.scope`. Tolerates
+ * missing or malformed values; legacy memories without these keys are left
+ * untouched (no `scope` field added).
+ */
+export function applyScopeFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+  const collected: Record<string, unknown> = {};
+  for (const key of SCOPE_KEYS) {
+    const fmKey = `scope_${key}`;
+    if (Object.hasOwn(fmData, fmKey)) {
+      collected[key] = fmData[fmKey];
+    }
+  }
+  if (Object.keys(collected).length === 0) return;
+  const scope = normalizeScopeObject(collected);
+  if (scope) entry.scope = scope;
 }
 
 function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
@@ -477,6 +550,8 @@ export async function generateMetadata(
       if (fmParams) entry.parameters = fmParams;
       // Pass wiki-pattern frontmatter through onto the entry
       applyWikiFrontmatter(entry, parsed.data);
+      // Pass canonical scope_* frontmatter through onto the entry
+      applyScopeFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);
@@ -600,6 +675,8 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
       if (fmParams) entry.parameters = fmParams;
       // Pass wiki-pattern frontmatter through onto the entry
       applyWikiFrontmatter(entry, parsed.data);
+      // Pass canonical scope_* frontmatter through onto the entry
+      applyScopeFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);

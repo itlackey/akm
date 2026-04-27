@@ -13,6 +13,7 @@ import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { closeDatabase, openDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
+import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
 // Eagerly import source providers to trigger self-registration before the
 // indexer or path-resolution code runs.
@@ -35,6 +36,16 @@ export async function akmSearch(input: {
   type?: AkmSearchType;
   limit?: number;
   source?: SearchSource | string;
+  /**
+   * Optional scope filter. Each present field narrows local hits to entries
+   * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
+   * queries (no `filters` argument or all keys absent) preserve the legacy
+   * behavior — entries without any scope keys still match.
+   *
+   * Filtering narrows the result set; ranking is unchanged. There is still
+   * one scoring pipeline.
+   */
+  filters?: StashEntryScope;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -62,6 +73,7 @@ export async function akmSearch(input: {
   // stash root. Safe because the empty-sources case is handled above.
   const stashDir = sources[0].path;
 
+  const filters = normalizeScopeFilters(input.filters);
   const localResult =
     source === "registry"
       ? undefined
@@ -72,6 +84,7 @@ export async function akmSearch(input: {
           stashDir,
           sources,
           config,
+          filters,
         });
 
   const registryResult =
@@ -218,6 +231,74 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
     `Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`,
     "INVALID_SOURCE_VALUE",
   );
+}
+
+/**
+ * Strip empty / non-string values from a scope filter object. Returns
+ * `undefined` when nothing meaningful remains, so callers don't pay for an
+ * empty-filter post-walk in `searchLocal`.
+ */
+function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
+  if (!raw) return undefined;
+  const out: StashEntryScope = {};
+  for (const key of ["user", "agent", "run", "channel"] as const) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) {
+      out[key] = value.trim();
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Parse repeated `--filter k=v` / `--scope k=v` argv tokens into a
+ * `StashEntryScope`. Throws a {@link UsageError} for malformed tokens
+ * (missing `=`, unknown key) so callers don't see ambiguous misses.
+ *
+ * Used by both `akm search --filter` and `akm show --scope`.
+ */
+export function parseScopeFilterFlags(values: string[], flagName = "--filter"): StashEntryScope | undefined {
+  if (values.length === 0) return undefined;
+  const out: StashEntryScope = {};
+  for (const raw of values) {
+    const eq = raw.indexOf("=");
+    if (eq <= 0) {
+      throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. user=alice).`);
+    }
+    const key = raw.slice(0, eq).trim();
+    const value = raw.slice(eq + 1).trim();
+    if (key !== "user" && key !== "agent" && key !== "run" && key !== "channel") {
+      throw new UsageError(`Unknown scope key "${key}" in ${flagName}. Valid keys: user, agent, run, channel.`);
+    }
+    if (!value) {
+      throw new UsageError(`${flagName} ${key}=… requires a non-empty value.`);
+    }
+    out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Returns true iff `entry.scope` (when present) satisfies every key in
+ * `filters`. A missing `entry.scope` (legacy memories) only matches when
+ * `filters` is empty / undefined.
+ *
+ * Filter semantics:
+ *   - No filter passed → all entries match (legacy behavior preserved).
+ *   - `filters.user = "alice"` → entry must have `scope.user === "alice"`.
+ *   - Multiple keys → AND-joined; every supplied key must match.
+ */
+export function entryMatchesScopeFilters(
+  scope: StashEntryScope | undefined,
+  filters: StashEntryScope | undefined,
+): boolean {
+  if (!filters) return true;
+  for (const key of ["user", "agent", "run", "channel"] as const) {
+    const expected = filters[key];
+    if (expected === undefined) continue;
+    if (!scope || scope[key] !== expected) return false;
+  }
+  return true;
 }
 
 /**
