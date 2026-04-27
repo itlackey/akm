@@ -9,6 +9,8 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
+> **Status note (2026-04-27):** This page documents the currently shipped pre-release config surface. Planned v1 additions such as the `agent` config block and `llm.features.*` map are being staged through the consolidated v1 plan and are not part of the live config contract until they land. See `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md` for pending work.
+
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
 merges them on top of the user config. Closer project directories win for
@@ -273,4 +275,3 @@ akm info
 
 If `searchModes` includes `"semantic"` with `"ready-vec"`, the native extension
 is working. If it shows `"ready-js"`, the JS fallback is in use.
-

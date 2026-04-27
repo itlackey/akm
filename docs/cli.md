@@ -5,6 +5,8 @@ JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
 brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
+> **Status note (2026-04-27):** This page describes the currently shipped pre-release CLI. Planned v1 commands such as `akm reflect`, `akm propose`, `akm proposal *`, and `akm distill` are part of the active implementation plan but are not yet live. See `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md` for sequencing.
+
 ## Global Flags
 
 These flags are accepted by all commands:
