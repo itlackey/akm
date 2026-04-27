@@ -190,14 +190,6 @@ function defaultPrompt(options: RunOptions): string {
  * is captured into the returned RunResult with a stable outcome value.
  */
 export async function runOne(options: RunOptions): Promise<RunResult> {
-  const profile = getBuiltinAgentProfile("opencode");
-  if (!profile) {
-    throw new Error(`built-in agent profile "opencode" missing; available: ${BUILTIN_AGENT_PROFILE_NAMES.join(", ")}`);
-  }
-
-  const dirs = createIsolationDirs(options.stashDir);
-  const env = buildIsolatedEnv(dirs, options.model);
-
   // Stamp a baseline result; we mutate fields below as the run progresses.
   const result: RunResult = {
     schemaVersion: 1,
@@ -213,6 +205,25 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     verifierStdout: "",
     verifierExitCode: -1,
   };
+
+  // Look up the built-in opencode profile defensively. The lookup is a pure
+  // map read today, but wrapping it preserves the doc-comment guarantee that
+  // runOne never throws on infrastructure failures even if the registry
+  // shape changes. A missing/throwing profile becomes harness_error.
+  let profile: ReturnType<typeof getBuiltinAgentProfile>;
+  try {
+    profile = getBuiltinAgentProfile("opencode");
+  } catch (err) {
+    result.verifierStdout = `harness: getBuiltinAgentProfile("opencode") threw: ${err instanceof Error ? err.message : String(err)}`;
+    return result;
+  }
+  if (!profile) {
+    result.verifierStdout = `harness: built-in agent profile "opencode" missing; available: ${BUILTIN_AGENT_PROFILE_NAMES.join(", ")}`;
+    return result;
+  }
+
+  const dirs = createIsolationDirs(options.stashDir);
+  const env = buildIsolatedEnv(dirs, options.model);
 
   try {
     const agentResult = await runAgent(profile, options.prompt ?? defaultPrompt(options), {
@@ -238,8 +249,11 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
         result.outcome = "harness_error";
         return result;
       }
-      // non_zero_exit from the agent: still run the verifier — the agent's
-      // exit code is not the verdict, the verifier is.
+      // non_zero_exit from the agent: intentionally falls through to the
+      // verifier path. Per spec §5.3 ("deterministic verifiers, never LLM"),
+      // the agent is the system under test, not the judge — its exit code
+      // does not gate verification. The verifier always runs against
+      // whatever workspace state the agent left behind, even on a crash.
     }
 
     // Token-budget enforcement is best-effort: only mark `budget_exceeded`

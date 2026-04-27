@@ -53,6 +53,11 @@ The operator's personal `~/.config/akm`, `~/.cache/akm`, `~/.config/opencode`,
 and any pre-existing `AKM_STASH_DIR` are NEVER read or written. The driver
 asserts this in `tests/bench/driver.test.ts`.
 
+`OPENCODE_API_KEY` is intentionally inherited from the operator's environment
+so opencode can authenticate with its provider — it is the one credential the
+harness deliberately does NOT isolate, while `OPENCODE_CONFIG`, `XDG_CACHE_HOME`,
+`XDG_CONFIG_HOME`, and `AKM_STASH_DIR` are pinned to per-run tmpdirs.
+
 After the run completes the entire tmp tree is removed; the driver copies
 `events.jsonl` into the `RunResult.events` array first so trajectory parsing
 in #238 has the bytes it needs without touching disk again.

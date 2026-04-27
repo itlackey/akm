@@ -145,6 +145,25 @@ describe("runOne", () => {
     expect(result.outcome).toBe("harness_error");
   });
 
+  test("budget_exceeded: parsed token usage exceeds budgetTokens", async () => {
+    // Agent reports 70k input + 50k output = 120k tokens, budget is 100k.
+    // Verifier should NOT run; outcome must be budget_exceeded.
+    const { spawn } = scriptedSpawn({
+      exitCode: 0,
+      stdout: "input_tokens: 70000 output_tokens: 50000",
+    });
+    const result = await runOne({
+      ...baseOptions,
+      workspace,
+      spawn,
+      budgetTokens: 100_000,
+    });
+    expect(result.outcome).toBe("budget_exceeded");
+    expect(result.tokens.input + result.tokens.output).toBeGreaterThan(100_000);
+    expect(result.tokens.input).toBe(70_000);
+    expect(result.tokens.output).toBe(50_000);
+  });
+
   test("isolation: child env carries pinned XDG/OPENCODE/AKM dirs and not operator values", async () => {
     const sentinel = "/tmp/operator-config-must-not-leak";
     const priors: Record<string, string | undefined> = {};
