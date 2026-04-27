@@ -54,12 +54,12 @@ metrics. It defines two booleans that the v1 utility report emits today:
 - `feedback_recorded` — did the agent emit any `feedback` event?
 
 The §13.3 sample envelope shows two additional illustrative fields
-(`replan_count` and `tool_call_overhead_ms`). Those were aspirational
-sketches, not part of the v1 commitment, and computing them well requires
-tool-call tracing and replan detection that #238 deliberately deferred. The
-JSON `trajectory.akm` object therefore carries **only** the two §6.2 fields
-in v1; if a future PR wants to land replan/overhead metrics, it can extend
-the shape additively without breaking the v1 contract.
+(`searched_before_acting` and `irrelevant_assets_loaded`). Those were
+aspirational sketches, not part of the v1 commitment, and computing them
+well requires tool-call tracing that #238 deliberately deferred. The JSON
+`trajectory.akm` object therefore carries **only** the two §6.2 fields in
+v1; if a future PR wants to land them, it can extend the shape additively
+without breaking the v1 contract.
 
 Per-run inputs (events.jsonl bytes-read and verifierStdout substring scan)
 are capped at 16 MiB each. A runaway agent that produces more than that does
