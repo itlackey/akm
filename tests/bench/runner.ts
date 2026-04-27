@@ -33,6 +33,9 @@ import {
   aggregateTrajectory,
   computeCorpusDelta,
   computePerTaskDelta,
+  computeSearchBridge,
+  extractGoldRanks,
+  type GoldRankRunRecord,
   type PerTaskMetrics,
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
@@ -73,6 +76,13 @@ export interface RunUtilityOptions {
 type GroupedRuns = Map<string, Map<Arm, RunResult[]>>;
 
 /**
+ * Internal: gold-rank records collected across all akm-arm runs in the
+ * current `runUtility` call. Reduced into `searchBridge` once every run
+ * lands.
+ */
+type GoldRankAccumulator = GoldRankRunRecord[];
+
+/**
  * Run K seeds × len(arms) × len(tasks) and return the §13.3 report.
  *
  * The function is robust to per-run failures — `runOne` already captures
@@ -89,6 +99,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
 
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
+  const goldRankRecords: GoldRankAccumulator = [];
 
   for (const task of options.tasks) {
     const taskRuns = new Map<Arm, RunResult[]>();
@@ -136,6 +147,21 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             warnings,
           });
           armRuns.push(run);
+
+          // §6.7 search-pipeline bridge: only the akm arm consults the stash,
+          // and we only attribute ranks for tasks with a gold ref. Both
+          // guards mean noakm and gold-less runs are silently excluded.
+          if (arm === "akm" && task.goldRef) {
+            const searches = extractGoldRanks(run, task.goldRef);
+            goldRankRecords.push({
+              taskId: task.id,
+              arm,
+              seed,
+              outcome: run.outcome,
+              goldRef: task.goldRef,
+              searches,
+            });
+          }
         }
       }
     } finally {
@@ -149,6 +175,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     seedsPerArm,
     slice,
     warnings,
+    goldRankRecords,
   });
 }
 
@@ -230,6 +257,7 @@ interface BuildReportArgs {
   seedsPerArm: number;
   slice: "all" | TaskSlice;
   warnings: string[];
+  goldRankRecords: GoldRankAccumulator;
 }
 
 function buildReport(args: BuildReportArgs): UtilityRunReport {
@@ -264,6 +292,11 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const commit = args.options.commit ?? resolveGitCommit();
   const timestamp = args.options.timestamp ?? new Date().toISOString();
 
+  // §6.7 — compute the search-pipeline bridge once over the whole corpus.
+  // The function tolerates an empty record list (renders the N/A sentence
+  // downstream).
+  const searchBridge = computeSearchBridge({ goldRankRecords: args.goldRankRecords });
+
   return {
     timestamp,
     branch,
@@ -281,5 +314,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     trajectoryAkm,
     tasks,
     warnings: args.warnings,
+    goldRankRecords: args.goldRankRecords,
+    searchBridge,
   };
 }
