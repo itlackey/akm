@@ -5,7 +5,25 @@ JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
 brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
-> **Status note (2026-04-27):** This page describes the currently shipped pre-release CLI. Planned v1 commands such as `akm reflect`, `akm propose`, `akm proposal *`, and `akm distill` are part of the active implementation plan but are not yet live. See `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md` for sequencing.
+> **Status legend.** This page documents both **pre-release (shipping)** and
+> **planned for v1** behaviour. Each command section opens with one of the
+> two markers below. Anything marked **Planned for v1** is part of the
+> v1.0-frozen surface declared in
+> [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+> §9.4 and is being implemented across milestones 0.7 – 1.0.
+>
+> - **Status: Pre-release (shipping)** — the command runs today on the
+>   current pre-release build. Behaviour described here is what the binary
+>   does.
+> - **Status: Planned for v1** — the command is declared by the v1
+>   architecture spec but is not yet wired up. The shape, flags, and exit
+>   behaviour described here are the locked target; the binary will return
+>   `usage: command not yet implemented` until the milestone lands.
+>
+> Sequencing lives in
+> [`docs/reviews/v1-implementation-plan.md`](reviews/v1-implementation-plan.md)
+> and
+> [`docs/reviews/v1-agent-reflection-issues.md`](reviews/v1-agent-reflection-issues.md).
 
 ## Global Flags
 
@@ -176,7 +194,15 @@ detail level matches `src/output/shapes.ts`:
 
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
-| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` |
+| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` [^curated-status] |
+
+[^curated-status]: **Status: Pre-release (shipping); Planned for v1: removed.**
+    The `curated` field is present on registry brief hits in the current
+    pre-release binary but is removed from the v1 contract. See
+    [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+    §4.2 and §9.4, and the rewrite in
+    [`docs/migration/v1.md`](migration/v1.md). Removal is tracked in issue
+    #223.
 | `normal` | adds `description` and `score` | adds `score` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, timings, stash metadata) | full hit object |
 | `summary` | metadata-only view (no content), under 200 tokens | — |
@@ -1066,3 +1092,126 @@ source <(akm completions)
 1. `$XDG_DATA_HOME/bash-completion/completions/akm`
 2. `~/.local/share/bash-completion/completions/akm`
 3. `~/.bash_completion.d/akm`
+
+---
+
+## Planned for v1 — agent, proposal, lesson, and distill
+
+The commands below are declared by the v1 architecture spec
+([`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+§9.4, §11–§14) and are part of the locked v1.0 surface. They are not yet
+implemented. The shape and flag set documented here is the locked target —
+implementations across milestones 0.7 – 1.0 must match this contract.
+
+### agent
+
+**Status: Planned for v1.**
+Dispatch a configured external agent profile.
+
+```sh
+akm agent <profile> [args...]
+```
+
+Profiles ship for `opencode`, `claude`, `codex`, `gemini`, and `aider` and
+can be extended via `agent.profiles[<name>]` in config (see
+[Configuration](configuration.md)). akm spawns the profile's `bin` via the
+shared spawn wrapper described in v1 spec §12.2 — captured or interactive
+stdio, hard timeout, structured failure reasons.
+
+Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
+failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |
+parse_error`.
+
+### reflect
+
+**Status: Planned for v1.**
+Produce reflection proposals for an existing asset. Proposals land in the
+durable proposal queue and never mutate live stash content.
+
+```sh
+akm reflect <ref>
+akm reflect <ref> --task "tighten the description"
+akm reflect <ref> --profile claude
+```
+
+| Flag | Description |
+| --- | --- |
+| `--task` | Optional task hint passed into the reflection prompt |
+| `--profile` | Override the default agent profile from `agent.default` |
+| `--timeout` | Override `agent.timeoutMs` for this call |
+
+Emits the `reflect_invoked` usage event. Returns the `id` of the new
+proposal row. Validation/timeout/parse errors return non-zero with a
+`ConfigError` or `UsageError` envelope.
+
+### propose
+
+**Status: Planned for v1.**
+Generate a brand-new asset proposal from a description. Output is always a
+proposal — never a direct write.
+
+```sh
+akm propose <type> <name> --task "..."
+akm propose skill code-review --task "PR-style review skill"
+akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
+```
+
+| Flag | Description |
+| --- | --- |
+| `--task` | Required. Free-form description of what the asset should do |
+| `--profile` | Override the default agent profile |
+| `--timeout` | Override `agent.timeoutMs` for this call |
+
+Emits `propose_invoked`. Returns the new proposal id. Same failure model as
+`reflect`.
+
+### proposal
+
+**Status: Planned for v1.**
+Review and operate the proposal queue. Five subcommands.
+
+```sh
+akm proposal list
+akm proposal list --status pending|accepted|rejected|archived
+akm proposal show <id>
+akm proposal diff <id>
+akm proposal accept <id>
+akm proposal reject <id> --reason "..."
+```
+
+| Subcommand | Description |
+| --- | --- |
+| `list` | List proposals, optionally filtered by status |
+| `show <id>` | Render the proposal body and metadata |
+| `diff <id>` | Show the proposed delta vs. the live ref (or vs. empty) |
+| `accept <id>` | Validate and promote via `writeAssetToSource` |
+| `reject <id>` | Archive with a reason; body is preserved |
+
+`accept` runs full validation (frontmatter, type-renderer, ref grammar,
+write-source policy) **before** promoting. Failures keep the proposal in
+`pending` and emit a structured `warnings` array. Successful promotion
+emits the `promoted` event; reject emits `rejected`.
+
+### distill
+
+**Status: Planned for v1.**
+Bounded in-tree LLM call that summarises feedback events for a ref into a
+`lesson` proposal. Gated behind `llm.features.feedback_distillation`.
+
+```sh
+akm distill <ref>
+```
+
+If `llm.features.feedback_distillation` is `false` (the default), the
+command exits with `ConfigError` and a hint pointing at the feature flag.
+On a successful call, the response is written to the proposal queue as a
+`lesson` (see v1 spec §13). The live stash is never mutated. Emits
+`distill_invoked`.
+
+### feedback (planned `--reason` extension)
+
+**Status: Planned for v1.**
+Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
+and gains an optional `--reason <slug>` flag whose value is forwarded into
+`distill_invoked` payloads. Backwards compatible: scripts without `--reason`
+behave exactly as today.

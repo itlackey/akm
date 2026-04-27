@@ -1,10 +1,10 @@
 # akm v1 — Architecture Specification
 
-**Status:** Draft for implementation
+**Status:** Draft for implementation (rev. 2026-04-27 — proposal/agent/lesson surfaces declared)
 **Target:** v1.0 freeze
 **Audience:** akm core contributors
 
-> **Status note (2026-04-27):** This spec is partially stale and is being revised under the consolidated pre-release v1 plan. The next implementation wave updates the locked CLI/config/type sections early rather than deferring that sync to the end. Until those edits land, treat proposal-queue, agent-CLI, `quality: "proposed"`, `lesson`, and `llm.features.*` as intended v1 surfaces, and use `docs/reviews/v1-implementation-plan.md` plus `docs/reviews/v1-agent-reflection-issues.md` for sequencing and execution tracking.
+> **Reading guide.** This spec defines the v1.0 contract. It mixes shipped pre-release surfaces (sources, indexer, search, show, write-source, registry providers, vault, wiki, workflow) with **planned v1 surfaces** (proposal queue, agent CLI integration, `quality: "proposed"`, `lesson` asset type, `llm.features.*`). Planned surfaces are explicitly marked **`Planned for v1`** in their section heading and in §9. Implementation tracks against these declarations via `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md`. Anything in §9 — shipped or planned — is part of the locked contract once v1.0 ships.
 
 ---
 
@@ -320,6 +320,57 @@ export interface SourceConfigEntry {
 }
 ```
 
+### 4.1 Asset type rules (open set)
+
+The asset *type* in an `AssetRef` is intentionally an open string, not a closed
+union. The v1 contract is:
+
+- **Well-known types**, each with a renderer, a directory under the working
+  stash, and frontmatter expectations:
+  `skill`, `command`, `agent`, `knowledge`, `script`, `memory`, `workflow`,
+  `vault`, `wiki`, and (Planned for v1) `lesson`. See §13.
+- **Plugin-registered types** are allowed via `registerAssetType()` (see
+  `src/core/asset-spec.ts`) and behave like well-known types as long as they
+  register a renderer. Unknown types parse, index, and search; they render as
+  raw markdown.
+- The CLI never rejects an `AssetRef` because the type is unknown. The
+  asset-ref grammar in Appendix A is the only enforced rule.
+
+### 4.2 Asset quality rules (open set, default-filtered)
+
+Search hits, registry hits, and indexed assets carry an optional `quality`
+field. The contract is:
+
+- The field is a string. Three values are well-known:
+  - `"generated"` — produced by an automated pipeline. Included in default
+    search.
+  - `"curated"` — promoted by a human or via the proposal queue (§11).
+    Included in default search.
+  - `"proposed"` — sitting in the proposal queue, not yet promoted.
+    **Excluded from default search**; surfaced only with
+    `--include-proposed` or via `akm proposal *` commands.
+- Unknown quality values **parse, warn once, and remain searchable** (treated
+  as included-by-default). They must not crash the indexer or the search
+  pipeline.
+- The legacy registry boolean `curated` is removed in v1. Legacy registry
+  JSON containing `curated` parses and ignores the key (see §3.3 and
+  `docs/migration/v1.md`).
+
+```ts
+// src/core/types.ts
+export type AssetQuality = "generated" | "curated" | "proposed" | (string & {});
+
+export interface SearchHit {
+  // ...existing fields...
+  readonly quality?: AssetQuality;
+  readonly warnings?: readonly string[];     // optional surfaced warnings
+}
+```
+
+`SearchHit.quality` and `SearchHit.warnings` are the only new fields v1
+introduces on the locked hit type. Both are optional. Renderers in
+`src/output/` surface them when present and omit them when absent.
+
 ---
 
 ## 5. Configuration
@@ -353,6 +404,28 @@ export interface SourceConfigEntry {
 
   "embedder": { "kind": "...", "options": { /* ... */ } },
   "scorer":   { "weights": { "relevance": 0.7, "utility": 0.3 } },
+
+  // Planned for v1 — agent CLI integration (§12).
+  "agent": {
+    "default": "opencode",
+    "profiles": {
+      "opencode": { /* built-in profile fields, overridable */ }
+    },
+    "timeoutMs": 60000
+  },
+
+  // Planned for v1 — bounded in-tree LLM feature gates (§14).
+  "llm": {
+    "endpoint": "...",
+    "model": "...",
+    "features": {
+      "curate_rerank":          false,
+      "tag_dedup":              false,
+      "memory_consolidation":   false,
+      "feedback_distillation":  false,
+      "embedding_fallback_score": false
+    }
+  },
 
   "defaultWriteTarget": "mine"              // optional; first writable if omitted
 }
@@ -518,18 +591,105 @@ What plugin authors can add at v1:
 
 ## 9. Locked contracts for v1
 
-Any change to the following requires a major version bump after v1.0.
+Any change to the following requires a major version bump after v1.0. Items
+marked **`Planned for v1`** are not yet implemented but are part of the
+v1.0 freeze surface and must ship before v1.0 GA.
+
+### 9.1 Interfaces and core types (shipped)
 
 - `SourceProvider` and `RegistryProvider` interfaces.
 - Core types: `AssetRef`, `AssetContent`, `SearchHit`, `KitResult`, `AssetPreview`, `KitManifest`, `SourceConfigEntry`.
 - Asset ref grammar (`[origin//]type:name`) and install ref grammar (distinct).
-- Score range for `SearchHit.score`: `[0, 1]`, higher = better.
-- Configuration JSON Schema, including literal-or-env value form and the `writable` flag.
-- Error classes, `.code` values, exit codes (`USAGE=2`, `CONFIG=78`, `GENERAL=1`), hints attached to error classes.
-- CLI command surface: `add | remove | list | update | search | show | clone | index | setup | remember | import | feedback | registry *`. Renaming or removing is major.
-- Output shape registry is exhaustive. Each command registers `{ shape, textRenderer }` at module load. No silent `JSON.stringify` fallback.
+- Score range for `SearchHit.score`: `[0, 1]`, higher = better. One scoring
+  pipeline (FTS5 + boosts) for all indexed content.
+- Asset *type* is an open string set (§4.1); the renderer registry is the
+  authority for "is this type well-known?".
+- Asset *quality* is an open string set (§4.2); `"proposed"` is excluded from
+  default search; `"generated"` and `"curated"` are included by default;
+  unknown values parse-warn-include.
+- `SearchHit.quality` and `SearchHit.warnings` are optional fields on the
+  locked hit type.
+
+### 9.2 Configuration (shipped + planned)
+
+- Configuration JSON Schema, including literal-or-env value form and the
+  `writable` flag.
+- **`Planned for v1`** — `agent.*` block: `agent.default`,
+  `agent.profiles[<name>]`, `agent.timeoutMs`. Unknown keys are
+  warn-and-ignore. Missing `agent` block disables agent commands with a
+  clear `ConfigError` (§12).
+- **`Planned for v1`** — `llm.features.*` map with the keys named in §14.
+  All defaults are `false`. Unknown feature keys warn and are ignored.
+
+### 9.3 Errors and exit codes (shipped)
+
+- Error classes own `.code`. No regex-on-message hint chain.
+- Errors render to stderr as JSON envelope `{ok:false, error, code}`; `hint`
+  is included when actionable.
+- Exit codes: `USAGE = 2`, `CONFIG = 78`, `GENERAL = 1`.
+
+### 9.4 CLI command surface
+
+The v1 surface is **exhaustive**. Adding a new top-level command in v1.x
+requires only that it register an output shape; renaming or removing is
+major. The current and planned set is:
+
+**Shipped pre-release (live today):**
+`add | remove | list | update | search | show | clone | index | setup |
+remember | import | feedback | registry * | info | curate | workflow * |
+vault * | wiki * | enable | disable | completions | upgrade | save | help |
+hints | config *`.
+
+**`Planned for v1`** (declared by this spec, implemented across milestones
+0.7 – 1.0):
+- `agent <name> [args...]` — dispatch a configured agent profile (§12).
+- `reflect [ref] [--task ...]` — produce reflection proposals into the
+  proposal queue (§11, §12).
+- `propose <type> <name> [--task ...]` — produce generation proposals into
+  the proposal queue (§11, §12).
+- `proposal list | show | accept | reject | diff` — operate the proposal
+  queue (§11).
+- `distill <ref>` — gated bounded LLM call producing a `lesson` proposal
+  (§13, §14).
+
+Renaming or removing any command above after v1.0 is a major version bump.
+
+### 9.5 Output shapes (shipped)
+
+- Output shape registry is exhaustive. Each command registers
+  `{ shape, textRenderer }` at module load. No silent `JSON.stringify`
+  fallback.
+- New planned commands (§9.4) each register their own shape; the
+  `proposal-list`, `proposal-show`, `proposal-diff`, `agent-result`,
+  `reflect-result`, `propose-result`, and `distill-result` shapes are
+  reserved.
+
+### 9.6 Indexer and storage (shipped)
+
 - v2 JSON index schema, owned by `static-index`.
-- Index DB is ephemeral; schema version bumps may wipe and rebuild.
+- Index DB (`index.db`) is ephemeral; schema-version bumps may wipe and
+  rebuild. `usage_events` is preserved across schema bumps.
+- `workflow.db` (durable workflow run state) is never touched by index
+  schema migrations.
+- **`Planned for v1`** — `proposal.db` (durable proposal queue, §11) is
+  managed by the proposal subsystem and survives index rebuilds.
+
+### 9.7 LLM/agent boundary (planned)
+
+**`Planned for v1`** — the boundary documented in §12 and §14 is a locked
+invariant:
+
+- **In-tree LLM helpers** (the `llm.*` config) make **bounded, single-shot,
+  stateless** calls. They never spawn shells, manage processes, or persist
+  state outside the call site. Each call site is gated behind exactly one
+  `llm.features.*` flag and degrades cleanly when disabled or on failure.
+- **External agents** (the `agent.*` config) are invoked via **CLI shell-out
+  only**, through the spawn wrapper documented in §12. akm never imports
+  vendor SDKs and never hosts a long-running agent process.
+
+Crossing this boundary in either direction (calling out to a CLI from the
+in-tree LLM path; calling vendor SDKs from the agent path) is a contract
+violation.
 
 ---
 
@@ -597,7 +757,230 @@ Publish this spec as the locked v1 contract. Document the ephemeral-index semant
 
 ---
 
-## 11. Decisions (resolved)
+## 11. Proposal queue (`Planned for v1`)
+
+All proposal-producing commands write through one durable queue. Live stash
+content is never mutated by reflection, generation, or distillation paths.
+
+### 11.1 Storage
+
+- Proposals live in `proposal.db` (a sibling SQLite DB to `index.db` and
+  `workflow.db`). The DB survives `akm index --full` and binary upgrades.
+- A single proposal row stores: `id`, `ref` (the target asset ref it would
+  propose), `status`
+  (`pending` | `accepted` | `rejected` | `archived`), `source`
+  (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id), `source_run`
+  (opaque correlation id), `created_at`, `updated_at`, `body`,
+  `frontmatter`, `review_notes`, `review_outcome`. Multiple proposals for
+  the same `ref` coexist without path collisions.
+- Invalid proposal rows are surfaced via `akm proposal list` with a clear
+  `warnings` entry. They do not crash the queue.
+
+### 11.2 Commands
+
+```sh
+akm proposal list                       # list pending proposals
+akm proposal list --status accepted     # filter by status
+akm proposal show <id>                  # render one proposal
+akm proposal diff <id>                  # diff vs. the live ref (if any)
+akm proposal accept <id>                # validate, then promote
+akm proposal reject <id> --reason "…"   # archive with reason
+```
+
+`accept` runs full validation (frontmatter, type-renderer, ref grammar,
+write-source policy) **before** promoting. Promotion calls
+`writeAssetToSource()` for the configured write target (§5.4) — same path
+as `akm remember` / `akm import`.
+
+`reject` writes review metadata and moves the row to `archived`. The body
+is preserved.
+
+`diff` shows the proposed delta against the live asset (or the empty file
+if the proposal would create a new ref).
+
+### 11.3 Events
+
+The following events are emitted into `usage_events`:
+
+| Event | When |
+|---|---|
+| `propose_invoked` | every successful `akm propose` call |
+| `reflect_invoked` | every successful `akm reflect` call |
+| `distill_invoked` | every successful `akm distill` call |
+| `promoted` | `proposal accept` after validation passes |
+| `rejected` | `proposal reject` |
+
+All five event names are part of the v1 contract (§9.7). Plugin authors may
+emit additional events but cannot reuse these names.
+
+---
+
+## 12. Agent CLI integration (`Planned for v1`)
+
+External coding agents are invoked via CLI shell-out only. akm never imports
+a vendor SDK.
+
+### 12.1 Profiles
+
+Built-in profiles ship for `opencode`, `claude`, `codex`, `gemini`, and
+`aider`. A profile is a small record:
+
+```ts
+interface AgentProfile {
+  readonly bin: string;                       // command to spawn
+  readonly args: readonly string[];           // base args
+  readonly stdio: "captured" | "interactive"; // capture for CI; interactive for users
+  readonly env?: Record<string, string>;
+  readonly timeoutMs?: number;                // overrides agent.timeoutMs
+  readonly parseOutput?: "text" | "json";
+}
+```
+
+Users can override or add profiles via `agent.profiles[<name>]` in config.
+Unknown keys are warn-and-ignore (§9.2).
+
+### 12.2 Spawn wrapper
+
+One helper, `runAgent(profile, prompt, options)`, owns process spawn,
+streaming or capture, hard timeout, and structured failure reasons. It
+returns `{ ok, exitCode, stdout, stderr, durationMs, reason? }` where
+`reason` is one of `"timeout" | "spawn_failed" | "non_zero_exit" |
+"parse_error"`. The CLI never throws raw process errors past this wrapper.
+
+### 12.3 Setup integration
+
+`akm setup` detects installed agent CLIs (probe each profile's `bin` with
+`--version`) and persists `agent.default` to the first one found. Users can
+change the default with `akm config set agent.default <name>`.
+
+### 12.4 Commands
+
+```sh
+akm agent <profile> [args...]            # raw shell-out
+akm reflect <ref> [--task ...]           # produces reflection proposals
+akm propose <type> <name> --task "..."   # produces generation proposals
+```
+
+`reflect` and `propose` build prompts from asset content, feedback signals
+(§6.6), and renderer schema. They write **only** to the proposal queue
+(§11). They never mutate live stash content. They emit `reflect_invoked` /
+`propose_invoked` (§11.3).
+
+Both commands return structured failures and exit non-zero on
+CLI/timeout/parse/validation errors.
+
+---
+
+## 13. Lesson asset type (`Planned for v1`)
+
+`lesson` is a first-class asset type with its own renderer and required
+frontmatter.
+
+### 13.1 Frontmatter contract
+
+```yaml
+---
+description: required, single-line                # what this lesson teaches
+when_to_use: required, single-line                # the trigger
+tags: [optional]
+sources: [optional, list of refs or URLs]
+---
+
+# Lesson body in markdown.
+```
+
+Lint validates `description` and `when_to_use` are present and non-empty.
+Missing either field fails `akm wiki lint`-style validation in the
+proposal-accept path.
+
+### 13.2 Storage
+
+`lessons/<name>.md` under the working stash, parallel to `memories/`,
+`skills/`, etc. The directory is created lazily on first lesson write.
+
+### 13.3 Origin
+
+Lessons normally arrive via `akm distill <ref>` (§14.5) as `proposed`
+quality (§4.2) and are promoted via `akm proposal accept`. They can also be
+authored directly with `akm import` or `akm remember`-style flows.
+
+---
+
+## 14. `llm.features.*` (`Planned for v1`)
+
+The in-tree LLM is intentionally bounded. Each call site is gated behind
+exactly one feature flag. All defaults are `false` so that adding the flag
+to the schema is itself a non-event.
+
+### 14.1 Locked feature keys
+
+| Key | Use site | Behaviour when disabled |
+|---|---|---|
+| `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline (no rerank) |
+| `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
+| `memory_consolidation` | `akm remember --enrich` consolidation pass | `--enrich` is a no-op; warning printed |
+| `feedback_distillation` | `akm distill <ref>` (§14.5) | `akm distill` exits with `ConfigError` and a hint |
+| `embedding_fallback_score` | scorer fallback when no embeddings available | Scorer uses lexical-only score |
+
+### 14.2 Failure modes
+
+Every LLM call site must:
+
+- check the feature flag before any network call,
+- enforce a hard timeout,
+- catch parse errors and surface a structured `warnings` entry,
+- **never** mutate state on failure.
+
+A disabled or failing feature flag returns the deterministic fallback path.
+Failure is observable but never blocks unrelated commands.
+
+### 14.3 Configuration
+
+```jsonc
+{
+  "llm": {
+    "endpoint": "http://localhost:11434/v1/chat/completions",
+    "model": "llama3.2",
+    "temperature": 0.3,
+    "maxTokens": 512,
+    "features": {
+      "curate_rerank": true,
+      "tag_dedup": true,
+      "memory_consolidation": false,
+      "feedback_distillation": false,
+      "embedding_fallback_score": false
+    }
+  }
+}
+```
+
+Unknown keys under `llm.features` warn and are ignored (§9.2).
+
+### 14.4 Statelessness invariant
+
+The in-tree LLM path holds no state across calls — no caches keyed on
+prior responses, no streaming sessions, no persistent connections. Each
+call is a single request/response cycle. Long-lived state belongs in the
+agent path (§12).
+
+### 14.5 `akm distill <ref>`
+
+`akm distill <ref>` is the canonical example. It:
+
+1. Reads `feedback` events (§6.6) for `<ref>`.
+2. Builds one prompt summarising the feedback.
+3. Issues a single bounded in-tree LLM call (gated by
+   `llm.features.feedback_distillation`).
+4. Writes the response as a `lesson` **proposal** (§13) into the queue
+   (§11).
+5. Emits `distill_invoked`.
+
+It never mutates the live stash. Promotion remains a human-initiated
+`akm proposal accept`.
+
+---
+
+## 15. Decisions (resolved)
 
 The four open questions originally listed here are resolved as of 2026-04-24. They are now part of the locked v1 contract (see §9).
 
