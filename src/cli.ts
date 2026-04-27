@@ -18,6 +18,8 @@ import {
   akmProposalReject,
   akmProposalShow,
 } from "./commands/proposal";
+import { akmPropose } from "./commands/propose";
+import { akmReflect } from "./commands/reflect";
 import { searchRegistry } from "./commands/registry-search";
 import {
   buildMemoryFrontmatter,
@@ -2551,6 +2553,72 @@ function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | 
   );
 }
 
+// ── reflect / propose (agent proposal-producers, #226) ──────────────────────
+
+const reflectCommand = defineCommand({
+  meta: {
+    name: "reflect",
+    description: "Ask the configured agent CLI to review an asset (or recent feedback) and queue a revised proposal",
+  },
+  args: {
+    ref: {
+      type: "positional",
+      description: "Asset ref (type:name) to reflect on. Optional — omit to reflect across recent feedback.",
+      required: false,
+    },
+    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
+      const timeoutMs =
+        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const result = await akmReflect({
+        ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+      output("reflect", result);
+      if (result.ok === false) {
+        process.exit(EXIT_GENERAL);
+      }
+    });
+  },
+});
+
+const proposeCommand = defineCommand({
+  meta: {
+    name: "propose",
+    description: "Ask the configured agent CLI to author a brand-new asset and queue it as a proposal",
+  },
+  args: {
+    type: { type: "positional", description: "Asset type (skill, command, knowledge, lesson, ...)", required: true },
+    name: { type: "positional", description: "Asset name (slug or path under the type dir)", required: true },
+    task: { type: "string", description: "Task description for the agent (what should the asset do?)", required: true },
+    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
+      const timeoutMs =
+        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const result = await akmPropose({
+        type: String(args.type),
+        name: String(args.name),
+        task: String(args.task ?? ""),
+        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+      output("propose", result);
+      if (result.ok === false) {
+        process.exit(EXIT_GENERAL);
+      }
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -2588,6 +2656,8 @@ const main = defineCommand({
     history: historyCommand,
     events: eventsCommand,
     proposal: proposalCommand,
+    reflect: reflectCommand,
+    propose: proposeCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
