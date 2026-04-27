@@ -20,12 +20,42 @@ export interface EventsListOptions {
   ctx?: EventsContext;
 }
 
+/**
+ * Parse `--since` accepting either a byte-offset cursor (`@offset:<int>`) for
+ * cross-process resumption, or a timestamp / epoch-ms (the existing form).
+ * Returns one of `{ sinceOffset }` or `{ since }`.
+ */
+function parseSinceFlag(since: string | undefined): {
+  since?: string;
+  sinceOffset?: number;
+} {
+  if (since === undefined) return {};
+  const trimmed = since.trim();
+  if (!trimmed) {
+    throw new UsageError("--since cannot be empty.", "INVALID_FLAG_VALUE");
+  }
+  if (trimmed.startsWith("@offset:")) {
+    const raw = trimmed.slice("@offset:".length);
+    const value = Number.parseInt(raw, 10);
+    if (Number.isNaN(value) || value < 0) {
+      throw new UsageError(
+        `Invalid --since byte offset: "${since}". Expected @offset:<non-negative integer>.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    return { sinceOffset: value };
+  }
+  return { since: normalizeSince(trimmed) };
+}
+
 export interface EventsListResult {
   schemaVersion: 1;
   totalCount: number;
   ref?: string;
   type?: string;
   since?: string;
+  /** Echoed when --since @offset:N was used. */
+  sinceOffset?: number;
   nextOffset: number;
   events: EventEnvelope[];
 }
@@ -67,14 +97,18 @@ function normalizeSince(since: string | undefined): string | undefined {
 
 export function akmEventsList(options: EventsListOptions = {}): EventsListResult {
   const ref = validateRef(options.ref);
-  const since = normalizeSince(options.since);
-  const result = readEvents({ since, type: options.type, ref }, options.ctx);
+  const parsed = parseSinceFlag(options.since);
+  const result = readEvents(
+    { since: parsed.since, sinceOffset: parsed.sinceOffset, type: options.type, ref },
+    options.ctx,
+  );
   return {
     schemaVersion: 1,
     totalCount: result.events.length,
     ...(ref !== undefined ? { ref } : {}),
     ...(options.type !== undefined ? { type: options.type } : {}),
-    ...(since !== undefined ? { since } : {}),
+    ...(parsed.since !== undefined ? { since: parsed.since } : {}),
+    ...(parsed.sinceOffset !== undefined ? { sinceOffset: parsed.sinceOffset } : {}),
     nextOffset: result.nextOffset,
     events: result.events,
   };
@@ -92,11 +126,21 @@ export interface EventsTailResult extends EventsListResult {
   reason: "signal" | "maxEvents" | "maxDuration";
 }
 
+/** Trailer line discriminator for streaming jsonl output (#204). */
+export interface EventsTailTrailer {
+  _kind: "trailer";
+  schemaVersion: 1;
+  nextOffset: number;
+  totalCount: number;
+  reason: "signal" | "maxEvents" | "maxDuration";
+}
+
 export async function akmEventsTail(options: EventsTailOptions = {}): Promise<EventsTailResult> {
   const ref = validateRef(options.ref);
-  const since = normalizeSince(options.since);
+  const parsed = parseSinceFlag(options.since);
   const tailOptions: TailOptions = {
-    since,
+    since: parsed.since,
+    sinceOffset: parsed.sinceOffset,
     type: options.type,
     ref,
     intervalMs: options.intervalMs,
@@ -111,7 +155,8 @@ export async function akmEventsTail(options: EventsTailOptions = {}): Promise<Ev
     totalCount: result.events.length,
     ...(ref !== undefined ? { ref } : {}),
     ...(options.type !== undefined ? { type: options.type } : {}),
-    ...(since !== undefined ? { since } : {}),
+    ...(parsed.since !== undefined ? { since: parsed.since } : {}),
+    ...(parsed.sinceOffset !== undefined ? { sinceOffset: parsed.sinceOffset } : {}),
     nextOffset: result.nextOffset,
     events: result.events,
     reason: result.reason,

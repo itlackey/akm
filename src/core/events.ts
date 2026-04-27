@@ -29,18 +29,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { getCacheDir } from "./paths";
 
-/** Stable, machine-readable event types. New types may be added freely. */
-export type EventType =
-  | "add"
-  | "remove"
-  | "update"
-  | "remember"
-  | "import"
-  | "save"
-  | "feedback"
-  | "index"
-  | "setup"
-  | string;
+/**
+ * Stable, machine-readable event types. New types may be added freely.
+ *
+ * NOTE: `index` and `setup` verbs are intentionally NOT emitted in #204 and
+ * are tracked as a follow-up. They were considered for inclusion but `akmIndex`
+ * has multiple exit paths and `setup` is a multi-step interactive flow; wiring
+ * them required a larger refactor than this issue scoped. Reintroduce them as
+ * literal members here when those emit sites land.
+ */
+export type EventType = "add" | "remove" | "update" | "remember" | "import" | "save" | "feedback" | string;
 
 export interface AppendEventInput {
   eventType: EventType;
@@ -66,7 +64,16 @@ export interface EventsContext {
   filePath?: string;
 }
 
-/** Default events.jsonl location: `<cacheDir>/events.jsonl`. */
+/**
+ * Default events.jsonl location: `<cacheDir>/events.jsonl`.
+ *
+ * Env-isolation caveat: `getCacheDir()` reads `XDG_CACHE_HOME` at the time of
+ * each call. Two cooperating processes (e.g. one writing events, one tailing)
+ * MUST inherit the same `XDG_CACHE_HOME` or they will read/write different
+ * `events.jsonl` files. This is the same env-isolation behaviour as the rest
+ * of akm — config, indexes, and caches all key off XDG paths — so set
+ * `XDG_CACHE_HOME` consistently across processes that share the events bus.
+ */
 export function getEventsPath(): string {
   return path.join(getCacheDir(), "events.jsonl");
 }

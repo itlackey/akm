@@ -2328,7 +2328,10 @@ const wikiCommand = defineCommand({
 const eventsListCommand = defineCommand({
   meta: { name: "list", description: "List events from the append-only events.jsonl stream" },
   args: {
-    since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    since: {
+      type: "string",
+      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+    },
     type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
   },
@@ -2343,7 +2346,10 @@ const eventsListCommand = defineCommand({
 const eventsTailCommand = defineCommand({
   meta: { name: "tail", description: "Follow the append-only events.jsonl stream (polling)" },
   args: {
-    since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    since: {
+      type: "string",
+      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+    },
     type: { type: "string", description: "Filter by event type" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
     "interval-ms": { type: "string", description: "Polling interval in ms (default: 75)" },
@@ -2379,10 +2385,26 @@ const eventsTailCommand = defineCommand({
           : undefined,
       });
       // Emit the canonical envelope last (JSON/YAML modes rely on this;
-      // streaming modes already printed each event but we still emit the
-      // summary so the exit signal carries a structured payload).
+      // streaming modes already printed each event but we still emit a
+      // trailer so callers can persist the resumable cursor).
       if (!stream) {
         output("events-tail", result);
+      } else if (mode.format === "jsonl") {
+        // Final discriminated trailer row so jsonl consumers can resume.
+        const trailer = {
+          _kind: "trailer",
+          schemaVersion: 1,
+          nextOffset: result.nextOffset,
+          totalCount: result.totalCount,
+          reason: result.reason,
+        };
+        console.log(JSON.stringify(trailer));
+      } else {
+        // text mode: keep stdout pristine for line-oriented parsers and
+        // emit the trailer on stderr.
+        process.stderr.write(
+          `[events-tail] reason=${result.reason} nextOffset=${result.nextOffset} total=${result.totalCount}\n`,
+        );
       }
     });
   },

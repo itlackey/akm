@@ -110,6 +110,71 @@ describe("appendEvent / readEvents", () => {
     expect(empty.nextOffset).toBe(next.nextOffset);
   });
 
+  test("`akm events list --since @offset:N` resumes across a real process boundary", () => {
+    // This is the cross-process durability contract: a producer writes N
+    // events, persists nextOffset to a temp file, appends MORE events, and
+    // then a SECOND `bun src/cli.ts events list` invocation reads the cursor
+    // from the file and must emit only the post-cursor events with no
+    // duplicates and no losses.
+    const cacheDir = makeTempDir("akm-events-xproc-cache-");
+    const configDir = makeTempDir("akm-events-xproc-config-");
+    const cursorFile = path.join(makeTempDir("akm-events-xproc-state-"), "cursor.txt");
+    // Drive both processes through the same XDG_CACHE_HOME so they share
+    // the same events.jsonl path (see env-isolation note in core/events.ts).
+    const childEnv = {
+      ...process.env,
+      XDG_CACHE_HOME: cacheDir,
+      XDG_CONFIG_HOME: configDir,
+    };
+    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
+    const ctx = { filePath: eventsPath };
+
+    // 1. Producer writes events 0..2 (the "first batch").
+    appendEvent({ eventType: "remember", ref: "memory:e0" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memory:e1" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memory:e2" }, ctx);
+
+    // 2. Producer persists nextOffset to a temp file.
+    const cursor = readEvents({}, ctx).nextOffset;
+    fs.writeFileSync(cursorFile, String(cursor));
+
+    // 3. Producer appends MORE events (3..5) BEFORE the second process reads.
+    appendEvent({ eventType: "remember", ref: "memory:e3" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memory:e4" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memory:e5" }, ctx);
+
+    // 4. Spawn a SECOND bun process; it reads the cursor from the temp file
+    //    and asks the CLI for events with `--since @offset:<cursor>`. This
+    //    exercises a real exec boundary, not just in-process arithmetic.
+    const persisted = fs.readFileSync(cursorFile, "utf8").trim();
+    const child = spawnSync("bun", [CLI, "events", "list", "--since", `@offset:${persisted}`, "--format=json"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: childEnv,
+    });
+    expect(child.status).toBe(0);
+    const parsed = JSON.parse(child.stdout) as {
+      events: Array<{ ref: string }>;
+      totalCount: number;
+      nextOffset: number;
+      sinceOffset?: number;
+    };
+
+    // 5. Assert: exactly the post-cursor events, in order, no duplicates,
+    //    no losses. The pre-cursor events MUST NOT appear.
+    expect(parsed.events.map((e) => e.ref)).toEqual(["memory:e3", "memory:e4", "memory:e5"]);
+    expect(parsed.totalCount).toBe(3);
+    expect(parsed.sinceOffset).toBe(Number(persisted));
+    expect(parsed.nextOffset).toBeGreaterThan(Number(persisted));
+  });
+
+  test("`akm events list --since @offset:` rejects malformed byte cursors", () => {
+    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
+    const ctx = { filePath };
+    expect(() => akmEventsList({ since: "@offset:not-a-number", ctx })).toThrow(/Invalid --since byte offset/);
+    expect(() => akmEventsList({ since: "@offset:-3", ctx })).toThrow(/Invalid --since/);
+  });
+
   test("--since (timestamp) filter is monotonic across processes", () => {
     const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
     let now = 1_700_000_000_000;
@@ -296,5 +361,73 @@ describe("akmEventsTail", () => {
     });
     expect(result.events).toHaveLength(1);
     expect(result.events[0]?.ref).toBe("memory:after");
+  });
+});
+
+describe("akm events tail (streaming trailer)", () => {
+  // Blocker fix: `--format text|jsonl` previously dropped the resumable
+  // cursor entirely. After the streaming loop ends we must emit a single
+  // trailer line so callers can resume from `nextOffset`.
+
+  test("--format jsonl writes a discriminated trailer row to stdout", () => {
+    const cacheDir = makeTempDir("akm-events-trailer-jsonl-cache-");
+    const configDir = makeTempDir("akm-events-trailer-jsonl-config-");
+    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
+    const ctx = { filePath: eventsPath };
+    appendEvent({ eventType: "remember", ref: "memory:t1" }, ctx);
+    appendEvent({ eventType: "remember", ref: "memory:t2" }, ctx);
+
+    const child = spawnSync(
+      "bun",
+      [
+        CLI,
+        "events",
+        "tail",
+        "--format=jsonl",
+        "--max-events",
+        "2",
+        "--max-duration-ms",
+        "2000",
+        "--interval-ms",
+        "20",
+      ],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: { ...process.env, XDG_CACHE_HOME: cacheDir, XDG_CONFIG_HOME: configDir },
+      },
+    );
+    expect(child.status).toBe(0);
+    const lines = child.stdout.trim().split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThanOrEqual(3); // 2 events + trailer
+    const last = JSON.parse(lines[lines.length - 1] as string) as Record<string, unknown>;
+    expect(last._kind).toBe("trailer");
+    expect(last.schemaVersion).toBe(1);
+    expect(typeof last.nextOffset).toBe("number");
+    expect(last.totalCount).toBe(2);
+    expect(["maxEvents", "signal", "maxDuration"]).toContain(last.reason);
+  });
+
+  test("--format text writes a trailer line to stderr (stdout stays pristine)", () => {
+    const cacheDir = makeTempDir("akm-events-trailer-text-cache-");
+    const configDir = makeTempDir("akm-events-trailer-text-config-");
+    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
+    const ctx = { filePath: eventsPath };
+    appendEvent({ eventType: "remember", ref: "memory:tx1" }, ctx);
+
+    const child = spawnSync(
+      "bun",
+      [CLI, "events", "tail", "--format=text", "--max-events", "1", "--max-duration-ms", "2000", "--interval-ms", "20"],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+        env: { ...process.env, XDG_CACHE_HOME: cacheDir, XDG_CONFIG_HOME: configDir },
+      },
+    );
+    expect(child.status).toBe(0);
+    // stdout: pristine event lines, no trailer mixed in.
+    expect(child.stdout).not.toContain("[events-tail]");
+    // stderr: the trailer with reason + nextOffset + total.
+    expect(child.stderr).toMatch(/\[events-tail\] reason=\S+ nextOffset=\d+ total=\d+/);
   });
 });

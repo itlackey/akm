@@ -39,6 +39,7 @@ export function shapeEventsOutput(result: Record<string, unknown>, detail: Detai
     ...(result.ref !== undefined ? { ref: result.ref } : {}),
     ...(result.type !== undefined ? { type: result.type } : {}),
     ...(result.since !== undefined ? { since: result.since } : {}),
+    ...(typeof result.sinceOffset === "number" ? { sinceOffset: result.sinceOffset } : {}),
     totalCount: result.totalCount ?? shapedEvents.length,
     events: shapedEvents,
   };
