@@ -4,6 +4,8 @@
 **Target:** v1.0 freeze
 **Audience:** akm core contributors
 
+> **Status note (2026-04-27):** This spec is being revised to align with the Agent Reflection and Self-Evolution proposal (2026-04-26). Until that rewrite lands, treat proposal-queue, agent-CLI, and lesson/distill requirements as authoritative and use `docs/reviews/v1-agent-reflection-issues.md` for execution tracking.
+
 ---
 
 ## 1. The model
