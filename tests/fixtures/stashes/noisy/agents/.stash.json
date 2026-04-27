@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "limerick-bard",
+      "type": "agent",
+      "description": "Compose limericks on demand",
+      "tags": ["novelty", "noise", "poem"],
+      "filename": "limerick-bard.md",
+      "quality": "curated",
+      "confidence": 0.3
+    }
+  ]
+}

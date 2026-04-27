@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "terraform",
+      "type": "skill",
+      "description": "Manage cloud infrastructure with Terraform",
+      "tags": ["terraform", "iac", "infrastructure", "hcl"],
+      "aliases": ["tf", "iac"],
+      "searchHints": ["terraform plan", "terraform apply", "infrastructure as code"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}

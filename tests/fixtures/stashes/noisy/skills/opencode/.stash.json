@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "opencode",
+      "type": "skill",
+      "description": "Run coding tasks with the opencode agent CLI",
+      "tags": ["opencode", "agent", "cli", "coding"],
+      "aliases": ["oc"],
+      "searchHints": ["run opencode", "opencode agent", "agent cli"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}

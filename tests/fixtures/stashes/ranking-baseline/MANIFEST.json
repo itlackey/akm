@@ -1,0 +1,7 @@
+{
+  "name": "ranking-baseline",
+  "description": "Synthetic 17-asset stash covering skills, commands, agents, knowledge, and scripts across docker, k8s, svelte, and code-review domains.",
+  "purpose": "Baseline fixture for tests/ranking-regression.test.ts and tests/benchmark-suite.ts. Migrated from tests/ranking-fixtures/stash/ in issue #235; content is byte-identical to that prior location and any change invalidates ranking baselines.",
+  "assets": { "skill": 4, "knowledge": 7, "command": 2, "agent": 2, "script": 3 },
+  "consumers": ["tests/ranking-regression.test.ts", "tests/benchmark-suite.ts"]
+}

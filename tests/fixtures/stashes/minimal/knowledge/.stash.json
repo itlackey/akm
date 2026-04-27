@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "about",
+      "type": "knowledge",
+      "description": "One-paragraph note about this fixture stash",
+      "tags": ["demo", "minimal"],
+      "filename": "about.md",
+      "quality": "curated",
+      "confidence": 0.5
+    }
+  ]
+}

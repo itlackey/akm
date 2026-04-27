@@ -1,0 +1,40 @@
+{
+  "entries": [
+    {
+      "name": "resource-groups",
+      "type": "knowledge",
+      "description": "Lifecycle and conventions for Azure resource groups via az CLI",
+      "tags": ["azure", "az", "resource-group", "reference"],
+      "filename": "resource-groups.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "identity",
+      "type": "knowledge",
+      "description": "Service principals, managed identities, and RBAC role assignment via az CLI",
+      "tags": ["azure", "az", "identity", "rbac"],
+      "filename": "identity.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "common-commands",
+      "type": "knowledge",
+      "description": "Quick reference of high-frequency az CLI commands",
+      "tags": ["azure", "az", "reference", "cheatsheet"],
+      "filename": "common-commands.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "az-troubleshooting",
+      "type": "knowledge",
+      "description": "First-line triage for az CLI failures and Azure-side errors",
+      "tags": ["azure", "az", "troubleshooting"],
+      "filename": "troubleshooting.md",
+      "quality": "curated",
+      "confidence": 0.85
+    }
+  ]
+}

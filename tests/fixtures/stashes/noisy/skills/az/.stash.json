@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "az",
+      "type": "skill",
+      "description": "Operate Azure resources from the command line via az",
+      "tags": ["azure", "az", "cloud", "cli"],
+      "aliases": ["azure-cli", "azure"],
+      "searchHints": ["azure command line", "manage azure resources"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}
