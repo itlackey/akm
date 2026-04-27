@@ -1,0 +1,10 @@
+{
+  "name": "docker-homelab",
+  "description": "Curated skills and knowledge for docker-compose-based homelab management.",
+  "purpose": "Used by bench tasks under domain=docker-homelab and by ranking tests for docker queries.",
+  "assets": { "skill": 1, "knowledge": 4, "command": 0, "agent": 0, "script": 0 },
+  "consumers": [
+    "tests/fixtures/bench/tasks/docker-homelab/* (when authored, future)",
+    "tests/ranking-regression.test.ts (docker queries)"
+  ]
+}

@@ -1,13 +1,14 @@
 /**
  * Ranking regression tests for akm search system.
  *
- * Uses the synthetic fixture stash at tests/fixtures/stash/ to validate
- * search ranking invariants: score differentiation, exact name matching,
- * type ranking, fuzzy/prefix matching, score preservation, and provider
- * merge behavior.
+ * Uses the shared `ranking-baseline` fixture under
+ * tests/fixtures/stashes/ranking-baseline/ to validate search ranking
+ * invariants: score differentiation, exact name matching, type ranking,
+ * fuzzy/prefix matching, score preservation, and provider merge behavior.
  *
- * The fixture stash is indexed once in beforeAll and all tests share the
- * same index to keep the suite fast.
+ * The fixture stash is materialised once in beforeAll via the shared
+ * `loadFixtureStash` helper, then re-indexed in place through the internal
+ * indexer DB API so all tests share the same index.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -21,6 +22,7 @@ import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from ".
 import type { StashEntry, StashFile } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
 import type { SourceSearchHit } from "../src/sources/types";
+import { loadFixtureStash } from "./fixtures/stashes/load";
 
 // Local test helper — mirrors the pre-v1 mergeStashHits logic that was removed
 // from production code when the OpenViking provider was dropped (Phase 1).
@@ -38,7 +40,8 @@ function mergeStashHits(
 
 // ── Fixture path ────────────────────────────────────────────────────────────
 
-const FIXTURE_STASH = path.resolve(__dirname, "ranking-fixtures", "stash");
+let FIXTURE_STASH: string;
+let fixtureCleanup: (() => void) | undefined;
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
 
@@ -65,6 +68,14 @@ beforeAll(async () => {
   testCacheDir = createTmpDir("akm-ranking-cache-");
   testConfigDir = createTmpDir("akm-ranking-config-");
 
+  // Materialise the shared ranking-baseline fixture into a tmp dir. This
+  // test rebuilds the index from scratch via `buildFixtureIndex()` below
+  // against its own XDG_CACHE_HOME, so we skip the helper's `akm index`
+  // spawn (~200-300ms saved per run).
+  const loaded = loadFixtureStash("ranking-baseline", { skipIndex: true });
+  FIXTURE_STASH = loaded.stashDir;
+  fixtureCleanup = loaded.cleanup;
+
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
@@ -85,6 +96,8 @@ afterAll(() => {
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
+
+  fixtureCleanup?.();
 
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });

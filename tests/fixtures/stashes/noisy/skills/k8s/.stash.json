@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "k8s",
+      "type": "skill",
+      "description": "Deploy and operate workloads on Kubernetes",
+      "tags": ["kubernetes", "k8s", "kubectl", "deploy"],
+      "aliases": ["kubernetes", "kube"],
+      "searchHints": ["deploy to kubernetes", "kubectl apply", "k8s workload"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}

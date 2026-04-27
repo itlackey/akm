@@ -1,0 +1,7 @@
+{
+  "name": "minimal",
+  "description": "Smallest possible fixture stash with one asset of each core type.",
+  "purpose": "For unit tests that just need a stash to exist. Five assets total: one skill, one command, one agent, one knowledge doc, one script.",
+  "assets": { "skill": 1, "knowledge": 1, "command": 1, "agent": 1, "script": 1 },
+  "consumers": ["tests/fixtures/stashes/load.test.ts", "future tests that need a tiny indexable stash"]
+}

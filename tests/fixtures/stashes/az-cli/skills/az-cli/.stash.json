@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "az-cli",
+      "type": "skill",
+      "description": "Operate Azure resources from the command line using the az CLI",
+      "tags": ["azure", "az", "cli", "cloud"],
+      "aliases": ["azure-cli", "az"],
+      "searchHints": ["azure command line", "manage azure resources", "az login", "azure subscription"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.95
+    }
+  ]
+}

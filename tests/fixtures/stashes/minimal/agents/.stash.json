@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "greeter",
+      "type": "agent",
+      "description": "Friendly agent that greets the user and exits",
+      "tags": ["demo", "minimal"],
+      "filename": "greeter.md",
+      "quality": "curated",
+      "confidence": 0.5
+    }
+  ]
+}

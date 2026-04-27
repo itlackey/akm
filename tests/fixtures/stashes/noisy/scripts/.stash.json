@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "name": "hello-world",
+      "type": "script",
+      "description": "Print a hello world greeting",
+      "tags": ["novelty", "noise"],
+      "filename": "hello-world.sh",
+      "quality": "curated",
+      "confidence": 0.3
+    },
+    {
+      "name": "fizzbuzz",
+      "type": "script",
+      "description": "Print FizzBuzz from 1 to 100",
+      "tags": ["novelty", "noise"],
+      "filename": "fizzbuzz.sh",
+      "quality": "curated",
+      "confidence": 0.3
+    }
+  ]
+}

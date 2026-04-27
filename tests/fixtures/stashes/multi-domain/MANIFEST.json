@@ -1,0 +1,10 @@
+{
+  "name": "multi-domain",
+  "description": "30 assets spanning six adjacent domains (docker, az, k8s, terraform, github-actions, opencode) with overlapping vocabulary.",
+  "purpose": "Track A primary fixture for measuring search behaviour when queries plausibly hit multiple domains. Each domain has one skill plus supporting knowledge or commands.",
+  "assets": { "skill": 6, "knowledge": 16, "command": 8, "agent": 0, "script": 0 },
+  "consumers": [
+    "tests/fixtures/bench/tasks/* (Track A — multi-domain corpus, future)",
+    "tests/ranking-regression.test.ts (cross-domain ranking, future)"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "name": "github-actions",
+      "type": "skill",
+      "description": "Author and operate GitHub Actions workflows",
+      "tags": ["github", "actions", "ci", "cd", "workflow"],
+      "aliases": ["gh-actions", "ci"],
+      "searchHints": ["github actions workflow", "ci pipeline", "github ci"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.9
+    }
+  ]
+}
