@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "lorem-generator",
+      "type": "skill",
+      "description": "Generate lorem ipsum filler text in arbitrary lengths",
+      "tags": ["filler", "novelty", "noise"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.3
+    }
+  ]
+}

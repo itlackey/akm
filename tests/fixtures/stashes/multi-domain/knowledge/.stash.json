@@ -1,0 +1,148 @@
+{
+  "entries": [
+    {
+      "name": "docker-compose-basics",
+      "type": "knowledge",
+      "description": "Minimal docker-compose patterns for single-host deployments",
+      "tags": ["docker", "compose", "reference"],
+      "filename": "docker-compose-basics.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "docker-image-build",
+      "type": "knowledge",
+      "description": "Best practices for writing Dockerfiles",
+      "tags": ["docker", "dockerfile", "build"],
+      "filename": "docker-image-build.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "docker-troubleshooting",
+      "type": "knowledge",
+      "description": "First-line diagnostics for failing Docker containers",
+      "tags": ["docker", "troubleshooting"],
+      "filename": "docker-troubleshooting.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "azure-rbac",
+      "type": "knowledge",
+      "description": "Role-based access control concepts and az CLI commands for Azure",
+      "tags": ["azure", "az", "rbac", "identity"],
+      "filename": "azure-rbac.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "azure-resource-groups",
+      "type": "knowledge",
+      "description": "Working with Azure resource groups via az CLI",
+      "tags": ["azure", "az", "resource-group"],
+      "filename": "azure-resource-groups.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "azure-keyvault",
+      "type": "knowledge",
+      "description": "Read and write secrets in Azure Key Vault from az CLI",
+      "tags": ["azure", "az", "keyvault", "secrets"],
+      "filename": "azure-keyvault.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "k8s-deployments",
+      "type": "knowledge",
+      "description": "Authoring Kubernetes Deployment manifests",
+      "tags": ["kubernetes", "k8s", "deployment"],
+      "filename": "k8s-deployments.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "k8s-services",
+      "type": "knowledge",
+      "description": "Kubernetes Service types and when to use each",
+      "tags": ["kubernetes", "k8s", "service", "networking"],
+      "filename": "k8s-services.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "k8s-troubleshooting",
+      "type": "knowledge",
+      "description": "First-line debugging for Kubernetes pod issues",
+      "tags": ["kubernetes", "k8s", "troubleshooting"],
+      "filename": "k8s-troubleshooting.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "terraform-state",
+      "type": "knowledge",
+      "description": "Storing and locking Terraform state safely",
+      "tags": ["terraform", "iac", "state"],
+      "filename": "terraform-state.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "terraform-modules",
+      "type": "knowledge",
+      "description": "Authoring and consuming Terraform modules",
+      "tags": ["terraform", "iac", "modules"],
+      "filename": "terraform-modules.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "terraform-providers",
+      "type": "knowledge",
+      "description": "Pinning and configuring Terraform providers",
+      "tags": ["terraform", "iac", "providers"],
+      "filename": "terraform-providers.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "gha-permissions",
+      "type": "knowledge",
+      "description": "Scoping GITHUB_TOKEN with the workflow permissions key",
+      "tags": ["github", "actions", "ci", "security"],
+      "filename": "gha-permissions.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "gha-reusable-workflows",
+      "type": "knowledge",
+      "description": "Composing GitHub Actions workflows with reusable workflow_call jobs",
+      "tags": ["github", "actions", "ci", "workflow"],
+      "filename": "gha-reusable-workflows.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "opencode-config",
+      "type": "knowledge",
+      "description": "opencode.json configuration reference",
+      "tags": ["opencode", "config", "agent"],
+      "filename": "opencode-config.md",
+      "quality": "curated",
+      "confidence": 0.8
+    },
+    {
+      "name": "opencode-agents",
+      "type": "knowledge",
+      "description": "Defining custom opencode agents",
+      "tags": ["opencode", "agent", "config"],
+      "filename": "opencode-agents.md",
+      "quality": "curated",
+      "confidence": 0.8
+    }
+  ]
+}

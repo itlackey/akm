@@ -81,13 +81,19 @@ function copyFixturesToTmp(): string {
   return tmpStash;
 }
 
-function copyDirRecursive(src: string, dest: string): void {
+// `tests/fixtures/stashes/` is the shared fixture-stash tree (issue #235); it
+// must not be copied into the per-scenario e2e fixture root or its assets
+// will leak into search results.
+const E2E_FIXTURE_SKIP_AT_ROOT = new Set(["stashes"]);
+
+function copyDirRecursive(src: string, dest: string, depth = 0): void {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (depth === 0 && E2E_FIXTURE_SKIP_AT_ROOT.has(entry.name)) continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
+      copyDirRecursive(srcPath, destPath, depth + 1);
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
