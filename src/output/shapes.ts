@@ -18,6 +18,7 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
       return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
+    // Output shape registration for `akm history` — paired with the textRenderer in text.ts.
     case "history":
       return shapeHistoryOutput(result as Record<string, unknown>, detail);
     default:

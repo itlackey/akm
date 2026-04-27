@@ -179,6 +179,7 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
       const over = r.overwritten ? " (overwritten)" : "";
       return `Cloned${remote} → ${dst}${over}`;
     }
+    // Output shape registration for `akm history` — paired with the shape function in shapes.ts.
     case "history": {
       return formatHistoryPlain(r);
     }
