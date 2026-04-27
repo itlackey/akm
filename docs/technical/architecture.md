@@ -242,6 +242,58 @@ parsing error messages.
 
 ---
 
+## LLM/Agent Boundary
+
+akm has two distinct integration paths to language models. They do not share
+state, do not share modules, and do not share import graphs. The boundary is
+locked by v1 spec §9.7 and is enforced at two concrete seams.
+
+### In-tree LLM helpers (`src/llm/`)
+
+Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
+Concretely:
+
+- Each public export is either a pure function (`chatCompletion`,
+  `enhanceMetadata`, `splitMemoryIntoAtomicFacts`, `resolveIndexPassLLM`,
+  `parseJsonResponse`, …) or a factory that returns a one-shot client tied to
+  the connection config the caller passes in.
+- No module under `src/llm/` keeps session, conversation, or response state at
+  module scope. The only module-level singleton is the local embedder
+  pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
+  stateless model handle (see the comment in that file). It exposes
+  `resetLocalEmbedder()` so tests can construct a fresh pipeline.
+- Each call site is gated behind exactly one `llm.features.*` flag (v1 spec
+  §14) and falls back to a deterministic path when the flag is `false`,
+  the endpoint is unreachable, or parsing fails.
+
+The seam is locked by `tests/architecture/llm-stateless-seam.test.ts`, which
+inspects the module shape of each `src/llm/*` entry — not the source text.
+
+### External agents (`src/integrations/agent/`)
+
+External coding agents are reachable **only** via the spawn wrapper in
+`src/integrations/agent/spawn.ts`. Concretely:
+
+- `runAgent(profile, prompt, options)` is the single entry point. It owns
+  process spawn, captured/interactive stdio, hard timeout, and structured
+  failure reasons.
+- The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
+  durationMs, reason?, error?, parsed? }` where `reason` is one of
+  `"timeout" | "spawn_failed" | "non_zero_exit" | "parse_error"`. Callers
+  never see raw process errors.
+- No file under `src/integrations/agent/` imports a vendor LLM SDK. Agents
+  are CLIs, not in-process clients.
+
+The seam is locked by `tests/architecture/agent-spawn-seam.test.ts`, which
+asserts the documented shape of `runAgent`, the failure-reason discriminated
+union, and the captured/interactive stdio modes. A regression guard in
+`tests/architecture/agent-no-llm-sdk-guard.test.ts` catches accidental
+introduction of vendor SDK imports under that path. The guard is a
+defence-in-depth mechanism — the primary enforcement is the seam test, the
+type system, and code review.
+
+---
+
 ## Module Boundaries
 
 | Module | Responsibility |
@@ -267,6 +319,15 @@ parsing error messages.
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
 | `src/output/renderers.ts` | search/show shaping per asset type |
 | `src/workflows/workflow-runs.ts` | workflow run persistence |
+| `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
+| `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (gated by `llm.features.memory_inference`) |
+| `src/llm/metadata-enhance.ts` | metadata enhancement helper |
+| `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
+| `src/integrations/agent/spawn.ts` | the single agent CLI shell-out entry point (`runAgent`) |
+| `src/integrations/agent/profiles.ts` | built-in agent CLI profile registry |
+| `src/integrations/agent/config.ts` | agent config parsing and profile resolution |
+| `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |
 
 ---
 

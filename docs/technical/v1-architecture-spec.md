@@ -691,6 +691,29 @@ Crossing this boundary in either direction (calling out to a CLI from the
 in-tree LLM path; calling vendor SDKs from the agent path) is a contract
 violation.
 
+#### Tested at
+
+The boundary is locked by three seam-level tests under
+`tests/architecture/`. They assert the integration **seams**, not the
+implementation:
+
+- `llm-stateless-seam.test.ts` — every export of `src/llm/*` is either a
+  pure function or a factory returning a one-shot client. No module-level
+  state holds session/conversation data across calls. The single
+  module-level singleton (`localEmbedder` in `src/llm/embedder.ts`) is a
+  stateless pipeline handle and exposes `resetLocalEmbedder()` for tests.
+- `agent-spawn-seam.test.ts` — `runAgent(profile, prompt, options)` from
+  `src/integrations/agent/spawn.ts` exposes the `AgentRunResult` envelope,
+  the `AgentFailureReason` discriminated union (`"timeout" |
+  "spawn_failed" | "non_zero_exit" | "parse_error"`), and the
+  captured/interactive stdio modes documented in §12.2.
+- `agent-no-llm-sdk-guard.test.ts` — regression-only file-content guard.
+  It scans `src/integrations/agent/**` for known LLM SDK package names
+  (e.g. `@anthropic-ai/sdk`, `openai`, `@google/generative-ai`) and
+  fails if any are imported. **This guard is defence-in-depth**: the
+  primary enforcement is the seam tests above and code review. The guard
+  exists to surface accidental regressions in PRs.
+
 ---
 
 ## 10. Refactor plan from 0.6.0
