@@ -38,7 +38,9 @@ utility flags:
   --seeds <N>              seeds per arm  (default: 5)
   --budget-tokens <N>      per-run token cap (default: 30000)
   --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
-  --json                   emit JSON to stdout; markdown summary to stderr.
+  --json                   suppress the markdown summary on stderr (machine-readable only).
+                           Without --json, JSON still goes to stdout and the markdown
+                           summary is also written to stderr for human-friendly reads.
   -h, --help               show this message.
 
 Environment:
@@ -140,15 +142,14 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   const jsonText = `${JSON.stringify(json, null, 2)}\n`;
   const markdownText = `${markdown}\n`;
 
-  let stdout: string;
-  let stderr: string;
-  if (options.json) {
-    stdout = jsonText;
-    stderr = markdownText;
-  } else {
-    stdout = markdownText;
-    stderr = "";
-  }
+  // JSON ALWAYS goes to stdout. This is the bench's machine-readable
+  // contract (matches `tests/benchmark-suite.ts` and the future `bench
+  // compare`/`attribute` subcommands). The `--json` flag means
+  // "suppress the human-friendly markdown summary on stderr"; without it,
+  // both the JSON envelope (stdout) and the markdown summary (stderr) are
+  // emitted so an operator running it interactively gets both views.
+  const stdout = jsonText;
+  let stderr = options.json ? "" : markdownText;
   stderr += `tasks discovered: ${tasks.length} (slice=${options.slice})\n`;
   if (tasks.length === 0) {
     stderr += "no tasks found — corpus is empty or the slice filter excluded all tasks\n";
@@ -180,10 +181,13 @@ async function main(argv: string[]): Promise<number> {
   switch (parsed.subcommand) {
     case "utility": {
       const sliceRaw = parsed.flags.get("tasks") ?? "all";
-      const slice =
-        sliceRaw === "train" || sliceRaw === "eval" || sliceRaw === "all"
-          ? (sliceRaw as "train" | "eval" | "all")
-          : "all";
+      if (sliceRaw !== "train" && sliceRaw !== "eval" && sliceRaw !== "all") {
+        process.stderr.write(
+          `bench utility: invalid --tasks value "${sliceRaw}"; expected one of: all, train, eval.\n`,
+        );
+        return 2;
+      }
+      const slice = sliceRaw as "train" | "eval" | "all";
       const model = getEnv("BENCH_OPENCODE_MODEL");
       if (!model) {
         process.stderr.write("bench utility: BENCH_OPENCODE_MODEL environment variable is required.\n");

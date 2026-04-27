@@ -114,4 +114,48 @@ describe("bench CLI", () => {
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("unknown subcommand");
   });
+
+  test("unknown --tasks value exits 2 with a clear error (no silent coerce to all)", () => {
+    const r = run(["utility", "--tasks", "bogus"], { BENCH_OPENCODE_MODEL: "test-model" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("invalid --tasks");
+    expect(r.stderr).toContain("bogus");
+    expect(r.stderr).toContain("all");
+    expect(r.stderr).toContain("train");
+    expect(r.stderr).toContain("eval");
+  });
+
+  test("without --json: JSON still goes to stdout, markdown summary goes to stderr", () => {
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000"],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    // stdout MUST be valid JSON (the bench's machine-readable contract).
+    let parsed: Record<string, unknown> | undefined;
+    expect(() => {
+      parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    }).not.toThrow();
+    expect(parsed?.schemaVersion).toBe(1);
+    expect(parsed?.track).toBe("utility");
+    // stderr MUST contain the human-friendly markdown summary.
+    expect(r.stderr).toContain("# akm-bench utility");
+    expect(r.stderr).toContain("## Aggregate");
+    expect(r.stderr).toContain("tasks discovered:");
+  }, 60_000);
+
+  test("with --json: stderr carries no markdown summary", () => {
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    // stdout is still JSON.
+    expect(() => JSON.parse(r.stdout)).not.toThrow();
+    // stderr MUST NOT contain the markdown summary headings.
+    expect(r.stderr).not.toContain("# akm-bench utility");
+    expect(r.stderr).not.toContain("## Aggregate");
+    // The minor trace line is fine.
+    expect(r.stderr).toContain("tasks discovered:");
+  }, 60_000);
 });

@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { EventEnvelope } from "../../src/core/events";
 import type { RunResult } from "./driver";
-import { computeTrajectory } from "./trajectory";
+import { computeTrajectory, VERIFIER_STDOUT_SCAN_CAP } from "./trajectory";
 
 function fakeRun(overrides: Partial<RunResult> = {}): RunResult {
   return {
@@ -109,5 +109,46 @@ describe("computeTrajectory.feedbackRecorded", () => {
     };
     const traj = computeTrajectory({ goldRef: "skill:foo" }, fakeRun({ events: [event] }));
     expect(traj.feedbackRecorded).toBe(false);
+  });
+});
+
+describe("computeTrajectory verifierStdout cap", () => {
+  test("trajectory still computes from the prefix when stdout exceeds the cap, and a warning is recorded", () => {
+    // Construct a stdout: prefix has the canonical `akm show` invocation;
+    // the rest is GBs-of-junk simulated as a long filler past the cap.
+    const ref = "skill:docker-homelab";
+    const prefix = `tool: akm show ${ref}\n`;
+    const fillerSize = VERIFIER_STDOUT_SCAN_CAP + 1024;
+    // Use repeated 'a' so total length comfortably exceeds the cap.
+    const filler = "a".repeat(fillerSize);
+    const verifierStdout = prefix + filler;
+    expect(verifierStdout.length).toBeGreaterThan(VERIFIER_STDOUT_SCAN_CAP);
+
+    const warnings: string[] = [];
+    const traj = computeTrajectory({ goldRef: ref }, fakeRun({ verifierStdout }), { warnings });
+    expect(traj.correctAssetLoaded).toBe(true);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("verifierStdout truncated");
+    expect(warnings[0]).toContain(String(VERIFIER_STDOUT_SCAN_CAP));
+  });
+
+  test("no warning when stdout is within the cap", () => {
+    const warnings: string[] = [];
+    computeTrajectory({ goldRef: "skill:foo" }, fakeRun({ verifierStdout: "akm show skill:foo\n" }), { warnings });
+    expect(warnings).toEqual([]);
+  });
+
+  test("match found in the prefix even though tail mentions the ref past the cap", () => {
+    // Prefix has only filler; the gold ref appears only AFTER the cap.
+    // The scan should miss it (correctly — the agent's effective behaviour
+    // within the budgeted prefix did not include the show call).
+    const ref = "skill:never-loaded";
+    const filler = "x".repeat(VERIFIER_STDOUT_SCAN_CAP);
+    const verifierStdout = `${filler}akm show ${ref}\n`;
+    const warnings: string[] = [];
+    const traj = computeTrajectory({ goldRef: ref }, fakeRun({ verifierStdout }), { warnings });
+    expect(traj.correctAssetLoaded).toBe(false);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("verifierStdout truncated");
   });
 });

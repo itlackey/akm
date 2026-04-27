@@ -133,6 +133,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             budgetTokens,
             budgetWallMs,
             spawn: options.spawn,
+            warnings,
           });
           armRuns.push(run);
         }
@@ -164,6 +165,7 @@ async function runOneIsolated(args: {
   budgetTokens: number;
   budgetWallMs: number;
   spawn?: SpawnFn;
+  warnings: string[];
 }): Promise<RunResult> {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-ws-${args.task.domain}-`));
   try {
@@ -183,13 +185,16 @@ async function runOneIsolated(args: {
       ...(args.task.expectedMatch ? { expectedMatch: args.task.expectedMatch } : {}),
       ...(args.stashDir ? { stashDir: args.stashDir } : {}),
       ...(args.spawn ? { spawn: args.spawn } : {}),
+      warnings: args.warnings,
     };
 
     const result = await runOne(runOptions);
 
     // Splice in the trajectory metric. The driver always returns
     // `{ null, null }` — this is where the real values get filled.
-    const trajectory = computeTrajectory({ goldRef: args.task.goldRef }, result);
+    const trajectory = computeTrajectory({ goldRef: args.task.goldRef }, result, {
+      warnings: args.warnings,
+    });
     return { ...result, trajectory };
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });

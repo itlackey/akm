@@ -19,10 +19,28 @@
 
 import type { RunResult, TrajectoryRecord } from "./driver";
 
+/**
+ * Cap on the number of characters of `verifierStdout` we substring-scan for
+ * the `akm show <ref>` heuristic. A runaway agent could emit GBs of stdout;
+ * scanning all of it would OOM the bench. The first 16 MiB is plenty to
+ * decide whether the agent invoked `akm show` for the gold ref.
+ */
+export const VERIFIER_STDOUT_SCAN_CAP = 16 * 1024 * 1024;
+
 /** Inputs the trajectory parser cares about — we accept a TaskMetadata-ish duck. */
 export interface TrajectoryTaskInput {
   /** Asset ref like `skill:docker-homelab`. Optional. */
   goldRef?: string;
+}
+
+/** Optional auxiliary inputs for `computeTrajectory`. */
+export interface TrajectoryOptions {
+  /**
+   * Collector for trajectory-scoped warnings (e.g. verifierStdout was
+   * truncated to fit the scan cap). Mirrors the events.jsonl warning path
+   * in `readRunEvents`.
+   */
+  warnings?: string[];
 }
 
 /**
@@ -40,13 +58,21 @@ export interface TrajectoryTaskInput {
  * exact ref and `skill:docker-homelab/anything`. The match is conservative
  * — case-sensitive, exact substring on `akm show <ref>` (whitespace-flexible).
  */
-export function computeTrajectory(task: TrajectoryTaskInput, runResult: RunResult): TrajectoryRecord {
-  const correctAssetLoaded = computeCorrectAssetLoaded(task, runResult);
+export function computeTrajectory(
+  task: TrajectoryTaskInput,
+  runResult: RunResult,
+  opts?: TrajectoryOptions,
+): TrajectoryRecord {
+  const correctAssetLoaded = computeCorrectAssetLoaded(task, runResult, opts);
   const feedbackRecorded = computeFeedbackRecorded(runResult);
   return { correctAssetLoaded, feedbackRecorded };
 }
 
-function computeCorrectAssetLoaded(task: TrajectoryTaskInput, runResult: RunResult): boolean | null {
+function computeCorrectAssetLoaded(
+  task: TrajectoryTaskInput,
+  runResult: RunResult,
+  opts?: TrajectoryOptions,
+): boolean | null {
   if (!task.goldRef) return null;
   const ref = task.goldRef;
 
@@ -68,7 +94,19 @@ function computeCorrectAssetLoaded(task: TrajectoryTaskInput, runResult: RunResu
   //     invokes the akm CLI as a tool), or
   //   - the bare ref appearing on a line that mentions `show` (covers tool-
   //     call JSON like `{"command":"akm","args":["show","skill:foo"]}`).
-  const haystack = runResult.verifierStdout;
+  // Cap the scan at VERIFIER_STDOUT_SCAN_CAP so a runaway agent's GBs of
+  // stdout cannot OOM the bench. When we truncate, push a warning so the
+  // top-level report aggregates it under `warnings[]`.
+  const haystackFull = runResult.verifierStdout;
+  let haystack = haystackFull;
+  if (haystack && haystack.length > VERIFIER_STDOUT_SCAN_CAP) {
+    haystack = haystack.slice(0, VERIFIER_STDOUT_SCAN_CAP);
+    if (opts?.warnings) {
+      opts.warnings.push(
+        `verifierStdout truncated for trajectory scan: ${haystackFull.length} chars exceeds ${VERIFIER_STDOUT_SCAN_CAP}-char cap; correct_asset_loaded computed from the prefix.`,
+      );
+    }
+  }
   if (haystack && containsAkmShow(haystack, ref)) return true;
 
   return false;
