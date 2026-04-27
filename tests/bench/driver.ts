@@ -93,6 +93,14 @@ export interface RunResult {
   events: EventEnvelope[];
   verifierStdout: string;
   verifierExitCode: number;
+  /**
+   * Failure-mode taxonomy label (spec §6.6). Set by the runner via
+   * `classifyFailureMode` for every failed akm-arm RunResult; `null` for
+   * passing runs, budget_exceeded, harness_error, and noakm-arm runs.
+   * Spliced in additively after `runOne` returns; the driver itself never
+   * populates this field.
+   */
+  failureMode?: import("./metrics").FailureMode | null;
 }
 
 /** Operator-config env names that MUST NOT leak into per-run children. */

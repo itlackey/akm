@@ -14,7 +14,15 @@
  */
 
 import { execSync } from "node:child_process";
-import type { CorpusDelta, CorpusMetrics, OutcomeAggregate, PerTaskMetrics, TrajectoryAggregate } from "./metrics";
+import type {
+  CorpusDelta,
+  CorpusMetrics,
+  FailureMode,
+  FailureModeAggregate,
+  OutcomeAggregate,
+  PerTaskMetrics,
+  TrajectoryAggregate,
+} from "./metrics";
 
 // ── Legacy envelope (#236) ─────────────────────────────────────────────────
 
@@ -99,6 +107,12 @@ export interface UtilityRunReport {
   aggregateAkm: CorpusMetrics;
   aggregateDelta: CorpusDelta;
   trajectoryAkm: TrajectoryAggregate;
+  /**
+   * Failure-mode taxonomy aggregate (§6.6). Counts and per-task breakdown
+   * across every failed akm-arm run in the corpus. Empty `byLabel` /
+   * `byTask` when no runs failed.
+   */
+  failureModes: FailureModeAggregate;
   tasks: UtilityReportTaskEntry[];
   warnings: string[];
 }
@@ -143,6 +157,10 @@ function buildUtilityJson(input: UtilityRunReport): object {
         correct_asset_loaded: input.trajectoryAkm.correctAssetLoaded,
         feedback_recorded: input.trajectoryAkm.feedbackRecorded,
       },
+    },
+    failure_modes: {
+      by_label: input.failureModes.byLabel,
+      by_task: input.failureModes.byTask,
     },
     tasks,
     warnings: input.warnings,
@@ -222,6 +240,13 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   for (const t of sorted) {
     lines.push(taskRow(t));
   }
+  // Failure-mode breakdown (§6.6). Appended near the bottom so the headline
+  // pass-rate / trajectory tables stay visually anchored at the top.
+  const failureSection = renderFailureModeBreakdown(input);
+  if (failureSection.length > 0) {
+    lines.push("");
+    lines.push(failureSection);
+  }
   if (input.warnings.length > 0) {
     lines.push("");
     lines.push("## Warnings");
@@ -254,6 +279,38 @@ function signed(text: string): string {
 function formatPercent(value: number | null): string {
   if (value === null) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+// ── Failure-mode breakdown (§6.6) ──────────────────────────────────────────
+
+/**
+ * Render the §6.6 "Failure modes" markdown section. Lines are sorted by
+ * descending count (ties broken alphabetically by label so output is
+ * byte-stable). Each line:
+ *
+ *   `<label> — <count> (<percent>% of failed runs)`
+ *
+ * Returns an empty string when no failed runs exist (caller decides whether
+ * to append a blank section header).
+ */
+export function renderFailureModeBreakdown(report: UtilityRunReport): string {
+  const entries = Object.entries(report.failureModes.byLabel) as Array<[FailureMode, number]>;
+  if (entries.length === 0) return "";
+  const totalFailures = entries.reduce((acc, [, count]) => acc + count, 0);
+  if (totalFailures === 0) return "";
+
+  // Sort by descending count, tie-break alphabetically for determinism.
+  entries.sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+
+  const lines: string[] = ["## Failure modes", ""];
+  for (const [label, count] of entries) {
+    const percent = ((count / totalFailures) * 100).toFixed(1);
+    lines.push(`- ${label} — ${count} (${percent}% of failed runs)`);
+  }
+  return lines.join("\n");
 }
 
 // ── Git helpers ────────────────────────────────────────────────────────────

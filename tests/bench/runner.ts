@@ -29,10 +29,13 @@ import type { TaskMetadata, TaskSlice } from "./corpus";
 import { type RunOptions, type RunResult, runOne } from "./driver";
 import {
   aggregateCorpus,
+  aggregateFailureModes,
   aggregatePerTask,
   aggregateTrajectory,
+  classifyFailureMode,
   computeCorpusDelta,
   computePerTaskDelta,
+  type FailureMode,
   type PerTaskMetrics,
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
@@ -195,7 +198,11 @@ async function runOneIsolated(args: {
     const trajectory = computeTrajectory({ goldRef: args.task.goldRef }, result, {
       warnings: args.warnings,
     });
-    return { ...result, trajectory };
+    // Splice in the failure-mode label. Only the akm arm carries one; the
+    // noakm baseline is the control and isn't part of the §6.6 to-do list.
+    // `classifyFailureMode` returns null for non-failed runs.
+    const failureMode = args.arm === "akm" ? classifyFailureMode(args.task, { ...result, trajectory }) : null;
+    return { ...result, trajectory, failureMode };
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
@@ -259,6 +266,14 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const aggregateDelta = computeCorpusDelta(aggregateNoakm, aggregateAkm);
   const trajectoryAkm = aggregateTrajectory(akmRunsAll);
 
+  // Failure-mode aggregate (§6.6). Walks every akm-arm run; runs that are
+  // not "fail" carry `failureMode: null` and are skipped here.
+  const failureEntries: Array<{ taskId: string; mode: FailureMode }> = [];
+  for (const r of akmRunsAll) {
+    if (r.failureMode) failureEntries.push({ taskId: r.taskId, mode: r.failureMode });
+  }
+  const failureModes = aggregateFailureModes(failureEntries);
+
   const domains = new Set(args.options.tasks.map((t) => t.domain)).size;
   const branch = args.options.branch ?? resolveGitBranch();
   const commit = args.options.commit ?? resolveGitCommit();
@@ -279,6 +294,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     aggregateAkm,
     aggregateDelta,
     trajectoryAkm,
+    failureModes,
     tasks,
     warnings: args.warnings,
   };
