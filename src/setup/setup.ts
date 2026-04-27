@@ -26,6 +26,12 @@ import {
   deriveSemanticProviderFingerprint,
   writeSemanticStatus,
 } from "../indexer/semantic-status";
+import {
+  type AgentConfig,
+  type AgentDetectionResult,
+  detectAgentCliProfiles,
+  pickDefaultAgentProfile,
+} from "../integrations/agent";
 import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectOllama } from "./detect";
@@ -813,6 +819,51 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
   return entries;
 }
 
+// ── Agent CLI detection step (v1 spec §12.3) ────────────────────────────────
+
+/**
+ * Result of the agent CLI detection step. The wizard surfaces this to the
+ * caller so the consolidated config write at the end of setup can persist
+ * the new `agent` block.
+ *
+ * @internal Exported for testing only.
+ */
+export interface AgentSetupResult {
+  /** Updated agent config block, or `undefined` if the user has nothing installed and no existing block. */
+  agent?: AgentConfig;
+  /** Per-profile detection results, available to the UI for display. */
+  detections: AgentDetectionResult[];
+}
+
+/**
+ * Detect installed agent CLIs and produce an updated `agent` config block
+ * with a sensible `default` (the first detected profile that the user has
+ * not already overridden).
+ *
+ * Pure-ish: file system / PATH probes are routed through `detectFn` so
+ * tests can drive the branches without touching the real PATH.
+ *
+ * @internal Exported for testing only.
+ */
+export function stepAgentCliDetection(
+  current: AkmConfig,
+  detectFn: (agent?: AgentConfig) => AgentDetectionResult[] = detectAgentCliProfiles,
+): AgentSetupResult {
+  const detections = detectFn(current.agent);
+  const defaultName = pickDefaultAgentProfile(detections, current.agent?.default);
+
+  // No installed agents found and no existing config → leave block absent.
+  if (!defaultName && !current.agent) {
+    return { detections };
+  }
+
+  const agent: AgentConfig = {
+    ...(current.agent ?? {}),
+    ...(defaultName ? { default: defaultName } : {}),
+  };
+  return { agent, detections };
+}
+
 // ── Main Wizard ─────────────────────────────────────────────────────────────
 
 /**
@@ -901,6 +952,26 @@ export function buildSetupSteps(options: {
           if (!merged.some((s) => s.path === ps.path)) merged.push(ps);
         }
         ctx.apply({ sources: merged.length > 0 ? merged : undefined });
+      },
+    },
+    {
+      id: "agent-cli",
+      label: "Agent CLI",
+      nonInteractive: true,
+      async run(ctx) {
+        const result = stepAgentCliDetection(ctx.config);
+        const detected = result.detections.filter((d) => d.available);
+        if (detected.length > 0) {
+          p.log.info(
+            `Detected agent CLIs: ${detected.map((d) => d.name).join(", ")}.` +
+              (result.agent?.default ? ` Default profile: ${result.agent.default}.` : ""),
+          );
+        } else {
+          p.log.info(
+            "No agent CLIs detected on PATH. Agent commands will be disabled until one is installed and `akm setup` is re-run.",
+          );
+        }
+        ctx.apply({ agent: result.agent });
       },
     },
   ];
