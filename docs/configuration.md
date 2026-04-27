@@ -195,8 +195,9 @@ for a single pass while keeping it on for others, set
     "model": "llama3.2"
   },
   "index": {
-    "enrichment": { "llm": false }   // skip LLM metadata enrichment
-    // future passes (memory, graph, …) inherit `llm` automatically
+    "enrichment": { "llm": false },  // skip LLM metadata enrichment
+    "memory": { "llm": false }       // skip memory inference (see below)
+    // future passes (graph, …) inherit `llm` automatically
   }
 }
 ```
@@ -207,6 +208,22 @@ provider configuration under `index.<pass>` (e.g. `endpoint`, `model`,
 `ConfigError("INVALID_CONFIG_FILE")` so that there is exactly one place to
 configure the LLM. To use a different model entirely, change the top-level
 `llm` block.
+
+### Memory inference pass (`index.memory`)
+
+When `akm.llm` is configured, `akm index` runs an opt-in memory inference
+pass that splits each pending memory in `<stashDir>/memories/` into atomic
+facts. Each atomic fact is written as a new sibling memory with frontmatter
+`inferred: true` and `source: memory:<parent-name>`, and the parent is
+marked `inferenceProcessed: true` so subsequent index runs are idempotent.
+
+The pass is disabled when:
+
+- No `akm.llm` block is configured (the default), or
+- `index.memory.llm = false` is set explicitly.
+
+Disabling the pass after a previous run never deletes existing inferred
+children — they remain on disk and continue to be searchable.
 
 ## Install Security Audit
 
