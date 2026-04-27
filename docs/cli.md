@@ -1287,15 +1287,15 @@ durable proposal queue and never mutate live stash content.
 
 ```sh
 akm reflect <ref>
-akm reflect <ref> --task "tighten the description"
-akm reflect <ref> --profile claude
+akm reflect [ref] --task "tighten the description"
+akm reflect --profile claude
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--task` | Optional task hint passed into the reflection prompt |
 | `--profile` | Override the default agent profile from `agent.default` |
-| `--timeout` | Override `agent.timeoutMs` for this call |
+| `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
 Emits the `reflect_invoked` usage event. Returns the `id` of the new
 proposal row. Validation/timeout/parse errors return non-zero with a

@@ -91,7 +91,8 @@ export interface LlmFeatureFlags {
   memory_consolidation?: boolean;
   /**
    * Gates `akm distill <ref>` (§14.5, #227). Default: false.
-   * When false, `akm distill` exits with `ConfigError` and a hint.
+   * When false (or absent), `akm distill` is skipped as a no-op rather than
+   * failing with `ConfigError`.
    */
   feedback_distillation?: boolean;
   /**

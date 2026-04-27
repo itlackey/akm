@@ -2593,6 +2593,7 @@ const reflectCommand = defineCommand({
       description: "Asset ref (type:name) to reflect on. Optional — omit to reflect across recent feedback.",
       required: false,
     },
+    task: { type: "string", description: "Optional task hint passed into the reflection prompt" },
     profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
@@ -2603,6 +2604,7 @@ const reflectCommand = defineCommand({
         typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
       const result = await akmReflect({
         ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
         profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });

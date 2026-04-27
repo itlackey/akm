@@ -19,7 +19,7 @@ import path from "node:path";
 
 import { akmPropose } from "../src/commands/propose";
 import { akmReflect } from "../src/commands/reflect";
-import { readEvents } from "../src/core/events";
+import { appendEvent, readEvents } from "../src/core/events";
 import { listProposals } from "../src/core/proposals";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../src/integrations/agent/spawn";
@@ -80,6 +80,18 @@ function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
       kill: () => undefined,
     };
     return proc;
+  };
+}
+
+function fakeSpawnWithCapture(
+  stdout: string,
+  stderr: string,
+  exitCode: number,
+  capture: (cmd: string[]) => void,
+): SpawnFn {
+  return (cmd) => {
+    capture(cmd);
+    return fakeSpawn(stdout, stderr, exitCode)(cmd, {});
   };
 }
 
@@ -245,19 +257,36 @@ describe("akm reflect", () => {
 
   test("ref omitted: still queues a proposal when the agent supplies one", async () => {
     const stash = makeStashDir();
+    appendEvent({
+      eventType: "feedback",
+      ref: "lesson:rg-over-grep",
+      metadata: { signal: "negative", note: "too vague" },
+    });
+    appendEvent({ eventType: "feedback", ref: "skill:hello", metadata: { signal: "positive", note: "nice greeting" } });
+    let prompt = "";
     const result = await akmReflect({
       stashDir: stash,
+      task: "Focus on the highest-value recent signal",
       agentProfile: makeProfile(),
-      runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
+      runAgentOptions: {
+        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
+          prompt = cmd.at(-1) ?? "";
+        }),
+      },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(listProposals(stash).length).toBe(1);
+    expect(prompt).toContain("No target ref was supplied.");
+    expect(prompt).toContain("lesson:rg-over-grep [negative] too vague");
+    expect(prompt).toContain("skill:hello [positive] nice greeting");
+    expect(prompt).toContain("Task / focus: Focus on the highest-value recent signal");
 
     const events = readEvents({ type: "reflect_invoked" });
     expect(events.events.length).toBe(1);
     // No ref on the event — we did not pass one in.
     expect(events.events[0]?.ref).toBeUndefined();
+    expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
   });
 });
 
@@ -357,6 +386,27 @@ describe("akm propose", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.reason).toBe("parse_error");
+    expect(listProposals(stash).length).toBe(0);
+  });
+
+  test("parse_error: rejects agent refs whose type does not match the requested type", async () => {
+    const stash = makeStashDir();
+    const mismatchedPayload = JSON.stringify({
+      ref: "lesson:hello",
+      content: "---\ndescription: Say hi\nwhen_to_use: When greeting\n---\n\nSay hi politely.\n",
+    });
+    const result = await akmPropose({
+      type: "skill",
+      name: "hello",
+      task: "Say hi",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn(mismatchedPayload, "", 0) },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toContain("expected skill");
     expect(listProposals(stash).length).toBe(0);
   });
 

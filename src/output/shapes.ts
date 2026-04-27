@@ -30,7 +30,8 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     // Output shape registration for `akm proposal {list,show,accept,reject,diff}`
     // (#225). Each verb gets its own arm so the registry stays exhaustive (no
     // silent JSON.stringify fallback). The proposal payload is reshaped per
-    // detail level — `brief` strips the content body and review notes;
+    // detail level — `brief` omits the full content body, while some proposal
+    // shapers still retain normal-level metadata such as review details;
     // `full`/`agent` includes everything.
     case "proposal-list":
       return shapeProposalListOutput(result as Record<string, unknown>, detail);

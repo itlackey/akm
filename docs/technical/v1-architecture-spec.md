@@ -894,7 +894,7 @@ change the default with `akm config set agent.default <name>`.
 
 ```sh
 akm agent <profile> [args...]            # raw shell-out
-akm reflect <ref> [--task ...]           # produces reflection proposals
+akm reflect [ref] [--task ...]           # produces reflection proposals
 akm propose <type> <name> --task "..."   # produces generation proposals
 ```
 

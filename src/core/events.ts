@@ -48,9 +48,8 @@ export type EventType =
   | "feedback"
   // Proposal substrate (#225). `promoted` and `rejected` are emitted by the
   // `akm proposal accept` / `akm proposal reject` flows. The `*_invoked`
-  // events name future call sites for `akm reflect` (#226), `akm propose`,
-  // and `akm distill` (#228) — they are reserved here so the union is stable
-  // when those commands land.
+  // events are emitted by the `akm reflect` (#226), `akm propose`, and
+  // `akm distill` (#228) command flows.
   | "promoted"
   | "rejected"
   | "reflect_invoked"

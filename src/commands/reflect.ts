@@ -43,6 +43,8 @@ import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/a
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
   ref?: string;
+  /** Optional task hint passed through to the reflection prompt. */
+  task?: string;
   /** Override the agent profile name (defaults to `agent.default`). */
   profile?: string;
   /** Override the spawn timeout. */
@@ -82,20 +84,25 @@ export interface AkmReflectSuccess {
 export type AkmReflectResult = AkmReflectSuccess | AkmReflectFailure;
 
 const MAX_FEEDBACK_LINES = 10;
+const MAX_GLOBAL_FEEDBACK_LINES = 20;
 
 /**
- * Pull recent `feedback` events for `ref` from events.jsonl. Best-effort —
- * a missing or empty events stream returns `[]`.
+ * Pull recent `feedback` events from events.jsonl. When `ref` is present we
+ * scope to that asset; otherwise we surface the most recent feedback across
+ * all assets so `akm reflect` can operate in a general "review recent
+ * signals" mode. Best-effort — a missing or empty events stream returns `[]`.
  */
-function readRecentFeedback(ref: string): string[] {
+function readRecentFeedback(ref?: string): string[] {
   try {
-    const result = readEvents({ type: "feedback", ref });
+    const result = readEvents({ type: "feedback", ...(ref ? { ref } : {}) });
     const lines: string[] = [];
-    for (const event of result.events.slice(-MAX_FEEDBACK_LINES)) {
+    const limit = ref ? MAX_FEEDBACK_LINES : MAX_GLOBAL_FEEDBACK_LINES;
+    for (const event of result.events.slice(-limit)) {
       const md = (event.metadata ?? {}) as Record<string, unknown>;
       const signal = typeof md.signal === "string" ? md.signal : "?";
       const note = typeof md.note === "string" ? md.note : typeof md.reason === "string" ? md.reason : "";
-      lines.push(note ? `[${signal}] ${note}` : `[${signal}]`);
+      const details = note ? `[${signal}] ${note}` : `[${signal}]`;
+      lines.push(!ref && event.ref ? `${event.ref} ${details}` : details);
     }
     return lines;
   } catch {
@@ -153,6 +160,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     eventType: "reflect_invoked",
     ...(options.ref ? { ref: options.ref } : {}),
     metadata: {
+      ...(options.task ? { task: options.task } : {}),
       ...(options.profile ? { profile: options.profile } : {}),
     },
   });
@@ -183,15 +191,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 4. Build the prompt.
-  const feedback = options.ref ? readRecentFeedback(options.ref) : [];
+  const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const prompt = buildReflectPrompt({
-    ref: options.ref ?? "(unspecified)",
-    type: parsedRef?.type ?? "unknown",
-    name: parsedRef?.name ?? "unknown",
+    ...(options.ref ? { ref: options.ref } : {}),
+    ...(parsedRef?.type ? { type: parsedRef.type } : {}),
+    ...(parsedRef?.name ? { name: parsedRef.name } : {}),
     ...(assetContent !== undefined ? { assetContent } : {}),
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
+    ...(options.task ? { task: options.task } : {}),
   });
 
   // 5. Spawn the agent. Force captured stdio + JSON parse so we can extract

@@ -10,6 +10,7 @@
  * `akm reflect`. `propose_invoked` is emitted at command entry.
  */
 
+import { parseAssetRef } from "../core/asset-ref";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
@@ -96,13 +97,13 @@ function failureEnvelope(
 }
 
 export async function akmPropose(options: AkmProposeOptions): Promise<AkmProposeResult> {
-  if (!options.type || !options.type.trim()) {
+  if (!options.type?.trim()) {
     throw new UsageError("propose: <type> is required.", "MISSING_REQUIRED_ARGUMENT");
   }
-  if (!options.name || !options.name.trim()) {
+  if (!options.name?.trim()) {
     throw new UsageError("propose: <name> is required.", "MISSING_REQUIRED_ARGUMENT");
   }
-  if (!options.task || !options.task.trim()) {
+  if (!options.task?.trim()) {
     throw new UsageError("propose: --task is required.", "MISSING_REQUIRED_ARGUMENT");
   }
   if (!TYPE_DIRS[options.type]) {
@@ -173,12 +174,43 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     };
   }
 
-  // 6. Insert the proposal. Note: we trust the agent's `ref` over our
-  // requested type:name so the agent can normalise the asset name (e.g.
-  // path-cleanup), but require the type to match the requested type to
-  // catch silly responses.
+  // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
+  // asset name (e.g. path-cleanup), but only after validating that the ref is
+  // well-formed and the type still matches the requested type.
   const expectedRef = `${options.type}:${options.name}`;
-  const ref = payload.ref || expectedRef;
+  let ref = expectedRef;
+  if (payload.ref) {
+    let parsedRef: ReturnType<typeof parseAssetRef>;
+    try {
+      parsedRef = parseAssetRef(payload.ref);
+    } catch (err) {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error: err instanceof Error ? err.message : String(err),
+        type: options.type,
+        name: options.name,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
+    if (parsedRef.type !== options.type) {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error: `Agent returned ref type ${parsedRef.type} but expected ${options.type}`,
+        type: options.type,
+        name: options.name,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
+    ref = `${parsedRef.type}:${parsedRef.name}`;
+  }
 
   const createInput: CreateProposalInput = {
     ref,

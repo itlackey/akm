@@ -78,15 +78,17 @@ const RESPONSE_CONTRACT = [
 ].join("\n");
 
 export interface ReflectPromptInput {
-  ref: string;
-  type: string;
-  name: string;
+  ref?: string;
+  type?: string;
+  name?: string;
   /** Current asset content (may be empty when the asset is new). */
   assetContent?: string;
   /** Recent feedback/event lines to feed in as context. */
   feedback?: string[];
   /** Optional schema/lint hints (e.g. lesson-lint findings). */
   schemaHints?: string[];
+  /** Optional operator task/focus hint. */
+  task?: string;
 }
 
 /**
@@ -97,24 +99,39 @@ export interface ReflectPromptInput {
  */
 export function buildReflectPrompt(input: ReflectPromptInput): string {
   const sections: string[] = [];
-  sections.push(
-    `You are reviewing an akm stash asset (${input.type}) called "${input.name}" and proposing an improved version.`,
-  );
-  sections.push(`Target ref: ${input.ref}`);
-  sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
+  if (input.ref && input.type && input.name) {
+    sections.push(
+      `You are reviewing an akm stash asset (${input.type}) called "${input.name}" and proposing an improved version.`,
+    );
+    sections.push(`Target ref: ${input.ref}`);
+    sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
+  } else {
+    sections.push("You are reviewing recent akm feedback and proposing a single improved asset revision.");
+    sections.push("No target ref was supplied. Choose the best target from the feedback below and return it in `ref`.");
+    sections.push(`Known asset types: ${knownTypeList()}.`);
+  }
 
-  if (input.assetContent && input.assetContent.trim()) {
+  if (input.task?.trim()) {
+    sections.push(`Task / focus: ${input.task.trim()}`);
+  }
+
+  if (input.assetContent?.trim()) {
     sections.push("Current asset content (verbatim):");
     sections.push("```");
     sections.push(input.assetContent.trimEnd());
     sections.push("```");
-  } else {
+  } else if (input.ref) {
     sections.push("(No existing content — propose a fresh asset that fits the ref.)");
+  } else {
+    sections.push("(No existing asset content was supplied.)");
   }
 
   if (input.feedback && input.feedback.length > 0) {
     sections.push("Recent feedback / signals:");
     for (const line of input.feedback) sections.push(`- ${line}`);
+  } else if (!input.ref) {
+    sections.push("Recent feedback / signals:");
+    sections.push("- (no feedback events recorded)");
   }
 
   if (input.schemaHints && input.schemaHints.length > 0) {
