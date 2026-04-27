@@ -394,7 +394,8 @@ in, per feature." See v1 spec §14 for the boundary rules.
       "tag_dedup":                false,
       "memory_consolidation":     false,
       "feedback_distillation":    false,
-      "embedding_fallback_score": false
+      "embedding_fallback_score": false,
+      "memory_inference":         true
     }
   }
 }
@@ -407,6 +408,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
 | `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
 | `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
+| `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 
 Unknown keys under `llm.features` are warn-and-ignore. The five keys above
 are locked and cannot be renamed after v1.0.

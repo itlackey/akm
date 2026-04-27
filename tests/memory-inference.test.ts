@@ -181,6 +181,62 @@ describe("runMemoryInferencePass — disabled by default", () => {
   });
 });
 
+// ── runMemoryInferencePass — orthogonal gating (§14 + #208) ─────────────────
+
+describe("runMemoryInferencePass — feature flag and per-pass key are orthogonal", () => {
+  test("runs when both gates allow (feature on, per-pass on)", async () => {
+    writeMemory("parent", {}, "Body.");
+    splitter = () => ["fact 1"];
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      // index.memory.llm omitted → defaults to enabled.
+    };
+    const result = await runMemoryInferencePass(cfg, sources());
+    expect(result.writtenFacts).toBe(1);
+    expect(result.splitParents).toBe(1);
+  });
+
+  test("skipped when llm.features.memory_inference = false even with index.memory.llm enabled", async () => {
+    const filePath = writeMemory("parent", {}, "Body.");
+    let invocations = 0;
+    splitter = () => {
+      invocations += 1;
+      return ["should never be called"];
+    };
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      llm: { ...SAMPLE_LLM, features: { memory_inference: false } },
+      index: { memory: { llm: true } },
+    };
+    const result = await runMemoryInferencePass(cfg, sources());
+    expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
+    expect(invocations).toBe(0);
+    // Parent is not mutated when the feature gate blocks.
+    const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(fm.data.inferenceProcessed).toBeUndefined();
+  });
+
+  test("skipped when index.memory.llm = false even with llm.features.memory_inference = true", async () => {
+    const filePath = writeMemory("parent", {}, "Body.");
+    let invocations = 0;
+    splitter = () => {
+      invocations += 1;
+      return ["should never be called"];
+    };
+    const cfg: AkmConfig = {
+      semanticSearchMode: "auto",
+      llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
+      index: { memory: { llm: false } },
+    };
+    const result = await runMemoryInferencePass(cfg, sources());
+    expect(result.writtenFacts).toBe(0);
+    expect(invocations).toBe(0);
+    const fm = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+    expect(fm.data.inferenceProcessed).toBeUndefined();
+  });
+});
+
 // ── runMemoryInferencePass — enabled path ───────────────────────────────────
 
 describe("runMemoryInferencePass — enabled", () => {

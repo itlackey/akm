@@ -14,25 +14,29 @@
  * with `inferenceProcessed: true`. A subsequent `akm index` therefore skips
  * the parent without re-running the LLM.
  *
- * Disabling: gated entirely by `resolveIndexPassLLM("memory", config)`. When
- * the user has either no `akm.llm` block or has set `index.memory.llm = false`,
- * the helper returns `undefined` and {@link runMemoryInferencePass} is a no-op.
- * Existing inferred children are NOT deleted — the user keeps what was already
- * produced.
+ * Disabling — two orthogonal gates per v1 spec §14:
+ *   1. `llm.features.memory_inference = false` blocks the pass at the
+ *      locked feature-flag layer (no network call may ever issue).
+ *   2. `index.memory.llm = false` (or no `akm.llm` block at all) opts the
+ *      pass out at the per-pass layer (#208).
+ *   A pass runs iff both layers allow it. Existing inferred children are
+ *   NEVER deleted — the user keeps what was already produced.
  *
  * Locked v1 contract:
  *   - LLM access is exclusively via `resolveIndexPassLLM("memory", config)`.
- *   - All writes go through `writeAssetToSource` in `src/core/write-source.ts`
- *     for the children, and a plain in-place rewrite for the parent's
- *     frontmatter (which `write-source.ts` is not designed to express).
+ *   - All child memory writes go through `writeAssetToSource` in
+ *     `src/core/write-source.ts`. The parent's frontmatter rewrite is an
+ *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import type { AkmConfig } from "../core/config";
+import { parseAssetRef } from "../core/asset-ref";
+import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
+import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { splitMemoryIntoAtomicFacts } from "../llm/memory-infer";
 import type { SearchSource } from "./search-source";
@@ -71,10 +75,19 @@ interface MemoryRecord {
 }
 
 /**
- * Top-level entry point. Returns a no-op result when the pass is disabled
- * (no `akm.llm` configured, or `index.memory.llm = false`). Per #208 the
- * decision is owned by `resolveIndexPassLLM` — this function does not read
- * `config.llm` directly.
+ * Top-level entry point. Returns a no-op result when the pass is disabled.
+ *
+ * Two orthogonal gates per v1 spec §14:
+ *
+ *   1. **Feature gate** — `llm.features.memory_inference` (defaults to
+ *      `true`). When `false`, no network call may issue regardless of
+ *      per-pass settings. This is the locked spec-§14 gate.
+ *   2. **Per-pass gate** — `resolveIndexPassLLM("memory", config)` (which
+ *      reads `index.memory.llm`). When `false`, the indexer simply skips
+ *      this pass for the current run.
+ *
+ * Both must allow the call for the pass to run. Either set to `false`
+ * short-circuits to a no-op result.
  */
 export async function runMemoryInferencePass(
   config: AkmConfig,
@@ -87,6 +100,12 @@ export async function runMemoryInferencePass(
     skippedNoFacts: 0,
   };
 
+  // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
+  // explicit `false` disables the pass entirely.
+  if (config.llm?.features?.memory_inference === false) return empty;
+
+  // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
+  // `undefined` when the pass should not run.
   const llmConfig = resolveIndexPassLLM("memory", config);
   if (!llmConfig) return empty;
 
@@ -108,7 +127,7 @@ export async function runMemoryInferencePass(
       // be retried on the next index run.
       continue;
     }
-    const written = writeAtomicChildren(record, facts);
+    const written = await writeAtomicChildren(record, facts);
     if (written > 0) {
       markParentProcessed(record);
       empty.splitParents += 1;
@@ -195,20 +214,37 @@ function toMemoryName(memoriesDir: string, filePath: string): string | undefined
 
 // ── Writing children + marking parent ───────────────────────────────────────
 
-function writeAtomicChildren(parent: MemoryRecord, facts: string[]): number {
+async function writeAtomicChildren(parent: MemoryRecord, facts: string[]): Promise<number> {
   const memoriesDir = path.join(parent.stashRoot, "memories");
   // Sibling directory layout: <parentDir>/<parentBase>.facts/fact-N.md
   // Keeps facts grouped near the parent without polluting the top level.
   const parentRel = path.relative(memoriesDir, parent.filePath).replace(/\\/g, "/");
   const parentBase = parentRel.replace(/\.md$/i, "");
   const factsDirRel = `${parentBase}.facts`;
-  const factsDirAbs = path.join(memoriesDir, factsDirRel);
+
+  // Children are routed through writeAssetToSource — the single dispatch
+  // point for kind-branching writes (CLAUDE.md / spec §10 step 5). Memory
+  // assets resolve to `<source.path>/memories/<name>.md`, so a child name
+  // of `<parentBase>.facts/fact-N` lands at exactly the documented child
+  // path scheme.
+  const writeTarget: WriteTargetSource = {
+    kind: "filesystem",
+    name: "stash",
+    path: parent.stashRoot,
+  };
+  const writeConfig: SourceConfigEntry = {
+    type: "filesystem",
+    name: "stash",
+    path: parent.stashRoot,
+    writable: true,
+  };
 
   let written = 0;
   for (let i = 0; i < facts.length; i++) {
     const fact = facts[i];
-    const childRelName = `${factsDirRel}/fact-${i + 1}`;
-    const childPath = path.join(memoriesDir, `${childRelName}.md`);
+    const childName = `${factsDirRel}/fact-${i + 1}`;
+    const childRefStr = `memory:${childName}`;
+    const childPath = path.join(memoriesDir, `${childName}.md`);
 
     // Idempotent re-writes: if a child already exists at this slot we skip
     // it. The parent's `inferenceProcessed` marker is the primary idempotency
@@ -220,13 +256,13 @@ function writeAtomicChildren(parent: MemoryRecord, facts: string[]): number {
     }
 
     try {
-      fs.mkdirSync(factsDirAbs, { recursive: true });
       const content = renderChildMemory(fact, parent.ref);
-      fs.writeFileSync(childPath, content, "utf8");
+      const childRef = parseAssetRef(childRefStr);
+      await writeAssetToSource(writeTarget, writeConfig, childRef, content);
       written += 1;
     } catch (err) {
       warn(
-        `memory inference: failed to write atomic child ${childRelName}: ${err instanceof Error ? err.message : String(err)}`,
+        `memory inference: failed to write atomic child ${childName}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -243,6 +279,11 @@ function renderChildMemory(fact: string, parentRef: string): string {
 }
 
 function markParentProcessed(parent: MemoryRecord): void {
+  // Frontmatter-only rewrite of an existing asset: not a new asset write,
+  // so writeAssetToSource isn't a fit here (it would round-trip the body
+  // through the asset-spec rendering layer instead of preserving the
+  // user's original markdown bytes verbatim). The narrow exception is
+  // documented in v1 spec §10 step 5 and CLAUDE.md write-source rules.
   let raw: string;
   try {
     raw = fs.readFileSync(parent.filePath, "utf8");
