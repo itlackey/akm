@@ -852,6 +852,54 @@ If the stash has never been indexed, the `usage_events` schema is created
 on demand and the command returns an empty `entries` array rather than
 erroring.
 
+### events
+
+Append-only realtime events stream (#204). Every mutating CLI verb appends
+a JSON line to `<cacheDir>/events.jsonl`; `akm events list` reads it and
+`akm events tail` follows it via polling.
+
+```sh
+akm events list                                   # All events, oldest first
+akm events list --type feedback                   # Filter by event type
+akm events list --ref skill:deploy                # Filter by asset ref
+akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
+akm events list --since '@offset:12345'           # Resume from a byte cursor
+akm events tail --max-events 10                   # Follow until 10 events
+akm events tail --format jsonl                    # Stream as JSONL
+```
+
+| Flag | Description |
+| --- | --- |
+| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
+| `--type` | Filter by event type (`add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`). |
+| `--ref` | Filter by asset ref (`[origin//]type:name`). |
+| `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
+| `--max-events` | (`tail` only) Stop after this many events. |
+| `--max-duration-ms` | (`tail` only) Stop after this many ms. |
+
+The list/tail envelope echoes a `nextOffset` byte cursor — persist it and
+pass it back as `--since '@offset:<nextOffset>'` to resume from exactly
+where you stopped, with no duplicates and no losses, even across process
+boundaries.
+
+Streaming output (`--format jsonl` / `--format text`) emits each event as
+a single line on stdout, then a trailer:
+
+- `--format jsonl` ends with a final discriminated row on stdout:
+  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<bytes>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
+- `--format text` writes the trailer to stderr to keep stdout pristine for
+  line-oriented parsers: `[events-tail] reason=<r> nextOffset=<n> total=<t>`.
+
+#### Environment isolation
+
+`events.jsonl` lives at `<cacheDir>/events.jsonl`, where `<cacheDir>` is
+derived from `XDG_CACHE_HOME` at the time of each call. Two processes with
+different inherited `XDG_CACHE_HOME` values write to different files; if
+the events stream is being used as a shared bus between cooperating
+processes, set `XDG_CACHE_HOME` consistently across them. This is the same
+env-isolation behaviour the rest of akm uses for config, caches, and
+indexes.
+
 ### registry
 
 Manage stash registries. The `registry` command has four subcommands:
