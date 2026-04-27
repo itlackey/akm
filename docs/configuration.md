@@ -116,6 +116,46 @@ and other write commands when `--target` is omitted. Resolution order:
 If none of those are configured, write commands raise a `ConfigError` that
 points at `akm init`.
 
+## Memory scope
+
+Multi-tenant / multi-agent deployments scope memories with four canonical
+top-level frontmatter keys. The `akm remember --user --agent --run --channel`
+flags write these keys; `akm search --filter` and `akm show --scope` read
+them back.
+
+| Frontmatter key | CLI flag | Meaning |
+| --- | --- | --- |
+| `scope_user` | `--user <id>` | User id this memory belongs to |
+| `scope_agent` | `--agent <id>` | Agent id that produced or consumes this memory |
+| `scope_run` | `--run <id>` | Run id (single agent invocation / chat session) |
+| `scope_channel` | `--channel <name>` | Channel / conversation name |
+
+All four are independent and optional. A memory may carry any subset; absent
+keys are simply not emitted. Example:
+
+```yaml
+---
+tags: [ops]
+scope_user: alice
+scope_agent: claude
+---
+Use staging cluster for blue-green deploys.
+```
+
+**Round-trip rules** (carried by spec contract):
+
+- Memories without any `scope_*` key (legacy content written before 0.7.0)
+  load and re-serialize unchanged. They match unfiltered `akm search`
+  queries — but a query with any `--filter` excludes them, since they have
+  no scope key to satisfy the filter.
+- Each scope key is an opaque string (no validation beyond non-empty +
+  trimmed). Use whatever id shape your host system already uses (UUID,
+  email, `@handle`, etc.).
+- The keys are stored flat (top-level) so the existing one-level frontmatter
+  parser reads them without nested-object handling.
+- The four canonical keys are the locked v1 wire contract for scope. Adding
+  new scope keys after v1.0 is a major version bump.
+
 ## Embedding Configuration
 
 Two backends are supported for generating search embeddings.

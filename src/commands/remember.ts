@@ -11,11 +11,19 @@ import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
+import type { StashEntryScope } from "../indexer/metadata";
+import { SCOPE_KEYS } from "../indexer/metadata";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
- * or `--enrich` before writing a memory. All optional; a `tags` array of
- * length 0 is treated the same as absent.
+ * `--enrich`, or the scope flags (`--user`, `--agent`, `--run`, `--channel`)
+ * before writing a memory. All optional; a `tags` array of length 0 is
+ * treated the same as absent.
+ *
+ * The `scope` shape is the wire-level contract — it is persisted as the
+ * canonical top-level frontmatter keys `scope_user`, `scope_agent`,
+ * `scope_run`, `scope_channel` (one key per non-empty scope value).
+ * Legacy memories without scope continue to load and parse cleanly.
  */
 export interface MemoryFrontmatterFields {
   description?: string;
@@ -24,6 +32,7 @@ export interface MemoryFrontmatterFields {
   observed_at?: string;
   expires?: string;
   subjective?: boolean;
+  scope?: StashEntryScope;
 }
 
 /**
@@ -61,6 +70,17 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
+  // Scope keys are emitted as flat top-level keys (`scope_user`, …) so the
+  // existing one-level frontmatter parser can read them without nesting.
+  // A scope object with no populated values is dropped.
+  if (fields.scope) {
+    for (const key of SCOPE_KEYS) {
+      const value = fields.scope[key];
+      if (typeof value === "string" && value.trim()) {
+        obj[`scope_${key}`] = value.trim();
+      }
+    }
+  }
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).
   if (Object.keys(obj).length === 0) return "---\n---";

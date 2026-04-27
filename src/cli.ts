@@ -17,7 +17,7 @@ import {
   runAutoHeuristics,
   runLlmEnrich,
 } from "./commands/remember";
-import { akmSearch, parseSearchSource } from "./commands/search";
+import { akmSearch, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";
 import { akmShowUnified } from "./commands/show";
 import { akmAdd } from "./commands/source-add";
@@ -201,6 +201,11 @@ const searchCommand = defineCommand({
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
+    filter: {
+      type: "string",
+      description:
+        "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
@@ -220,7 +225,11 @@ const searchCommand = defineCommand({
       }
       const limit = limitRaw;
       const source = parseSearchSource(args.source);
-      const result = await akmSearch({ query, type, limit, source });
+      // Repeatable; citty exposes only the last `--filter` value, so read all
+      // occurrences directly from argv (same pattern as `--tag`).
+      const filterTokens = parseAllFlagValues("--filter");
+      const filters = parseScopeFilterFlags(filterTokens, "--filter");
+      const result = await akmSearch({ query, type, limit, source, filters });
       output("search", result);
     });
   },
@@ -475,6 +484,11 @@ const showCommand = defineCommand({
     ref: { type: "positional", description: "Asset ref (type:name)", required: true },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    scope: {
+      type: "string",
+      description:
+        "Scope filter (repeatable): --scope user=<id> --scope agent=<id> --scope run=<id> --scope channel=<name>. Narrows resolution to assets whose frontmatter scope matches.",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -513,7 +527,11 @@ const showCommand = defineCommand({
       const explicitDetail = parseFlagValue(process.argv, "--detail");
       const showDetail: ShowDetailLevel | undefined =
         explicitDetail === "brief" ? "brief" : cliDetail === "summary" ? "summary" : undefined;
-      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail });
+      // `--scope` is repeatable — citty only exposes the last value, so read
+      // every occurrence directly from argv (same pattern as `--filter`).
+      const scopeTokens = parseAllFlagValues("--scope");
+      const scope = parseScopeFilterFlags(scopeTokens, "--scope");
+      const result = await akmShowUnified({ ref: args.ref, view, detail: showDetail, scope });
       output("show", result);
     });
   },
@@ -1334,6 +1352,22 @@ const rememberCommand = defineCommand({
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working stash.",
     },
+    user: {
+      type: "string",
+      description: "Scope this memory to a user id (persisted as `scope_user` frontmatter)",
+    },
+    agent: {
+      type: "string",
+      description: "Scope this memory to an agent id (persisted as `scope_agent` frontmatter)",
+    },
+    run: {
+      type: "string",
+      description: "Scope this memory to a run id (persisted as `scope_run` frontmatter)",
+    },
+    channel: {
+      type: "string",
+      description: "Scope this memory to a channel name (persisted as `scope_channel` frontmatter)",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1344,8 +1378,19 @@ const rememberCommand = defineCommand({
       // only exposes the last value for repeated string flags.
       const rawTags = parseAllFlagValues("--tag");
 
-      const hasStructuredArgs =
+      // Collect scope flags. Scope alone counts as structured metadata so we
+      // emit frontmatter, but it does NOT trigger the "tags required" check —
+      // memory + scope (no tags) is a valid combination for multi-tenant use.
+      const scopeFields: { user?: string; agent?: string; run?: string; channel?: string } = {};
+      if (typeof args.user === "string" && args.user.trim()) scopeFields.user = args.user.trim();
+      if (typeof args.agent === "string" && args.agent.trim()) scopeFields.agent = args.agent.trim();
+      if (typeof args.run === "string" && args.run.trim()) scopeFields.run = args.run.trim();
+      if (typeof args.channel === "string" && args.channel.trim()) scopeFields.channel = args.channel.trim();
+      const hasScope = Object.keys(scopeFields).length > 0;
+
+      const hasTagRequiringArgs =
         rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.auto || args.enrich;
+      const hasStructuredArgs = hasTagRequiringArgs || hasScope;
 
       if (!hasStructuredArgs) {
         const result = await writeMarkdownAsset({
@@ -1400,8 +1445,12 @@ const rememberCommand = defineCommand({
       }
 
       // ── Required-field check (before any write) ───────────────────────────
+      // Tags remain required when the user opted into a tag-producing mode
+      // (--tag / --auto / --enrich / --description / --source / --expires).
+      // Scope-only writes (`akm remember "..." --user u1`) skip this check —
+      // scope is independent metadata and a memory with only scope is valid.
       const missing: string[] = [];
-      if (tags.length === 0) missing.push("tags");
+      if (hasTagRequiringArgs && tags.length === 0) missing.push("tags");
 
       if (missing.length > 0) {
         throw new UsageError(
@@ -1418,6 +1467,7 @@ const rememberCommand = defineCommand({
         observed_at,
         expires,
         subjective,
+        ...(hasScope ? { scope: scopeFields } : {}),
       });
 
       const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;

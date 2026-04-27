@@ -35,7 +35,13 @@ import {
   searchVec,
 } from "./db";
 import { getRenderer } from "./file-context";
-import { generateMetadataFlat, loadStashFile, type StashEntry, shouldIndexStashFile } from "./metadata";
+import {
+  generateMetadataFlat,
+  loadStashFile,
+  type StashEntry,
+  type StashEntryScope,
+  shouldIndexStashFile,
+} from "./metadata";
 import { buildSearchText } from "./search-fields";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
@@ -87,6 +93,13 @@ export async function searchLocal(input: {
   config: AkmConfig;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
+  /**
+   * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
+   * hits whose `entry.scope` does not satisfy every supplied key are dropped
+   * AFTER ranking — filtering narrows the result set, it does not alter the
+   * single FTS5+boosts scoring pipeline.
+   */
+  filters?: StashEntryScope;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -95,6 +108,7 @@ export async function searchLocal(input: {
   rankMs?: number;
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
+  const filters = input.filters;
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -151,6 +165,7 @@ export async function searchLocal(input: {
             config,
             sources,
             rendererRegistry,
+            filters,
           );
           return {
             hits,
@@ -175,7 +190,9 @@ export async function searchLocal(input: {
   }
 
   const hitArrays = await Promise.all(
-    allSourceDirs.map((dir) => substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry)),
+    allSourceDirs.map((dir) =>
+      substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry, filters),
+    ),
   );
   const hits = hitArrays.flat().slice(0, limit);
   return {
@@ -197,6 +214,7 @@ async function searchDatabase(
   config: AkmConfig,
   sources: SearchSource[],
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
+  filters?: StashEntryScope,
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -217,7 +235,13 @@ async function searchDatabase(
       seenFilePaths.add(ie.filePath);
       return true;
     });
-    const selected = uniqueEntries.slice(0, limit);
+    // Scope filter: drop entries whose stored scope does not satisfy every
+    // supplied scope key. Filtering happens BEFORE the limit slice so a
+    // restrictive filter still returns up to `limit` results.
+    const scopeFiltered = filters
+      ? uniqueEntries.filter((ie) => entryMatchesScope(ie.entry.scope, filters))
+      : uniqueEntries;
+    const selected = scopeFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -494,9 +518,14 @@ async function searchDatabase(
   // multiple times clutters results.
   const deduped = deduplicateByPath(preFilter);
 
+  // Scope filter: drop hits whose stored scope does not satisfy every supplied
+  // key. Applied AFTER ranking — filtering narrows the result set without
+  // touching the single FTS5+boosts scoring pipeline.
+  const scopeFiltered = filters ? deduped.filter((item) => entryMatchesScope(item.entry.scope, filters)) : deduped;
+
   const rankMs = Date.now() - tRank0;
 
-  const selected = deduped.slice(0, limit);
+  const selected = scopeFiltered.slice(0, limit);
   const hits = await Promise.all(
     selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
       buildDbHit({
@@ -561,9 +590,11 @@ async function substringSearch(
   sources: SearchSource[],
   config?: AkmConfig,
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
+  filters?: StashEntryScope,
 ): Promise<SourceSearchHit[]> {
   const assets = await indexAssets(stashDir, searchType, sources);
-  const matched = assets.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
+  const scopeMatched = filters ? assets.filter((asset) => entryMatchesScope(asset.entry.scope, filters)) : assets;
+  const matched = scopeMatched.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
 
   if (!query) {
     const sorted = matched.sort(compareAssets);
@@ -914,6 +945,20 @@ function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
     seen.add(asset.path);
     return true;
   });
+}
+
+/**
+ * Exact-match scope filter check. Legacy entries without a `scope` object only
+ * match when no filter is supplied — which is what the caller guards on
+ * before invoking this helper.
+ */
+function entryMatchesScope(scope: StashEntryScope | undefined, filters: StashEntryScope): boolean {
+  for (const key of ["user", "agent", "run", "channel"] as const) {
+    const expected = filters[key];
+    if (expected === undefined) continue;
+    if (!scope || scope[key] !== expected) return false;
+  }
+  return true;
 }
 
 function realpathOrResolve(targetPath: string): string {
