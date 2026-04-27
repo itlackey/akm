@@ -25,6 +25,7 @@ import {
   upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
+import { runMemoryInferencePass } from "./memory-inference";
 import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile, shouldIndexStashFile } from "./metadata";
 import { buildSearchText } from "./search-fields";
 import type { SearchSource } from "./search-source";
@@ -150,6 +151,27 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
           }
         }
       }
+    }
+
+    // Memory inference pass (#201). Runs before the walk so any atomic-fact
+    // children that get written are picked up by the walker in this same run
+    // and don't have to wait for the next `akm index`. Gated entirely by
+    // `resolveIndexPassLLM("memory", config)` — when the user has no
+    // `akm.llm` block or has set `index.memory.llm = false`, this is a no-op
+    // and existing inferred children are left in place.
+    try {
+      const inferenceResult = await runMemoryInferencePass(config, allSourceEntries);
+      if (inferenceResult.writtenFacts > 0) {
+        onProgress({
+          phase: "llm",
+          message: `Memory inference wrote ${inferenceResult.writtenFacts} atomic fact${inferenceResult.writtenFacts === 1 ? "" : "s"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
+        });
+      }
+    } catch (err) {
+      // Defensive — runMemoryInferencePass swallows per-memory failures.
+      // A thrown error here would only come from an unexpected programming
+      // bug; surface it as a warning rather than aborting the index run.
+      warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const tWalkStart = Date.now();

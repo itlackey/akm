@@ -12,6 +12,7 @@ const LOCKED_FEATURE_KEYS = [
   "memory_consolidation",
   "feedback_distillation",
   "embedding_fallback_score",
+  "memory_inference",
 ];
 
 describe("v1 spec §14 — llm.features.*", () => {
@@ -48,6 +49,12 @@ describe("v1 spec §14 — llm.features.*", () => {
     const flat = section.replace(/\s+/g, " ");
     expect(flat).toMatch(/`lesson` \*\*proposal\*\*/i);
     expect(section).toContain("distill_invoked");
+  });
+
+  test("§14 documents orthogonality between llm.features.* and index.<pass>.llm", () => {
+    expect(section).toMatch(/orthogonal/i);
+    expect(section).toMatch(/llm\.features\.<key>/);
+    expect(section).toMatch(/index\.<pass>\.llm/);
   });
 
   test("§14 stops before §15 (helper boundary check)", () => {

@@ -921,6 +921,26 @@ to the schema is itself a non-event.
 | `memory_consolidation` | `akm remember --enrich` consolidation pass | `--enrich` is a no-op; warning printed |
 | `feedback_distillation` | `akm distill <ref>` (§14.5) | `akm distill` exits with `ConfigError` and a hint |
 | `embedding_fallback_score` | scorer fallback when no embeddings available | Scorer uses lexical-only score |
+| `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
+
+#### `llm.features.<key>` and `index.<pass>.llm` are orthogonal
+
+Some indexer LLM call sites are also addressable by the per-pass opt-out
+key documented in §9 / `index.<pass>.llm` (e.g. `memory_inference`
+corresponds to the `index.memory.llm` per-pass key). The two surfaces are
+deliberately orthogonal:
+
+- `llm.features.<key>` governs whether the call is **permitted at all**.
+  It is the locked feature gate (§14) — disabling it prevents every call
+  site under that key from issuing a network request, regardless of any
+  per-pass setting.
+- `index.<pass>.llm` governs whether the indexer should **run that pass
+  during this index** (§9). It is a runtime opt-out for the indexer's
+  per-pass orchestration.
+
+A pass runs iff `llm.features.<key> !== false` **AND** the per-pass
+`index.<pass>.llm` is not `false`. Either flag set to `false` short-circuits
+the pass to its disabled fallback.
 
 ### 14.2 Failure modes
 
