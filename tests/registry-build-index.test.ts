@@ -226,6 +226,68 @@ describe("buildRegistryIndex", () => {
     expect(manualOnlyStash?.assetTypes).toEqual(["skill"]);
   });
 
+  test("legacy curated key parses without error", async () => {
+    // v1 spec §4.2: `curated: true` is a removed legacy field on registry
+    // entries. Manual-entry JSON in the wild may still contain it. The
+    // builder MUST silently ignore it (not throw, not fail validation),
+    // and the entry MUST still be processed end-to-end.
+    const fixtureRoot = makeTempDir("akm-registry-build-legacy-curated-");
+
+    const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
+    writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
+    const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
+    createTarball(githubRepoDir, githubArchivePath);
+
+    const npmPackageDir = path.join(fixtureRoot, "package");
+    writeFile(path.join(npmPackageDir, "package.json"), JSON.stringify({ name: "agent-stash", version: "1.2.3" }));
+    const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
+    createTarball(npmPackageDir, npmArchivePath);
+
+    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+    const manualEntriesPath = path.join(fixtureRoot, "manual-entries.json");
+    fs.writeFileSync(
+      manualEntriesPath,
+      `${JSON.stringify(
+        [
+          {
+            id: "github:legacy/curated",
+            name: "Legacy Curated",
+            description: "entry retaining the removed `curated: true` field",
+            ref: "legacy/curated",
+            source: "github",
+            assetTypes: ["skill"],
+            curated: true,
+          },
+        ],
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    await expect(
+      buildRegistryIndex({
+        manualEntriesPath,
+        npmRegistryBase: serverBase,
+        githubApiBase: serverBase,
+      }),
+    ).resolves.toBeDefined();
+
+    // Re-run to inspect the actual result; resolves above proves no throw.
+    const result = await buildRegistryIndex({
+      manualEntriesPath,
+      npmRegistryBase: serverBase,
+      githubApiBase: serverBase,
+    });
+
+    // Non-empty kit list proves the legacy entry was processed, not silently
+    // dropped on parse error.
+    expect(result.index.stashes.length).toBeGreaterThan(0);
+    const legacyStash = result.index.stashes.find((stash) => stash.id === "github:legacy/curated");
+    expect(legacyStash).toBeDefined();
+    expect(legacyStash as Record<string, unknown>).not.toHaveProperty("curated");
+  });
+
   test("respects .stash.json metadata and akm.include when enriching assets", async () => {
     const fixtureRoot = makeTempDir("akm-registry-build-include-");
     const npmPackageDir = path.join(fixtureRoot, "package");
