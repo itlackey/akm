@@ -10,3 +10,4 @@ tests/fixtures/openviking/workspace/viking/_system/accounts.json
 .claude/worktrees/
 .akm/state/
 .claude/scheduled_tasks.lock
+.akm-run/
