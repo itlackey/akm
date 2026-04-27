@@ -194,7 +194,15 @@ detail level matches `src/output/shapes.ts`:
 
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
-| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` |
+| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` [^curated-status] |
+
+[^curated-status]: **Status: Pre-release (shipping); Planned for v1: removed.**
+    The `curated` field is present on registry brief hits in the current
+    pre-release binary but is removed from the v1 contract. See
+    [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
+    §4.2 and §9.4, and the rewrite in
+    [`docs/migration/v1.md`](migration/v1.md). Removal is tracked in issue
+    #223.
 | `normal` | adds `description` and `score` | adds `score` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, timings, stash metadata) | full hit object |
 | `summary` | metadata-only view (no content), under 200 tokens | — |

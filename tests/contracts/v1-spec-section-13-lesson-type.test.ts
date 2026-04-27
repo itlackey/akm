@@ -25,4 +25,12 @@ describe("v1 spec §13 — lesson asset type", () => {
     expect(section).toMatch(/akm distill/);
     expect(section).toMatch(/akm proposal accept/);
   });
+
+  test("§13 stops before §14 (helper boundary check)", () => {
+    // Defensive: extractSection() returns to EOF if no sibling stop
+    // heading exists. Pin the section terminus so a missing §14 heading
+    // (or a renamed one) trips this test instead of silently spilling
+    // §14 content into the §13 assertions above.
+    expect(section).not.toContain("## 14.");
+  });
 });

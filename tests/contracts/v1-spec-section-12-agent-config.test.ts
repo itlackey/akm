@@ -38,6 +38,15 @@ describe("v1 spec §12 — agent CLI integration", () => {
   test("§12.4 declares reflect/propose write only to the proposal queue", () => {
     expect(section).toMatch(/write\s*\*\*only\*\*\s*to the proposal queue/i);
   });
+
+  test("§12 stops before §13 (helper boundary check)", () => {
+    // Defensive: extractSection() returns to EOF if no sibling stop
+    // heading exists. Pin the section terminus so a missing §13 heading
+    // (or a renamed one) trips this test instead of silently spilling
+    // §13+§14 content into the §12 assertions above.
+    expect(section).not.toContain("## 13.");
+    expect(section).not.toContain("## 14.");
+  });
 });
 
 describe("v1 spec §12 — configuration.md mirrors the agent block", () => {

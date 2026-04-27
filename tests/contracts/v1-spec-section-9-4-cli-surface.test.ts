@@ -25,11 +25,14 @@ const SHIPPED_COMMANDS = [
   "workflow",
   "vault",
   "wiki",
+  "enable",
+  "disable",
   "completions",
   "upgrade",
   "save",
   "help",
   "hints",
+  "config",
 ] as const;
 
 const PLANNED_FOR_V1 = ["agent", "reflect", "propose", "proposal", "distill"] as const;

@@ -55,4 +55,14 @@ describe("v1 spec §11 — proposal queue", () => {
   test("§11.3 says other plugins cannot reuse these event names", () => {
     expect(section).toMatch(/cannot reuse these names/i);
   });
+
+  test("§11 stops before §12 (helper boundary check)", () => {
+    // Defensive: extractSection() returns to EOF if no sibling stop
+    // heading exists. Pin the section terminus so a missing §12 heading
+    // (or a renamed one) trips this test instead of silently spilling
+    // §12+§13+§14 content into the §11 assertions above.
+    expect(section).not.toContain("## 12.");
+    expect(section).not.toContain("## 13.");
+    expect(section).not.toContain("## 14.");
+  });
 });

@@ -49,6 +49,15 @@ describe("v1 spec §14 — llm.features.*", () => {
     expect(flat).toMatch(/`lesson` \*\*proposal\*\*/i);
     expect(section).toContain("distill_invoked");
   });
+
+  test("§14 stops before §15 (helper boundary check)", () => {
+    // Defensive: extractSection() returns to EOF if no sibling stop
+    // heading exists. Pin the section terminus so a missing §15 heading
+    // (or a renamed one) trips this test instead of silently spilling
+    // §15+ content into the §14 assertions above.
+    expect(section).not.toContain("## 15.");
+    expect(section).not.toContain("## Appendix");
+  });
 });
 
 describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
