@@ -18,12 +18,12 @@ opencode 3+2).
 | docker-homelab/named-volume | docker-homelab | eval | docker-homelab | pytest | SKILL.md mentions named volumes generally; the literal path `/var/lib/postgresql/data` and the volume name `pgdata` do not appear. |
 | docker-homelab/bridge-network | docker-homelab | eval | docker-homelab | pytest | SKILL.md describes bridge networking generally; the literal network name `internal` and the YAML structural fragments do not appear. |
 | docker-homelab/compose-version-upgrade | docker-homelab | train | docker-homelab | pytest | SKILL.md states "compose v3+" generally; the literal string `version: "3.8"` and the v2-only key list (`mem_limit`, `cpu_shares`) do not appear. |
-| az-cli/create-resource-group | az-cli | train | az-cli | regex | SKILL.md describes RG lifecycle generally; the literal `az group create --name myrg --location eastus` does not appear. |
-| az-cli/assign-managed-identity | az-cli | eval | az-cli | regex | SKILL.md does not contain `az vm identity assign` or the literal `-g myrg -n myvm`. |
-| az-cli/query-by-tag | az-cli | train | az-cli | regex | SKILL.md does not contain `az resource list --tag env=prod`. |
-| az-cli/keyvault-secret-set | az-cli | train | az-cli | regex | SKILL.md does not contain `az keyvault secret set --vault-name myvault --name dbpass`. |
-| az-cli/aks-get-credentials | az-cli | eval | az-cli | regex | SKILL.md does not contain `az aks get-credentials -g myrg -n mycluster`. |
-| az-cli/storage-account-create | az-cli | eval | az-cli | regex | SKILL.md does not contain `az storage account create --name mystorage --sku Standard_LRS`. |
+| az-cli/create-resource-group | az-cli | train | az-cli | script | verify.sh greps `commands.txt` for `az group create`, `-n/--name myrg`, `-l/--location eastus`. SKILL.md describes RG lifecycle generally; none of those grep clauses appear verbatim. |
+| az-cli/assign-managed-identity | az-cli | eval | az-cli | script | verify.sh greps for `az vm identity assign`, `-g/--resource-group myrg`, `-n/--name myvm`. SKILL.md does not contain any of these clauses. |
+| az-cli/query-by-tag | az-cli | train | az-cli | script | verify.sh greps for `az resource list` and `--tag env=prod`. SKILL.md does not contain either. |
+| az-cli/keyvault-secret-set | az-cli | train | az-cli | script | verify.sh greps for `az keyvault secret set`, `--vault-name myvault`, `-n/--name dbpass`. SKILL.md does not contain these. |
+| az-cli/aks-get-credentials | az-cli | eval | az-cli | script | verify.sh greps for `az aks get-credentials`, `-g/--resource-group myrg`, `-n/--name mycluster`. SKILL.md does not contain these. |
+| az-cli/storage-account-create | az-cli | eval | az-cli | script | verify.sh greps for `az storage account create`, `-n/--name mystorage`, `--sku Standard_LRS`, `-g/--resource-group myrg`. SKILL.md does not contain these. |
 | opencode/agents-md-akm-snippet | opencode | eval | multi-domain | script | gold ref `skill:opencode` (multi-domain) describes opencode generally; does not contain the phrase `akm search` or an `AGENTS.md` snippet. |
 | opencode/opencode-config-model | opencode | train | multi-domain | script | gold ref mentions `opencode.json` for model config generally; does not pin `anthropic/claude-opus-4-7` verbatim. |
 | opencode/tool-allowlist | opencode | train | multi-domain | script | gold ref does not list `["bash","edit","read"]` or describe a tool allowlist. |

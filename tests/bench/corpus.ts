@@ -102,7 +102,13 @@ export function listTasks(options: ListTasksOptions = {}): TaskMetadata[] {
     if (!options.includeExamples && isExampleTaskDir(dir)) continue;
     const meta = readTask(dir);
     if (!meta) continue;
-    if (options.slice && meta.slice && meta.slice !== options.slice) continue;
+    if (options.slice) {
+      // Tasks without an explicit `slice:` are partitioned by id-hash so the
+      // filter behaves consistently with `partitionSlice()`. Without this,
+      // an unsliced task would always pass through both `slice: "train"` and
+      // `slice: "eval"` filters, double-counting in evaluation reports.
+      if (effectiveSlice(meta) !== options.slice) continue;
+    }
     out.push(meta);
   }
   out.sort((a, b) => a.id.localeCompare(b.id));
@@ -118,7 +124,7 @@ export function partitionSlice(tasks: TaskMetadata[]): { train: TaskMetadata[]; 
   const train: TaskMetadata[] = [];
   const evalSlice: TaskMetadata[] = [];
   for (const task of tasks) {
-    const slice = task.slice ?? assignSliceByHash(task.id);
+    const slice = effectiveSlice(task);
     if (slice === "train") train.push(task);
     else evalSlice.push(task);
   }
@@ -130,6 +136,16 @@ function assignSliceByHash(id: string): TaskSlice {
   // for slice partitioning. We avoid `node:crypto.randomInt` (non-deterministic).
   const digest = createHash("sha1").update(id).digest();
   return digest[0] % 2 === 0 ? "train" : "eval";
+}
+
+/**
+ * Resolve a task's effective slice. If `task.yaml` declares `slice:` we honour
+ * it; otherwise the id-hash partition assigns one deterministically. Exported
+ * so that consumers (and tests) can ask "which slice would this task fall in?"
+ * without re-running `partitionSlice()`.
+ */
+export function effectiveSlice(task: Pick<TaskMetadata, "id" | "slice">): TaskSlice {
+  return task.slice ?? assignSliceByHash(task.id);
 }
 
 /** Walk the corpus tree depth-first, yielding every directory containing a `task.yaml`. */

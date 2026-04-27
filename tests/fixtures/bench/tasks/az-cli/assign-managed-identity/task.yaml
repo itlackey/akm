@@ -5,8 +5,7 @@ difficulty: medium
 slice: eval
 gold_ref: skill:az-cli
 stash: az-cli
-verifier: regex
-expected_match: "az vm identity assign.*-g myrg.*-n myvm"
+verifier: script
 budget:
   tokens: 25000
   wallMs: 90000

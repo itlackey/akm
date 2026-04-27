@@ -12,7 +12,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { getTasksRoot, listTasks, loadTask, partitionSlice, type TaskMetadata } from "./corpus";
+import { effectiveSlice, getTasksRoot, listTasks, loadTask, partitionSlice, type TaskMetadata } from "./corpus";
 
 describe("listTasks", () => {
   test("the corpus root resolves under tests/fixtures/bench/tasks", () => {
@@ -141,5 +141,34 @@ describe("partitionSlice", () => {
     const b = partitionSlice(corpus);
     expect(a.train.map((t) => t.id)).toEqual(b.train.map((t) => t.id));
     expect(a.eval.map((t) => t.id)).toEqual(b.eval.map((t) => t.id));
+  });
+
+  test("a task without explicit slice is bucketed deterministically and goes to exactly one slice", () => {
+    // This guards against the regression where `listTasks({ slice })` would
+    // pass an unsliced task through *both* the train and eval filters because
+    // the early code only excluded tasks whose explicit slice differed.
+    const synthetic: TaskMetadata = {
+      id: "synthetic/no-slice-task",
+      title: "Synthetic task with no explicit slice",
+      domain: "synthetic",
+      difficulty: "easy",
+      stash: "minimal",
+      verifier: "regex",
+      budget: { tokens: 1000, wallMs: 1000 },
+      taskDir: "/tmp/none",
+    };
+    const slice = effectiveSlice(synthetic);
+    expect(["train", "eval"]).toContain(slice);
+    // Re-running must give the same bucket.
+    expect(effectiveSlice(synthetic)).toBe(slice);
+    // partitionSlice and effectiveSlice must agree.
+    const { train, eval: evalSlice } = partitionSlice([synthetic]);
+    if (slice === "train") {
+      expect(train.map((t) => t.id)).toEqual([synthetic.id]);
+      expect(evalSlice).toEqual([]);
+    } else {
+      expect(evalSlice.map((t) => t.id)).toEqual([synthetic.id]);
+      expect(train).toEqual([]);
+    }
   });
 });

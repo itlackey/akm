@@ -104,11 +104,13 @@ describe("gold-ref leakage check", () => {
     test(`${task.id}: verifier text does not appear in gold-ref content`, () => {
       const goldRef = task.goldRef as string;
       const goldPath = resolveGoldRefPath(task.stash, goldRef);
-      // If the gold ref points at a non-skill asset or a missing file, the
-      // task is responsible for documenting that in CORPUS.md; we skip the
-      // automated check rather than failing.
+      // A declared gold_ref MUST resolve to an existing fixture asset. Silent
+      // skipping here previously masked typos and stash-name drift; we now
+      // fail loudly so the corpus author is forced to fix the reference.
       if (!goldPath) {
-        return;
+        throw new Error(
+          `${task.id}: gold_ref "${goldRef}" against stash "${task.stash}" did not resolve to a SKILL.md under tests/fixtures/stashes/. Fix the gold_ref, fix the stash name, or remove the gold_ref.`,
+        );
       }
       const goldContent = fs.readFileSync(goldPath, "utf8");
 
