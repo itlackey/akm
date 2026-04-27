@@ -211,6 +211,11 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "propose": {
       return formatProposalProducerPlain(command, r);
     }
+    // Output shape registration for `akm distill <ref>` (#228). Three branches
+    // mirror the three terminal `outcome` values.
+    case "distill": {
+      return formatDistillPlain(r);
+    }
     default:
       return null; // fall through to YAML
   }
@@ -293,6 +298,27 @@ export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
 export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   const reason = r.reason ? ` (${String(r.reason)})` : "";
   return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
+}
+
+export function formatDistillPlain(r: Record<string, unknown>): string {
+  const outcome = String(r.outcome ?? "unknown");
+  const inputRef = String(r.inputRef ?? "?");
+  const lessonRef = String(r.lessonRef ?? "?");
+  if (outcome === "queued") {
+    const id = String(r.proposalId ?? "?");
+    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm proposal show ${id}\` to review.`;
+  }
+  if (outcome === "validation_failed") {
+    const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
+    const lines = [`Distillation produced an invalid lesson for ${inputRef}; no proposal queued.`];
+    for (const f of findings) {
+      lines.push(`  - ${String(f.message ?? f.kind ?? "validation finding")}`);
+    }
+    return lines.join("\n");
+  }
+  // skipped
+  const message = typeof r.message === "string" ? r.message : "feature disabled or LLM unavailable";
+  return `Distill skipped for ${inputRef}: ${message}`;
 }
 
 export function formatProposalDiffPlain(r: Record<string, unknown>): string {
