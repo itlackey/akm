@@ -435,7 +435,8 @@ in, per feature." See v1 spec §14 for the boundary rules.
       "memory_consolidation":     false,
       "feedback_distillation":    false,
       "embedding_fallback_score": false,
-      "memory_inference":         true
+      "memory_inference":         true,
+      "graph_extraction":         false
     }
   }
 }
@@ -449,8 +450,9 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
 | `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
+| `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 
-Unknown keys under `llm.features` are warn-and-ignore. The five keys above
+Unknown keys under `llm.features` are warn-and-ignore. The keys above
 are locked and cannot be renamed after v1.0.
 
 **Statelessness invariant.** Every in-tree LLM call site is a single,

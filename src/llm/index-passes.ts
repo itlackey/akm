@@ -9,10 +9,10 @@
  *   rejected at config-load time by `parseIndexConfig` in
  *   {@link ../core/config.ts} (`ConfigError("INVALID_CONFIG_FILE")`).
  *
- * New passes (e.g. memory inference, graph extraction — issues #201, #207)
- * plug in by calling {@link resolveIndexPassLLM} with their pass name. They
- * do not read `config.llm` directly. This keeps the config surface small
- * and the wiring uniform.
+ * Passes plug in by calling {@link resolveIndexPassLLM} with their pass
+ * name (e.g. `"memory"` for #201's memory-inference pass, `"graph"` for
+ * #207's graph-extraction pass). They do not read `config.llm` directly.
+ * This keeps the config surface small and the wiring uniform.
  */
 
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
