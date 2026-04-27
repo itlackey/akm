@@ -197,7 +197,9 @@ describe("buildRegistryIndex", () => {
     const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
     expect(npmStash).toBeDefined();
     expect(npmStash?.description).toBe("manual description");
-    expect(npmStash?.curated).toBe(true);
+    // v1 spec §4.2: the legacy `curated` boolean is removed. The builder must
+    // not surface it on emitted stash entries even when input contained it.
+    expect(npmStash as Record<string, unknown>).not.toHaveProperty("curated");
     expect(npmStash?.assetTypes).toEqual(["knowledge", "script", "skill"]);
     expect(npmStash?.tags).toEqual(["curated", "deploy", "review"]);
     expect(npmStash?.assets?.map((asset) => `${asset.type}:${asset.name}`)).toEqual([
@@ -218,7 +220,9 @@ describe("buildRegistryIndex", () => {
     expect(githubStash?.tags).toEqual(["automation", "release"]);
 
     const manualOnlyStash = result.index.stashes.find((stash) => stash.id === "github:manual/only");
-    expect(manualOnlyStash?.curated).toBe(true);
+    expect(manualOnlyStash).toBeDefined();
+    // v1 spec §4.2: legacy `curated` from manual entries is silently ignored.
+    expect(manualOnlyStash as Record<string, unknown>).not.toHaveProperty("curated");
     expect(manualOnlyStash?.assetTypes).toEqual(["skill"]);
   });
 

@@ -194,19 +194,16 @@ detail level matches `src/output/shapes.ts`:
 
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
-| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `type`, `name`, `id`, `description`, `action`, `curated` [^curated-status] |
-
-[^curated-status]: **Status: Pre-release (shipping); Planned for v1: removed.**
-    The `curated` field is present on registry brief hits in the current
-    pre-release binary but is removed from the v1 contract. See
-    [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-    §4.2 and §9.4, and the rewrite in
-    [`docs/migration/v1.md`](migration/v1.md). Removal is tracked in issue
-    #223.
-| `normal` | adds `description` and `score` | adds `score` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, timings, stash metadata) | full hit object |
+| `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
+| `normal` | adds `description`, `score`, and optional `warnings` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, timings, stash metadata) | full hit object |
 | `summary` | metadata-only view (no content), under 200 tokens | — |
 | `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
+
+The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
+surface an optional `warnings: string[]` field on hits when a provider has
+non-fatal issues to report; the field is omitted otherwise. Per spec §4.2,
+populating `warnings` does not affect ranking.
 
 If you want a `ref` handle without the rest of the `full` payload, use
 `--detail=agent`.

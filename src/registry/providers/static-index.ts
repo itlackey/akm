@@ -46,8 +46,6 @@ export interface RegistryStashEntry {
   author?: string;
   license?: string;
   latestVersion?: string;
-  /** Whether this entry was manually reviewed and approved */
-  curated?: boolean;
 }
 
 // ── Provider class ──────────────────────────────────────────────────────────
@@ -277,6 +275,9 @@ function parseStashEntry(raw: unknown): RegistryStashEntry | null {
   const source = asSource(obj.source);
   if (!id || !name || !ref || !source) return null;
 
+  // The legacy registry boolean `curated` is removed in v1. Legacy index JSON
+  // containing a `curated` key parses normally; the key is silently ignored
+  // (v1 spec §4.2, docs/migration/v1.md).
   return {
     id,
     name,
@@ -290,7 +291,6 @@ function parseStashEntry(raw: unknown): RegistryStashEntry | null {
     author: asString(obj.author),
     license: asString(obj.license),
     latestVersion: asString(obj.latestVersion),
-    curated: obj.curated === true ? true : undefined,
   };
 }
 
@@ -370,7 +370,6 @@ function toSearchHit(stash: RegistryStashEntry, score: number, registryName?: st
     homepage: stash.homepage,
     score: Math.round(score * 1000) / 1000,
     metadata,
-    curated: stash.curated,
     registryName,
   };
 }
