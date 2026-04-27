@@ -13,6 +13,7 @@ const LOCKED_FEATURE_KEYS = [
   "feedback_distillation",
   "embedding_fallback_score",
   "memory_inference",
+  "graph_extraction",
 ];
 
 describe("v1 spec §14 — llm.features.*", () => {

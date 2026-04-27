@@ -66,6 +66,14 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
 export interface LlmFeatureFlags {
   /** Gates the `akm index` memory-inference pass (#201). Default: true. */
   memory_inference?: boolean;
+  /**
+   * Gates the `akm index` graph-extraction pass (#207). Default: true (the
+   * pass is still off by default unless `akm.llm` is configured AND
+   * `index.graph.llm !== false`, per the orthogonal-gates rule in v1
+   * spec §14). Set to `false` to block every graph_extraction call site
+   * regardless of any per-pass setting.
+   */
+  graph_extraction?: boolean;
   // Other locked feature keys (curate_rerank, tag_dedup,
   // memory_consolidation, feedback_distillation, embedding_fallback_score)
   // are accepted in the on-disk JSON via warn-and-ignore tolerance until
@@ -901,6 +909,7 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "feedback_distillation",
   "embedding_fallback_score",
   "memory_inference",
+  "graph_extraction",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
@@ -916,6 +925,8 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
     }
     if (key === "memory_inference") {
       out.memory_inference = value;
+    } else if (key === "graph_extraction") {
+      out.graph_extraction = value;
     }
     // Other locked keys are accepted but not yet modelled in
     // LlmFeatureFlags (see comment on the interface). They roundtrip

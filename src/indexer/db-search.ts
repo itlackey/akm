@@ -35,6 +35,7 @@ import {
   searchVec,
 } from "./db";
 import { getRenderer } from "./file-context";
+import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import {
   generateMetadataFlat,
   loadStashFile,
@@ -362,6 +363,23 @@ async function searchDatabase(
   const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
   const queryLower = query.toLowerCase().trim();
 
+  // Graph boost context (#207). Built once per query and reused across
+  // every scored entry so the disk read + JSON parse only happens once
+  // per search invocation. `null` when no graph file is present, when
+  // the schema doesn't match, or when no query token matches a graph
+  // entity — in all of those cases the per-entry call is skipped and
+  // graph contributes nothing. The graph signal feeds this single
+  // FTS5+boosts loop as ONE additive component (CLAUDE.md / spec §6:
+  // one scoring pipeline, no parallel SearchHit scorer).
+  const graphContext: GraphBoostContext | null = (() => {
+    // Search across all source dirs; the graph file lives next to the
+    // primary source root. Cache misses are silent — the helper handles
+    // missing files internally and returns `null` instead of throwing.
+    const primaryDir = allSourceDirs[0];
+    if (!primaryDir) return null;
+    return loadGraphBoostContext(primaryDir, query);
+  })();
+
   for (const item of scored) {
     const entry = item.entry;
     let boostSum = 0;
@@ -466,6 +484,20 @@ async function searchDatabase(
       typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
     boostSum += confidenceBoost;
 
+    // ── 8. Graph signal (opt-in, #207) ──
+    // When the graph-extraction pass has produced a `graph.json`,
+    // contribute an additive boost based on how many of this entry's
+    // extracted entities match the query (or are one hop away from a
+    // match). Computed inside the same loop so all boosts are in one
+    // place and the per-call cost is one map lookup when the graph is
+    // absent. There is no parallel scoring track — `boostSum` is the
+    // single accumulator and the existing `MAX_BOOST_SUM` cap below
+    // applies to graph contributions exactly as it does to every other
+    // boost.
+    if (graphContext) {
+      boostSum += computeGraphBoost(graphContext, item.filePath);
+    }
+
     const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
     item.score = item.score * (1 + cappedBoost);
   }
@@ -527,12 +559,17 @@ async function searchDatabase(
 
   const selected = scopeFiltered.slice(0, limit);
   const hits = await Promise.all(
-    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) =>
-      buildDbHit({
+    selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
+      // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
+      // exceed 1.0 (this was a pre-existing breach that #207's graph boost
+      // — up to ~1.05 additive contribution — made detectable); clamp here
+      // so the score handed to buildDbHit always satisfies the spec.
+      const finalScore = Math.min(1, Math.max(0, score));
+      return buildDbHit({
         entry,
         path: filePath,
         // Round to 4 decimal places
-        score: Math.round(score * 10000) / 10000,
+        score: Math.round(finalScore * 10000) / 10000,
         query,
         rankingMode,
         defaultStashDir: stashDir,
@@ -541,8 +578,8 @@ async function searchDatabase(
         config,
         utilityBoosted,
         rendererRegistry,
-      }),
-    ),
+      });
+    }),
   );
 
   return { embedMs, rankMs, hits };
