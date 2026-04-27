@@ -1,0 +1,11 @@
+id: opencode/system-prompt-snippet
+title: "Author a system.txt snippet that records akm feedback after asset use"
+domain: opencode
+difficulty: easy
+slice: train
+gold_ref: skill:opencode
+stash: multi-domain
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000

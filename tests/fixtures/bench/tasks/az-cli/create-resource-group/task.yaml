@@ -1,0 +1,11 @@
+id: az-cli/create-resource-group
+title: "Produce the az command to create RG myrg in eastus"
+domain: az-cli
+difficulty: easy
+slice: train
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000

@@ -1,0 +1,11 @@
+id: az-cli/assign-managed-identity
+title: "Produce the az command to assign a system-managed identity to a VM"
+domain: az-cli
+difficulty: medium
+slice: eval
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
