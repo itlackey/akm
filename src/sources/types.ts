@@ -30,6 +30,13 @@ export interface SourceSearchHit {
    * a value here MUST NOT change ranking — warnings are informational only.
    */
   warnings?: string[];
+  /**
+   * Optional asset quality marker (v1 spec §4.2). One of `generated`,
+   * `curated`, `proposed`, or any other string the source emits. Surfaced
+   * verbatim from the underlying entry. Absent when the entry has no
+   * `quality` field.
+   */
+  quality?: string;
 }
 
 export interface RegistrySearchResultHit {
