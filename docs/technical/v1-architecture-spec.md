@@ -671,8 +671,9 @@ Renaming or removing any command above after v1.0 is a major version bump.
   rebuild. `usage_events` is preserved across schema bumps.
 - `workflow.db` (durable workflow run state) is never touched by index
   schema migrations.
-- **`Planned for v1`** — `proposal.db` (durable proposal queue, §11) is
-  managed by the proposal subsystem and survives index rebuilds.
+- **`Planned for v1`** — the proposal queue (§11) is durable filesystem
+  state under `<stashRoot>/.akm/proposals/`, managed by the proposal
+  subsystem and untouched by index rebuilds.
 
 ### 9.7 LLM/agent boundary (planned)
 
@@ -787,17 +788,29 @@ content is never mutated by reflection, generation, or distillation paths.
 
 ### 11.1 Storage
 
-- Proposals live in `proposal.db` (a sibling SQLite DB to `index.db` and
-  `workflow.db`). The DB survives `akm index --full` and binary upgrades.
-- A single proposal row stores: `id`, `ref` (the target asset ref it would
-  propose), `status`
-  (`pending` | `accepted` | `rejected` | `archived`), `source`
-  (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id), `source_run`
-  (opaque correlation id), `created_at`, `updated_at`, `body`,
-  `frontmatter`, `review_notes`, `review_outcome`. Multiple proposals for
-  the same `ref` coexist without path collisions.
-- Invalid proposal rows are surfaced via `akm proposal list` with a clear
-  `warnings` entry. They do not crash the queue.
+- Proposals live as one directory per proposal under
+  `<stashRoot>/.akm/proposals/<id>/`, each containing a single
+  `proposal.json` file. The store is plain filesystem state and survives
+  `akm index --full` and binary upgrades. Directory-per-id is what
+  guarantees multiple proposals can coexist for the same `ref` without
+  path collisions.
+- A single `proposal.json` carries: `id` (UUID), `ref` (the target asset
+  ref it would propose), `status` (`pending` | `accepted` | `rejected`),
+  `source` (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id),
+  `sourceRun` (opaque correlation id), `createdAt`, `updatedAt`,
+  `payload.frontmatter`, `payload.content`, and an optional `review`
+  block (`outcome`, `reason`, `decidedAt`).
+- Rejected proposals are physically moved to
+  `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
+  state — there is no separate `archived` status, so the on-disk
+  location is the source of truth for "active vs. archived" listings.
+- Invalid `proposal.json` files are surfaced via `akm proposal list`
+  with a clear warning entry. They do not crash the queue.
+- The proposal store is queue state, not asset state, so it does **not**
+  go through `writeAssetToSource()` for proposal writes themselves
+  (only the eventual promotion in `accept` does). This is the single
+  documented carve-out from the §5.4 write-helper rule, recorded in the
+  module docblock of `src/core/proposals.ts`.
 
 ### 11.2 Commands
 
@@ -815,8 +828,9 @@ write-source policy) **before** promoting. Promotion calls
 `writeAssetToSource()` for the configured write target (§5.4) — same path
 as `akm remember` / `akm import`.
 
-`reject` writes review metadata and moves the row to `archived`. The body
-is preserved.
+`reject` writes review metadata (outcome, reason, decidedAt) and moves
+the proposal directory under `<stashRoot>/.akm/proposals/archive/<id>/`.
+The body is preserved.
 
 `diff` shows the proposed delta against the live asset (or the empty file
 if the proposal would create a new ref).

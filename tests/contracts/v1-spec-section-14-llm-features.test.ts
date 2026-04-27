@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../src/llm/feature-gate";
 import { CONFIG_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §14 — `llm.features.*` (Planned for v1).
@@ -84,5 +85,43 @@ describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
 
   test("configuration.md says unknown llm.features keys are warn-and-ignore", () => {
     expect(block).toMatch(/Unknown keys.*warn-and-ignore/i);
+  });
+});
+
+describe("v1 spec §14 — runtime gate seam", () => {
+  // The graceful-fallback contract says: disabled gate returns the fallback
+  // without ever calling fn; throws are swallowed and return fallback. We
+  // pin the seam shape here so renames trigger the contract test.
+  test("isLlmFeatureEnabled is exported and pure", () => {
+    expect(typeof isLlmFeatureEnabled).toBe("function");
+    expect(isLlmFeatureEnabled(undefined, "curate_rerank")).toBe(false);
+  });
+
+  test("tryLlmFeature returns fallback when the gate is disabled (no fn call)", async () => {
+    let called = false;
+    const result = await tryLlmFeature(
+      "curate_rerank",
+      undefined,
+      () => {
+        called = true;
+        return "ran";
+      },
+      "fallback",
+    );
+    expect(result).toBe("fallback");
+    expect(called).toBe(false);
+  });
+
+  test("tryLlmFeature swallows throws and returns fallback when enabled", async () => {
+    const config = { llm: { features: { curate_rerank: true } } } as never;
+    const result = await tryLlmFeature(
+      "curate_rerank",
+      config,
+      () => {
+        throw new Error("boom");
+      },
+      "fallback",
+    );
+    expect(result).toBe("fallback");
   });
 });

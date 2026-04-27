@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ASSET_SPECS, TYPE_DIRS } from "../../src/core/asset-spec";
 import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §13 — Lesson asset type (Planned for v1).
@@ -24,6 +25,11 @@ describe("v1 spec §13 — lesson asset type", () => {
   test("§13.3 routes distill output through the proposal queue", () => {
     expect(section).toMatch(/akm distill/);
     expect(section).toMatch(/akm proposal accept/);
+  });
+
+  test("`lesson` is registered as a well-known asset type at runtime", () => {
+    expect(ASSET_SPECS.lesson).toBeDefined();
+    expect(TYPE_DIRS.lesson).toBe("lessons");
   });
 
   test("§13 stops before §14 (helper boundary check)", () => {

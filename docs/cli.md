@@ -1329,7 +1329,7 @@ Review and operate the proposal queue. Five subcommands.
 
 ```sh
 akm proposal list
-akm proposal list --status pending|accepted|rejected|archived
+akm proposal list --status pending|accepted|rejected
 akm proposal show <id>
 akm proposal diff <id>
 akm proposal accept <id>
