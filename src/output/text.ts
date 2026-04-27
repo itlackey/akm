@@ -179,9 +179,46 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
       const over = r.overwritten ? " (overwritten)" : "";
       return `Cloned${remote} → ${dst}${over}`;
     }
+    case "history": {
+      return formatHistoryPlain(r);
+    }
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatHistoryPlain(r: Record<string, unknown>): string {
+  const entries = Array.isArray(r.entries) ? (r.entries as Array<Record<string, unknown>>) : [];
+  const headerParts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
+  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
+  const totalCount = typeof r.totalCount === "number" ? r.totalCount : entries.length;
+  headerParts.push(`${totalCount} event(s)`);
+  const header = headerParts.join("  ");
+
+  if (entries.length === 0) {
+    const scope = typeof r.ref === "string" && r.ref ? ` for ${r.ref}` : "";
+    return `${header}\nNo history${scope}.`;
+  }
+
+  const lines: string[] = [header, ""];
+  for (const entry of entries) {
+    const created = String(entry.createdAt ?? "?");
+    const eventType = String(entry.eventType ?? "?");
+    const ref = entry.ref ? String(entry.ref) : null;
+    const signal = entry.signal ? String(entry.signal) : null;
+    const query = entry.query ? String(entry.query) : null;
+
+    const head = ref ? `${created}  [${eventType}] ${ref}` : `${created}  [${eventType}]`;
+    lines.push(head);
+    if (signal) lines.push(`  signal: ${signal}`);
+    if (query) lines.push(`  query: ${query}`);
+    if (entry.metadata != null && entry.metadata !== "") {
+      const meta = typeof entry.metadata === "string" ? entry.metadata : JSON.stringify(entry.metadata);
+      lines.push(`  metadata: ${meta}`);
+    }
+  }
+  return lines.join("\n").trimEnd();
 }
 
 function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): string | null {

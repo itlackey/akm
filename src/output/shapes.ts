@@ -18,9 +18,46 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeRegistrySearchOutput(result as Record<string, unknown>, detail);
     case "show":
       return shapeShowOutput(result as Record<string, unknown>, detail, forAgent);
+    case "history":
+      return shapeHistoryOutput(result as Record<string, unknown>, detail);
     default:
       return result;
   }
+}
+
+export function shapeHistoryOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const entries = Array.isArray(result.entries) ? (result.entries as Record<string, unknown>[]) : [];
+  const shapedEntries = entries.map((entry) => shapeHistoryEntry(entry, detail));
+  if (detail === "full") {
+    return {
+      schemaVersion: result.schemaVersion ?? 1,
+      ...(result.ref !== undefined ? { ref: result.ref } : {}),
+      ...(result.since !== undefined ? { since: result.since } : {}),
+      totalCount: result.totalCount ?? shapedEntries.length,
+      entries: shapedEntries,
+      ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+    };
+  }
+  return {
+    ...(result.ref !== undefined ? { ref: result.ref } : {}),
+    ...(result.since !== undefined ? { since: result.since } : {}),
+    totalCount: result.totalCount ?? shapedEntries.length,
+    entries: shapedEntries,
+    ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+  };
+}
+
+export function shapeHistoryEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    // signal is load-bearing for feedback rows (positive/negative) so we
+    // project it even at brief — without it the entry is ambiguous.
+    return pickFields(entry, ["eventType", "ref", "signal", "createdAt"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["eventType", "ref", "signal", "query", "createdAt"]);
+  }
+  // full / agent: return everything the reader emits.
+  return pickFields(entry, ["id", "eventType", "ref", "entryId", "query", "signal", "metadata", "createdAt"]);
 }
 
 export function shapeSearchOutput(
