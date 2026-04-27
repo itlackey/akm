@@ -11,6 +11,13 @@ import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
 import { renderMigrationHelp } from "./commands/migration-help";
+import {
+  akmProposalAccept,
+  akmProposalDiff,
+  akmProposalList,
+  akmProposalReject,
+  akmProposalShow,
+} from "./commands/proposal";
 import { searchRegistry } from "./commands/registry-search";
 import {
   buildMemoryFrontmatter,
@@ -2438,6 +2445,112 @@ const eventsCommand = defineCommand({
   },
 });
 
+// ── proposal substrate (#225) ────────────────────────────────────────────────
+
+const proposalListCommand = defineCommand({
+  meta: { name: "list", description: "List pending proposals (use --include-archive to see decided ones)" },
+  args: {
+    status: { type: "string", description: "Filter by status (pending|accepted|rejected)" },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    "include-archive": {
+      type: "boolean",
+      description: "Include accepted/rejected proposals from the archive",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const status = parseProposalStatus(args.status);
+      const result = akmProposalList({
+        status,
+        ref: args.ref,
+        includeArchive: getHyphenatedBoolean(args, "include-archive"),
+      });
+      output("proposal-list", result);
+    });
+  },
+});
+
+const proposalShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a proposal's metadata, payload, and validation report" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalShow({ id: args.id });
+      output("proposal-show", result);
+    });
+  },
+});
+
+const proposalAcceptCommand = defineCommand({
+  meta: { name: "accept", description: "Validate and promote a proposal to a real asset" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmProposalAccept({ id: args.id, target: args.target });
+      output("proposal-accept", result);
+    });
+  },
+});
+
+const proposalRejectCommand = defineCommand({
+  meta: { name: "reject", description: "Archive a pending proposal with an optional reason" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    reason: { type: "string", description: "Reason for rejection (recorded in the archived proposal)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalReject({ id: args.id, reason: args.reason });
+      output("proposal-reject", result);
+    });
+  },
+});
+
+const proposalDiffCommand = defineCommand({
+  meta: { name: "diff", description: "Show the diff between an existing asset and a pending proposal" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalDiff({ id: args.id, target: args.target });
+      output("proposal-diff", result);
+    });
+  },
+});
+
+const proposalCommand = defineCommand({
+  meta: {
+    name: "proposal",
+    description: "Review and promote queued asset proposals (durable storage under .akm/proposals/)",
+  },
+  subCommands: {
+    list: proposalListCommand,
+    show: proposalShowCommand,
+    accept: proposalAcceptCommand,
+    reject: proposalRejectCommand,
+    diff: proposalDiffCommand,
+  },
+});
+
+function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected") return trimmed;
+  throw new UsageError(
+    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -2474,6 +2587,7 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
+    proposal: proposalCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
