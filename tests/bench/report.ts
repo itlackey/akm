@@ -90,6 +90,70 @@ export function renderMarkdownSummary(input: ReportInput): string {
 // ── Utility-track report (§13.3) ───────────────────────────────────────────
 
 /**
+ * Compact serialised RunResult row persisted into the §13.3 JSON envelope
+ * under the top-level `runs[]` key (#249).
+ *
+ * One row per `(task, arm, seed)` execution, both `noakm` and `akm`. Contains
+ * enough fields to recompute every aggregate metric (per-task, trajectory,
+ * failure-mode, search-bridge, attribution) plus task metadata, but
+ * deliberately omits the full `events[]` and unbounded `verifierStdout` so the
+ * envelope stays compact. Older artefacts that pre-date this field are still
+ * valid: callers that need run-level data should fall back to the per-task
+ * aggregate path.
+ */
+export interface RunRecordSerialized {
+  task_id: string;
+  arm: string;
+  seed: number;
+  model: string;
+  outcome: string;
+  /**
+   * Spread of `RunResult.tokens` so future fields (e.g. `measurement` from
+   * #252) flow through automatically without a renderer change. Today the
+   * shape is `{input: number, output: number}`; #252 will add a sibling
+   * `measurement` field. TODO(#252): keep this pass-through.
+   */
+  tokens: Record<string, unknown>;
+  wallclock_ms: number;
+  verifier_exit_code: number;
+  trajectory: {
+    correct_asset_loaded: boolean | null;
+    feedback_recorded: boolean | null;
+  };
+  assets_loaded: string[];
+  failure_mode: string | null;
+}
+
+/**
+ * Project a RunResult onto its compact serialised form for the §13.3 JSON
+ * envelope (#249). Mirrors the field list in the issue body.
+ *
+ * Token-shape seam: `tokens` is spread verbatim from `result.tokens` so when
+ * #252 adds a `measurement` field the renderer doesn't need a code change.
+ * Do NOT hardcode `{input, output}` projections here.
+ */
+export function serializeRunForReport(result: RunResult): RunRecordSerialized {
+  return {
+    task_id: result.taskId,
+    arm: result.arm,
+    seed: result.seed,
+    model: result.model,
+    outcome: result.outcome,
+    // TODO(#252): when RunResult.tokens grows a `measurement` key, this spread
+    // carries it forward without a renderer change.
+    tokens: { ...result.tokens },
+    wallclock_ms: result.wallclockMs,
+    verifier_exit_code: result.verifierExitCode,
+    trajectory: {
+      correct_asset_loaded: result.trajectory.correctAssetLoaded,
+      feedback_recorded: result.trajectory.feedbackRecorded,
+    },
+    assets_loaded: [...(result.assetsLoaded ?? [])],
+    failure_mode: result.failureMode ?? null,
+  };
+}
+
+/**
  * Per-task envelope inside `tasks[]`. Mirrors the §13.3 layout: `noakm` and
  * `akm` are PerTaskMetrics, `delta` is the akm − noakm difference.
  */
@@ -140,6 +204,14 @@ export interface UtilityRunReport {
    * contract. The field is on the in-memory shape only.
    */
   akmRuns?: RunResult[];
+  /**
+   * Raw RunResults across both arms (`noakm` + `akm`), retained on the
+   * report so `buildUtilityJson` can serialise the compact §13.3 `runs[]`
+   * array (#249). Populated by the runner. When omitted, the envelope simply
+   * does not gain a `runs` key — backward-compat with code paths that
+   * construct a UtilityRunReport without raw runs.
+   */
+  allRuns?: RunResult[];
   /**
    * Task metadata for in-process consumers (the masked-corpus helper needs
    * to remap each task's stash to a tmp dir). Not serialised into the §13.3
@@ -207,6 +279,14 @@ function buildUtilityJson(input: UtilityRunReport): object {
     warnings: input.warnings,
     ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
+
+  // Compact raw runs[] — additive top-level key (#249). One row per
+  // (task, arm, seed) execution; both noakm and akm. Older artefacts that
+  // pre-date this field stay valid because we only emit it when the runner
+  // actually populated `allRuns`.
+  if (input.allRuns) {
+    envelope.runs = input.allRuns.map(serializeRunForReport);
+  }
 
   // Per-asset attribution is an additive top-level key (§6.5). Emit it only
   // when the runner populated it so older code paths (e.g. the empty-corpus

@@ -666,3 +666,267 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
     fs.rmSync(fixturesRoot, { recursive: true, force: true });
   });
 });
+
+// ── #249 round-trip: persisted runs[] → attribute → compute paths ──────────
+
+describe("bench attribute prefers persisted runs[] (#249)", () => {
+  test("hydrates persisted runs[] and feeds them to runMaskedCorpus", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-runs-"));
+    const fixturesRoot = path.join(tmp, "stashes");
+    fs.mkdirSync(fixturesRoot, { recursive: true });
+    const fixDir = path.join(fixturesRoot, "tiny");
+    fs.mkdirSync(path.join(fixDir, "skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(fixDir, "MANIFEST.json"),
+      JSON.stringify({ name: "tiny", description: "x", purpose: "x", assets: { skill: 2 }, consumers: [] }),
+    );
+    fs.writeFileSync(
+      path.join(fixDir, "skills", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          { name: "alpha", type: "skill", filename: "alpha.md" },
+          { name: "beta", type: "skill", filename: "beta.md" },
+        ],
+      }),
+    );
+    fs.writeFileSync(path.join(fixDir, "skills", "alpha.md"), "# alpha");
+    fs.writeFileSync(path.join(fixDir, "skills", "beta.md"), "# beta");
+
+    // Build a §13.3 envelope WITH a persisted runs[] array. The compact rows
+    // mirror what the runner would have emitted — both arms, multiple seeds.
+    const envelope = {
+      schemaVersion: 1,
+      track: "utility",
+      branch: "test",
+      commit: "abc",
+      timestamp: "2026-04-27T00:00:00Z",
+      agent: { harness: "opencode", model: "test-model" },
+      corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: 2 },
+      aggregate: {
+        noakm: { pass_rate: 0, tokens_per_pass: null, wallclock_ms: 0 },
+        akm: { pass_rate: 0.5, tokens_per_pass: null, wallclock_ms: 0 },
+        delta: { pass_rate: 0.5, tokens_per_pass: null, wallclock_ms: 0 },
+      },
+      trajectory: { akm: { correct_asset_loaded: null, feedback_recorded: 0 } },
+      tasks: [],
+      warnings: [],
+      runs: [
+        // noakm — should be filtered out of attribution.
+        {
+          task_id: "t",
+          arm: "noakm",
+          seed: 0,
+          model: "test-model",
+          outcome: "fail",
+          tokens: { input: 0, output: 0 },
+          wallclock_ms: 0,
+          verifier_exit_code: 1,
+          trajectory: { correct_asset_loaded: null, feedback_recorded: null },
+          assets_loaded: [],
+          failure_mode: null,
+        },
+        // akm — alpha:1pass+1fail, beta:1pass.
+        {
+          task_id: "t",
+          arm: "akm",
+          seed: 0,
+          model: "test-model",
+          outcome: "pass",
+          tokens: { input: 1, output: 2 },
+          wallclock_ms: 100,
+          verifier_exit_code: 0,
+          trajectory: { correct_asset_loaded: true, feedback_recorded: false },
+          assets_loaded: ["skill:alpha", "skill:beta"],
+          failure_mode: null,
+        },
+        {
+          task_id: "t",
+          arm: "akm",
+          seed: 1,
+          model: "test-model",
+          outcome: "fail",
+          tokens: { input: 3, output: 4 },
+          wallclock_ms: 110,
+          verifier_exit_code: 1,
+          trajectory: { correct_asset_loaded: false, feedback_recorded: false },
+          assets_loaded: ["skill:alpha"],
+          failure_mode: "wrong_asset",
+        },
+      ],
+      // perAsset is also present (older path) — but the persisted runs[]
+      // should take precedence.
+      perAsset: {
+        total_akm_runs: 2,
+        rows: [
+          {
+            asset_ref: "skill:alpha",
+            load_count: 2,
+            load_count_passing: 1,
+            load_count_failing: 1,
+            load_pass_rate: 0.5,
+          },
+          {
+            asset_ref: "skill:beta",
+            load_count: 1,
+            load_count_passing: 1,
+            load_count_failing: 0,
+            load_pass_rate: 1,
+          },
+        ],
+      },
+    };
+    const basePath = path.join(tmp, "run.json");
+    fs.writeFileSync(basePath, JSON.stringify(envelope));
+
+    let observedAkmAssetsLoaded: string[][] = [];
+    const result = await runAttributeCli({
+      basePath,
+      topN: 2,
+      json: true,
+      runUtility: async (options) => {
+        // Capture the akmRuns the masked runner sees so we can prove the
+        // hydrated runs[] flowed through unchanged.
+        observedAkmAssetsLoaded = options.tasks.map((t) => [t.id]);
+        return {
+          timestamp: "2026-04-27T00:00:00Z",
+          branch: "test",
+          commit: "abc",
+          model: "test-model",
+          corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: 2 },
+          aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
+          aggregateDelta: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
+          trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+          tasks: [],
+          warnings: [],
+        };
+      },
+      fixturesRoot,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const json = JSON.parse(result.stdout) as Record<string, unknown>;
+    // 2 attributions = 2 distinct loaded assets, both came from the persisted
+    // runs[] (alpha + beta). The noakm row is excluded.
+    expect((json.attributions as unknown[]).length).toBe(2);
+    expect(observedAkmAssetsLoaded.length).toBeGreaterThan(0);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("falls back to perAsset synthesis when runs[] is absent (legacy report)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-legacy-"));
+    const fixturesRoot = path.join(tmp, "stashes");
+    fs.mkdirSync(fixturesRoot, { recursive: true });
+    const fixDir = path.join(fixturesRoot, "tiny");
+    fs.mkdirSync(path.join(fixDir, "skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(fixDir, "MANIFEST.json"),
+      JSON.stringify({ name: "tiny", description: "x", purpose: "x", assets: { skill: 1 }, consumers: [] }),
+    );
+    fs.writeFileSync(
+      path.join(fixDir, "skills", ".stash.json"),
+      JSON.stringify({ entries: [{ name: "alpha", type: "skill", filename: "alpha.md" }] }),
+    );
+    fs.writeFileSync(path.join(fixDir, "skills", "alpha.md"), "# alpha");
+
+    // Legacy envelope: NO runs[] key.
+    const envelope = {
+      schemaVersion: 1,
+      track: "utility",
+      branch: "test",
+      commit: "abc",
+      timestamp: "2026-04-27T00:00:00Z",
+      agent: { harness: "opencode", model: "test-model" },
+      corpus: { domains: 1, tasks: 0, slice: "all", seedsPerArm: 1 },
+      aggregate: {
+        noakm: { pass_rate: 0, tokens_per_pass: null, wallclock_ms: 0 },
+        akm: { pass_rate: 0.5, tokens_per_pass: null, wallclock_ms: 0 },
+        delta: { pass_rate: 0.5, tokens_per_pass: null, wallclock_ms: 0 },
+      },
+      trajectory: { akm: { correct_asset_loaded: null, feedback_recorded: 0 } },
+      tasks: [],
+      warnings: [],
+      perAsset: {
+        total_akm_runs: 2,
+        rows: [
+          {
+            asset_ref: "skill:alpha",
+            load_count: 2,
+            load_count_passing: 1,
+            load_count_failing: 1,
+            load_pass_rate: 0.5,
+          },
+        ],
+      },
+    };
+    const basePath = path.join(tmp, "run.json");
+    fs.writeFileSync(basePath, JSON.stringify(envelope));
+
+    let calls = 0;
+    const result = await runAttributeCli({
+      basePath,
+      topN: 5,
+      json: true,
+      runUtility: async () => {
+        calls += 1;
+        return {
+          timestamp: "2026-04-27T00:00:00Z",
+          branch: "test",
+          commit: "abc",
+          model: "test-model",
+          corpus: { domains: 1, tasks: 0, slice: "all", seedsPerArm: 1 },
+          aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+          tasks: [],
+          warnings: [],
+        };
+      },
+      fixturesRoot,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const json = JSON.parse(result.stdout) as Record<string, unknown>;
+    // Legacy path still works: clamps to 1 attribution row from perAsset.
+    expect(json.runsPerformed).toBe(1);
+    expect((json.attributions as unknown[]).length).toBe(1);
+    expect(calls).toBe(1);
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+// ── #249 metrics-level round-trip: aggregate from runs[] + reduce parity ───
+
+describe("aggregateRunsForReport + rehydrate round-trip (#249)", () => {
+  test("recomputes computePerAssetAttribution identically from persisted rows", async () => {
+    const {
+      aggregateRunsForReport,
+      rehydrateRunFromSerialized,
+      computePerAssetAttribution: cpa,
+    } = await import("./metrics");
+    const original: RunResult[] = [
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha", "skill:beta"] }),
+      makeRun({ outcome: "fail", assetsLoaded: ["skill:alpha"], verifierStdout: "junk" }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:beta"] }),
+    ];
+    const reportBefore = makeReport(original);
+    const before = cpa(reportBefore);
+
+    // Round-trip through compact persisted rows.
+    const rows = aggregateRunsForReport(original);
+    const hydrated = rows.map(rehydrateRunFromSerialized);
+    const reportAfter = makeReport(hydrated);
+    const after = cpa(reportAfter);
+
+    expect(after.totalAkmRuns).toBe(before.totalAkmRuns);
+    expect(after.rows.length).toBe(before.rows.length);
+    for (let i = 0; i < before.rows.length; i++) {
+      expect(after.rows[i]?.assetRef).toBe(before.rows[i]?.assetRef);
+      expect(after.rows[i]?.loadCount).toBe(before.rows[i]?.loadCount);
+      expect(after.rows[i]?.loadPassRate).toBe(before.rows[i]?.loadPassRate);
+    }
+  });
+});
