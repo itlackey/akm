@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { RunResult } from "./driver";
 import type { PerTaskMetrics } from "./metrics";
 import {
   type ReportInput,
@@ -14,6 +15,7 @@ import {
   renderUtilityReport,
   resolveGitBranch,
   resolveGitCommit,
+  serializeRunForReport,
   type UtilityRunReport,
 } from "./report";
 
@@ -179,6 +181,102 @@ describe("renderUtilityReport markdown", () => {
     const { markdown } = renderUtilityReport(withWarn);
     expect(markdown).toContain("## Warnings");
     expect(markdown).toContain("stash xyz failed to load");
+  });
+});
+
+// ── Compact runs[] serialisation (#249) ───────────────────────────────────
+
+function makeRun(overrides: Partial<RunResult> = {}): RunResult {
+  const base: RunResult = {
+    schemaVersion: 1,
+    taskId: "domain-a/task-1",
+    arm: "akm",
+    seed: 0,
+    model: "anthropic/claude-opus-4-7",
+    outcome: "pass",
+    tokens: { input: 1234, output: 5678 },
+    wallclockMs: 4200,
+    trajectory: { correctAssetLoaded: true, feedbackRecorded: false },
+    events: [
+      // events[] MUST be filtered out of the persisted row.
+      { id: 0, ts: "2026-04-27T12:00:00Z", kind: "noop" } as unknown as RunResult["events"][number],
+    ],
+    verifierStdout: "x".repeat(1024 * 1024),
+    verifierExitCode: 0,
+    assetsLoaded: ["skill:foo"],
+    failureMode: null,
+  };
+  return { ...base, ...overrides };
+}
+
+describe("serializeRunForReport", () => {
+  test("omits events[] and verifierStdout, keeps the compact field set", () => {
+    const row = serializeRunForReport(makeRun());
+    expect(row).toEqual({
+      task_id: "domain-a/task-1",
+      arm: "akm",
+      seed: 0,
+      model: "anthropic/claude-opus-4-7",
+      outcome: "pass",
+      tokens: { input: 1234, output: 5678 },
+      wallclock_ms: 4200,
+      verifier_exit_code: 0,
+      trajectory: { correct_asset_loaded: true, feedback_recorded: false },
+      assets_loaded: ["skill:foo"],
+      failure_mode: null,
+    });
+    // No events / stdout leakage even when the source carries large data.
+    expect(Object.keys(row)).not.toContain("events");
+    expect(Object.keys(row)).not.toContain("verifierStdout");
+    expect(Object.keys(row)).not.toContain("verifier_stdout");
+  });
+
+  test("passes unknown token-shape keys through (token-shape seam for #252)", () => {
+    // Simulate a future RunResult.tokens that grows a `measurement` field.
+    const futureRun = makeRun({
+      tokens: { input: 10, output: 20, measurement: "parsed" } as unknown as RunResult["tokens"],
+    });
+    const row = serializeRunForReport(futureRun);
+    expect(row.tokens).toEqual({ input: 10, output: 20, measurement: "parsed" });
+  });
+
+  test("propagates failure_mode label when present", () => {
+    const run = makeRun({ outcome: "fail", failureMode: "wrong_asset" as RunResult["failureMode"] });
+    const row = serializeRunForReport(run);
+    expect(row.outcome).toBe("fail");
+    expect(row.failure_mode).toBe("wrong_asset");
+  });
+});
+
+describe("renderUtilityReport runs[] persistence (#249)", () => {
+  test("emits one row per (task, arm, seed) when allRuns is supplied", () => {
+    const allRuns = [
+      makeRun({ taskId: "domain-a/task-1", arm: "noakm", seed: 0 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "noakm", seed: 1 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "akm", seed: 0 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "akm", seed: 1, outcome: "fail" }),
+    ];
+    const report: UtilityRunReport = { ...utilSample, allRuns };
+    const { json } = renderUtilityReport(report);
+    const obj = json as Record<string, unknown>;
+    const runs = obj.runs as Array<Record<string, unknown>>;
+    expect(Array.isArray(runs)).toBe(true);
+    expect(runs.length).toBe(4);
+    // Order matches the runner's deterministic emission order.
+    expect(runs[0]?.arm).toBe("noakm");
+    expect(runs[2]?.arm).toBe("akm");
+    expect(runs[3]?.outcome).toBe("fail");
+    // verifier stdout / events MUST be absent.
+    for (const r of runs) {
+      expect(Object.keys(r)).not.toContain("events");
+      expect(Object.keys(r)).not.toContain("verifierStdout");
+    }
+  });
+
+  test("omits the runs key entirely when allRuns is not supplied (legacy shape)", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    expect("runs" in obj).toBe(false);
   });
 });
 

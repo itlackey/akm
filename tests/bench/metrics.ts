@@ -21,7 +21,8 @@ import path from "node:path";
 
 import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
-import type { UtilityRunReport } from "./report";
+import type { RunRecordSerialized, UtilityRunReport } from "./report";
+import { serializeRunForReport } from "./report";
 
 // ── Outcome (§6.1) ─────────────────────────────────────────────────────────
 
@@ -410,6 +411,73 @@ export function computePerAssetAttribution(report: UtilityRunReport): PerAssetAt
 function collectAkmRuns(report: UtilityRunReport): RunResult[] {
   if (Array.isArray(report.akmRuns)) return report.akmRuns;
   return [];
+}
+
+// ── runs[] serialisation (#249) ────────────────────────────────────────────
+
+/**
+ * Project a list of RunResults onto the compact `runs[]` rows persisted
+ * inside the §13.3 JSON envelope (#249). One row per (task, arm, seed)
+ * triple; the renderer walks the input order verbatim, which the runner
+ * already builds deterministically (per-task block, noakm before akm,
+ * seeds in ascending order).
+ *
+ * Aggregate metrics (per-task, trajectory, failure-mode, search-bridge,
+ * attribution) MUST be recomputable from these rows + task metadata. This
+ * helper is the canonical projection — keep it in lockstep with the field
+ * list in the issue body.
+ */
+export function aggregateRunsForReport(runs: RunResult[]): RunRecordSerialized[] {
+  return runs.map(serializeRunForReport);
+}
+
+/**
+ * Hydrate a persisted `runs[]` row back into the `RunResult` shape that
+ * downstream metrics helpers (`computePerAssetAttribution`, `aggregateCorpus`,
+ * etc.) expect. Used by `bench attribute` / `bench compare` when they read a
+ * §13.3 envelope from disk: the persisted row carries a compact subset, but
+ * it carries everything those helpers need.
+ *
+ * Fields the row deliberately does NOT carry are filled with safe defaults:
+ *   • `events: []` — events.jsonl is not persisted; downstream attribution
+ *     only consults `assetsLoaded` and `verifierStdout`.
+ *   • `verifierStdout: ""` — full stdout is intentionally omitted from the
+ *     envelope (#249 acceptance criterion). `assetsLoaded` already carries
+ *     the post-hoc extraction the agent run produced.
+ *   • `schemaVersion: 1` — the report schema implies it.
+ *
+ * Tokens are passed through as-is so a future `measurement` field added by
+ * #252 lands on the rehydrated row automatically. TODO(#252): keep this
+ * spread.
+ */
+export function rehydrateRunFromSerialized(row: RunRecordSerialized): RunResult {
+  // The compact row uses a permissive Record shape for tokens (see
+  // RunRecordSerialized). Coerce defensively so older artefacts with only
+  // {input, output} hydrate cleanly.
+  const tok = row.tokens as { input?: number; output?: number } & Record<string, unknown>;
+  return {
+    schemaVersion: 1,
+    taskId: row.task_id,
+    arm: row.arm,
+    seed: row.seed,
+    model: row.model,
+    outcome: row.outcome as RunResult["outcome"],
+    tokens: {
+      ...tok,
+      input: typeof tok.input === "number" ? tok.input : 0,
+      output: typeof tok.output === "number" ? tok.output : 0,
+    } as RunResult["tokens"],
+    wallclockMs: row.wallclock_ms,
+    trajectory: {
+      correctAssetLoaded: row.trajectory.correct_asset_loaded,
+      feedbackRecorded: row.trajectory.feedback_recorded,
+    },
+    events: [],
+    verifierStdout: "",
+    verifierExitCode: row.verifier_exit_code,
+    assetsLoaded: [...row.assets_loaded],
+    failureMode: (row.failure_mode ?? null) as RunResult["failureMode"],
+  };
 }
 
 // ── runMaskedCorpus (§6.5 leave-one-out) ──────────────────────────────────

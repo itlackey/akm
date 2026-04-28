@@ -360,6 +360,40 @@ describe("runCompareCli", () => {
     }
   });
 
+  test("round-trip: reports with persisted runs[] (#249) compare cleanly", () => {
+    // The runs[] field is additive — compare ignores it but must NOT reject
+    // reports that carry it. Confirms the new key is forward-compatible with
+    // the existing aggregate-based diff path.
+    const baseWithRuns = {
+      ...(makeReport() as unknown as Record<string, unknown>),
+      runs: [
+        {
+          task_id: "domain-a/task-1",
+          arm: "akm",
+          seed: 0,
+          model: MODEL,
+          outcome: "pass",
+          tokens: { input: 1, output: 2 },
+          wallclock_ms: 100,
+          verifier_exit_code: 0,
+          trajectory: { correct_asset_loaded: true, feedback_recorded: false },
+          assets_loaded: ["skill:foo"],
+          failure_mode: null,
+        },
+      ],
+    };
+    withTmpFiles(
+      ({ basePath, currentPath }) => {
+        const result = runCompareCli({ basePath, currentPath, json: true });
+        expect(result.exitCode).toBe(0);
+        const parsed = JSON.parse(result.stdout) as { ok: boolean };
+        expect(parsed.ok).toBe(true);
+      },
+      baseWithRuns,
+      baseWithRuns,
+    );
+  });
+
   test("missing --base file: exit 2", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-compare-missing-"));
     try {

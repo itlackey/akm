@@ -354,6 +354,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const noakmPerTask: Record<string, PerTaskMetrics> = {};
   const akmPerTask: Record<string, PerTaskMetrics> = {};
   const akmRunsAll: RunResult[] = [];
+  const allRuns: RunResult[] = [];
 
   for (const task of args.options.tasks) {
     const taskRuns = args.grouped.get(task.id);
@@ -367,6 +368,9 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     noakmPerTask[task.id] = noakmMetrics;
     akmPerTask[task.id] = akmMetrics;
     akmRunsAll.push(...akmRuns);
+    // Preserve arm order (noakm first, then akm) so the persisted runs[]
+    // array is deterministic across reruns. #249.
+    allRuns.push(...noakmRuns, ...akmRuns);
 
     tasks.push({ id: task.id, noakm: noakmMetrics, akm: akmMetrics, delta });
   }
@@ -413,6 +417,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     tasks,
     warnings: args.warnings,
     akmRuns: akmRunsAll,
+    allRuns,
     taskMetadata: args.options.tasks,
     goldRankRecords: args.goldRankRecords,
     searchBridge,
