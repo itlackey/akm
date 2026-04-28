@@ -76,6 +76,7 @@ function pt(passRate: number, tokens: number | null, wall: number, count = 5): P
     budgetExceededCount: 0,
     harnessErrorCount: 0,
     count,
+    runsWithMeasuredTokens: count,
   };
 }
 
@@ -179,6 +180,83 @@ describe("renderUtilityReport markdown", () => {
     const { markdown } = renderUtilityReport(withWarn);
     expect(markdown).toContain("## Warnings");
     expect(markdown).toContain("stash xyz failed to load");
+  });
+});
+
+describe("token-measurement surface (issue #252)", () => {
+  function fakeRun(overrides: Partial<import("./driver").RunResult>): import("./driver").RunResult {
+    return {
+      schemaVersion: 1,
+      taskId: "t",
+      arm: "akm",
+      seed: 0,
+      model: "m",
+      outcome: "pass",
+      tokens: { input: 0, output: 0 },
+      tokenMeasurement: "parsed",
+      wallclockMs: 0,
+      trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      events: [],
+      verifierStdout: "",
+      verifierExitCode: 0,
+      assetsLoaded: [],
+      ...overrides,
+    };
+  }
+
+  test("JSON envelope has token_measurement coverage block + warning when any run is missing", () => {
+    const akmRuns = [
+      fakeRun({ seed: 0, tokenMeasurement: "parsed", tokens: { input: 100, output: 50 } }),
+      fakeRun({ seed: 1, tokenMeasurement: "missing" }),
+      fakeRun({ seed: 2, tokenMeasurement: "unsupported" }),
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns };
+    const { json, markdown } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(3);
+    expect(tm.runs_with_measured_tokens).toBe(1);
+    expect(tm.runs_missing_measurement).toBe(1);
+    expect(tm.runs_unsupported_measurement).toBe(1);
+    expect(tm.coverage).toBeCloseTo(1 / 3);
+    expect(tm.reliable).toBe(false);
+
+    const warnings = obj.warnings as string[];
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("token measurement unreliable");
+
+    expect(markdown).toContain("## Token measurement (akm)");
+    expect(markdown).toContain("unreliable");
+    expect(markdown).toContain("## Warnings");
+    expect(markdown).toContain("token measurement unreliable");
+  });
+
+  test("JSON envelope marks reliable=true and emits no warning when every run is parsed", () => {
+    const akmRuns = [
+      fakeRun({ seed: 0, tokenMeasurement: "parsed", tokens: { input: 100, output: 50 } }),
+      fakeRun({ seed: 1, tokenMeasurement: "parsed", tokens: { input: 200, output: 75 } }),
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns };
+    const { json, markdown } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(2);
+    expect(tm.runs_with_measured_tokens).toBe(2);
+    expect(tm.coverage).toBeCloseTo(1);
+    expect(tm.reliable).toBe(true);
+    expect(obj.warnings).toEqual([]);
+    expect(markdown).toContain("reliable");
+    expect(markdown).not.toContain("token measurement unreliable");
+  });
+
+  test("coverage is null and section is skipped when no akm runs are attached", () => {
+    const { json, markdown } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(0);
+    expect(tm.coverage).toBeNull();
+    expect(tm.reliable).toBe(false);
+    expect(markdown).not.toContain("## Token measurement");
   });
 });
 

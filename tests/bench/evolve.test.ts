@@ -569,6 +569,7 @@ describe("computeLongitudinalMetrics", () => {
       budgetExceededCount: 0,
       harnessErrorCount: 0,
       count: seedsPerArm,
+      runsWithMeasuredTokens: 0,
     };
     const noakm = { ...akm, passRate: 0 };
     return {
