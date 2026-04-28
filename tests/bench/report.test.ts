@@ -828,6 +828,118 @@ describe("renderUtilityReport workflow compliance (#257)", () => {
     const b = renderUtilityReport(sample).markdown;
     expect(a).toBe(b);
   });
+
+  // ── Reliability sub-block (#258) ────────────────────────────────────────
+
+  test("workflow.reliability is present and zeroed when no checks were collected", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    const reliability = wf.reliability as Record<string, unknown>;
+    expect(reliability).toBeDefined();
+    expect(reliability.by_workflow).toEqual({});
+    const corpus = reliability.corpus as Record<string, unknown>;
+    expect(corpus.pass_at_k).toBe(0);
+    expect(corpus.pass_all_k).toBe(0);
+    expect(corpus.groups).toBe(0);
+  });
+
+  test("workflow.reliability surfaces pass@k and pass^k per workflow + corpus", () => {
+    // wf-flaky: t1 has 1 pass + 1 fail (anyPass=1, allPass=0)
+    // wf-solid: t2 has 2 pass (anyPass=1, allPass=1)
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-flaky", taskId: "t1", seed: 0, status: "pass", score: 1 }),
+      makeCheck({ workflowId: "wf-flaky", taskId: "t1", seed: 1, status: "fail", score: 0 }),
+      makeCheck({ workflowId: "wf-solid", taskId: "t2", seed: 0, status: "pass", score: 1 }),
+      makeCheck({ workflowId: "wf-solid", taskId: "t2", seed: 1, status: "pass", score: 1 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    const reliability = wf.reliability as Record<string, unknown>;
+    const byWorkflow = reliability.by_workflow as Record<string, Record<string, unknown>>;
+    expect(byWorkflow["wf-flaky"].pass_at_k).toBeCloseTo(1);
+    expect(byWorkflow["wf-flaky"].pass_all_k).toBe(0);
+    expect(byWorkflow["wf-solid"].pass_at_k).toBe(1);
+    expect(byWorkflow["wf-solid"].pass_all_k).toBe(1);
+    const corpus = reliability.corpus as Record<string, unknown>;
+    expect(corpus.groups).toBe(2);
+    expect(corpus.pass_at_k).toBeCloseTo(1);
+    expect(corpus.pass_all_k).toBeCloseTo(0.5);
+
+    expect(markdown).toContain("### Reliability (pass@k / pass^k)");
+    expect(markdown).toContain("| wf-flaky |");
+    expect(markdown).toContain("| wf-solid |");
+    expect(markdown).toContain("Inconsistent workflows");
+    // wf-flaky should be flagged: pass@k=1 vs pass^k=0 (gap=1).
+    expect(markdown).toContain("`wf-flaky`");
+    // wf-solid should NOT be in the inconsistent list.
+    const inconsistentSection = markdown.split("Inconsistent workflows")[1] ?? "";
+    expect(inconsistentSection).not.toContain("`wf-solid`");
+  });
+
+  test("reliability is omitted from markdown when no group is applicable", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-skips", status: "not_applicable", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { markdown } = renderUtilityReport(sample);
+    expect(markdown).not.toContain("### Reliability (pass@k / pass^k)");
+  });
+
+  test("reliability handles all-pass corpus without flagging inconsistency", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 0, status: "pass", score: 1 }),
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 1, status: "pass", score: 1 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    const reliability = wf.reliability as Record<string, unknown>;
+    const corpus = reliability.corpus as Record<string, unknown>;
+    expect(corpus.pass_at_k).toBe(1);
+    expect(corpus.pass_all_k).toBe(1);
+    expect(markdown).toContain("### Reliability (pass@k / pass^k)");
+    expect(markdown).not.toContain("Inconsistent workflows");
+  });
+
+  test("reliability handles none-pass corpus (zeroed but section still rendered)", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 0, status: "fail", score: 0 }),
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 1, status: "fail", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    const reliability = wf.reliability as Record<string, unknown>;
+    const corpus = reliability.corpus as Record<string, unknown>;
+    expect(corpus.pass_at_k).toBe(0);
+    expect(corpus.pass_all_k).toBe(0);
+    expect(corpus.groups).toBe(1);
+    expect(markdown).toContain("### Reliability (pass@k / pass^k)");
+    // pass@k=0 fails the floor → no inconsistency callout.
+    expect(markdown).not.toContain("Inconsistent workflows");
+  });
+
+  test("reliability tolerates mixed partial/fail (partial counts as non-pass for pass^k)", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 0, status: "pass", score: 1 }),
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 1, status: "partial", score: 0.5 }),
+      makeCheck({ workflowId: "wf-1", taskId: "t1", seed: 2, status: "fail", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    const reliability = wf.reliability as Record<string, unknown>;
+    const byWorkflow = reliability.by_workflow as Record<string, Record<string, unknown>>;
+    expect(byWorkflow["wf-1"].pass_at_k).toBe(1); // 1 of 1 task has any pass
+    expect(byWorkflow["wf-1"].pass_all_k).toBe(0); // not all 3 seeds are pass
+    expect(byWorkflow["wf-1"].k).toBe(3);
+  });
 });
 // ── AKM overhead block (#263) ──────────────────────────────────────────────
 
