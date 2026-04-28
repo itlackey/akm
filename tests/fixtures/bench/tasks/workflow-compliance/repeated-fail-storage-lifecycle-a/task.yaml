@@ -1,0 +1,36 @@
+id: workflow-compliance/repeated-fail-storage-lifecycle-a
+title: "Set lifecycle delete-after-days on an az storage account (variant A)"
+domain: workflow-compliance
+difficulty: hard
+slice: train
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+
+# --- Workflow-compliance metadata (issue #259) ---
+# Category: repeated-failure-reflection-trigger.
+#
+# Companion task: workflow-compliance/repeated-fail-storage-lifecycle-b.
+#
+# Both task variants depend on the same `skill:az-cli` asset, which is
+# silent on storage-account lifecycle policy. Each variant's verifier is
+# strict enough that an agent following only the asset's hints will fail.
+#
+# After two negative outcomes against `skill:az-cli`, the workflow
+# `akm-reflect-after-repeated-failure` (min_repeated_failures: 2) should
+# fire — the agent reflects, distills, and proposes an updated asset.
+# Arms that distill after a single failure (premature) or never (never
+# converge) both score poorly here.
+#
+# This is variant A; the companion variant B exists so a single training
+# pass produces two negative-feedback events against the same asset.
+repeated_failure_group: az-storage-lifecycle
+workflow_failure_category: repeated-failure-reflection-trigger
+expected_workflows:
+  - akm-lookup-before-edit
+  - akm-negative-feedback-on-failure
+  - akm-reflect-after-repeated-failure
+abstention_case: false

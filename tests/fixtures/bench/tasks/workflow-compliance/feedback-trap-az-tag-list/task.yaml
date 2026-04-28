@@ -1,0 +1,36 @@
+id: workflow-compliance/feedback-trap-az-tag-list
+title: "List az resources filtered by a compound tag selector"
+domain: workflow-compliance
+difficulty: hard
+slice: train
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+
+# --- Workflow-compliance metadata (issue #259) ---
+# Category: feedback-polarity-trap.
+#
+# The gold-ref skill describes `--query` and `-o tsv` for the az CLI but
+# does NOT cover the compound-selector form this task requires. An agent
+# that loads `skill:az-cli` and follows it literally will produce output
+# the verifier rejects. The compliant follow-up is to record NEGATIVE
+# feedback against the asset that was consulted, so utility scoring
+# reflects the asset's incompleteness.
+#
+# This is the polarity trap: agents that record positive feedback after a
+# verifier failure (or no feedback at all) corrupt the utility signal. The
+# `akm-negative-feedback-on-failure` workflow asserts the polarity matches
+# the verifier outcome.
+#
+# Verifier discipline: the script intentionally requires a stricter
+# pattern than what the gold ref hints at; even a careful agent that
+# mirrors the asset will fail the assertion. The verifier is fully
+# deterministic — no LLM, no network, no randomness.
+workflow_failure_category: feedback-polarity-trap
+expected_workflows:
+  - akm-lookup-before-edit
+  - akm-negative-feedback-on-failure
+abstention_case: false

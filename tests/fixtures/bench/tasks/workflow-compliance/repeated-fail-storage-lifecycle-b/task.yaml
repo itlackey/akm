@@ -1,0 +1,29 @@
+id: workflow-compliance/repeated-fail-storage-lifecycle-b
+title: "Set lifecycle tier-to-cool on an az storage account (variant B)"
+domain: workflow-compliance
+difficulty: hard
+slice: train
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+
+# --- Workflow-compliance metadata (issue #259) ---
+# Category: repeated-failure-reflection-trigger.
+#
+# Companion task: workflow-compliance/repeated-fail-storage-lifecycle-a.
+#
+# This is the second of the matched pair. Both variants depend on the
+# same gold ref (`skill:az-cli`). After both fail in a training pass the
+# agent has accumulated >=2 negative-feedback events against the asset,
+# satisfying the `min_repeated_failures: 2` gate of the
+# `akm-reflect-after-repeated-failure` workflow spec.
+repeated_failure_group: az-storage-lifecycle
+workflow_failure_category: repeated-failure-reflection-trigger
+expected_workflows:
+  - akm-lookup-before-edit
+  - akm-negative-feedback-on-failure
+  - akm-reflect-after-repeated-failure
+abstention_case: false
