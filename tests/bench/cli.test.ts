@@ -51,12 +51,16 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
   });
 
-  test("evolve remains not-implemented", () => {
-    for (const sub of ["evolve"]) {
-      const r = run([sub]);
-      expect(r.exitCode).toBe(2);
-      expect(r.stderr).toContain("not yet implemented");
-    }
+  test("evolve without --tasks exits 2 with usage error", () => {
+    const r = run(["evolve"], { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--tasks");
+  });
+
+  test("evolve without BENCH_OPENCODE_MODEL exits 2", () => {
+    const r = run(["evolve", "--tasks", "docker-homelab"], { BENCH_OPENCODE_MODEL: "" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
   });
 
   test("attribute without --base exits 2", () => {

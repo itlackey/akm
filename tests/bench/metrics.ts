@@ -1658,3 +1658,389 @@ function percentile(ranks: Array<number | null>, p: number): number {
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[idx];
 }
+
+// ── Proposal-quality metrics (§6.3) ────────────────────────────────────────
+
+/**
+ * One proposal-lifecycle entry recorded by the evolve runner. The runner
+ * collects these as it walks the queue produced by `akm distill` and `akm
+ * reflect`. Each event captures the proposal id, its source asset ref, the
+ * proposal kind (lesson vs revision), the lint outcome, and whether it was
+ * accepted or rejected.
+ */
+export interface ProposalLogEntry {
+  proposalId: string;
+  /** Asset ref the proposal targets (the ref passed to distill/reflect). */
+  assetRef: string;
+  kind: "lesson" | "revision" | "unknown";
+  /** Whether `akm proposal show --json` reported `lint_pass: true`. */
+  lintPass: boolean;
+  /** Terminal state. `accept` if the runner ran `proposal accept`; `reject` otherwise. */
+  decision: "accept" | "reject";
+  /** Reason recorded on rejection (lint failure detail, etc.). Empty on accept. */
+  rejectReason?: string;
+}
+
+/** Per-asset row in the proposal-quality table (§6.3). */
+export interface ProposalQualityRow {
+  assetRef: string;
+  proposalCount: number;
+  lintPassCount: number;
+  acceptedCount: number;
+}
+
+/** Aggregate proposal-quality metrics (§6.3). */
+export interface ProposalQualityMetrics {
+  rows: ProposalQualityRow[];
+  totalProposals: number;
+  totalAccepted: number;
+  /** `accepted / proposals`. `0` when there are no proposals. */
+  acceptanceRate: number;
+  /** `lint_pass / proposals`. `0` when there are no proposals. */
+  lintPassRate: number;
+}
+
+/**
+ * Aggregate proposal-quality metrics from the evolve runner's proposal log.
+ * Pure function — does not touch disk and does not invoke any subprocess.
+ */
+export function computeProposalQualityMetrics(proposalLog: ProposalLogEntry[]): ProposalQualityMetrics {
+  const byRef = new Map<string, ProposalQualityRow>();
+  let totalAccepted = 0;
+  let totalLintPass = 0;
+  for (const entry of proposalLog) {
+    let row = byRef.get(entry.assetRef);
+    if (!row) {
+      row = { assetRef: entry.assetRef, proposalCount: 0, lintPassCount: 0, acceptedCount: 0 };
+      byRef.set(entry.assetRef, row);
+    }
+    row.proposalCount += 1;
+    if (entry.lintPass) {
+      row.lintPassCount += 1;
+      totalLintPass += 1;
+    }
+    if (entry.decision === "accept") {
+      row.acceptedCount += 1;
+      totalAccepted += 1;
+    }
+  }
+  const rows = [...byRef.values()].sort((a, b) => a.assetRef.localeCompare(b.assetRef));
+  const totalProposals = proposalLog.length;
+  return {
+    rows,
+    totalProposals,
+    totalAccepted,
+    acceptanceRate: totalProposals === 0 ? 0 : totalAccepted / totalProposals,
+    lintPassRate: totalProposals === 0 ? 0 : totalLintPass / totalProposals,
+  };
+}
+
+// ── Longitudinal metrics (§6.4) ────────────────────────────────────────────
+
+/** Per-task longitudinal degradation row. */
+export interface DegradationRow {
+  taskId: string;
+  prePassRate: number;
+  postPassRate: number;
+  delta: number;
+  /** Failure-mode label for the post arm if the task failed (for §6.6 cross-link). */
+  failureMode: FailureMode | null;
+}
+
+/** Longitudinal metrics envelope (§6.4). */
+export interface LongitudinalMetrics {
+  /** `pass_rate(post) - pass_rate(pre)`, akm arm of each report. */
+  improvementSlope: number;
+  /** `pass_rate(post) - pass_rate(synthetic)`. */
+  overSyntheticLift: number;
+  /**
+   * Number of eval tasks where pass_rate(post) < pass_rate(pre) by more than
+   * 1 seed (i.e. `pre - post > 1 / seedsPerArm`). Lists the offending tasks
+   * with their post-arm failureMode label.
+   */
+  degradationCount: number;
+  degradations: DegradationRow[];
+  /** Echo of the pre / post / synthetic akm pass rates for the report header. */
+  prePassRate: number;
+  postPassRate: number;
+  syntheticPassRate: number;
+}
+
+/**
+ * Compute longitudinal metrics from three §13.3 utility-shaped reports. Each
+ * input report is expected to share the same eval-slice corpus, with one arm
+ * driving the akm side: `pre` = pre-evolve stash, `post` = evolved stash,
+ * `synthetic` = no-stash scratchpad arm.
+ *
+ * The "arm" we read off each report is `aggregateAkm.passRate` — the runners
+ * produce the akm arm for all three (synthetic is just the akm arm with a
+ * stripped stashDir; pre/post differ by stash content). `seedsPerArm` for
+ * the degradation threshold is taken from the post report's corpus envelope.
+ */
+export function computeLongitudinalMetrics(
+  preReport: UtilityRunReport,
+  postReport: UtilityRunReport,
+  syntheticReport: UtilityRunReport,
+): LongitudinalMetrics {
+  const prePassRate = preReport.aggregateAkm.passRate;
+  const postPassRate = postReport.aggregateAkm.passRate;
+  const syntheticPassRate = syntheticReport.aggregateAkm.passRate;
+
+  const seedsPerArm = Math.max(1, postReport.corpus.seedsPerArm);
+  const oneSeedFraction = 1 / seedsPerArm;
+
+  // Per-task degradation: outer-join pre and post on task id.
+  const preTasks = new Map<string, UtilityRunReport["tasks"][number]>();
+  for (const t of preReport.tasks) preTasks.set(t.id, t);
+  const postTasks = new Map<string, UtilityRunReport["tasks"][number]>();
+  for (const t of postReport.tasks) postTasks.set(t.id, t);
+
+  // Index post failure-mode labels by task id (one mode per task — first
+  // failed run wins; matches the §6.6 by-task aggregate's natural ordering).
+  const postFailureByTask: Record<string, FailureMode | undefined> = {};
+  const postFailureByTaskMap = postReport.failureModes?.byTask ?? {};
+  for (const [taskId, byMode] of Object.entries(postFailureByTaskMap)) {
+    const labels = Object.keys(byMode) as FailureMode[];
+    if (labels.length > 0) postFailureByTask[taskId] = labels[0];
+  }
+
+  const degradations: DegradationRow[] = [];
+  const allIds = new Set<string>();
+  for (const id of preTasks.keys()) allIds.add(id);
+  for (const id of postTasks.keys()) allIds.add(id);
+  for (const id of [...allIds].sort()) {
+    const pre = preTasks.get(id);
+    const post = postTasks.get(id);
+    if (!pre || !post) continue;
+    const preRate = pre.akm.passRate;
+    const postRate = post.akm.passRate;
+    const dropped = preRate - postRate;
+    if (dropped > oneSeedFraction) {
+      degradations.push({
+        taskId: id,
+        prePassRate: preRate,
+        postPassRate: postRate,
+        delta: postRate - preRate,
+        failureMode: postFailureByTask[id] ?? null,
+      });
+    }
+  }
+
+  return {
+    improvementSlope: postPassRate - prePassRate,
+    overSyntheticLift: postPassRate - syntheticPassRate,
+    degradationCount: degradations.length,
+    degradations,
+    prePassRate,
+    postPassRate,
+    syntheticPassRate,
+  };
+}
+
+// ── Feedback-signal integrity (§6.8) ───────────────────────────────────────
+
+/**
+ * Per-asset 2×2 confusion matrix row.
+ *
+ * `feedback_agreement`, `false_positive_rate`, and `false_negative_rate`
+ * are `null` (NaN-safe sentinel) when the relevant denominator is 0 — i.e.
+ * an asset with zero feedback events emits all rates as `null`, never `0`
+ * or `NaN`.
+ */
+export interface FeedbackIntegrityPerAssetRow {
+  ref: string;
+  /** Feedback `+`, run passed. */
+  truePositive: number;
+  /** Feedback `+`, run failed (agent was wrong). */
+  falsePositive: number;
+  /** Feedback `−`, run failed. */
+  trueNegative: number;
+  /** Feedback `−`, run passed. */
+  falseNegative: number;
+  /** `(TP+TN) / total`, or `null` when no feedback events. */
+  feedback_agreement: number | null;
+  /** `FP / (FP+TN)`, or `null` when `FP+TN === 0`. */
+  false_positive_rate: number | null;
+  /** `FN / (FN+TP)`, or `null` when `FN+TP === 0`. */
+  false_negative_rate: number | null;
+}
+
+/**
+ * Aggregate confusion-matrix envelope. The aggregate fields use the same
+ * NaN-safe rules as per-asset, except `feedback_coverage` which is always
+ * a finite number in `[0, 1]` (denominator is total Phase 1 runs; a
+ * caller with zero runs gets `0`).
+ */
+export interface FeedbackIntegrityAggregate {
+  truePositive: number;
+  falsePositive: number;
+  trueNegative: number;
+  falseNegative: number;
+  feedback_agreement: number;
+  false_positive_rate: number;
+  false_negative_rate: number;
+  /** (Phase-1 runs with any feedback dispatched) / (total Phase 1 runs). */
+  feedback_coverage: number;
+}
+
+/** §6.8 envelope: aggregate matrix + per-asset breakdown. */
+export interface FeedbackIntegrityMetrics {
+  aggregate: FeedbackIntegrityAggregate;
+  perAsset: FeedbackIntegrityPerAssetRow[];
+}
+
+/**
+ * Inputs to `computeFeedbackIntegrity`.
+ *
+ * `phase1` is the Phase 1 utility report (akm arm, train slice). Each
+ * `phase1.akmRuns[i]` carries `taskId`, `seed`, and `outcome`. The bench's
+ * Phase 1 dispatches at most one feedback event per run (positive on pass,
+ * negative on fail; harness_error runs are skipped). `feedbackLog[i]` is
+ * the dispatched record carrying `taskId`, `seed`, `goldRef`, and the
+ * dispatched `signal`.
+ *
+ * Attribution rule (§6.8): each `feedbackLog` entry is joined to the run
+ * with the matching `(taskId, seed)`. The run's `outcome` (NOT the asset's
+ * later state) decides the matrix cell. Runs whose feedback failed to
+ * dispatch (`feedbackLog[i].ok === false`) are excluded from the matrix
+ * but still count toward `feedback_coverage` denominators only when they
+ * appear in `phase1.akmRuns`. Specifically, a feedback event that the
+ * runner *attempted* to dispatch counts against `feedback_coverage` — but
+ * if it failed (ok=false) it is not labelled into TP/FP/TN/FN. This
+ * mirrors how the runner treats the dispatch as best-effort.
+ */
+export interface FeedbackIntegrityInput {
+  /**
+   * Phase 1 utility report. Only `akmRuns` is consulted (each carries
+   * `taskId`, `seed`, `outcome`).
+   */
+  phase1: { akmRuns?: RunResult[] };
+  /**
+   * Phase 1 feedback dispatch log produced by the runner. Each entry
+   * carries `taskId`, `seed`, `goldRef`, the dispatched `signal`, and a
+   * boolean `ok` (true iff the akm CLI exited 0).
+   */
+  feedbackLog: Array<{
+    taskId: string;
+    seed: number;
+    goldRef: string;
+    signal: "positive" | "negative";
+    ok: boolean;
+  }>;
+}
+
+/**
+ * Compute the §6.8 feedback-signal integrity confusion matrix.
+ *
+ * Pure function — does not touch disk and does not invoke any subprocess.
+ * The join is by `(taskId, seed)` so that a feedback event is attributed
+ * to the run that produced it, NOT to a later run that happens to touch
+ * the same gold ref. This matters when the same gold ref appears across
+ * multiple Phase 1 runs (e.g. multiple seeds, or two tasks sharing a
+ * skill); the per-asset row aggregates across all runs that referenced it
+ * in feedback, but each individual feedback event's matrix cell is
+ * decided by its own run's outcome.
+ *
+ * NaN-safety: a per-asset row with zero feedback events (cannot happen via
+ * this function — every row is derived from at least one feedback entry —
+ * but defensive against future callers passing curated subsets) emits all
+ * three rates as `null`. `false_positive_rate` is `null` when `FP+TN===0`
+ * even if the row has `FN+TP>0`, and vice versa.
+ */
+export function computeFeedbackIntegrity(input: FeedbackIntegrityInput): FeedbackIntegrityMetrics {
+  const akmRuns = input.phase1.akmRuns ?? [];
+  // Build a (taskId, seed) → outcome lookup so every feedback event
+  // resolves in O(1). When two runs share the same key (shouldn't happen
+  // — runner emits unique seeds per task — but defensive) the first
+  // wins.
+  const runOutcomeByKey = new Map<string, RunResult["outcome"]>();
+  for (const r of akmRuns) {
+    const key = `${r.taskId}::${r.seed}`;
+    if (!runOutcomeByKey.has(key)) runOutcomeByKey.set(key, r.outcome);
+  }
+
+  // Per-asset accumulator. We key on goldRef.
+  interface AssetCounts {
+    truePositive: number;
+    falsePositive: number;
+    trueNegative: number;
+    falseNegative: number;
+  }
+  const perRef = new Map<string, AssetCounts>();
+  let aggTP = 0;
+  let aggFP = 0;
+  let aggTN = 0;
+  let aggFN = 0;
+
+  // Track which (taskId, seed) keys had any feedback dispatched (ok or
+  // not), for the coverage denominator. We count an attempted dispatch as
+  // covered — if `ok===false`, the operator wanted feedback but the CLI
+  // failed; that's still a covered run for the purpose of §6.8 (and is
+  // surfaced in the warnings list elsewhere).
+  const coveredKeys = new Set<string>();
+
+  for (const fb of input.feedbackLog) {
+    const key = `${fb.taskId}::${fb.seed}`;
+    coveredKeys.add(key);
+    if (!fb.ok) continue; // failed dispatches don't label a matrix cell.
+    const outcome = runOutcomeByKey.get(key);
+    if (outcome === undefined) continue; // run not found — defensive, drop.
+    // harness_error runs are not labelled (the bench skips dispatching
+    // feedback for them; if a fake test injects one, we drop it from the
+    // matrix to avoid mislabelling).
+    if (outcome === "harness_error") continue;
+    const passed = outcome === "pass";
+
+    let row = perRef.get(fb.goldRef);
+    if (!row) {
+      row = { truePositive: 0, falsePositive: 0, trueNegative: 0, falseNegative: 0 };
+      perRef.set(fb.goldRef, row);
+    }
+    if (fb.signal === "positive" && passed) {
+      row.truePositive += 1;
+      aggTP += 1;
+    } else if (fb.signal === "positive" && !passed) {
+      row.falsePositive += 1;
+      aggFP += 1;
+    } else if (fb.signal === "negative" && !passed) {
+      row.trueNegative += 1;
+      aggTN += 1;
+    } else if (fb.signal === "negative" && passed) {
+      row.falseNegative += 1;
+      aggFN += 1;
+    }
+  }
+
+  const aggTotal = aggTP + aggFP + aggTN + aggFN;
+  const totalPhase1Runs = akmRuns.length;
+
+  const aggregate: FeedbackIntegrityAggregate = {
+    truePositive: aggTP,
+    falsePositive: aggFP,
+    trueNegative: aggTN,
+    falseNegative: aggFN,
+    feedback_agreement: aggTotal === 0 ? 0 : (aggTP + aggTN) / aggTotal,
+    false_positive_rate: aggFP + aggTN === 0 ? 0 : aggFP / (aggFP + aggTN),
+    false_negative_rate: aggFN + aggTP === 0 ? 0 : aggFN / (aggFN + aggTP),
+    feedback_coverage: totalPhase1Runs === 0 ? 0 : coveredKeys.size / totalPhase1Runs,
+  };
+
+  const perAsset: FeedbackIntegrityPerAssetRow[] = [];
+  for (const [ref, row] of [...perRef.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const total = row.truePositive + row.falsePositive + row.trueNegative + row.falseNegative;
+    const fpDenom = row.falsePositive + row.trueNegative;
+    const fnDenom = row.falseNegative + row.truePositive;
+    perAsset.push({
+      ref,
+      truePositive: row.truePositive,
+      falsePositive: row.falsePositive,
+      trueNegative: row.trueNegative,
+      falseNegative: row.falseNegative,
+      feedback_agreement: total === 0 ? null : (row.truePositive + row.trueNegative) / total,
+      false_positive_rate: fpDenom === 0 ? null : row.falsePositive / fpDenom,
+      false_negative_rate: fnDenom === 0 ? null : row.falseNegative / fnDenom,
+    });
+  }
+
+  return { aggregate, perAsset };
+}
