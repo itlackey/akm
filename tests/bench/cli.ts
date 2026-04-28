@@ -4,12 +4,11 @@
  *
  * Subcommands:
  *   • `utility`    — paired noakm vs akm utility benchmark (Track A).
+ *   • `compare`    — diff two report JSON files; refuses on hash/model mismatch.
+ *   • `attribute`  — per-asset marginal contribution via leave-one-out masking.
  *   • `evolve`     — longitudinal evolution loop (Track B). Stub.
- *   • `compare`    — diff two report JSON files. Stub.
- *   • `attribute`  — per-asset marginal contribution. Stub.
  *
- * #238 wires `utility` to the K-seed runner and §13.3 report renderer. The
- * other three subcommands stay as "not yet implemented" pointers.
+ * Implementation status and validity rules live in `tests/bench/BENCH.md`.
  *
  * NOTE: The bench binary is intentionally argv-light. citty is the project's
  * CLI framework but the bench is not part of the public CLI surface, so a
