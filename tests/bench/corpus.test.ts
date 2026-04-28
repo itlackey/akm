@@ -257,7 +257,7 @@ describe("memory-operation tags (#262)", () => {
   test("every seeded corpus task carries memory_ability + task_family", () => {
     for (const task of listTasks()) {
       expect(task.memoryAbility).toBeDefined();
-      expect(MEMORY_ABILITY_VALUES).toContain(task.memoryAbility as string);
+      expect(MEMORY_ABILITY_VALUES as readonly string[]).toContain(task.memoryAbility as string);
       expect(task.taskFamily).toBeDefined();
       expect(task.taskFamily).toMatch(/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/);
     }

@@ -467,7 +467,7 @@ describe("Score boosts", () => {
     expect(resolvedGeneratedHit.score).toBeDefined();
     // Scores are rounded to 2 decimal places, so small boosts may tie.
     // Verify curated ranks at least as high (sort order preserves pre-rounding order).
-    expect(resolvedCuratedHit.score).toBeGreaterThanOrEqual(resolvedGeneratedHit.score);
+    expect(resolvedCuratedHit.score).toBeGreaterThanOrEqual(resolvedGeneratedHit.score as number);
     expect(resolvedCuratedHit.whyMatched).toBeDefined();
     expect(resolvedCuratedHit.whyMatched).toContain("curated metadata boost");
   });
@@ -617,7 +617,7 @@ describe("Source filtering", () => {
     for (const hit of result.hits) {
       expect(hit.type).not.toBe("registry");
       if (hit.type !== "registry") {
-        expect(hit.origin).toBeNull();
+        expect((hit as { origin?: string | null }).origin).toBeNull();
         expect(hit.action).toContain("akm show");
       }
     }

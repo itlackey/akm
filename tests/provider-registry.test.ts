@@ -8,10 +8,13 @@ describe("provider-registry", () => {
   });
 
   test("registerProvider + resolveProviderFactory round-trips", () => {
-    const factory = () => ({
+    const factory = (() => ({
       type: "test-provider",
       search: async () => ({ hits: [] }),
-    });
+      searchKits: async () => [],
+      getKit: async () => null,
+      canHandle: () => false,
+    })) as unknown as Parameters<typeof registerProvider>[1];
     registerProvider("test-roundtrip", factory);
     expect(resolveProviderFactory("test-roundtrip")).toBe(factory);
   });

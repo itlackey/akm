@@ -405,7 +405,7 @@ describe("akm events tail (streaming trailer)", () => {
     expect(last.schemaVersion).toBe(1);
     expect(typeof last.nextOffset).toBe("number");
     expect(last.totalCount).toBe(2);
-    expect(["maxEvents", "signal", "maxDuration"]).toContain(last.reason);
+    expect(["maxEvents", "signal", "maxDuration"]).toContain(last.reason as string);
   });
 
   test("--format text writes a trailer line to stderr (stdout stays pristine)", () => {

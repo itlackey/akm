@@ -462,11 +462,11 @@ describe("hit shape", () => {
       const result = await searchRegistry("itlackey", { registries: [{ url: srv.url }] });
       const legacyCuratedHit = result.hits.find((h) => h.id === "github:itlackey/dimm-city-stash");
       expect(legacyCuratedHit).toBeDefined();
-      expect(legacyCuratedHit as Record<string, unknown>).not.toHaveProperty("curated");
+      expect(legacyCuratedHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
 
       const autoHit = result.hits.find((h) => h.id === "npm:@itlackey/openkit");
       expect(autoHit).toBeDefined();
-      expect(autoHit as Record<string, unknown>).not.toHaveProperty("curated");
+      expect(autoHit as unknown as Record<string, unknown>).not.toHaveProperty("curated");
     } finally {
       srv.close();
     }
@@ -668,7 +668,7 @@ describe("incomplete hits filter (#159)", () => {
       ref: "github:owner/good",
       installRef: "github:owner/good",
     };
-    registerProvider("incomplete-hits-test", () => ({
+    registerProvider("incomplete-hits-test", (() => ({
       type: "incomplete-hits-test",
       async search() {
         return {
@@ -676,7 +676,7 @@ describe("incomplete hits filter (#159)", () => {
           hits: [{} as never, { source: "github", title: "x" } as never, goodHit],
         };
       },
-    }));
+    })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
       registries: [{ url: "http://unused", provider: "incomplete-hits-test" }],
@@ -689,7 +689,7 @@ describe("incomplete hits filter (#159)", () => {
 
   test("incomplete asset hits are dropped from assetHits", async () => {
     const { registerProvider } = await import("../src/registry/factory");
-    registerProvider("incomplete-assets-test", () => ({
+    registerProvider("incomplete-assets-test", (() => ({
       type: "incomplete-assets-test",
       async search() {
         return {
@@ -707,7 +707,7 @@ describe("incomplete hits filter (#159)", () => {
           ],
         };
       },
-    }));
+    })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
       registries: [{ url: "http://unused", provider: "incomplete-assets-test" }],
@@ -722,7 +722,7 @@ describe("incomplete hits filter (#159)", () => {
   // are also incomplete and must not propagate to JSON output.
   test("asset hits with missing or empty stash fields are dropped", async () => {
     const { registerProvider } = await import("../src/registry/factory");
-    registerProvider("incomplete-stash-test", () => ({
+    registerProvider("incomplete-stash-test", (() => ({
       type: "incomplete-stash-test",
       async search() {
         return {
@@ -762,7 +762,7 @@ describe("incomplete hits filter (#159)", () => {
           ],
         };
       },
-    }));
+    })) as unknown as Parameters<typeof registerProvider>[1]);
 
     const result = await searchRegistry("anything", {
       registries: [{ url: "http://unused", provider: "incomplete-stash-test" }],

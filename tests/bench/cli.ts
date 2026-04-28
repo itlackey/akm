@@ -415,6 +415,7 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     aggregateAkm: extractCorpusMetrics(baseEnvelope, "akm"),
     aggregateDelta: extractCorpusMetrics(baseEnvelope, "delta"),
     trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+    failureModes: { byLabel: {}, byTask: {} },
     tasks: [],
     warnings: [],
     perAsset,

@@ -331,7 +331,7 @@ describe("listStashes", () => {
 
     expect(result.localSources).toBeDefined();
     expect(result.sources).toEqual([]);
-    expect(result.remoteSources).toBeUndefined();
+    expect((result as unknown as { remoteSources?: unknown }).remoteSources).toBeUndefined();
   });
 
   test("lists filesystem stash sources", () => {

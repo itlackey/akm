@@ -119,7 +119,7 @@ describe("akm manifest", () => {
     expect(typeof entry.ref).toBe("string");
 
     // Must NOT have full search hit fields like path, tags, score, action, whyMatched
-    const raw = entry as Record<string, unknown>;
+    const raw = entry as unknown as Record<string, unknown>;
     expect(raw.path).toBeUndefined();
     expect(raw.tags).toBeUndefined();
     expect(raw.score).toBeUndefined();
@@ -183,7 +183,7 @@ describe("akm manifest", () => {
 
     // Verify no entry carries heavyweight fields
     for (const entry of result.entries) {
-      const raw = entry as Record<string, unknown>;
+      const raw = entry as unknown as Record<string, unknown>;
       expect(raw.path).toBeUndefined();
       expect(raw.tags).toBeUndefined();
       expect(raw.score).toBeUndefined();
