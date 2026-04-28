@@ -55,6 +55,51 @@ export interface WriteTargetSource {
  */
 const REJECTED_WRITABLE_KINDS: ReadonlySet<string> = new Set(["website", "npm"]);
 
+/**
+ * Maximum length of a sanitized git commit message. Git itself imposes no
+ * fixed limit, but message strings come from refs and `--message` flags that
+ * can be supplied by users or upstream config. A 4096-char clamp keeps audit
+ * trails readable and prevents pathological payloads from bloating the log
+ * stream a downstream consumer parses.
+ */
+const COMMIT_MESSAGE_MAX_LENGTH = 4096;
+
+/**
+ * Sanitize a string before passing it as `git commit -m <message>`.
+ *
+ * Defenses, in order:
+ *   1. Strip NUL bytes (`\0`) — git rejects them anyway, but we never want
+ *      them in argv.
+ *   2. Replace any CR/LF (`\r`, `\n`) and other ASCII control chars with a
+ *      single space. This collapses newline-injection attempts that would
+ *      otherwise turn a single-line commit subject into a forged trailer
+ *      block.
+ *   3. Collapse runs of whitespace into a single space and trim.
+ *   4. Clamp to {@link COMMIT_MESSAGE_MAX_LENGTH} characters.
+ *
+ * If the result is empty after sanitization the caller should substitute a
+ * default — this helper returns `""` rather than throwing because not every
+ * callsite has a sensible "invalid input" exit code, and "empty" is a
+ * recoverable signal.
+ */
+export function sanitizeCommitMessage(input: string): string {
+  if (typeof input !== "string") return "";
+  // 1. Strip NULs outright.
+  let out = input.replace(/\0/g, "");
+  // 2. Replace CR/LF + other C0 control characters (0x00-0x1F, 0x7F) with a
+  //    space. Tab (0x09) is included intentionally — commit subjects should
+  //    be a single visual line.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional sanitization
+  out = out.replace(/[\x00-\x1F\x7F]/g, " ");
+  // 3. Collapse whitespace runs and trim.
+  out = out.replace(/\s+/g, " ").trim();
+  // 4. Clamp length.
+  if (out.length > COMMIT_MESSAGE_MAX_LENGTH) {
+    out = out.slice(0, COMMIT_MESSAGE_MAX_LENGTH).trimEnd();
+  }
+  return out;
+}
+
 // ── Public helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -300,11 +345,17 @@ function runGitCommit(repoDir: string, filePath: string, message: string): void 
     throw new Error(`git add failed: ${addResult.stderr?.trim() || "unknown error"}`);
   }
 
+  // Defense in depth: sanitize the commit subject one more time at the spawn
+  // boundary. Callers should already pass sanitized strings (via
+  // formatRefForMessage / saveGitStash), but this guards against future
+  // refactors that forget. Empty after sanitize falls back to a safe stub.
+  const safeMessage = sanitizeCommitMessage(message) || "akm update";
+
   // Provide a fallback identity so fresh CI/test environments without
   // user.name/user.email configured can always commit.
   const commitResult = spawnSync(
     "git",
-    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", message],
+    ["-C", repoDir, "-c", "user.name=akm", "-c", "user.email=akm@local", "commit", "-m", safeMessage],
     { encoding: "utf8" },
   );
   if (commitResult.status !== 0) {
@@ -329,7 +380,16 @@ function runGitPush(repoDir: string): void {
 }
 
 function formatRefForMessage(ref: AssetRef): string {
-  return ref.origin ? `${ref.origin}//${ref.type}:${ref.name}` : `${ref.type}:${ref.name}`;
+  // Sanitize each component independently. `ref.origin` originates from user
+  // config and could contain CR/LF that would otherwise be smuggled into the
+  // commit subject and forge trailers downstream. `ref.type` and `ref.name`
+  // are also sanitized defensively — the asset-spec validator should already
+  // reject control bytes there, but a single sanitizer at the boundary keeps
+  // the contract explicit and centralized.
+  const origin = ref.origin ? sanitizeCommitMessage(ref.origin) : "";
+  const type = sanitizeCommitMessage(ref.type);
+  const name = sanitizeCommitMessage(ref.name);
+  return origin ? `${origin}//${type}:${name}` : `${type}:${name}`;
 }
 
 /**
