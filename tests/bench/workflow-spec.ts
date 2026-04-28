@@ -121,6 +121,7 @@ export interface WorkflowSpec {
 // ── Errors ─────────────────────────────────────────────────────────────────
 
 export class WorkflowSpecError extends Error {
+  readonly code = "WORKFLOW_SPEC_INVALID" as const;
   constructor(
     message: string,
     readonly specPath: string,
