@@ -29,10 +29,18 @@ import type { TaskMetadata, TaskSlice } from "./corpus";
 import { type RunOptions, type RunResult, runOne } from "./driver";
 import {
   aggregateCorpus,
+  aggregateFailureModes,
   aggregatePerTask,
   aggregateTrajectory,
+  classifyFailureMode,
   computeCorpusDelta,
+  computePerAssetAttribution,
   computePerTaskDelta,
+  computeSearchBridge,
+  extractAssetLoads,
+  extractGoldRanks,
+  type FailureMode,
+  type GoldRankRunRecord,
   type PerTaskMetrics,
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
@@ -73,6 +81,13 @@ export interface RunUtilityOptions {
 type GroupedRuns = Map<string, Map<Arm, RunResult[]>>;
 
 /**
+ * Internal: gold-rank records collected across all akm-arm runs in the
+ * current `runUtility` call. Reduced into `searchBridge` once every run
+ * lands.
+ */
+type GoldRankAccumulator = GoldRankRunRecord[];
+
+/**
  * Run K seeds × len(arms) × len(tasks) and return the §13.3 report.
  *
  * The function is robust to per-run failures — `runOne` already captures
@@ -89,6 +104,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
 
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
+  const goldRankRecords: GoldRankAccumulator = [];
 
   for (const task of options.tasks) {
     const taskRuns = new Map<Arm, RunResult[]>();
@@ -136,6 +152,21 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             warnings,
           });
           armRuns.push(run);
+
+          // §6.7 search-pipeline bridge: only the akm arm consults the stash,
+          // and we only attribute ranks for tasks with a gold ref. Both
+          // guards mean noakm and gold-less runs are silently excluded.
+          if (arm === "akm" && task.goldRef) {
+            const searches = extractGoldRanks(run, task.goldRef);
+            goldRankRecords.push({
+              taskId: task.id,
+              arm,
+              seed,
+              outcome: run.outcome,
+              goldRef: task.goldRef,
+              searches,
+            });
+          }
         }
       }
     } finally {
@@ -149,6 +180,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     seedsPerArm,
     slice,
     warnings,
+    goldRankRecords,
   });
 }
 
@@ -195,7 +227,16 @@ async function runOneIsolated(args: {
     const trajectory = computeTrajectory({ goldRef: args.task.goldRef }, result, {
       warnings: args.warnings,
     });
-    return { ...result, trajectory };
+    // Per-asset attribution is post-processing on the trace; it's free, so we
+    // run it on every (task, arm, seed) result. The driver emits an empty
+    // assetsLoaded[]; this is where the real refs get filled. Spec §6.5.
+    const assetsLoaded = extractAssetLoads(result);
+    // Splice in the failure-mode label. Only the akm arm carries one; the
+    // noakm baseline is the control and isn't part of the §6.6 to-do list.
+    // `classifyFailureMode` returns null for non-failed runs.
+    const failureMode =
+      args.arm === "akm" ? classifyFailureMode(args.task, { ...result, trajectory, assetsLoaded }) : null;
+    return { ...result, trajectory, assetsLoaded, failureMode };
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
@@ -230,6 +271,7 @@ interface BuildReportArgs {
   seedsPerArm: number;
   slice: "all" | TaskSlice;
   warnings: string[];
+  goldRankRecords: GoldRankAccumulator;
 }
 
 function buildReport(args: BuildReportArgs): UtilityRunReport {
@@ -259,12 +301,25 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const aggregateDelta = computeCorpusDelta(aggregateNoakm, aggregateAkm);
   const trajectoryAkm = aggregateTrajectory(akmRunsAll);
 
+  // Failure-mode aggregate (§6.6). Walks every akm-arm run; runs that are
+  // not "fail" carry `failureMode: null` and are skipped here.
+  const failureEntries: Array<{ taskId: string; mode: FailureMode }> = [];
+  for (const r of akmRunsAll) {
+    if (r.failureMode) failureEntries.push({ taskId: r.taskId, mode: r.failureMode });
+  }
+  const failureModes = aggregateFailureModes(failureEntries);
+
   const domains = new Set(args.options.tasks.map((t) => t.domain)).size;
   const branch = args.options.branch ?? resolveGitBranch();
   const commit = args.options.commit ?? resolveGitCommit();
   const timestamp = args.options.timestamp ?? new Date().toISOString();
 
-  return {
+  // §6.7 — compute the search-pipeline bridge once over the whole corpus.
+  // The function tolerates an empty record list (renders the N/A sentence
+  // downstream).
+  const searchBridge = computeSearchBridge({ goldRankRecords: args.goldRankRecords });
+
+  const baseReport: UtilityRunReport = {
     timestamp,
     branch,
     commit,
@@ -279,7 +334,17 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     aggregateAkm,
     aggregateDelta,
     trajectoryAkm,
+    failureModes,
     tasks,
     warnings: args.warnings,
+    akmRuns: akmRunsAll,
+    taskMetadata: args.options.tasks,
+    goldRankRecords: args.goldRankRecords,
+    searchBridge,
   };
+  // Compute per-asset attribution as post-processing on the akm-arm runs
+  // we just collected. This is the §6.5 "free" diagnostic — it runs on every
+  // utility invocation, no extra spawns.
+  baseReport.perAsset = computePerAssetAttribution(baseReport);
+  return baseReport;
 }

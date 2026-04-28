@@ -14,7 +14,24 @@
  */
 
 import { execSync } from "node:child_process";
-import type { CorpusDelta, CorpusMetrics, OutcomeAggregate, PerTaskMetrics, TrajectoryAggregate } from "./metrics";
+import type { TaskMetadata } from "./corpus";
+import type { RunResult } from "./driver";
+import type {
+  CompareResult,
+  CompareTaskRow,
+  CorpusDelta,
+  CorpusMetrics,
+  DeltaSign,
+  FailureMode,
+  FailureModeAggregate,
+  GoldRankRunRecord,
+  OutcomeAggregate,
+  PerAssetAttribution,
+  PerTaskMetrics,
+  SearchBridgeMetrics,
+  TrajectoryAggregate,
+} from "./metrics";
+import { histogramKeys } from "./metrics";
 
 // ── Legacy envelope (#236) ─────────────────────────────────────────────────
 
@@ -99,8 +116,43 @@ export interface UtilityRunReport {
   aggregateAkm: CorpusMetrics;
   aggregateDelta: CorpusDelta;
   trajectoryAkm: TrajectoryAggregate;
+  /**
+   * Failure-mode taxonomy aggregate (§6.6). Counts and per-task breakdown
+   * across every failed akm-arm run in the corpus. Empty `byLabel` /
+   * `byTask` when no runs failed.
+   */
+  failureModes: FailureModeAggregate;
   tasks: UtilityReportTaskEntry[];
   warnings: string[];
+  /**
+   * Per-asset attribution rows (§6.5). Populated by the runner; aggregated
+   * across every akm-arm RunResult. Older artefacts without this field
+   * remain valid (callers should default to an empty `{ rows: [], totalAkmRuns: 0 }`).
+   */
+  perAsset?: PerAssetAttribution;
+  /**
+   * Raw akm-arm RunResults retained on the report for in-process consumers
+   * (the masked-corpus helper, attribution post-processing). NOT serialised
+   * into the §13.3 JSON envelope — too large and not part of the locked
+   * contract. The field is on the in-memory shape only.
+   */
+  akmRuns?: RunResult[];
+  /**
+   * Task metadata for in-process consumers (the masked-corpus helper needs
+   * to remap each task's stash to a tmp dir). Not serialised into the §13.3
+   * envelope — the existing `tasks[]` carries the public per-task aggregates.
+   */
+  taskMetadata?: TaskMetadata[];
+  /**
+   * Per-(akm-arm, goldRef) gold-rank records. Populated by the runner; read
+   * by `computeSearchBridge`. Empty when no corpus tasks carry a `goldRef`.
+   */
+  goldRankRecords?: GoldRankRunRecord[];
+  /**
+   * §6.7 search-pipeline bridge metrics. Always present on populated runs;
+   * an "empty" SearchBridgeMetrics envelope renders as the N/A sentence.
+   */
+  searchBridge?: SearchBridgeMetrics;
 }
 
 /**
@@ -125,7 +177,7 @@ function buildUtilityJson(input: UtilityRunReport): object {
     delta: serialiseDelta(t.delta),
   }));
 
-  return {
+  const envelope: Record<string, unknown> = {
     schemaVersion: 1,
     track: "utility",
     branch: input.branch,
@@ -144,9 +196,59 @@ function buildUtilityJson(input: UtilityRunReport): object {
         feedback_recorded: input.trajectoryAkm.feedbackRecorded,
       },
     },
+    failure_modes: {
+      by_label: input.failureModes.byLabel,
+      by_task: input.failureModes.byTask,
+    },
     tasks,
     warnings: input.warnings,
+    ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
+
+  // Per-asset attribution is an additive top-level key (§6.5). Emit it only
+  // when the runner populated it so older code paths (e.g. the empty-corpus
+  // skeleton) don't gain the key spuriously.
+  if (input.perAsset) {
+    envelope.perAsset = {
+      total_akm_runs: input.perAsset.totalAkmRuns,
+      rows: input.perAsset.rows.map((r) => ({
+        asset_ref: r.assetRef,
+        load_count: r.loadCount,
+        load_count_passing: r.loadCountPassing,
+        load_count_failing: r.loadCountFailing,
+        load_pass_rate: r.loadPassRate,
+      })),
+    };
+  }
+
+  return envelope;
+}
+
+/**
+ * §6.7 envelope. We expose `null` for percentiles that fell into the missing
+ * bucket so JSON consumers don't choke on `Infinity`.
+ */
+function serialiseSearchBridge(s: SearchBridgeMetrics): object {
+  return {
+    runs_observed: s.runsObserved,
+    searches_observed: s.searchesObserved,
+    gold_rank_distribution: s.goldRankDistribution,
+    gold_rank_p50: percentileForJson(s.goldRankP50),
+    gold_rank_p90: percentileForJson(s.goldRankP90),
+    gold_at_rank_1: s.goldAtRank1,
+    gold_missing: s.goldMissing,
+    pass_rate_by_rank: s.passRateByRank.map((e) => ({
+      rank: e.rank,
+      pass_rate: e.passRate,
+      run_count: e.runCount,
+    })),
+  };
+}
+
+function percentileForJson(value: number | null): number | string | null {
+  if (value === null) return null;
+  if (!Number.isFinite(value)) return "missing";
+  return value;
 }
 
 function serialiseCorpus(c: CorpusMetrics): {
@@ -222,6 +324,17 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   for (const t of sorted) {
     lines.push(taskRow(t));
   }
+  // Failure-mode breakdown (§6.6). Appended near the bottom so the headline
+  // pass-rate / trajectory tables stay visually anchored at the top.
+  const failureSection = renderFailureModeBreakdown(input);
+  if (failureSection.length > 0) {
+    lines.push("");
+    lines.push(failureSection);
+  }
+  if (input.searchBridge) {
+    lines.push("");
+    lines.push(renderSearchBridgeTable(input.searchBridge));
+  }
   if (input.warnings.length > 0) {
     lines.push("");
     lines.push("## Warnings");
@@ -229,6 +342,63 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
     for (const w of input.warnings) lines.push(`- ${w}`);
   }
   return lines.join("\n");
+}
+
+// ── Search-pipeline bridge (§6.7) markdown ─────────────────────────────────
+
+/**
+ * Render the §6.7 search-pipeline bridge as a markdown section.
+ *
+ * When the corpus has no gold-ref tasks (or simply no `akm search`
+ * invocations), the section collapses to a single "(N/A)" sentence so the
+ * report stays compact.
+ */
+export function renderSearchBridgeTable(metrics: SearchBridgeMetrics): string {
+  const lines: string[] = [];
+  lines.push("## Search → outcome bridge");
+  lines.push("");
+
+  if (metrics.searchesObserved === 0 && metrics.runsObserved === 0) {
+    lines.push("(no gold-ref tasks in corpus; bridge metrics N/A)");
+    return lines.join("\n");
+  }
+
+  // Histogram of gold rank.
+  lines.push("| rank | count |");
+  lines.push("|------|-------|");
+  for (const k of histogramKeys()) {
+    const count = metrics.goldRankDistribution[k] ?? 0;
+    lines.push(`| ${k} | ${count} |`);
+  }
+  lines.push("");
+
+  // Summary line.
+  const p50 = formatRank(metrics.goldRankP50);
+  const p90 = formatRank(metrics.goldRankP90);
+  lines.push(
+    `p50=${p50}, p90=${p90}, gold_at_rank_1=${formatPercent(metrics.goldAtRank1)}, gold_missing=${formatPercent(
+      metrics.goldMissing,
+    )}`,
+  );
+  lines.push("");
+
+  // pass_rate_by_rank.
+  lines.push("| rank | pass_rate | run_count |");
+  lines.push("|------|-----------|-----------|");
+  if (metrics.passRateByRank.length === 0) {
+    lines.push("| (no runs with `akm search` invocations) | — | 0 |");
+  } else {
+    for (const entry of metrics.passRateByRank) {
+      lines.push(`| ${entry.rank} | ${entry.passRate.toFixed(2)} | ${entry.runCount} |`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatRank(value: number | null): string {
+  if (value === null) return "n/a";
+  if (!Number.isFinite(value)) return "missing";
+  return value.toFixed(1);
 }
 
 function corpusRow(arm: string, c: CorpusMetrics): string {
@@ -254,6 +424,243 @@ function signed(text: string): string {
 function formatPercent(value: number | null): string {
   if (value === null) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+// ── Compare rendering (§8) ─────────────────────────────────────────────────
+
+/**
+ * Render a CompareResult as a deterministic markdown diff.
+ *
+ * Determinism: no timestamps, no run IDs, no git SHAs in the body — the diff
+ * is a pure function of the two inputs' aggregated numbers and per-task
+ * tables. Per-task rows are sorted alphabetically (already done by
+ * `compareReports`, but re-asserted here defensively).
+ *
+ * Refusal cases (model mismatch, hash mismatch, schema/track issues) render
+ * as a single error block instead of a diff table — there's nothing
+ * actionable to show, and the operator's recovery path is in the message.
+ */
+export function renderCompareMarkdown(result: CompareResult): string {
+  if (!result.ok) {
+    return renderCompareFailure(result);
+  }
+  return renderCompareSuccess(result);
+}
+
+function renderCompareFailure(result: Extract<CompareResult, { ok: false }>): string {
+  const lines: string[] = [];
+  lines.push(`# akm-bench compare — refused (${result.reason})`);
+  lines.push("");
+  lines.push(result.message);
+  if (result.reason === "model_mismatch" && result.baseModel !== undefined && result.currentModel !== undefined) {
+    lines.push("");
+    lines.push(`- base model:    \`${result.baseModel}\``);
+    lines.push(`- current model: \`${result.currentModel}\``);
+  }
+  if (
+    result.reason === "hash_mismatch" &&
+    result.baseFixtureContentHash !== undefined &&
+    result.currentFixtureContentHash !== undefined
+  ) {
+    lines.push("");
+    lines.push(`- base fixture hash:    \`${String(result.baseFixtureContentHash)}\``);
+    lines.push(`- current fixture hash: \`${String(result.currentFixtureContentHash)}\``);
+    if (result.affectedFixtures && result.affectedFixtures.length > 0) {
+      lines.push("");
+      lines.push("affected fixtures:");
+      for (const f of result.affectedFixtures) lines.push(`- ${f}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function renderCompareSuccess(result: Extract<CompareResult, { ok: true }>): string {
+  const lines: string[] = [];
+  lines.push(`# akm-bench compare — \`${result.currentModel}\``);
+  lines.push("");
+  if (result.baseFixtureContentHash !== null || result.currentFixtureContentHash !== null) {
+    const b = result.baseFixtureContentHash === null ? "n/a" : `\`${result.baseFixtureContentHash}\``;
+    const c = result.currentFixtureContentHash === null ? "n/a" : `\`${result.currentFixtureContentHash}\``;
+    lines.push(`fixture-content hash: base=${b}, current=${c}`);
+    lines.push("");
+  }
+  lines.push("## Aggregate (akm arm, current − base)");
+  lines.push("");
+  lines.push("| metric | delta | direction |");
+  lines.push("|--------|-------|-----------|");
+  lines.push(
+    `| pass_rate | ${signedFixed(result.aggregate.passRateDelta, 2)} | ${signGlyph(result.aggregate.passRateSign)} |`,
+  );
+  lines.push(
+    `| tokens_per_pass | ${nullableSignedFixed(result.aggregate.tokensPerPassDelta, 0)} | ${signGlyph(result.aggregate.tokensPerPassSign)} |`,
+  );
+  lines.push(
+    `| wallclock_ms | ${signedFixed(result.aggregate.wallclockMsDelta, 0)} | ${signGlyph(result.aggregate.wallclockMsSign)} |`,
+  );
+  lines.push("");
+  lines.push("## Per-task (akm arm)");
+  lines.push("");
+  lines.push("| task | base pass_rate | current pass_rate | delta | dir | base stdev | current stdev |");
+  lines.push("|------|----------------|-------------------|-------|-----|------------|---------------|");
+  const sorted = [...result.perTask].sort((a, b) => a.id.localeCompare(b.id));
+  for (const row of sorted) lines.push(perTaskCompareRow(row));
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push("## Warnings");
+    lines.push("");
+    for (const w of result.warnings) lines.push(`- ${w}`);
+  }
+  return lines.join("\n");
+}
+
+function perTaskCompareRow(row: CompareTaskRow): string {
+  const baseRate = row.baseMetrics === null ? "n/a" : row.baseMetrics.pass_rate.toFixed(2);
+  const currentRate = row.currentMetrics === null ? "n/a" : row.currentMetrics.pass_rate.toFixed(2);
+  const delta = row.delta.passRate === null ? "n/a" : signedFixed(row.delta.passRate, 2);
+  const dir = signGlyph(row.signMarker);
+  const baseStdev = row.baseMetrics === null ? "n/a" : row.baseMetrics.pass_rate_stdev.toFixed(2);
+  const currentStdev = row.currentMetrics === null ? "n/a" : row.currentMetrics.pass_rate_stdev.toFixed(2);
+  const idCell = row.presence === "both" ? row.id : `${row.id} _(${row.presence})_`;
+  return `| ${idCell} | ${baseRate} | ${currentRate} | ${delta} | ${dir} | ${baseStdev} | ${currentStdev} |`;
+}
+
+function signGlyph(sign: DeltaSign): string {
+  if (sign === "improve") return "▲";
+  if (sign === "regress") return "▼";
+  return "▬";
+}
+
+function signedFixed(value: number, digits: number): string {
+  // Treat numerical zero (or values that round to "-0.00") as "0" so we
+  // never emit a misleading "+0.00" or "-0.00" in deterministic output.
+  const fixed = value.toFixed(digits);
+  if (fixed === "-0" || /^-0\.0+$/.test(fixed)) return (0).toFixed(digits);
+  if (value === 0) return fixed;
+  return value > 0 ? `+${fixed}` : fixed;
+}
+
+function nullableSignedFixed(value: number | null, digits: number): string {
+  if (value === null) return "n/a";
+  return signedFixed(value, digits);
+}
+
+// ── Attribution table rendering (§6.5) ─────────────────────────────────────
+
+/**
+ * Threshold for the "highly loaded" slice — assets with a load count at or
+ * above this fraction of the per-table maximum get bucketed into the "well
+ * used and working" / "well used and not working" callout sections.
+ */
+const HIGH_LOAD_THRESHOLD = 0.5;
+
+/**
+ * Threshold for "working" pass-rate. An asset is "working" if its
+ * load_pass_rate is at or above this; "not working" if below.
+ */
+const WORKING_PASS_RATE_THRESHOLD = 0.5;
+
+/**
+ * Render a per-asset attribution table as markdown. Sort order matches
+ * `computePerAssetAttribution` (load count desc, pass rate desc, ref asc).
+ *
+ * The output has three sections:
+ *   1. Full sorted table.
+ *   2. "Well-used and working" callout — high load, high pass_rate.
+ *   3. "Well-used and not working" callout — high load, low pass_rate.
+ *
+ * The two callouts are the actionable slices: the first is what curation
+ * should preserve, the second is what should be improved or removed.
+ */
+export function renderAttributionTable(attr: PerAssetAttribution): string {
+  const lines: string[] = [];
+  lines.push("## Per-asset attribution");
+  lines.push("");
+  lines.push(`Total akm-arm runs aggregated: ${attr.totalAkmRuns}`);
+  lines.push("");
+
+  if (attr.rows.length === 0) {
+    lines.push("_No assets were loaded by the agent during akm-arm runs._");
+    return lines.join("\n");
+  }
+
+  lines.push("| asset_ref | load_count | load_count_passing | load_count_failing | load_pass_rate |");
+  lines.push("|-----------|------------|--------------------|--------------------|----------------|");
+  for (const row of attr.rows) {
+    lines.push(
+      `| \`${row.assetRef}\` | ${row.loadCount} | ${row.loadCountPassing} | ${row.loadCountFailing} | ${formatRate(row.loadPassRate)} |`,
+    );
+  }
+
+  // Slice callouts. We compute the high-load threshold relative to the
+  // top-loaded asset's count so this scales whether the corpus has 5 or 500
+  // total runs.
+  const topLoad = attr.rows[0]?.loadCount ?? 0;
+  const highLoadCutoff = Math.max(1, Math.ceil(topLoad * HIGH_LOAD_THRESHOLD));
+  const heavilyLoaded = attr.rows.filter((r) => r.loadCount >= highLoadCutoff);
+
+  const working = heavilyLoaded.filter((r) => (r.loadPassRate ?? 0) >= WORKING_PASS_RATE_THRESHOLD);
+  const notWorking = heavilyLoaded.filter((r) => (r.loadPassRate ?? 0) < WORKING_PASS_RATE_THRESHOLD);
+
+  lines.push("");
+  lines.push("### Well-used and working");
+  lines.push("");
+  if (working.length === 0) {
+    lines.push("_None._");
+  } else {
+    for (const r of working) {
+      lines.push(`- \`${r.assetRef}\` (load_count=${r.loadCount}, load_pass_rate=${formatRate(r.loadPassRate)})`);
+    }
+  }
+
+  lines.push("");
+  lines.push("### Well-used and NOT working");
+  lines.push("");
+  if (notWorking.length === 0) {
+    lines.push("_None._");
+  } else {
+    for (const r of notWorking) {
+      lines.push(`- \`${r.assetRef}\` (load_count=${r.loadCount}, load_pass_rate=${formatRate(r.loadPassRate)})`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatRate(value: number | null): string {
+  if (value === null) return "n/a";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+// ── Failure-mode breakdown (§6.6) ──────────────────────────────────────────
+
+/**
+ * Render the §6.6 "Failure modes" markdown section. Lines are sorted by
+ * descending count (ties broken alphabetically by label so output is
+ * byte-stable). Each line:
+ *
+ *   `<label> — <count> (<percent>% of failed runs)`
+ *
+ * Returns an empty string when no failed runs exist (caller decides whether
+ * to append a blank section header).
+ */
+export function renderFailureModeBreakdown(report: UtilityRunReport): string {
+  const entries = Object.entries(report.failureModes.byLabel) as Array<[FailureMode, number]>;
+  if (entries.length === 0) return "";
+  const totalFailures = entries.reduce((acc, [, count]) => acc + count, 0);
+  if (totalFailures === 0) return "";
+
+  // Sort by descending count, tie-break alphabetically for determinism.
+  entries.sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+
+  const lines: string[] = ["## Failure modes", ""];
+  for (const [label, count] of entries) {
+    const percent = ((count / totalFailures) * 100).toFixed(1);
+    lines.push(`- ${label} — ${count} (${percent}% of failed runs)`);
+  }
+  return lines.join("\n");
 }
 
 // ── Git helpers ────────────────────────────────────────────────────────────
