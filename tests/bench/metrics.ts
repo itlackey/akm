@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { safeRealpath } from "../../src/core/common";
 import { MEMORY_ABILITY_VALUES, type MemoryAbility, type TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import type { RunRecordSerialized, UtilityRunReport } from "./report";
@@ -998,8 +999,17 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
  *   3. Rewrite the `.stash.json` with the trimmed entries (or remove it if
  *      it is now empty).
  */
-function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRef: string): string | null {
-  const sourceDir = path.join(fixturesRoot, stashName);
+export function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRef: string): string | null {
+  // #271: validate stashName containment BEFORE touching the filesystem.
+  // `stashName` originates from a task YAML which, while authored, is part
+  // of the fixture corpus the bench loads; a fixture with `stash: "../../etc"`
+  // would otherwise resolve outside `fixturesRoot` and let masking edits or
+  // copies escape the bench sandbox. path.relative gives the cleanest
+  // containment check (handles `..` AND absolute path injection in one go).
+  const fixturesRootResolved = path.resolve(fixturesRoot);
+  const sourceDir = path.resolve(fixturesRootResolved, stashName);
+  const rel = path.relative(fixturesRootResolved, sourceDir);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
   if (!fs.existsSync(path.join(sourceDir, "MANIFEST.json"))) return null;
 
   // Issue #251 review addendum: validate the WHOLE ref against the anchored
@@ -1122,10 +1132,17 @@ function isSafeAssetNameSegment(value: string): boolean {
  * After resolving a target path, confirm it lives under `root`. Defense in
  * depth: even if a traversal-shaped name slipped past the segment check,
  * this catches escapes via symlinks or odd `path.join` semantics.
+ *
+ * #271: aligned with `isWithin` in `src/core/common.ts` — both inputs go
+ * through `safeRealpath` so a symlink inside `root` that points outside
+ * cannot fool the `path.relative` containment check. The shared helper
+ * also handles not-yet-existing children (walks up to the closest existing
+ * ancestor and resolves symlinks there) so we keep the existing semantics
+ * for `target` paths the masking heuristic is about to create.
  */
-function isPathContained(root: string, target: string): boolean {
-  const rootResolved = path.resolve(root);
-  const targetResolved = path.resolve(target);
+export function isPathContained(root: string, target: string): boolean {
+  const rootResolved = safeRealpath(root);
+  const targetResolved = safeRealpath(target);
   const rel = path.relative(rootResolved, targetResolved);
   if (rel === "") return true;
   if (rel.startsWith("..")) return false;

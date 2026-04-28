@@ -12,7 +12,9 @@ import path from "node:path";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 import {
   _ISOLATED_ENV_NAMES,
+  _SCRUBBED_OPERATOR_ENV_NAMES,
   buildIsolatedEnv,
+  buildSanitizedEnvSource,
   createIsolationDirs,
   EVENTS_READ_CAP_BYTES,
   parseTokenUsage,
@@ -229,6 +231,62 @@ describe("runOne", () => {
     }
   });
 
+  // ── #271: operator-env isolation (OPENCODE_API_KEY/ANTHROPIC_API_KEY/AKM_CONFIG_DIR)
+
+  test("operator env isolation: bench child never inherits OPENCODE_API_KEY/ANTHROPIC_API_KEY/AKM_CONFIG_DIR (#271)", async () => {
+    // Even though `OPENCODE_API_KEY` is in the opencode profile's
+    // `envPassthrough` list, the bench driver MUST scrub these operator-env
+    // names before profile.envPassthrough copies them into the child. This
+    // is the regression guard the #271 review identified — without it,
+    // operator credentials and the operator's `AKM_CONFIG_DIR` would leak
+    // into every (task × arm × seed) child.
+    const sentinels: Record<string, string> = {
+      OPENCODE_API_KEY: "sentinel-A-must-not-leak",
+      ANTHROPIC_API_KEY: "sentinel-B-must-not-leak",
+      AKM_CONFIG_DIR: "sentinel-C-must-not-leak",
+    };
+    const priors: Record<string, string | undefined> = {};
+    for (const [name, value] of Object.entries(sentinels)) {
+      priors[name] = process.env[name];
+      process.env[name] = value;
+    }
+    try {
+      const { spawn, invocations } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      await runOne({
+        ...baseOptions,
+        workspace,
+        arm: "akm",
+        stashDir: "/tmp/some-stash",
+        spawn,
+      });
+      const childEnv = invocations[0]?.env ?? {};
+      // None of the operator sentinels reach the child env that runAgent
+      // hands to spawn — neither as a key:value pair nor as a substring
+      // match (paranoid: confirm the literal sentinel strings are absent
+      // even from values like `OPENCODE_CONFIG`).
+      for (const name of _SCRUBBED_OPERATOR_ENV_NAMES) {
+        expect(childEnv[name]).toBeUndefined();
+      }
+      for (const sentinel of Object.values(sentinels)) {
+        for (const value of Object.values(childEnv)) {
+          expect(value).not.toContain(sentinel);
+        }
+      }
+      // The explicit bench keys ARE present and pinned to the per-run
+      // tmpdirs (sanity: the scrubbing didn't accidentally drop them).
+      expect(childEnv.XDG_CACHE_HOME).toBeDefined();
+      expect(childEnv.XDG_CONFIG_HOME).toBeDefined();
+      expect(childEnv.OPENCODE_CONFIG).toBeDefined();
+      expect(childEnv.AKM_STASH_DIR).toBe("/tmp/some-stash");
+      expect(childEnv.BENCH_OPENCODE_MODEL).toBe("anthropic/claude-opus-4-7");
+    } finally {
+      for (const [name, prior] of Object.entries(priors)) {
+        if (prior === undefined) delete process.env[name];
+        else process.env[name] = prior;
+      }
+    }
+  });
+
   // ── #261: synthetic-arm AKM_STASH_DIR isolation ─────────────────────────────
 
   test("synthetic arm: child env never carries AKM_STASH_DIR (recurrence guard for #243 fixup)", async () => {
@@ -299,6 +357,44 @@ describe("driver helpers", () => {
     const env2: Record<string, string | undefined> = { XDG_CACHE_HOME: "/tmp/cache" };
     stripAkmStashDir(env2);
     expect(env2).toEqual({ XDG_CACHE_HOME: "/tmp/cache" });
+  });
+
+  test("buildSanitizedEnvSource strips OPENCODE_API_KEY/ANTHROPIC_API_KEY/AKM_CONFIG_DIR (#271)", () => {
+    const source: NodeJS.ProcessEnv = {
+      OPENCODE_API_KEY: "leak-A",
+      ANTHROPIC_API_KEY: "leak-B",
+      AKM_CONFIG_DIR: "/operator/akm",
+      PATH: "/usr/bin",
+      HOME: "/home/op",
+      OPENCODE_CONFIG: "/operator/opencode",
+      UNRELATED: "kept",
+    };
+    const result = buildSanitizedEnvSource(source);
+    // Operator names removed.
+    expect(result.OPENCODE_API_KEY).toBeUndefined();
+    expect(result.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(result.AKM_CONFIG_DIR).toBeUndefined();
+    // Everything else preserved verbatim.
+    expect(result.PATH).toBe("/usr/bin");
+    expect(result.HOME).toBe("/home/op");
+    expect(result.OPENCODE_CONFIG).toBe("/operator/opencode");
+    expect(result.UNRELATED).toBe("kept");
+    // Result is a copy, not the same reference (caller can mutate freely).
+    expect(result).not.toBe(source);
+    // Source object is untouched.
+    expect(source.OPENCODE_API_KEY).toBe("leak-A");
+  });
+
+  test("buildSanitizedEnvSource defaults to process.env when no source given", () => {
+    const prior = process.env.OPENCODE_API_KEY;
+    process.env.OPENCODE_API_KEY = "default-source-leak";
+    try {
+      const result = buildSanitizedEnvSource();
+      expect(result.OPENCODE_API_KEY).toBeUndefined();
+    } finally {
+      if (prior === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = prior;
+    }
   });
 
   test("buildIsolatedEnv pins the four isolation keys plus model", () => {

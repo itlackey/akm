@@ -4,6 +4,10 @@
 
 import { describe, expect, test } from "bun:test";
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type { EventEnvelope } from "../../src/core/events";
 import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
@@ -26,7 +30,9 @@ import {
   computeWorkflowReliability,
   domainOfTaskId,
   type EpisodeRecord,
+  isPathContained,
   LEARNING_IMPROVEMENT_THRESHOLD,
+  materialiseMaskedStash,
   type PerTaskMetrics,
   type PerTaskTagEntry,
 } from "./metrics";
@@ -1104,5 +1110,147 @@ describe("computeLearningCurve", () => {
     expect(curve.episodes[1].cumulative_proposals_accepted).toBe(3);
     expect(curve.episodes[1].cumulative_lessons_created).toBe(3);
     expect(curve.episodes[1].lesson_reuse_rate).toBeCloseTo(0.42);
+  });
+});
+
+// ── #271: masked-stash path-traversal hardening ─────────────────────────────
+
+describe("materialiseMaskedStash stashName containment (#271)", () => {
+  function makeFixturesRoot(): { fixturesRoot: string; cleanup: () => void } {
+    const fixturesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-fixtures-"));
+    // Plant a sibling outside fixturesRoot that a traversal-shaped stashName
+    // could otherwise reach. The MANIFEST.json existence check would pass
+    // there if containment were not enforced.
+    const sibling = path.join(path.dirname(fixturesRoot), `sibling-${path.basename(fixturesRoot)}`);
+    fs.mkdirSync(sibling, { recursive: true });
+    fs.writeFileSync(path.join(sibling, "MANIFEST.json"), "{}");
+    return {
+      fixturesRoot,
+      cleanup: () => {
+        fs.rmSync(fixturesRoot, { recursive: true, force: true });
+        fs.rmSync(sibling, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("rejects stashName starting with '..' (relative traversal)", () => {
+    const { fixturesRoot, cleanup } = makeFixturesRoot();
+    try {
+      const sibling = `../sibling-${path.basename(fixturesRoot)}`;
+      const result = materialiseMaskedStash(fixturesRoot, sibling, "skill:foo");
+      expect(result).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rejects absolute stashName", () => {
+    const { fixturesRoot, cleanup } = makeFixturesRoot();
+    try {
+      const result = materialiseMaskedStash(fixturesRoot, "/etc", "skill:foo");
+      expect(result).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rejects nested traversal that would escape fixturesRoot", () => {
+    const { fixturesRoot, cleanup } = makeFixturesRoot();
+    try {
+      // path.resolve(fixturesRoot, "a/../../sibling-xyz") would land on
+      // the sibling directory if containment is not enforced.
+      const escapePath = `a/../../sibling-${path.basename(fixturesRoot)}`;
+      const result = materialiseMaskedStash(fixturesRoot, escapePath, "skill:foo");
+      expect(result).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("returns null (not a crash) for a contained stashName with no MANIFEST", () => {
+    const { fixturesRoot, cleanup } = makeFixturesRoot();
+    try {
+      // 'inner' is inside fixturesRoot but has no MANIFEST.json. Containment
+      // passes; the existing MANIFEST gate returns null. Sanity check that
+      // the new containment check did not accidentally reject the happy path.
+      fs.mkdirSync(path.join(fixturesRoot, "inner"));
+      const result = materialiseMaskedStash(fixturesRoot, "inner", "skill:foo");
+      expect(result).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("isPathContained symlink resolution (#271)", () => {
+  test("rejects a symlink inside root that points outside (alignment with isWithin)", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-root-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-outside-"));
+    try {
+      // The actual file lives outside `tmpRoot`. Without realpath alignment,
+      // path.resolve(tmpRoot, "escape") looks contained ('escape' is just a
+      // basename) and the masking heuristic would happily rmSync it.
+      const escapeTarget = path.join(outside, "victim");
+      fs.writeFileSync(escapeTarget, "do-not-delete");
+      const symlinkPath = path.join(tmpRoot, "escape");
+      try {
+        fs.symlinkSync(escapeTarget, symlinkPath);
+      } catch (err) {
+        // Some sandboxes (e.g. Windows w/o dev mode) deny symlink creation —
+        // skip rather than fail in those environments.
+        if (process.platform === "win32") return;
+        throw err;
+      }
+
+      // Without #271 alignment: rel === "escape" (contained). With
+      // safeRealpath: target resolves to `outside/victim` → rel starts with
+      // "..".
+      expect(isPathContained(tmpRoot, symlinkPath)).toBe(false);
+      // The victim file must still exist after the rejection (sanity check
+      // for the test fixture, not the function under test).
+      expect(fs.existsSync(escapeTarget)).toBe(true);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a symlink inside root that points back inside root", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-inside-"));
+    try {
+      const realFile = path.join(tmpRoot, "real");
+      fs.writeFileSync(realFile, "ok");
+      const linkPath = path.join(tmpRoot, "link");
+      try {
+        fs.symlinkSync(realFile, linkPath);
+      } catch (err) {
+        if (process.platform === "win32") return;
+        throw err;
+      }
+      expect(isPathContained(tmpRoot, linkPath)).toBe(true);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a non-existent child path under root (covers safeRealpath ancestor walk)", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-pending-"));
+    try {
+      const pending = path.join(tmpRoot, "not-yet-created", "child.md");
+      expect(isPathContained(tmpRoot, pending)).toBe(true);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an absolute target outside root", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-abs-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-abs-outside-"));
+    try {
+      expect(isPathContained(tmpRoot, path.join(outside, "x"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
