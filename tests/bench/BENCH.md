@@ -32,18 +32,37 @@ BENCH_OPENCODE_MODEL=anthropic/claude-haiku-4-5 \
 Subcommands:
 
 - `utility` — Track A: paired noakm vs akm utility benchmark.
-- `evolve` — Track B: longitudinal evolution loop. Stub in #236; lands in #239.
-- `compare` — diff two report JSON files. Stub in #236; lands in #240.
-- `attribute` — per-asset marginal contribution. Stub in #236; lands in #243.
+- `evolve` — Track B: longitudinal evolution loop.
+- `compare` — diff two report JSON files (refuses cross-model / cross-corpus / cross-fixture diffs).
+- `attribute` — per-asset marginal contribution via leave-one-out masking.
 
-`--tasks` accepts `train | eval | all`; any other value exits 2 with a clear
-error rather than silently coercing. The JSON envelope is **always** written
-to stdout — that is the bench's machine-readable contract and matches
-`tests/benchmark-suite.ts`. The `--json` flag means "machine-readable only":
-it suppresses the human-friendly markdown summary that is otherwise written to
-stderr alongside the JSON. Without `--json`, both stdout (JSON) and stderr
-(markdown summary) get content; with `--json`, stderr only carries minor trace
-lines (e.g. the `tasks discovered: …` line).
+### Implementation status
+
+Operators reading this guide want to know what's safe to trust. As of the
+current branch:
+
+| Subcommand | Status | Notes |
+|---|---|---|
+| `utility` | Implemented | Paired `noakm`/`akm` Track A over the seeded corpus. Persists raw `runs[]` (#249), stamps `taskCorpusHash` + `fixtureContentHash` (#250), tracks `token_measurement.coverage` (#252), aggregates `corpus_coverage` per memory ability + task family (#262). Optional `--include-synthetic` adds a third self-notes arm (#261). |
+| `compare` | Implemented | Refuses model / `taskCorpusHash` / `fixtureContentHash` / schema / track mismatches (exit 1); `--allow-corpus-mismatch` and `--allow-fixture-mismatch` downgrade to warnings (#250). Input/parse errors exit 2. |
+| `attribute` | Implemented | Top-N leave-one-out masking. Hydrates `runs[]` from the base envelope when present (#249), falls back to synthesising runs from the per-asset table for legacy reports. Masked-stash wiring fixed by #251 (`TaskMetadata.stashDirOverride`); always run a smoke check that the `attribution.maskedRefs` order matches the rows you expect before trusting marginal-contribution numbers. |
+| `evolve` | Stub | Track B (longitudinal feedback → distill → propose loop) is wired in `runEvolve`/`renderEvolveReport` for the wave-3 corpus, but the auto-accept evolution path is gated behind further validation. Treat numbers as exploratory until announced. |
+
+### stdout / stderr contract
+
+`utility`, `compare`, and `attribute` follow the same pattern:
+
+- **stdout** always carries the JSON envelope. This is the machine-readable
+  contract and is what `tests/benchmark-suite.ts` consumes.
+- **stderr** carries a short markdown summary (and a one-line trace such as
+  `tasks discovered: …`).
+- `--json` suppresses the markdown summary on stderr; the JSON on stdout is
+  unaffected. Trace lines (`tasks discovered`, compare's one-line aggregate,
+  attribute's projected re-run count) are still emitted on stderr.
+- `--tasks` accepts `train | eval | all`; any other value exits 2 with a
+  clear error rather than silently coercing.
+- Exit codes: `0` success, `1` refusal (e.g. `compare` model mismatch,
+  `attribute` masked-corpus failure), `2` input/usage error.
 
 ## Trajectory metrics — what the v1 contract emits
 
@@ -103,12 +122,111 @@ Every `RunResult` carries one of four outcomes:
 
 ## Reports
 
-`renderJsonReport` produces a stamped envelope with `branch`, `commit`,
-`model`, `timestamp`, and per-arm aggregates. `renderMarkdownSummary`
-produces a 5-ish-line summary suitable for PR descriptions.
+`renderUtilityReport` produces a stamped envelope (`branch`, `commit`,
+`model`, `timestamp`, per-arm aggregates) on stdout and a short markdown
+summary on stderr suitable for PR descriptions. The envelope additionally
+carries:
 
-For #236 reports go to stdout/stderr; persisting them to disk under a
-predictable path is part of #238.
+- `runs[]` — one compact row per (task, arm, seed) run (#249). Required
+  input for faithful `attribute` re-runs.
+- `taskCorpusHash` / `fixtureContentHash` — deterministic identity stamps
+  used by `compare` to refuse cross-corpus / cross-fixture diffs (#250).
+- `token_measurement` — `total_runs`, `runs_with_measured_tokens`,
+  `runs_missing_measurement`, `runs_unsupported_measurement`, `coverage`,
+  `reliable` (#252). The markdown summary's "Token measurement" block
+  surfaces this.
+- `corpus_coverage` — per-`memory_ability` and per-`task_family` pass
+  rate / delta / negative-transfer counts (#262).
+- `warnings[]` — additive trust signals (e.g. low token-measurement
+  coverage, oversized event log, leakage filtering on evolve).
+
+The bench does not persist reports to a predictable path on its own; the
+operator (or CI) is responsible for capturing stdout JSON to disk. The
+`tests/benchmark-suite.ts` runner does this for the regression harness.
+
+## Validity checklist
+
+A `utility` report is **only** trustworthy when all of the following hold.
+Operators should sanity-check these before quoting numbers in a PR or a
+roadmap doc.
+
+- **Hash match (#250).** When comparing two runs, both reports must agree
+  on `taskCorpusHash` AND `fixtureContentHash`. Mismatches mean the
+  corpus or the fixture stashes drifted between runs and the diff is
+  apples-to-oranges. `compare` refuses by default; only override with
+  `--allow-corpus-mismatch` / `--allow-fixture-mismatch` if you know
+  which task or fixture changed and why.
+- **Persisted runs[] (#249).** `runs.length` should equal
+  `corpus.tasks × arms × seedsPerArm`. A short `runs[]` array means some
+  driver invocations crashed or were truncated; pass-rate numbers built
+  from aggregates over a partial bag are misleading.
+- **Token measurement coverage (#252).** Don't trust token-economics
+  numbers (`tokens_per_pass`, cost regressions) when
+  `token_measurement.coverage < 0.95` or `token_measurement.reliable ===
+  false`. Re-run with a model/profile that emits parseable token
+  accounting before quoting cost deltas.
+- **Outcome distribution.** A meaningful run has both arms producing a
+  mix of `pass` / `fail`. If every run is `harness_error`, you're
+  measuring opencode availability, not akm utility — fix the runtime
+  (`pytest` on PATH, `opencode` model auth, etc.) and re-run.
+- **Trajectory presence.** `trajectory.akm.correct_asset_loaded` and
+  `trajectory.akm.feedback_recorded` should be non-null on the akm arm.
+  All-null trajectories usually mean the events.jsonl stream wasn't
+  captured (per-run isolation broken, or the cap in §"Trajectory
+  metrics" was hit).
+- **Compare prerequisites.** `bench compare` only emits a meaningful
+  diff when both reports share the same `model`, `schemaVersion`, and
+  `track`. The first two are stamped at envelope build time; mismatches
+  exit 1.
+- **Attribute prerequisites (#251).** `bench attribute` only produces
+  faithful marginal-contribution numbers when the base report carries
+  `runs[]` (#249) AND the masked-stash override is wired correctly so
+  the masked corpus genuinely runs without each top-N asset. Verify
+  `attribution.maskedRefs` lists the assets you expected before quoting
+  marginal contributions, and confirm `attribute.runsPerformed` matches
+  `topN × tasks × arms × seedsPerArm`.
+- **Workflow-compliance signal (#256, #259, #260).** The
+  `corpus_coverage` workflow-focus rows are only meaningful when the
+  workflow-compliance domain ran with non-zero seeds AND the spec set
+  in `tests/fixtures/bench/workflows/` matches what was loaded. A
+  zero-coverage row indicates the spec wasn't applied, not that the
+  agent passed.
+
+If any of the above fails, treat the report as a smoke test: useful for
+"did the harness run end-to-end?", not for utility decisions.
+
+## Known caveats
+
+- **Token measurement is opencode-dependent.** Some opencode profiles
+  don't emit a parseable token total per turn. Those runs are flagged
+  `tokenMeasurement: "unsupported"` (issue #252) and excluded from
+  `tokens_per_pass`. The aggregate stays reliable as long as
+  `coverage >= 0.95`; below that, the markdown summary annotates the
+  numbers as "unreliable".
+- **Attribution masking is leave-one-out only.** The masking strategy
+  is a single value (`"leave-one-out"`); interaction effects between
+  two assets are NOT measured. Reading `marginal_contribution` as
+  "removing only this asset" is correct; reading it as "this asset's
+  share of the total uplift" is not.
+- **Attribution masking validation.** The `attribute` path depends on
+  the per-task `stashDirOverride` wiring landed in #251. Before
+  trusting marginal contributions on a new corpus, run `bench
+  attribute --top 1` and confirm the masked stash actually has the
+  named asset removed (the markdown table on stderr will show
+  `masked_pass_rate` distinctly from `base_pass_rate`).
+- **Trajectory metrics are intentionally minimal.** v1 emits only
+  `correct_asset_loaded` and `feedback_recorded` (see §6.2).
+  `searched_before_acting` and `irrelevant_assets_loaded` from the
+  §13.3 sketch are NOT computed today.
+- **Evolve numbers are exploratory.** `improvement_slope` and
+  `over_synthetic_lift` depend on `feedback_agreement >= 0.80`;
+  below that, the JSON envelope's `warnings[]` carries
+  `feedback_agreement_below_threshold` and the headline numbers
+  should not be quoted.
+- **No on-disk persistence by default.** `bench utility` writes JSON to
+  stdout; capturing it for later `compare` / `attribute` runs is the
+  operator's job. CI pipelines should redirect stdout to a hashed path
+  before invoking compare.
 
 ## Adding tasks
 
@@ -116,6 +234,14 @@ Tasks live at `tests/fixtures/bench/tasks/<domain>/<task-id>/` and consist of:
 
 - `task.yaml` — metadata (id, title, domain, difficulty, slice, gold_ref,
   stash, verifier, budget). See `docs/technical/benchmark.md` §13.1.
+  Optional memory-operation tags (#262): `memory_ability` (closed set —
+  see `tests/bench/corpus.ts` `MEMORY_ABILITY_VALUES`), `task_family`
+  (`<domain>/<short-name>`), `workflow_focus`, `expected_transfer_from`,
+  `abstention_case`, `conflict_case`, `stale_guidance_case`. The utility
+  report's `corpus_coverage` block aggregates pass rate / delta / negative
+  transfer per ability and per family. See
+  `tests/fixtures/bench/tasks/CORPUS.md` for the closed set + current
+  per-family coverage.
 - `workspace/` — initial files copied into the agent's cwd.
 - `verify.sh` (script verifier), `tests/test_*.py` (pytest), or
   `expected_match` regex in `task.yaml` (regex verifier).
@@ -264,8 +390,63 @@ double-fire. On signal, the handler:
 Re-entrant signals while cleanup is in flight are dropped. Operators who
 need a hard kill can press Ctrl-C twice.
 
+### Workflow specs (#255)
+
+Declarative workflow rules live under `tests/fixtures/bench/workflows/*.yaml`
+and define what AKM agent behavior we expect for each task category. They
+are loaded by `tests/bench/workflow-spec.ts` and consumed by Wave 3's
+compliance evaluator (#256).
+
+**Authoring a spec.** Each YAML file holds one `WorkflowSpec`:
+
+```yaml
+id: akm-lookup-before-edit            # unique within the dir
+title: "Agent searches AKM before editing"
+description: "..."                    # optional
+applies_to:                           # optional filters
+  arms: ["akm"]                       # arms this spec applies to
+  task_domains: ["docker-homelab"]    # domain prefixes from task_id
+required_sequence:                    # ordered required events
+  - event: agent_started
+  - event: akm_search
+    before: first_workspace_write     # must occur before this event
+forbidden:                            # events that must NOT occur
+  - event: first_workspace_write
+    before: akm_search
+scoring:                              # weights must sum to 1
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+```
+
+The loader rejects:
+- malformed YAML or missing required fields,
+- unknown event names (validated against the 14-name `KNOWN_EVENT_NAMES`
+  set, hardcoded from #254's brief; Wave 3 will reconcile by importing
+  from `workflow-trace.ts` directly),
+- scoring weights outside `[0,1]` or whose sum is not `1.0` (1e-6
+  tolerance),
+- `gold_ref` values that fail `parseAssetRef` from `src/core/asset-ref.ts`,
+- specs larger than 1 MiB (DoS guard),
+- file paths that resolve outside the supplied workflows root
+  (path-traversal guard via `path.relative` containment),
+- duplicate `id` within a single `loadAllWorkflowSpecs(dir)` call.
+
+**Loading specs.** Use `loadAllWorkflowSpecs(dir)` to load every
+`*.yaml` under `dir`. Use `loadWorkflowSpec(path, root?)` to load one;
+when `root` is supplied the path-traversal guard is enforced.
+
+**Applying specs.** `specApplies(spec, { arm, taskId })` returns whether
+the spec's `applies_to` filters match the run. Wave 3's evaluator calls
+this once per (run, spec) before scoring.
+
+**Errors.** All loader failures throw `WorkflowSpecError`, which carries
+`.code === "WORKFLOW_SPEC_INVALID"` for v1 contract compliance and
+`.specPath` for diagnostics.
+
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.
 - Search-pipeline benchmark sibling: `tests/BENCHMARKS.md`.
 - Fixture stashes: `tests/fixtures/stashes/`.
+- Workflow specs: `tests/fixtures/bench/workflows/`.

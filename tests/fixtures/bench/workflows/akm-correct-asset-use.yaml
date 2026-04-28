@@ -1,0 +1,26 @@
+id: akm-correct-asset-use
+title: "Agent shows and uses the gold asset for the task"
+description: |
+  When a task has a `gold_ref` declared, the AKM-armed agent must call
+  akm_show with that exact ref before its first workspace write. This proves
+  the agent loaded the right asset rather than guessing.
+applies_to:
+  arms: ["akm"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
+  requires_gold_ref: true
+gold_ref: "skill:deploy"
+required_sequence:
+  - event: agent_started
+  - event: akm_search
+    before: akm_show
+  - event: akm_show
+    ref_must_equal: gold_ref
+    before: first_workspace_write
+  - event: first_workspace_write
+forbidden:
+  - event: first_workspace_write
+    before: akm_show
+scoring:
+  required_steps_weight: 0.6
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.2

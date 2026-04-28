@@ -4,13 +4,18 @@
  *   • `listTasks()` returns `[]` cleanly when the corpus dir is missing.
  *   • The shipped sample task at `_example/example-task` is excluded by
  *     default but loadable via `{ includeExamples: true }`.
- *   • The seeded corpus contains 17 tasks (issue #237) and every entry
- *     validates against the §13.1 schema.
+ *   • The seeded corpus contains 23 tasks (issue #237 seeded 17 across
+ *     three domains; #259 added six workflow-compliance tasks) and every
+ *     entry validates against the §13.1 schema.
  *   • `partitionSlice` is deterministic — same input → same partitioning
  *     across calls.
  */
 
 import { describe, expect, test } from "bun:test";
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   computeTaskCorpusHash,
@@ -18,6 +23,8 @@ import {
   getTasksRoot,
   listTasks,
   loadTask,
+  MEMORY_ABILITY_VALUES,
+  parseTaskYaml,
   partitionSlice,
   readTaskBody,
   type TaskMetadata,
@@ -49,19 +56,22 @@ describe("listTasks", () => {
     expect(sample?.budget.wallMs).toBe(30_000);
   });
 
-  test("seeds 17 hand-authored tasks across three domains (issue #237)", () => {
+  test("seeds 23 hand-authored tasks across four domains (issues #237, #259)", () => {
     const tasks = listTasks();
-    expect(tasks).toHaveLength(17);
+    expect(tasks).toHaveLength(23);
     const byDomain = new Map<string, TaskMetadata[]>();
     for (const task of tasks) {
       const list = byDomain.get(task.domain) ?? [];
       list.push(task);
       byDomain.set(task.domain, list);
     }
-    expect(new Set(byDomain.keys())).toEqual(new Set(["docker-homelab", "az-cli", "opencode"]));
+    expect(new Set(byDomain.keys())).toEqual(new Set(["docker-homelab", "az-cli", "opencode", "workflow-compliance"]));
     expect(byDomain.get("docker-homelab")).toHaveLength(6);
     expect(byDomain.get("az-cli")).toHaveLength(6);
     expect(byDomain.get("opencode")).toHaveLength(5);
+    // Workflow-compliance domain (#259): one task per failure category,
+    // plus the matched pair for repeated-failure-reflection-trigger.
+    expect(byDomain.get("workflow-compliance")).toHaveLength(6);
   });
 
   test("every task validates against the §13.1 schema", () => {
@@ -87,9 +97,10 @@ describe("listTasks", () => {
     const evalTasks = listTasks({ slice: "eval" });
     expect(train.every((t) => t.slice === "train")).toBe(true);
     expect(evalTasks.every((t) => t.slice === "eval")).toBe(true);
-    // The seeded corpus is split 9 train / 8 eval.
-    expect(train).toHaveLength(9);
-    expect(evalTasks).toHaveLength(8);
+    // The seeded corpus is split 13 train / 10 eval after the
+    // workflow-compliance tasks landed (#259 added 4 train + 2 eval).
+    expect(train).toHaveLength(13);
+    expect(evalTasks).toHaveLength(10);
   });
 });
 
@@ -202,6 +213,85 @@ describe("partitionSlice", () => {
     } else {
       expect(evalSlice.map((t) => t.id)).toEqual([synthetic.id]);
       expect(train).toEqual([]);
+    }
+  });
+});
+
+// ── Memory-operation tags (#262) ───────────────────────────────────────────
+
+describe("memory-operation tags (#262)", () => {
+  test("MEMORY_ABILITY_VALUES is the documented closed set", () => {
+    expect(new Set(MEMORY_ABILITY_VALUES)).toEqual(
+      new Set([
+        "procedural_lookup",
+        "multi_asset_composition",
+        "temporal_update",
+        "conflict_resolution",
+        "abstention",
+        "noisy_retrieval",
+      ]),
+    );
+  });
+
+  test("loader leaves tag fields undefined for legacy tasks (without new fields)", () => {
+    // The shipped `_example/example-task` carries no #262 tags — it
+    // continues to load cleanly with every new field undefined.
+    const meta = loadTask("_example/example-task", { includeExamples: true });
+    expect(meta.memoryAbility).toBeUndefined();
+    expect(meta.taskFamily).toBeUndefined();
+    expect(meta.workflowFocus).toBeUndefined();
+    expect(meta.expectedTransferFrom).toBeUndefined();
+    expect(meta.abstentionCase).toBeUndefined();
+    expect(meta.conflictCase).toBeUndefined();
+    expect(meta.staleGuidanceCase).toBeUndefined();
+  });
+
+  test("loader parses memory_ability + task_family from a tagged task", () => {
+    // Every seeded corpus task is tagged with at least these two fields by
+    // #262. Pick a representative entry and assert the round-trip.
+    const meta = loadTask("docker-homelab/restart-policy");
+    expect(meta.memoryAbility).toBe("procedural_lookup");
+    expect(meta.taskFamily).toBe("docker-homelab/compose-basics");
+  });
+
+  test("every seeded corpus task carries memory_ability + task_family", () => {
+    for (const task of listTasks()) {
+      expect(task.memoryAbility).toBeDefined();
+      expect(MEMORY_ABILITY_VALUES).toContain(task.memoryAbility as string);
+      expect(task.taskFamily).toBeDefined();
+      expect(task.taskFamily).toMatch(/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/);
+    }
+  });
+
+  test("invalid memory_ability values are dropped (loader stays permissive)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-tag-"));
+    try {
+      const taskDir = path.join(dir, "_example", "bad-tag");
+      fs.mkdirSync(taskDir, { recursive: true });
+      // Write a clone of `_example/example-task` augmented with a bogus tag.
+      const yaml = [
+        "id: _example/bad-tag",
+        'title: "Bogus tag"',
+        "domain: _example",
+        "difficulty: easy",
+        "slice: train",
+        "stash: minimal",
+        "verifier: script",
+        "budget:",
+        "  tokens: 1000",
+        "  wallMs: 30000",
+        "memory_ability: not_a_real_ability",
+        "task_family: _example/bad",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(taskDir, "task.yaml"), yaml, "utf8");
+      const parsed = parseTaskYaml(readTaskBody(taskDir), taskDir);
+      expect(parsed).toBeDefined();
+      expect(parsed?.id).toBe("_example/bad-tag");
+      expect(parsed?.memoryAbility).toBeUndefined();
+      expect(parsed?.taskFamily).toBe("_example/bad");
+    } finally {
+      fs.rmSync(dir, { recursive: true });
     }
   });
 });

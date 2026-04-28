@@ -20,6 +20,30 @@ export type TaskSlice = "train" | "eval";
 export type TaskDifficulty = "easy" | "medium" | "hard";
 export type TaskVerifier = "script" | "pytest" | "regex";
 
+/**
+ * Closed set of memory-operation labels (#262).
+ *
+ * Each value names the kind of memory / knowledge ability the task exercises:
+ * - `procedural_lookup` — find and apply a single procedural skill.
+ * - `multi_asset_composition` — combine guidance from two+ assets.
+ * - `temporal_update` — apply the most recent guidance over older versions.
+ * - `conflict_resolution` — choose between conflicting assets.
+ * - `abstention` — recognise no relevant asset exists and decline to load.
+ * - `noisy_retrieval` — succeed despite distractor / irrelevant assets.
+ *
+ * Adding a value here is a CORPUS-schema change; callers iterate the closed
+ * set when laying out coverage tables.
+ */
+export const MEMORY_ABILITY_VALUES = [
+  "procedural_lookup",
+  "multi_asset_composition",
+  "temporal_update",
+  "conflict_resolution",
+  "abstention",
+  "noisy_retrieval",
+] as const;
+export type MemoryAbility = (typeof MEMORY_ABILITY_VALUES)[number];
+
 export interface TaskMetadata {
   /** `<domain>/<task-name>`, kebab-case. */
   id: string;
@@ -54,6 +78,60 @@ export interface TaskMetadata {
    * up. The runner does not delete it.
    */
   stashDirOverride?: string;
+
+  // ── Memory-operation tags (#262) ─────────────────────────────────────────
+  // All seven fields below are OPTIONAL. Tasks that pre-date #262 still load
+  // unchanged — the loader does not synthesise defaults. Aggregations skip
+  // tasks where the relevant tag is undefined.
+
+  /**
+   * Closed set: see {@link MEMORY_ABILITY_VALUES}. Names the memory / knowledge
+   * ability the task exercises. Optional; tasks tagged with `memory_ability`
+   * participate in `aggregateByMemoryAbility` slices in the utility report.
+   */
+  memoryAbility?: MemoryAbility;
+
+  /**
+   * Free-form tag naming the workflow the task is meant to drive
+   * (e.g. `lookup_before_edit`, `propose_then_apply`). Optional; matched
+   * against #255's declarative workflow specs at runtime when present.
+   */
+  workflowFocus?: string;
+
+  /**
+   * Stable cross-task family identifier. Format: `<domain>/<short-name>`,
+   * lowercase, kebab-case (e.g. `docker-homelab/compose-basics`). Tasks
+   * sharing a `task_family` are expected to transfer knowledge between
+   * each other. Optional but RECOMMENDED for every real task — coverage
+   * reports collapse single-task families into one bucket.
+   */
+  taskFamily?: string;
+
+  /**
+   * Task-family identifiers from which a successful agent SHOULD have
+   * carried over knowledge. Optional. Each entry follows the same
+   * `<domain>/<short-name>` grammar as `task_family`.
+   */
+  expectedTransferFrom?: string[];
+
+  /**
+   * `true` when the canonical "correct" behaviour is to abstain from loading
+   * any asset (no relevant asset exists). Optional; defaults to `false`
+   * downstream when undefined.
+   */
+  abstentionCase?: boolean;
+
+  /**
+   * `true` when the task pits two conflicting assets against each other and
+   * the agent must pick the right one. Optional.
+   */
+  conflictCase?: boolean;
+
+  /**
+   * `true` when the task contains stale guidance that must be overridden by
+   * a newer asset. Optional.
+   */
+  staleGuidanceCase?: boolean;
 }
 
 const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
@@ -241,6 +319,14 @@ interface RawTask {
   verifier?: unknown;
   expected_match?: unknown;
   budget?: { tokens?: unknown; wallMs?: unknown };
+  // #262 memory-operation tags. All optional.
+  memory_ability?: unknown;
+  workflow_focus?: unknown;
+  task_family?: unknown;
+  expected_transfer_from?: unknown;
+  abstention_case?: unknown;
+  conflict_case?: unknown;
+  stale_guidance_case?: unknown;
 }
 
 function readTask(taskDir: string): TaskMetadata | undefined {
@@ -251,6 +337,10 @@ function readTask(taskDir: string): TaskMetadata | undefined {
   } catch {
     return undefined;
   }
+  return parseTaskYaml(text, taskDir);
+}
+
+export function parseTaskYaml(text: string, taskDir: string): TaskMetadata | undefined {
   let raw: RawTask;
   try {
     raw = parseYaml(text) as RawTask;
@@ -291,7 +381,41 @@ function readTask(taskDir: string): TaskMetadata | undefined {
   if (goldRef !== undefined) meta.goldRef = goldRef;
   if (stashOverlay !== undefined) meta.stashOverlay = stashOverlay;
   if (expectedMatch !== undefined) meta.expectedMatch = expectedMatch;
+
+  // #262 memory-operation tags. Each tag is OPTIONAL — invalid values are
+  // silently ignored so a malformed tag never breaks an existing task. This
+  // matches the broader "loader returns undefined on bad core fields, drops
+  // bad tags" contract documented in the §13.1 schema.
+  const memoryAbility = asEnum<MemoryAbility>(raw.memory_ability, MEMORY_ABILITY_VALUES);
+  if (memoryAbility !== undefined) meta.memoryAbility = memoryAbility;
+  const workflowFocus = asString(raw.workflow_focus);
+  if (workflowFocus !== undefined) meta.workflowFocus = workflowFocus;
+  const taskFamily = asString(raw.task_family);
+  if (taskFamily !== undefined) meta.taskFamily = taskFamily;
+  const expectedTransferFrom = asStringArray(raw.expected_transfer_from);
+  if (expectedTransferFrom !== undefined) meta.expectedTransferFrom = expectedTransferFrom;
+  const abstentionCase = asBoolean(raw.abstention_case);
+  if (abstentionCase !== undefined) meta.abstentionCase = abstentionCase;
+  const conflictCase = asBoolean(raw.conflict_case);
+  if (conflictCase !== undefined) meta.conflictCase = conflictCase;
+  const staleGuidanceCase = asBoolean(raw.stale_guidance_case);
+  if (staleGuidanceCase !== undefined) meta.staleGuidanceCase = staleGuidanceCase;
+
   return meta;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  return undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry.length > 0) out.push(entry);
+  }
+  return out;
 }
 
 function asString(value: unknown): string | undefined {

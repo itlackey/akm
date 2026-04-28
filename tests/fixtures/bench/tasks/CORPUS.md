@@ -1,12 +1,18 @@
 # akm-bench seeded corpus
 
-Seventeen hand-authored tasks across three domains. Each task references a
+Twenty-three hand-authored tasks across four domains. Each task references a
 fixture stash by name (`tests/fixtures/stashes/<name>/`). The `_example/`
 subtree exists for loader unit tests and is excluded by `listTasks()` by
 default — see `tests/bench/corpus.ts`.
 
-Train/eval split: 9 train, 8 eval (~50/50 per domain: docker 3+3, az 3+3,
-opencode 3+2).
+The original three domains (docker-homelab, az-cli, opencode) measure task
+success. The fourth domain — `workflow-compliance/` — measures whether the
+agent follows AKM workflow process even when shortcuts are tempting,
+retrieval is noisy, or feedback requires discipline. See
+`workflow-compliance/README.md` for the per-task breakdown.
+
+Train/eval split: 13 train, 10 eval (~50/50 per task-success domain;
+workflow-compliance contributes 4 train + 2 eval).
 
 ## Tasks
 
@@ -29,6 +35,61 @@ opencode 3+2).
 | opencode/tool-allowlist | opencode | train | multi-domain | script | gold ref does not list `["bash","edit","read"]` or describe a tool allowlist. |
 | opencode/provider-akm-feedback | opencode | eval | multi-domain | script | gold ref does not mention `akm feedback` or `provider.sh`. |
 | opencode/system-prompt-snippet | opencode | train | multi-domain | script | gold ref does not contain a system-prompt snippet referencing `akm feedback`. |
+| workflow-compliance/tempting-shortcut-arithmetic | workflow-compliance | train | minimal | script | No `gold_ref`. Verifier computes the expected sum at runtime via `$((2+2))`; the literal `4` does not appear in the script. |
+| workflow-compliance/distractor-docker-port-publish | workflow-compliance | eval | noisy | pytest | gold ref `skill:docker` (in `noisy`) describes compose generally; the literal `8080`, `nginx:1.27`, and the multi-subscript chain `services["web"]["ports"]` do not appear. |
+| workflow-compliance/feedback-trap-az-tag-list | workflow-compliance | train | az-cli | script | gold ref discusses `--query` and `-o tsv` generally; the literal `az resource list`, `--tag env=prod`, `--tag tier=data`, and the JMESPath projection regex do not appear. |
+| workflow-compliance/abstention-rust-async-haiku | workflow-compliance | eval | minimal | script | Abstention case — no `gold_ref`. Verifier checks file shape (3 non-empty lines), no content match. |
+| workflow-compliance/repeated-fail-storage-lifecycle-a | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, or `daysAfterModificationGreaterThan`. |
+| workflow-compliance/repeated-fail-storage-lifecycle-b | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, `daysAfterLastAccessTimeGreaterThan`, or `tierToCool`. |
+
+## Memory-operation tags (#262)
+
+Every real corpus task carries at minimum a `memory_ability` and `task_family`
+tag. Both are OPTIONAL in the schema — the loader leaves them undefined for
+legacy tasks and `aggregateBy*` helpers skip rows where the keying tag is
+missing.
+
+`memory_ability` (closed set, see `tests/bench/corpus.ts`):
+
+| value | what the task exercises |
+|-------|--------------------------|
+| `procedural_lookup` | find and apply a single procedural skill |
+| `multi_asset_composition` | combine guidance from two+ assets |
+| `temporal_update` | apply newer guidance over older versions |
+| `conflict_resolution` | choose between conflicting assets |
+| `abstention` | recognise no relevant asset exists and decline to load |
+| `noisy_retrieval` | succeed despite distractor / irrelevant assets |
+
+`task_family` follows `<domain>/<short-name>` (e.g.
+`docker-homelab/compose-basics`). Tasks sharing a family are expected to
+transfer knowledge between each other; the utility report aggregates pass
+rate / akm − noakm delta per family.
+
+Optional booleans (`abstention_case`, `conflict_case`, `stale_guidance_case`)
+flag the structural shape of the task. `expected_transfer_from[]` lists
+families the agent should benefit from when memory carries over.
+`workflow_focus` names the declarative workflow (#255) the task targets.
+
+The utility report's `corpus_coverage` block surfaces:
+- counts per memory-ability label (closed set + `untagged`),
+- per-memory-ability pass-rate / delta / negative-transfer counts,
+- per-task-family rollups when ≥ 2 families are tagged,
+- workflow-compliance means when the runner plumbs the trace.
+
+### Coverage in this release
+
+The seeded `release/1.0.0` corpus tags every real task as
+`memory_ability: procedural_lookup` (single-skill lookup-and-apply tasks).
+Per-domain task families:
+
+| family | tasks |
+|--------|-------|
+| `az-cli/commands` | 6 |
+| `docker-homelab/compose-basics` | 6 |
+| `opencode/config-basics` | 5 |
+
+Future waves will broaden coverage. The report intentionally surfaces zero
+counts for absent abilities so the gaps are visible.
 
 ## Leakage discipline (spec §7.4)
 

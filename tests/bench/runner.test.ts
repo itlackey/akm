@@ -477,4 +477,543 @@ describe("runUtility", () => {
     const trailing = capturedAgentCmds[0]?.[capturedAgentCmds[0].length - 1] ?? "";
     expect(trailing).toContain("Task: fake/task-a");
   });
+
+  // ── #261: optional synthetic arm ───────────────────────────────────────────
+
+  test("includeSynthetic: runs noakm + akm + synthetic over the same tasks/seeds", async () => {
+    // Spy on every agent invocation so we can assert which arm fired and
+    // that AKM_STASH_DIR is absent for the synthetic arm only.
+    const observedArms: { arm: "noakm" | "akm" | "synthetic"; akmStashDir: string | undefined }[] = [];
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent) {
+        const promptArg = cmd[cmd.length - 1] ?? "";
+        let arm: "noakm" | "akm" | "synthetic";
+        if (promptArg.includes("Arm: synthetic")) arm = "synthetic";
+        else if (opts.env?.AKM_STASH_DIR) arm = "akm";
+        else arm = "noakm";
+        observedArms.push({ arm, akmStashDir: opts.env?.AKM_STASH_DIR });
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 2,
+      spawn,
+      materialiseStash: false,
+      includeSynthetic: true,
+    });
+    // 2 seeds × 3 arms = 6 invocations.
+    expect(observedArms.length).toBe(6);
+    expect(observedArms.filter((o) => o.arm === "noakm").length).toBe(2);
+    expect(observedArms.filter((o) => o.arm === "akm").length).toBe(2);
+    expect(observedArms.filter((o) => o.arm === "synthetic").length).toBe(2);
+    // Synthetic-arm child env MUST NOT carry AKM_STASH_DIR.
+    for (const o of observedArms.filter((o) => o.arm === "synthetic")) {
+      expect(o.akmStashDir).toBeUndefined();
+    }
+    // Per-task synthetic metrics are spliced in; aggregateSynth populated.
+    expect(report.aggregateSynth).toBeDefined();
+    expect(report.aggregateSynth?.passRate).toBe(1);
+    expect(report.tasks[0]?.synthetic).toBeDefined();
+    expect(report.tasks[0]?.synthetic?.count).toBe(2);
+  });
+
+  test("default behaviour (no includeSynthetic) is byte-identical to two-arm output (no synthetic keys)", async () => {
+    // SNAPSHOT-STYLE TEST: run runUtility WITHOUT includeSynthetic, capture
+    // the JSON envelope keys, and assert no key contains 'synthetic'.
+    // Without this gate the byte-identical contract is unverifiable.
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      branch: "test-branch",
+      commit: "abc123",
+      timestamp: "2026-04-27T00:00:00Z",
+    });
+    // In-memory report shape: aggregateSynth absent.
+    expect(report.aggregateSynth).toBeUndefined();
+    expect(report.tasks[0]?.synthetic).toBeUndefined();
+
+    // Render the JSON envelope and walk every key recursively. None should
+    // contain 'synthetic'. We exercise the byte-identical envelope contract.
+    const { renderUtilityReport } = await import("./report");
+    const { json } = renderUtilityReport(report);
+    const allKeys: string[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item);
+      } else if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          allKeys.push(k);
+          walk(v);
+        }
+      }
+    };
+    walk(json);
+    const synthMentions = allKeys.filter((k) => k.toLowerCase().includes("synth"));
+    expect(synthMentions).toEqual([]);
+    // Markdown body must not mention 'synthetic' (case-insensitive).
+    const { markdown } = renderUtilityReport(report);
+    expect(markdown.toLowerCase().includes("synthetic")).toBe(false);
+  });
+
+  test("includeSynthetic: arm-keyed map defaults synthetic to 'arm-not-run' when arm is absent on a task", async () => {
+    // Edge case: build a grouped map manually that lacks the synthetic arm
+    // for a given task. The runner ALWAYS dispatches the arm when the flag
+    // is set, so this guard is enforced through the buildReport branch:
+    // when includeSynth is true but no synth runs landed, the per-task
+    // PerTaskMetrics carries `count: 0` (zero-result aggregate) — distinct
+    // from "arm not run at all" which omits the field. Verify the
+    // distinction: report tasks WITHOUT the flag have synthetic absent.
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const reportNoFlag = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+    });
+    expect(reportNoFlag.tasks[0]?.synthetic).toBeUndefined();
+  });
+
+  test("includeSynthetic: forwards a clear scratch-notes prompt to the synthetic arm", async () => {
+    // Acceptance criterion: synthetic arm has a clear scratch-notes prompt
+    // contract. We assert the default built-in prompt is forwarded when
+    // the caller does not supply a buildPrompt override.
+    const capturedAgentCmds: string[][] = [];
+    const spawn: SpawnFn = (cmd, _opts) => {
+      if (cmd[0] === "opencode") capturedAgentCmds.push([...cmd]);
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      includeSynthetic: true,
+    });
+    const synthCmd = capturedAgentCmds.find((c) => c[c.length - 1]?.includes("Arm: synthetic"));
+    expect(synthCmd).toBeDefined();
+    const synthPrompt = synthCmd?.[synthCmd.length - 1] ?? "";
+    expect(synthPrompt).toContain("Bring Your Own Skills");
+    expect(synthPrompt).toContain("scratchpad");
+    expect(synthPrompt).toContain("AKM_STASH_DIR is intentionally absent");
+  });
+
+  test("includeSynthetic: caller buildPrompt override wins for synthetic arm", async () => {
+    // When the caller threads a buildPrompt override that returns a string
+    // for the synthetic arm, the runner forwards that override verbatim
+    // instead of the built-in scratch-notes prompt. This preserves the
+    // Track B `runEvolve` integration where synthetic arm prompts are
+    // built by `buildSyntheticPrompt(task.id)`.
+    const capturedAgentCmds: string[][] = [];
+    const spawn: SpawnFn = (cmd, _opts) => {
+      if (cmd[0] === "opencode") capturedAgentCmds.push([...cmd]);
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      includeSynthetic: true,
+      buildPrompt: (task, arm) => (arm === "synthetic" ? `OVERRIDE for ${task.id}` : undefined),
+    });
+    const synthCmd = capturedAgentCmds.find((c) => c[c.length - 1]?.startsWith("OVERRIDE for"));
+    expect(synthCmd).toBeDefined();
+    // The built-in scratch-notes contract MUST NOT have leaked through.
+    expect(synthCmd?.[synthCmd.length - 1]).not.toContain("Bring Your Own Skills");
+  });
+
+  test("includeSynthetic: report carries akm_over_synthetic_lift in aggregate", async () => {
+    // akm + noakm pass (regex verifier matches "ok"); synthetic fails (we
+    // emit "nope" on the synthetic agent stdout so the regex verifier
+    // rejects). The fake task uses regex/expectedMatch="ok" — see fakeTask().
+    const spawn: SpawnFn = (cmd, _opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (!isAgent) {
+        return {
+          exitCode: 0,
+          exited: Promise.resolve(0),
+          stdout: asReadableStream(""),
+          stderr: asReadableStream(""),
+          stdin: null,
+          kill() {},
+        };
+      }
+      const promptArg = cmd[cmd.length - 1] ?? "";
+      const isSynth = promptArg.includes("Arm: synthetic");
+      const stdout = isSynth ? "nope" : "ok";
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream(stdout),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 2,
+      spawn,
+      materialiseStash: false,
+      includeSynthetic: true,
+    });
+    expect(report.aggregateAkm.passRate).toBe(1);
+    expect(report.aggregateSynth?.passRate).toBe(0);
+
+    const { renderUtilityReport } = await import("./report");
+    const { json, markdown } = renderUtilityReport(report);
+    const aggregate = (json as Record<string, Record<string, unknown>>).aggregate;
+    expect(aggregate.synthetic).toBeDefined();
+    expect(aggregate.akm_over_synthetic_lift).toBe(1);
+    // Markdown should mention the lift.
+    expect(markdown).toContain("akm_over_synthetic_lift");
+  });
+
+  test("includeSynthetic: markdown surfaces a warning when AKM fails to beat synthetic", async () => {
+    // Acceptance criterion: utility markdown summarizes when AKM fails to
+    // beat synthetic notes. Construct a scenario where akm_pass_rate <=
+    // synth_pass_rate — regex verifier expects "ok"; AKM agent emits "nope"
+    // (fail), synthetic + noakm emit "ok" (pass).
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (!isAgent) {
+        return {
+          exitCode: 0,
+          exited: Promise.resolve(0),
+          stdout: asReadableStream(""),
+          stderr: asReadableStream(""),
+          stdin: null,
+          kill() {},
+        };
+      }
+      const promptArg = cmd[cmd.length - 1] ?? "";
+      const isSynth = promptArg.includes("Arm: synthetic");
+      const isAkm = !isSynth && opts.env?.AKM_STASH_DIR !== undefined;
+      const stdout = isAkm ? "nope" : "ok";
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream(stdout),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 2,
+      spawn,
+      materialiseStash: false,
+      includeSynthetic: true,
+    });
+    expect(report.aggregateAkm.passRate).toBe(0);
+    expect(report.aggregateSynth?.passRate).toBe(1);
+    const { renderUtilityReport } = await import("./report");
+    const { markdown } = renderUtilityReport(report);
+    expect(markdown).toContain(":warning:");
+    expect(markdown).toContain("AKM did not beat the synthetic-notes baseline");
+  });
+});
+
+// ── Workflow compliance plumbing (#257) ────────────────────────────────────
+
+describe("runUtility workflow compliance (#257)", () => {
+  let workspaceRoot: string;
+  let taskDir: string;
+
+  beforeAll(() => {
+    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-runner-wf-"));
+    taskDir = path.join(workspaceRoot, "task");
+    fs.mkdirSync(taskDir, { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("loads workflow specs from the default directory and stamps workflowChecks on the report", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [
+        // domain-name needs to match a task_domain in at least one shipping spec
+        // so the evaluator emits applicable checks (not_applicable rows are
+        // expected for the rest).
+        fakeTask(taskDir, { id: "docker-homelab/redis", domain: "docker-homelab" }),
+      ],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+    });
+    expect(Array.isArray(report.workflowChecks)).toBe(true);
+    // At least one shipping spec applies to docker-homelab → some checks emitted.
+    expect((report.workflowChecks ?? []).length).toBeGreaterThan(0);
+  });
+
+  test("workflowsDir: '' disables workflow evaluation and yields no workflowChecks", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      workflowsDir: "",
+    });
+    expect(report.workflowChecks).toEqual([]);
+  });
+
+  test("missing workflowsDir is recorded as a warning, not a crash", async () => {
+    const { setQuiet, resetQuiet } = await import("../../src/core/warn");
+    setQuiet(true);
+    try {
+      const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+      const report = await runUtility({
+        tasks: [fakeTask(taskDir)],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        workflowsDir: "/path/that/does/not/exist",
+      });
+      expect(report.workflowChecks).toEqual([]);
+      const hasWarn = report.warnings.some((w) => w.includes("workflow specs"));
+      expect(hasWarn).toBe(true);
+    } finally {
+      resetQuiet();
+    }
+  });
+
+  test("runner attaches taskOutcome to each workflowCheck so the cross-tab can attribute it", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "docker-homelab/redis", domain: "docker-homelab" })],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+    });
+    const c = (report.workflowChecks ?? [])[0];
+    expect(c).toBeDefined();
+    expect(typeof c?.taskOutcome).toBe("string");
+  });
+
+  test("passes search/result and test-presence flags into workflow evaluation", async () => {
+    const workflowsDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-workflow-flags-"));
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.XDG_CACHE_HOME) {
+        const akmDir = path.join(opts.env.XDG_CACHE_HOME, "akm");
+        fs.mkdirSync(akmDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(akmDir, "events.jsonl"),
+          [
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:00Z",
+              eventType: "search",
+              metadata: { query: "deploy", resultRefs: ["skill:foo"] },
+            }),
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:01Z",
+              eventType: "propose_invoked",
+            }),
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:02Z",
+              eventType: "promoted",
+            }),
+          ].join("\n"),
+        );
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    try {
+      fs.writeFileSync(
+        path.join(workflowsDir, "search.yaml"),
+        `id: search-guard
+title: search guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_search
+  - event: akm_show
+    required_if: search_has_relevant_result
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(workflowsDir, "tests.yaml"),
+        `id: tests-guard
+title: tests guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_propose
+  - event: test_run
+    required_if: task_has_tests
+  - event: akm_proposal_accept
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+      const testsDir = path.join(taskDir, "tests");
+      fs.mkdirSync(testsDir, { recursive: true });
+      fs.writeFileSync(path.join(testsDir, "test_sample.py"), "def test_ok():\n    assert True\n");
+
+      const report = await runUtility({
+        tasks: [fakeTask(taskDir, { verifier: "pytest", goldRef: "skill:foo" })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        workflowsDir,
+      });
+      const byId = new Map((report.workflowChecks ?? []).map((check) => [check.workflowId, check]));
+      expect(byId.get("search-guard")?.violations.some((v) => v.code === "missing_required_event")).toBe(true);
+      expect(byId.get("tests-guard")?.violations.some((v) => v.code === "missing_required_event")).toBe(true);
+    } finally {
+      fs.rmSync(workflowsDir, { recursive: true, force: true });
+      fs.rmSync(path.join(taskDir, "tests"), { recursive: true, force: true });
+    }
+  });
+
+  test("skips required_if workflow steps when runner-derived flags are false", async () => {
+    const workflowsDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-workflow-flags-off-"));
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.XDG_CACHE_HOME) {
+        const akmDir = path.join(opts.env.XDG_CACHE_HOME, "akm");
+        fs.mkdirSync(akmDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(akmDir, "events.jsonl"),
+          `${JSON.stringify({
+            schemaVersion: 1,
+            ts: "2026-04-27T00:00:00Z",
+            eventType: "search",
+            metadata: { query: "deploy", resultRefs: ["skill:other"] },
+          })}\n`,
+        );
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    try {
+      fs.writeFileSync(
+        path.join(workflowsDir, "search.yaml"),
+        `id: search-guard
+title: search guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_search
+  - event: akm_show
+    required_if: search_has_relevant_result
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(workflowsDir, "tests.yaml"),
+        `id: tests-guard
+title: tests guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_search
+  - event: test_run
+    required_if: task_has_tests
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+
+      const report = await runUtility({
+        tasks: [fakeTask(taskDir, { verifier: "regex", goldRef: "skill:foo" })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        workflowsDir,
+      });
+      const byId = new Map((report.workflowChecks ?? []).map((check) => [check.workflowId, check]));
+      expect(byId.get("search-guard")?.status).toBe("pass");
+      expect(byId.get("tests-guard")?.status).toBe("pass");
+    } finally {
+      fs.rmSync(workflowsDir, { recursive: true, force: true });
+    }
+  });
 });

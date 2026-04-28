@@ -4,16 +4,48 @@
 
 import { describe, expect, test } from "bun:test";
 
+import type { EventEnvelope } from "../../src/core/events";
+import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import {
+  aggregateAkmOverhead,
+  aggregateByMemoryAbility,
+  aggregateByTaskFamily,
   aggregateCorpus,
   aggregatePerTask,
   aggregateTrajectory,
+  computeAkmOverhead,
+  computeAssetRegressionCandidates,
+  computeCorpusCoverage,
   computeCorpusDelta,
+  computeDomainAggregates,
+  computeLearningCurve,
+  computeNegativeTransfer,
   computeOutcomeAggregate,
   computePerTaskDelta,
+  computeWorkflowReliability,
+  domainOfTaskId,
+  type EpisodeRecord,
+  LEARNING_IMPROVEMENT_THRESHOLD,
   type PerTaskMetrics,
+  type PerTaskTagEntry,
 } from "./metrics";
+import type { WorkflowCheckResult, WorkflowCheckStatus } from "./workflow-evaluator";
+
+function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
+  return {
+    passRate: 0,
+    passAt1: 0,
+    tokensPerPass: null,
+    wallclockMs: 0,
+    passRateStdev: 0,
+    budgetExceededCount: 0,
+    harnessErrorCount: 0,
+    count: 1,
+    runsWithMeasuredTokens: 0,
+    ...overrides,
+  };
+}
 
 function fakeResult(overrides: Partial<RunResult>): RunResult {
   return {
@@ -338,5 +370,739 @@ describe("aggregateTrajectory", () => {
     const t = aggregateTrajectory(runs);
     expect(t.correctAssetLoaded).toBeCloseTo(0.5);
     expect(t.feedbackRecorded).toBe(0);
+  });
+});
+
+describe("domainOfTaskId", () => {
+  test("returns the segment before the first slash", () => {
+    expect(domainOfTaskId("docker-homelab/redis-healthcheck")).toBe("docker-homelab");
+  });
+
+  test("falls back to 'unknown' when there is no slash", () => {
+    expect(domainOfTaskId("noslash")).toBe("unknown");
+  });
+
+  test("falls back to 'unknown' when the slash is at index 0", () => {
+    expect(domainOfTaskId("/leading")).toBe("unknown");
+  });
+});
+
+describe("computeNegativeTransfer", () => {
+  test("returns zero count and severity when no regressions are present", () => {
+    const tasks = [
+      { id: "d/a", noakm: ptm({ passRate: 0.4 }), akm: ptm({ passRate: 0.8 }) },
+      { id: "d/b", noakm: ptm({ passRate: 0.5 }), akm: ptm({ passRate: 0.5 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(0);
+    expect(out.severity).toBe(0);
+    expect(out.topRegressedTasks).toEqual([]);
+  });
+
+  test("captures a single regression with correct delta and severity", () => {
+    const tasks = [
+      { id: "d/a", noakm: ptm({ passRate: 0.4 }), akm: ptm({ passRate: 0.8 }) },
+      { id: "d/regressed", noakm: ptm({ passRate: 0.6 }), akm: ptm({ passRate: 0.2 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(1);
+    expect(out.severity).toBeCloseTo(0.4);
+    expect(out.topRegressedTasks).toHaveLength(1);
+    const row = out.topRegressedTasks[0];
+    if (!row) throw new Error("expected row");
+    expect(row.taskId).toBe("d/regressed");
+    expect(row.domain).toBe("d");
+    expect(row.delta).toBeCloseTo(-0.4);
+    expect(row.severity).toBeCloseTo(0.4);
+  });
+
+  test("multiple regressions are sorted by severity desc with deterministic tiebreak", () => {
+    const tasks = [
+      // Mild regression -0.1.
+      { id: "alpha/x", noakm: ptm({ passRate: 0.6 }), akm: ptm({ passRate: 0.5 }) },
+      // Tied severity -0.3 (first tiebreaks by taskId asc).
+      { id: "beta/y", noakm: ptm({ passRate: 0.8 }), akm: ptm({ passRate: 0.5 }) },
+      { id: "alpha/z", noakm: ptm({ passRate: 0.8 }), akm: ptm({ passRate: 0.5 }) },
+      // Improvement (no regression).
+      { id: "alpha/w", noakm: ptm({ passRate: 0.1 }), akm: ptm({ passRate: 0.9 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(3);
+    expect(out.severity).toBeCloseTo(0.7);
+    expect(out.topRegressedTasks.map((r) => r.taskId)).toEqual(["alpha/z", "beta/y", "alpha/x"]);
+  });
+
+  test("a task with equal pass rate is not counted as regressed", () => {
+    const tasks = [{ id: "d/eq", noakm: ptm({ passRate: 0.5 }), akm: ptm({ passRate: 0.5 }) }];
+    expect(computeNegativeTransfer(tasks).count).toBe(0);
+  });
+});
+
+describe("computeDomainAggregates", () => {
+  test("groups tasks by domain prefix", () => {
+    const tasks = [
+      {
+        id: "alpha/a",
+        noakm: ptm({ passRate: 0.4, tokensPerPass: 10000, wallclockMs: 1000 }),
+        akm: ptm({ passRate: 0.8, tokensPerPass: 8000, wallclockMs: 900 }),
+      },
+      {
+        id: "alpha/b",
+        noakm: ptm({ passRate: 0.6, tokensPerPass: 12000, wallclockMs: 2000 }),
+        akm: ptm({ passRate: 0.4, tokensPerPass: 9000, wallclockMs: 1500 }),
+      },
+      {
+        id: "beta/c",
+        noakm: ptm({ passRate: 0.2, tokensPerPass: null, wallclockMs: 500 }),
+        akm: ptm({ passRate: 0.5, tokensPerPass: 5000, wallclockMs: 600 }),
+      },
+    ];
+    const rows = computeDomainAggregates(tasks);
+    expect(rows.map((r) => r.domain)).toEqual(["alpha", "beta"]);
+
+    const alpha = rows.find((r) => r.domain === "alpha");
+    if (!alpha) throw new Error("alpha missing");
+    expect(alpha.taskCount).toBe(2);
+    expect(alpha.regressionCount).toBe(1);
+    expect(alpha.passRateNoakm).toBeCloseTo(0.5);
+    expect(alpha.passRateAkm).toBeCloseTo(0.6);
+    expect(alpha.passRateDelta).toBeCloseTo(0.1);
+    expect(alpha.tokensPerPassDelta).toBeCloseTo(8500 - 11000);
+    expect(alpha.wallclockMsDelta).toBeCloseTo(1200 - 1500);
+
+    const beta = rows.find((r) => r.domain === "beta");
+    if (!beta) throw new Error("beta missing");
+    expect(beta.regressionCount).toBe(0);
+    // Single-side null tokensPerPass yields null delta.
+    expect(beta.tokensPerPassDelta).toBeNull();
+  });
+
+  test("emits an empty array on no tasks", () => {
+    expect(computeDomainAggregates([])).toEqual([]);
+  });
+});
+
+describe("computeAssetRegressionCandidates", () => {
+  function fakeRun(taskId: string, assets: string[]): RunResult {
+    return {
+      schemaVersion: 1,
+      taskId,
+      arm: "akm",
+      seed: 0,
+      model: "m",
+      outcome: "pass",
+      tokens: { input: 0, output: 0 },
+      wallclockMs: 0,
+      trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      events: [],
+      verifierStdout: "",
+      verifierExitCode: 0,
+      assetsLoaded: assets,
+    };
+  }
+
+  test("returns empty when no regressed tasks were provided", () => {
+    expect(computeAssetRegressionCandidates([], [fakeRun("d/a", ["skill:x"])])).toEqual([]);
+  });
+
+  test("counts distinct regressed tasks per asset and totals raw load volume", () => {
+    const akmRuns = [
+      // task d/r1 across two seeds, same asset.
+      fakeRun("d/r1", ["skill:foo", "skill:bar"]),
+      fakeRun("d/r1", ["skill:foo"]),
+      // task d/r2 loads skill:foo (again) plus skill:baz.
+      fakeRun("d/r2", ["skill:foo", "skill:baz"]),
+      // Non-regressed task is ignored entirely.
+      fakeRun("d/clean", ["skill:foo", "skill:bar", "skill:baz"]),
+    ];
+    const rows = computeAssetRegressionCandidates(["d/r1", "d/r2"], akmRuns);
+    expect(rows.map((r) => r.assetRef)).toEqual(["skill:foo", "skill:bar", "skill:baz"]);
+    const foo = rows[0];
+    if (!foo) throw new Error("foo missing");
+    expect(foo.regressedTaskCount).toBe(2);
+    expect(foo.regressedTaskIds).toEqual(["d/r1", "d/r2"]);
+    expect(foo.totalLoadCount).toBe(3);
+    const bar = rows[1];
+    if (!bar) throw new Error("bar missing");
+    expect(bar.regressedTaskCount).toBe(1);
+    expect(bar.totalLoadCount).toBe(1);
+  });
+});
+
+// ── Memory-operation aggregations (#262) ───────────────────────────────────
+
+describe("aggregateByMemoryAbility / aggregateByTaskFamily (#262)", () => {
+  function entry(
+    id: string,
+    noakmPass: number,
+    akmPass: number,
+    extras: Partial<PerTaskTagEntry> = {},
+  ): PerTaskTagEntry {
+    return {
+      id,
+      noakm: ptm({ passRate: noakmPass }),
+      akm: ptm({ passRate: akmPass }),
+      ...extras,
+    };
+  }
+
+  test("returns empty when no entries carry the keying tag", () => {
+    const entries = [entry("d/a", 0.4, 0.6), entry("d/b", 0.5, 0.7)];
+    expect(aggregateByMemoryAbility(entries)).toEqual([]);
+    expect(aggregateByTaskFamily(entries)).toEqual([]);
+  });
+
+  test("aggregateByMemoryAbility groups tasks, computes deltas + negative transfer", () => {
+    const entries = [
+      entry("d/lookup-1", 0.4, 0.8, { memoryAbility: "procedural_lookup" }),
+      entry("d/lookup-2", 0.6, 0.4, { memoryAbility: "procedural_lookup" }),
+      entry("d/compose-1", 0.0, 1.0, { memoryAbility: "multi_asset_composition" }),
+      entry("d/no-tag", 0.5, 0.7),
+    ];
+    const rows = aggregateByMemoryAbility(entries);
+    expect(rows.map((r) => r.category)).toEqual(["multi_asset_composition", "procedural_lookup"]);
+    const lookup = rows.find((r) => r.category === "procedural_lookup");
+    expect(lookup?.taskCount).toBe(2);
+    expect(lookup?.passRateNoakm).toBeCloseTo(0.5);
+    expect(lookup?.passRateAkm).toBeCloseTo(0.6);
+    expect(lookup?.passRateDelta).toBeCloseTo(0.1);
+    // d/lookup-2 regressed (akm < noakm).
+    expect(lookup?.negativeTransferCount).toBe(1);
+    expect(lookup?.workflowCompliance).toBeNull();
+  });
+
+  test("aggregateByMemoryAbility folds workflow_compliance when at least one task supplies it", () => {
+    const entries = [
+      entry("d/a", 0.5, 0.7, { memoryAbility: "procedural_lookup", workflowCompliance: 0.8 }),
+      entry("d/b", 0.5, 0.7, { memoryAbility: "procedural_lookup" }),
+      entry("d/c", 0.5, 0.7, { memoryAbility: "procedural_lookup", workflowCompliance: 0.6 }),
+    ];
+    const [row] = aggregateByMemoryAbility(entries);
+    expect(row?.workflowCompliance).toBeCloseTo(0.7);
+  });
+
+  test("aggregateByTaskFamily groups by family", () => {
+    const entries = [
+      entry("d/a", 0.4, 0.6, { taskFamily: "d/group-1" }),
+      entry("d/b", 0.4, 0.4, { taskFamily: "d/group-1" }),
+      entry("d/c", 0.0, 1.0, { taskFamily: "d/group-2" }),
+    ];
+    const rows = aggregateByTaskFamily(entries);
+    expect(rows.map((r) => r.category)).toEqual(["d/group-1", "d/group-2"]);
+    const g1 = rows.find((r) => r.category === "d/group-1");
+    expect(g1?.taskCount).toBe(2);
+    expect(g1?.passRateDelta).toBeCloseTo(0.1);
+  });
+
+  test("computeCorpusCoverage counts every closed-set ability + an untagged bucket", () => {
+    const cov = computeCorpusCoverage([
+      { memoryAbility: "procedural_lookup", taskFamily: "d/family-a" },
+      { memoryAbility: "procedural_lookup", taskFamily: "d/family-a" },
+      { memoryAbility: "abstention", taskFamily: "d/family-b" },
+      { taskFamily: "d/family-c" },
+      {},
+    ]);
+    expect(cov.totalTasks).toBe(5);
+    expect(cov.memoryAbilityCounts.procedural_lookup).toBe(2);
+    expect(cov.memoryAbilityCounts.abstention).toBe(1);
+    expect(cov.memoryAbilityCounts.conflict_resolution).toBe(0);
+    expect(cov.memoryAbilityCounts.untagged).toBe(2);
+    expect(cov.taskFamilyCounts["d/family-a"]).toBe(2);
+    expect(cov.taskFamilyCounts.untagged).toBe(1);
+  });
+});
+
+// ── AKM overhead (#263) ────────────────────────────────────────────────────
+
+function akmEvent(eventType: string, ts: string, ref?: string, metadata?: Record<string, unknown>): EventEnvelope {
+  return {
+    schemaVersion: 1,
+    id: 0,
+    ts,
+    eventType,
+    ...(ref ? { ref } : {}),
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function metaMap(
+  entries: ReadonlyArray<Pick<TaskMetadata, "id" | "goldRef" | "expectedTransferFrom">>,
+): Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">> {
+  const m = new Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">>();
+  for (const e of entries) m.set(e.id, { goldRef: e.goldRef, expectedTransferFrom: e.expectedTransferFrom });
+  return m;
+}
+
+describe("computeAkmOverhead — no AKM calls", () => {
+  test("zero counts and null timings when run had no AKM events", () => {
+    const run = fakeResult({ taskId: "demo/none", events: [] });
+    const rows = computeAkmOverhead([run]);
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    expect(r.searchCount).toBe(0);
+    expect(r.showCount).toBe(0);
+    expect(r.feedbackCount).toBe(0);
+    expect(r.totalToolCalls).toBe(0);
+    expect(r.assetsLoadedCount).toBe(0);
+    expect(r.timeToFirstSearchMs).toBeNull();
+    expect(r.timeToFirstCorrectAssetMs).toBeNull();
+    expect(r.contextBytesLoaded).toBeNull();
+    expect(r.assetBytesLoaded).toBeNull();
+    // Without metadata, irrelevance is unjudgeable -> null.
+    expect(r.irrelevantAssetsLoadedCount).toBeNull();
+  });
+
+  test("aggregate over empty array is the zero envelope", () => {
+    const agg = aggregateAkmOverhead([]);
+    expect(agg.totalRuns).toBe(0);
+    expect(agg.passingRuns).toBe(0);
+    expect(agg.toolCallsPerSuccess).toBeNull();
+    expect(agg.costPerSuccess).toBeNull();
+    expect(agg.meanTimeToFirstSearchMs).toBeNull();
+  });
+});
+
+describe("computeAkmOverhead — successful AKM use", () => {
+  test("counts search/show/feedback, computes timings and relevance", () => {
+    const run = fakeResult({
+      taskId: "demo/ok",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 100, output: 50 },
+      events: [
+        akmEvent("search", "2026-04-27T10:00:00.000Z", undefined, { query: "deploy" }),
+        akmEvent("show", "2026-04-27T10:00:00.500Z", "skill:deploy"),
+        akmEvent("feedback", "2026-04-27T10:00:01.000Z", "skill:deploy"),
+      ],
+    });
+    const tasks = metaMap([{ id: "demo/ok", goldRef: "skill:deploy", expectedTransferFrom: [] }]);
+    const rows = computeAkmOverhead([run], { taskMetadata: tasks });
+    const r = rows[0];
+    expect(r.searchCount).toBe(1);
+    expect(r.showCount).toBe(1);
+    expect(r.feedbackCount).toBe(1);
+    expect(r.totalToolCalls).toBe(3);
+    expect(r.assetsLoadedCount).toBe(1);
+    expect(r.irrelevantAssetsLoadedCount).toBe(0);
+    expect(r.timeToFirstSearchMs).toBe(0); // first search IS the run-start anchor
+    expect(r.timeToFirstCorrectAssetMs).toBe(500);
+    const agg = aggregateAkmOverhead(rows, [run]);
+    expect(agg.passingRuns).toBe(1);
+    expect(agg.toolCallsPerSuccess).toBe(3);
+    expect(agg.costPerSuccess).toBe(150);
+  });
+
+  test("expected_transfer_from refs are not counted as irrelevant", () => {
+    const run = fakeResult({
+      taskId: "demo/transfer",
+      events: [
+        akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo"),
+        akmEvent("show", "2026-04-27T10:00:01.000Z", "skill:helper"),
+      ],
+    });
+    const tasks = metaMap([{ id: "demo/transfer", goldRef: "skill:foo", expectedTransferFrom: ["skill:helper"] }]);
+    const rows = computeAkmOverhead([run], { taskMetadata: tasks });
+    expect(rows[0].assetsLoadedCount).toBe(2);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBe(0);
+  });
+});
+
+describe("computeAkmOverhead — excessive AKM calls", () => {
+  test("high counts and low calls-per-success are surfaced", () => {
+    const goldRef = "skill:gold";
+    const noisyRun = fakeResult({
+      taskId: "demo/noisy",
+      outcome: "fail",
+      events: [
+        akmEvent("search", "2026-04-27T10:00:00.000Z"),
+        akmEvent("search", "2026-04-27T10:00:00.100Z"),
+        akmEvent("search", "2026-04-27T10:00:00.200Z"),
+        akmEvent("show", "2026-04-27T10:00:00.300Z", "skill:other"),
+        akmEvent("show", "2026-04-27T10:00:00.400Z", "skill:other2"),
+        akmEvent("show", "2026-04-27T10:00:00.500Z", "skill:other3"),
+        akmEvent("show", "2026-04-27T10:00:00.600Z", goldRef),
+      ],
+    });
+    const passingRun = fakeResult({
+      taskId: "demo/easy",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 10, output: 10 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z"), akmEvent("show", "2026-04-27T10:00:00.100Z", goldRef)],
+    });
+    const tasks = metaMap([
+      { id: "demo/noisy", goldRef, expectedTransferFrom: [] },
+      { id: "demo/easy", goldRef, expectedTransferFrom: [] },
+    ]);
+    const rows = computeAkmOverhead([noisyRun, passingRun], { taskMetadata: tasks });
+    expect(rows[0].totalToolCalls).toBe(7);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBe(3);
+    expect(rows[0].timeToFirstCorrectAssetMs).toBe(600);
+    expect(rows[1].totalToolCalls).toBe(2);
+    const agg = aggregateAkmOverhead(rows, [noisyRun, passingRun]);
+    expect(agg.totalToolCalls).toBe(9);
+    expect(agg.passingRuns).toBe(1);
+    // 9 tool calls for one passing run = high overhead per success.
+    expect(agg.toolCallsPerSuccess).toBe(9);
+  });
+});
+
+describe("computeAkmOverhead — missing timing/byte data", () => {
+  test("event without ts -> null first-search timing (NOT zero)", () => {
+    const run = fakeResult({
+      taskId: "demo/notime",
+      events: [
+        // No ts on event — workflow-trace assigns a synthetic order hint but
+        // ts stays undefined, so we cannot anchor a real time-offset.
+        { schemaVersion: 1, id: 0, eventType: "search" } as EventEnvelope,
+      ],
+    });
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].searchCount).toBe(1);
+    expect(rows[0].timeToFirstSearchMs).toBeNull();
+    expect(rows[0].timeToFirstCorrectAssetMs).toBeNull();
+  });
+
+  test("byte sizes are always null for now (NOT zero)", () => {
+    const run = fakeResult({
+      events: [akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo")],
+    });
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].contextBytesLoaded).toBeNull();
+    expect(rows[0].assetBytesLoaded).toBeNull();
+    const agg = aggregateAkmOverhead(rows, [run]);
+    expect(agg.meanContextBytesLoaded).toBeNull();
+    expect(agg.meanAssetBytesLoaded).toBeNull();
+  });
+
+  test("cost_per_success is null when any passing run lacks parsed token measurement", () => {
+    const passParsed = fakeResult({
+      taskId: "t1",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 10, output: 5 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z")],
+    });
+    const passMissing = fakeResult({
+      taskId: "t2",
+      outcome: "pass",
+      tokenMeasurement: "missing",
+      tokens: { input: 0, output: 0 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z")],
+    });
+    const rows = computeAkmOverhead([passParsed, passMissing]);
+    const agg = aggregateAkmOverhead(rows, [passParsed, passMissing]);
+    expect(agg.passingRuns).toBe(2);
+    expect(agg.costPerSuccess).toBeNull();
+  });
+
+  test("missing task metadata -> irrelevantAssetsLoadedCount is null (not 0)", () => {
+    const run = fakeResult({
+      taskId: "demo/unknown",
+      events: [akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo")],
+    });
+    // No metadata supplied for this task.
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].assetsLoadedCount).toBe(1);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBeNull();
+  });
+
+  test("aggregate skips null timings rather than zero-filling", () => {
+    const noTime = fakeResult({
+      taskId: "t1",
+      outcome: "fail",
+      events: [{ schemaVersion: 1, id: 0, eventType: "search" } as EventEnvelope],
+    });
+    const withTime = fakeResult({
+      taskId: "t2",
+      outcome: "fail",
+      events: [akmEvent("search", "2026-04-27T10:00:01.000Z")],
+    });
+    const rows = computeAkmOverhead([noTime, withTime]);
+    // First run: search event has no ts -> no run-start anchor, timing null.
+    // Second run: search event IS the only event with ts, so it's both the
+    // anchor and the first search -> offset 0.
+    expect(rows[0].timeToFirstSearchMs).toBeNull();
+    expect(rows[1].timeToFirstSearchMs).toBe(0);
+    const agg = aggregateAkmOverhead(rows, [noTime, withTime]);
+    // Mean honours only the parseable observation; the null is skipped, NOT
+    // treated as zero in the numerator.
+    expect(agg.meanTimeToFirstSearchMs).toBe(0);
+    // tool_calls_per_success is null because no run passed.
+    expect(agg.toolCallsPerSuccess).toBeNull();
+  });
+});
+
+// ── computeWorkflowReliability (#258) ──────────────────────────────────────
+
+function wfCheck(overrides: Partial<WorkflowCheckResult> = {}): WorkflowCheckResult {
+  return {
+    schemaVersion: 1,
+    workflowId: "wf-1",
+    taskId: "t1",
+    arm: "akm",
+    seed: 0,
+    status: "pass",
+    score: 1,
+    requiredPassed: 1,
+    requiredTotal: 1,
+    violations: [],
+    evidence: {
+      matchedEvents: 1,
+      feedbackRecorded: false,
+      goldAssetLoaded: false,
+      traceTruncated: false,
+    },
+    ...overrides,
+  };
+}
+
+// ── Learning curve across episodes (issue #265) ────────────────────────────
+
+function ep(overrides: Partial<EpisodeRecord> & { episode_index: number; pass_rate: number }): EpisodeRecord {
+  return {
+    delta_from_previous_episode: 0,
+    cumulative_feedback_events: 0,
+    cumulative_proposals_created: 0,
+    cumulative_proposals_accepted: 0,
+    cumulative_lessons_created: 0,
+    lesson_reuse_rate: null,
+    ...overrides,
+  };
+}
+
+function statuses(workflowId: string, taskId: string, statusList: WorkflowCheckStatus[]): WorkflowCheckResult[] {
+  return statusList.map((status, seed) => wfCheck({ workflowId, taskId, seed, status }));
+}
+
+describe("computeWorkflowReliability (#258)", () => {
+  test("empty input yields zeroed corpus + empty by_workflow", () => {
+    const result = computeWorkflowReliability([]);
+    expect(result.byWorkflow).toEqual({});
+    expect(result.corpus).toEqual({ pass_at_k: 0, pass_all_k: 0, groups: 0, tasks: 0 });
+  });
+
+  test("all-pass: every (task, seed) is pass → pass@k=1, pass^k=1", () => {
+    const checks = [
+      ...statuses("wf-1", "t1", ["pass", "pass", "pass"]),
+      ...statuses("wf-1", "t2", ["pass", "pass", "pass"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].tasks).toBe(2);
+    expect(result.byWorkflow["wf-1"].k).toBe(3);
+    expect(result.corpus.pass_at_k).toBe(1);
+    expect(result.corpus.pass_all_k).toBe(1);
+    expect(result.corpus.groups).toBe(2);
+    expect(result.corpus.tasks).toBe(2);
+  });
+
+  test("none-pass: no seed is pass → pass@k=0, pass^k=0", () => {
+    const checks = [
+      ...statuses("wf-1", "t1", ["fail", "fail", "fail"]),
+      ...statuses("wf-1", "t2", ["partial", "fail", "harness_error"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(0);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+    expect(result.corpus.pass_at_k).toBe(0);
+    expect(result.corpus.pass_all_k).toBe(0);
+  });
+
+  test("some-pass: pass@k > 0, pass^k < pass@k when seeds disagree per task", () => {
+    // t1: 1 pass, 2 fail → counts toward pass@k (anyPass) but NOT pass^k
+    // t2: 3 pass → counts toward both
+    const checks = [
+      ...statuses("wf-1", "t1", ["pass", "fail", "fail"]),
+      ...statuses("wf-1", "t2", ["pass", "pass", "pass"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBeCloseTo(1); // both tasks have at least one pass
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBeCloseTo(0.5); // only t2 is all-pass
+    expect(result.corpus.pass_at_k).toBeCloseTo(1);
+    expect(result.corpus.pass_all_k).toBeCloseTo(0.5);
+  });
+
+  test("mixed partial/fail: partial does NOT count as pass for reliability", () => {
+    // partial is non-pass per the strict reliability bucketing.
+    const checks = [...statuses("wf-1", "t1", ["partial", "partial", "partial"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(0);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+  });
+
+  test("not_applicable seeds are excluded from numerator and denominator", () => {
+    // Only the 2 applicable seeds matter; both are pass → 1 task all-pass.
+    const checks = [...statuses("wf-1", "t1", ["not_applicable", "pass", "pass", "not_applicable"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].tasks).toBe(1);
+    expect(result.byWorkflow["wf-1"].k).toBe(2);
+  });
+
+  test("workflow with every check not_applicable is omitted (no group counted)", () => {
+    const checks = [...statuses("wf-skips", "t1", ["not_applicable", "not_applicable"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-skips"]).toBeUndefined();
+    expect(result.corpus.groups).toBe(0);
+    expect(result.corpus.tasks).toBe(0);
+  });
+
+  test("multiple workflows compute independently; corpus weights groups equally", () => {
+    // wf-a: t1 all pass (1/1 = 1, 1/1 = 1)
+    // wf-b: t2 mixed (anyPass=1, allPass=0); t3 none (0, 0)
+    //   per-workflow: pass@k=0.5, pass^k=0
+    // corpus: 3 groups → pass@k = (1+1+0)/3 = 2/3; pass^k = (1+0+0)/3 = 1/3
+    const checks = [
+      ...statuses("wf-a", "t1", ["pass", "pass"]),
+      ...statuses("wf-b", "t2", ["pass", "fail"]),
+      ...statuses("wf-b", "t3", ["fail", "fail"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-a"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-a"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-b"].pass_at_k).toBeCloseTo(0.5);
+    expect(result.byWorkflow["wf-b"].pass_all_k).toBe(0);
+    expect(result.corpus.pass_at_k).toBeCloseTo(2 / 3);
+    expect(result.corpus.pass_all_k).toBeCloseTo(1 / 3);
+    expect(result.corpus.groups).toBe(3);
+    expect(result.corpus.tasks).toBe(3);
+  });
+
+  test("harness_error is treated as non-pass (consistent with #257 bucketing)", () => {
+    const checks = [...statuses("wf-1", "t1", ["pass", "harness_error", "pass"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+  });
+});
+describe("computeLearningCurve", () => {
+  test("monotonic improvement: positive slope, time_to_improvement at first crossing", () => {
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4, cumulative_feedback_events: 10 }),
+      ep({ episode_index: 1, pass_rate: 0.5, cumulative_feedback_events: 22 }),
+      ep({ episode_index: 2, pass_rate: 0.6, cumulative_feedback_events: 35 }),
+      ep({ episode_index: 3, pass_rate: 0.7, cumulative_feedback_events: 48 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.pass_rate_by_episode).toEqual([0.4, 0.5, 0.6, 0.7]);
+    // Slope is exactly 0.1 per episode for evenly spaced 0.1 increments.
+    expect(curve.learning_slope).toBeCloseTo(0.1, 6);
+    // Episode 1 first exceeds 0.4 + 0.05 = 0.45 (0.5 > 0.45).
+    expect(curve.time_to_improvement).toBe(1);
+    // Deltas: 0, 0.1, 0.1, 0.1
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+    expect(curve.episodes[1].delta_from_previous_episode).toBeCloseTo(0.1);
+    expect(curve.episodes[3].delta_from_previous_episode).toBeCloseTo(0.1);
+  });
+
+  test("no improvement: flat pass rate yields zero slope and null time_to_improvement", () => {
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.5 }),
+      ep({ episode_index: 1, pass_rate: 0.5 }),
+      ep({ episode_index: 2, pass_rate: 0.51 }),
+      ep({ episode_index: 3, pass_rate: 0.52 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.learning_slope).toBeCloseTo(0.0073, 3);
+    // Never crosses 0.5 + 0.05 = 0.55.
+    expect(curve.time_to_improvement).toBeNull();
+  });
+
+  test("regression mid-episode: slope still computed, time_to_improvement honours first qualifying episode", () => {
+    // Pass rate climbs, then regresses below baseline+threshold, then recovers.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4 }),
+      ep({ episode_index: 1, pass_rate: 0.6 }), // > 0.45 → first crossing
+      ep({ episode_index: 2, pass_rate: 0.42 }), // mid-episode regression
+      ep({ episode_index: 3, pass_rate: 0.55 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    // First crossing wins, even though episode 2 regresses below threshold.
+    expect(curve.time_to_improvement).toBe(1);
+    expect(curve.episodes[2].delta_from_previous_episode).toBeCloseTo(-0.18);
+    // Slope is computed across all four points; should be positive overall.
+    expect(curve.learning_slope).toBeGreaterThan(0);
+  });
+
+  test("single-episode degenerate input: slope is 0, time_to_improvement is null", () => {
+    const curve = computeLearningCurve([ep({ episode_index: 0, pass_rate: 0.7 })]);
+    expect(curve.pass_rate_by_episode).toEqual([0.7]);
+    expect(curve.learning_slope).toBe(0);
+    expect(curve.time_to_improvement).toBeNull();
+    // Episode 0's delta is always 0 by definition.
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+  });
+
+  test("empty input is degenerate: empty arrays, zero slope, null time", () => {
+    const curve = computeLearningCurve([]);
+    expect(curve.episodes).toEqual([]);
+    expect(curve.pass_rate_by_episode).toEqual([]);
+    expect(curve.learning_slope).toBe(0);
+    expect(curve.time_to_improvement).toBeNull();
+  });
+
+  test("unsorted input is sorted by episode_index before processing", () => {
+    const episodes = [
+      ep({ episode_index: 2, pass_rate: 0.6 }),
+      ep({ episode_index: 0, pass_rate: 0.4 }),
+      ep({ episode_index: 1, pass_rate: 0.5 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes.map((e) => e.episode_index)).toEqual([0, 1, 2]);
+    expect(curve.pass_rate_by_episode).toEqual([0.4, 0.5, 0.6]);
+    expect(curve.time_to_improvement).toBe(1);
+  });
+
+  test("delta_from_previous_episode is recomputed defensively from sorted pass_rates", () => {
+    // Caller stamps wrong deltas — function recomputes.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4, delta_from_previous_episode: 99 }),
+      ep({ episode_index: 1, pass_rate: 0.6, delta_from_previous_episode: -42 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+    expect(curve.episodes[1].delta_from_previous_episode).toBeCloseTo(0.2);
+  });
+
+  test("threshold is strictly greater-than (exact baseline+threshold does not count)", () => {
+    // baseline = 0.5; threshold = 0.05 → must exceed 0.55.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.5 }),
+      ep({ episode_index: 1, pass_rate: 0.5 + LEARNING_IMPROVEMENT_THRESHOLD }), // 0.55 exactly
+      ep({ episode_index: 2, pass_rate: 0.5 + LEARNING_IMPROVEMENT_THRESHOLD + 0.001 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.time_to_improvement).toBe(2);
+  });
+
+  test("cumulative counters are echoed verbatim (caller-provided)", () => {
+    const episodes = [
+      ep({
+        episode_index: 0,
+        pass_rate: 0.4,
+        cumulative_feedback_events: 10,
+        cumulative_proposals_created: 0,
+        cumulative_proposals_accepted: 0,
+        cumulative_lessons_created: 0,
+        lesson_reuse_rate: null,
+      }),
+      ep({
+        episode_index: 1,
+        pass_rate: 0.55,
+        cumulative_feedback_events: 25,
+        cumulative_proposals_created: 4,
+        cumulative_proposals_accepted: 3,
+        cumulative_lessons_created: 3,
+        lesson_reuse_rate: 0.42,
+      }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes[1].cumulative_feedback_events).toBe(25);
+    expect(curve.episodes[1].cumulative_proposals_accepted).toBe(3);
+    expect(curve.episodes[1].cumulative_lessons_created).toBe(3);
+    expect(curve.episodes[1].lesson_reuse_rate).toBeCloseTo(0.42);
   });
 });

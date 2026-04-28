@@ -1,0 +1,27 @@
+id: akm-negative-feedback-on-failure
+title: "Agent records negative feedback after a failed task"
+description: |
+  When the verifier fails after the agent loaded an AKM asset, the agent
+  must record negative feedback against that asset. Silent failures
+  produce no learning signal and break utility convergence.
+applies_to:
+  arms: ["akm"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
+  outcomes: ["fail"]
+required_sequence:
+  - event: agent_started
+  - event: akm_show
+    before: verifier_run
+  - event: verifier_run
+    before: akm_feedback
+  - event: akm_feedback
+    polarity: negative
+    before: agent_finished
+  - event: agent_finished
+forbidden:
+  - event: akm_feedback
+    polarity: positive
+scoring:
+  required_steps_weight: 0.5
+  forbidden_steps_weight: 0.3
+  evidence_quality_weight: 0.2

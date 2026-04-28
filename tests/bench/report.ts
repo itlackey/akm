@@ -14,27 +14,50 @@
  */
 
 import { execSync } from "node:child_process";
-import type { TaskMetadata } from "./corpus";
+import type { MemoryAbility, TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
+import type { LessonMetrics, LessonRecord } from "./evolve-metrics";
 import type {
+  AssetRegressionCandidateRow,
+  CategoryAggregateRow,
   CompareResult,
   CompareTaskRow,
+  CorpusCoverage,
   CorpusDelta,
   CorpusMetrics,
   DeltaSign,
+  DomainAggregateRow,
   FailureMode,
   FailureModeAggregate,
   FeedbackIntegrityMetrics,
   GoldRankRunRecord,
+  LearningCurve,
   LongitudinalMetrics,
   OutcomeAggregate,
   PerAssetAttribution,
   PerTaskMetrics,
+  PerTaskTagEntry,
   ProposalQualityMetrics,
   SearchBridgeMetrics,
   TrajectoryAggregate,
 } from "./metrics";
-import { histogramKeys } from "./metrics";
+import {
+  type AkmOverheadAggregate,
+  type AkmOverheadPerRun,
+  aggregateAkmOverhead,
+  aggregateByMemoryAbility,
+  aggregateByTaskFamily,
+  computeAkmOverhead,
+  computeAssetRegressionCandidates,
+  computeCorpusCoverage,
+  computeDomainAggregates,
+  computeNegativeTransfer,
+  computeWorkflowReliability,
+  histogramKeys,
+  type WorkflowReliabilityCorpus,
+  type WorkflowReliabilityRow,
+} from "./metrics";
+import type { WorkflowCheckResult, WorkflowCheckStatus, WorkflowViolationCode } from "./workflow-evaluator";
 
 // ── Legacy envelope (#236) ─────────────────────────────────────────────────
 
@@ -162,6 +185,19 @@ export interface UtilityReportTaskEntry {
   noakm: PerTaskMetrics;
   akm: PerTaskMetrics;
   delta: CorpusDelta;
+  /**
+   * Per-task synthetic-arm metrics (#261). Present only on reports built by
+   * `runUtility({ includeSynthetic: true, ... })`. When absent the per-task
+   * row in the §13.3 envelope omits the `synthetic` key entirely so the
+   * default two-arm envelope is byte-identical to the pre-#261 output.
+   */
+  synthetic?: PerTaskMetrics;
+  /**
+   * Optional workflow-compliance fraction `[0, 1]` for the akm arm (#255 +
+   * #262). When present the corpus_coverage section folds it into the mean
+   * compliance per `memory_ability` / `task_family` group.
+   */
+  workflowCompliance?: number;
 }
 
 /**
@@ -192,6 +228,14 @@ export interface UtilityRunReport {
   aggregateNoakm: CorpusMetrics;
   aggregateAkm: CorpusMetrics;
   aggregateDelta: CorpusDelta;
+  /**
+   * Synthetic-arm corpus aggregate (#261). Present only when `runUtility`
+   * was called with `includeSynthetic: true`. Renderers gate every
+   * synthetic-related output (`arms.synthetic`, `akm_over_synthetic_lift`,
+   * markdown subsection) on the presence of this field so the default
+   * two-arm envelope stays byte-identical to the pre-#261 shape.
+   */
+  aggregateSynth?: CorpusMetrics;
   trajectoryAkm: TrajectoryAggregate;
   /**
    * Failure-mode taxonomy aggregate (§6.6). Counts and per-task breakdown
@@ -238,6 +282,14 @@ export interface UtilityRunReport {
    * an "empty" SearchBridgeMetrics envelope renders as the N/A sentence.
    */
   searchBridge?: SearchBridgeMetrics;
+  /**
+   * Per-(akm-arm-run, spec) workflow compliance results (#257). Populated by
+   * `runUtility` when at least one workflow spec applies. Aggregated into the
+   * top-level `workflow` block at JSON-render time, and rendered as the
+   * `## Workflow compliance` markdown section. Empty array (or missing field)
+   * renders an empty `workflow` object — never crashes.
+   */
+  workflowChecks?: WorkflowCheckResult[];
 }
 
 /**
@@ -255,12 +307,29 @@ export function renderUtilityReport(input: UtilityRunReport): { json: object; ma
 }
 
 function buildUtilityJson(input: UtilityRunReport): object {
+  const includeSynth = input.aggregateSynth !== undefined;
   const tasks = input.tasks.map((t) => ({
     id: t.id,
     noakm: serialisePerTaskMetrics(t.noakm),
     akm: serialisePerTaskMetrics(t.akm),
     delta: serialiseDelta(t.delta),
+    // #261: per-task synthetic block is emitted ONLY when the runner opted
+    // into the synthetic arm AND this task carries a synthetic aggregate.
+    // When the arm was not run we leave the key absent — a missing arm is
+    // not a zero-pass arm.
+    ...(includeSynth && t.synthetic ? { synthetic: serialisePerTaskMetrics(t.synthetic) } : {}),
   }));
+
+  // Negative-transfer + domain-level diagnostics (#260). Pure post-processing
+  // off `input.tasks` and `input.akmRuns` — runner.ts is intentionally
+  // untouched so this slots in alongside the per-task entries that already
+  // carry both arms via UtilityReportTaskEntry.
+  const negativeTransfer = computeNegativeTransfer(input.tasks);
+  const domainDeltas = computeDomainAggregates(input.tasks);
+  const assetRegressionCandidates = computeAssetRegressionCandidates(
+    negativeTransfer.topRegressedTasks.map((r) => r.taskId),
+    input.akmRuns ?? [],
+  );
 
   // Token-measurement coverage (issue #252). Folds the corpus-wide picture so
   // operators can tell at a glance whether token economics are reliable. The
@@ -282,6 +351,17 @@ function buildUtilityJson(input: UtilityRunReport): object {
       noakm: serialiseCorpus(input.aggregateNoakm),
       akm: serialiseCorpus(input.aggregateAkm),
       delta: serialiseDelta(input.aggregateDelta),
+      // #261: synthetic aggregate is emitted ONLY when includeSynthetic
+      // was set on the runner. Absent otherwise — byte-identical to the
+      // pre-#261 envelope.
+      ...(input.aggregateSynth ? { synthetic: serialiseCorpus(input.aggregateSynth) } : {}),
+      // #261: akm_over_synthetic_lift = passRate(akm) - passRate(synthetic).
+      // Only computed when the synthetic arm ran. Positive => AKM beats the
+      // synthetic-notes baseline; non-positive flags AKM is not adding value
+      // beyond what the model can synthesise on its own.
+      ...(input.aggregateSynth
+        ? { akm_over_synthetic_lift: input.aggregateAkm.passRate - input.aggregateSynth.passRate }
+        : {}),
     },
     trajectory: {
       akm: {
@@ -302,6 +382,20 @@ function buildUtilityJson(input: UtilityRunReport): object {
       reliable: tokenMeasurement.reliable,
     },
     tasks,
+    negative_transfer_count: negativeTransfer.count,
+    negative_transfer_severity: negativeTransfer.severity,
+    top_regressed_tasks: negativeTransfer.topRegressedTasks.map((r) => ({
+      task_id: r.taskId,
+      domain: r.domain,
+      noakm_pass_rate: r.noakmPassRate,
+      akm_pass_rate: r.akmPassRate,
+      delta: r.delta,
+      severity: r.severity,
+    })),
+    domain_level_deltas: domainDeltas.map(serialiseDomainAggregate),
+    asset_regression_candidates: assetRegressionCandidates.map(serialiseAssetRegressionCandidate),
+    corpus_coverage: buildCorpusCoverageBlock(input),
+    workflow: buildWorkflowAggregate(input.workflowChecks ?? []),
     warnings,
     ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
@@ -330,7 +424,158 @@ function buildUtilityJson(input: UtilityRunReport): object {
     };
   }
 
+  // AKM overhead + tool-use efficiency block (#263). Computed from the akm-
+  // arm RunResults attached to the report; missing akmRuns yields an empty
+  // aggregate so the key shape stays stable.
+  envelope.akm_overhead = buildAkmOverheadBlock(input);
+
   return envelope;
+}
+
+// ── AKM overhead block (#263) ──────────────────────────────────────────────
+
+/**
+ * Build the §13.3 `akm_overhead` block from the akm-arm RunResults and (when
+ * supplied) per-task metadata. `taskMetadata` lets us split irrelevant from
+ * relevant asset loads and compute time-to-first-correct-asset; without it
+ * those fields surface as `null` rather than misleading zeros.
+ */
+function buildAkmOverheadBlock(input: UtilityRunReport): {
+  per_run: ReturnType<typeof serialiseAkmOverheadPerRun>[];
+  aggregate: ReturnType<typeof serialiseAkmOverheadAggregate>;
+} {
+  const akmRuns = input.akmRuns ?? [];
+  const meta = new Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">>();
+  for (const t of input.taskMetadata ?? []) {
+    meta.set(t.id, { goldRef: t.goldRef, expectedTransferFrom: t.expectedTransferFrom });
+  }
+  const perRun = computeAkmOverhead(akmRuns, { taskMetadata: meta });
+  const aggregate = aggregateAkmOverhead(perRun, akmRuns);
+  return {
+    per_run: perRun.map(serialiseAkmOverheadPerRun),
+    aggregate: serialiseAkmOverheadAggregate(aggregate),
+  };
+}
+
+function serialiseAkmOverheadPerRun(row: AkmOverheadPerRun): {
+  task_id: string;
+  arm: string;
+  seed: number;
+  outcome: string;
+  search_count: number;
+  show_count: number;
+  feedback_count: number;
+  total_tool_calls: number;
+  assets_loaded_count: number;
+  irrelevant_assets_loaded_count: number | null;
+  time_to_first_search_ms: number | null;
+  time_to_first_correct_asset_ms: number | null;
+  context_bytes_loaded: number | null;
+  asset_bytes_loaded: number | null;
+} {
+  return {
+    task_id: row.taskId,
+    arm: row.arm,
+    seed: row.seed,
+    outcome: row.outcome,
+    search_count: row.searchCount,
+    show_count: row.showCount,
+    feedback_count: row.feedbackCount,
+    total_tool_calls: row.totalToolCalls,
+    assets_loaded_count: row.assetsLoadedCount,
+    irrelevant_assets_loaded_count: row.irrelevantAssetsLoadedCount,
+    time_to_first_search_ms: row.timeToFirstSearchMs,
+    time_to_first_correct_asset_ms: row.timeToFirstCorrectAssetMs,
+    context_bytes_loaded: row.contextBytesLoaded,
+    asset_bytes_loaded: row.assetBytesLoaded,
+  };
+}
+
+function serialiseAkmOverheadAggregate(agg: AkmOverheadAggregate): {
+  total_runs: number;
+  passing_runs: number;
+  mean_search_count: number;
+  mean_show_count: number;
+  mean_feedback_count: number;
+  mean_tool_calls: number;
+  mean_assets_loaded: number;
+  mean_irrelevant_assets_loaded: number | null;
+  mean_time_to_first_search_ms: number | null;
+  mean_time_to_first_correct_asset_ms: number | null;
+  mean_context_bytes_loaded: number | null;
+  mean_asset_bytes_loaded: number | null;
+  total_tool_calls: number;
+  tool_calls_per_success: number | null;
+  cost_per_success: number | null;
+} {
+  return {
+    total_runs: agg.totalRuns,
+    passing_runs: agg.passingRuns,
+    mean_search_count: agg.meanSearchCount,
+    mean_show_count: agg.meanShowCount,
+    mean_feedback_count: agg.meanFeedbackCount,
+    mean_tool_calls: agg.meanToolCalls,
+    mean_assets_loaded: agg.meanAssetsLoaded,
+    mean_irrelevant_assets_loaded: agg.meanIrrelevantAssetsLoaded,
+    mean_time_to_first_search_ms: agg.meanTimeToFirstSearchMs,
+    mean_time_to_first_correct_asset_ms: agg.meanTimeToFirstCorrectAssetMs,
+    mean_context_bytes_loaded: agg.meanContextBytesLoaded,
+    mean_asset_bytes_loaded: agg.meanAssetBytesLoaded,
+    total_tool_calls: agg.totalToolCalls,
+    tool_calls_per_success: agg.toolCallsPerSuccess,
+    cost_per_success: agg.costPerSuccess,
+  };
+}
+
+/**
+ * Render the §13.3 AKM overhead summary as a compact markdown section (#263).
+ * Skipped entirely when the corpus had no akm-arm runs so the report stays
+ * tight on the no-akm code path.
+ */
+export function renderAkmOverheadSection(input: UtilityRunReport): string {
+  const akmRuns = input.akmRuns ?? [];
+  if (akmRuns.length === 0) return "";
+  const meta = new Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">>();
+  for (const t of input.taskMetadata ?? []) {
+    meta.set(t.id, { goldRef: t.goldRef, expectedTransferFrom: t.expectedTransferFrom });
+  }
+  const perRun = computeAkmOverhead(akmRuns, { taskMetadata: meta });
+  const agg = aggregateAkmOverhead(perRun, akmRuns);
+  const lines: string[] = [];
+  lines.push("## AKM overhead");
+  lines.push("");
+  lines.push(`- runs: ${agg.totalRuns} (${agg.passingRuns} passed)`);
+  lines.push(
+    `- tool calls: search=${formatMean(agg.meanSearchCount)} show=${formatMean(agg.meanShowCount)} feedback=${formatMean(agg.meanFeedbackCount)} (mean per run)`,
+  );
+  lines.push(`- total tool calls: ${agg.totalToolCalls} (mean ${formatMean(agg.meanToolCalls)} per run)`);
+  lines.push(
+    `- tool_calls_per_success: ${agg.toolCallsPerSuccess === null ? "n/a" : formatMean(agg.toolCallsPerSuccess)}`,
+  );
+  lines.push(`- assets loaded (mean unique per run): ${formatMean(agg.meanAssetsLoaded)}`);
+  lines.push(`- irrelevant assets loaded (mean per tagged run): ${formatNullableMean(agg.meanIrrelevantAssetsLoaded)}`);
+  lines.push(`- time_to_first_search: ${formatNullableMs(agg.meanTimeToFirstSearchMs)}`);
+  lines.push(`- time_to_first_correct_asset: ${formatNullableMs(agg.meanTimeToFirstCorrectAssetMs)}`);
+  lines.push(`- context_bytes_loaded: ${formatNullableBytes(agg.meanContextBytesLoaded)}`);
+  lines.push(`- asset_bytes_loaded: ${formatNullableBytes(agg.meanAssetBytesLoaded)}`);
+  lines.push(`- cost_per_success: ${agg.costPerSuccess === null ? "n/a" : formatMean(agg.costPerSuccess)} tokens`);
+  return lines.join("\n");
+}
+
+function formatMean(value: number): string {
+  return value.toFixed(2);
+}
+
+function formatNullableMean(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(2);
+}
+
+function formatNullableMs(value: number | null): string {
+  return value === null ? "n/a" : `${Math.round(value)}ms`;
+}
+
+function formatNullableBytes(value: number | null): string {
+  return value === null ? "n/a" : `${Math.round(value)} bytes`;
 }
 
 /**
@@ -377,6 +622,116 @@ function serialiseDelta(d: CorpusDelta): { pass_rate: number; tokens_per_pass: n
     pass_rate: d.passRate,
     tokens_per_pass: d.tokensPerPass,
     wallclock_ms: d.wallclockMs,
+  };
+}
+
+/** Snake-case wire shape for one row of `domain_level_deltas` (#260). */
+function serialiseDomainAggregate(row: DomainAggregateRow): {
+  domain: string;
+  task_count: number;
+  regression_count: number;
+  pass_rate_noakm: number;
+  pass_rate_akm: number;
+  pass_rate_delta: number;
+  tokens_per_pass_delta: number | null;
+  wallclock_ms_delta: number;
+} {
+  return {
+    domain: row.domain,
+    task_count: row.taskCount,
+    regression_count: row.regressionCount,
+    pass_rate_noakm: row.passRateNoakm,
+    pass_rate_akm: row.passRateAkm,
+    pass_rate_delta: row.passRateDelta,
+    tokens_per_pass_delta: row.tokensPerPassDelta,
+    wallclock_ms_delta: row.wallclockMsDelta,
+  };
+}
+
+// ── Corpus coverage block (#262) ───────────────────────────────────────────
+
+/**
+ * Build the §13.3 `corpus_coverage` block from a UtilityRunReport (#262).
+ * Folds three pieces:
+ * - `coverage`: counts per `memory_ability` (closed set + `untagged`) and
+ *   `task_family`. Operators see at a glance which abilities the corpus
+ *   covers and which are missing.
+ * - `by_memory_ability` / `by_task_family`: per-category aggregates of pass
+ *   rate, akm − noakm delta, negative transfer count, and (when supplied)
+ *   workflow-compliance mean.
+ *
+ * When the runner did not plumb `taskMetadata` (legacy code paths) we emit a
+ * skeleton block with zero counts so JSON consumers don't see the key flicker
+ * in and out depending on the runner version.
+ */
+function buildCorpusCoverageBlock(input: UtilityRunReport): {
+  coverage: CorpusCoverage;
+  by_memory_ability: ReturnType<typeof serialiseCategoryRow>[];
+  by_task_family: ReturnType<typeof serialiseCategoryRow>[];
+} {
+  const taskMetadata = input.taskMetadata ?? [];
+  const metaById = new Map<string, TaskMetadata>();
+  for (const m of taskMetadata) metaById.set(m.id, m);
+
+  const tagEntries: PerTaskTagEntry[] = input.tasks.map((t) => {
+    const meta = metaById.get(t.id);
+    const entry: PerTaskTagEntry = {
+      id: t.id,
+      noakm: t.noakm,
+      akm: t.akm,
+    };
+    if (meta?.memoryAbility) entry.memoryAbility = meta.memoryAbility;
+    if (meta?.taskFamily) entry.taskFamily = meta.taskFamily;
+    if (meta?.workflowFocus) entry.workflowFocus = meta.workflowFocus;
+    if (typeof t.workflowCompliance === "number" && Number.isFinite(t.workflowCompliance)) {
+      entry.workflowCompliance = t.workflowCompliance;
+    }
+    return entry;
+  });
+
+  const coverage = computeCorpusCoverage(taskMetadata);
+  const byAbility = aggregateByMemoryAbility(tagEntries);
+  const byFamily = aggregateByTaskFamily(tagEntries);
+
+  return {
+    coverage,
+    by_memory_ability: byAbility.map(serialiseCategoryRow),
+    by_task_family: byFamily.map(serialiseCategoryRow),
+  };
+}
+
+function serialiseCategoryRow(row: CategoryAggregateRow): {
+  category: string;
+  task_count: number;
+  pass_rate_noakm: number;
+  pass_rate_akm: number;
+  pass_rate_delta: number;
+  negative_transfer_count: number;
+  workflow_compliance: number | null;
+} {
+  return {
+    category: row.category,
+    task_count: row.taskCount,
+    pass_rate_noakm: row.passRateNoakm,
+    pass_rate_akm: row.passRateAkm,
+    pass_rate_delta: row.passRateDelta,
+    negative_transfer_count: row.negativeTransferCount,
+    workflow_compliance: row.workflowCompliance,
+  };
+}
+
+/** Snake-case wire shape for one row of `asset_regression_candidates` (#260). */
+function serialiseAssetRegressionCandidate(row: AssetRegressionCandidateRow): {
+  asset_ref: string;
+  regressed_task_count: number;
+  regressed_task_ids: string[];
+  total_load_count: number;
+} {
+  return {
+    asset_ref: row.assetRef,
+    regressed_task_count: row.regressedTaskCount,
+    regressed_task_ids: row.regressedTaskIds,
+    total_load_count: row.totalLoadCount,
   };
 }
 
@@ -472,8 +827,29 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("| arm | pass_rate | tokens_per_pass | wallclock_ms |");
   lines.push("|-----|-----------|-----------------|--------------|");
   lines.push(corpusRow("noakm", input.aggregateNoakm));
+  // #261: synthetic row sits between noakm and akm so the columns read
+  // baseline → synthetic → akm in the natural progression. Only rendered
+  // when the runner opted into the synthetic arm.
+  if (input.aggregateSynth) {
+    lines.push(corpusRow("synthetic", input.aggregateSynth));
+  }
   lines.push(corpusRow("akm", input.aggregateAkm));
   lines.push(deltaRow(input.aggregateDelta));
+  // #261: akm_over_synthetic_lift summary line. When AKM does not beat the
+  // synthetic baseline (lift <= 0) we surface a warning marker so operators
+  // cannot miss the regression. Otherwise we render the lift as an
+  // informative line.
+  if (input.aggregateSynth) {
+    const lift = input.aggregateAkm.passRate - input.aggregateSynth.passRate;
+    lines.push("");
+    if (lift <= 0) {
+      lines.push(
+        `:warning: **akm_over_synthetic_lift = ${signedFixed(lift, 2)}** — AKM did not beat the synthetic-notes baseline.`,
+      );
+    } else {
+      lines.push(`**akm_over_synthetic_lift: ${signedFixed(lift, 2)}**`);
+    }
+  }
   lines.push("");
   lines.push("## Trajectory (akm)");
   lines.push("");
@@ -482,13 +858,34 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("");
   lines.push("## Per-task pass rates");
   lines.push("");
-  lines.push("| task | noakm | akm | delta |");
-  lines.push("|------|-------|-----|-------|");
+  // #261: synthetic column is rendered only when the synthetic arm ran.
+  // The default header/row stays identical to the pre-#261 output.
+  if (input.aggregateSynth) {
+    lines.push("| task | noakm | synthetic | akm | delta |");
+    lines.push("|------|-------|-----------|-----|-------|");
+  } else {
+    lines.push("| task | noakm | akm | delta |");
+    lines.push("|------|-------|-----|-------|");
+  }
   // Sort tasks alphabetically for byte-stable markdown output.
   const sorted = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
   for (const t of sorted) {
-    lines.push(taskRow(t));
+    lines.push(taskRow(t, input.aggregateSynth !== undefined));
   }
+  // Corpus-coverage section (#262). Renders only when at least one task was
+  // tagged with a `memory_ability`; without tags the section adds no signal
+  // and would just churn snapshots.
+  const coverageSection = renderCorpusCoverageSection(input);
+  if (coverageSection.length > 0) {
+    lines.push("");
+    lines.push(coverageSection);
+  }
+  // Negative-transfer + domain diagnostics (#260). The section stays quiet
+  // ("none") when no regressions were observed so green corpora don't fill
+  // the report with empty subheaders.
+  const negativeTransferSection = renderNegativeTransferSection(input);
+  lines.push("");
+  lines.push(negativeTransferSection);
   // Failure-mode breakdown (§6.6). Appended near the bottom so the headline
   // pass-rate / trajectory tables stay visually anchored at the top.
   const failureSection = renderFailureModeBreakdown(input);
@@ -499,6 +896,23 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   if (input.searchBridge) {
     lines.push("");
     lines.push(renderSearchBridgeTable(input.searchBridge));
+  }
+
+  // #257: workflow compliance section. `renderWorkflowComplianceSection`
+  // returns "" when there are no checks, so we only push the blank-line
+  // separator when there's actually content to render.
+  const workflowSection = renderWorkflowComplianceSection(input);
+  if (workflowSection.length > 0) {
+    lines.push("");
+    lines.push(workflowSection);
+  }
+
+  // AKM overhead + tool-use efficiency (#263). Skipped when the corpus had
+  // no akm-arm runs so the report stays compact on the no-akm path.
+  const overheadSection = renderAkmOverheadSection(input);
+  if (overheadSection.length > 0) {
+    lines.push("");
+    lines.push(overheadSection);
   }
 
   // Token-measurement section (issue #252). Always rendered when there are
@@ -594,7 +1008,14 @@ function deltaRow(d: CorpusDelta): string {
   return `| **delta** | ${signed(d.passRate.toFixed(2))} | ${tpp} | ${signed(d.wallclockMs.toFixed(0))} |`;
 }
 
-function taskRow(t: UtilityReportTaskEntry): string {
+function taskRow(t: UtilityReportTaskEntry, includeSynthetic = false): string {
+  if (includeSynthetic) {
+    // #261: render the synthetic-arm pass-rate when present; "n/a" when the
+    // arm did not run for this task. A missing arm is NOT a zero-pass arm —
+    // a 0.00 cell would be misleading because the model never tried.
+    const synth = t.synthetic ? t.synthetic.passRate.toFixed(2) : "n/a";
+    return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${synth} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
+  }
   return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
 }
 
@@ -869,6 +1290,640 @@ export function renderFailureModeBreakdown(report: UtilityRunReport): string {
   return lines.join("\n");
 }
 
+// ── Workflow compliance aggregation (#257) ─────────────────────────────────
+
+/**
+ * Top-violation entry with enough detail to identify which (task, seed)
+ * caused each occurrence. The `evidence` array is capped at
+ * `MAX_VIOLATION_EVIDENCE` per code so a pathological corpus cannot blow up
+ * the report.
+ */
+const MAX_VIOLATION_EVIDENCE = 10;
+
+/**
+ * Maximum number of top-violation entries to surface in JSON / markdown.
+ * Operators care about the head of the distribution; the long tail is
+ * recoverable from `workflowChecks` if needed.
+ */
+const MAX_TOP_VIOLATIONS = 10;
+
+interface WorkflowViolationEvidence {
+  task_id: string;
+  arm: string;
+  seed: number;
+  workflow_id: string;
+  message?: string;
+  expected?: string;
+  observed?: string;
+}
+
+interface WorkflowTopViolation {
+  code: WorkflowViolationCode;
+  count: number;
+  evidence: WorkflowViolationEvidence[];
+}
+
+interface WorkflowPerSpecAggregate {
+  workflow_id: string;
+  count: number;
+  score: number;
+  pass_rate: number;
+  partial_rate: number;
+  fail_rate: number;
+  violation_count: number;
+}
+
+interface WorkflowOutcomeCounts {
+  pass: number;
+  partial: number;
+  fail: number;
+}
+
+interface WorkflowCrossTabRow {
+  task_outcome: string;
+  pass: number;
+  partial: number;
+  fail: number;
+  total: number;
+}
+
+/**
+ * Workflow reliability sub-block (#258) attached under the existing #257
+ * `workflow` envelope. Always present; `corpus.groups === 0` and an empty
+ * `by_workflow` record indicate "no applicable checks contributed".
+ */
+interface WorkflowReliabilityBlock {
+  by_workflow: Record<string, WorkflowReliabilityRow>;
+  corpus: WorkflowReliabilityCorpus;
+}
+
+interface WorkflowAggregate {
+  total_checks: number;
+  applicable_checks: number;
+  overall_compliance: number;
+  strict_pass_rate: number;
+  partial_pass_rate: number;
+  fail_rate: number;
+  violation_count: number;
+  by_workflow: Record<string, WorkflowPerSpecAggregate>;
+  top_violations: WorkflowTopViolation[];
+  cross_tab: WorkflowCrossTabRow[];
+  /** #258 reliability metrics (pass@k / pass^k). */
+  reliability: WorkflowReliabilityBlock;
+}
+
+/**
+ * Map a workflow check `status` onto the public pass/partial/fail bucket.
+ * `not_applicable` returns `null` (excluded from the aggregate counts).
+ * `harness_error` is bucketed as `fail` so corrupt traces are visibly
+ * counted against compliance.
+ */
+function bucketWorkflowStatus(status: WorkflowCheckStatus): "pass" | "partial" | "fail" | null {
+  if (status === "pass") return "pass";
+  if (status === "partial") return "partial";
+  if (status === "fail") return "fail";
+  if (status === "harness_error") return "fail";
+  return null; // not_applicable
+}
+
+/**
+ * Compute the §257 `workflow` block from a flat list of `WorkflowCheckResult`.
+ * Empty input yields an empty (zero-filled) aggregate so JSON consumers
+ * always see the same shape.
+ */
+function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): WorkflowAggregate {
+  // #258: Compute reliability up front so all early-return paths share the
+  // same shape. Reliability tolerates empty input (`groups === 0`).
+  const reliabilityResult = computeWorkflowReliability(checks);
+  const reliability: WorkflowReliabilityBlock = {
+    by_workflow: reliabilityResult.byWorkflow,
+    corpus: reliabilityResult.corpus,
+  };
+
+  const empty: WorkflowAggregate = {
+    total_checks: checks.length,
+    applicable_checks: 0,
+    overall_compliance: 0,
+    strict_pass_rate: 0,
+    partial_pass_rate: 0,
+    fail_rate: 0,
+    violation_count: 0,
+    by_workflow: {},
+    top_violations: [],
+    cross_tab: [],
+    reliability,
+  };
+
+  if (checks.length === 0) return empty;
+
+  // Bucket counts (corpus-wide) and accumulate per-spec / per-violation /
+  // cross-tab in a single pass.
+  let strict = 0;
+  let partial = 0;
+  let fail = 0;
+  let scoreSum = 0;
+  let applicable = 0;
+  let violationCount = 0;
+
+  const perSpecAcc = new Map<
+    string,
+    { count: number; scoreSum: number; pass: number; partial: number; fail: number; violationCount: number }
+  >();
+  const violationAcc = new Map<WorkflowViolationCode, WorkflowViolationEvidence[]>();
+  const crossTabAcc = new Map<string, WorkflowOutcomeCounts>();
+  // We need each (task_outcome, run) bucketed against the WORST workflow
+  // outcome that run produced — otherwise a run with one passing and one
+  // failing spec gets double-counted across cross-tab rows. Reduce per-run.
+  const runWorstOutcome = new Map<string, { taskOutcome: string; workflowOutcome: "pass" | "partial" | "fail" }>();
+  // Track which run keys have at least one applicable check; non-applicable
+  // runs do not contribute to the cross-tab.
+  const runHasApplicable = new Set<string>();
+
+  for (const c of checks) {
+    const bucket = bucketWorkflowStatus(c.status);
+    const runKey = `${c.taskId}::${c.arm}::${c.seed}`;
+
+    // Per-spec: include `not_applicable` in the spec's `count` column
+    // (operators want to see whether the spec ever fired) but exclude
+    // it from rate denominators.
+    const specEntry = perSpecAcc.get(c.workflowId) ?? {
+      count: 0,
+      scoreSum: 0,
+      pass: 0,
+      partial: 0,
+      fail: 0,
+      violationCount: 0,
+    };
+    specEntry.count += 1;
+    if (bucket !== null) {
+      specEntry.scoreSum += c.score;
+      specEntry[bucket] += 1;
+    }
+    specEntry.violationCount += c.violations.length;
+    perSpecAcc.set(c.workflowId, specEntry);
+
+    if (bucket === null) continue;
+
+    applicable += 1;
+    scoreSum += c.score;
+    violationCount += c.violations.length;
+    runHasApplicable.add(runKey);
+
+    if (bucket === "pass") strict += 1;
+    else if (bucket === "partial") partial += 1;
+    else fail += 1;
+
+    // Per-violation evidence collection. Cap evidence per code so one noisy
+    // failure mode cannot dominate the section.
+    for (const v of c.violations) {
+      const list = violationAcc.get(v.code) ?? [];
+      if (list.length < MAX_VIOLATION_EVIDENCE) {
+        const ev: WorkflowViolationEvidence = {
+          task_id: c.taskId,
+          arm: c.arm,
+          seed: c.seed,
+          workflow_id: c.workflowId,
+        };
+        if (v.message) ev.message = v.message;
+        if (v.expected !== undefined) ev.expected = v.expected;
+        if (v.observed !== undefined) ev.observed = v.observed;
+        list.push(ev);
+      }
+      violationAcc.set(v.code, list);
+    }
+
+    // Cross-tab bookkeeping: keep the WORST workflow outcome per run so we
+    // get one cell per run (not per (run × spec)).
+    const taskOutcome = readCheckTaskOutcome(c) ?? "unknown";
+    const worst = runWorstOutcome.get(runKey);
+    if (!worst) {
+      runWorstOutcome.set(runKey, { taskOutcome, workflowOutcome: bucket });
+    } else if (severityRank(bucket) > severityRank(worst.workflowOutcome)) {
+      worst.workflowOutcome = bucket;
+    }
+  }
+
+  // Reduce runWorstOutcome into the public cross_tab rows. We always emit
+  // entries for `pass` and `fail` task outcomes so the table shape is
+  // stable; additional outcomes ("budget_exceeded", "harness_error",
+  // "unknown") only appear when at least one run carried them.
+  const stableOutcomes: string[] = ["pass", "fail"];
+  for (const [, entry] of runWorstOutcome) {
+    if (!stableOutcomes.includes(entry.taskOutcome) && entry.taskOutcome !== "unknown") {
+      stableOutcomes.push(entry.taskOutcome);
+    }
+  }
+  for (const [, entry] of runWorstOutcome) {
+    const counts = crossTabAcc.get(entry.taskOutcome) ?? { pass: 0, partial: 0, fail: 0 };
+    counts[entry.workflowOutcome] += 1;
+    crossTabAcc.set(entry.taskOutcome, counts);
+  }
+
+  const cross_tab: WorkflowCrossTabRow[] = [];
+  for (const outcome of stableOutcomes) {
+    const counts = crossTabAcc.get(outcome) ?? { pass: 0, partial: 0, fail: 0 };
+    cross_tab.push({
+      task_outcome: outcome,
+      pass: counts.pass,
+      partial: counts.partial,
+      fail: counts.fail,
+      total: counts.pass + counts.partial + counts.fail,
+    });
+  }
+  // Append "unknown" row only if any run actually carried it.
+  if (crossTabAcc.has("unknown")) {
+    const counts = crossTabAcc.get("unknown") ?? { pass: 0, partial: 0, fail: 0 };
+    cross_tab.push({
+      task_outcome: "unknown",
+      pass: counts.pass,
+      partial: counts.partial,
+      fail: counts.fail,
+      total: counts.pass + counts.partial + counts.fail,
+    });
+  }
+
+  if (applicable === 0) {
+    // Every check was `not_applicable`. Surface a non-empty `by_workflow`
+    // (so operators see which specs ran) but leave the rate fields zeroed.
+    const by_workflow: Record<string, WorkflowPerSpecAggregate> = {};
+    for (const [id, e] of perSpecAcc) {
+      by_workflow[id] = {
+        workflow_id: id,
+        count: e.count,
+        score: 0,
+        pass_rate: 0,
+        partial_rate: 0,
+        fail_rate: 0,
+        violation_count: e.violationCount,
+      };
+    }
+    return {
+      total_checks: checks.length,
+      applicable_checks: 0,
+      overall_compliance: 0,
+      strict_pass_rate: 0,
+      partial_pass_rate: 0,
+      fail_rate: 0,
+      violation_count: 0,
+      by_workflow,
+      top_violations: [],
+      cross_tab,
+      reliability,
+    };
+  }
+
+  const by_workflow: Record<string, WorkflowPerSpecAggregate> = {};
+  for (const [id, e] of perSpecAcc) {
+    const applicableForSpec = e.pass + e.partial + e.fail;
+    const score = applicableForSpec === 0 ? 0 : e.scoreSum / applicableForSpec;
+    const passRate = applicableForSpec === 0 ? 0 : e.pass / applicableForSpec;
+    const partialRate = applicableForSpec === 0 ? 0 : e.partial / applicableForSpec;
+    const failRate = applicableForSpec === 0 ? 0 : e.fail / applicableForSpec;
+    by_workflow[id] = {
+      workflow_id: id,
+      count: e.count,
+      score,
+      pass_rate: passRate,
+      partial_rate: partialRate,
+      fail_rate: failRate,
+      violation_count: e.violationCount,
+    };
+  }
+
+  // Top-violation list: sort by count desc, tie-break alphabetically by
+  // code so rendering is byte-stable.
+  const top_violations: WorkflowTopViolation[] = [];
+  for (const [code, evidence] of violationAcc) {
+    top_violations.push({
+      code,
+      count: evidence.length, // bounded; raw count below for accuracy
+      evidence,
+    });
+  }
+  // Recount: `evidence.length` is capped at MAX_VIOLATION_EVIDENCE; we want
+  // the true count for sorting/reporting. Re-derive from violationAcc by
+  // scanning checks again — cheap.
+  const trueCounts = new Map<WorkflowViolationCode, number>();
+  for (const c of checks) {
+    if (bucketWorkflowStatus(c.status) === null) continue;
+    for (const v of c.violations) {
+      trueCounts.set(v.code, (trueCounts.get(v.code) ?? 0) + 1);
+    }
+  }
+  for (const tv of top_violations) {
+    tv.count = trueCounts.get(tv.code) ?? tv.count;
+  }
+  top_violations.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.code.localeCompare(b.code);
+  });
+  const trimmedViolations = top_violations.slice(0, MAX_TOP_VIOLATIONS);
+
+  return {
+    total_checks: checks.length,
+    applicable_checks: applicable,
+    overall_compliance: scoreSum / applicable,
+    strict_pass_rate: strict / applicable,
+    partial_pass_rate: partial / applicable,
+    fail_rate: fail / applicable,
+    violation_count: violationCount,
+    by_workflow,
+    top_violations: trimmedViolations,
+    cross_tab,
+    reliability,
+  };
+}
+
+/**
+ * Severity rank for cross-tab "WORST workflow outcome per run" reduction.
+ * fail > partial > pass.
+ */
+function severityRank(b: "pass" | "partial" | "fail"): number {
+  if (b === "fail") return 2;
+  if (b === "partial") return 1;
+  return 0;
+}
+
+/**
+ * Recover the task-level outcome that produced a check, when available.
+ * The check shape does not carry it directly; the runner stashes it on a
+ * non-public side-channel field. Returns `undefined` when no task outcome
+ * was attached (older callers, hand-written tests).
+ */
+function readCheckTaskOutcome(c: WorkflowCheckResult): string | undefined {
+  return typeof c.taskOutcome === "string" ? c.taskOutcome : undefined;
+}
+
+/**
+ * Render the §257 `## Workflow compliance` markdown section. Returns "" when
+ * there are no checks so the report stays compact for runs without
+ * applicable workflow specs.
+ */
+export function renderWorkflowComplianceSection(input: UtilityRunReport): string {
+  const checks = input.workflowChecks ?? [];
+  const agg = buildWorkflowAggregate(checks);
+  if (agg.total_checks === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Workflow compliance");
+  lines.push("");
+  if (agg.applicable_checks === 0) {
+    lines.push("_No workflow specs applied to this corpus._");
+    if (Object.keys(agg.by_workflow).length > 0) {
+      lines.push("");
+      lines.push(`Loaded specs (none matched the run): ${Object.keys(agg.by_workflow).sort().join(", ")}`);
+    }
+    return lines.join("\n");
+  }
+
+  lines.push(
+    `overall_compliance=${agg.overall_compliance.toFixed(2)}, ` +
+      `strict_pass_rate=${agg.strict_pass_rate.toFixed(2)}, ` +
+      `partial_pass_rate=${agg.partial_pass_rate.toFixed(2)}, ` +
+      `fail_rate=${agg.fail_rate.toFixed(2)}, ` +
+      `violations=${agg.violation_count}`,
+  );
+  lines.push("");
+  lines.push("### By workflow");
+  lines.push("");
+  lines.push("| workflow_id | applicable | score | pass | partial | fail | violations |");
+  lines.push("|-------------|-----------:|------:|-----:|--------:|-----:|-----------:|");
+  const sortedSpecs = Object.values(agg.by_workflow).sort((a, b) => a.workflow_id.localeCompare(b.workflow_id));
+  for (const spec of sortedSpecs) {
+    lines.push(
+      `| ${spec.workflow_id} | ${spec.count} | ${spec.score.toFixed(2)} | ${spec.pass_rate.toFixed(2)} | ${spec.partial_rate.toFixed(2)} | ${spec.fail_rate.toFixed(2)} | ${spec.violation_count} |`,
+    );
+  }
+
+  if (agg.top_violations.length > 0) {
+    lines.push("");
+    lines.push("### Top violations");
+    lines.push("");
+    lines.push("| code | count |");
+    lines.push("|------|------:|");
+    for (const tv of agg.top_violations) {
+      lines.push(`| ${tv.code} | ${tv.count} |`);
+    }
+    // Surface the first evidence pointer per top-violation so operators can
+    // jump to a concrete (task, seed) without parsing the JSON envelope.
+    lines.push("");
+    lines.push("### Violation evidence");
+    lines.push("");
+    lines.push("| code | task | seed | workflow | observed |");
+    lines.push("|------|------|-----:|----------|----------|");
+    for (const tv of agg.top_violations) {
+      for (const ev of tv.evidence) {
+        const observed = ev.observed ?? ev.message ?? "";
+        lines.push(`| ${tv.code} | ${ev.task_id} | ${ev.seed} | ${ev.workflow_id} | ${truncateCell(observed)} |`);
+      }
+    }
+  }
+
+  if (agg.cross_tab.length > 0) {
+    lines.push("");
+    lines.push("### Task outcome × workflow outcome");
+    lines.push("");
+    lines.push("| task_outcome | wf_pass | wf_partial | wf_fail | total |");
+    lines.push("|--------------|--------:|-----------:|--------:|------:|");
+    for (const row of agg.cross_tab) {
+      lines.push(`| ${row.task_outcome} | ${row.pass} | ${row.partial} | ${row.fail} | ${row.total} |`);
+    }
+  }
+
+  // #258: Reliability sub-section. Skip when no group contributed (all
+  // checks were `not_applicable` or input was empty).
+  const reliability = agg.reliability;
+  if (reliability.corpus.groups > 0) {
+    lines.push("");
+    lines.push("### Reliability (pass@k / pass^k)");
+    lines.push("");
+    lines.push(
+      `corpus pass@k=${reliability.corpus.pass_at_k.toFixed(2)}, ` +
+        `pass^k=${reliability.corpus.pass_all_k.toFixed(2)} ` +
+        `(over ${reliability.corpus.groups} workflow×task groups, ${reliability.corpus.tasks} distinct tasks)`,
+    );
+    lines.push("");
+    lines.push("| workflow_id | tasks | k | pass@k | pass^k |");
+    lines.push("|-------------|------:|--:|-------:|-------:|");
+    const sortedReliability = Object.values(reliability.by_workflow).sort((a, b) =>
+      a.workflow_id.localeCompare(b.workflow_id),
+    );
+    for (const row of sortedReliability) {
+      lines.push(
+        `| ${row.workflow_id} | ${row.tasks} | ${row.k} | ${row.pass_at_k.toFixed(2)} | ${row.pass_all_k.toFixed(2)} |`,
+      );
+    }
+    // Inconsistency callout: workflows where the agent CAN comply
+    // (pass@k high) but does not RELIABLY comply (pass^k materially lower).
+    // Threshold: pass@k ≥ 0.5 AND (pass@k − pass^k) ≥ 0.25.
+    const INCONSISTENCY_GAP = 0.25;
+    const PASS_AT_K_FLOOR = 0.5;
+    const inconsistent = sortedReliability.filter(
+      (r) => r.pass_at_k >= PASS_AT_K_FLOOR && r.pass_at_k - r.pass_all_k >= INCONSISTENCY_GAP,
+    );
+    if (inconsistent.length > 0) {
+      lines.push("");
+      lines.push("**Inconsistent workflows** (high pass@k but low pass^k — agent can comply but does not reliably):");
+      lines.push("");
+      for (const row of inconsistent) {
+        lines.push(
+          `- \`${row.workflow_id}\`: pass@k=${row.pass_at_k.toFixed(2)} vs pass^k=${row.pass_all_k.toFixed(2)} (gap ${(
+            row.pass_at_k - row.pass_all_k
+          ).toFixed(2)})`,
+        );
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Trim a single cell so the markdown table stays scannable. We keep the
+ * head 80 chars and append `…` when clamped.
+ */
+function truncateCell(s: string): string {
+  if (s.length <= 80) return s.replace(/\|/g, "\\|");
+  return `${s.slice(0, 80).replace(/\|/g, "\\|")}…`;
+}
+
+// ── Negative-transfer + domain diagnostics markdown (#260) ─────────────────
+
+/**
+ * Render the §260 negative-transfer section. Stays quiet when no
+ * regressions exist — emits a single `## Negative transfer\n\nnone` block so
+ * the report remains scannable for green corpora. When regressions exist,
+ * renders headline counts, the top-regressed-task table, the per-domain
+ * delta table, and the asset-regression-candidate table.
+ */
+export function renderNegativeTransferSection(input: UtilityRunReport): string {
+  const negativeTransfer = computeNegativeTransfer(input.tasks);
+  const lines: string[] = ["## Negative transfer", ""];
+  if (negativeTransfer.count === 0) {
+    lines.push("none");
+    return lines.join("\n");
+  }
+  lines.push(
+    `count=${negativeTransfer.count}, severity=${negativeTransfer.severity.toFixed(2)} (sum of noakm − akm pass rate over regressed tasks)`,
+  );
+  lines.push("");
+  lines.push("### Top regressed tasks");
+  lines.push("");
+  lines.push("| task | domain | noakm | akm | delta |");
+  lines.push("|------|--------|-------|-----|-------|");
+  for (const row of negativeTransfer.topRegressedTasks) {
+    lines.push(
+      `| ${row.taskId} | ${row.domain} | ${row.noakmPassRate.toFixed(2)} | ${row.akmPassRate.toFixed(2)} | ${signed(row.delta.toFixed(2))} |`,
+    );
+  }
+
+  const domainRows = computeDomainAggregates(input.tasks);
+  if (domainRows.length > 0) {
+    lines.push("");
+    lines.push("### Domain-level deltas");
+    lines.push("");
+    lines.push(
+      "| domain | tasks | regressions | noakm pass | akm pass | delta | tokens delta | wallclock delta (ms) |",
+    );
+    lines.push(
+      "|--------|-------|-------------|------------|----------|-------|--------------|----------------------|",
+    );
+    for (const row of domainRows) {
+      const tppDelta = row.tokensPerPassDelta === null ? "n/a" : signed(row.tokensPerPassDelta.toFixed(0));
+      lines.push(
+        `| ${row.domain} | ${row.taskCount} | ${row.regressionCount} | ${row.passRateNoakm.toFixed(2)} | ${row.passRateAkm.toFixed(2)} | ${signed(row.passRateDelta.toFixed(2))} | ${tppDelta} | ${signed(row.wallclockMsDelta.toFixed(0))} |`,
+      );
+    }
+  }
+
+  const candidates = computeAssetRegressionCandidates(
+    negativeTransfer.topRegressedTasks.map((r) => r.taskId),
+    input.akmRuns ?? [],
+  );
+  if (candidates.length > 0) {
+    lines.push("");
+    lines.push("### Asset regression candidates");
+    lines.push("");
+    lines.push("| asset_ref | regressed tasks | total loads |");
+    lines.push("|-----------|-----------------|-------------|");
+    for (const row of candidates) {
+      lines.push(`| \`${row.assetRef}\` | ${row.regressedTaskCount} | ${row.totalLoadCount} |`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// ── Corpus-coverage markdown (#262) ────────────────────────────────────────
+
+/**
+ * Render the §13.3 corpus_coverage markdown section (#262). Returns "" when
+ * no task carries a `memory_ability` tag — at that point the section adds
+ * no signal and only churns markdown snapshots.
+ *
+ * Sections rendered:
+ * - Coverage counts per memory-ability label (closed set + `untagged`).
+ * - Per-memory-ability pass-rate / akm − noakm delta / negative-transfer
+ *   counts, plus workflow compliance when at least one task supplied it.
+ * - A compact `## Task families` rollup when ≥ 2 families are tagged.
+ */
+export function renderCorpusCoverageSection(input: UtilityRunReport): string {
+  const block = buildCorpusCoverageBlock(input);
+  const taggedAbility = Object.entries(block.coverage.memoryAbilityCounts).some(([k, v]) => k !== "untagged" && v > 0);
+  if (!taggedAbility) return "";
+
+  const lines: string[] = [];
+  lines.push("## Corpus coverage");
+  lines.push("");
+  lines.push("| memory_ability | tasks |");
+  lines.push("|----------------|-------|");
+  // Sort keys: known abilities alphabetically, `untagged` last.
+  const counts = block.coverage.memoryAbilityCounts;
+  const knownKeys = Object.keys(counts)
+    .filter((k) => k !== "untagged")
+    .sort();
+  for (const k of knownKeys) lines.push(`| ${k} | ${counts[k as MemoryAbility]} |`);
+  if ((counts.untagged ?? 0) > 0) lines.push(`| untagged | ${counts.untagged} |`);
+
+  if (block.by_memory_ability.length > 0) {
+    lines.push("");
+    lines.push("### By memory_ability");
+    lines.push("");
+    const anyCompliance = block.by_memory_ability.some((r) => r.workflow_compliance !== null);
+    if (anyCompliance) {
+      lines.push("| memory_ability | tasks | noakm | akm | delta | neg.transfer | workflow_compliance |");
+      lines.push("|----------------|-------|-------|-----|-------|--------------|---------------------|");
+    } else {
+      lines.push("| memory_ability | tasks | noakm | akm | delta | neg.transfer |");
+      lines.push("|----------------|-------|-------|-----|-------|--------------|");
+    }
+    for (const row of block.by_memory_ability) {
+      const base = `| ${row.category} | ${row.task_count} | ${row.pass_rate_noakm.toFixed(2)} | ${row.pass_rate_akm.toFixed(2)} | ${signed(row.pass_rate_delta.toFixed(2))} | ${row.negative_transfer_count} |`;
+      if (anyCompliance) {
+        const wc = row.workflow_compliance === null ? "n/a" : row.workflow_compliance.toFixed(2);
+        lines.push(`${base} ${wc} |`);
+      } else {
+        lines.push(base);
+      }
+    }
+  }
+
+  const families = block.by_task_family;
+  if (families.length >= 2) {
+    lines.push("");
+    lines.push("### By task_family");
+    lines.push("");
+    lines.push("| task_family | tasks | noakm | akm | delta |");
+    lines.push("|-------------|-------|-------|-----|-------|");
+    for (const row of families) {
+      lines.push(
+        `| ${row.category} | ${row.task_count} | ${row.pass_rate_noakm.toFixed(2)} | ${row.pass_rate_akm.toFixed(2)} | ${signed(row.pass_rate_delta.toFixed(2))} |`,
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
 // ── Git helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -916,6 +1971,12 @@ export interface EvolveReportInput {
   domain: string;
   seedsPerArm: number;
   proposals: ProposalQualityMetrics;
+  /**
+   * Per-lesson quality + reuse metrics (#264). Optional so older artefacts
+   * pre-#264 keep rendering without the `lessons` JSON block. When omitted,
+   * the markdown summary skips the lessons section entirely.
+   */
+  lessons?: LessonMetrics;
   longitudinal: LongitudinalMetrics;
   /**
    * Feedback-signal integrity 2x2 confusion matrix (§6.8). When omitted,
@@ -924,6 +1985,13 @@ export interface EvolveReportInput {
    * older artefacts remain valid.
    */
   feedbackIntegrity?: FeedbackIntegrityMetrics;
+  /**
+   * §6.4 (issue #265) — learning curve across evolution episodes. Optional;
+   * when omitted both the JSON envelope's `learning` key and the markdown
+   * "Learning curve" section are suppressed so older artefacts remain
+   * valid. `episode_index === 0` is the pre-evolution baseline.
+   */
+  learningCurve?: LearningCurve;
   arms: { pre: UtilityRunReport; post: UtilityRunReport; synthetic: UtilityRunReport };
   warnings: string[];
 }
@@ -988,6 +2056,7 @@ function buildEvolveJson(input: EvolveReportInput): object {
         accepted_count: r.acceptedCount,
       })),
     },
+    ...(input.lessons ? { lessons: serialiseLessons(input.lessons) } : {}),
     longitudinal: {
       improvement_slope: input.longitudinal.improvementSlope,
       over_synthetic_lift: input.longitudinal.overSyntheticLift,
@@ -1003,6 +2072,7 @@ function buildEvolveJson(input: EvolveReportInput): object {
         failure_mode: d.failureMode,
       })),
     },
+    ...(input.learningCurve ? { learning: serialiseLearningCurve(input.learningCurve) } : {}),
     arms: {
       pre: armEnvelope(input.arms.pre),
       post: armEnvelope(input.arms.post),
@@ -1030,6 +2100,103 @@ function buildEvolveJson(input: EvolveReportInput): object {
   };
 }
 
+/**
+ * #264 — flatten the LessonMetrics envelope into JSON. Aggregate counters
+ * sit alongside `lessons[]` so consumers can pick the headline numbers off
+ * without walking every row.
+ */
+function serialiseLessons(metrics: LessonMetrics): object {
+  return {
+    lessons_created_count: metrics.lessons_created_count,
+    lessons_accepted_count: metrics.lessons_accepted_count,
+    proposal_lint_pass_rate: metrics.proposal_lint_pass_rate,
+    proposal_acceptance_rate: metrics.proposal_acceptance_rate,
+    lesson_reuse_rate: metrics.lesson_reuse_rate,
+    lesson_reuse_success_rate: metrics.lesson_reuse_success_rate,
+    lesson_negative_transfer_count: metrics.lesson_negative_transfer_count,
+    lessons: metrics.lessons.map((l: LessonRecord) => ({
+      ref: l.ref,
+      source_failures: l.source_failures,
+      lint_pass: l.lint_pass,
+      accepted: l.accepted,
+      first_reused_on: l.first_reused_on,
+      reuse_count: l.reuse_count,
+      reuse_pass_rate: l.reuse_pass_rate,
+      negative_transfer_count: l.negative_transfer_count,
+      leakage_risk: l.leakage_risk,
+    })),
+  };
+}
+
+/**
+ * §6.4 (issue #265) — flatten a `LearningCurve` into its JSON envelope.
+ * Mirrors the suggested shape from the issue body: an `episodes[]` block
+ * with per-episode rows, plus the headline `learning_slope` and
+ * `time_to_improvement`. `pass_rate_by_episode` is exposed as a flat array
+ * for tools that want to plot without re-projecting the rows.
+ */
+function serialiseLearningCurve(curve: LearningCurve): {
+  episodes: Array<{
+    episode_index: number;
+    pass_rate: number;
+    delta_from_previous_episode: number;
+    cumulative_feedback_events: number;
+    cumulative_proposals_created: number;
+    cumulative_proposals_accepted: number;
+    cumulative_lessons_created: number;
+    lesson_reuse_rate: number | null;
+  }>;
+  pass_rate_by_episode: number[];
+  learning_slope: number;
+  time_to_improvement: number | null;
+} {
+  return {
+    episodes: curve.episodes.map((ep) => ({
+      episode_index: ep.episode_index,
+      pass_rate: ep.pass_rate,
+      delta_from_previous_episode: ep.delta_from_previous_episode,
+      cumulative_feedback_events: ep.cumulative_feedback_events,
+      cumulative_proposals_created: ep.cumulative_proposals_created,
+      cumulative_proposals_accepted: ep.cumulative_proposals_accepted,
+      cumulative_lessons_created: ep.cumulative_lessons_created,
+      lesson_reuse_rate: ep.lesson_reuse_rate,
+    })),
+    pass_rate_by_episode: curve.pass_rate_by_episode.slice(),
+    learning_slope: curve.learning_slope,
+    time_to_improvement: curve.time_to_improvement,
+  };
+}
+
+/**
+ * §6.4 (issue #265) — render a compact "Learning curve" markdown table.
+ * One row per episode plus the headline slope + time-to-improvement.
+ */
+export function renderLearningCurveSection(curve: LearningCurve): string {
+  const lines: string[] = [];
+  lines.push("## Learning curve");
+  lines.push("");
+  lines.push(
+    `learning_slope=${signedFixed(curve.learning_slope, 3)}, time_to_improvement=${
+      curve.time_to_improvement === null ? "n/a" : String(curve.time_to_improvement)
+    }`,
+  );
+  lines.push("");
+  if (curve.episodes.length === 0) {
+    lines.push("_No episodes recorded._");
+    return lines.join("\n");
+  }
+  lines.push("| episode | pass_rate | Δ prev | feedback | proposals | accepted | lessons | reuse |");
+  lines.push("|--------:|----------:|-------:|---------:|----------:|---------:|--------:|------:|");
+  for (const ep of curve.episodes) {
+    lines.push(
+      `| ${ep.episode_index} | ${ep.pass_rate.toFixed(2)} | ${signedFixed(ep.delta_from_previous_episode, 2)} | ${ep.cumulative_feedback_events} | ${ep.cumulative_proposals_created} | ${ep.cumulative_proposals_accepted} | ${ep.cumulative_lessons_created} | ${
+        ep.lesson_reuse_rate === null ? "n/a" : ep.lesson_reuse_rate.toFixed(2)
+      } |`,
+    );
+  }
+  return lines.join("\n");
+}
+
 /** §6.8 — flatten the FeedbackIntegrityMetrics envelope into JSON. */
 function serialiseFeedbackIntegrity(metrics: FeedbackIntegrityMetrics): object {
   return {
@@ -1054,6 +2221,33 @@ function serialiseFeedbackIntegrity(metrics: FeedbackIntegrityMetrics): object {
       false_negative_rate: row.false_negative_rate,
     })),
   };
+}
+
+/**
+ * Render the #264 lessons block — aggregate counters followed by one row
+ * per lesson. Exported for tests so the rendered shape can be asserted
+ * directly without going through `renderEvolveReport`.
+ */
+export function renderLessonsTable(metrics: LessonMetrics): string {
+  const lines: string[] = [];
+  lines.push("## Lessons");
+  lines.push("");
+  lines.push(
+    `created=${metrics.lessons_created_count}, accepted=${metrics.lessons_accepted_count}, reuse_rate=${metrics.lesson_reuse_rate.toFixed(2)}, reuse_success_rate=${metrics.lesson_reuse_success_rate.toFixed(2)}, negative_transfer=${metrics.lesson_negative_transfer_count}`,
+  );
+  lines.push("");
+  if (metrics.lessons.length === 0) {
+    lines.push("_No lessons generated._");
+    return lines.join("\n");
+  }
+  lines.push("| ref | accepted | lint | reuse | reuse_pass | first_reused_on | neg_transfer | leakage |");
+  lines.push("|-----|----------|------|-------|------------|-----------------|--------------|---------|");
+  for (const l of metrics.lessons) {
+    lines.push(
+      `| \`${l.ref}\` | ${l.accepted ? "yes" : "no"} | ${l.lint_pass ? "pass" : "fail"} | ${l.reuse_count} | ${l.reuse_pass_rate.toFixed(2)} | ${l.first_reused_on ?? "n/a"} | ${l.negative_transfer_count} | ${l.leakage_risk} |`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -1175,6 +2369,11 @@ function buildEvolveMarkdown(input: EvolveReportInput): string {
     lines.push("");
   }
 
+  if (input.lessons) {
+    lines.push(renderLessonsTable(input.lessons));
+    lines.push("");
+  }
+
   lines.push("## Per-task pre → post → synthetic");
   lines.push("");
   lines.push("| task | pre | post | synthetic | post − pre |");
@@ -1199,6 +2398,11 @@ function buildEvolveMarkdown(input: EvolveReportInput): string {
   if (input.feedbackIntegrity) {
     lines.push("");
     lines.push(renderFeedbackIntegrityTable(input.feedbackIntegrity));
+  }
+
+  if (input.learningCurve) {
+    lines.push("");
+    lines.push(renderLearningCurveSection(input.learningCurve));
   }
 
   if (input.warnings.length > 0) {

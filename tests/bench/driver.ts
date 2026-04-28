@@ -180,6 +180,20 @@ export function buildIsolatedEnv(dirs: IsolationDirs, model: string): Record<str
 }
 
 /**
+ * Strip `AKM_STASH_DIR` from a child env object. Used by the synthetic-arm
+ * spawn path (#261) so the operator's real `AKM_STASH_DIR` cannot leak in
+ * via the parent process even when the harness has copied a wider env via
+ * `{ ...process.env, ...env }`. This is the recurrence guard for the #243
+ * fixup pattern — a synthetic-arm child must NEVER inherit a stash.
+ *
+ * Mutates `env` in place and returns it for ergonomic chaining.
+ */
+export function stripAkmStashDir(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  delete env.AKM_STASH_DIR;
+  return env;
+}
+
+/**
  * Best-effort token-usage parser for opencode stdout. Returns numeric token
  * counts AND a measurement status so callers can distinguish a real zero
  * (`"parsed"`, both fields legitimately 0) from an unparseable / absent
@@ -334,8 +348,18 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     return result;
   }
 
-  const dirs = createIsolationDirs(options.stashDir);
+  // #261: synthetic-arm runs MUST NOT carry AKM_STASH_DIR. We refuse to
+  // forward a stashDir for the synthetic arm even when the caller mistakenly
+  // supplies one, and we explicitly delete the key from the built env so the
+  // operator's real AKM_STASH_DIR can never leak in through any parent-env
+  // inheritance the harness happens to do downstream. Recurrence guard for
+  // the #243 fixup pattern.
+  const stashDir = options.arm === "synthetic" ? undefined : options.stashDir;
+  const dirs = createIsolationDirs(stashDir);
   const env = buildIsolatedEnv(dirs, options.model);
+  if (options.arm === "synthetic") {
+    stripAkmStashDir(env);
+  }
 
   try {
     const agentResult = await runAgent(profile, options.prompt ?? defaultPrompt(options), {

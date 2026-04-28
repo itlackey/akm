@@ -19,10 +19,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { TaskMetadata } from "./corpus";
+import { MEMORY_ABILITY_VALUES, type MemoryAbility, type TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import type { RunRecordSerialized, UtilityRunReport } from "./report";
 import { serializeRunForReport } from "./report";
+import type { WorkflowCheckResult, WorkflowCheckStatus } from "./workflow-evaluator";
+import { normalizeRunToTrace, type WorkflowTraceEvent, type WorkflowTraceEventType } from "./workflow-trace";
 
 // ── Outcome (§6.1) ─────────────────────────────────────────────────────────
 
@@ -276,6 +278,227 @@ export function computePerTaskDelta(noakm: PerTaskMetrics, akm: PerTaskMetrics):
       akm.tokensPerPass === null || noakm.tokensPerPass === null ? null : akm.tokensPerPass - noakm.tokensPerPass,
     wallclockMs: akm.wallclockMs - noakm.wallclockMs,
   };
+}
+
+// ── Negative-transfer + domain diagnostics (#260) ──────────────────────────
+
+/**
+ * One regressed-task row: a task where AKM hurt pass rate relative to noakm.
+ * `delta` is `akm - noakm` (negative for regressions); kept identical to the
+ * sign convention used everywhere else in the bench. `severity` is the
+ * positive magnitude (`noakm - akm`) — convenient for sums and sorting.
+ */
+export interface RegressedTaskRow {
+  taskId: string;
+  domain: string;
+  noakmPassRate: number;
+  akmPassRate: number;
+  /** `akm - noakm`, negative for regressions. */
+  delta: number;
+  /** `noakm - akm`, positive for regressions. */
+  severity: number;
+}
+
+/**
+ * Negative-transfer aggregate (#260). Counts and severity sum across tasks
+ * where `akm.passRate < noakm.passRate`. `topRegressedTasks` is sorted by
+ * largest negative AKM delta first (most-severe regressions on top), with
+ * `taskId` as the deterministic tiebreaker.
+ */
+export interface NegativeTransferAggregate {
+  count: number;
+  /** Sum of `noakm_pass_rate - akm_pass_rate` over regressed tasks. ≥ 0. */
+  severity: number;
+  topRegressedTasks: RegressedTaskRow[];
+}
+
+/**
+ * Per-domain aggregate row (#260). One entry per domain present in the
+ * corpus. Pass rate, tokens-per-pass, and wallclock are means across the
+ * tasks in that domain (each task contributes once, K seeds already
+ * collapsed into PerTaskMetrics). `tokensPerPassDelta` is `null` when
+ * either arm has no measured passes.
+ */
+export interface DomainAggregateRow {
+  domain: string;
+  taskCount: number;
+  /** Tasks within this domain where akm pass rate regressed. */
+  regressionCount: number;
+  passRateNoakm: number;
+  passRateAkm: number;
+  /** `akm - noakm`. Positive when AKM helped this domain. */
+  passRateDelta: number;
+  /** `akm - noakm`. `null` if either arm has no measured passes for this domain. */
+  tokensPerPassDelta: number | null;
+  /** `akm - noakm`, ms. */
+  wallclockMsDelta: number;
+}
+
+/**
+ * Asset-regression-candidate row (#260). An asset that was loaded by the
+ * AKM agent during one or more regressed tasks. `regressedTaskCount` is the
+ * number of distinct regressed task IDs that loaded this asset (de-duped
+ * across seeds) — operators care about cross-task reach, not seed-level
+ * load volume.
+ */
+export interface AssetRegressionCandidateRow {
+  assetRef: string;
+  regressedTaskCount: number;
+  /** Distinct regressed task IDs that loaded this asset, sorted ascending. */
+  regressedTaskIds: string[];
+  /** Total seed-level load count across all regressed tasks (raw volume). */
+  totalLoadCount: number;
+}
+
+/**
+ * Extract the domain prefix from a task ID. The corpus convention is
+ * `<domain>/<task-name>`; we split on the first `/`. Tasks lacking a slash
+ * fall back to the literal `unknown` bucket so they aggregate predictably
+ * rather than producing per-task domains-of-one.
+ */
+export function domainOfTaskId(taskId: string): string {
+  const idx = taskId.indexOf("/");
+  if (idx <= 0) return "unknown";
+  return taskId.slice(0, idx);
+}
+
+/**
+ * Compute the negative-transfer aggregate over a set of per-task entries
+ * (one entry per task; both arms already aggregated into PerTaskMetrics).
+ *
+ * A task is "regressed" when `akm.passRate < noakm.passRate`. Ties (equal
+ * pass rate, including 0=0) are NOT regressions. `topRegressedTasks` is
+ * sorted by `severity` descending then `taskId` ascending so output is
+ * deterministic.
+ */
+export function computeNegativeTransfer(
+  tasks: ReadonlyArray<{ id: string; noakm: PerTaskMetrics; akm: PerTaskMetrics }>,
+): NegativeTransferAggregate {
+  const regressed: RegressedTaskRow[] = [];
+  for (const t of tasks) {
+    const delta = t.akm.passRate - t.noakm.passRate;
+    if (delta >= 0) continue;
+    regressed.push({
+      taskId: t.id,
+      domain: domainOfTaskId(t.id),
+      noakmPassRate: t.noakm.passRate,
+      akmPassRate: t.akm.passRate,
+      delta,
+      severity: -delta,
+    });
+  }
+  regressed.sort((a, b) => {
+    if (b.severity !== a.severity) return b.severity - a.severity;
+    return a.taskId.localeCompare(b.taskId);
+  });
+  const severity = regressed.reduce((acc, r) => acc + r.severity, 0);
+  return { count: regressed.length, severity, topRegressedTasks: regressed };
+}
+
+/**
+ * Compute per-domain aggregates over a set of per-task entries. Each task
+ * contributes once to its domain (K seeds already collapsed). Output rows
+ * are sorted by `domain` ascending so JSON / markdown are byte-stable.
+ *
+ * Domain extraction uses `domainOfTaskId` (split on first `/`).
+ */
+export function computeDomainAggregates(
+  tasks: ReadonlyArray<{ id: string; noakm: PerTaskMetrics; akm: PerTaskMetrics }>,
+): DomainAggregateRow[] {
+  const buckets = new Map<string, Array<{ id: string; noakm: PerTaskMetrics; akm: PerTaskMetrics }>>();
+  for (const t of tasks) {
+    const d = domainOfTaskId(t.id);
+    let arr = buckets.get(d);
+    if (!arr) {
+      arr = [];
+      buckets.set(d, arr);
+    }
+    arr.push(t);
+  }
+  const rows: DomainAggregateRow[] = [];
+  for (const [domain, group] of buckets) {
+    const n = group.length;
+    let noakmSum = 0;
+    let akmSum = 0;
+    let wallNoakm = 0;
+    let wallAkm = 0;
+    let regressionCount = 0;
+    const noakmTpp: number[] = [];
+    const akmTpp: number[] = [];
+    for (const t of group) {
+      noakmSum += t.noakm.passRate;
+      akmSum += t.akm.passRate;
+      wallNoakm += t.noakm.wallclockMs;
+      wallAkm += t.akm.wallclockMs;
+      if (t.akm.passRate < t.noakm.passRate) regressionCount += 1;
+      if (t.noakm.tokensPerPass !== null) noakmTpp.push(t.noakm.tokensPerPass);
+      if (t.akm.tokensPerPass !== null) akmTpp.push(t.akm.tokensPerPass);
+    }
+    const passRateNoakm = noakmSum / n;
+    const passRateAkm = akmSum / n;
+    const meanNoakmTpp = noakmTpp.length === 0 ? null : noakmTpp.reduce((a, b) => a + b, 0) / noakmTpp.length;
+    const meanAkmTpp = akmTpp.length === 0 ? null : akmTpp.reduce((a, b) => a + b, 0) / akmTpp.length;
+    const tokensPerPassDelta = meanNoakmTpp === null || meanAkmTpp === null ? null : meanAkmTpp - meanNoakmTpp;
+    rows.push({
+      domain,
+      taskCount: n,
+      regressionCount,
+      passRateNoakm,
+      passRateAkm,
+      passRateDelta: passRateAkm - passRateNoakm,
+      tokensPerPassDelta,
+      wallclockMsDelta: wallAkm / n - wallNoakm / n,
+    });
+  }
+  rows.sort((a, b) => a.domain.localeCompare(b.domain));
+  return rows;
+}
+
+/**
+ * Compute asset-regression-candidate rows (#260). Walks the AKM-arm runs,
+ * keeps only those whose `taskId` is in `regressedTaskIds`, and tallies how
+ * often each loaded asset shows up. `regressedTaskCount` (distinct task IDs
+ * touched) is the primary sort key — assets that hurt many tasks are more
+ * actionable than assets that flooded one task across seeds.
+ *
+ * Sort: regressedTaskCount desc, totalLoadCount desc, assetRef asc.
+ */
+export function computeAssetRegressionCandidates(
+  regressedTaskIds: ReadonlyArray<string>,
+  akmRuns: ReadonlyArray<RunResult>,
+): AssetRegressionCandidateRow[] {
+  const regressed = new Set(regressedTaskIds);
+  if (regressed.size === 0) return [];
+  const taskIdsByAsset = new Map<string, Set<string>>();
+  const totalLoadByAsset = new Map<string, number>();
+  for (const run of akmRuns) {
+    if (!regressed.has(run.taskId)) continue;
+    const assets = run.assetsLoaded ?? [];
+    for (const ref of assets) {
+      let bucket = taskIdsByAsset.get(ref);
+      if (!bucket) {
+        bucket = new Set<string>();
+        taskIdsByAsset.set(ref, bucket);
+      }
+      bucket.add(run.taskId);
+      totalLoadByAsset.set(ref, (totalLoadByAsset.get(ref) ?? 0) + 1);
+    }
+  }
+  const rows: AssetRegressionCandidateRow[] = [];
+  for (const [assetRef, taskIds] of taskIdsByAsset) {
+    rows.push({
+      assetRef,
+      regressedTaskCount: taskIds.size,
+      regressedTaskIds: [...taskIds].sort(),
+      totalLoadCount: totalLoadByAsset.get(assetRef) ?? 0,
+    });
+  }
+  rows.sort((a, b) => {
+    if (b.regressedTaskCount !== a.regressedTaskCount) return b.regressedTaskCount - a.regressedTaskCount;
+    if (b.totalLoadCount !== a.totalLoadCount) return b.totalLoadCount - a.totalLoadCount;
+    return a.assetRef.localeCompare(b.assetRef);
+  });
+  return rows;
 }
 
 // ── Trajectory (§6.2) ──────────────────────────────────────────────────────
@@ -2135,6 +2358,120 @@ export function computeLongitudinalMetrics(
   };
 }
 
+// ── Learning curve across episodes (§6.4 extension, issue #265) ────────────
+
+/**
+ * Episode-level Track B record. One record per evolution pass:
+ * `episode_index === 0` is the pre-evolution baseline; subsequent indices
+ * are the post-each-pass measurements.
+ *
+ * Cumulative counters are running totals AT THE END of `episode_index`
+ * (i.e. inclusive). Per-episode deltas are derived in `computeLearningCurve`
+ * — the record itself only carries the running totals so callers can supply
+ * either cumulative or per-episode raw inputs without ambiguity.
+ *
+ * `lesson_reuse_rate` mirrors #264's lesson-quality aggregate for this
+ * episode (NOT a delta). When an episode has not yet recorded any lesson
+ * applications the caller passes `null`.
+ */
+export interface EpisodeRecord {
+  episode_index: number;
+  pass_rate: number;
+  /** `pass_rate(i) - pass_rate(i-1)`; `0` for `episode_index === 0`. */
+  delta_from_previous_episode: number;
+  cumulative_feedback_events: number;
+  cumulative_proposals_created: number;
+  cumulative_proposals_accepted: number;
+  cumulative_lessons_created: number;
+  /** Reuse rate from #264's lesson aggregate; `null` when no data yet. */
+  lesson_reuse_rate: number | null;
+}
+
+/** Threshold above `pass_rate[0]` that defines "improvement" for §6.4. */
+export const LEARNING_IMPROVEMENT_THRESHOLD = 0.05;
+
+/**
+ * Aggregate learning-curve metrics across an evolution episode sequence.
+ *
+ * Output:
+ * - `episodes`: echo of the input with `delta_from_previous_episode`
+ *   recomputed defensively (callers may supply raw 0s for episode 0).
+ * - `pass_rate_by_episode`: array indexed by `episode_index`.
+ * - `learning_slope`: standard least-squares regression slope of pass rate
+ *   against episode index. Returns `0` for a single-episode (degenerate)
+ *   input where the regressor variance is zero.
+ * - `time_to_improvement`: smallest `i` where
+ *   `pass_rate[i] > pass_rate[0] + LEARNING_IMPROVEMENT_THRESHOLD`. `null`
+ *   when no such episode exists.
+ *
+ * Empty input is rejected by returning a degenerate envelope with
+ * `learning_slope = 0` and `time_to_improvement = null`. Callers that
+ * supply unsorted episodes get back a stable-sorted copy keyed on
+ * `episode_index`.
+ */
+export interface LearningCurve {
+  episodes: EpisodeRecord[];
+  pass_rate_by_episode: number[];
+  learning_slope: number;
+  time_to_improvement: number | null;
+}
+
+export function computeLearningCurve(episodes: ReadonlyArray<EpisodeRecord>): LearningCurve {
+  // Stable sort by episode_index — defensive against unordered inputs.
+  const sorted = [...episodes].sort((a, b) => a.episode_index - b.episode_index);
+
+  // Recompute per-episode deltas so the contract holds regardless of what
+  // the caller stamped on the input record.
+  const normalised: EpisodeRecord[] = sorted.map((ep, i) => {
+    const prev = i === 0 ? null : sorted[i - 1];
+    const delta = prev === null ? 0 : ep.pass_rate - prev.pass_rate;
+    return { ...ep, delta_from_previous_episode: delta };
+  });
+
+  const passRateByEpisode = normalised.map((ep) => ep.pass_rate);
+
+  // Linear regression slope: sum((xi - x_mean) * (yi - y_mean)) /
+  // sum((xi - x_mean)^2). For a single episode the denominator is 0 — we
+  // return 0 (no observable trend) rather than NaN.
+  const n = normalised.length;
+  let learningSlope = 0;
+  if (n >= 2) {
+    const xs = normalised.map((ep) => ep.episode_index);
+    const xMean = xs.reduce((s, v) => s + v, 0) / n;
+    const yMean = passRateByEpisode.reduce((s, v) => s + v, 0) / n;
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i += 1) {
+      const dx = xs[i] - xMean;
+      const dy = passRateByEpisode[i] - yMean;
+      num += dx * dy;
+      den += dx * dx;
+    }
+    learningSlope = den === 0 ? 0 : num / den;
+  }
+
+  // time_to_improvement: smallest episode_index strictly greater than
+  // `pass_rate[0] + threshold`. Episode 0 itself is excluded — improvement
+  // is only meaningful relative to baseline.
+  let timeToImprovement: number | null = null;
+  if (n >= 2) {
+    const baseline = passRateByEpisode[0];
+    for (let i = 1; i < n; i += 1) {
+      if (passRateByEpisode[i] > baseline + LEARNING_IMPROVEMENT_THRESHOLD) {
+        timeToImprovement = normalised[i].episode_index;
+        break;
+      }
+    }
+  }
+
+  return {
+    episodes: normalised,
+    pass_rate_by_episode: passRateByEpisode,
+    learning_slope: learningSlope,
+    time_to_improvement: timeToImprovement,
+  };
+}
+
 // ── Feedback-signal integrity (§6.8) ───────────────────────────────────────
 
 /**
@@ -2341,4 +2678,728 @@ export function computeFeedbackIntegrity(input: FeedbackIntegrityInput): Feedbac
   }
 
   return { aggregate, perAsset };
+}
+
+// ── Memory-operation tag aggregations (#262) ───────────────────────────────
+
+/**
+ * One per-task entry as consumed by `aggregateByMemoryAbility` /
+ * `aggregateByTaskFamily`. Mirrors the runner's per-task envelope plus the
+ * bag of optional memory-operation tags from `task.yaml`. Tasks may carry
+ * arbitrary subsets of tags — aggregations skip rows where the keying tag
+ * is undefined.
+ */
+export interface PerTaskTagEntry {
+  id: string;
+  noakm: PerTaskMetrics;
+  akm: PerTaskMetrics;
+  /** Optional memory-operation ability tag (#262). */
+  memoryAbility?: MemoryAbility;
+  /** Optional cross-task family identifier (#262). */
+  taskFamily?: string;
+  /** Optional declarative-workflow focus tag (#255 / #262). */
+  workflowFocus?: string;
+  /**
+   * Optional workflow-compliance fraction `[0, 1]` for the akm arm. When
+   * undefined the row is skipped from the workflow-compliance mean for the
+   * group. The runner populates this from #255's per-task workflow trace.
+   */
+  workflowCompliance?: number;
+}
+
+/**
+ * Per-category aggregate emitted by `aggregateByMemoryAbility` and
+ * `aggregateByTaskFamily`. Each row carries:
+ * - `taskCount`: number of tasks that fell into this category.
+ * - `passRateNoakm` / `passRateAkm`: mean pass rate per arm.
+ * - `passRateDelta`: `akm - noakm`. Positive = akm helped this category.
+ * - `negativeTransferCount`: count of tasks where akm pass rate regressed.
+ * - `workflowCompliance`: mean of `workflowCompliance` over rows where it
+ *   was supplied; `null` when no rows in the category provided one.
+ */
+export interface CategoryAggregateRow {
+  category: string;
+  taskCount: number;
+  passRateNoakm: number;
+  passRateAkm: number;
+  passRateDelta: number;
+  negativeTransferCount: number;
+  workflowCompliance: number | null;
+}
+
+function aggregateByKey(
+  entries: ReadonlyArray<PerTaskTagEntry>,
+  pickKey: (e: PerTaskTagEntry) => string | undefined,
+): CategoryAggregateRow[] {
+  const buckets = new Map<string, PerTaskTagEntry[]>();
+  for (const entry of entries) {
+    const key = pickKey(entry);
+    if (!key) continue;
+    let arr = buckets.get(key);
+    if (!arr) {
+      arr = [];
+      buckets.set(key, arr);
+    }
+    arr.push(entry);
+  }
+  const rows: CategoryAggregateRow[] = [];
+  for (const [category, group] of buckets) {
+    const n = group.length;
+    let noakmSum = 0;
+    let akmSum = 0;
+    let regressionCount = 0;
+    let complianceSum = 0;
+    let complianceCount = 0;
+    for (const t of group) {
+      noakmSum += t.noakm.passRate;
+      akmSum += t.akm.passRate;
+      if (t.akm.passRate < t.noakm.passRate) regressionCount += 1;
+      if (typeof t.workflowCompliance === "number" && Number.isFinite(t.workflowCompliance)) {
+        complianceSum += t.workflowCompliance;
+        complianceCount += 1;
+      }
+    }
+    rows.push({
+      category,
+      taskCount: n,
+      passRateNoakm: noakmSum / n,
+      passRateAkm: akmSum / n,
+      passRateDelta: akmSum / n - noakmSum / n,
+      negativeTransferCount: regressionCount,
+      workflowCompliance: complianceCount === 0 ? null : complianceSum / complianceCount,
+    });
+  }
+  rows.sort((a, b) => a.category.localeCompare(b.category));
+  return rows;
+}
+
+/**
+ * Aggregate per-task entries by `memoryAbility` (#262). Tasks lacking a tag
+ * are skipped so the report only surfaces categories with explicit
+ * coverage. Output rows are sorted by category for byte-stable JSON.
+ *
+ * The closed set of memory-ability values is exported as
+ * {@link MEMORY_ABILITY_VALUES} from `corpus.ts`.
+ */
+export function aggregateByMemoryAbility(entries: ReadonlyArray<PerTaskTagEntry>): CategoryAggregateRow[] {
+  return aggregateByKey(entries, (e) => e.memoryAbility);
+}
+
+/**
+ * Aggregate per-task entries by `taskFamily` (#262). Tasks lacking a tag
+ * are skipped. `taskFamily` follows the `<domain>/<short-name>` grammar —
+ * tasks sharing a family are expected to transfer knowledge between each
+ * other. Output rows are sorted by category for byte-stable JSON.
+ */
+export function aggregateByTaskFamily(entries: ReadonlyArray<PerTaskTagEntry>): CategoryAggregateRow[] {
+  return aggregateByKey(entries, (e) => e.taskFamily);
+}
+
+/**
+ * Build the corpus-coverage block for the §13.3 utility report (#262).
+ *
+ * Returns:
+ * - `memoryAbilityCounts`: count of tagged tasks per memory-ability label
+ *   across every value in {@link MEMORY_ABILITY_VALUES}. Untagged tasks are
+ *   summed into `untagged`. Missing categories render as 0 — operators want
+ *   to know which abilities the corpus does NOT cover.
+ * - `taskFamilyCounts`: count of tagged tasks per family. Untagged tasks
+ *   summed into `untagged`. Sorted for stable JSON output.
+ * - `totalTasks`: total tasks supplied to the aggregator.
+ */
+export interface CorpusCoverage {
+  totalTasks: number;
+  memoryAbilityCounts: Record<MemoryAbility | "untagged", number>;
+  taskFamilyCounts: Record<string, number>;
+}
+
+export function computeCorpusCoverage(
+  tasks: ReadonlyArray<Pick<TaskMetadata, "memoryAbility" | "taskFamily">>,
+): CorpusCoverage {
+  const memoryAbilityCounts = {
+    untagged: 0,
+  } as Record<MemoryAbility | "untagged", number>;
+  for (const ability of MEMORY_ABILITY_VALUES) {
+    memoryAbilityCounts[ability] = 0;
+  }
+  const taskFamilyCounts: Record<string, number> = {};
+  let untaggedFamily = 0;
+  for (const task of tasks) {
+    if (task.memoryAbility) {
+      memoryAbilityCounts[task.memoryAbility] = (memoryAbilityCounts[task.memoryAbility] ?? 0) + 1;
+    } else {
+      memoryAbilityCounts.untagged += 1;
+    }
+    if (task.taskFamily) {
+      taskFamilyCounts[task.taskFamily] = (taskFamilyCounts[task.taskFamily] ?? 0) + 1;
+    } else {
+      untaggedFamily += 1;
+    }
+  }
+  if (untaggedFamily > 0) taskFamilyCounts.untagged = untaggedFamily;
+  return {
+    totalTasks: tasks.length,
+    memoryAbilityCounts,
+    taskFamilyCounts,
+  };
+}
+
+// ── AKM overhead + tool-use efficiency (#263) ──────────────────────────────
+
+/**
+ * Per-run AKM overhead record (#263).
+ *
+ * Counts and timings derived from a single RunResult by reusing #254's
+ * `normalizeRunToTrace`. Counts are always numeric (≥ 0). Timings and byte
+ * sizes are `null` when the run did not provide enough evidence to compute
+ * them — they are NEVER zero-filled, because zero is a meaningful value
+ * (e.g. "first search at t=0ms") that would silently mask missing data.
+ *
+ * Definitions:
+ * - `searchCount` / `showCount` / `feedbackCount`: count of `akm_search`,
+ *   `akm_show`, and `akm_feedback` events in the normalised trace.
+ * - `totalToolCalls`: sum of the three counts above. The minimal
+ *   "AKM tool-use" footprint we surface today; if/when we recognise more
+ *   verbs as tool-calls (`akm_reflect`, `akm_distill`, `akm_propose`,
+ *   `akm_proposal_accept`) they will be folded in here additively.
+ * - `assetsLoadedCount`: count of UNIQUE assetRefs from `akm_show` events.
+ * - `irrelevantAssetsLoadedCount`: count of unique `akm_show` assetRefs that
+ *   are NOT the task's `goldRef` AND NOT in `expectedTransferFrom`. When the
+ *   task has neither metadata field, every loaded asset is considered
+ *   irrelevant for accounting — there is no way to know what was relevant.
+ *   When the task is unknown to the caller (no metadata supplied) the count
+ *   is `null` rather than zero, since we cannot judge relevance.
+ * - `timeToFirstSearchMs`: `(ts of first akm_search) - (run start ts)`. Run
+ *   start is the earliest parseable `ts` in the trace. `null` when no
+ *   `akm_search` event has a parseable ts, or when no run-start anchor
+ *   exists.
+ * - `timeToFirstCorrectAssetMs`: `(ts of first akm_show whose assetRef
+ *   matches goldRef) - (run start ts)`. `null` when the task has no
+ *   `goldRef`, no matching show event was found, or timestamps are missing.
+ * - `contextBytesLoaded` / `assetBytesLoaded`: byte sizes of context /
+ *   loaded assets. Not currently captured by the trace; always `null` until
+ *   evidence is wired through. Documented here as a contract: callers MUST
+ *   treat `null` as "unavailable" and never assume zero.
+ */
+export interface AkmOverheadPerRun {
+  taskId: string;
+  arm: string;
+  seed: number;
+  outcome: RunResult["outcome"];
+  searchCount: number;
+  showCount: number;
+  feedbackCount: number;
+  totalToolCalls: number;
+  assetsLoadedCount: number;
+  /** `null` when relevance cannot be judged (no task metadata supplied). */
+  irrelevantAssetsLoadedCount: number | null;
+  /** ms; `null` when unavailable (NOT zero). */
+  timeToFirstSearchMs: number | null;
+  /** ms; `null` when unavailable (NOT zero). */
+  timeToFirstCorrectAssetMs: number | null;
+  /** Bytes; `null` when unavailable (NOT zero). */
+  contextBytesLoaded: number | null;
+  /** Bytes; `null` when unavailable (NOT zero). */
+  assetBytesLoaded: number | null;
+}
+
+/**
+ * Aggregate AKM overhead block emitted into the §13.3 utility envelope (#263).
+ *
+ * `meanAssetsLoaded` etc. are means over `runs.length` (not "runs that loaded
+ * something"); zero-call runs contribute zeros to the numerator. This keeps
+ * the aggregate comparable across arms regardless of how many runs actually
+ * touched AKM.
+ *
+ * Cross-run timings (`meanTimeToFirstSearchMs`, etc.) skip per-run `null`s
+ * — a missing timing must not silently pull the mean toward zero. When NO
+ * run provided a timing the aggregate value is `null`.
+ *
+ * `toolCallsPerSuccess` = `totalToolCalls / passingRuns`. `null` when no
+ * runs passed (avoids `Infinity`). `costPerSuccess` is `null` unless every
+ * passing run has parsed token measurement — partial coverage yields
+ * `null` because mixed measurement statuses cannot be averaged honestly.
+ */
+export interface AkmOverheadAggregate {
+  totalRuns: number;
+  passingRuns: number;
+  meanSearchCount: number;
+  meanShowCount: number;
+  meanFeedbackCount: number;
+  meanToolCalls: number;
+  meanAssetsLoaded: number;
+  meanIrrelevantAssetsLoaded: number | null;
+  meanTimeToFirstSearchMs: number | null;
+  meanTimeToFirstCorrectAssetMs: number | null;
+  meanContextBytesLoaded: number | null;
+  meanAssetBytesLoaded: number | null;
+  /** `totalToolCalls` summed across runs. */
+  totalToolCalls: number;
+  /** `totalToolCalls / passingRuns`. `null` when `passingRuns === 0`. */
+  toolCallsPerSuccess: number | null;
+  /**
+   * Mean (input+output) tokens across passing runs whose `tokenMeasurement`
+   * is `"parsed"`. `null` when:
+   * - `passingRuns === 0`, OR
+   * - any passing run lacks parsed token measurement (mixing parsed with
+   *   missing/unsupported is dishonest), OR
+   * - none of the passing runs has `tokenMeasurement === "parsed"`.
+   */
+  costPerSuccess: number | null;
+}
+
+/**
+ * Optional inputs for `computeAkmOverhead`.
+ *
+ * `taskMetadata` is consulted to compute `irrelevantAssetsLoadedCount` and
+ * `timeToFirstCorrectAssetMs`. Callers that do not have task metadata to
+ * hand can omit it; the per-run record will degrade gracefully (relevant
+ * fields become `null`). The map is keyed by `taskId`.
+ */
+export interface AkmOverheadOptions {
+  /** Lookup of task metadata used for relevance / gold-ref scoring. */
+  taskMetadata?: ReadonlyMap<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">>;
+}
+
+/**
+ * Verb counts considered "AKM tool calls" for `totalToolCalls`. We
+ * deliberately keep this list small — each verb folded in MUST be a
+ * user-initiated CLI invocation, not a background bookkeeping event.
+ * Adding new verbs here is additive and changes only `totalToolCalls`.
+ */
+export const AKM_TOOL_CALL_TYPES: ReadonlySet<WorkflowTraceEventType> = new Set<WorkflowTraceEventType>([
+  "akm_search",
+  "akm_show",
+  "akm_feedback",
+]);
+
+/**
+ * Compute per-run AKM overhead records by replaying #254's normalised trace.
+ *
+ * Pure function: never mutates `runs` and never reads disk. The optional
+ * `taskMetadata` lookup is used only to label loads as relevant / irrelevant
+ * and to compute `timeToFirstCorrectAssetMs`.
+ *
+ * Returned array length matches `runs.length`; element order matches input
+ * order. Runs whose trace contains no AKM events still produce a record
+ * with all counts at zero and timings at `null`.
+ */
+export function computeAkmOverhead(
+  runs: ReadonlyArray<RunResult>,
+  options: AkmOverheadOptions = {},
+): AkmOverheadPerRun[] {
+  const out: AkmOverheadPerRun[] = [];
+  for (const run of runs) {
+    out.push(perRun(run, options.taskMetadata));
+  }
+  return out;
+}
+
+function perRun(run: RunResult, taskMetadata: AkmOverheadOptions["taskMetadata"]): AkmOverheadPerRun {
+  const trace = normalizeRunToTrace(run);
+  const events = trace.events;
+
+  let searchCount = 0;
+  let showCount = 0;
+  let feedbackCount = 0;
+  const uniqueShowRefs = new Set<string>();
+
+  for (const ev of events) {
+    if (ev.type === "akm_search") searchCount += 1;
+    else if (ev.type === "akm_show") {
+      showCount += 1;
+      if (typeof ev.assetRef === "string" && ev.assetRef.length > 0) {
+        uniqueShowRefs.add(ev.assetRef);
+      }
+    } else if (ev.type === "akm_feedback") feedbackCount += 1;
+  }
+  const totalToolCalls = searchCount + showCount + feedbackCount;
+
+  // Run-start anchor: earliest parseable ts in the trace. We use the trace
+  // (not RunResult.events directly) so harness lifecycle markers, when
+  // supplied, can serve as the anchor for stdout-derived events that lack a
+  // native ts.
+  const runStartMs = earliestEventMs(events);
+
+  const timeToFirstSearchMs = computeFirstEventOffsetMs(events, runStartMs, (ev) => ev.type === "akm_search");
+
+  // Resolve task metadata once. Missing metadata means we can't judge
+  // relevance — emit null counts rather than zero.
+  const meta = taskMetadata?.get(run.taskId);
+  const goldRef = meta?.goldRef;
+  const transferFrom = meta?.expectedTransferFrom ?? [];
+  const knownRelevant = new Set<string>();
+  if (typeof goldRef === "string" && goldRef.length > 0) knownRelevant.add(goldRef);
+  for (const r of transferFrom) {
+    if (typeof r === "string" && r.length > 0) knownRelevant.add(r);
+  }
+
+  let irrelevantAssetsLoadedCount: number | null;
+  if (!meta) {
+    // No metadata: cannot tell relevant from irrelevant. Surface null.
+    irrelevantAssetsLoadedCount = null;
+  } else {
+    let count = 0;
+    for (const ref of uniqueShowRefs) {
+      if (!knownRelevant.has(ref)) count += 1;
+    }
+    irrelevantAssetsLoadedCount = count;
+  }
+
+  let timeToFirstCorrectAssetMs: number | null = null;
+  if (typeof goldRef === "string" && goldRef.length > 0) {
+    timeToFirstCorrectAssetMs = computeFirstEventOffsetMs(
+      events,
+      runStartMs,
+      (ev) => ev.type === "akm_show" && ev.assetRef === goldRef,
+    );
+  }
+
+  return {
+    taskId: run.taskId,
+    arm: run.arm,
+    seed: run.seed,
+    outcome: run.outcome,
+    searchCount,
+    showCount,
+    feedbackCount,
+    totalToolCalls,
+    assetsLoadedCount: uniqueShowRefs.size,
+    irrelevantAssetsLoadedCount,
+    timeToFirstSearchMs,
+    timeToFirstCorrectAssetMs,
+    // Byte sizes are not yet wired through the trace (#254 does not capture
+    // payload sizes). Callers MUST treat null as "unavailable", not zero.
+    contextBytesLoaded: null,
+    assetBytesLoaded: null,
+  };
+}
+
+/**
+ * Aggregate per-run AKM overhead records into the corpus-wide block (#263).
+ *
+ * Pure: never mutates `perRun`. When `perRun` is empty, returns a zero/null
+ * envelope so callers can render a "no AKM activity" section without
+ * branching. `passingRuns === 0` always implies `toolCallsPerSuccess === null`
+ * and `costPerSuccess === null`.
+ */
+export function aggregateAkmOverhead(
+  perRun: ReadonlyArray<AkmOverheadPerRun>,
+  rawRuns: ReadonlyArray<RunResult> = [],
+): AkmOverheadAggregate {
+  const n = perRun.length;
+  if (n === 0) {
+    return {
+      totalRuns: 0,
+      passingRuns: 0,
+      meanSearchCount: 0,
+      meanShowCount: 0,
+      meanFeedbackCount: 0,
+      meanToolCalls: 0,
+      meanAssetsLoaded: 0,
+      meanIrrelevantAssetsLoaded: null,
+      meanTimeToFirstSearchMs: null,
+      meanTimeToFirstCorrectAssetMs: null,
+      meanContextBytesLoaded: null,
+      meanAssetBytesLoaded: null,
+      totalToolCalls: 0,
+      toolCallsPerSuccess: null,
+      costPerSuccess: null,
+    };
+  }
+
+  let searchSum = 0;
+  let showSum = 0;
+  let feedbackSum = 0;
+  let toolCallsSum = 0;
+  let assetsSum = 0;
+
+  let irrelevantSum = 0;
+  let irrelevantCount = 0;
+
+  let firstSearchSum = 0;
+  let firstSearchCount = 0;
+  let firstCorrectSum = 0;
+  let firstCorrectCount = 0;
+
+  let contextBytesSum = 0;
+  let contextBytesCount = 0;
+  let assetBytesSum = 0;
+  let assetBytesCount = 0;
+
+  // Build a quick lookup for token measurement off `rawRuns` so the cost-
+  // per-success calc can honour the parsed/missing/unsupported distinction
+  // without forcing the caller to project tokens onto AkmOverheadPerRun.
+  const rawByKey = new Map<string, RunResult>();
+  for (const r of rawRuns) {
+    rawByKey.set(`${r.taskId} ${r.arm} ${r.seed}`, r);
+  }
+
+  let passingRuns = 0;
+  let parsedPassTokenSum = 0;
+  let parsedPassCount = 0;
+  let anyPassMissingMeasurement = false;
+
+  for (const row of perRun) {
+    searchSum += row.searchCount;
+    showSum += row.showCount;
+    feedbackSum += row.feedbackCount;
+    toolCallsSum += row.totalToolCalls;
+    assetsSum += row.assetsLoadedCount;
+
+    if (row.irrelevantAssetsLoadedCount !== null) {
+      irrelevantSum += row.irrelevantAssetsLoadedCount;
+      irrelevantCount += 1;
+    }
+    if (row.timeToFirstSearchMs !== null) {
+      firstSearchSum += row.timeToFirstSearchMs;
+      firstSearchCount += 1;
+    }
+    if (row.timeToFirstCorrectAssetMs !== null) {
+      firstCorrectSum += row.timeToFirstCorrectAssetMs;
+      firstCorrectCount += 1;
+    }
+    if (row.contextBytesLoaded !== null) {
+      contextBytesSum += row.contextBytesLoaded;
+      contextBytesCount += 1;
+    }
+    if (row.assetBytesLoaded !== null) {
+      assetBytesSum += row.assetBytesLoaded;
+      assetBytesCount += 1;
+    }
+
+    if (row.outcome === "pass") {
+      passingRuns += 1;
+      const raw = rawByKey.get(`${row.taskId} ${row.arm} ${row.seed}`);
+      // Treat absent tokenMeasurement as `parsed` for backward compat with
+      // older artefacts (mirrors `isMeasured` behaviour above).
+      const measurement = raw?.tokenMeasurement ?? "parsed";
+      if (raw && measurement === "parsed") {
+        parsedPassTokenSum += raw.tokens.input + raw.tokens.output;
+        parsedPassCount += 1;
+      } else if (raw) {
+        anyPassMissingMeasurement = true;
+      } else {
+        // No matching raw run supplied — cannot honour cost-per-success.
+        anyPassMissingMeasurement = true;
+      }
+    }
+  }
+
+  const toolCallsPerSuccess = passingRuns === 0 ? null : toolCallsSum / passingRuns;
+  // Cost-per-success: null unless EVERY passing run has parsed measurement.
+  // Mixed measurement statuses cannot be averaged honestly (issue #252).
+  const costPerSuccess =
+    passingRuns === 0 || anyPassMissingMeasurement || parsedPassCount === 0
+      ? null
+      : parsedPassTokenSum / parsedPassCount;
+
+  return {
+    totalRuns: n,
+    passingRuns,
+    meanSearchCount: searchSum / n,
+    meanShowCount: showSum / n,
+    meanFeedbackCount: feedbackSum / n,
+    meanToolCalls: toolCallsSum / n,
+    meanAssetsLoaded: assetsSum / n,
+    meanIrrelevantAssetsLoaded: irrelevantCount === 0 ? null : irrelevantSum / irrelevantCount,
+    meanTimeToFirstSearchMs: firstSearchCount === 0 ? null : firstSearchSum / firstSearchCount,
+    meanTimeToFirstCorrectAssetMs: firstCorrectCount === 0 ? null : firstCorrectSum / firstCorrectCount,
+    meanContextBytesLoaded: contextBytesCount === 0 ? null : contextBytesSum / contextBytesCount,
+    meanAssetBytesLoaded: assetBytesCount === 0 ? null : assetBytesSum / assetBytesCount,
+    totalToolCalls: toolCallsSum,
+    toolCallsPerSuccess,
+    costPerSuccess,
+  };
+}
+
+// ── Workflow reliability (#258) ────────────────────────────────────────────
+
+/**
+ * Per-workflow reliability row.
+ *
+ * `pass_at_k`: fraction of tasks where AT LEAST ONE seed produced a `pass`
+ * workflow check for this workflow id. Group by task first, then ask
+ * "did the agent ever comply?".
+ *
+ * `pass_all_k`: fraction of tasks where ALL K seeds produced a `pass`
+ * workflow check for this workflow id. Tasks with mixed pass/non-pass
+ * outcomes count against this metric — partial/fail/harness_error are NOT
+ * compliant.
+ *
+ * `tasks` is the count of distinct task ids that contributed at least one
+ * applicable seed (i.e., a `pass`/`partial`/`fail`/`harness_error` status).
+ * `not_applicable` rows are excluded from the denominator.
+ *
+ * `k` is the maximum seed count observed across this workflow's tasks; it
+ * is descriptive only — pass_at_k and pass_all_k are computed per-task on
+ * that task's actual seed count, then averaged over tasks.
+ */
+export interface WorkflowReliabilityRow {
+  workflow_id: string;
+  pass_at_k: number;
+  pass_all_k: number;
+  tasks: number;
+  k: number;
+}
+
+/**
+ * Corpus-wide reliability aggregate.
+ *
+ * `pass_at_k` / `pass_all_k` are weighted averages over `(workflow_id, task)`
+ * groups: every (workflow, task) pair contributes equally. This avoids a
+ * workflow with many tasks dominating one with few. `groups` is the total
+ * number of (workflow_id, task) groups counted; `tasks` is the count of
+ * distinct task ids that appeared in at least one group.
+ */
+export interface WorkflowReliabilityCorpus {
+  pass_at_k: number;
+  pass_all_k: number;
+  groups: number;
+  tasks: number;
+}
+
+/**
+ * Output of `computeWorkflowReliability`.
+ *
+ * `byWorkflow` is keyed by `workflow_id` for stable lookup.
+ * `corpus` is the cross-workflow rollup.
+ *
+ * Empty input yields zeroed-out fields so renderers can branch on
+ * `groups === 0` rather than handling undefined.
+ */
+export interface WorkflowReliabilityResult {
+  byWorkflow: Record<string, WorkflowReliabilityRow>;
+  corpus: WorkflowReliabilityCorpus;
+}
+
+/**
+ * Bucket a workflow check status onto pass / non-pass for reliability.
+ *
+ * Reliability is a strict pass-or-not metric (issue #258). Anything other
+ * than `pass` (including `partial`, `fail`, `harness_error`) counts as a
+ * non-pass. `not_applicable` returns `null` so the caller can skip the
+ * entire (task, seed) pair — it never contributes to either numerator or
+ * denominator.
+ */
+function bucketReliabilityStatus(status: WorkflowCheckStatus): "pass" | "non_pass" | null {
+  if (status === "not_applicable") return null;
+  if (status === "pass") return "pass";
+  return "non_pass";
+}
+
+/**
+ * Compute workflow reliability metrics (`pass@k` and `pass^k`) per workflow
+ * and corpus-wide from a flat list of `WorkflowCheckResult`.
+ *
+ * Methodology (per #258 review addendum):
+ *   1. Filter out `not_applicable` checks entirely.
+ *   2. For each `(workflow_id, task_id)` group, collapse seeds to the set
+ *      of statuses observed.
+ *   3. `pass_at_k` per task = 1 if at least one seed is `pass`, else 0.
+ *   4. `pass_all_k` per task = 1 if every seed is `pass`, else 0.
+ *   5. Per-workflow row averages over its task set.
+ *   6. Corpus rollup averages over every (workflow, task) group equally.
+ *
+ * Pure: never mutates `checks`. Returns a stable shape for empty input.
+ */
+export function computeWorkflowReliability(checks: ReadonlyArray<WorkflowCheckResult>): WorkflowReliabilityResult {
+  // Group by (workflow_id, task_id) → list of statuses across seeds.
+  // Use Map<string, Map<string, WorkflowCheckStatus[]>> so iteration order
+  // is insertion order (deterministic given deterministic input).
+  const grouped = new Map<string, Map<string, WorkflowCheckStatus[]>>();
+
+  for (const c of checks) {
+    if (bucketReliabilityStatus(c.status) === null) continue;
+    let perWorkflow = grouped.get(c.workflowId);
+    if (!perWorkflow) {
+      perWorkflow = new Map<string, WorkflowCheckStatus[]>();
+      grouped.set(c.workflowId, perWorkflow);
+    }
+    const list = perWorkflow.get(c.taskId);
+    if (list) list.push(c.status);
+    else perWorkflow.set(c.taskId, [c.status]);
+  }
+
+  const byWorkflow: Record<string, WorkflowReliabilityRow> = {};
+  let corpusPassAtKSum = 0;
+  let corpusPassAllKSum = 0;
+  let corpusGroupCount = 0;
+  const corpusTasks = new Set<string>();
+
+  for (const [workflowId, perTask] of grouped) {
+    let passAtKSum = 0;
+    let passAllKSum = 0;
+    let kMax = 0;
+    for (const [taskId, statuses] of perTask) {
+      if (statuses.length > kMax) kMax = statuses.length;
+      const allPass = statuses.every((s) => s === "pass");
+      const anyPass = statuses.some((s) => s === "pass");
+      if (anyPass) passAtKSum += 1;
+      if (allPass) passAllKSum += 1;
+      corpusPassAtKSum += anyPass ? 1 : 0;
+      corpusPassAllKSum += allPass ? 1 : 0;
+      corpusGroupCount += 1;
+      corpusTasks.add(taskId);
+    }
+    const taskCount = perTask.size;
+    byWorkflow[workflowId] = {
+      workflow_id: workflowId,
+      pass_at_k: taskCount === 0 ? 0 : passAtKSum / taskCount,
+      pass_all_k: taskCount === 0 ? 0 : passAllKSum / taskCount,
+      tasks: taskCount,
+      k: kMax,
+    };
+  }
+
+  const corpus: WorkflowReliabilityCorpus = {
+    pass_at_k: corpusGroupCount === 0 ? 0 : corpusPassAtKSum / corpusGroupCount,
+    pass_all_k: corpusGroupCount === 0 ? 0 : corpusPassAllKSum / corpusGroupCount,
+    groups: corpusGroupCount,
+    tasks: corpusTasks.size,
+  };
+
+  return { byWorkflow, corpus };
+}
+
+/** Earliest parseable ts (ms epoch) among events; null when none. */
+function earliestEventMs(events: ReadonlyArray<WorkflowTraceEvent>): number | null {
+  let earliest: number | null = null;
+  for (const ev of events) {
+    const ms = parseTsToMs(ev.ts);
+    if (ms === null) continue;
+    if (earliest === null || ms < earliest) earliest = ms;
+  }
+  return earliest;
+}
+
+/**
+ * Find the first event matching `predicate`, parse its ts, and return
+ * `(ts - runStartMs)`. Returns `null` if no matching event has a parseable
+ * ts, if `runStartMs` is null, or if the offset would be negative (a clock
+ * inversion we refuse to silently coerce to zero).
+ */
+function computeFirstEventOffsetMs(
+  events: ReadonlyArray<WorkflowTraceEvent>,
+  runStartMs: number | null,
+  predicate: (ev: WorkflowTraceEvent) => boolean,
+): number | null {
+  if (runStartMs === null) return null;
+  for (const ev of events) {
+    if (!predicate(ev)) continue;
+    const ms = parseTsToMs(ev.ts);
+    if (ms === null) continue;
+    const offset = ms - runStartMs;
+    if (offset < 0) return null;
+    return offset;
+  }
+  return null;
+}
+
+/** Parse an ISO ts to ms-epoch; null when missing or unparseable. */
+function parseTsToMs(ts: string | undefined): number | null {
+  if (typeof ts !== "string" || ts.length === 0) return null;
+  const ms = Date.parse(ts);
+  if (Number.isNaN(ms)) return null;
+  return ms;
 }

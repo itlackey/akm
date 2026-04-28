@@ -9,3 +9,5 @@ verifier: script
 budget:
   tokens: 25000
   wallMs: 90000
+memory_ability: procedural_lookup
+task_family: az-cli/commands

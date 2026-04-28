@@ -24,6 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { warn } from "../../src/core/warn";
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { computeFixtureContentHash, type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
 import { registerCleanup } from "./cleanup";
@@ -47,8 +48,23 @@ import {
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
 import { computeTrajectory } from "./trajectory";
+import {
+  evaluateRunAgainstAllSpecs,
+  type WorkflowCheckResult,
+  type WorkflowEvalRunContext,
+} from "./workflow-evaluator";
+import { loadAllWorkflowSpecs, type WorkflowSpec } from "./workflow-spec";
+import { normalizeRunToTrace } from "./workflow-trace";
 
-export type Arm = "noakm" | "akm";
+/**
+ * Default workflows directory. Can be overridden by callers (tests) via
+ * `RunUtilityOptions.workflowsDir`. Specs in this directory are loaded ONCE
+ * per `runUtility` call (not per run) — the evaluator filters via each spec's
+ * `applies_to` so we don't I/O in the hot loop.
+ */
+const DEFAULT_WORKFLOWS_DIR = path.resolve(__dirname, "..", "fixtures", "bench", "workflows");
+
+export type Arm = "noakm" | "akm" | "synthetic";
 
 /**
  * Optional per-arm prompt-override seam (#267). The runner forwards the
@@ -111,6 +127,30 @@ export interface RunUtilityOptions {
    * prompt by returning undefined.
    */
   buildPrompt?: BuildPromptFn;
+  /**
+   * Track A synthetic-arm gate (#261). When `true`, the runner adds a third
+   * arm (`synthetic`) to every task in the corpus. The synthetic arm runs
+   * the same tasks/seeds/model/budgets/verifiers as `noakm`/`akm` but
+   * receives a scratch-notes prompt contract (the model creates and uses
+   * its own procedural notes rather than consulting an AKM stash). The
+   * synthetic-arm child env explicitly DELETES `AKM_STASH_DIR` so the
+   * operator's real stash never leaks in (recurrence guard for the #243
+   * fixup pattern).
+   *
+   * Default behaviour (when `false` or omitted) is byte-identical to the
+   * pre-#261 two-arm output: the report carries no `synthetic` keys, the
+   * markdown summary mentions no synthetic arm, and the runner skips the
+   * synthetic-arm orchestration entirely.
+   */
+  includeSynthetic?: boolean;
+  /**
+   * Override the workflows-spec directory (#257). When omitted, the runner
+   * loads `tests/fixtures/bench/workflows/*.yaml` once per `runUtility` call
+   * and feeds the parsed specs to `evaluateRunAgainstAllSpecs` for every
+   * akm-arm run. When supplied, the directory is loaded instead. Pass an
+   * empty string to disable workflow evaluation entirely (tests).
+   */
+  workflowsDir?: string;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -141,6 +181,24 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
   const goldRankRecords: GoldRankAccumulator = [];
+
+  // #257: load workflow specs ONCE per runUtility call. Skipped when the
+  // caller passes an empty `workflowsDir` string (test escape hatch). Errors
+  // are surfaced as warnings — workflow evaluation is best-effort and a
+  // missing/malformed spec must not abort the whole bench run.
+  const workflowSpecs: WorkflowSpec[] = [];
+  const workflowsDir = options.workflowsDir ?? DEFAULT_WORKFLOWS_DIR;
+  if (workflowsDir.length > 0) {
+    try {
+      const loaded = loadAllWorkflowSpecs(workflowsDir);
+      workflowSpecs.push(...loaded);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`workflow specs: failed to load from "${workflowsDir}": ${msg}`);
+      warn(`[runUtility] workflow specs unavailable: ${msg}`);
+    }
+  }
+  const workflowChecks: WorkflowCheckResult[] = [];
 
   for (const task of options.tasks) {
     const taskRuns = new Map<Arm, RunResult[]>();
@@ -178,8 +236,19 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
         })
       : () => {};
 
+    // #261: when `includeSynthetic` is set, splice the synthetic arm into the
+    // per-task arm iteration alongside whatever the caller asked for. We
+    // dedupe so a caller that already passes `synthetic` in `arms` does not
+    // see it run twice. Pre-#261 callers (no flag, no `synthetic` in arms)
+    // see the old loop verbatim — that's the byte-identical default contract.
+    const armsForTask: Arm[] = (() => {
+      if (!options.includeSynthetic) return options.arms;
+      if (options.arms.includes("synthetic")) return options.arms;
+      return [...options.arms, "synthetic"];
+    })();
+
     try {
-      for (const arm of options.arms) {
+      for (const arm of armsForTask) {
         const armRuns: RunResult[] = [];
         taskRuns.set(arm, armRuns);
         for (let seed = 0; seed < seedsPerArm; seed += 1) {
@@ -210,7 +279,17 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
           // Build the prompt-override (#267). The builder is invoked once
           // per (task, arm) — seeds share a prompt. `undefined` keeps the
           // driver's default prompt in play.
-          const promptOverride = options.buildPrompt?.(task, arm);
+          //
+          // #261: the synthetic arm has a scratch-notes prompt contract —
+          // the model is told no AKM stash is available and instructed to
+          // write/use its own procedural notes. When the caller does not
+          // supply a `buildPrompt` override for the synthetic arm we fall
+          // back to a built-in scratch-notes prompt so the contract is
+          // honoured by every utility-track caller, not just `runEvolve`.
+          let promptOverride = options.buildPrompt?.(task, arm);
+          if (promptOverride === undefined && arm === "synthetic") {
+            promptOverride = buildUtilitySyntheticPrompt(task.id);
+          }
           const run = await runOneIsolated({
             task,
             arm,
@@ -239,6 +318,24 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
               searches,
             });
           }
+
+          // #257: evaluate the akm-arm run against every workflow spec. The
+          // evaluator's `specApplies` filter handles applicability (arm,
+          // domain, gold ref, repeated-failures threshold), so we hand it the
+          // entire spec list and append whatever it returns. noakm/synthetic
+          // arms are not evaluated — workflow specs target the akm arm.
+          if (arm === "akm" && workflowSpecs.length > 0) {
+            const trace = normalizeRunToTrace(run, { warnings });
+            const runCtx: WorkflowEvalRunContext = {
+              arm: run.arm,
+              taskId: run.taskId,
+              seed: run.seed,
+              outcome: run.outcome,
+            };
+            const taskMetadata = buildWorkflowTaskMetadata(task, trace);
+            const checks = evaluateRunAgainstAllSpecs(trace, workflowSpecs, runCtx, taskMetadata);
+            workflowChecks.push(...checks);
+          }
         }
       }
     } finally {
@@ -256,7 +353,45 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     slice,
     warnings,
     goldRankRecords,
+    workflowChecks,
   });
+}
+
+function buildWorkflowTaskMetadata(
+  task: TaskMetadata,
+  trace: ReturnType<typeof normalizeRunToTrace>,
+): { goldRef?: string; flags?: Record<string, boolean> } {
+  const flags: Record<string, boolean> = {
+    search_has_relevant_result: searchResultIncludesGoldRef(trace, task.goldRef),
+    task_has_tests: taskHasTests(task),
+  };
+  return {
+    ...(task.goldRef !== undefined ? { goldRef: task.goldRef } : {}),
+    flags,
+  };
+}
+
+function searchResultIncludesGoldRef(
+  trace: ReturnType<typeof normalizeRunToTrace>,
+  goldRef: string | undefined,
+): boolean {
+  if (!goldRef) return false;
+  for (const event of trace.events) {
+    if (event.type !== "akm_search") continue;
+    if (event.resultRefs?.includes(goldRef)) return true;
+  }
+  return false;
+}
+
+function taskHasTests(task: TaskMetadata): boolean {
+  if (task.verifier === "pytest") return true;
+  const testsDir = path.join(task.taskDir, "tests");
+  if (!fs.existsSync(testsDir)) return false;
+  try {
+    return fs.readdirSync(testsDir).some((name) => name.endsWith(".py") || name.endsWith(".sh"));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -341,6 +476,30 @@ function seedWorkspace(taskDir: string, dest: string): void {
   copyDirRecursive(src, dest);
 }
 
+/**
+ * Default synthetic-arm prompt (#261). Used by Track A `runUtility` when the
+ * caller opts in via `includeSynthetic: true` and does not also supply a
+ * `buildPrompt` override for the synthetic arm.
+ *
+ * The prompt is a clear scratch-notes contract: the model is told no AKM
+ * stash is available and instructed to write/use its own procedural notes
+ * before solving the task. This mirrors the prompt shape used by Track B's
+ * `buildSyntheticPrompt(taskId)` but is intentionally duplicated here so
+ * Track A has no module-level dependency on `evolve.ts`.
+ *
+ * Exported for tests.
+ */
+export function buildUtilitySyntheticPrompt(taskId: string): string {
+  return [
+    `Task: ${taskId}`,
+    "Arm: synthetic (Bring Your Own Skills)",
+    "No akm stash is available; AKM_STASH_DIR is intentionally absent. Before solving",
+    "the task, write a short scratchpad of the skills and steps you intend to use,",
+    "then proceed. Cite the scratchpad in your trace so the verifier can attribute",
+    "the approach to your own reasoning rather than retrieved guidance.",
+  ].join("\n");
+}
+
 function copyDirRecursive(src: string, dest: string): void {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -360,19 +519,40 @@ interface BuildReportArgs {
   slice: "all" | TaskSlice;
   warnings: string[];
   goldRankRecords: GoldRankAccumulator;
+  /** #257: per-(akm-arm-run, spec) workflow checks accumulated across the corpus. */
+  workflowChecks: WorkflowCheckResult[];
 }
 
 function buildReport(args: BuildReportArgs): UtilityRunReport {
   const tasks: UtilityReportTaskEntry[] = [];
   const noakmPerTask: Record<string, PerTaskMetrics> = {};
   const akmPerTask: Record<string, PerTaskMetrics> = {};
+  const synthPerTask: Record<string, PerTaskMetrics> = {};
   const akmRunsAll: RunResult[] = [];
   const allRuns: RunResult[] = [];
+  const includeSynth = args.options.includeSynthetic === true;
+
+  // #257: index workflow checks by taskId so we can attach a per-task
+  // mean compliance to each `UtilityReportTaskEntry`. Only `pass` and
+  // `partial` statuses contribute non-zero scores; `not_applicable` is
+  // skipped (the spec did not target this run); `harness_error` rolls in
+  // as a 0 so corrupt traces drag the per-task number down.
+  const checksByTask = new Map<string, WorkflowCheckResult[]>();
+  for (const c of args.workflowChecks) {
+    const arr = checksByTask.get(c.taskId);
+    if (arr) arr.push(c);
+    else checksByTask.set(c.taskId, [c]);
+  }
 
   for (const task of args.options.tasks) {
     const taskRuns = args.grouped.get(task.id);
     const noakmRuns = taskRuns?.get("noakm") ?? [];
     const akmRuns = taskRuns?.get("akm") ?? [];
+    // #261: synthetic-arm runs are only consulted when the caller opted in.
+    // A missing arm is NOT a zero-pass arm — we leave `synthPerTask[task.id]`
+    // unset rather than defaulting to a zeroed PerTaskMetrics so downstream
+    // consumers can distinguish "arm not run" from "arm ran with 0 passes".
+    const synthRuns: RunResult[] = includeSynth ? (taskRuns?.get("synthetic") ?? []) : [];
 
     const noakmMetrics = aggregatePerTask(noakmRuns);
     const akmMetrics = aggregatePerTask(akmRuns);
@@ -380,17 +560,50 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
 
     noakmPerTask[task.id] = noakmMetrics;
     akmPerTask[task.id] = akmMetrics;
+    if (includeSynth) {
+      synthPerTask[task.id] = aggregatePerTask(synthRuns);
+    }
     akmRunsAll.push(...akmRuns);
-    // Preserve arm order (noakm first, then akm) so the persisted runs[]
-    // array is deterministic across reruns. #249.
-    allRuns.push(...noakmRuns, ...akmRuns);
+    // Preserve arm order (noakm, synthetic when enabled, then akm) so the
+    // persisted runs[] array is deterministic across reruns. #249. The
+    // synthetic block is omitted entirely when includeSynth is false so the
+    // pre-#261 envelope stays byte-identical.
+    if (includeSynth) {
+      allRuns.push(...noakmRuns, ...synthRuns, ...akmRuns);
+    } else {
+      allRuns.push(...noakmRuns, ...akmRuns);
+    }
 
-    tasks.push({ id: task.id, noakm: noakmMetrics, akm: akmMetrics, delta });
+    // #257: per-task workflow compliance, mean of `score` over applicable
+    // checks (excludes `not_applicable`). Undefined when this task has no
+    // applicable checks at all so downstream renderers can distinguish
+    // "not measured" from "measured at 0".
+    const taskChecks = checksByTask.get(task.id) ?? [];
+    const applicableTaskChecks = taskChecks.filter((c) => c.status !== "not_applicable");
+    let workflowCompliance: number | undefined;
+    if (applicableTaskChecks.length > 0) {
+      let sum = 0;
+      for (const c of applicableTaskChecks) sum += c.score;
+      workflowCompliance = sum / applicableTaskChecks.length;
+    }
+
+    tasks.push({
+      id: task.id,
+      noakm: noakmMetrics,
+      akm: akmMetrics,
+      delta,
+      ...(includeSynth ? { synthetic: aggregatePerTask(synthRuns) } : {}),
+      ...(workflowCompliance !== undefined ? { workflowCompliance } : {}),
+    });
   }
 
   const aggregateNoakm = aggregateCorpus(noakmPerTask);
   const aggregateAkm = aggregateCorpus(akmPerTask);
   const aggregateDelta = computeCorpusDelta(aggregateNoakm, aggregateAkm);
+  // #261: synthetic-arm aggregate is built ONLY when the caller opted in.
+  // We compute it once here so the report renderer can stamp `arms.synthetic`
+  // and `akm_over_synthetic_lift` without recomputing.
+  const aggregateSynth = includeSynth ? aggregateCorpus(synthPerTask) : undefined;
   const trajectoryAkm = aggregateTrajectory(akmRunsAll);
 
   // Failure-mode aggregate (§6.6). Walks every akm-arm run; runs that are
@@ -463,6 +676,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     aggregateNoakm,
     aggregateAkm,
     aggregateDelta,
+    ...(aggregateSynth ? { aggregateSynth } : {}),
     trajectoryAkm,
     failureModes,
     tasks,
@@ -472,6 +686,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     taskMetadata: args.options.tasks,
     goldRankRecords: args.goldRankRecords,
     searchBridge,
+    workflowChecks: args.workflowChecks,
   };
   // Compute per-asset attribution as post-processing on the akm-arm runs
   // we just collected. This is the §6.5 "free" diagnostic — it runs on every

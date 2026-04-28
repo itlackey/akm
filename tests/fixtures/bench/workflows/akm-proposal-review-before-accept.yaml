@@ -1,0 +1,30 @@
+id: akm-proposal-review-before-accept
+title: "Proposals are validated before acceptance"
+description: |
+  The agent must propose changes and run verifier/lint (test_run or
+  verifier_run) before any akm_proposal_accept. Accepting unreviewed
+  proposals corrupts the stash.
+applies_to:
+  arms: ["akm"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
+required_sequence:
+  - event: agent_started
+  - event: akm_propose
+    before: akm_proposal_accept
+  - event: verifier_run
+    before: akm_proposal_accept
+  - event: test_run
+    required_if: task_has_tests
+    before: akm_proposal_accept
+  - event: akm_proposal_accept
+    before: agent_finished
+  - event: agent_finished
+forbidden:
+  - event: akm_proposal_accept
+    before: akm_propose
+  - event: akm_proposal_accept
+    before: verifier_run
+scoring:
+  required_steps_weight: 0.6
+  forbidden_steps_weight: 0.3
+  evidence_quality_weight: 0.1
