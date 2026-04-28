@@ -57,12 +57,7 @@ export type WorkflowTraceEventType =
   | "agent_finished";
 
 /** Where the evidence for an event came from. */
-export type WorkflowTraceSource =
-  | "akm_events"
-  | "agent_stdout"
-  | "filesystem_diff"
-  | "harness"
-  | "verifier";
+export type WorkflowTraceSource = "akm_events" | "agent_stdout" | "filesystem_diff" | "harness" | "verifier";
 
 /**
  * One normalized workflow event. Field set is intentionally narrow: only the

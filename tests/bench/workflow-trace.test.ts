@@ -9,8 +9,8 @@ import {
   MAX_EVENT_BYTES,
   MAX_EVENT_COUNT,
   MAX_STDOUT_SCAN_BYTES,
-  type WorkflowTraceEvent,
   normalizeRunToTrace,
+  type WorkflowTraceEvent,
 } from "./workflow-trace";
 
 function makeRun(overrides: Partial<RunResult> = {}): RunResult {
@@ -105,7 +105,7 @@ describe("normalizeRunToTrace — AKM event input", () => {
 describe("normalizeRunToTrace — stdout / tool-call input", () => {
   test("detects akm CLI invocations from agent stdout", () => {
     const stdout = [
-      "tool: akm search \"deploy docker\"",
+      'tool: akm search "deploy docker"',
       "tool: akm show skill:deploy",
       "tool: akm feedback +1 skill:deploy",
     ].join("\n");
@@ -146,9 +146,7 @@ describe("normalizeRunToTrace — workspace-write detection", () => {
     const trace = normalizeRunToTrace(run, {
       workspaceWrites: ["src/a.ts", "src/b.ts", "src/c.ts"],
     });
-    const writes = trace.events.filter(
-      (e) => e.type === "first_workspace_write" || e.type === "workspace_write",
-    );
+    const writes = trace.events.filter((e) => e.type === "first_workspace_write" || e.type === "workspace_write");
     expect(writes.length).toBe(3);
     expect(writes[0].type).toBe("first_workspace_write");
     expect(writes[0].filePath).toBe("src/a.ts");
@@ -164,9 +162,7 @@ describe("normalizeRunToTrace — workspace-write detection", () => {
   test("no workspace writes => no workspace events", () => {
     const run = makeRun();
     const trace = normalizeRunToTrace(run, { workspaceWrites: [] });
-    const writes = trace.events.filter(
-      (e) => e.type === "first_workspace_write" || e.type === "workspace_write",
-    );
+    const writes = trace.events.filter((e) => e.type === "first_workspace_write" || e.type === "workspace_write");
     expect(writes.length).toBe(0);
   });
 
