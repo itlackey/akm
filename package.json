@@ -63,7 +63,7 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "3.8.1",
     "sqlite-vec": "0.1.7-alpha.2"
   },
   "engines": {

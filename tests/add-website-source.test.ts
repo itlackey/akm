@@ -128,7 +128,7 @@ describe("akm add website", () => {
 
       const configPath = path.join(xdgConfig, "akm", "config.json");
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
-        stashes?: Array<{ type?: string; url?: string; name?: string }>;
+        sources?: Array<{ type?: string; url?: string; name?: string }>;
       };
       expect(config.sources).toContainEqual({
         type: "website",

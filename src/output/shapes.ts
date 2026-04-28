@@ -55,8 +55,58 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     // everything for downstream automation.
     case "distill":
       return shapeDistillOutput(result as Record<string, unknown>, detail);
-    default:
+    // Identity-passthrough commands — registered here so the registry stays
+    // exhaustive (v1 spec §9). Each result object is already shaped at the
+    // command boundary; the registry just confirms there's no surprise
+    // command name slipping through.
+    case "add":
+    case "clone":
+    case "config":
+    case "curate":
+    case "disable":
+    case "enable":
+    case "feedback":
+    case "import":
+    case "index":
+    case "info":
+    case "init":
+    case "list":
+    case "registry-add":
+    case "registry-build-index":
+    case "registry-list":
+    case "registry-remove":
+    case "remember":
+    case "remove":
+    case "save":
+    case "update":
+    case "upgrade":
+    case "vault-create":
+    case "vault-list":
+    case "vault-set":
+    case "vault-unset":
+    case "wiki-create":
+    case "wiki-ingest":
+    case "wiki-lint":
+    case "wiki-list":
+    case "wiki-pages":
+    case "wiki-register":
+    case "wiki-remove":
+    case "wiki-show":
+    case "wiki-stash":
+    case "workflow-complete":
+    case "workflow-create":
+    case "workflow-list":
+    case "workflow-next":
+    case "workflow-resume":
+    case "workflow-start":
+    case "workflow-status":
+    case "workflow-validate":
       return result;
+    default:
+      // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
+      // fallback. A missing case here is a registration bug — fail loudly so
+      // the caller (or its tests) sees the missing command name.
+      throw new Error(`output shape not registered for command: ${command}`);
   }
 }
 

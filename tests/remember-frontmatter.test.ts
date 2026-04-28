@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../src/core/frontmatter";
 import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
+import type { StashEntry } from "../src/indexer/metadata";
 import { memoryMdRenderer } from "../src/output/renderers";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
@@ -341,7 +342,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops, networking]\n---\nDeployment needs VPN access\n");
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     memoryMdRenderer.extractMetadata?.(entry, renderCtx);
 
@@ -355,7 +356,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     );
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     memoryMdRenderer.extractMetadata?.(entry, renderCtx);
 
@@ -368,7 +369,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     );
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     memoryMdRenderer.extractMetadata?.(entry, renderCtx);
 
@@ -383,7 +384,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     memoryMdRenderer.extractMetadata?.(entry, renderCtx);
 
@@ -399,7 +400,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
 
     // Should not throw
@@ -414,7 +415,7 @@ describe("memoryMdRenderer.extractMetadata", () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags:\n- ops\n- networking\n- deploy\n---\nVPN required\n");
 
     const ctx = buildFileContext(stashRoot, filePath);
-    const entry = { name: "test-memory", type: "memory" };
+    const entry: StashEntry = { name: "test-memory", type: "memory" };
     const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
     memoryMdRenderer.extractMetadata?.(entry, renderCtx);
 

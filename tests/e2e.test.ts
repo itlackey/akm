@@ -52,6 +52,7 @@ type CliJsonHit = {
   origin?: string | null;
   action?: string;
   size?: string;
+  score?: number;
   whyMatched?: string;
   editable?: boolean;
   editHint?: string;

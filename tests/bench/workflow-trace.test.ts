@@ -11,6 +11,7 @@ import {
   MAX_STDOUT_SCAN_BYTES,
   normalizeRunToTrace,
   type WorkflowTraceEvent,
+  type WorkflowTraceEventType,
 } from "./workflow-trace";
 
 function makeRun(overrides: Partial<RunResult> = {}): RunResult {
@@ -199,7 +200,7 @@ describe("normalizeRunToTrace — malformed/noisy input", () => {
     // ts so it sorts after the synthesised verifier_run sentinel), plus the
     // verifier_run derived from RunResult.
     const types = trace.events.map((e) => e.type).sort();
-    expect(types).toEqual(["akm_search", "verifier_run"].sort());
+    expect(types).toEqual((["akm_search", "verifier_run"] as WorkflowTraceEventType[]).sort());
     expect(trace.events.length).toBe(2);
   });
 

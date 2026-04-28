@@ -306,8 +306,8 @@ describe("shapeSearchOutput", () => {
       hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1, description: "desc" }],
       registryHits: [],
     };
-    const brief = shapeSearchOutput(result, "brief", false);
-    const normal = shapeSearchOutput(result, "normal", false);
+    const brief = shapeSearchOutput(result, "brief", false) as { hits: Record<string, unknown>[] };
+    const normal = shapeSearchOutput(result, "normal", false) as { hits: Record<string, unknown>[] };
     expect((brief.hits[0] as Record<string, unknown>).description).toBeUndefined();
     expect((normal.hits[0] as Record<string, unknown>).description).toBe("desc");
   });
@@ -327,7 +327,7 @@ describe("shapeSearchOutput", () => {
       ],
       registryHits: [],
     };
-    const out = shapeSearchOutput(result, "brief", true);
+    const out = shapeSearchOutput(result, "brief", true) as { hits: Record<string, unknown>[] };
     expect((out.hits[0] as Record<string, unknown>).ref).toBe("skill:x");
   });
 });
@@ -347,8 +347,22 @@ describe("shapeRegistrySearchOutput", () => {
       ],
       registryHits: [],
     };
-    const brief = shapeRegistrySearchOutput(result, "brief");
+    const brief = shapeRegistrySearchOutput(result, "brief") as { hits: Record<string, unknown>[] };
     // QA #28: brief now projects name + score at minimum (not just name/action)
     expect(brief.hits[0]).toMatchObject({ name: "azure-ops", score: 0.5 });
+  });
+});
+
+// ── Output-shape registry exhaustiveness (#274) ─────────────────────────────
+
+describe("shapeForCommand: unknown command", () => {
+  test("throws with the command name in the message instead of silently passing the result through", () => {
+    // v1 spec §9: the output shape registry is exhaustive. A missing case is
+    // a registration bug (silent JSON.stringify fallback was the old
+    // behaviour). The throw must include the unknown command name so the
+    // caller / test sees the missing registration.
+    expect(() => shapeForCommand("definitely-not-a-real-command", { foo: "bar" }, "normal")).toThrow(
+      "output shape not registered for command: definitely-not-a-real-command",
+    );
   });
 });

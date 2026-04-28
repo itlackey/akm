@@ -63,6 +63,7 @@ function makeReport(akmRuns: RunResult[]): UtilityRunReport {
     },
     aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
     trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+    failureModes: { byLabel: {}, byTask: {} },
     tasks: [],
     warnings: [],
     akmRuns,
@@ -711,6 +712,7 @@ describe("bench attribute --top clamping", () => {
           aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
           aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+          failureModes: { byLabel: {}, byTask: {} },
           tasks: [],
           warnings: [],
         };
@@ -782,6 +784,7 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
       aggregateAkm: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
       aggregateDelta: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
       trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+      failureModes: { byLabel: {}, byTask: {} },
       tasks: [],
       warnings: [],
       akmRuns: baseRuns,
@@ -984,6 +987,7 @@ describe("bench attribute prefers persisted runs[] (#249)", () => {
           aggregateAkm: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
           aggregateDelta: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+          failureModes: { byLabel: {}, byTask: {} },
           tasks: [],
           warnings: [],
         };
@@ -1067,6 +1071,7 @@ describe("bench attribute prefers persisted runs[] (#249)", () => {
           aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
           aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+          failureModes: { byLabel: {}, byTask: {} },
           tasks: [],
           warnings: [],
         };
