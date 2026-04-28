@@ -212,10 +212,19 @@ async function withMockedNpmPackage<T>(packageName: string, archivePath: string,
     return new Response("not found", { status: 404 });
   }) as typeof fetch;
 
+  // The mock serves tarballs from example.test, so trust that host for the
+  // duration of the run via the operator-configurable npm registry override.
+  const originalRegistry = process.env.AKM_NPM_REGISTRY;
+  process.env.AKM_NPM_REGISTRY = "https://example.test";
   try {
     return await run();
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalRegistry === undefined) {
+      delete process.env.AKM_NPM_REGISTRY;
+    } else {
+      process.env.AKM_NPM_REGISTRY = originalRegistry;
+    }
   }
 }
 
