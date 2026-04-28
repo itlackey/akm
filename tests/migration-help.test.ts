@@ -22,7 +22,7 @@ describe("migration help", () => {
 
   test("supports latest alias when changelog text is available", () => {
     const result = renderMigrationHelp("latest");
-    expect(result).toContain("## [0.6.0]");
+    expect(result).toContain("## [0.7.0]");
   });
 
   test("ensures published static files exist in the repo", () => {
