@@ -12,7 +12,16 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { effectiveSlice, getTasksRoot, listTasks, loadTask, partitionSlice, type TaskMetadata } from "./corpus";
+import {
+  computeTaskCorpusHash,
+  effectiveSlice,
+  getTasksRoot,
+  listTasks,
+  loadTask,
+  partitionSlice,
+  readTaskBody,
+  type TaskMetadata,
+} from "./corpus";
 
 describe("listTasks", () => {
   test("the corpus root resolves under tests/fixtures/bench/tasks", () => {
@@ -141,6 +150,30 @@ describe("partitionSlice", () => {
     const b = partitionSlice(corpus);
     expect(a.train.map((t) => t.id)).toEqual(b.train.map((t) => t.id));
     expect(a.eval.map((t) => t.id)).toEqual(b.eval.map((t) => t.id));
+  });
+
+  test("computeTaskCorpusHash is deterministic and order-independent (#250)", () => {
+    const bodies = new Map<string, string>([
+      ["a/one", "id: a/one\ntitle: One\n"],
+      ["b/two", "id: b/two\ntitle: Two\n"],
+    ]);
+    const h1 = computeTaskCorpusHash(["a/one", "b/two"], bodies);
+    const h2 = computeTaskCorpusHash(["b/two", "a/one"], bodies);
+    expect(h1).toBe(h2);
+    expect(h1).toMatch(/^[0-9a-f]{64}$/);
+
+    // Body change → hash change.
+    const altBodies = new Map(bodies);
+    altBodies.set("a/one", "id: a/one\ntitle: Different\n");
+    const h3 = computeTaskCorpusHash(["a/one", "b/two"], altBodies);
+    expect(h3).not.toBe(h1);
+
+    // ID-set change → hash change.
+    const h4 = computeTaskCorpusHash(["a/one"], bodies);
+    expect(h4).not.toBe(h1);
+
+    // readTaskBody returns "" for a missing taskDir without throwing.
+    expect(readTaskBody("/does/not/exist")).toBe("");
   });
 
   test("a task without explicit slice is bucketed deterministically and goes to exactly one slice", () => {

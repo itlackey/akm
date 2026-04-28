@@ -79,6 +79,19 @@ export interface TrajectoryRecord {
   feedbackRecorded: boolean | null;
 }
 
+/**
+ * Distinguishes real zero-token measurements from missing or unsupported
+ * token reporting (issue #252). Aggregations MUST skip runs where this is
+ * not `"parsed"` rather than treating numeric zero as a measured value.
+ *
+ *   - `"parsed"`     — token usage was extracted from agent stdout.
+ *   - `"missing"`    — agent emits token usage in some configurations but
+ *                      we could not parse it on this run.
+ *   - `"unsupported"`— the agent profile / harness does not report tokens
+ *                      at all (e.g. a synthetic-arm fake).
+ */
+export type TokenMeasurementStatus = "parsed" | "missing" | "unsupported";
+
 /** Run result envelope (spec §5.2). */
 export interface RunResult {
   schemaVersion: 1;
@@ -88,6 +101,16 @@ export interface RunResult {
   model: string;
   outcome: "pass" | "fail" | "budget_exceeded" | "harness_error";
   tokens: { input: number; output: number };
+  /**
+   * Status of the token-usage measurement on this run (issue #252). Aggregate
+   * metrics MUST skip runs whose measurement is not `"parsed"` and report-
+   * level surfaces SHOULD warn when any run lacks parsed token usage. The
+   * field is optional on the type for backward compatibility — older
+   * artefacts (and older test fixtures) without this field are treated as
+   * `"parsed"` so historical reports remain analysable. New runs always
+   * stamp a value.
+   */
+  tokenMeasurement?: TokenMeasurementStatus;
   wallclockMs: number;
   trajectory: TrajectoryRecord;
   events: EventEnvelope[];
@@ -156,16 +179,35 @@ export function buildIsolatedEnv(dirs: IsolationDirs, model: string): Record<str
   return env;
 }
 
-/** Best-effort token-usage parser for opencode stdout. Returns zeros if absent. */
-export function parseTokenUsage(stdout: string): { input: number; output: number } {
+/**
+ * Best-effort token-usage parser for opencode stdout. Returns numeric token
+ * counts AND a measurement status so callers can distinguish a real zero
+ * (`"parsed"`, both fields legitimately 0) from an unparseable / absent
+ * report (`"missing"`, both fields default to 0 but downstream aggregation
+ * MUST skip the run rather than treat that 0 as measured).
+ *
+ * The harness never emits `"unsupported"` from this parser — that label is
+ * stamped on results from arms that don't run a token-reporting agent
+ * (e.g. the synthetic arm), and is set by the caller, not here.
+ */
+export function parseTokenUsage(stdout: string): {
+  input: number;
+  output: number;
+  measurement: TokenMeasurementStatus;
+} {
   // opencode prints lines like `tokens: input=1234 output=5678` in some
-  // configurations. We look for the keys defensively; missing values stay 0.
-  const out = { input: 0, output: 0 };
+  // configurations. We look for the keys defensively; absent values mean we
+  // could not measure (`measurement: "missing"`).
   const inputMatch = stdout.match(/(?:input[_\s-]?tokens?|tokens?[_\s-]?input)[\s:=]+(\d+)/i);
   const outputMatch = stdout.match(/(?:output[_\s-]?tokens?|tokens?[_\s-]?output)[\s:=]+(\d+)/i);
-  if (inputMatch) out.input = Number.parseInt(inputMatch[1], 10);
-  if (outputMatch) out.output = Number.parseInt(outputMatch[1], 10);
-  return out;
+  if (!inputMatch && !outputMatch) {
+    return { input: 0, output: 0, measurement: "missing" };
+  }
+  return {
+    input: inputMatch ? Number.parseInt(inputMatch[1], 10) : 0,
+    output: outputMatch ? Number.parseInt(outputMatch[1], 10) : 0,
+    measurement: "parsed",
+  };
 }
 
 /**
@@ -267,6 +309,7 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     model: options.model,
     outcome: "harness_error",
     tokens: { input: 0, output: 0 },
+    tokenMeasurement: "missing",
     wallclockMs: 0,
     trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
     events: [],
@@ -304,7 +347,9 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     });
 
     result.wallclockMs = agentResult.durationMs;
-    result.tokens = parseTokenUsage(agentResult.stdout);
+    const parsed = parseTokenUsage(agentResult.stdout);
+    result.tokens = { input: parsed.input, output: parsed.output };
+    result.tokenMeasurement = parsed.measurement;
     result.events = readRunEvents(dirs.cacheHome, { warnings: options.warnings });
 
     if (!agentResult.ok) {
@@ -326,11 +371,15 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     }
 
     // Token-budget enforcement is best-effort: only mark `budget_exceeded`
-    // if we could parse a number AND it exceeds the cap.
-    const totalTokens = result.tokens.input + result.tokens.output;
-    if (totalTokens > 0 && totalTokens > options.budgetTokens) {
-      result.outcome = "budget_exceeded";
-      return result;
+    // if measurement was actually parsed (issue #252) AND the total exceeds
+    // the cap. A `"missing"` / `"unsupported"` measurement MUST NOT silently
+    // mask a budget overrun as a pass — it leaves the verifier to decide.
+    if (result.tokenMeasurement === "parsed") {
+      const totalTokens = result.tokens.input + result.tokens.output;
+      if (totalTokens > options.budgetTokens) {
+        result.outcome = "budget_exceeded";
+        return result;
+      }
     }
 
     const verifierResult = await runVerifier(options.taskDir, options.workspace, options.verifier, {

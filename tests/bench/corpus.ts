@@ -39,6 +39,21 @@ export interface TaskMetadata {
   budget: { tokens: number; wallMs: number };
   /** Absolute path to the directory containing `task.yaml`. */
   taskDir: string;
+  /**
+   * Optional override for the akm-arm `stashDir` plumbed into `runOne`.
+   *
+   * Used by `runMaskedCorpus` (#251) to redirect the runner at a tmp stash
+   * with one asset removed without mutating the on-disk fixture stash named
+   * by `stash`. When set, the runner forwards this directory verbatim as
+   * `AKM_STASH_DIR` for every akm-arm invocation of this task — bypassing
+   * the per-task `loadFixtureStash` step (which would otherwise re-resolve
+   * `stash` against `tests/fixtures/stashes/`) and the `__no-stash__`
+   * placeholder used when `materialiseStash` is `false`.
+   *
+   * MUST be a directory the caller created and is responsible for cleaning
+   * up. The runner does not delete it.
+   */
+  stashDirOverride?: string;
 }
 
 const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
@@ -46,6 +61,50 @@ const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
 /** Public for tests; resolves the corpus root in case callers need to assert it. */
 export function getTasksRoot(): string {
   return TASKS_ROOT;
+}
+
+/**
+ * Compute a deterministic SHA-256 hash over a selected task corpus (#250).
+ *
+ * Two reports with the same selected task IDs and the same task body bytes
+ * produce the same hash. The hash is order-independent: callers may pass IDs
+ * in any order — the function sorts them lexicographically before hashing.
+ *
+ * The `taskBodies` map is keyed by task id and carries the raw `task.yaml`
+ * bytes (or any deterministic per-task identity payload). Tasks present in
+ * `taskIds` but missing from `taskBodies` are hashed with an empty body so
+ * the hash still distinguishes the selection.
+ *
+ * Encoding (per id, in sorted order):
+ *   `<id>\0<body-bytes>\0`
+ *
+ * Used by `bench compare` to refuse mismatched corpora unless the operator
+ * explicitly opts in via `--allow-corpus-mismatch`.
+ */
+export function computeTaskCorpusHash(taskIds: string[], taskBodies: Map<string, string>): string {
+  const sortedIds = [...taskIds].sort();
+  const hash = createHash("sha256");
+  for (const id of sortedIds) {
+    hash.update(id);
+    hash.update("\0");
+    hash.update(taskBodies.get(id) ?? "");
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Read the raw `task.yaml` bytes for a task whose `taskDir` is known. Returns
+ * the empty string when the file is missing — callers should still hash the
+ * id so the selection's identity is preserved.
+ */
+export function readTaskBody(taskDir: string): string {
+  const yamlPath = path.join(taskDir, "task.yaml");
+  try {
+    return fs.readFileSync(yamlPath, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 /**

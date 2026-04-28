@@ -21,7 +21,8 @@ import path from "node:path";
 
 import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
-import type { UtilityRunReport } from "./report";
+import type { RunRecordSerialized, UtilityRunReport } from "./report";
+import { serializeRunForReport } from "./report";
 
 // ── Outcome (§6.1) ─────────────────────────────────────────────────────────
 
@@ -29,14 +30,23 @@ export interface OutcomeAggregate {
   /** Fraction of runs whose outcome is `pass`. Zero when results is empty. */
   passRate: number;
   /**
-   * Mean total tokens across runs that passed; `0` when there are no passes
-   * (avoids `Infinity` and `NaN` polluting downstream JSON).
+   * Mean total tokens across runs that passed AND have a parsed token
+   * measurement; `0` when no such runs exist (avoids `Infinity` and `NaN`
+   * polluting downstream JSON). Runs with `tokenMeasurement !== "parsed"`
+   * are deliberately skipped so a `0` here means "no parsed passes" rather
+   * than "free run" (issue #252).
    */
   tokensPerPass: number;
   /** Mean wallclock ms across all runs (not just passes). */
   wallclockMs: number;
   /** Number of runs whose outcome is `budget_exceeded`. */
   budgetExceeded: number;
+  /**
+   * Total runs (any outcome) with `tokenMeasurement === "parsed"`. Reports
+   * use this to surface token-measurement coverage; aggregations with low
+   * coverage cannot be trusted for token economics (issue #252).
+   */
+  runsWithMeasuredTokens: number;
 }
 
 /**
@@ -48,27 +58,47 @@ export interface OutcomeAggregate {
  */
 export function computeOutcomeAggregate(results: RunResult[]): OutcomeAggregate {
   if (results.length === 0) {
-    return { passRate: 0, tokensPerPass: 0, wallclockMs: 0, budgetExceeded: 0 };
+    return { passRate: 0, tokensPerPass: 0, wallclockMs: 0, budgetExceeded: 0, runsWithMeasuredTokens: 0 };
   }
   let passes = 0;
   let budgetExceeded = 0;
-  let totalTokensInPasses = 0;
+  let totalTokensInMeasuredPasses = 0;
+  let measuredPasses = 0;
+  let runsWithMeasuredTokens = 0;
   let totalWallclock = 0;
   for (const r of results) {
     totalWallclock += r.wallclockMs;
+    if (isMeasured(r)) {
+      runsWithMeasuredTokens += 1;
+    }
     if (r.outcome === "pass") {
       passes += 1;
-      totalTokensInPasses += r.tokens.input + r.tokens.output;
+      // Only fold tokens into the mean when we actually measured them
+      // (issue #252) — otherwise a `0` would silently understate cost.
+      if (isMeasured(r)) {
+        measuredPasses += 1;
+        totalTokensInMeasuredPasses += r.tokens.input + r.tokens.output;
+      }
     } else if (r.outcome === "budget_exceeded") {
       budgetExceeded += 1;
     }
   }
   return {
     passRate: passes / results.length,
-    tokensPerPass: passes === 0 ? 0 : totalTokensInPasses / passes,
+    tokensPerPass: measuredPasses === 0 ? 0 : totalTokensInMeasuredPasses / measuredPasses,
     wallclockMs: totalWallclock / results.length,
     budgetExceeded,
+    runsWithMeasuredTokens,
   };
+}
+
+/**
+ * Treat older artefacts without `tokenMeasurement` as `"parsed"` for backward
+ * compatibility — pre-#252 reports always returned numeric zero, and rejecting
+ * them entirely would break compare/attribute over historical runs.
+ */
+function isMeasured(r: RunResult): boolean {
+  return (r.tokenMeasurement ?? "parsed") === "parsed";
 }
 
 // ── Per-task aggregation (§6.1, K seeds per arm) ───────────────────────────
@@ -85,7 +115,12 @@ export interface PerTaskMetrics {
   passRate: number;
   /** Pass-or-fail of seed 0 (or first run when seed 0 is absent). */
   passAt1: 0 | 1;
-  /** Mean total tokens in passing runs. `null` when 0 passes. */
+  /**
+   * Mean total tokens in passing runs that also carry a parsed token
+   * measurement. `null` when 0 passes OR when every passing run has missing /
+   * unsupported token measurement (issue #252) — downstream renderers must
+   * treat `null` as "not enough measurement to know" rather than zero cost.
+   */
   tokensPerPass: number | null;
   /** Mean wallclock ms across all K runs. */
   wallclockMs: number;
@@ -97,6 +132,12 @@ export interface PerTaskMetrics {
   harnessErrorCount: number;
   /** Number of runs aggregated. Useful when K varies (last seed dropped, etc.). */
   count: number;
+  /**
+   * Count of runs (any outcome) with `tokenMeasurement === "parsed"` (issue
+   * #252). Reports use this to surface token-measurement coverage so
+   * operators can tell when token economics are unreliable.
+   */
+  runsWithMeasuredTokens: number;
 }
 
 /**
@@ -114,23 +155,35 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
       budgetExceededCount: 0,
       harnessErrorCount: 0,
       count: 0,
+      runsWithMeasuredTokens: 0,
     };
   }
 
   let passes = 0;
-  let totalTokensInPasses = 0;
+  let measuredPasses = 0;
+  let totalTokensInMeasuredPasses = 0;
   let totalWallclock = 0;
   let budgetExceeded = 0;
   let harnessError = 0;
+  let runsWithMeasuredTokens = 0;
   // For the standard deviation we need a fixed-iteration buffer of pass/fail.
   const passSamples: number[] = [];
   for (const r of results) {
     totalWallclock += r.wallclockMs;
+    if (isMeasured(r)) {
+      runsWithMeasuredTokens += 1;
+    }
     const isPass = r.outcome === "pass" ? 1 : 0;
     passSamples.push(isPass);
     if (isPass === 1) {
       passes += 1;
-      totalTokensInPasses += r.tokens.input + r.tokens.output;
+      // Only count tokens for measured passes (issue #252). A pass with
+      // missing measurement contributes to `passRate` but NOT to
+      // `tokensPerPass` — preserving "tokens per measured pass" semantics.
+      if (isMeasured(r)) {
+        measuredPasses += 1;
+        totalTokensInMeasuredPasses += r.tokens.input + r.tokens.output;
+      }
     } else if (r.outcome === "budget_exceeded") {
       budgetExceeded += 1;
     } else if (r.outcome === "harness_error") {
@@ -144,12 +197,13 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
   return {
     passRate: passes / results.length,
     passAt1,
-    tokensPerPass: passes === 0 ? null : totalTokensInPasses / passes,
+    tokensPerPass: measuredPasses === 0 ? null : totalTokensInMeasuredPasses / measuredPasses,
     wallclockMs: totalWallclock / results.length,
     passRateStdev: stdev(passSamples),
     budgetExceededCount: budgetExceeded,
     harnessErrorCount: harnessError,
     count: results.length,
+    runsWithMeasuredTokens,
   };
 }
 
@@ -319,9 +373,37 @@ export function extractAssetLoads(runResult: RunResult): string[] {
   return out;
 }
 
-// Suppress the unused warning for the constant exposed to keep the cap
-// discoverable from this module's surface (mirrors the trajectory cap).
+// Suppress the unused warning for `ASSET_REF_PATTERN` above. The constant is
+// retained as the documentation seam called out by the #251 review addenda,
+// even though `extractAssetLoads` uses inline regexes for its two scan forms.
 void ASSET_REF_PATTERN;
+
+/**
+ * Anchored variant of `ASSET_REF_PATTERN` for whole-string validation.
+ *
+ * Used by `materialiseMaskedStash` (#251) to gate every asset ref BEFORE we
+ * touch the filesystem. The base `ASSET_REF_PATTERN` is `/g`-flagged for
+ * scanning agent stdout; we re-anchor here so a hostile string like
+ * `skill:foo/../../etc` is rejected as a whole even though the regex would
+ * happily match a `skill:foo` substring under `/g`.
+ *
+ * Rejects `..`, absolute paths, drive letters, null bytes, `/`, `\`, and
+ * anything else outside the v1 ref grammar (mirrors src/core/asset-ref.ts).
+ */
+const ASSET_REF_ANCHORED = /^(?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[A-Za-z0-9_-]+$/;
+
+/**
+ * Reject hostile asset refs before they reach any `fs.rmSync` call. The ref
+ * comes from agent stdout (untrusted; the agent could be prompt-injected) so
+ * we apply the anchored grammar pattern first, then the per-segment shape
+ * check after the colon-split. Defense in depth — each layer is sufficient
+ * on its own; the layered structure makes a future grammar relax safe.
+ */
+function isSafeAssetRef(ref: string): boolean {
+  if (!ref) return false;
+  if (ref.includes("\0")) return false;
+  return ASSET_REF_ANCHORED.test(ref);
+}
 
 /** Per-asset attribution row (§6.5). */
 export interface PerAssetAttributionRow {
@@ -412,6 +494,73 @@ function collectAkmRuns(report: UtilityRunReport): RunResult[] {
   return [];
 }
 
+// ── runs[] serialisation (#249) ────────────────────────────────────────────
+
+/**
+ * Project a list of RunResults onto the compact `runs[]` rows persisted
+ * inside the §13.3 JSON envelope (#249). One row per (task, arm, seed)
+ * triple; the renderer walks the input order verbatim, which the runner
+ * already builds deterministically (per-task block, noakm before akm,
+ * seeds in ascending order).
+ *
+ * Aggregate metrics (per-task, trajectory, failure-mode, search-bridge,
+ * attribution) MUST be recomputable from these rows + task metadata. This
+ * helper is the canonical projection — keep it in lockstep with the field
+ * list in the issue body.
+ */
+export function aggregateRunsForReport(runs: RunResult[]): RunRecordSerialized[] {
+  return runs.map(serializeRunForReport);
+}
+
+/**
+ * Hydrate a persisted `runs[]` row back into the `RunResult` shape that
+ * downstream metrics helpers (`computePerAssetAttribution`, `aggregateCorpus`,
+ * etc.) expect. Used by `bench attribute` / `bench compare` when they read a
+ * §13.3 envelope from disk: the persisted row carries a compact subset, but
+ * it carries everything those helpers need.
+ *
+ * Fields the row deliberately does NOT carry are filled with safe defaults:
+ *   • `events: []` — events.jsonl is not persisted; downstream attribution
+ *     only consults `assetsLoaded` and `verifierStdout`.
+ *   • `verifierStdout: ""` — full stdout is intentionally omitted from the
+ *     envelope (#249 acceptance criterion). `assetsLoaded` already carries
+ *     the post-hoc extraction the agent run produced.
+ *   • `schemaVersion: 1` — the report schema implies it.
+ *
+ * Tokens are passed through as-is so a future `measurement` field added by
+ * #252 lands on the rehydrated row automatically. TODO(#252): keep this
+ * spread.
+ */
+export function rehydrateRunFromSerialized(row: RunRecordSerialized): RunResult {
+  // The compact row uses a permissive Record shape for tokens (see
+  // RunRecordSerialized). Coerce defensively so older artefacts with only
+  // {input, output} hydrate cleanly.
+  const tok = row.tokens as { input?: number; output?: number } & Record<string, unknown>;
+  return {
+    schemaVersion: 1,
+    taskId: row.task_id,
+    arm: row.arm,
+    seed: row.seed,
+    model: row.model,
+    outcome: row.outcome as RunResult["outcome"],
+    tokens: {
+      ...tok,
+      input: typeof tok.input === "number" ? tok.input : 0,
+      output: typeof tok.output === "number" ? tok.output : 0,
+    } as RunResult["tokens"],
+    wallclockMs: row.wallclock_ms,
+    trajectory: {
+      correctAssetLoaded: row.trajectory.correct_asset_loaded,
+      feedbackRecorded: row.trajectory.feedback_recorded,
+    },
+    events: [],
+    verifierStdout: "",
+    verifierExitCode: row.verifier_exit_code,
+    assetsLoaded: [...row.assets_loaded],
+    failureMode: (row.failure_mode ?? null) as RunResult["failureMode"],
+  };
+}
+
 // ── runMaskedCorpus (§6.5 leave-one-out) ──────────────────────────────────
 
 /**
@@ -438,6 +587,20 @@ export interface MaskedCorpusResult {
    * to verify cost accounting.
    */
   runsPerformed: number;
+  /**
+   * Strategy used to construct each masked stash. Currently always
+   * `"leave-one-out"`: every re-run masks exactly one asset ref from the
+   * source fixture stash. Recorded in the JSON envelope so operators can
+   * tell at a glance whether a future strategy (e.g. `"leave-pair-out"`)
+   * was used.
+   */
+  maskingStrategy: "leave-one-out";
+  /**
+   * The exact asset refs masked, one per masked re-run. Order matches
+   * `attributions[]`. Recorded in the JSON envelope so the operator can
+   * audit which assets contributed to the marginal-contribution numbers.
+   */
+  maskedRefs: string[];
 }
 
 /** Caller-facing options for `runMaskedCorpus`. */
@@ -526,6 +689,7 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
   const baseAkmPassRate = baseReport.aggregateAkm.passRate;
   const top = attribution.rows.slice(0, clamped);
   const attributions: MaskedAttributionRow[] = [];
+  const maskedRefs: string[] = [];
 
   for (const row of top) {
     const maskedTasks: TaskMetadata[] = [];
@@ -534,20 +698,36 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
       for (const baseTask of baseReport.taskMetadata ?? []) {
         const maskedStashDir = materialiseMaskedStash(fixturesRoot, baseTask.stash, row.assetRef);
         if (maskedStashDir) tmpDirs.push(maskedStashDir);
-        // Forward the masked stashDir as a sibling field. Tasks already carry
-        // `stash` (the fixture name), so we tunnel the masked dir through
-        // `taskDir` won't work — instead we mutate `stash` to point at the
-        // tmp dir and rely on the runner's `materialiseStash` flow. The
-        // injected runUtility for masked runs MUST honour `stashDirOverride`.
-        maskedTasks.push({ ...baseTask, stash: maskedStashDir ?? baseTask.stash });
+        // Issue #251: forward the masked stashDir via the explicit
+        // `stashDirOverride` field on the cloned TaskMetadata. We MUST NOT
+        // mutate `baseTask.stash` (the fixture name) — the runner uses that
+        // to call `loadFixtureStash`, and overloading it breaks the
+        // `__no-stash__` resolution branch in runner.ts. The runner's AKM-arm
+        // branch checks `task.stashDirOverride` first.
+        //
+        // When `materialiseMaskedStash` returned `null` (asset not present in
+        // this fixture, or hostile ref shape rejected by the validator), we
+        // intentionally leave both fields untouched. The runner falls back to
+        // the normal materialisation flow against the unchanged source
+        // fixture — so the re-run still happens, but the result mirrors the
+        // base. This is a meaningful diagnostic (the ref didn't bind in this
+        // fixture) and is the same accounting `cost-accounting`-style tests
+        // assert against.
+        if (maskedStashDir) {
+          maskedTasks.push({ ...baseTask, stashDirOverride: maskedStashDir });
+        } else {
+          maskedTasks.push({ ...baseTask });
+        }
       }
 
       const maskedReport = await opts.runUtility({
         ...opts.baseOptions,
         tasks: maskedTasks,
-        // The masked stash already has the correct content on disk, so we
-        // skip the runner's own materialisation step (which would otherwise
-        // try to look up the fixture by name).
+        // The masked stash already has the correct content on disk, and the
+        // runner now resolves it via `task.stashDirOverride`. We still pass
+        // `materialiseStash: false` so the runner does not call
+        // `loadFixtureStash` against the (unmasked) named fixture — that
+        // would waste work and risk re-indexing the source dir.
         materialiseStash: false,
       });
 
@@ -558,7 +738,11 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
         maskedPassRate,
         marginalContribution: baseAkmPassRate - maskedPassRate,
       });
+      maskedRefs.push(row.assetRef);
     } finally {
+      // Cleanup runs in BOTH success and failure paths (acceptance criterion).
+      // Best-effort: a tmpfs failure here is logged via the `try/catch` below
+      // and the host OS reaps the tmp dir on reboot.
       for (const dir of tmpDirs) {
         try {
           fs.rmSync(dir, { recursive: true, force: true });
@@ -573,6 +757,8 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
     baseReport,
     attributions,
     runsPerformed: clamped,
+    maskingStrategy: "leave-one-out",
+    maskedRefs,
   };
 }
 
@@ -592,6 +778,11 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
 function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRef: string): string | null {
   const sourceDir = path.join(fixturesRoot, stashName);
   if (!fs.existsSync(path.join(sourceDir, "MANIFEST.json"))) return null;
+
+  // Issue #251 review addendum: validate the WHOLE ref against the anchored
+  // grammar before we touch the filesystem. The downstream `isSafeAssetNameSegment`
+  // + `isPathContained` checks are still applied — this is defense in depth.
+  if (!isSafeAssetRef(assetRef)) return null;
 
   const colonIdx = assetRef.indexOf(":");
   if (colonIdx < 0) {
@@ -847,7 +1038,7 @@ export interface CompareReportSuccess {
 /** Failure envelope. `reason` is the discrete refusal cause; `message` is human-readable. */
 export interface CompareReportFailure {
   ok: false;
-  reason: "model_mismatch" | "hash_mismatch" | "schema_mismatch" | "track_mismatch";
+  reason: "model_mismatch" | "hash_mismatch" | "corpus_mismatch" | "schema_mismatch" | "track_mismatch";
   message: string;
   baseModel?: string;
   currentModel?: string;
@@ -855,6 +1046,26 @@ export interface CompareReportFailure {
   currentFixtureContentHash?: string | null;
   /** When `reason === "hash_mismatch"`, the affected fixtures (best-effort). */
   affectedFixtures?: string[];
+  /** #250 — task corpus hashes when `reason === "corpus_mismatch"`. */
+  baseTaskCorpusHash?: string | null;
+  currentTaskCorpusHash?: string | null;
+  /** #250 — selected task IDs that diverge between base and current. */
+  baseSelectedTaskIds?: string[];
+  currentSelectedTaskIds?: string[];
+}
+
+/**
+ * Caller-controlled overrides for `compareReports` (#250). When both flags
+ * are false (the default), the comparator refuses mismatched corpora /
+ * fixtures. Setting a flag converts the corresponding refusal into a
+ * warning so an operator can still inspect a cross-corpus or cross-fixture
+ * diff when they explicitly opt in.
+ */
+export interface CompareOptions {
+  /** When true, accept mismatched task IDs / `taskCorpusHash`; emit a warning instead. */
+  allowCorpusMismatch?: boolean;
+  /** When true, accept mismatched `fixtureContentHash`; emit a warning instead. */
+  allowFixtureMismatch?: boolean;
 }
 
 export type CompareResult = CompareReportSuccess | CompareReportFailure;
@@ -897,6 +1108,12 @@ export interface ParsedReportJson {
     slice?: string;
     seedsPerArm?: number;
     fixtureContentHash?: string | null;
+    /** #250 — stable-sorted list of task IDs the run selected. */
+    selectedTaskIds?: string[];
+    /** #250 — deterministic hash over `selectedTaskIds` + per-task body bytes. */
+    taskCorpusHash?: string | null;
+    /** #250 — per-fixture content hash (fixture name → sha256 hex). */
+    fixtures?: Record<string, string>;
   };
   aggregate?: {
     noakm?: { pass_rate?: number; tokens_per_pass?: number | null; wallclock_ms?: number };
@@ -919,6 +1136,24 @@ function readModel(r: ParsedReportJson): string {
 function readFixtureHash(r: ParsedReportJson): string | null {
   const v = r.corpus?.fixtureContentHash;
   return v === undefined || v === null ? null : v;
+}
+
+function readTaskCorpusHash(r: ParsedReportJson): string | null {
+  const v = r.corpus?.taskCorpusHash;
+  return v === undefined || v === null ? null : v;
+}
+
+function readSelectedTaskIds(r: ParsedReportJson): string[] | null {
+  const v = r.corpus?.selectedTaskIds;
+  return Array.isArray(v) ? v : null;
+}
+
+function arraysEqualIgnoringOrder(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i += 1) if (sa[i] !== sb[i]) return false;
+  return true;
 }
 
 function akmAgg(r: ParsedReportJson): { pass_rate: number; tokens_per_pass: number | null; wallclock_ms: number } {
@@ -947,7 +1182,11 @@ function akmAgg(r: ParsedReportJson): { pass_rate: number; tokens_per_pass: numb
  * higher is better; `tokens_per_pass` and `wallclock_ms` are counts, lower
  * is better.
  */
-export function compareReports(base: ParsedReportJson, current: ParsedReportJson): CompareResult {
+export function compareReports(
+  base: ParsedReportJson,
+  current: ParsedReportJson,
+  options: CompareOptions = {},
+): CompareResult {
   // Schema-version gate.
   if (base.schemaVersion !== 1 || current.schemaVersion !== 1) {
     return {
@@ -984,16 +1223,75 @@ export function compareReports(base: ParsedReportJson, current: ParsedReportJson
   const baseHash = readFixtureHash(base);
   const currentHash = readFixtureHash(current);
   const warnings: string[] = [];
+
+  // #250 — task corpus hash + selected task IDs. Refused unless either side
+  // is legacy (missing the hash) or the operator passed
+  // `allowCorpusMismatch`. Legacy reports (no taskCorpusHash) degrade to a
+  // warning so older artefacts can still be diffed.
+  const baseTaskHash = readTaskCorpusHash(base);
+  const currentTaskHash = readTaskCorpusHash(current);
+  const baseIds = readSelectedTaskIds(base);
+  const currentIds = readSelectedTaskIds(current);
+  if (baseTaskHash !== null && currentTaskHash !== null && baseTaskHash !== currentTaskHash) {
+    if (!options.allowCorpusMismatch) {
+      return {
+        ok: false,
+        reason: "corpus_mismatch",
+        message: `cannot compare across different task corpora: base taskCorpusHash="${baseTaskHash}", current="${currentTaskHash}". Rerun against the same task selection or pass --allow-corpus-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseTaskCorpusHash: baseTaskHash,
+        currentTaskCorpusHash: currentTaskHash,
+        ...(baseIds ? { baseSelectedTaskIds: baseIds } : {}),
+        ...(currentIds ? { currentSelectedTaskIds: currentIds } : {}),
+      };
+    }
+    warnings.push(
+      `task corpus hashes differ (base="${baseTaskHash}", current="${currentTaskHash}") — diff requested via --allow-corpus-mismatch`,
+    );
+  } else if (
+    baseTaskHash === null &&
+    currentTaskHash === null &&
+    baseIds !== null &&
+    currentIds !== null &&
+    !arraysEqualIgnoringOrder(baseIds, currentIds)
+  ) {
+    // Both sides legacy (no taskCorpusHash) but both expose selectedTaskIds
+    // and they differ. We can still detect a mismatched corpus from the ID
+    // list alone — refuse unless the operator opted in.
+    if (!options.allowCorpusMismatch) {
+      return {
+        ok: false,
+        reason: "corpus_mismatch",
+        message: `cannot compare across different selected task IDs. Rerun against the same task selection or pass --allow-corpus-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseSelectedTaskIds: baseIds,
+        currentSelectedTaskIds: currentIds,
+      };
+    }
+    warnings.push("selected task IDs differ — diff requested via --allow-corpus-mismatch");
+  }
+  if (baseTaskHash === null)
+    warnings.push("base report has no corpus.taskCorpusHash; proceeding without task-corpus-pin check");
+  if (currentTaskHash === null)
+    warnings.push("current report has no corpus.taskCorpusHash; proceeding without task-corpus-pin check");
+
   if (baseHash !== null && currentHash !== null && baseHash !== currentHash) {
-    return {
-      ok: false,
-      reason: "hash_mismatch",
-      message: `cannot compare across different fixture-content hashes: base="${baseHash}", current="${currentHash}". Rerun against matching fixtures.`,
-      baseModel,
-      currentModel,
-      baseFixtureContentHash: baseHash,
-      currentFixtureContentHash: currentHash,
-    };
+    if (!options.allowFixtureMismatch) {
+      return {
+        ok: false,
+        reason: "hash_mismatch",
+        message: `cannot compare across different fixture-content hashes: base="${baseHash}", current="${currentHash}". Rerun against matching fixtures or pass --allow-fixture-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseFixtureContentHash: baseHash,
+        currentFixtureContentHash: currentHash,
+      };
+    }
+    warnings.push(
+      `fixture-content hashes differ (base="${baseHash}", current="${currentHash}") — diff requested via --allow-fixture-mismatch`,
+    );
   }
   if (baseHash === null)
     warnings.push("base report has no corpus.fixtureContentHash; proceeding without fixture-pin check");

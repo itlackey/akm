@@ -27,9 +27,11 @@ import {
   type ParsedReportJson,
   type PerAssetAttribution,
   type RunUtilityOptionsForMask,
+  rehydrateRunFromSerialized,
   runMaskedCorpus,
 } from "./metrics";
 import {
+  type RunRecordSerialized,
   renderAttributionTable,
   renderCompareMarkdown,
   renderEvolveReport,
@@ -69,11 +71,17 @@ evolve flags:
   --json                   suppress the markdown summary on stderr.
 
 compare flags:
-  --base <path>            path to baseline UtilityRunReport JSON file. REQUIRED.
-  --current <path>         path to current  UtilityRunReport JSON file. REQUIRED.
-  --json                   emit the structured CompareResult JSON to stdout instead
-                           of a markdown diff.
-  Exit codes: 0 on successful diff, 1 on refusal (model/hash/schema/track mismatch),
+  --base <path>                 path to baseline UtilityRunReport JSON file. REQUIRED.
+  --current <path>              path to current  UtilityRunReport JSON file. REQUIRED.
+  --json                        emit the structured CompareResult JSON to stdout instead
+                                of a markdown diff.
+  --allow-corpus-mismatch       proceed even when the two reports disagree on the
+                                selected task IDs / taskCorpusHash. The diff is
+                                rendered with a warning instead of being refused.
+  --allow-fixture-mismatch      proceed even when the two reports disagree on the
+                                fixtureContentHash. Renders a warning instead of
+                                refusing.
+  Exit codes: 0 on successful diff, 1 on refusal (model/corpus/fixture-hash/schema/track mismatch),
               2 on input errors (missing files, malformed JSON, unknown flags).
 
 attribute flags:
@@ -195,6 +203,10 @@ export interface CompareCliOptions {
   basePath: string;
   currentPath: string;
   json: boolean;
+  /** #250 — accept mismatched task corpora and emit a warning instead. */
+  allowCorpusMismatch?: boolean;
+  /** #250 — accept mismatched fixture-content hashes and emit a warning instead. */
+  allowFixtureMismatch?: boolean;
 }
 
 /**
@@ -249,7 +261,10 @@ export function runCompareCli(options: CompareCliOptions): UtilityCliResult {
     };
   }
 
-  const result = compareReports(base, current);
+  const result = compareReports(base, current, {
+    ...(options.allowCorpusMismatch ? { allowCorpusMismatch: true } : {}),
+    ...(options.allowFixtureMismatch ? { allowFixtureMismatch: true } : {}),
+  });
   const stdout = options.json ? `${JSON.stringify(result, null, 2)}\n` : `${renderCompareMarkdown(result)}\n`;
   let stderr = "";
   if (!result.ok) {
@@ -365,14 +380,15 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
   const desired = Math.max(1, options.topN);
   const clamped = Math.min(desired, perAsset.rows.length);
 
-  // Reconstitute a partial UtilityRunReport so runMaskedCorpus has what it
-  // needs. We don't have the raw RunResults in the on-disk envelope, so the
-  // helper uses the perAsset table directly via computePerAssetAttribution.
-  // To make that work we synthesise akmRuns from the perAsset rows: each
-  // row contributes loadCountPassing pass-stub runs and loadCountFailing
-  // fail-stub runs. This is enough for `computePerAssetAttribution` inside
-  // `runMaskedCorpus` to produce the same top-N ranking we just loaded.
-  const synthesisedAkmRuns = synthesiseAkmRunsFromAttribution(perAsset);
+  // Prefer the persisted `runs[]` array (#249). When the report carries
+  // serialised raw runs we hydrate them back into RunResult shape and feed
+  // them to `runMaskedCorpus` directly — that keeps attribution faithful to
+  // the original (task, arm, seed) bag instead of synthesising stubs from
+  // the per-asset aggregate. Falls back to the legacy aggregate path when
+  // the report pre-dates the `runs[]` field.
+  const persistedRuns = readPersistedRuns(baseEnvelope);
+  const akmRuns =
+    persistedRuns !== null ? persistedRuns.filter((r) => r.arm === "akm") : synthesiseAkmRunsFromAttribution(perAsset);
   const baseReport: UtilityRunReport = {
     timestamp: String(baseEnvelope.timestamp ?? ""),
     branch: String(baseEnvelope.branch ?? ""),
@@ -391,7 +407,7 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     tasks: [],
     warnings: [],
     perAsset,
-    akmRuns: synthesisedAkmRuns,
+    akmRuns,
     taskMetadata: tasks,
   };
 
@@ -426,7 +442,16 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     schemaVersion: 1,
     track: "attribute",
     base: { path: options.basePath, model },
-    maskingStrategy: "leave-one-out",
+    // Issue #251: surface the masking strategy + the exact masked refs in
+    // the JSON envelope so operators can audit the marginal-contribution
+    // numbers without re-running the masker. The `maskedRefs` order matches
+    // `attributions[]`. Strategy is currently always `"leave-one-out"`;
+    // future strategies extend the union in `MaskedCorpusResult`.
+    attribution: {
+      maskingStrategy: maskedResult.maskingStrategy,
+      maskedRefs: maskedResult.maskedRefs,
+    },
+    maskingStrategy: maskedResult.maskingStrategy,
     runsPerformed: maskedResult.runsPerformed,
     perAsset: {
       total_akm_runs: perAsset.totalAkmRuns,
@@ -501,6 +526,54 @@ function extractCorpusMetrics(
       node.tokens_per_pass === null ? null : typeof node.tokens_per_pass === "number" ? node.tokens_per_pass : null,
     wallclockMs: typeof node.wallclock_ms === "number" ? node.wallclock_ms : 0,
   };
+}
+
+/**
+ * Read the persisted `runs[]` array (#249) from a §13.3 envelope and hydrate
+ * each row back into the in-memory `RunResult` shape. Returns `null` when the
+ * envelope pre-dates the field (legacy reports) so callers can fall back to
+ * the aggregate-only path.
+ *
+ * Structurally validates each row: rows that don't carry the required keys
+ * are skipped silently. We intentionally avoid throwing — older envelopes
+ * with partial shapes still want to flow through the legacy path.
+ */
+function readPersistedRuns(envelope: Record<string, unknown>): import("./driver").RunResult[] | null {
+  const raw = envelope.runs;
+  if (!Array.isArray(raw)) return null;
+  const out: import("./driver").RunResult[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const row = r as Partial<RunRecordSerialized> & Record<string, unknown>;
+    if (typeof row.task_id !== "string") continue;
+    if (typeof row.arm !== "string") continue;
+    if (typeof row.seed !== "number") continue;
+    if (typeof row.outcome !== "string") continue;
+    // Trajectory shape: tolerate missing/partial sub-object so we don't
+    // reject otherwise-valid rows.
+    const traj = (row.trajectory ?? {}) as {
+      correct_asset_loaded?: boolean | null;
+      feedback_recorded?: boolean | null;
+    };
+    const normalised: RunRecordSerialized = {
+      task_id: row.task_id,
+      arm: row.arm,
+      seed: row.seed,
+      model: typeof row.model === "string" ? row.model : "unknown",
+      outcome: row.outcome,
+      tokens: (row.tokens as Record<string, unknown>) ?? { input: 0, output: 0 },
+      wallclock_ms: typeof row.wallclock_ms === "number" ? row.wallclock_ms : 0,
+      verifier_exit_code: typeof row.verifier_exit_code === "number" ? row.verifier_exit_code : 0,
+      trajectory: {
+        correct_asset_loaded: traj.correct_asset_loaded ?? null,
+        feedback_recorded: traj.feedback_recorded ?? null,
+      },
+      assets_loaded: Array.isArray(row.assets_loaded) ? (row.assets_loaded as string[]) : [],
+      failure_mode: typeof row.failure_mode === "string" ? row.failure_mode : null,
+    };
+    out.push(rehydrateRunFromSerialized(normalised));
+  }
+  return out;
 }
 
 /**
@@ -696,6 +769,8 @@ async function main(argv: string[]): Promise<number> {
         basePath,
         currentPath,
         json: parsed.bool.has("json"),
+        allowCorpusMismatch: parsed.bool.has("allow-corpus-mismatch"),
+        allowFixtureMismatch: parsed.bool.has("allow-fixture-mismatch"),
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);

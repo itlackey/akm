@@ -90,6 +90,70 @@ export function renderMarkdownSummary(input: ReportInput): string {
 // ── Utility-track report (§13.3) ───────────────────────────────────────────
 
 /**
+ * Compact serialised RunResult row persisted into the §13.3 JSON envelope
+ * under the top-level `runs[]` key (#249).
+ *
+ * One row per `(task, arm, seed)` execution, both `noakm` and `akm`. Contains
+ * enough fields to recompute every aggregate metric (per-task, trajectory,
+ * failure-mode, search-bridge, attribution) plus task metadata, but
+ * deliberately omits the full `events[]` and unbounded `verifierStdout` so the
+ * envelope stays compact. Older artefacts that pre-date this field are still
+ * valid: callers that need run-level data should fall back to the per-task
+ * aggregate path.
+ */
+export interface RunRecordSerialized {
+  task_id: string;
+  arm: string;
+  seed: number;
+  model: string;
+  outcome: string;
+  /**
+   * Spread of `RunResult.tokens` so future fields (e.g. `measurement` from
+   * #252) flow through automatically without a renderer change. Today the
+   * shape is `{input: number, output: number}`; #252 will add a sibling
+   * `measurement` field. TODO(#252): keep this pass-through.
+   */
+  tokens: Record<string, unknown>;
+  wallclock_ms: number;
+  verifier_exit_code: number;
+  trajectory: {
+    correct_asset_loaded: boolean | null;
+    feedback_recorded: boolean | null;
+  };
+  assets_loaded: string[];
+  failure_mode: string | null;
+}
+
+/**
+ * Project a RunResult onto its compact serialised form for the §13.3 JSON
+ * envelope (#249). Mirrors the field list in the issue body.
+ *
+ * Token-shape seam: `tokens` is spread verbatim from `result.tokens` so when
+ * #252 adds a `measurement` field the renderer doesn't need a code change.
+ * Do NOT hardcode `{input, output}` projections here.
+ */
+export function serializeRunForReport(result: RunResult): RunRecordSerialized {
+  return {
+    task_id: result.taskId,
+    arm: result.arm,
+    seed: result.seed,
+    model: result.model,
+    outcome: result.outcome,
+    // TODO(#252): when RunResult.tokens grows a `measurement` key, this spread
+    // carries it forward without a renderer change.
+    tokens: { ...result.tokens },
+    wallclock_ms: result.wallclockMs,
+    verifier_exit_code: result.verifierExitCode,
+    trajectory: {
+      correct_asset_loaded: result.trajectory.correctAssetLoaded,
+      feedback_recorded: result.trajectory.feedbackRecorded,
+    },
+    assets_loaded: [...(result.assetsLoaded ?? [])],
+    failure_mode: result.failureMode ?? null,
+  };
+}
+
+/**
  * Per-task envelope inside `tasks[]`. Mirrors the §13.3 layout: `noakm` and
  * `akm` are PerTaskMetrics, `delta` is the akm − noakm difference.
  */
@@ -114,6 +178,16 @@ export interface UtilityRunReport {
     tasks: number;
     slice: "all" | "train" | "eval";
     seedsPerArm: number;
+    /**
+     * Identity stamps used by `bench compare` to refuse cross-corpus diffs
+     * (#250). All four are populated by `runUtility` at finalize time. Older
+     * reports (pre-#250) lack these keys and degrade to a warning instead of
+     * a refusal — see `compareReports`.
+     */
+    selectedTaskIds?: string[];
+    taskCorpusHash?: string;
+    fixtures?: Record<string, string>;
+    fixtureContentHash?: string;
   };
   aggregateNoakm: CorpusMetrics;
   aggregateAkm: CorpusMetrics;
@@ -140,6 +214,14 @@ export interface UtilityRunReport {
    * contract. The field is on the in-memory shape only.
    */
   akmRuns?: RunResult[];
+  /**
+   * Raw RunResults across both arms (`noakm` + `akm`), retained on the
+   * report so `buildUtilityJson` can serialise the compact §13.3 `runs[]`
+   * array (#249). Populated by the runner. When omitted, the envelope simply
+   * does not gain a `runs` key — backward-compat with code paths that
+   * construct a UtilityRunReport without raw runs.
+   */
+  allRuns?: RunResult[];
   /**
    * Task metadata for in-process consumers (the masked-corpus helper needs
    * to remap each task's stash to a tmp dir). Not serialised into the §13.3
@@ -180,6 +262,14 @@ function buildUtilityJson(input: UtilityRunReport): object {
     delta: serialiseDelta(t.delta),
   }));
 
+  // Token-measurement coverage (issue #252). Folds the corpus-wide picture so
+  // operators can tell at a glance whether token economics are reliable. The
+  // warning string mirrors what we add to `warnings[]` in markdown output.
+  const tokenMeasurement = summariseTokenMeasurement(input);
+
+  const warnings = [...input.warnings];
+  if (tokenMeasurement.warning) warnings.push(tokenMeasurement.warning);
+
   const envelope: Record<string, unknown> = {
     schemaVersion: 1,
     track: "utility",
@@ -203,10 +293,26 @@ function buildUtilityJson(input: UtilityRunReport): object {
       by_label: input.failureModes.byLabel,
       by_task: input.failureModes.byTask,
     },
+    token_measurement: {
+      total_runs: tokenMeasurement.totalRuns,
+      runs_with_measured_tokens: tokenMeasurement.measuredRuns,
+      runs_missing_measurement: tokenMeasurement.missingRuns,
+      runs_unsupported_measurement: tokenMeasurement.unsupportedRuns,
+      coverage: tokenMeasurement.coverage,
+      reliable: tokenMeasurement.reliable,
+    },
     tasks,
-    warnings: input.warnings,
+    warnings,
     ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
+
+  // Compact raw runs[] — additive top-level key (#249). One row per
+  // (task, arm, seed) execution; both noakm and akm. Older artefacts that
+  // pre-date this field stay valid because we only emit it when the runner
+  // actually populated `allRuns`.
+  if (input.allRuns) {
+    envelope.runs = input.allRuns.map(serializeRunForReport);
+  }
 
   // Per-asset attribution is an additive top-level key (§6.5). Emit it only
   // when the runner populated it so older code paths (e.g. the empty-corpus
@@ -283,6 +389,7 @@ function serialisePerTaskMetrics(m: PerTaskMetrics): {
   budget_exceeded_count: number;
   harness_error_count: number;
   count: number;
+  runs_with_measured_tokens: number;
 } {
   return {
     pass_rate: m.passRate,
@@ -293,6 +400,61 @@ function serialisePerTaskMetrics(m: PerTaskMetrics): {
     budget_exceeded_count: m.budgetExceededCount,
     harness_error_count: m.harnessErrorCount,
     count: m.count,
+    runs_with_measured_tokens: m.runsWithMeasuredTokens,
+  };
+}
+
+/**
+ * Token-measurement coverage summary (issue #252). The `warning` string is
+ * non-null whenever any run lacks parsed token measurement; report renderers
+ * splice it into `warnings[]` so the markdown "## Warnings" section and the
+ * JSON `warnings` array surface the same prose.
+ *
+ * `coverage` is `null` when there are no akm-arm runs (nothing to measure
+ * against — distinct from "0 / 0 = NaN"). `reliable` is `true` only when
+ * every akm run carried `tokenMeasurement === "parsed"`.
+ */
+interface TokenMeasurementSummary {
+  totalRuns: number;
+  measuredRuns: number;
+  missingRuns: number;
+  unsupportedRuns: number;
+  coverage: number | null;
+  reliable: boolean;
+  warning: string | null;
+}
+
+function summariseTokenMeasurement(input: UtilityRunReport): TokenMeasurementSummary {
+  const runs = input.akmRuns ?? [];
+  let measured = 0;
+  let missing = 0;
+  let unsupported = 0;
+  for (const r of runs) {
+    const m = r.tokenMeasurement ?? "parsed";
+    if (m === "parsed") measured += 1;
+    else if (m === "missing") missing += 1;
+    else if (m === "unsupported") unsupported += 1;
+  }
+  const total = runs.length;
+  const coverage = total === 0 ? null : measured / total;
+  const reliable = total > 0 && missing === 0 && unsupported === 0;
+  let warning: string | null = null;
+  if (total > 0 && !reliable) {
+    const parts: string[] = [];
+    if (missing > 0) parts.push(`${missing} missing`);
+    if (unsupported > 0) parts.push(`${unsupported} unsupported`);
+    warning =
+      `token measurement unreliable: ${parts.join(", ")} of ${total} akm-arm runs lack parsed token usage; ` +
+      `tokens_per_pass and token-budget signals reflect only the ${measured} measured runs.`;
+  }
+  return {
+    totalRuns: total,
+    measuredRuns: measured,
+    missingRuns: missing,
+    unsupportedRuns: unsupported,
+    coverage,
+    reliable,
+    warning,
   };
 }
 
@@ -338,11 +500,29 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
     lines.push("");
     lines.push(renderSearchBridgeTable(input.searchBridge));
   }
-  if (input.warnings.length > 0) {
+
+  // Token-measurement section (issue #252). Always rendered when there are
+  // akm-arm runs to report on, so operators can tell whether tokens economics
+  // are trustworthy without scrolling to the warnings block.
+  const tokenSummary = summariseTokenMeasurement(input);
+  if (tokenSummary.totalRuns > 0) {
+    lines.push("");
+    lines.push("## Token measurement (akm)");
+    lines.push("");
+    const cov = tokenSummary.coverage === null ? "n/a" : `${(tokenSummary.coverage * 100).toFixed(1)}%`;
+    lines.push(
+      `- runs: ${tokenSummary.totalRuns} total, ${tokenSummary.measuredRuns} measured, ${tokenSummary.missingRuns} missing, ${tokenSummary.unsupportedRuns} unsupported`,
+    );
+    lines.push(`- coverage: ${cov} (${tokenSummary.reliable ? "reliable" : "unreliable — see warning below"})`);
+  }
+
+  const warnings = [...input.warnings];
+  if (tokenSummary.warning) warnings.push(tokenSummary.warning);
+  if (warnings.length > 0) {
     lines.push("");
     lines.push("## Warnings");
     lines.push("");
-    for (const w of input.warnings) lines.push(`- ${w}`);
+    for (const w of warnings) lines.push(`- ${w}`);
   }
   return lines.join("\n");
 }
@@ -472,6 +652,29 @@ function renderCompareFailure(result: Extract<CompareResult, { ok: false }>): st
       lines.push("");
       lines.push("affected fixtures:");
       for (const f of result.affectedFixtures) lines.push(`- ${f}`);
+    }
+  }
+  if (result.reason === "corpus_mismatch") {
+    if (result.baseTaskCorpusHash !== undefined || result.currentTaskCorpusHash !== undefined) {
+      lines.push("");
+      lines.push(`- base taskCorpusHash:    \`${String(result.baseTaskCorpusHash ?? "n/a")}\``);
+      lines.push(`- current taskCorpusHash: \`${String(result.currentTaskCorpusHash ?? "n/a")}\``);
+    }
+    if (result.baseSelectedTaskIds && result.currentSelectedTaskIds) {
+      const baseSet = new Set(result.baseSelectedTaskIds);
+      const currentSet = new Set(result.currentSelectedTaskIds);
+      const addedToCurrent = result.currentSelectedTaskIds.filter((id) => !baseSet.has(id)).sort();
+      const droppedFromBase = result.baseSelectedTaskIds.filter((id) => !currentSet.has(id)).sort();
+      if (addedToCurrent.length > 0) {
+        lines.push("");
+        lines.push("only in current:");
+        for (const id of addedToCurrent) lines.push(`- ${id}`);
+      }
+      if (droppedFromBase.length > 0) {
+        lines.push("");
+        lines.push("only in base:");
+        for (const id of droppedFromBase) lines.push(`- ${id}`);
+      }
     }
   }
   return lines.join("\n");

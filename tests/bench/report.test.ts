@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { RunResult } from "./driver";
 import type { PerTaskMetrics } from "./metrics";
 import {
   type ReportInput,
@@ -14,6 +15,7 @@ import {
   renderUtilityReport,
   resolveGitBranch,
   resolveGitCommit,
+  serializeRunForReport,
   type UtilityRunReport,
 } from "./report";
 
@@ -24,8 +26,20 @@ const sample: ReportInput = {
   model: "anthropic/claude-opus-4-7",
   track: "utility",
   arms: {
-    noakm: { passRate: 0.4, tokensPerPass: 18000, wallclockMs: 41000, budgetExceeded: 0 },
-    akm: { passRate: 0.7, tokensPerPass: 14000, wallclockMs: 36000, budgetExceeded: 1 },
+    noakm: {
+      passRate: 0.4,
+      tokensPerPass: 18000,
+      wallclockMs: 41000,
+      budgetExceeded: 0,
+      runsWithMeasuredTokens: 4,
+    },
+    akm: {
+      passRate: 0.7,
+      tokensPerPass: 14000,
+      wallclockMs: 36000,
+      budgetExceeded: 1,
+      runsWithMeasuredTokens: 7,
+    },
   },
 };
 
@@ -76,6 +90,7 @@ function pt(passRate: number, tokens: number | null, wall: number, count = 5): P
     budgetExceededCount: 0,
     harnessErrorCount: 0,
     count,
+    runsWithMeasuredTokens: count,
   };
 }
 
@@ -106,6 +121,36 @@ const utilSample: UtilityRunReport = {
   ],
   warnings: [],
 };
+
+describe("renderUtilityReport JSON corpus identity (#250)", () => {
+  test("emits selectedTaskIds, taskCorpusHash, fixtures, fixtureContentHash when present", () => {
+    const stamped: UtilityRunReport = {
+      ...utilSample,
+      corpus: {
+        ...utilSample.corpus,
+        selectedTaskIds: ["domain-a/task-1", "domain-b/task-2"],
+        taskCorpusHash: "deadbeef".repeat(8),
+        fixtures: { "fixture-a": "aa".repeat(32), "fixture-b": "bb".repeat(32) },
+        fixtureContentHash: "ff".repeat(32),
+      },
+    };
+    const { json } = renderUtilityReport(stamped);
+    const corpus = (json as { corpus: Record<string, unknown> }).corpus;
+    expect(corpus.selectedTaskIds).toEqual(["domain-a/task-1", "domain-b/task-2"]);
+    expect(corpus.taskCorpusHash).toBe("deadbeef".repeat(8));
+    expect(corpus.fixtureContentHash).toBe("ff".repeat(32));
+    expect(corpus.fixtures).toEqual({ "fixture-a": "aa".repeat(32), "fixture-b": "bb".repeat(32) });
+  });
+
+  test("legacy reports without identity stamps still render (#250 backward compat)", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const corpus = (json as { corpus: Record<string, unknown> }).corpus;
+    // The four #250 keys are absent on legacy inputs and the renderer does
+    // not synthesise placeholders.
+    expect(corpus.taskCorpusHash).toBeUndefined();
+    expect(corpus.fixtureContentHash).toBeUndefined();
+  });
+});
 
 describe("renderUtilityReport JSON", () => {
   test("conforms to the §13.3 shape", () => {
@@ -179,6 +224,179 @@ describe("renderUtilityReport markdown", () => {
     const { markdown } = renderUtilityReport(withWarn);
     expect(markdown).toContain("## Warnings");
     expect(markdown).toContain("stash xyz failed to load");
+  });
+});
+
+// ── Compact runs[] serialisation (#249) ───────────────────────────────────
+
+function makeRun(overrides: Partial<RunResult> = {}): RunResult {
+  const base: RunResult = {
+    schemaVersion: 1,
+    taskId: "domain-a/task-1",
+    arm: "akm",
+    seed: 0,
+    model: "anthropic/claude-opus-4-7",
+    outcome: "pass",
+    tokens: { input: 1234, output: 5678 },
+    wallclockMs: 4200,
+    trajectory: { correctAssetLoaded: true, feedbackRecorded: false },
+    events: [
+      // events[] MUST be filtered out of the persisted row.
+      { id: 0, ts: "2026-04-27T12:00:00Z", kind: "noop" } as unknown as RunResult["events"][number],
+    ],
+    verifierStdout: "x".repeat(1024 * 1024),
+    verifierExitCode: 0,
+    assetsLoaded: ["skill:foo"],
+    failureMode: null,
+  };
+  return { ...base, ...overrides };
+}
+
+describe("serializeRunForReport", () => {
+  test("omits events[] and verifierStdout, keeps the compact field set", () => {
+    const row = serializeRunForReport(makeRun());
+    expect(row).toEqual({
+      task_id: "domain-a/task-1",
+      arm: "akm",
+      seed: 0,
+      model: "anthropic/claude-opus-4-7",
+      outcome: "pass",
+      tokens: { input: 1234, output: 5678 },
+      wallclock_ms: 4200,
+      verifier_exit_code: 0,
+      trajectory: { correct_asset_loaded: true, feedback_recorded: false },
+      assets_loaded: ["skill:foo"],
+      failure_mode: null,
+    });
+    // No events / stdout leakage even when the source carries large data.
+    expect(Object.keys(row)).not.toContain("events");
+    expect(Object.keys(row)).not.toContain("verifierStdout");
+    expect(Object.keys(row)).not.toContain("verifier_stdout");
+  });
+
+  test("passes unknown token-shape keys through (token-shape seam for #252)", () => {
+    // Simulate a future RunResult.tokens that grows a `measurement` field.
+    const futureRun = makeRun({
+      tokens: { input: 10, output: 20, measurement: "parsed" } as unknown as RunResult["tokens"],
+    });
+    const row = serializeRunForReport(futureRun);
+    expect(row.tokens).toEqual({ input: 10, output: 20, measurement: "parsed" });
+  });
+
+  test("propagates failure_mode label when present", () => {
+    const run = makeRun({ outcome: "fail", failureMode: "wrong_asset" as RunResult["failureMode"] });
+    const row = serializeRunForReport(run);
+    expect(row.outcome).toBe("fail");
+    expect(row.failure_mode).toBe("wrong_asset");
+  });
+});
+
+describe("renderUtilityReport runs[] persistence (#249)", () => {
+  test("emits one row per (task, arm, seed) when allRuns is supplied", () => {
+    const allRuns = [
+      makeRun({ taskId: "domain-a/task-1", arm: "noakm", seed: 0 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "noakm", seed: 1 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "akm", seed: 0 }),
+      makeRun({ taskId: "domain-a/task-1", arm: "akm", seed: 1, outcome: "fail" }),
+    ];
+    const report: UtilityRunReport = { ...utilSample, allRuns };
+    const { json } = renderUtilityReport(report);
+    const obj = json as Record<string, unknown>;
+    const runs = obj.runs as Array<Record<string, unknown>>;
+    expect(Array.isArray(runs)).toBe(true);
+    expect(runs.length).toBe(4);
+    // Order matches the runner's deterministic emission order.
+    expect(runs[0]?.arm).toBe("noakm");
+    expect(runs[2]?.arm).toBe("akm");
+    expect(runs[3]?.outcome).toBe("fail");
+    // verifier stdout / events MUST be absent.
+    for (const r of runs) {
+      expect(Object.keys(r)).not.toContain("events");
+      expect(Object.keys(r)).not.toContain("verifierStdout");
+    }
+  });
+
+  test("omits the runs key entirely when allRuns is not supplied (legacy shape)", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    expect("runs" in obj).toBe(false);
+  });
+});
+
+describe("token-measurement surface (issue #252)", () => {
+  function fakeRun(overrides: Partial<import("./driver").RunResult>): import("./driver").RunResult {
+    return {
+      schemaVersion: 1,
+      taskId: "t",
+      arm: "akm",
+      seed: 0,
+      model: "m",
+      outcome: "pass",
+      tokens: { input: 0, output: 0 },
+      tokenMeasurement: "parsed",
+      wallclockMs: 0,
+      trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      events: [],
+      verifierStdout: "",
+      verifierExitCode: 0,
+      assetsLoaded: [],
+      ...overrides,
+    };
+  }
+
+  test("JSON envelope has token_measurement coverage block + warning when any run is missing", () => {
+    const akmRuns = [
+      fakeRun({ seed: 0, tokenMeasurement: "parsed", tokens: { input: 100, output: 50 } }),
+      fakeRun({ seed: 1, tokenMeasurement: "missing" }),
+      fakeRun({ seed: 2, tokenMeasurement: "unsupported" }),
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns };
+    const { json, markdown } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(3);
+    expect(tm.runs_with_measured_tokens).toBe(1);
+    expect(tm.runs_missing_measurement).toBe(1);
+    expect(tm.runs_unsupported_measurement).toBe(1);
+    expect(tm.coverage).toBeCloseTo(1 / 3);
+    expect(tm.reliable).toBe(false);
+
+    const warnings = obj.warnings as string[];
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("token measurement unreliable");
+
+    expect(markdown).toContain("## Token measurement (akm)");
+    expect(markdown).toContain("unreliable");
+    expect(markdown).toContain("## Warnings");
+    expect(markdown).toContain("token measurement unreliable");
+  });
+
+  test("JSON envelope marks reliable=true and emits no warning when every run is parsed", () => {
+    const akmRuns = [
+      fakeRun({ seed: 0, tokenMeasurement: "parsed", tokens: { input: 100, output: 50 } }),
+      fakeRun({ seed: 1, tokenMeasurement: "parsed", tokens: { input: 200, output: 75 } }),
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns };
+    const { json, markdown } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(2);
+    expect(tm.runs_with_measured_tokens).toBe(2);
+    expect(tm.coverage).toBeCloseTo(1);
+    expect(tm.reliable).toBe(true);
+    expect(obj.warnings).toEqual([]);
+    expect(markdown).toContain("reliable");
+    expect(markdown).not.toContain("token measurement unreliable");
+  });
+
+  test("coverage is null and section is skipped when no akm runs are attached", () => {
+    const { json, markdown } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    const tm = obj.token_measurement as Record<string, unknown>;
+    expect(tm.total_runs).toBe(0);
+    expect(tm.coverage).toBeNull();
+    expect(tm.reliable).toBe(false);
+    expect(markdown).not.toContain("## Token measurement");
   });
 });
 

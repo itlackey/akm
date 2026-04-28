@@ -163,6 +163,37 @@ describe("runOne", () => {
     expect(result.tokens.input + result.tokens.output).toBeGreaterThan(100_000);
     expect(result.tokens.input).toBe(70_000);
     expect(result.tokens.output).toBe(50_000);
+    expect(result.tokenMeasurement).toBe("parsed");
+  });
+
+  test("tokenMeasurement: parsed when stdout reports tokens", async () => {
+    const { spawn } = scriptedSpawn({
+      exitCode: 0,
+      stdout: "ok\ninput_tokens: 10 output_tokens: 5",
+    });
+    const result = await runOne({ ...baseOptions, workspace, spawn });
+    expect(result.outcome).toBe("pass");
+    expect(result.tokenMeasurement).toBe("parsed");
+    expect(result.tokens.input).toBe(10);
+    expect(result.tokens.output).toBe(5);
+  });
+
+  test("tokenMeasurement: missing when stdout has no token line — and budget is NOT enforced", async () => {
+    // Agent never reports tokens. budgetTokens is 1, but the harness must not
+    // mark this as budget_exceeded (issue #252) — measurement is missing.
+    const { spawn } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+    const result = await runOne({ ...baseOptions, workspace, spawn, budgetTokens: 1 });
+    expect(result.tokenMeasurement).toBe("missing");
+    expect(result.tokens).toEqual({ input: 0, output: 0 });
+    expect(result.outcome).not.toBe("budget_exceeded");
+  });
+
+  test("tokenMeasurement: harness_error path leaves measurement as 'missing'", async () => {
+    const { spawn } = scriptedSpawn({ exitCode: 0, throwSync: new Error("ENOENT") });
+    const result = await runOne({ ...baseOptions, workspace, spawn });
+    expect(result.outcome).toBe("harness_error");
+    // No agent stdout was ever observed → measurement stays at the default.
+    expect(result.tokenMeasurement).toBe("missing");
   });
 
   test("isolation: child env carries pinned XDG/OPENCODE/AKM dirs and not operator values", async () => {
@@ -225,10 +256,19 @@ describe("driver helpers", () => {
     }
   });
 
-  test("parseTokenUsage extracts numbers when present, zero otherwise", () => {
-    expect(parseTokenUsage("")).toEqual({ input: 0, output: 0 });
-    expect(parseTokenUsage("noise")).toEqual({ input: 0, output: 0 });
-    expect(parseTokenUsage("input_tokens: 123 output_tokens: 456")).toEqual({ input: 123, output: 456 });
+  test("parseTokenUsage extracts numbers when present, missing otherwise", () => {
+    // No matchable token line at all → measurement is "missing", not a real zero (issue #252).
+    expect(parseTokenUsage("")).toEqual({ input: 0, output: 0, measurement: "missing" });
+    expect(parseTokenUsage("noise")).toEqual({ input: 0, output: 0, measurement: "missing" });
+    // Both keys present → "parsed" with the actual numbers.
+    expect(parseTokenUsage("input_tokens: 123 output_tokens: 456")).toEqual({
+      input: 123,
+      output: 456,
+      measurement: "parsed",
+    });
+    // Only one key present → still "parsed", missing key defaults to 0.
+    expect(parseTokenUsage("input_tokens: 99")).toEqual({ input: 99, output: 0, measurement: "parsed" });
+    expect(parseTokenUsage("output_tokens: 55")).toEqual({ input: 0, output: 55, measurement: "parsed" });
   });
 
   test("readRunEvents returns [] when events.jsonl is missing and parses lines when present", () => {

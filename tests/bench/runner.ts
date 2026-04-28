@@ -19,14 +19,15 @@
  * tmp dirs even on harness exceptions.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
-import { type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
+import { computeFixtureContentHash, type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
 import { registerCleanup } from "./cleanup";
-import type { TaskMetadata, TaskSlice } from "./corpus";
+import { computeTaskCorpusHash, readTaskBody, type TaskMetadata, type TaskSlice } from "./corpus";
 import { type RunOptions, type RunResult, runOne } from "./driver";
 import {
   aggregateCorpus,
@@ -190,7 +191,19 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
           // stable placeholder so the env keys are wired correctly.
           let stashDir: string | undefined;
           if (arm === "akm") {
-            if (overrideStashDir) stashDir = overrideStashDir;
+            // Resolution order (must match the issue #251 acceptance criteria):
+            //   1. Per-task explicit override (used by `runMaskedCorpus` to
+            //      point at a tmp stash with one asset removed). Highest
+            //      priority because attribution correctness depends on this
+            //      branch never being shadowed by the `__no-stash__`
+            //      placeholder fallback.
+            //   2. Per-(task, arm)-call `stashDirByFixture` override (Phase
+            //      3 evolve persistence).
+            //   3. Per-task materialised fixture stash from `loadFixtureStash`.
+            //   4. `materialiseStash: false` placeholder so AKM_STASH_DIR is
+            //      still wired into the child env.
+            if (task.stashDirOverride) stashDir = task.stashDirOverride;
+            else if (overrideStashDir) stashDir = overrideStashDir;
             else if (stash) stashDir = stash.stashDir;
             else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
           }
@@ -354,6 +367,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const noakmPerTask: Record<string, PerTaskMetrics> = {};
   const akmPerTask: Record<string, PerTaskMetrics> = {};
   const akmRunsAll: RunResult[] = [];
+  const allRuns: RunResult[] = [];
 
   for (const task of args.options.tasks) {
     const taskRuns = args.grouped.get(task.id);
@@ -367,6 +381,9 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     noakmPerTask[task.id] = noakmMetrics;
     akmPerTask[task.id] = akmMetrics;
     akmRunsAll.push(...akmRuns);
+    // Preserve arm order (noakm first, then akm) so the persisted runs[]
+    // array is deterministic across reruns. #249.
+    allRuns.push(...noakmRuns, ...akmRuns);
 
     tasks.push({ id: task.id, noakm: noakmMetrics, akm: akmMetrics, delta });
   }
@@ -394,6 +411,40 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   // downstream).
   const searchBridge = computeSearchBridge({ goldRankRecords: args.goldRankRecords });
 
+  // #250 — stamp deterministic corpus + fixture identity into the report
+  // so `bench compare` can refuse cross-corpus / cross-fixture diffs unless
+  // the operator explicitly opts in via --allow-corpus-mismatch /
+  // --allow-fixture-mismatch.
+  const selectedTaskIds = [...args.options.tasks.map((t) => t.id)].sort();
+  const taskBodies = new Map<string, string>();
+  for (const t of args.options.tasks) taskBodies.set(t.id, readTaskBody(t.taskDir));
+  const taskCorpusHash = computeTaskCorpusHash(selectedTaskIds, taskBodies);
+
+  const fixtureNames = [...new Set(args.options.tasks.map((t) => t.stash))].sort();
+  const fixtures: Record<string, string> = {};
+  for (const name of fixtureNames) {
+    try {
+      fixtures[name] = computeFixtureContentHash(name);
+    } catch (err) {
+      // Loader-test tasks point at fixtures that may not exist on disk; we
+      // still want to stamp identity for the present fixtures, so we record
+      // the failure as a warning and continue with the remaining set.
+      args.warnings.push(
+        `corpus stamp: cannot hash fixture "${name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  // Combined fixture-content hash. Hash input is the same `<name>\0<hash>\0`
+  // pattern used elsewhere — order-stable because `fixtureNames` is sorted.
+  const combinedHash = createHash("sha256");
+  for (const name of fixtureNames) {
+    combinedHash.update(name);
+    combinedHash.update("\0");
+    combinedHash.update(fixtures[name] ?? "");
+    combinedHash.update("\0");
+  }
+  const fixtureContentHash = combinedHash.digest("hex");
+
   const baseReport: UtilityRunReport = {
     timestamp,
     branch,
@@ -404,6 +455,10 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
       tasks: args.options.tasks.length,
       slice: args.slice,
       seedsPerArm: args.seedsPerArm,
+      selectedTaskIds,
+      taskCorpusHash,
+      fixtures,
+      fixtureContentHash,
     },
     aggregateNoakm,
     aggregateAkm,
@@ -413,6 +468,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     tasks,
     warnings: args.warnings,
     akmRuns: akmRunsAll,
+    allRuns,
     taskMetadata: args.options.tasks,
     goldRankRecords: args.goldRankRecords,
     searchBridge,

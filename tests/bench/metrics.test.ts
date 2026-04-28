@@ -41,6 +41,7 @@ describe("computeOutcomeAggregate", () => {
       tokensPerPass: 0,
       wallclockMs: 0,
       budgetExceeded: 0,
+      runsWithMeasuredTokens: 0,
     });
   });
 
@@ -63,6 +64,42 @@ describe("computeOutcomeAggregate", () => {
     const agg = computeOutcomeAggregate(results);
     expect(agg.passRate).toBe(0);
     expect(agg.tokensPerPass).toBe(0);
+  });
+
+  test("missing token measurement is NOT silently treated as zero (issue #252)", () => {
+    // Two passes: one parsed at 1000, one missing measurement. The mean must
+    // be 1000 (the measured pass), not (1000+0)/2 = 500.
+    const results = [
+      fakeResult({
+        outcome: "pass",
+        tokens: { input: 700, output: 300 },
+        tokenMeasurement: "parsed",
+      }),
+      fakeResult({
+        outcome: "pass",
+        tokens: { input: 0, output: 0 },
+        tokenMeasurement: "missing",
+      }),
+    ];
+    const agg = computeOutcomeAggregate(results);
+    expect(agg.passRate).toBeCloseTo(1);
+    expect(agg.tokensPerPass).toBeCloseTo(1000);
+    expect(agg.runsWithMeasuredTokens).toBe(1);
+  });
+
+  test("unsupported token measurement is also skipped from token aggregation", () => {
+    const results = [
+      fakeResult({
+        outcome: "pass",
+        tokens: { input: 0, output: 0 },
+        tokenMeasurement: "unsupported",
+      }),
+    ];
+    const agg = computeOutcomeAggregate(results);
+    // No measured passes → tokensPerPass collapses to 0, but runsWithMeasuredTokens=0
+    // signals that the 0 is "unknown", not "free".
+    expect(agg.tokensPerPass).toBe(0);
+    expect(agg.runsWithMeasuredTokens).toBe(0);
   });
 });
 
@@ -125,6 +162,53 @@ describe("aggregatePerTask", () => {
     expect(m.count).toBe(0);
     expect(m.passRate).toBe(0);
     expect(m.tokensPerPass).toBeNull();
+    expect(m.runsWithMeasuredTokens).toBe(0);
+  });
+
+  test("aggregatePerTask: passes with missing measurement do NOT pull tokensPerPass to zero", () => {
+    const runs = [
+      fakeResult({
+        seed: 0,
+        outcome: "pass",
+        tokens: { input: 800, output: 200 },
+        tokenMeasurement: "parsed",
+        wallclockMs: 1000,
+      }),
+      fakeResult({
+        seed: 1,
+        outcome: "pass",
+        tokens: { input: 0, output: 0 },
+        tokenMeasurement: "missing",
+        wallclockMs: 1000,
+      }),
+    ];
+    const m = aggregatePerTask(runs);
+    expect(m.passRate).toBe(1);
+    // Mean is over the single measured pass, not (1000 + 0) / 2.
+    expect(m.tokensPerPass).toBeCloseTo(1000);
+    expect(m.runsWithMeasuredTokens).toBe(1);
+    expect(m.count).toBe(2);
+  });
+
+  test("aggregatePerTask: tokensPerPass is null when every pass has missing measurement", () => {
+    const runs = [
+      fakeResult({
+        seed: 0,
+        outcome: "pass",
+        tokens: { input: 0, output: 0 },
+        tokenMeasurement: "missing",
+      }),
+      fakeResult({
+        seed: 1,
+        outcome: "pass",
+        tokens: { input: 0, output: 0 },
+        tokenMeasurement: "unsupported",
+      }),
+    ];
+    const m = aggregatePerTask(runs);
+    expect(m.passRate).toBe(1);
+    expect(m.tokensPerPass).toBeNull();
+    expect(m.runsWithMeasuredTokens).toBe(0);
   });
 });
 
@@ -140,6 +224,7 @@ describe("aggregateCorpus", () => {
         budgetExceededCount: 0,
         harnessErrorCount: 0,
         count: 5,
+        runsWithMeasuredTokens: 5,
       },
       b: {
         passRate: 0,
@@ -150,6 +235,7 @@ describe("aggregateCorpus", () => {
         budgetExceededCount: 0,
         harnessErrorCount: 0,
         count: 1,
+        runsWithMeasuredTokens: 0,
       },
     };
     const corpus = aggregateCorpus(perTask);
@@ -169,6 +255,7 @@ describe("aggregateCorpus", () => {
         budgetExceededCount: 0,
         harnessErrorCount: 0,
         count: 1,
+        runsWithMeasuredTokens: 0,
       },
     };
     const corpus = aggregateCorpus(perTask);
@@ -208,6 +295,7 @@ describe("delta helpers", () => {
       budgetExceededCount: 0,
       harnessErrorCount: 0,
       count: 1,
+      runsWithMeasuredTokens: 0,
     };
     const akm: PerTaskMetrics = {
       passRate: 1,
@@ -218,6 +306,7 @@ describe("delta helpers", () => {
       budgetExceededCount: 0,
       harnessErrorCount: 0,
       count: 1,
+      runsWithMeasuredTokens: 1,
     };
     expect(computePerTaskDelta(noakm, akm).tokensPerPass).toBeNull();
   });

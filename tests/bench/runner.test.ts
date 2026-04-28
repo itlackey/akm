@@ -104,6 +104,44 @@ describe("runUtility", () => {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
+  test("stamps corpus identity (selectedTaskIds, taskCorpusHash, fixtures, fixtureContentHash) (#250)", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "domain-a/task-z" }), fakeTask(taskDir, { id: "domain-a/task-a" })],
+      arms: ["noakm"],
+      model: "test-model",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      branch: "test-branch",
+      commit: "abc123",
+      timestamp: "2026-04-27T00:00:00Z",
+    });
+    // selectedTaskIds is sorted alphabetically.
+    expect(report.corpus.selectedTaskIds).toEqual(["domain-a/task-a", "domain-a/task-z"]);
+    expect(report.corpus.taskCorpusHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(report.corpus.fixtureContentHash).toMatch(/^[0-9a-f]{64}$/);
+    // The "minimal" fixture is referenced by both fakeTasks; one entry expected.
+    expect(report.corpus.fixtures).toBeDefined();
+    expect(Object.keys(report.corpus.fixtures ?? {})).toEqual(["minimal"]);
+    expect(report.corpus.fixtures?.minimal).toMatch(/^[0-9a-f]{64}$/);
+
+    // Re-running with the same inputs yields the same hashes (determinism).
+    const report2 = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "domain-a/task-z" }), fakeTask(taskDir, { id: "domain-a/task-a" })],
+      arms: ["noakm"],
+      model: "test-model",
+      seedsPerArm: 1,
+      spawn: fakeSpawnFactory({ noakm: "ok", akm: "ok" }).spawn,
+      materialiseStash: false,
+      branch: "test-branch",
+      commit: "abc123",
+      timestamp: "2026-04-27T00:00:00Z",
+    });
+    expect(report2.corpus.taskCorpusHash).toBe(report.corpus.taskCorpusHash);
+    expect(report2.corpus.fixtureContentHash).toBe(report.corpus.fixtureContentHash);
+  });
+
   test("produces tasks × arms × seeds run records (cardinality)", async () => {
     const { spawn, observed } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
     const report = await runUtility({
@@ -329,6 +367,86 @@ describe("runUtility", () => {
     // The noakm arm received the default prompt — assert the override didn't
     // leak across arms.
     expect(noakmInvocation?.some((t) => t.startsWith("BYOS"))).toBe(false);
+  });
+
+  // ── #251: TaskMetadata.stashDirOverride ───────────────────────────────────
+
+  test("stashDirOverride: AKM_STASH_DIR points at the override, never at __no-stash__", async () => {
+    // Issue #251 regression. Before the fix, `runMaskedCorpus` mutated
+    // `task.stash` and called the runner with `materialiseStash: false`,
+    // which ended up wiring `AKM_STASH_DIR` to `<taskDir>/__no-stash__` —
+    // so masked re-runs never saw the masked content. The fix is a
+    // dedicated `stashDirOverride` field that the runner consults FIRST.
+    const observedAkmStashDirs: string[] = [];
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.AKM_STASH_DIR) {
+        observedAkmStashDirs.push(opts.env.AKM_STASH_DIR);
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-override-"));
+    try {
+      await runUtility({
+        tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+      });
+      expect(observedAkmStashDirs.length).toBe(1);
+      expect(observedAkmStashDirs[0]).toBe(overrideDir);
+      // Critical: the runner MUST NOT have fallen back to the __no-stash__
+      // placeholder. This is the regression guard.
+      expect(observedAkmStashDirs[0]?.endsWith("__no-stash__")).toBe(false);
+    } finally {
+      fs.rmSync(overrideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("stashDirOverride: takes precedence over stashDirByFixture and materialised stash", async () => {
+    // Resolution order acceptance criterion: per-task override beats both
+    // the per-fixture map and the runner's own loadFixtureStash.
+    const observedAkmStashDirs: string[] = [];
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.AKM_STASH_DIR) {
+        observedAkmStashDirs.push(opts.env.AKM_STASH_DIR);
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-prec-"));
+    const fixtureMapDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-mapdir-"));
+    try {
+      await runUtility({
+        tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir, stash: "ignored-fixture" })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        stashDirByFixture: new Map([["ignored-fixture", fixtureMapDir]]),
+      });
+      expect(observedAkmStashDirs).toEqual([overrideDir]);
+    } finally {
+      fs.rmSync(overrideDir, { recursive: true, force: true });
+      fs.rmSync(fixtureMapDir, { recursive: true, force: true });
+    }
   });
 
   test("buildPrompt returning undefined keeps the default prompt path", async () => {
