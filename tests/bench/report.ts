@@ -50,7 +50,10 @@ import {
   computeCorpusCoverage,
   computeDomainAggregates,
   computeNegativeTransfer,
+  computeWorkflowReliability,
   histogramKeys,
+  type WorkflowReliabilityCorpus,
+  type WorkflowReliabilityRow,
 } from "./metrics";
 import type { WorkflowCheckResult, WorkflowCheckStatus, WorkflowViolationCode } from "./workflow-evaluator";
 
@@ -1342,6 +1345,16 @@ interface WorkflowCrossTabRow {
   total: number;
 }
 
+/**
+ * Workflow reliability sub-block (#258) attached under the existing #257
+ * `workflow` envelope. Always present; `corpus.groups === 0` and an empty
+ * `by_workflow` record indicate "no applicable checks contributed".
+ */
+interface WorkflowReliabilityBlock {
+  by_workflow: Record<string, WorkflowReliabilityRow>;
+  corpus: WorkflowReliabilityCorpus;
+}
+
 interface WorkflowAggregate {
   total_checks: number;
   applicable_checks: number;
@@ -1353,6 +1366,8 @@ interface WorkflowAggregate {
   by_workflow: Record<string, WorkflowPerSpecAggregate>;
   top_violations: WorkflowTopViolation[];
   cross_tab: WorkflowCrossTabRow[];
+  /** #258 reliability metrics (pass@k / pass^k). */
+  reliability: WorkflowReliabilityBlock;
 }
 
 /**
@@ -1375,6 +1390,14 @@ function bucketWorkflowStatus(status: WorkflowCheckStatus): "pass" | "partial" |
  * always see the same shape.
  */
 function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): WorkflowAggregate {
+  // #258: Compute reliability up front so all early-return paths share the
+  // same shape. Reliability tolerates empty input (`groups === 0`).
+  const reliabilityResult = computeWorkflowReliability(checks);
+  const reliability: WorkflowReliabilityBlock = {
+    by_workflow: reliabilityResult.byWorkflow,
+    corpus: reliabilityResult.corpus,
+  };
+
   const empty: WorkflowAggregate = {
     total_checks: checks.length,
     applicable_checks: 0,
@@ -1386,6 +1409,7 @@ function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): Workflo
     by_workflow: {},
     top_violations: [],
     cross_tab: [],
+    reliability,
   };
 
   if (checks.length === 0) return empty;
@@ -1559,6 +1583,7 @@ function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): Workflo
       by_workflow,
       top_violations: [],
       cross_tab,
+      reliability,
     };
   }
 
@@ -1620,6 +1645,7 @@ function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): Workflo
     by_workflow,
     top_violations: trimmedViolations,
     cross_tab,
+    reliability,
   };
 }
 
@@ -1720,6 +1746,51 @@ export function renderWorkflowComplianceSection(input: UtilityRunReport): string
     lines.push("|--------------|--------:|-----------:|--------:|------:|");
     for (const row of agg.cross_tab) {
       lines.push(`| ${row.task_outcome} | ${row.pass} | ${row.partial} | ${row.fail} | ${row.total} |`);
+    }
+  }
+
+  // #258: Reliability sub-section. Skip when no group contributed (all
+  // checks were `not_applicable` or input was empty).
+  const reliability = agg.reliability;
+  if (reliability.corpus.groups > 0) {
+    lines.push("");
+    lines.push("### Reliability (pass@k / pass^k)");
+    lines.push("");
+    lines.push(
+      `corpus pass@k=${reliability.corpus.pass_at_k.toFixed(2)}, ` +
+        `pass^k=${reliability.corpus.pass_all_k.toFixed(2)} ` +
+        `(over ${reliability.corpus.groups} workflow×task groups, ${reliability.corpus.tasks} distinct tasks)`,
+    );
+    lines.push("");
+    lines.push("| workflow_id | tasks | k | pass@k | pass^k |");
+    lines.push("|-------------|------:|--:|-------:|-------:|");
+    const sortedReliability = Object.values(reliability.by_workflow).sort((a, b) =>
+      a.workflow_id.localeCompare(b.workflow_id),
+    );
+    for (const row of sortedReliability) {
+      lines.push(
+        `| ${row.workflow_id} | ${row.tasks} | ${row.k} | ${row.pass_at_k.toFixed(2)} | ${row.pass_all_k.toFixed(2)} |`,
+      );
+    }
+    // Inconsistency callout: workflows where the agent CAN comply
+    // (pass@k high) but does not RELIABLY comply (pass^k materially lower).
+    // Threshold: pass@k ≥ 0.5 AND (pass@k − pass^k) ≥ 0.25.
+    const INCONSISTENCY_GAP = 0.25;
+    const PASS_AT_K_FLOOR = 0.5;
+    const inconsistent = sortedReliability.filter(
+      (r) => r.pass_at_k >= PASS_AT_K_FLOOR && r.pass_at_k - r.pass_all_k >= INCONSISTENCY_GAP,
+    );
+    if (inconsistent.length > 0) {
+      lines.push("");
+      lines.push("**Inconsistent workflows** (high pass@k but low pass^k — agent can comply but does not reliably):");
+      lines.push("");
+      for (const row of inconsistent) {
+        lines.push(
+          `- \`${row.workflow_id}\`: pass@k=${row.pass_at_k.toFixed(2)} vs pass^k=${row.pass_all_k.toFixed(2)} (gap ${(
+            row.pass_at_k - row.pass_all_k
+          ).toFixed(2)})`,
+        );
+      }
     }
   }
 

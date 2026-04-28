@@ -22,10 +22,12 @@ import {
   computeNegativeTransfer,
   computeOutcomeAggregate,
   computePerTaskDelta,
+  computeWorkflowReliability,
   domainOfTaskId,
   type PerTaskMetrics,
   type PerTaskTagEntry,
 } from "./metrics";
+import type { WorkflowCheckResult, WorkflowCheckStatus } from "./workflow-evaluator";
 
 function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
   return {
@@ -825,5 +827,137 @@ describe("computeAkmOverhead — missing timing/byte data", () => {
     expect(agg.meanTimeToFirstSearchMs).toBe(0);
     // tool_calls_per_success is null because no run passed.
     expect(agg.toolCallsPerSuccess).toBeNull();
+  });
+});
+
+// ── computeWorkflowReliability (#258) ──────────────────────────────────────
+
+function wfCheck(overrides: Partial<WorkflowCheckResult> = {}): WorkflowCheckResult {
+  return {
+    schemaVersion: 1,
+    workflowId: "wf-1",
+    taskId: "t1",
+    arm: "akm",
+    seed: 0,
+    status: "pass",
+    score: 1,
+    requiredPassed: 1,
+    requiredTotal: 1,
+    violations: [],
+    evidence: {
+      matchedEvents: 1,
+      feedbackRecorded: false,
+      goldAssetLoaded: false,
+      traceTruncated: false,
+    },
+    ...overrides,
+  };
+}
+
+function statuses(workflowId: string, taskId: string, statusList: WorkflowCheckStatus[]): WorkflowCheckResult[] {
+  return statusList.map((status, seed) => wfCheck({ workflowId, taskId, seed, status }));
+}
+
+describe("computeWorkflowReliability (#258)", () => {
+  test("empty input yields zeroed corpus + empty by_workflow", () => {
+    const result = computeWorkflowReliability([]);
+    expect(result.byWorkflow).toEqual({});
+    expect(result.corpus).toEqual({ pass_at_k: 0, pass_all_k: 0, groups: 0, tasks: 0 });
+  });
+
+  test("all-pass: every (task, seed) is pass → pass@k=1, pass^k=1", () => {
+    const checks = [
+      ...statuses("wf-1", "t1", ["pass", "pass", "pass"]),
+      ...statuses("wf-1", "t2", ["pass", "pass", "pass"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].tasks).toBe(2);
+    expect(result.byWorkflow["wf-1"].k).toBe(3);
+    expect(result.corpus.pass_at_k).toBe(1);
+    expect(result.corpus.pass_all_k).toBe(1);
+    expect(result.corpus.groups).toBe(2);
+    expect(result.corpus.tasks).toBe(2);
+  });
+
+  test("none-pass: no seed is pass → pass@k=0, pass^k=0", () => {
+    const checks = [
+      ...statuses("wf-1", "t1", ["fail", "fail", "fail"]),
+      ...statuses("wf-1", "t2", ["partial", "fail", "harness_error"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(0);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+    expect(result.corpus.pass_at_k).toBe(0);
+    expect(result.corpus.pass_all_k).toBe(0);
+  });
+
+  test("some-pass: pass@k > 0, pass^k < pass@k when seeds disagree per task", () => {
+    // t1: 1 pass, 2 fail → counts toward pass@k (anyPass) but NOT pass^k
+    // t2: 3 pass → counts toward both
+    const checks = [
+      ...statuses("wf-1", "t1", ["pass", "fail", "fail"]),
+      ...statuses("wf-1", "t2", ["pass", "pass", "pass"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBeCloseTo(1); // both tasks have at least one pass
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBeCloseTo(0.5); // only t2 is all-pass
+    expect(result.corpus.pass_at_k).toBeCloseTo(1);
+    expect(result.corpus.pass_all_k).toBeCloseTo(0.5);
+  });
+
+  test("mixed partial/fail: partial does NOT count as pass for reliability", () => {
+    // partial is non-pass per the strict reliability bucketing.
+    const checks = [...statuses("wf-1", "t1", ["partial", "partial", "partial"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(0);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+  });
+
+  test("not_applicable seeds are excluded from numerator and denominator", () => {
+    // Only the 2 applicable seeds matter; both are pass → 1 task all-pass.
+    const checks = [...statuses("wf-1", "t1", ["not_applicable", "pass", "pass", "not_applicable"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].tasks).toBe(1);
+    expect(result.byWorkflow["wf-1"].k).toBe(2);
+  });
+
+  test("workflow with every check not_applicable is omitted (no group counted)", () => {
+    const checks = [...statuses("wf-skips", "t1", ["not_applicable", "not_applicable"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-skips"]).toBeUndefined();
+    expect(result.corpus.groups).toBe(0);
+    expect(result.corpus.tasks).toBe(0);
+  });
+
+  test("multiple workflows compute independently; corpus weights groups equally", () => {
+    // wf-a: t1 all pass (1/1 = 1, 1/1 = 1)
+    // wf-b: t2 mixed (anyPass=1, allPass=0); t3 none (0, 0)
+    //   per-workflow: pass@k=0.5, pass^k=0
+    // corpus: 3 groups → pass@k = (1+1+0)/3 = 2/3; pass^k = (1+0+0)/3 = 1/3
+    const checks = [
+      ...statuses("wf-a", "t1", ["pass", "pass"]),
+      ...statuses("wf-b", "t2", ["pass", "fail"]),
+      ...statuses("wf-b", "t3", ["fail", "fail"]),
+    ];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-a"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-a"].pass_all_k).toBe(1);
+    expect(result.byWorkflow["wf-b"].pass_at_k).toBeCloseTo(0.5);
+    expect(result.byWorkflow["wf-b"].pass_all_k).toBe(0);
+    expect(result.corpus.pass_at_k).toBeCloseTo(2 / 3);
+    expect(result.corpus.pass_all_k).toBeCloseTo(1 / 3);
+    expect(result.corpus.groups).toBe(3);
+    expect(result.corpus.tasks).toBe(3);
+  });
+
+  test("harness_error is treated as non-pass (consistent with #257 bucketing)", () => {
+    const checks = [...statuses("wf-1", "t1", ["pass", "harness_error", "pass"])];
+    const result = computeWorkflowReliability(checks);
+    expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
+    expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
   });
 });
