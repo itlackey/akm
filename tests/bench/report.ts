@@ -16,6 +16,7 @@
 import { execSync } from "node:child_process";
 import type { MemoryAbility, TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
+import type { LessonMetrics, LessonRecord } from "./evolve-metrics";
 import type {
   AssetRegressionCandidateRow,
   CategoryAggregateRow,
@@ -1990,6 +1991,12 @@ export interface EvolveReportInput {
   domain: string;
   seedsPerArm: number;
   proposals: ProposalQualityMetrics;
+  /**
+   * Per-lesson quality + reuse metrics (#264). Optional so older artefacts
+   * pre-#264 keep rendering without the `lessons` JSON block. When omitted,
+   * the markdown summary skips the lessons section entirely.
+   */
+  lessons?: LessonMetrics;
   longitudinal: LongitudinalMetrics;
   /**
    * Feedback-signal integrity 2x2 confusion matrix (§6.8). When omitted,
@@ -2062,6 +2069,7 @@ function buildEvolveJson(input: EvolveReportInput): object {
         accepted_count: r.acceptedCount,
       })),
     },
+    ...(input.lessons ? { lessons: serialiseLessons(input.lessons) } : {}),
     longitudinal: {
       improvement_slope: input.longitudinal.improvementSlope,
       over_synthetic_lift: input.longitudinal.overSyntheticLift,
@@ -2104,6 +2112,34 @@ function buildEvolveJson(input: EvolveReportInput): object {
   };
 }
 
+/**
+ * #264 — flatten the LessonMetrics envelope into JSON. Aggregate counters
+ * sit alongside `lessons[]` so consumers can pick the headline numbers off
+ * without walking every row.
+ */
+function serialiseLessons(metrics: LessonMetrics): object {
+  return {
+    lessons_created_count: metrics.lessons_created_count,
+    lessons_accepted_count: metrics.lessons_accepted_count,
+    proposal_lint_pass_rate: metrics.proposal_lint_pass_rate,
+    proposal_acceptance_rate: metrics.proposal_acceptance_rate,
+    lesson_reuse_rate: metrics.lesson_reuse_rate,
+    lesson_reuse_success_rate: metrics.lesson_reuse_success_rate,
+    lesson_negative_transfer_count: metrics.lesson_negative_transfer_count,
+    lessons: metrics.lessons.map((l: LessonRecord) => ({
+      ref: l.ref,
+      source_failures: l.source_failures,
+      lint_pass: l.lint_pass,
+      accepted: l.accepted,
+      first_reused_on: l.first_reused_on,
+      reuse_count: l.reuse_count,
+      reuse_pass_rate: l.reuse_pass_rate,
+      negative_transfer_count: l.negative_transfer_count,
+      leakage_risk: l.leakage_risk,
+    })),
+  };
+}
+
 /** §6.8 — flatten the FeedbackIntegrityMetrics envelope into JSON. */
 function serialiseFeedbackIntegrity(metrics: FeedbackIntegrityMetrics): object {
   return {
@@ -2128,6 +2164,33 @@ function serialiseFeedbackIntegrity(metrics: FeedbackIntegrityMetrics): object {
       false_negative_rate: row.false_negative_rate,
     })),
   };
+}
+
+/**
+ * Render the #264 lessons block — aggregate counters followed by one row
+ * per lesson. Exported for tests so the rendered shape can be asserted
+ * directly without going through `renderEvolveReport`.
+ */
+export function renderLessonsTable(metrics: LessonMetrics): string {
+  const lines: string[] = [];
+  lines.push("## Lessons");
+  lines.push("");
+  lines.push(
+    `created=${metrics.lessons_created_count}, accepted=${metrics.lessons_accepted_count}, reuse_rate=${metrics.lesson_reuse_rate.toFixed(2)}, reuse_success_rate=${metrics.lesson_reuse_success_rate.toFixed(2)}, negative_transfer=${metrics.lesson_negative_transfer_count}`,
+  );
+  lines.push("");
+  if (metrics.lessons.length === 0) {
+    lines.push("_No lessons generated._");
+    return lines.join("\n");
+  }
+  lines.push("| ref | accepted | lint | reuse | reuse_pass | first_reused_on | neg_transfer | leakage |");
+  lines.push("|-----|----------|------|-------|------------|-----------------|--------------|---------|");
+  for (const l of metrics.lessons) {
+    lines.push(
+      `| \`${l.ref}\` | ${l.accepted ? "yes" : "no"} | ${l.lint_pass ? "pass" : "fail"} | ${l.reuse_count} | ${l.reuse_pass_rate.toFixed(2)} | ${l.first_reused_on ?? "n/a"} | ${l.negative_transfer_count} | ${l.leakage_risk} |`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -2246,6 +2309,11 @@ function buildEvolveMarkdown(input: EvolveReportInput): string {
     lines.push("");
   } else {
     lines.push("_No proposals generated._");
+    lines.push("");
+  }
+
+  if (input.lessons) {
+    lines.push(renderLessonsTable(input.lessons));
     lines.push("");
   }
 
