@@ -128,6 +128,57 @@ Stashes are referenced by name from `tests/fixtures/stashes/`; the bench
 loader copies the named fixture into a tmp dir per run via
 `loadFixtureStash` from `tests/fixtures/stashes/load.ts`.
 
+## Track B (`bench evolve`)
+
+`bench evolve --tasks <domain>` runs the longitudinal three-phase loop on a
+single domain (or `--tasks all` for the whole corpus):
+
+1. **Phase 1 — accumulate signal.** K seeds × train-slice tasks under the akm
+   arm. After each run lands the runner invokes
+   `akm feedback <gold_ref> --positive` (on pass) or `--negative` (on fail).
+2. **Phase 2 — evolve.** Every asset whose negative feedback crosses the
+   threshold (default: `>= 2` absolute OR `> 50%` ratio) triggers
+   `akm distill` and `akm reflect`. Each resulting proposal is validated via
+   `akm proposal show --json`; lint-passing ones are auto-accepted, lint
+   failures are auto-rejected with a captured reason. Track B is the
+   **auto-accept-only** scope per spec §11; human-in-the-loop is post-v1.
+   The index is rebuilt at the end of the phase.
+3. **Phase 3 — re-evaluate.** Eval-slice tasks are run under three arms:
+   `pre` (the original un-evolved fixture), `post` (the evolved stash with
+   accepted lessons + revisions), and `synthetic` (no stash; the agent
+   writes its own scratchpad — "Bring Your Own Skills").
+
+`bench evolve` runs **entirely in tmp directories**. Before Phase 1 starts,
+the runner materialises one dedicated tmp stash per fixture (the
+`evolveStash`) plus a fresh sibling snapshot per fixture (the `preStash`).
+Phase 1 + Phase 2 pin `AKM_STASH_DIR` to the appropriate evolveStash for
+every spawned `akm` invocation; Phase 3's pre arm reads from preStash, the
+post arm reads from the mutated evolveStash, and the synthetic arm reads
+no stash at all. **The operator's real `AKM_STASH_DIR` is never read or
+written.** All tmp stashes are torn down in a top-level try/finally.
+
+The report (§6.3 + §6.4 envelope) carries:
+
+- `proposals` — `acceptance_rate`, `lint_pass_rate`, plus a per-asset table.
+- `longitudinal` — `improvement_slope = post − pre`, `over_synthetic_lift =
+  post − synthetic`, and a `degradation_count` of eval tasks where
+  `pre − post > 1 / seedsPerArm`. Each degradation row carries the post-arm
+  `failure_mode` from §6.6.
+- `arms.{pre,post,synthetic}` — full §13.3 utility envelopes per arm so the
+  per-task pre→post→synthetic delta is reproducible.
+
+The headline of the markdown summary is `improvement_slope`. The second
+line is a placeholder for `feedback_agreement`, which lands with #244.
+
+### Leakage prevention (§7.4)
+
+The evolve runner refuses to invoke `akm distill` / `akm reflect` on any
+ref that is also an eval-slice gold ref. It additionally exports
+`AKM_BENCH_EXCLUDE_GOLD_REFS=<csv>` so a future akm version can filter
+its LLM input. Today's `akm distill` does not honour that hint, so the
+runner records a warning when distillation runs on shared content and
+defers the harder filter to a follow-up.
+
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.

@@ -25,9 +25,11 @@ import type {
   FailureMode,
   FailureModeAggregate,
   GoldRankRunRecord,
+  LongitudinalMetrics,
   OutcomeAggregate,
   PerAssetAttribution,
   PerTaskMetrics,
+  ProposalQualityMetrics,
   SearchBridgeMetrics,
   TrajectoryAggregate,
 } from "./metrics";
@@ -693,4 +695,191 @@ function tryGit(args: string[], cwd?: string): string {
   } catch {
     return "unknown";
   }
+}
+
+// ── Evolve-track report (§6.3 + §6.4) ──────────────────────────────────────
+
+/**
+ * Top-level evolve report shape. Mirrors `EvolveRunReport` from `evolve.ts`
+ * — re-declared here as a structural subtype so report.ts has no cycle on
+ * evolve.ts.
+ */
+export interface EvolveReportInput {
+  timestamp: string;
+  branch: string;
+  commit: string;
+  model: string;
+  domain: string;
+  seedsPerArm: number;
+  proposals: ProposalQualityMetrics;
+  longitudinal: LongitudinalMetrics;
+  arms: { pre: UtilityRunReport; post: UtilityRunReport; synthetic: UtilityRunReport };
+  warnings: string[];
+}
+
+/**
+ * Render an evolve run as the §6.3+§6.4 JSON envelope plus a markdown
+ * summary. Mirrors `renderUtilityReport` — caller wires stdout/stderr.
+ */
+export function renderEvolveReport(input: EvolveReportInput): { json: object; markdown: string } {
+  const json = buildEvolveJson(input);
+  const markdown = buildEvolveMarkdown(input);
+  return { json, markdown };
+}
+
+function buildEvolveJson(input: EvolveReportInput): object {
+  // For each arm we re-render the §13.3 utility envelope so downstream
+  // consumers can treat each arm exactly like a `bench utility` artefact.
+  const armEnvelope = (r: UtilityRunReport): object => buildUtilityJson(r);
+
+  return {
+    schemaVersion: 1,
+    track: "evolve",
+    branch: input.branch,
+    commit: input.commit,
+    timestamp: input.timestamp,
+    agent: { harness: "opencode", model: input.model },
+    corpus: {
+      domain: input.domain,
+      seedsPerArm: input.seedsPerArm,
+    },
+    proposals: {
+      total_proposals: input.proposals.totalProposals,
+      total_accepted: input.proposals.totalAccepted,
+      acceptance_rate: input.proposals.acceptanceRate,
+      lint_pass_rate: input.proposals.lintPassRate,
+      rows: input.proposals.rows.map((r) => ({
+        asset_ref: r.assetRef,
+        proposal_count: r.proposalCount,
+        lint_pass_count: r.lintPassCount,
+        accepted_count: r.acceptedCount,
+      })),
+    },
+    longitudinal: {
+      improvement_slope: input.longitudinal.improvementSlope,
+      over_synthetic_lift: input.longitudinal.overSyntheticLift,
+      degradation_count: input.longitudinal.degradationCount,
+      pre_pass_rate: input.longitudinal.prePassRate,
+      post_pass_rate: input.longitudinal.postPassRate,
+      synthetic_pass_rate: input.longitudinal.syntheticPassRate,
+      degradations: input.longitudinal.degradations.map((d) => ({
+        task_id: d.taskId,
+        pre_pass_rate: d.prePassRate,
+        post_pass_rate: d.postPassRate,
+        delta: d.delta,
+        failure_mode: d.failureMode,
+      })),
+    },
+    arms: {
+      pre: armEnvelope(input.arms.pre),
+      post: armEnvelope(input.arms.post),
+      synthetic: armEnvelope(input.arms.synthetic),
+    },
+    perAsset: input.arms.post.perAsset
+      ? {
+          total_akm_runs: input.arms.post.perAsset.totalAkmRuns,
+          rows: input.arms.post.perAsset.rows.map((r) => ({
+            asset_ref: r.assetRef,
+            load_count: r.loadCount,
+            load_count_passing: r.loadCountPassing,
+            load_count_failing: r.loadCountFailing,
+            load_pass_rate: r.loadPassRate,
+          })),
+        }
+      : { total_akm_runs: 0, rows: [] },
+    failure_modes: {
+      by_label: input.arms.post.failureModes.byLabel,
+      by_task: input.arms.post.failureModes.byTask,
+    },
+    ...(input.arms.post.searchBridge ? { searchBridge: serialiseSearchBridge(input.arms.post.searchBridge) } : {}),
+    warnings: input.warnings,
+  };
+}
+
+function buildEvolveMarkdown(input: EvolveReportInput): string {
+  const lines: string[] = [];
+  lines.push(`# akm-bench evolve — ${input.model}`);
+  lines.push("");
+  lines.push(`branch \`${input.branch}\` @ \`${input.commit}\` — ${input.timestamp}`);
+  lines.push(`corpus: domain=\`${input.domain}\`, seedsPerArm=${input.seedsPerArm}`);
+  lines.push("");
+  // Headline: improvement_slope.
+  lines.push(
+    `**improvement_slope: ${signedFixed(input.longitudinal.improvementSlope, 2)}** (post=${input.longitudinal.postPassRate.toFixed(2)}, pre=${input.longitudinal.prePassRate.toFixed(2)})`,
+  );
+  // Second line: feedback_agreement placeholder for #244.
+  lines.push("_feedback_agreement: pending (#244)_");
+  lines.push("");
+
+  lines.push("## Longitudinal");
+  lines.push("");
+  lines.push("| metric | value |");
+  lines.push("|--------|-------|");
+  lines.push(`| improvement_slope | ${signedFixed(input.longitudinal.improvementSlope, 2)} |`);
+  lines.push(`| over_synthetic_lift | ${signedFixed(input.longitudinal.overSyntheticLift, 2)} |`);
+  lines.push(`| degradation_count | ${input.longitudinal.degradationCount} |`);
+  lines.push(`| pre_pass_rate | ${input.longitudinal.prePassRate.toFixed(2)} |`);
+  lines.push(`| post_pass_rate | ${input.longitudinal.postPassRate.toFixed(2)} |`);
+  lines.push(`| synthetic_pass_rate | ${input.longitudinal.syntheticPassRate.toFixed(2)} |`);
+  lines.push("");
+
+  if (input.longitudinal.degradations.length > 0) {
+    lines.push("### Degradations");
+    lines.push("");
+    lines.push("| task | pre | post | delta | failure_mode |");
+    lines.push("|------|-----|------|-------|--------------|");
+    for (const d of input.longitudinal.degradations) {
+      lines.push(
+        `| ${d.taskId} | ${d.prePassRate.toFixed(2)} | ${d.postPassRate.toFixed(2)} | ${signedFixed(d.delta, 2)} | ${d.failureMode ?? "n/a"} |`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push("## Proposals");
+  lines.push("");
+  lines.push(
+    `acceptance_rate=${input.proposals.acceptanceRate.toFixed(2)}, lint_pass_rate=${input.proposals.lintPassRate.toFixed(2)}, total=${input.proposals.totalProposals}`,
+  );
+  lines.push("");
+  if (input.proposals.rows.length > 0) {
+    lines.push("| asset_ref | proposals | lint_pass | accepted |");
+    lines.push("|-----------|-----------|-----------|----------|");
+    for (const row of input.proposals.rows) {
+      lines.push(`| \`${row.assetRef}\` | ${row.proposalCount} | ${row.lintPassCount} | ${row.acceptedCount} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("_No proposals generated._");
+    lines.push("");
+  }
+
+  lines.push("## Per-task pre → post → synthetic");
+  lines.push("");
+  lines.push("| task | pre | post | synthetic | post − pre |");
+  lines.push("|------|-----|------|-----------|------------|");
+  const preTasks = new Map<string, UtilityReportTaskEntry>();
+  for (const t of input.arms.pre.tasks) preTasks.set(t.id, t);
+  const postTasks = new Map<string, UtilityReportTaskEntry>();
+  for (const t of input.arms.post.tasks) postTasks.set(t.id, t);
+  const synthTasks = new Map<string, UtilityReportTaskEntry>();
+  for (const t of input.arms.synthetic.tasks) synthTasks.set(t.id, t);
+  const allIds = new Set<string>([...preTasks.keys(), ...postTasks.keys(), ...synthTasks.keys()]);
+  for (const id of [...allIds].sort()) {
+    const pre = preTasks.get(id)?.akm.passRate;
+    const post = postTasks.get(id)?.akm.passRate;
+    const synth = synthTasks.get(id)?.akm.passRate;
+    const delta = pre !== undefined && post !== undefined ? signedFixed(post - pre, 2) : "n/a";
+    lines.push(
+      `| ${id} | ${pre === undefined ? "n/a" : pre.toFixed(2)} | ${post === undefined ? "n/a" : post.toFixed(2)} | ${synth === undefined ? "n/a" : synth.toFixed(2)} | ${delta} |`,
+    );
+  }
+
+  if (input.warnings.length > 0) {
+    lines.push("");
+    lines.push("## Warnings");
+    lines.push("");
+    for (const w of input.warnings) lines.push(`- ${w}`);
+  }
+  return lines.join("\n");
 }

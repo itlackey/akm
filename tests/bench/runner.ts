@@ -75,6 +75,16 @@ export interface RunUtilityOptions {
    * Defaults to `true`.
    */
   materialiseStash?: boolean;
+  /**
+   * Optional override map keyed by `task.stash` (fixture name). When provided,
+   * the runner skips per-task `loadFixtureStash` and forwards the supplied
+   * directory as `AKM_STASH_DIR` for the akm arm of every task whose
+   * `task.stash` is in the map. Used by `runEvolve` so a single
+   * pre-materialised stash persists across Phase 1 / Phase 2 / Phase 3.
+   * When set, `materialiseStash` is ignored for tasks whose fixture is
+   * present in this map.
+   */
+  stashDirByFixture?: Map<string, string>;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -110,12 +120,17 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     const taskRuns = new Map<Arm, RunResult[]>();
     grouped.set(task.id, taskRuns);
 
+    // Resolve a caller-supplied stash override before materialising. When
+    // `stashDirByFixture` provides a directory for this task's fixture, we
+    // skip `loadFixtureStash` entirely and forward the override.
+    const overrideStashDir = options.stashDirByFixture?.get(task.stash);
+
     // Materialise the akm-arm stash once per task. We share it across the K
     // seeds because the stash content is identical and re-running `akm
     // index` for every seed is wasted work.
     let stash: LoadedFixtureStash | undefined;
     let stashError: string | undefined;
-    if (options.arms.includes("akm") && materialiseStash) {
+    if (options.arms.includes("akm") && materialiseStash && !overrideStashDir) {
       try {
         stash = loadFixtureStash(task.stash, { skipIndex: true });
       } catch (err) {
@@ -137,7 +152,8 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
           // stable placeholder so the env keys are wired correctly.
           let stashDir: string | undefined;
           if (arm === "akm") {
-            if (stash) stashDir = stash.stashDir;
+            if (overrideStashDir) stashDir = overrideStashDir;
+            else if (stash) stashDir = stash.stashDir;
             else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
           }
           const run = await runOneIsolated({

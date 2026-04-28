@@ -20,6 +20,7 @@ import fs from "node:fs";
 import process from "node:process";
 
 import { listTasks, type TaskMetadata } from "./corpus";
+import { runEvolve } from "./evolve";
 import {
   compareReports,
   type MaskedCorpusResult,
@@ -28,7 +29,13 @@ import {
   type RunUtilityOptionsForMask,
   runMaskedCorpus,
 } from "./metrics";
-import { renderAttributionTable, renderCompareMarkdown, renderUtilityReport, type UtilityRunReport } from "./report";
+import {
+  renderAttributionTable,
+  renderCompareMarkdown,
+  renderEvolveReport,
+  renderUtilityReport,
+  type UtilityRunReport,
+} from "./report";
 import { runUtility } from "./runner";
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
@@ -51,6 +58,15 @@ utility flags:
                            Without --json, JSON still goes to stdout and the markdown
                            summary is also written to stderr for human-friendly reads.
   -h, --help               show this message.
+
+evolve flags:
+  --tasks <domain>         domain id (e.g., docker-homelab) or 'all'. REQUIRED.
+  --seeds <N>              seeds per arm (default: 5)
+  --budget-tokens <N>      per-run token cap (default: 30000)
+  --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
+  --negative-threshold-count <N>  absolute negative-feedback count to evolve (default: 2)
+  --negative-threshold-ratio <R>  ratio of negatives to total feedback (default: 0.5)
+  --json                   suppress the markdown summary on stderr.
 
 compare flags:
   --base <path>            path to baseline UtilityRunReport JSON file. REQUIRED.
@@ -111,11 +127,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     positional.push(arg);
   }
   return { subcommand, flags, bool, positional };
-}
-
-function notImplemented(name: string, issueRef: string): never {
-  process.stderr.write(`bench ${name}: not yet implemented; see ${issueRef}.\n`);
-  process.exit(2);
 }
 
 export interface UtilityCliOptions {
@@ -555,6 +566,63 @@ function parseInt32(text: string | undefined, fallback: number): number {
   return n;
 }
 
+function parseFloatArg(text: string | undefined, fallback: number): number {
+  if (text === undefined) return fallback;
+  const n = Number.parseFloat(text);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+export interface EvolveCliOptions {
+  /** Domain id (e.g., `docker-homelab`) or the literal `all`. */
+  domain: string;
+  json: boolean;
+  seedsPerArm: number;
+  budgetTokens: number;
+  budgetWallMs: number;
+  model: string;
+  negativeThreshold: { absoluteCount: number; ratio: number };
+  branch?: string;
+  commit?: string;
+  timestamp?: string;
+}
+
+/**
+ * `evolve` subcommand. Filters the corpus to one domain (or `all`), then
+ * dispatches `runEvolve` and renders the §6.3+§6.4 envelope.
+ */
+export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCliResult> {
+  // Discover all tasks then filter on domain.
+  const allTasks = listTasks();
+  const tasks = options.domain === "all" ? allTasks : allTasks.filter((t) => t.domain === options.domain);
+
+  if (tasks.length === 0) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `bench evolve: no tasks matched domain "${options.domain}".\n`,
+    };
+  }
+
+  const report = await runEvolve({
+    tasks,
+    model: options.model,
+    seedsPerArm: options.seedsPerArm,
+    budgetTokens: options.budgetTokens,
+    budgetWallMs: options.budgetWallMs,
+    negativeThreshold: options.negativeThreshold,
+    ...(options.branch !== undefined ? { branch: options.branch } : {}),
+    ...(options.commit !== undefined ? { commit: options.commit } : {}),
+    ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
+  });
+
+  const { json, markdown } = renderEvolveReport(report);
+  const stdout = `${JSON.stringify(json, null, 2)}\n`;
+  let stderr = options.json ? "" : `${markdown}\n`;
+  stderr += `tasks discovered: ${tasks.length} (domain=${options.domain})\n`;
+  return { exitCode: 0, stdout, stderr };
+}
+
 async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
 
@@ -590,8 +658,33 @@ async function main(argv: string[]): Promise<number> {
       if (result.stderr) process.stderr.write(result.stderr);
       return result.exitCode;
     }
-    case "evolve":
-      return notImplemented("evolve", "#243");
+    case "evolve": {
+      const domain = parsed.flags.get("tasks");
+      if (!domain) {
+        process.stderr.write("bench evolve: --tasks <domain> is required (use --tasks all to run the full corpus).\n");
+        return 2;
+      }
+      const model = getEnv("BENCH_OPENCODE_MODEL");
+      if (!model) {
+        process.stderr.write("bench evolve: BENCH_OPENCODE_MODEL environment variable is required.\n");
+        return 2;
+      }
+      const result = await runEvolveCli({
+        domain,
+        json: parsed.bool.has("json"),
+        seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
+        budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
+        budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
+        model,
+        negativeThreshold: {
+          absoluteCount: parseInt32(parsed.flags.get("negative-threshold-count"), 2),
+          ratio: parseFloatArg(parsed.flags.get("negative-threshold-ratio"), 0.5),
+        },
+      });
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      return result.exitCode;
+    }
     case "compare": {
       const basePath = parsed.flags.get("base");
       const currentPath = parsed.flags.get("current");
