@@ -253,8 +253,15 @@ const ASSET_LOAD_STDOUT_SCAN_CAP = 16 * 1024 * 1024;
 // name are lowercase letters, digits, `_`, `-`. We deliberately do NOT match
 // `://` schemes (those are install locators, not asset refs). The character
 // class is intentionally tight so we don't mis-pickup arbitrary words after
-// `akm show`.
-const ASSET_REF_PATTERN = /(?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[a-zA-Z0-9_./-]+/g;
+// `akm show`. The `name` segment is restricted to `[A-Za-z0-9_-]+` (no `/`,
+// no `.`) — the v1 grammar in src/core/asset-ref.ts permits `/` and `.` in
+// names (e.g. `script:db/migrate/run.sh`), but the masker treats names as
+// untrusted input and rejects any traversal-shaped value, so the bench-side
+// scanner does not need (or want) to extract such refs from agent stdout.
+// Limiting the regex here is defense-in-depth against a prompt-injected
+// agent emitting `akm show "skill:../../etc"` and us pulling that ref into
+// the masking flow.
+const ASSET_REF_PATTERN = /(?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[A-Za-z0-9_-]+/g;
 
 export function extractAssetLoads(runResult: RunResult): string[] {
   const seen = new Set<string>();
@@ -288,7 +295,7 @@ export function extractAssetLoads(runResult: RunResult): string[] {
 
   // `akm show <ref>` literal form. Accept optional quoting around the ref so
   // shell traces like `akm show "skill:foo"` work too.
-  const literalRe = /akm\s+show\s+["']?((?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[a-zA-Z0-9_./-]+)["']?/g;
+  const literalRe = /akm\s+show\s+["']?((?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[A-Za-z0-9_-]+)["']?/g;
   for (const literalMatch of haystack.matchAll(literalRe)) {
     push(literalMatch[1] as string);
   }
@@ -296,7 +303,7 @@ export function extractAssetLoads(runResult: RunResult): string[] {
   // Tool-call JSON form. `"args":[..., "show", "<ref>", ...]`. We extract
   // every refish token in the haystack that follows a "show" arg in JSON-y
   // form. A second cheap pass keeps the pattern simple.
-  const toolCallRe = /"show"\s*,\s*"((?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[a-zA-Z0-9_./-]+)"/g;
+  const toolCallRe = /"show"\s*,\s*"((?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[A-Za-z0-9_-]+)"/g;
   for (const toolCallMatch of haystack.matchAll(toolCallRe)) {
     push(toolCallMatch[1] as string);
   }
@@ -349,15 +356,8 @@ export function computePerAssetAttribution(report: UtilityRunReport): PerAssetAt
   const failing = new Map<string, number>();
   let totalAkmRuns = 0;
 
-  for (const task of report.tasks) {
-    // The §13.3 task entry doesn't carry RunResults — we read them from the
-    // shared akm-arm runs collection on the report. But the v1 report only
-    // exposes aggregates per task. We rely on `report.akmRuns[]` (added below
-    // by the runner). For backward compat, fall back to scanning whatever
-    // raw runs the report carries.
-    void task;
-  }
-
+  // The §13.3 task entry doesn't carry RunResults — we read them from the
+  // shared akm-arm runs collection that the runner stamps onto `report.akmRuns`.
   const akmRuns = collectAkmRuns(report);
   for (const r of akmRuns) {
     totalAkmRuns += 1;
@@ -477,7 +477,15 @@ export interface RunUtilityOptionsForMask {
   branch?: string;
   commit?: string;
   timestamp?: string;
-  // biome-ignore lint/suspicious/noExplicitAny: SpawnFn lives in src/integrations/agent/spawn — importing it would pull node-specific types we don't need here. A loose type keeps metrics.ts independent of that module.
+  /**
+   * Test-only injection seam for the child-process spawn function. The
+   * masked re-runner forwards this verbatim to `runUtility`, which uses it
+   * to launch the agent harness for each masked task. SECURITY: a non-test
+   * caller MUST NOT set this — production code paths leave it `undefined`
+   * so the runner falls back to the vetted default `SpawnFn`. The field is
+   * typed `any` only to keep metrics.ts independent of `src/integrations/agent/spawn`.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: Test-injection seam (see JSDoc above). SpawnFn lives in src/integrations/agent/spawn; importing it would pull node-specific types into metrics.ts. Production callers leave this undefined.
   spawn?: any;
   materialiseStash?: boolean;
 }
@@ -577,14 +585,29 @@ function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRe
   const sourceDir = path.join(fixturesRoot, stashName);
   if (!fs.existsSync(path.join(sourceDir, "MANIFEST.json"))) return null;
 
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-masked-${stashName}-`));
-  copyDirRecursive(sourceDir, tmpRoot);
-
   const colonIdx = assetRef.indexOf(":");
-  if (colonIdx < 0) return tmpRoot;
+  if (colonIdx < 0) {
+    // Malformed ref: still produce a tmp copy with no edits so the caller's
+    // re-run sees the unmodified fixture.
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-masked-${stashName}-`));
+    copyDirRecursive(sourceDir, tmpRoot);
+    return tmpRoot;
+  }
   const typeWithOrigin = assetRef.slice(0, colonIdx);
   const name = assetRef.slice(colonIdx + 1);
   const type = typeWithOrigin.includes("//") ? (typeWithOrigin.split("//")[1] ?? typeWithOrigin) : typeWithOrigin;
+
+  // SECURITY: the asset ref originates from agent stdout (untrusted; the
+  // agent could be prompt-injected). The masking heuristic below will
+  // `fs.rmSync` files under the tmp stash dir whose names are derived from
+  // `name`. A traversal-shaped name (`../etc`, `/abs/path`, `..\\..`) would
+  // escape the tmp root and delete arbitrary disk content. Reject those
+  // shapes BEFORE we materialise — and re-validate after path-resolving
+  // each candidate. Mirrors src/core/asset-ref.ts validateName().
+  if (!isSafeAssetNameSegment(name)) return null;
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-masked-${stashName}-`));
+  copyDirRecursive(sourceDir, tmpRoot);
 
   // Walk every .stash.json under the tmp root and edit in place.
   walkStashJsonFiles(tmpRoot, (jsonPath) => {
@@ -602,21 +625,31 @@ function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRe
     }
     const entries = parsed.entries ?? [];
     const kept: Array<Record<string, unknown>> = [];
+    const jsonDir = path.dirname(jsonPath);
     for (const entry of entries) {
       if (entry.type === type && entry.name === name) {
-        // Remove the entry's content file(s).
+        // Remove the entry's content file(s). The on-disk `filename` is read
+        // from the fixture .stash.json (trusted) but the value still passes
+        // through path.relative containment so a malicious fixture can't use
+        // this path to escape either.
         const filename = entry.filename;
-        if (typeof filename === "string") {
-          const target = path.join(path.dirname(jsonPath), filename);
-          try {
-            fs.rmSync(target, { force: true });
-          } catch {
-            // ignore
+        if (typeof filename === "string" && isSafeAssetNameSegment(filename)) {
+          const target = path.resolve(jsonDir, filename);
+          if (isPathContained(tmpRoot, target)) {
+            try {
+              fs.rmSync(target, { force: true });
+            } catch {
+              // ignore
+            }
           }
         }
         // Some fixtures keep a per-asset directory (e.g. skills/<name>/SKILL.md).
-        const dirCandidate = path.join(path.dirname(jsonPath), name);
-        if (fs.existsSync(dirCandidate) && fs.statSync(dirCandidate).isDirectory()) {
+        const dirCandidate = path.resolve(jsonDir, name);
+        if (
+          isPathContained(tmpRoot, dirCandidate) &&
+          fs.existsSync(dirCandidate) &&
+          fs.statSync(dirCandidate).isDirectory()
+        ) {
           try {
             fs.rmSync(dirCandidate, { recursive: true, force: true });
           } catch {
@@ -640,6 +673,42 @@ function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRe
   });
 
   return tmpRoot;
+}
+
+/**
+ * Reject any segment that could escape the tmp stash root when used as a
+ * relative path component:
+ *   - empty string
+ *   - any `/` or `\\` (path separators)
+ *   - a `..` segment in any form
+ *   - a leading `/` (POSIX absolute) or `C:` (Windows drive)
+ *   - any null byte
+ *
+ * Mirrors src/core/asset-ref.ts validateName(), but returns a boolean
+ * (callers map this to "skip" rather than "throw").
+ */
+function isSafeAssetNameSegment(value: string): boolean {
+  if (!value) return false;
+  if (value.includes("\0")) return false;
+  if (value.includes("/") || value.includes("\\")) return false;
+  if (value === ".." || value === ".") return false;
+  if (/^[A-Za-z]:/.test(value)) return false;
+  return true;
+}
+
+/**
+ * After resolving a target path, confirm it lives under `root`. Defense in
+ * depth: even if a traversal-shaped name slipped past the segment check,
+ * this catches escapes via symlinks or odd `path.join` semantics.
+ */
+function isPathContained(root: string, target: string): boolean {
+  const rootResolved = path.resolve(root);
+  const targetResolved = path.resolve(target);
+  const rel = path.relative(rootResolved, targetResolved);
+  if (rel === "") return true;
+  if (rel.startsWith("..")) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
 }
 
 function walkStashJsonFiles(root: string, visit: (jsonPath: string) => void): void {

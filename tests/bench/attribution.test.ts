@@ -332,6 +332,96 @@ describe("runMaskedCorpus", () => {
     fs.rmSync(fixturesRoot, { recursive: true, force: true });
   });
 
+  test("rejects path-traversal asset refs without deleting anything outside the tmp stash", async () => {
+    const fixturesRoot = makeFixturesRoot();
+    // A sentinel file outside the fixtures tree — if the masker honoured the
+    // hostile `..`-laden ref, the deletion target would be computed via
+    // `path.join(fixturesRoot/fixtureA/skills/, "..", "..", "..", "sentinel")`
+    // and the sentinel would disappear. The validation must block that.
+    const sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-sentinel-"));
+    const sentinelFile = path.join(sentinelDir, "sentinel.txt");
+    fs.writeFileSync(sentinelFile, "do-not-delete");
+
+    const baseRuns: RunResult[] = [
+      // Hostile ref: name contains `..` segments. Constructed by hand to
+      // simulate a prompt-injected agent emitting `akm show "skill:../../../etc"`.
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:../../../etc"] }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:../../../etc"] }),
+    ];
+    const baseReport = makeReport(baseRuns);
+    baseReport.taskMetadata = [fakeTask()];
+
+    let callCount = 0;
+    const result = await runMaskedCorpus({
+      baseReport,
+      topN: 1,
+      runUtility: async () => {
+        callCount += 1;
+        return {
+          ...baseReport,
+          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+        };
+      },
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+
+    // The masker rejects the hostile ref → null → runMaskedCorpus falls back
+    // to the original fixture name. The runner is still called (we want the
+    // accounting to be honest), but no rmSync is performed against any path
+    // resolved from the hostile name.
+    expect(result.runsPerformed).toBe(1);
+    expect(callCount).toBe(1);
+    // Sentinel survives.
+    expect(fs.existsSync(sentinelFile)).toBe(true);
+    expect(fs.readFileSync(sentinelFile, "utf8")).toBe("do-not-delete");
+    // Source fixture files survive.
+    expect(fs.existsSync(path.join(fixturesRoot, "fixtureA", "skills", "alpha.md"))).toBe(true);
+    expect(fs.existsSync(path.join(fixturesRoot, "fixtureA", "skills", "beta.md"))).toBe(true);
+
+    fs.rmSync(sentinelDir, { recursive: true, force: true });
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
+  });
+
+  test("rejects absolute-path asset refs without escaping the tmp stash", async () => {
+    const fixturesRoot = makeFixturesRoot();
+    const sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-sentinel-abs-"));
+    const sentinelFile = path.join(sentinelDir, "sentinel.txt");
+    fs.writeFileSync(sentinelFile, "do-not-delete");
+
+    const baseRuns: RunResult[] = [
+      // Hostile ref: name is an absolute POSIX path.
+      makeRun({ outcome: "pass", assetsLoaded: [`skill:${sentinelDir}`] }),
+      makeRun({ outcome: "pass", assetsLoaded: [`skill:${sentinelDir}`] }),
+    ];
+    const baseReport = makeReport(baseRuns);
+    baseReport.taskMetadata = [fakeTask()];
+
+    let callCount = 0;
+    const result = await runMaskedCorpus({
+      baseReport,
+      topN: 1,
+      runUtility: async () => {
+        callCount += 1;
+        return {
+          ...baseReport,
+          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+        };
+      },
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+
+    expect(result.runsPerformed).toBe(1);
+    expect(callCount).toBe(1);
+    expect(fs.existsSync(sentinelFile)).toBe(true);
+    expect(fs.readFileSync(sentinelFile, "utf8")).toBe("do-not-delete");
+    expect(fs.existsSync(sentinelDir)).toBe(true);
+
+    fs.rmSync(sentinelDir, { recursive: true, force: true });
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
+  });
+
   test("cost accounting: runs N times when N <= asset count", async () => {
     const fixturesRoot = makeFixturesRoot();
     const baseRuns: RunResult[] = [
@@ -452,5 +542,127 @@ describe("bench attribute --top clamping", () => {
     expect(calls).toBe(2);
 
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+describe("runMaskedCorpus marginal_contribution arithmetic", () => {
+  // Distinct from the clamp test in `bench attribute --top clamping`, which
+  // uses passRate 0 for every masked re-run and so cannot detect a sign
+  // error in the marginal-contribution arithmetic. Here we engineer a base
+  // pass_rate of 0.8 and two distinct masked pass_rates (0.4 and 0.5) and
+  // assert the resulting marginal_contribution = base - masked, with the
+  // correct sign and magnitude per masked asset.
+  function makeMarginalFixturesRoot(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-marginal-fixtures-"));
+    const fixDir = path.join(root, "fixtureMarginal");
+    fs.mkdirSync(path.join(fixDir, "skills"), { recursive: true });
+    fs.writeFileSync(
+      path.join(fixDir, "MANIFEST.json"),
+      JSON.stringify({ name: "fixtureMarginal", description: "x", purpose: "x", assets: { skill: 2 }, consumers: [] }),
+    );
+    fs.writeFileSync(
+      path.join(fixDir, "skills", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          { name: "alpha", type: "skill", filename: "alpha.md" },
+          { name: "beta", type: "skill", filename: "beta.md" },
+        ],
+      }),
+    );
+    fs.writeFileSync(path.join(fixDir, "skills", "alpha.md"), "# alpha");
+    fs.writeFileSync(path.join(fixDir, "skills", "beta.md"), "# beta");
+    return root;
+  }
+
+  test("computes marginal_contribution = basePassRate - maskedPassRate per asset", async () => {
+    const fixturesRoot = makeMarginalFixturesRoot();
+    const baseRuns: RunResult[] = [
+      // alpha: 4 pass, 0 fail → load_count 4
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      // beta: 1 pass, 1 fail → load_count 2
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:beta"] }),
+      makeRun({ outcome: "fail", assetsLoaded: ["skill:beta"] }),
+    ];
+    const baseReport: UtilityRunReport = {
+      timestamp: "2026-04-27T00:00:00Z",
+      branch: "test",
+      commit: "abc",
+      model: "m",
+      corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: baseRuns.length },
+      aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+      // Engineered base pass rate distinct from the masked rates so the
+      // arithmetic is observable.
+      aggregateAkm: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
+      aggregateDelta: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
+      trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
+      tasks: [],
+      warnings: [],
+      akmRuns: baseRuns,
+      taskMetadata: [
+        {
+          id: "fake/t",
+          title: "t",
+          domain: "fake",
+          difficulty: "easy",
+          stash: "fixtureMarginal",
+          verifier: "regex",
+          expectedMatch: "ok",
+          budget: { tokens: 100, wallMs: 1000 },
+          taskDir: "/tmp",
+        },
+      ],
+    };
+
+    // Map masked-asset → simulated pass rate. The injected runner inspects
+    // the on-disk masked stash to detect which asset is missing.
+    const maskedPassRates: Record<string, number> = {
+      "skill:alpha": 0.4,
+      "skill:beta": 0.5,
+    };
+
+    const result = await runMaskedCorpus({
+      baseReport,
+      topN: 2,
+      runUtility: async (options) => {
+        const stashDir = options.tasks[0]?.stash ?? "";
+        const alphaMissing = !fs.existsSync(path.join(stashDir, "skills", "alpha.md"));
+        const betaMissing = !fs.existsSync(path.join(stashDir, "skills", "beta.md"));
+        const masked = alphaMissing ? "skill:alpha" : betaMissing ? "skill:beta" : "none";
+        const passRate = maskedPassRates[masked] ?? 0;
+        return {
+          ...baseReport,
+          aggregateAkm: { passRate, tokensPerPass: null, wallclockMs: 0 },
+          akmRuns: [],
+        };
+      },
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+
+    expect(result.runsPerformed).toBe(2);
+    expect(result.attributions.length).toBe(2);
+
+    const alpha = result.attributions.find((a) => a.assetRef === "skill:alpha");
+    const beta = result.attributions.find((a) => a.assetRef === "skill:beta");
+
+    // Both rows carry the engineered base pass rate.
+    expect(alpha?.basePassRate).toBeCloseTo(0.8, 5);
+    expect(beta?.basePassRate).toBeCloseTo(0.8, 5);
+    // Masked pass rates are the runner-injected values, distinguished per
+    // asset (this is the property the vacuous 0 → 0 → 0 fixture above
+    // could not exercise).
+    expect(alpha?.maskedPassRate).toBeCloseTo(0.4, 5);
+    expect(beta?.maskedPassRate).toBeCloseTo(0.5, 5);
+    // Marginal contribution = base - masked. Positive sign means masking
+    // hurt — the asset was helping. Both must be non-zero.
+    expect(alpha?.marginalContribution).toBeCloseTo(0.4, 5);
+    expect(beta?.marginalContribution).toBeCloseTo(0.3, 5);
+    expect(alpha?.marginalContribution).not.toBe(0);
+    expect(beta?.marginalContribution).not.toBe(0);
+
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
   });
 });
