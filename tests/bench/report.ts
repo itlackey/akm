@@ -30,6 +30,7 @@ import type {
   FailureModeAggregate,
   FeedbackIntegrityMetrics,
   GoldRankRunRecord,
+  LearningCurve,
   LongitudinalMetrics,
   OutcomeAggregate,
   PerAssetAttribution,
@@ -1927,6 +1928,13 @@ export interface EvolveReportInput {
    * older artefacts remain valid.
    */
   feedbackIntegrity?: FeedbackIntegrityMetrics;
+  /**
+   * §6.4 (issue #265) — learning curve across evolution episodes. Optional;
+   * when omitted both the JSON envelope's `learning` key and the markdown
+   * "Learning curve" section are suppressed so older artefacts remain
+   * valid. `episode_index === 0` is the pre-evolution baseline.
+   */
+  learningCurve?: LearningCurve;
   arms: { pre: UtilityRunReport; post: UtilityRunReport; synthetic: UtilityRunReport };
   warnings: string[];
 }
@@ -2006,6 +2014,7 @@ function buildEvolveJson(input: EvolveReportInput): object {
         failure_mode: d.failureMode,
       })),
     },
+    ...(input.learningCurve ? { learning: serialiseLearningCurve(input.learningCurve) } : {}),
     arms: {
       pre: armEnvelope(input.arms.pre),
       post: armEnvelope(input.arms.post),
@@ -2031,6 +2040,75 @@ function buildEvolveJson(input: EvolveReportInput): object {
     ...(input.feedbackIntegrity ? { feedback_integrity: serialiseFeedbackIntegrity(input.feedbackIntegrity) } : {}),
     warnings: augmentedWarnings,
   };
+}
+
+/**
+ * §6.4 (issue #265) — flatten a `LearningCurve` into its JSON envelope.
+ * Mirrors the suggested shape from the issue body: an `episodes[]` block
+ * with per-episode rows, plus the headline `learning_slope` and
+ * `time_to_improvement`. `pass_rate_by_episode` is exposed as a flat array
+ * for tools that want to plot without re-projecting the rows.
+ */
+function serialiseLearningCurve(curve: LearningCurve): {
+  episodes: Array<{
+    episode_index: number;
+    pass_rate: number;
+    delta_from_previous_episode: number;
+    cumulative_feedback_events: number;
+    cumulative_proposals_created: number;
+    cumulative_proposals_accepted: number;
+    cumulative_lessons_created: number;
+    lesson_reuse_rate: number | null;
+  }>;
+  pass_rate_by_episode: number[];
+  learning_slope: number;
+  time_to_improvement: number | null;
+} {
+  return {
+    episodes: curve.episodes.map((ep) => ({
+      episode_index: ep.episode_index,
+      pass_rate: ep.pass_rate,
+      delta_from_previous_episode: ep.delta_from_previous_episode,
+      cumulative_feedback_events: ep.cumulative_feedback_events,
+      cumulative_proposals_created: ep.cumulative_proposals_created,
+      cumulative_proposals_accepted: ep.cumulative_proposals_accepted,
+      cumulative_lessons_created: ep.cumulative_lessons_created,
+      lesson_reuse_rate: ep.lesson_reuse_rate,
+    })),
+    pass_rate_by_episode: curve.pass_rate_by_episode.slice(),
+    learning_slope: curve.learning_slope,
+    time_to_improvement: curve.time_to_improvement,
+  };
+}
+
+/**
+ * §6.4 (issue #265) — render a compact "Learning curve" markdown table.
+ * One row per episode plus the headline slope + time-to-improvement.
+ */
+export function renderLearningCurveSection(curve: LearningCurve): string {
+  const lines: string[] = [];
+  lines.push("## Learning curve");
+  lines.push("");
+  lines.push(
+    `learning_slope=${signedFixed(curve.learning_slope, 3)}, time_to_improvement=${
+      curve.time_to_improvement === null ? "n/a" : String(curve.time_to_improvement)
+    }`,
+  );
+  lines.push("");
+  if (curve.episodes.length === 0) {
+    lines.push("_No episodes recorded._");
+    return lines.join("\n");
+  }
+  lines.push("| episode | pass_rate | Δ prev | feedback | proposals | accepted | lessons | reuse |");
+  lines.push("|--------:|----------:|-------:|---------:|----------:|---------:|--------:|------:|");
+  for (const ep of curve.episodes) {
+    lines.push(
+      `| ${ep.episode_index} | ${ep.pass_rate.toFixed(2)} | ${signedFixed(ep.delta_from_previous_episode, 2)} | ${ep.cumulative_feedback_events} | ${ep.cumulative_proposals_created} | ${ep.cumulative_proposals_accepted} | ${ep.cumulative_lessons_created} | ${
+        ep.lesson_reuse_rate === null ? "n/a" : ep.lesson_reuse_rate.toFixed(2)
+      } |`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /** §6.8 — flatten the FeedbackIntegrityMetrics envelope into JSON. */
@@ -2202,6 +2280,11 @@ function buildEvolveMarkdown(input: EvolveReportInput): string {
   if (input.feedbackIntegrity) {
     lines.push("");
     lines.push(renderFeedbackIntegrityTable(input.feedbackIntegrity));
+  }
+
+  if (input.learningCurve) {
+    lines.push("");
+    lines.push(renderLearningCurveSection(input.learningCurve));
   }
 
   if (input.warnings.length > 0) {
