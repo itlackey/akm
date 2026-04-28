@@ -166,9 +166,48 @@ The report (§6.3 + §6.4 envelope) carries:
   `failure_mode` from §6.6.
 - `arms.{pre,post,synthetic}` — full §13.3 utility envelopes per arm so the
   per-task pre→post→synthetic delta is reproducible.
+- `feedback_integrity` — §6.8 confusion matrix (TP/FP/TN/FN) joining each
+  Phase 1 feedback event back to the run that produced it. See
+  "Feedback-signal integrity" below.
 
-The headline of the markdown summary is `improvement_slope`. The second
-line is a placeholder for `feedback_agreement`, which lands with #244.
+The headline of the markdown summary is `improvement_slope`. The line
+directly after it carries `feedback_agreement` (#244) — the headline trust
+gate for the run.
+
+### Feedback-signal integrity (§6.8)
+
+Track B's headline numbers (`improvement_slope`, `over_synthetic_lift`)
+are only meaningful when Phase 1 feedback agrees with run outcomes most
+of the time. If the agent calls `akm feedback --positive` on runs that
+actually failed, Phase 2 distillation walks down the wrong branch and the
+post-evolve fixture drifts in a direction that has nothing to do with
+real task success. `feedback_integrity` quantifies this:
+
+- `feedback_agreement = (TP + TN) / total` — fraction of feedback events
+  that match the run's outcome (positive on pass, negative on fail).
+- `false_positive_rate = FP / (FP + TN)` — agent claimed success when
+  the run failed.
+- `false_negative_rate = FN / (FN + TP)` — agent claimed failure when
+  the run passed.
+- `feedback_coverage = (Phase 1 runs with any feedback dispatched) /
+  (total Phase 1 runs)` — how complete the signal stream is.
+
+Per-asset rows surface the same matrix scoped to a single gold ref so
+operators can see whether a single skill is responsible for the
+disagreement.
+
+**Warning threshold:** when `feedback_agreement < 0.80`, the markdown
+summary prepends a warning marker above the headline and the JSON
+envelope's `warnings[]` carries a `feedback_agreement_below_threshold`
+entry. Below this gate, treat `improvement_slope` and
+`over_synthetic_lift` as unreliable until AGENTS.md guidance for `akm
+feedback` is tightened.
+
+Attribution rule: a feedback event is joined to the run that produced
+it (by `taskId` + `seed`), not to a later run that happened to touch
+the same gold ref. Per-asset rows aggregate across runs that share a
+ref, but each individual matrix cell is decided by its own run's
+outcome.
 
 ### Leakage prevention (§7.4)
 
