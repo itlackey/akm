@@ -26,6 +26,7 @@ import {
   deleteAssetFromSource,
   resolveWritable,
   resolveWriteTarget,
+  sanitizeCommitMessage,
   type WriteTargetSource,
   writeAssetToSource,
 } from "../../src/core/write-source";
@@ -378,5 +379,91 @@ describe("resolveWriteTarget", () => {
         "nope",
       ),
     ).toThrow(UsageError);
+  });
+});
+
+// ── sanitizeCommitMessage (issue #270) ──────────────────────────────────────
+
+describe("sanitizeCommitMessage", () => {
+  test("strips newline injection attempts and collapses to a single line", () => {
+    // Classic newline-injection payload: forge a Co-Authored-By trailer.
+    const payload = "Update skill:foo\n\nCo-Authored-By: attacker <evil@example>";
+    const out = sanitizeCommitMessage(payload);
+    expect(out.includes("\n")).toBe(false);
+    expect(out.includes("\r")).toBe(false);
+    // Content survives, just on one line with whitespace runs collapsed.
+    expect(out).toBe("Update skill:foo Co-Authored-By: attacker <evil@example>");
+  });
+
+  test("strips carriage returns", () => {
+    expect(sanitizeCommitMessage("a\rb\r\nc")).toBe("a b c");
+  });
+
+  test("strips NUL bytes", () => {
+    const out = sanitizeCommitMessage("subject\x00hidden");
+    expect(out.includes("\x00")).toBe(false);
+    expect(out).toBe("subjecthidden");
+  });
+
+  test("strips other C0 control characters", () => {
+    // 0x07 BEL, 0x1B ESC, 0x7F DEL — all become spaces (then collapsed).
+    expect(sanitizeCommitMessage("a\x07b\x1Bc\x7Fd")).toBe("a b c d");
+  });
+
+  test("clamps to 4096 characters", () => {
+    const long = "x".repeat(5000);
+    const out = sanitizeCommitMessage(long);
+    expect(out.length).toBe(4096);
+  });
+
+  test("returns empty string for empty/whitespace-only input", () => {
+    expect(sanitizeCommitMessage("")).toBe("");
+    expect(sanitizeCommitMessage("   \n\r\t  ")).toBe("");
+  });
+
+  test("returns empty string for non-string input", () => {
+    expect(sanitizeCommitMessage(undefined as unknown as string)).toBe("");
+    expect(sanitizeCommitMessage(null as unknown as string)).toBe("");
+  });
+});
+
+// ── git commit message sanitization end-to-end (issue #270) ─────────────────
+
+describe("writeAssetToSource — commit message sanitization (issue #270)", () => {
+  test("ref.origin with embedded newline does not produce multi-line commit", async () => {
+    const { workDir } = initBareGitRepo();
+    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
+    const config: SourceConfigEntry = { type: "git", writable: true };
+
+    // Newline-laden origin: an attacker who controls a config entry could
+    // otherwise smuggle trailers into the commit subject.
+    const malignOrigin = "team\n\nCo-Authored-By: attacker <evil@example>";
+    await writeAssetToSource(source, config, { type: "memory", name: "alpha", origin: malignOrigin }, "body");
+
+    const fullLog = spawnSync("git", ["-C", workDir, "log", "--format=%B%x00", "-1"], { encoding: "utf8" });
+    // Trim the NUL terminator we used as a record separator. The remaining
+    // body must contain no embedded newlines (other than the trailing one git
+    // always appends to the message).
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL is the explicit record separator.
+    const messageBody = fullLog.stdout.replace(/\x00\s*$/, "").replace(/\n$/, "");
+    expect(messageBody.includes("\n")).toBe(false);
+    expect(messageBody.includes("Co-Authored-By: attacker")).toBe(true);
+    // The injected trailer is part of the *subject*, not a real trailer.
+    expect(messageBody.startsWith("Update team")).toBe(true);
+  });
+
+  test("ref.origin with NUL byte is sanitized (commit succeeds)", async () => {
+    const { workDir } = initBareGitRepo();
+    const source: WriteTargetSource = { kind: "git", name: "team", path: workDir };
+    const config: SourceConfigEntry = { type: "git", writable: true };
+
+    // A NUL byte in argv would make git reject the commit outright. We strip
+    // it so the commit succeeds with the rest of the origin intact.
+    const malignOrigin = "team\x00hidden";
+    await writeAssetToSource(source, config, { type: "memory", name: "beta", origin: malignOrigin }, "body");
+
+    const log = spawnSync("git", ["-C", workDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.includes("\x00")).toBe(false);
+    expect(log.stdout.trim()).toBe("Update teamhidden//memory:beta");
   });
 });
