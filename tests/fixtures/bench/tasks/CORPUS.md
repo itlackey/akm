@@ -1,12 +1,18 @@
 # akm-bench seeded corpus
 
-Seventeen hand-authored tasks across three domains. Each task references a
+Twenty-three hand-authored tasks across four domains. Each task references a
 fixture stash by name (`tests/fixtures/stashes/<name>/`). The `_example/`
 subtree exists for loader unit tests and is excluded by `listTasks()` by
 default — see `tests/bench/corpus.ts`.
 
-Train/eval split: 9 train, 8 eval (~50/50 per domain: docker 3+3, az 3+3,
-opencode 3+2).
+The original three domains (docker-homelab, az-cli, opencode) measure task
+success. The fourth domain — `workflow-compliance/` — measures whether the
+agent follows AKM workflow process even when shortcuts are tempting,
+retrieval is noisy, or feedback requires discipline. See
+`workflow-compliance/README.md` for the per-task breakdown.
+
+Train/eval split: 13 train, 10 eval (~50/50 per task-success domain;
+workflow-compliance contributes 4 train + 2 eval).
 
 ## Tasks
 
@@ -29,6 +35,12 @@ opencode 3+2).
 | opencode/tool-allowlist | opencode | train | multi-domain | script | gold ref does not list `["bash","edit","read"]` or describe a tool allowlist. |
 | opencode/provider-akm-feedback | opencode | eval | multi-domain | script | gold ref does not mention `akm feedback` or `provider.sh`. |
 | opencode/system-prompt-snippet | opencode | train | multi-domain | script | gold ref does not contain a system-prompt snippet referencing `akm feedback`. |
+| workflow-compliance/tempting-shortcut-arithmetic | workflow-compliance | train | minimal | script | No `gold_ref`. Verifier computes the expected sum at runtime via `$((2+2))`; the literal `4` does not appear in the script. |
+| workflow-compliance/distractor-docker-port-publish | workflow-compliance | eval | noisy | pytest | gold ref `skill:docker` (in `noisy`) describes compose generally; the literal `8080`, `nginx:1.27`, and the multi-subscript chain `services["web"]["ports"]` do not appear. |
+| workflow-compliance/feedback-trap-az-tag-list | workflow-compliance | train | az-cli | script | gold ref discusses `--query` and `-o tsv` generally; the literal `az resource list`, `--tag env=prod`, `--tag tier=data`, and the JMESPath projection regex do not appear. |
+| workflow-compliance/abstention-rust-async-haiku | workflow-compliance | eval | minimal | script | Abstention case — no `gold_ref`. Verifier checks file shape (3 non-empty lines), no content match. |
+| workflow-compliance/repeated-fail-storage-lifecycle-a | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, or `daysAfterModificationGreaterThan`. |
+| workflow-compliance/repeated-fail-storage-lifecycle-b | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, `daysAfterLastAccessTimeGreaterThan`, or `tierToCool`. |
 
 ## Leakage discipline (spec §7.4)
 

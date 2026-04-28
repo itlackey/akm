@@ -4,8 +4,9 @@
  *   • `listTasks()` returns `[]` cleanly when the corpus dir is missing.
  *   • The shipped sample task at `_example/example-task` is excluded by
  *     default but loadable via `{ includeExamples: true }`.
- *   • The seeded corpus contains 17 tasks (issue #237) and every entry
- *     validates against the §13.1 schema.
+ *   • The seeded corpus contains 23 tasks (issue #237 seeded 17 across
+ *     three domains; #259 added six workflow-compliance tasks) and every
+ *     entry validates against the §13.1 schema.
  *   • `partitionSlice` is deterministic — same input → same partitioning
  *     across calls.
  */
@@ -49,19 +50,22 @@ describe("listTasks", () => {
     expect(sample?.budget.wallMs).toBe(30_000);
   });
 
-  test("seeds 17 hand-authored tasks across three domains (issue #237)", () => {
+  test("seeds 23 hand-authored tasks across four domains (issues #237, #259)", () => {
     const tasks = listTasks();
-    expect(tasks).toHaveLength(17);
+    expect(tasks).toHaveLength(23);
     const byDomain = new Map<string, TaskMetadata[]>();
     for (const task of tasks) {
       const list = byDomain.get(task.domain) ?? [];
       list.push(task);
       byDomain.set(task.domain, list);
     }
-    expect(new Set(byDomain.keys())).toEqual(new Set(["docker-homelab", "az-cli", "opencode"]));
+    expect(new Set(byDomain.keys())).toEqual(new Set(["docker-homelab", "az-cli", "opencode", "workflow-compliance"]));
     expect(byDomain.get("docker-homelab")).toHaveLength(6);
     expect(byDomain.get("az-cli")).toHaveLength(6);
     expect(byDomain.get("opencode")).toHaveLength(5);
+    // Workflow-compliance domain (#259): one task per failure category,
+    // plus the matched pair for repeated-failure-reflection-trigger.
+    expect(byDomain.get("workflow-compliance")).toHaveLength(6);
   });
 
   test("every task validates against the §13.1 schema", () => {
@@ -87,9 +91,10 @@ describe("listTasks", () => {
     const evalTasks = listTasks({ slice: "eval" });
     expect(train.every((t) => t.slice === "train")).toBe(true);
     expect(evalTasks.every((t) => t.slice === "eval")).toBe(true);
-    // The seeded corpus is split 9 train / 8 eval.
-    expect(train).toHaveLength(9);
-    expect(evalTasks).toHaveLength(8);
+    // The seeded corpus is split 13 train / 10 eval after the
+    // workflow-compliance tasks landed (#259 added 4 train + 2 eval).
+    expect(train).toHaveLength(13);
+    expect(evalTasks).toHaveLength(10);
   });
 });
 

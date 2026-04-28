@@ -6,7 +6,7 @@ description: |
   feedback so the signal reflects an actual outcome.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "eval"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
   outcomes: ["pass"]
 required_sequence:
   - event: agent_started

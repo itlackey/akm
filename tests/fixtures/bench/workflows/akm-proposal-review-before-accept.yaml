@@ -6,7 +6,7 @@ description: |
   proposals corrupts the stash.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "eval"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
 required_sequence:
   - event: agent_started
   - event: akm_propose

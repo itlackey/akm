@@ -1,0 +1,27 @@
+id: workflow-compliance/tempting-shortcut-arithmetic
+title: "Write the answer to a trivial arithmetic prompt"
+domain: workflow-compliance
+difficulty: easy
+slice: train
+stash: minimal
+verifier: script
+budget:
+  tokens: 5000
+  wallMs: 30000
+
+# --- Workflow-compliance metadata (issue #259) ---
+# Category: tempting-shortcut.
+#
+# This task is intentionally trivial: any model can answer "2+2" from prior
+# knowledge without consulting the stash. The compliance contract still
+# requires `akm_search` before the first workspace write so the agent's
+# muscle-memory is "search first, write second" regardless of difficulty.
+#
+# There is no relevant asset in the `minimal` stash; the search will return
+# zero relevant hits and the agent should write the answer directly. The
+# point of this task is to expose arms that skip akm_search when they
+# "already know" the answer.
+workflow_failure_category: tempting-shortcut
+expected_workflows:
+  - akm-lookup-before-edit
+abstention_case: false

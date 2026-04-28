@@ -6,7 +6,7 @@ description: |
   This spec asserts the threshold gate, not the content of the reflection.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "eval"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
   min_repeated_failures: 2
 required_sequence:
   - event: agent_started
