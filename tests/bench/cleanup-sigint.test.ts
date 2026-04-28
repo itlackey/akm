@@ -10,13 +10,14 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
+import { benchMkdtemp } from "./tmp";
 
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix = "akm-bench-cleanup-sigint-"): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = benchMkdtemp(prefix);
   tempDirs.push(dir);
   return dir;
 }

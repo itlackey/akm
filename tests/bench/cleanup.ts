@@ -6,7 +6,8 @@
  * is wrapped in a try/finally so happy-path runs leave nothing behind. But
  * an external SIGINT/SIGTERM (operator hits Ctrl-C, CI cancels the job)
  * bypasses `finally` blocks entirely on Bun, leaving orphan tmp dirs under
- * `os.tmpdir()` that nothing reaps.
+ * the bench tmp root (#276 redirected this from the OS temp dir to
+ * `${AKM_CACHE_DIR}/bench/`) that nothing reaps.
  *
  * `registerCleanup(fn)` captures the cleanup intent on a process-wide
  * registry and returns a deregister function. The first `registerCleanup`
@@ -20,7 +21,18 @@
  *   1. Register the cleanup at the top of `try`.
  *   2. Deregister it in `finally` *before* running cleanup themselves so the
  *      handler doesn't double-fire.
+ *
+ * Garbage-collection of orphan dirs (#276): the FIRST `registerCleanup` call
+ * also sweeps `${AKM_CACHE_DIR}/bench/*` entries older than 6h. This catches
+ * orphans from prior crashed runs that bypassed `finally`. Subsequent calls
+ * never re-sweep — the GC is install-once.
  */
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+import { warn } from "../../src/core/warn";
+import { benchTmpRoot } from "./tmp";
 
 export type CleanupFn = () => void | Promise<void>;
 
@@ -51,9 +63,60 @@ export function registerCleanup(fn: CleanupFn): () => void {
   };
 }
 
+/** GC threshold for orphan bench tmp dirs: 6 hours in milliseconds. */
+const BENCH_TMP_GC_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Sweep `${AKM_CACHE_DIR}/bench/*` entries whose mtime is older than 6h.
+ * Best-effort: any individual rmSync failure is swallowed (warned in
+ * verbose mode) so a permission-bound entry does not kill the install.
+ *
+ * Idempotent because it only runs from the first-installer path in
+ * `installSignalHandlers` — gated by `registry.installed`.
+ */
+function gcOrphanBenchTmp(): void {
+  let root: string;
+  try {
+    root = benchTmpRoot();
+  } catch {
+    // If the cache dir cannot be resolved (e.g. HOME unset in a sandboxed
+    // CI shell), skip GC silently — the bench will fail later on its own.
+    return;
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    // Root does not yet exist or is unreadable — nothing to reap.
+    return;
+  }
+
+  const cutoff = Date.now() - BENCH_TMP_GC_MAX_AGE_MS;
+  for (const name of entries) {
+    const full = path.join(root, name);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(full);
+    } catch {
+      continue;
+    }
+    if (stat.mtimeMs > cutoff) continue;
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+    } catch (err) {
+      warn(`bench tmp GC: could not remove ${full}: ${(err as Error).message}`);
+    }
+  }
+}
+
 function installSignalHandlers(): void {
   if (registry.installed) return;
   registry.installed = true;
+  // First-installer GC sweep: reap orphan bench tmp dirs older than 6h.
+  // Subsequent registerCleanup() calls never re-trigger this — the
+  // `registry.installed` guard above ensures install-once semantics.
+  gcOrphanBenchTmp();
 
   const handler = (): void => {
     // Re-entrant signals are dropped — a second Ctrl-C will hit our

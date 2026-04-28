@@ -14,7 +14,6 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { runAttributeCli } from "./cli";
 import type { TaskMetadata } from "./corpus";
@@ -28,6 +27,7 @@ import {
   runMaskedCorpus,
 } from "./metrics";
 import { renderAttributionTable, type UtilityRunReport } from "./report";
+import { benchMkdtemp, benchTmpRoot } from "./tmp";
 
 function makeRun(overrides: Partial<RunResult> = {}): RunResult {
   return {
@@ -215,7 +215,7 @@ describe("renderAttributionTable", () => {
 
 describe("runMaskedCorpus", () => {
   function makeFixturesRoot(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-fixtures-"));
+    const root = benchMkdtemp("akm-bench-attr-fixtures-");
     // fixture A: two assets in one .stash.json
     const fixA = path.join(root, "fixtureA");
     fs.mkdirSync(path.join(fixA, "skills"), { recursive: true });
@@ -332,7 +332,7 @@ describe("runMaskedCorpus", () => {
     // The two stash dirs the runner saw should be different tmp dirs (not the source).
     expect(new Set(seenStashDirs).size).toBe(2);
     for (const d of seenStashDirs) {
-      expect(d.startsWith(os.tmpdir())).toBe(true);
+      expect(d.startsWith(benchTmpRoot())).toBe(true);
     }
     // Issue #251: the original `task.stash` field was NEVER mutated.
     expect(seenStashFieldUnchanged.every(Boolean)).toBe(true);
@@ -523,7 +523,7 @@ describe("runMaskedCorpus", () => {
     // hostile `..`-laden ref, the deletion target would be computed via
     // `path.join(fixturesRoot/fixtureA/skills/, "..", "..", "..", "sentinel")`
     // and the sentinel would disappear. The validation must block that.
-    const sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-sentinel-"));
+    const sentinelDir = benchMkdtemp("akm-bench-sentinel-");
     const sentinelFile = path.join(sentinelDir, "sentinel.txt");
     fs.writeFileSync(sentinelFile, "do-not-delete");
 
@@ -570,7 +570,7 @@ describe("runMaskedCorpus", () => {
 
   test("rejects absolute-path asset refs without escaping the tmp stash", async () => {
     const fixturesRoot = makeFixturesRoot();
-    const sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-sentinel-abs-"));
+    const sentinelDir = benchMkdtemp("akm-bench-sentinel-abs-");
     const sentinelFile = path.join(sentinelDir, "sentinel.txt");
     fs.writeFileSync(sentinelFile, "do-not-delete");
 
@@ -640,7 +640,7 @@ describe("runMaskedCorpus", () => {
 describe("bench attribute --top clamping", () => {
   test("clamps --top when fewer assets exist", async () => {
     // Write a §13.3 envelope to disk with only 2 perAsset rows.
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-cli-"));
+    const tmp = benchMkdtemp("akm-bench-attr-cli-");
     const fixturesRoot = path.join(tmp, "stashes");
     fs.mkdirSync(fixturesRoot, { recursive: true });
     // Two-asset fixture so the masked re-runs find their assets to remove.
@@ -739,7 +739,7 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
   // assert the resulting marginal_contribution = base - masked, with the
   // correct sign and magnitude per masked asset.
   function makeMarginalFixturesRoot(): string {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-marginal-fixtures-"));
+    const root = benchMkdtemp("akm-bench-attr-marginal-fixtures-");
     const fixDir = path.join(root, "fixtureMarginal");
     fs.mkdirSync(path.join(fixDir, "skills"), { recursive: true });
     fs.writeFileSync(
@@ -861,7 +861,7 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
 
 describe("bench attribute prefers persisted runs[] (#249)", () => {
   test("hydrates persisted runs[] and feeds them to runMaskedCorpus", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-runs-"));
+    const tmp = benchMkdtemp("akm-bench-attr-runs-");
     const fixturesRoot = path.join(tmp, "stashes");
     fs.mkdirSync(fixturesRoot, { recursive: true });
     const fixDir = path.join(fixturesRoot, "tiny");
@@ -1006,7 +1006,7 @@ describe("bench attribute prefers persisted runs[] (#249)", () => {
   });
 
   test("falls back to perAsset synthesis when runs[] is absent (legacy report)", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-attr-legacy-"));
+    const tmp = benchMkdtemp("akm-bench-attr-legacy-");
     const fixturesRoot = path.join(tmp, "stashes");
     fs.mkdirSync(fixturesRoot, { recursive: true });
     const fixDir = path.join(fixturesRoot, "tiny");

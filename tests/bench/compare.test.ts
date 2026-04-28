@@ -12,12 +12,12 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { runCompareCli } from "./cli";
 import { compareReports, type ParsedReportJson } from "./metrics";
 import { renderCompareMarkdown } from "./report";
+import { benchMkdtemp } from "./tmp";
 
 const MODEL = "anthropic/claude-opus-4-7";
 
@@ -396,7 +396,7 @@ describe("runCompareCli", () => {
     base?: object,
     current?: object,
   ): void {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-compare-"));
+    const tmp = benchMkdtemp("bench-compare-");
     try {
       const basePath = path.join(tmp, "base.json");
       const currentPath = path.join(tmp, "current.json");
@@ -451,7 +451,7 @@ describe("runCompareCli", () => {
   });
 
   test("malformed JSON in --base: exit 2", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-compare-bad-"));
+    const tmp = benchMkdtemp("bench-compare-bad-");
     try {
       const basePath = path.join(tmp, "base.json");
       const currentPath = path.join(tmp, "current.json");
@@ -584,7 +584,7 @@ describe("runCompareCli", () => {
   });
 
   test("missing --base file: exit 2", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-compare-missing-"));
+    const tmp = benchMkdtemp("bench-compare-missing-");
     try {
       const currentPath = path.join(tmp, "current.json");
       fs.writeFileSync(currentPath, JSON.stringify(makeReport()));

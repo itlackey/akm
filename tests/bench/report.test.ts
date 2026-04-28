@@ -4,8 +4,6 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { RunResult } from "./driver";
 import type { PerTaskMetrics } from "./metrics";
 import {
@@ -18,6 +16,7 @@ import {
   serializeRunForReport,
   type UtilityRunReport,
 } from "./report";
+import { benchMkdtemp } from "./tmp";
 
 const sample: ReportInput = {
   timestamp: "2026-04-27T12:00:00Z",
@@ -531,7 +530,7 @@ describe("git resolvers", () => {
   });
 
   test("falls back to 'unknown' outside a git repo", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-nogit-"));
+    const tmp = benchMkdtemp("bench-nogit-");
     try {
       expect(resolveGitBranch(tmp)).toBe("unknown");
       expect(resolveGitCommit(tmp)).toBe("unknown");

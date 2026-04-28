@@ -5,7 +5,6 @@
 import { describe, expect, test } from "bun:test";
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { EventEnvelope } from "../../src/core/events";
@@ -36,6 +35,7 @@ import {
   type PerTaskMetrics,
   type PerTaskTagEntry,
 } from "./metrics";
+import { benchMkdtemp } from "./tmp";
 import type { WorkflowCheckResult, WorkflowCheckStatus } from "./workflow-evaluator";
 
 function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
@@ -1117,7 +1117,7 @@ describe("computeLearningCurve", () => {
 
 describe("materialiseMaskedStash stashName containment (#271)", () => {
   function makeFixturesRoot(): { fixturesRoot: string; cleanup: () => void } {
-    const fixturesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-fixtures-"));
+    const fixturesRoot = benchMkdtemp("akm-bench-fixtures-");
     // Plant a sibling outside fixturesRoot that a traversal-shaped stashName
     // could otherwise reach. The MANIFEST.json existence check would pass
     // there if containment were not enforced.
@@ -1184,8 +1184,8 @@ describe("materialiseMaskedStash stashName containment (#271)", () => {
 
 describe("isPathContained symlink resolution (#271)", () => {
   test("rejects a symlink inside root that points outside (alignment with isWithin)", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-root-"));
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-outside-"));
+    const tmpRoot = benchMkdtemp("akm-bench-contain-root-");
+    const outside = benchMkdtemp("akm-bench-contain-outside-");
     try {
       // The actual file lives outside `tmpRoot`. Without realpath alignment,
       // path.resolve(tmpRoot, "escape") looks contained ('escape' is just a
@@ -1216,7 +1216,7 @@ describe("isPathContained symlink resolution (#271)", () => {
   });
 
   test("accepts a symlink inside root that points back inside root", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-inside-"));
+    const tmpRoot = benchMkdtemp("akm-bench-contain-inside-");
     try {
       const realFile = path.join(tmpRoot, "real");
       fs.writeFileSync(realFile, "ok");
@@ -1234,7 +1234,7 @@ describe("isPathContained symlink resolution (#271)", () => {
   });
 
   test("accepts a non-existent child path under root (covers safeRealpath ancestor walk)", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-pending-"));
+    const tmpRoot = benchMkdtemp("akm-bench-contain-pending-");
     try {
       const pending = path.join(tmpRoot, "not-yet-created", "child.md");
       expect(isPathContained(tmpRoot, pending)).toBe(true);
@@ -1244,8 +1244,8 @@ describe("isPathContained symlink resolution (#271)", () => {
   });
 
   test("rejects an absolute target outside root", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-abs-"));
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-contain-abs-outside-"));
+    const tmpRoot = benchMkdtemp("akm-bench-contain-abs-");
+    const outside = benchMkdtemp("akm-bench-contain-abs-outside-");
     try {
       expect(isPathContained(tmpRoot, path.join(outside, "x"))).toBe(false);
     } finally {
