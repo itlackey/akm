@@ -19,11 +19,14 @@ import {
   computeCorpusCoverage,
   computeCorpusDelta,
   computeDomainAggregates,
+  computeLearningCurve,
   computeNegativeTransfer,
   computeOutcomeAggregate,
   computePerTaskDelta,
   computeWorkflowReliability,
   domainOfTaskId,
+  type EpisodeRecord,
+  LEARNING_IMPROVEMENT_THRESHOLD,
   type PerTaskMetrics,
   type PerTaskTagEntry,
 } from "./metrics";
@@ -854,6 +857,20 @@ function wfCheck(overrides: Partial<WorkflowCheckResult> = {}): WorkflowCheckRes
   };
 }
 
+// ── Learning curve across episodes (issue #265) ────────────────────────────
+
+function ep(overrides: Partial<EpisodeRecord> & { episode_index: number; pass_rate: number }): EpisodeRecord {
+  return {
+    delta_from_previous_episode: 0,
+    cumulative_feedback_events: 0,
+    cumulative_proposals_created: 0,
+    cumulative_proposals_accepted: 0,
+    cumulative_lessons_created: 0,
+    lesson_reuse_rate: null,
+    ...overrides,
+  };
+}
+
 function statuses(workflowId: string, taskId: string, statusList: WorkflowCheckStatus[]): WorkflowCheckResult[] {
   return statusList.map((status, seed) => wfCheck({ workflowId, taskId, seed, status }));
 }
@@ -959,5 +976,133 @@ describe("computeWorkflowReliability (#258)", () => {
     const result = computeWorkflowReliability(checks);
     expect(result.byWorkflow["wf-1"].pass_at_k).toBe(1);
     expect(result.byWorkflow["wf-1"].pass_all_k).toBe(0);
+  });
+});
+describe("computeLearningCurve", () => {
+  test("monotonic improvement: positive slope, time_to_improvement at first crossing", () => {
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4, cumulative_feedback_events: 10 }),
+      ep({ episode_index: 1, pass_rate: 0.5, cumulative_feedback_events: 22 }),
+      ep({ episode_index: 2, pass_rate: 0.6, cumulative_feedback_events: 35 }),
+      ep({ episode_index: 3, pass_rate: 0.7, cumulative_feedback_events: 48 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.pass_rate_by_episode).toEqual([0.4, 0.5, 0.6, 0.7]);
+    // Slope is exactly 0.1 per episode for evenly spaced 0.1 increments.
+    expect(curve.learning_slope).toBeCloseTo(0.1, 6);
+    // Episode 1 first exceeds 0.4 + 0.05 = 0.45 (0.5 > 0.45).
+    expect(curve.time_to_improvement).toBe(1);
+    // Deltas: 0, 0.1, 0.1, 0.1
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+    expect(curve.episodes[1].delta_from_previous_episode).toBeCloseTo(0.1);
+    expect(curve.episodes[3].delta_from_previous_episode).toBeCloseTo(0.1);
+  });
+
+  test("no improvement: flat pass rate yields zero slope and null time_to_improvement", () => {
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.5 }),
+      ep({ episode_index: 1, pass_rate: 0.5 }),
+      ep({ episode_index: 2, pass_rate: 0.51 }),
+      ep({ episode_index: 3, pass_rate: 0.52 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.learning_slope).toBeCloseTo(0.0073, 3);
+    // Never crosses 0.5 + 0.05 = 0.55.
+    expect(curve.time_to_improvement).toBeNull();
+  });
+
+  test("regression mid-episode: slope still computed, time_to_improvement honours first qualifying episode", () => {
+    // Pass rate climbs, then regresses below baseline+threshold, then recovers.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4 }),
+      ep({ episode_index: 1, pass_rate: 0.6 }), // > 0.45 → first crossing
+      ep({ episode_index: 2, pass_rate: 0.42 }), // mid-episode regression
+      ep({ episode_index: 3, pass_rate: 0.55 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    // First crossing wins, even though episode 2 regresses below threshold.
+    expect(curve.time_to_improvement).toBe(1);
+    expect(curve.episodes[2].delta_from_previous_episode).toBeCloseTo(-0.18);
+    // Slope is computed across all four points; should be positive overall.
+    expect(curve.learning_slope).toBeGreaterThan(0);
+  });
+
+  test("single-episode degenerate input: slope is 0, time_to_improvement is null", () => {
+    const curve = computeLearningCurve([ep({ episode_index: 0, pass_rate: 0.7 })]);
+    expect(curve.pass_rate_by_episode).toEqual([0.7]);
+    expect(curve.learning_slope).toBe(0);
+    expect(curve.time_to_improvement).toBeNull();
+    // Episode 0's delta is always 0 by definition.
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+  });
+
+  test("empty input is degenerate: empty arrays, zero slope, null time", () => {
+    const curve = computeLearningCurve([]);
+    expect(curve.episodes).toEqual([]);
+    expect(curve.pass_rate_by_episode).toEqual([]);
+    expect(curve.learning_slope).toBe(0);
+    expect(curve.time_to_improvement).toBeNull();
+  });
+
+  test("unsorted input is sorted by episode_index before processing", () => {
+    const episodes = [
+      ep({ episode_index: 2, pass_rate: 0.6 }),
+      ep({ episode_index: 0, pass_rate: 0.4 }),
+      ep({ episode_index: 1, pass_rate: 0.5 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes.map((e) => e.episode_index)).toEqual([0, 1, 2]);
+    expect(curve.pass_rate_by_episode).toEqual([0.4, 0.5, 0.6]);
+    expect(curve.time_to_improvement).toBe(1);
+  });
+
+  test("delta_from_previous_episode is recomputed defensively from sorted pass_rates", () => {
+    // Caller stamps wrong deltas — function recomputes.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.4, delta_from_previous_episode: 99 }),
+      ep({ episode_index: 1, pass_rate: 0.6, delta_from_previous_episode: -42 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes[0].delta_from_previous_episode).toBe(0);
+    expect(curve.episodes[1].delta_from_previous_episode).toBeCloseTo(0.2);
+  });
+
+  test("threshold is strictly greater-than (exact baseline+threshold does not count)", () => {
+    // baseline = 0.5; threshold = 0.05 → must exceed 0.55.
+    const episodes = [
+      ep({ episode_index: 0, pass_rate: 0.5 }),
+      ep({ episode_index: 1, pass_rate: 0.5 + LEARNING_IMPROVEMENT_THRESHOLD }), // 0.55 exactly
+      ep({ episode_index: 2, pass_rate: 0.5 + LEARNING_IMPROVEMENT_THRESHOLD + 0.001 }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.time_to_improvement).toBe(2);
+  });
+
+  test("cumulative counters are echoed verbatim (caller-provided)", () => {
+    const episodes = [
+      ep({
+        episode_index: 0,
+        pass_rate: 0.4,
+        cumulative_feedback_events: 10,
+        cumulative_proposals_created: 0,
+        cumulative_proposals_accepted: 0,
+        cumulative_lessons_created: 0,
+        lesson_reuse_rate: null,
+      }),
+      ep({
+        episode_index: 1,
+        pass_rate: 0.55,
+        cumulative_feedback_events: 25,
+        cumulative_proposals_created: 4,
+        cumulative_proposals_accepted: 3,
+        cumulative_lessons_created: 3,
+        lesson_reuse_rate: 0.42,
+      }),
+    ];
+    const curve = computeLearningCurve(episodes);
+    expect(curve.episodes[1].cumulative_feedback_events).toBe(25);
+    expect(curve.episodes[1].cumulative_proposals_accepted).toBe(3);
+    expect(curve.episodes[1].cumulative_lessons_created).toBe(3);
+    expect(curve.episodes[1].lesson_reuse_rate).toBeCloseTo(0.42);
   });
 });
