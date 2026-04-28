@@ -48,7 +48,7 @@ import {
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
 import { computeTrajectory } from "./trajectory";
 
-export type Arm = "noakm" | "akm";
+export type Arm = "noakm" | "akm" | "synthetic";
 
 /**
  * Optional per-arm prompt-override seam (#267). The runner forwards the
@@ -111,6 +111,22 @@ export interface RunUtilityOptions {
    * prompt by returning undefined.
    */
   buildPrompt?: BuildPromptFn;
+  /**
+   * Track A synthetic-arm gate (#261). When `true`, the runner adds a third
+   * arm (`synthetic`) to every task in the corpus. The synthetic arm runs
+   * the same tasks/seeds/model/budgets/verifiers as `noakm`/`akm` but
+   * receives a scratch-notes prompt contract (the model creates and uses
+   * its own procedural notes rather than consulting an AKM stash). The
+   * synthetic-arm child env explicitly DELETES `AKM_STASH_DIR` so the
+   * operator's real stash never leaks in (recurrence guard for the #243
+   * fixup pattern).
+   *
+   * Default behaviour (when `false` or omitted) is byte-identical to the
+   * pre-#261 two-arm output: the report carries no `synthetic` keys, the
+   * markdown summary mentions no synthetic arm, and the runner skips the
+   * synthetic-arm orchestration entirely.
+   */
+  includeSynthetic?: boolean;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -178,8 +194,19 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
         })
       : () => {};
 
+    // #261: when `includeSynthetic` is set, splice the synthetic arm into the
+    // per-task arm iteration alongside whatever the caller asked for. We
+    // dedupe so a caller that already passes `synthetic` in `arms` does not
+    // see it run twice. Pre-#261 callers (no flag, no `synthetic` in arms)
+    // see the old loop verbatim — that's the byte-identical default contract.
+    const armsForTask: Arm[] = (() => {
+      if (!options.includeSynthetic) return options.arms;
+      if (options.arms.includes("synthetic")) return options.arms;
+      return [...options.arms, "synthetic"];
+    })();
+
     try {
-      for (const arm of options.arms) {
+      for (const arm of armsForTask) {
         const armRuns: RunResult[] = [];
         taskRuns.set(arm, armRuns);
         for (let seed = 0; seed < seedsPerArm; seed += 1) {
@@ -210,7 +237,17 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
           // Build the prompt-override (#267). The builder is invoked once
           // per (task, arm) — seeds share a prompt. `undefined` keeps the
           // driver's default prompt in play.
-          const promptOverride = options.buildPrompt?.(task, arm);
+          //
+          // #261: the synthetic arm has a scratch-notes prompt contract —
+          // the model is told no AKM stash is available and instructed to
+          // write/use its own procedural notes. When the caller does not
+          // supply a `buildPrompt` override for the synthetic arm we fall
+          // back to a built-in scratch-notes prompt so the contract is
+          // honoured by every utility-track caller, not just `runEvolve`.
+          let promptOverride = options.buildPrompt?.(task, arm);
+          if (promptOverride === undefined && arm === "synthetic") {
+            promptOverride = buildUtilitySyntheticPrompt(task.id);
+          }
           const run = await runOneIsolated({
             task,
             arm,
@@ -341,6 +378,30 @@ function seedWorkspace(taskDir: string, dest: string): void {
   copyDirRecursive(src, dest);
 }
 
+/**
+ * Default synthetic-arm prompt (#261). Used by Track A `runUtility` when the
+ * caller opts in via `includeSynthetic: true` and does not also supply a
+ * `buildPrompt` override for the synthetic arm.
+ *
+ * The prompt is a clear scratch-notes contract: the model is told no AKM
+ * stash is available and instructed to write/use its own procedural notes
+ * before solving the task. This mirrors the prompt shape used by Track B's
+ * `buildSyntheticPrompt(taskId)` but is intentionally duplicated here so
+ * Track A has no module-level dependency on `evolve.ts`.
+ *
+ * Exported for tests.
+ */
+export function buildUtilitySyntheticPrompt(taskId: string): string {
+  return [
+    `Task: ${taskId}`,
+    "Arm: synthetic (Bring Your Own Skills)",
+    "No akm stash is available; AKM_STASH_DIR is intentionally absent. Before solving",
+    "the task, write a short scratchpad of the skills and steps you intend to use,",
+    "then proceed. Cite the scratchpad in your trace so the verifier can attribute",
+    "the approach to your own reasoning rather than retrieved guidance.",
+  ].join("\n");
+}
+
 function copyDirRecursive(src: string, dest: string): void {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -366,13 +427,20 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const tasks: UtilityReportTaskEntry[] = [];
   const noakmPerTask: Record<string, PerTaskMetrics> = {};
   const akmPerTask: Record<string, PerTaskMetrics> = {};
+  const synthPerTask: Record<string, PerTaskMetrics> = {};
   const akmRunsAll: RunResult[] = [];
   const allRuns: RunResult[] = [];
+  const includeSynth = args.options.includeSynthetic === true;
 
   for (const task of args.options.tasks) {
     const taskRuns = args.grouped.get(task.id);
     const noakmRuns = taskRuns?.get("noakm") ?? [];
     const akmRuns = taskRuns?.get("akm") ?? [];
+    // #261: synthetic-arm runs are only consulted when the caller opted in.
+    // A missing arm is NOT a zero-pass arm — we leave `synthPerTask[task.id]`
+    // unset rather than defaulting to a zeroed PerTaskMetrics so downstream
+    // consumers can distinguish "arm not run" from "arm ran with 0 passes".
+    const synthRuns: RunResult[] = includeSynth ? (taskRuns?.get("synthetic") ?? []) : [];
 
     const noakmMetrics = aggregatePerTask(noakmRuns);
     const akmMetrics = aggregatePerTask(akmRuns);
@@ -380,17 +448,36 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
 
     noakmPerTask[task.id] = noakmMetrics;
     akmPerTask[task.id] = akmMetrics;
+    if (includeSynth) {
+      synthPerTask[task.id] = aggregatePerTask(synthRuns);
+    }
     akmRunsAll.push(...akmRuns);
-    // Preserve arm order (noakm first, then akm) so the persisted runs[]
-    // array is deterministic across reruns. #249.
-    allRuns.push(...noakmRuns, ...akmRuns);
+    // Preserve arm order (noakm, synthetic when enabled, then akm) so the
+    // persisted runs[] array is deterministic across reruns. #249. The
+    // synthetic block is omitted entirely when includeSynth is false so the
+    // pre-#261 envelope stays byte-identical.
+    if (includeSynth) {
+      allRuns.push(...noakmRuns, ...synthRuns, ...akmRuns);
+    } else {
+      allRuns.push(...noakmRuns, ...akmRuns);
+    }
 
-    tasks.push({ id: task.id, noakm: noakmMetrics, akm: akmMetrics, delta });
+    tasks.push({
+      id: task.id,
+      noakm: noakmMetrics,
+      akm: akmMetrics,
+      delta,
+      ...(includeSynth ? { synthetic: aggregatePerTask(synthRuns) } : {}),
+    });
   }
 
   const aggregateNoakm = aggregateCorpus(noakmPerTask);
   const aggregateAkm = aggregateCorpus(akmPerTask);
   const aggregateDelta = computeCorpusDelta(aggregateNoakm, aggregateAkm);
+  // #261: synthetic-arm aggregate is built ONLY when the caller opted in.
+  // We compute it once here so the report renderer can stamp `arms.synthetic`
+  // and `akm_over_synthetic_lift` without recomputing.
+  const aggregateSynth = includeSynth ? aggregateCorpus(synthPerTask) : undefined;
   const trajectoryAkm = aggregateTrajectory(akmRunsAll);
 
   // Failure-mode aggregate (§6.6). Walks every akm-arm run; runs that are
@@ -463,6 +550,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     aggregateNoakm,
     aggregateAkm,
     aggregateDelta,
+    ...(aggregateSynth ? { aggregateSynth } : {}),
     trajectoryAkm,
     failureModes,
     tasks,

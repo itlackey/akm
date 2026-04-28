@@ -19,6 +19,7 @@ import {
   type RunOptions,
   readRunEvents,
   runOne,
+  stripAkmStashDir,
 } from "./driver";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
@@ -227,6 +228,49 @@ describe("runOne", () => {
       }
     }
   });
+
+  // ── #261: synthetic-arm AKM_STASH_DIR isolation ─────────────────────────────
+
+  test("synthetic arm: child env never carries AKM_STASH_DIR (recurrence guard for #243 fixup)", async () => {
+    // CRITICAL: synthetic-arm runs MUST NOT carry AKM_STASH_DIR. Without
+    // this guard the operator's real AKM_STASH_DIR leaks in via parent-env
+    // inheritance — exactly the failure mode the #243 fixup chased. We
+    // exercise both the explicit-stashDir case (bad caller passes one
+    // anyway) and the no-stashDir case.
+    const operatorStash = "/tmp/operator-stash-must-never-leak-into-synthetic";
+    const prior = process.env.AKM_STASH_DIR;
+    process.env.AKM_STASH_DIR = operatorStash;
+    try {
+      // 1) Synthetic arm with NO stashDir option: AKM_STASH_DIR must be
+      //    absent in the child env.
+      const { spawn, invocations } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      await runOne({
+        ...baseOptions,
+        workspace,
+        arm: "synthetic",
+        spawn,
+      });
+      const childEnv1 = invocations[0]?.env ?? {};
+      expect(childEnv1.AKM_STASH_DIR).toBeUndefined();
+      expect(childEnv1.AKM_STASH_DIR).not.toBe(operatorStash);
+
+      // 2) Even when a buggy caller forwards a stashDir to the synthetic
+      //    arm, the driver MUST refuse to wire it into the child env.
+      const { spawn: spawn2, invocations: invocations2 } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      await runOne({
+        ...baseOptions,
+        workspace,
+        arm: "synthetic",
+        stashDir: "/tmp/buggy-caller-stash",
+        spawn: spawn2,
+      });
+      const childEnv2 = invocations2[0]?.env ?? {};
+      expect(childEnv2.AKM_STASH_DIR).toBeUndefined();
+    } finally {
+      if (prior === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = prior;
+    }
+  });
 });
 
 describe("driver helpers", () => {
@@ -240,6 +284,21 @@ describe("driver helpers", () => {
     } finally {
       fs.rmSync(dirs.root, { recursive: true, force: true });
     }
+  });
+
+  test("stripAkmStashDir deletes AKM_STASH_DIR in place (#261 synthetic-arm guard)", () => {
+    const env: Record<string, string | undefined> = {
+      AKM_STASH_DIR: "/tmp/operator-stash",
+      XDG_CACHE_HOME: "/tmp/cache",
+    };
+    const result = stripAkmStashDir(env);
+    expect(result).toBe(env); // mutates in place + returns same ref
+    expect(env.AKM_STASH_DIR).toBeUndefined();
+    expect(env.XDG_CACHE_HOME).toBe("/tmp/cache"); // siblings untouched
+    // No-op on env without AKM_STASH_DIR.
+    const env2: Record<string, string | undefined> = { XDG_CACHE_HOME: "/tmp/cache" };
+    stripAkmStashDir(env2);
+    expect(env2).toEqual({ XDG_CACHE_HOME: "/tmp/cache" });
   });
 
   test("buildIsolatedEnv pins the four isolation keys plus model", () => {
