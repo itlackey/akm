@@ -22,11 +22,11 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
+import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
 /** Run option envelope (spec §5.2). */
@@ -191,7 +191,7 @@ export interface IsolationDirs {
 }
 
 export function createIsolationDirs(stashDir?: string): IsolationDirs {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-run-"));
+  const root = benchMkdtemp("akm-bench-run-");
   const cacheHome = path.join(root, "cache");
   const configHome = path.join(root, "config");
   const opencodeConfig = path.join(root, "opencode-config");

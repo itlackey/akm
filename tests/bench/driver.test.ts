@@ -6,7 +6,6 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
@@ -23,6 +22,7 @@ import {
   runOne,
   stripAkmStashDir,
 } from "./driver";
+import { benchMkdtemp } from "./tmp";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
@@ -105,7 +105,7 @@ describe("runOne", () => {
   let workspace: string;
 
   beforeAll(() => {
-    workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bench-driver-test-"));
+    workspace = benchMkdtemp("bench-driver-test-");
   });
 
   afterAll(() => {
@@ -427,7 +427,7 @@ describe("driver helpers", () => {
   });
 
   test("readRunEvents returns [] when events.jsonl is missing and parses lines when present", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-events-"));
+    const tmp = benchMkdtemp("bench-events-");
     try {
       expect(readRunEvents(tmp)).toEqual([]);
       const akm = path.join(tmp, "akm");
@@ -445,7 +445,7 @@ describe("driver helpers", () => {
   });
 
   test("readRunEvents caps reads at EVENTS_READ_CAP_BYTES and records a warning when exceeded", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bench-events-cap-"));
+    const tmp = benchMkdtemp("bench-events-cap-");
     try {
       const akm = path.join(tmp, "akm");
       fs.mkdirSync(akm, { recursive: true });

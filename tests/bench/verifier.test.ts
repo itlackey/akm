@@ -5,16 +5,16 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
+import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
 let scratch: string;
 
 beforeAll(() => {
-  scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bench-verifier-test-"));
+  scratch = benchMkdtemp("bench-verifier-test-");
 });
 
 afterAll(() => {

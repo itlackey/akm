@@ -16,7 +16,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { safeRealpath } from "../../src/core/common";
@@ -24,6 +23,7 @@ import { MEMORY_ABILITY_VALUES, type MemoryAbility, type TaskMetadata } from "./
 import type { RunResult } from "./driver";
 import type { RunRecordSerialized, UtilityRunReport } from "./report";
 import { serializeRunForReport } from "./report";
+import { benchMkdtemp } from "./tmp";
 import type { WorkflowCheckResult, WorkflowCheckStatus } from "./workflow-evaluator";
 import { normalizeRunToTrace, type WorkflowTraceEvent, type WorkflowTraceEventType } from "./workflow-trace";
 
@@ -1021,7 +1021,7 @@ export function materialiseMaskedStash(fixturesRoot: string, stashName: string, 
   if (colonIdx < 0) {
     // Malformed ref: still produce a tmp copy with no edits so the caller's
     // re-run sees the unmodified fixture.
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-masked-${stashName}-`));
+    const tmpRoot = benchMkdtemp(`akm-bench-masked-${stashName}-`);
     copyDirRecursive(sourceDir, tmpRoot);
     return tmpRoot;
   }
@@ -1038,7 +1038,7 @@ export function materialiseMaskedStash(fixturesRoot: string, stashName: string, 
   // each candidate. Mirrors src/core/asset-ref.ts validateName().
   if (!isSafeAssetNameSegment(name)) return null;
 
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-masked-${stashName}-`));
+  const tmpRoot = benchMkdtemp(`akm-bench-masked-${stashName}-`);
   copyDirRecursive(sourceDir, tmpRoot);
 
   // Walk every .stash.json under the tmp root and edit in place.

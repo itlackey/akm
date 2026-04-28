@@ -7,10 +7,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { benchMkdtemp } from "./tmp";
 import {
   KNOWN_EVENT_NAMES,
   loadAllWorkflowSpecs,
@@ -35,7 +35,7 @@ const REQUIRED_SPECS = [
 let scratch: string;
 
 beforeEach(() => {
-  scratch = mkdtempSync(path.join(tmpdir(), "akm-workflow-spec-"));
+  scratch = benchMkdtemp("akm-workflow-spec-");
 });
 
 afterEach(() => {

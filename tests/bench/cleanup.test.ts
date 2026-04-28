@@ -9,7 +9,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import { _drainForTest, _registeredCountForTest, _resetForTest, registerCleanup } from "./cleanup";
+import { benchMkdtemp, benchTmpRoot } from "./tmp";
 
 beforeEach(() => {
   _resetForTest();
@@ -127,6 +129,44 @@ describe("registerCleanup (#267)", () => {
     expect(ran.length).toBe(2);
     expect(ran).toContain("rmsync(workspace)");
     expect(ran).toContain("rmsync(stash)");
+  });
+
+  test("first registerCleanup sweeps bench tmp entries older than 6h (#276)", () => {
+    // Ensure root exists before populating.
+    benchTmpRoot();
+    // Stale entry: mtime backdated 7h.
+    const stale = benchMkdtemp("akm-bench-gc-stale-");
+    const sevenHoursAgo = (Date.now() - 7 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(stale, sevenHoursAgo, sevenHoursAgo);
+    // Fresh entry: untouched mtime (now).
+    const fresh = benchMkdtemp("akm-bench-gc-fresh-");
+
+    expect(fs.existsSync(stale)).toBe(true);
+    expect(fs.existsSync(fresh)).toBe(true);
+
+    // Trigger first-installer GC.
+    registerCleanup(() => {});
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(fresh)).toBe(true);
+
+    // Cleanup the fresh entry ourselves.
+    fs.rmSync(fresh, { recursive: true, force: true });
+  });
+
+  test("GC is idempotent — second registerCleanup does not re-sweep", () => {
+    // Install once with a sentinel registered.
+    registerCleanup(() => {});
+    // Now create a stale entry AFTER install. Second registerCleanup must
+    // NOT sweep it because the GC only runs on first install.
+    const stale = benchMkdtemp("akm-bench-gc-postinstall-");
+    const sevenHoursAgo = (Date.now() - 7 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(stale, sevenHoursAgo, sevenHoursAgo);
+
+    registerCleanup(() => {});
+
+    expect(fs.existsSync(stale)).toBe(true);
+    fs.rmSync(stale, { recursive: true, force: true });
   });
 
   test("re-entrant signals during running cleanup are dropped", async () => {

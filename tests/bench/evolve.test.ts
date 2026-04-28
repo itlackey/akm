@@ -13,7 +13,6 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
@@ -21,6 +20,7 @@ import type { TaskMetadata } from "./corpus";
 import { type AkmCliFn, type AkmCliResult, buildSyntheticPrompt, type FeedbackLogEntry, runEvolve } from "./evolve";
 import { computeLongitudinalMetrics, computeProposalQualityMetrics, type ProposalLogEntry } from "./metrics";
 import type { UtilityRunReport } from "./report";
+import { benchMkdtemp } from "./tmp";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
@@ -122,7 +122,7 @@ describe("runEvolve — Phase 1 feedback", () => {
   let taskDir: string;
 
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-test-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-test-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -172,7 +172,7 @@ describe("runEvolve — Phase 2 threshold + proposal lifecycle", () => {
   let workspaceRoot: string;
   let taskDir: string;
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-phase2-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-phase2-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -256,7 +256,7 @@ describe("runEvolve — Phase 3 three-arm execution", () => {
   let workspaceRoot: string;
   let taskDir: string;
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-phase3-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-phase3-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -355,7 +355,7 @@ describe("runEvolve — leakage prevention (§7.4)", () => {
   let workspaceRoot: string;
   let taskDir: string;
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-leak-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-leak-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -435,7 +435,7 @@ describe("runEvolve — Phase 1 fault tolerance", () => {
   let workspaceRoot: string;
   let taskDir: string;
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-faulty-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-faulty-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -486,7 +486,7 @@ describe("runEvolve — operator stash sandboxing", () => {
   let workspaceRoot: string;
   let taskDir: string;
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-sandbox-"));
+    workspaceRoot = benchMkdtemp("bench-evolve-sandbox-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
