@@ -11,6 +11,37 @@
 import { fetchWithTimeout } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
 
+/** Maximum length of an LLM error response body included in thrown errors. */
+const ERROR_BODY_MAX_LEN = 200;
+
+/**
+ * Redact credential-shaped substrings from an upstream error body before
+ * including it in a thrown Error. The body is also trimmed to a fixed length
+ * so that a verbose provider response cannot leak large amounts of context.
+ *
+ * Targets:
+ *  - `Bearer <token>` headers echoed back by the provider
+ *  - `sk-…` / `sk_…` style API keys (OpenAI / Anthropic-shaped)
+ *  - `key-…` / `key_…` shorthand keys
+ *  - `"api_key": "…"` / `"apiKey": "…"` JSON fields
+ */
+export function redactErrorBody(input: string): string {
+  if (!input) return "";
+  let out = input
+    // Bearer tokens (case-insensitive)
+    .replace(/\bBearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]")
+    // sk-/sk_ style keys
+    .replace(/\bsk[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
+    // key-/key_ shorthand keys
+    .replace(/\bkey[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
+    // JSON-style "api_key": "...", "apiKey": "...", "api-key": "..."
+    .replace(/("(?:api[_-]?key|apiKey|authorization|token)"\s*:\s*")([^"]*)(")/gi, "$1[REDACTED]$3");
+  if (out.length > ERROR_BODY_MAX_LEN) {
+    out = `${out.slice(0, ERROR_BODY_MAX_LEN)}…`;
+  }
+  return out;
+}
+
 // ── OpenAI-compatible chat completions ──────────────────────────────────────
 
 export interface ChatMessage {
@@ -51,8 +82,9 @@ export async function chatCompletion(
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`LLM request failed (${response.status}): ${body}`);
+    const rawBody = await response.text().catch(() => "");
+    const safeBody = redactErrorBody(rawBody);
+    throw new Error(`LLM request failed (${response.status}) ${config.endpoint}: ${safeBody}`);
   }
 
   const json = (await response.json()) as ChatCompletionResponse;
