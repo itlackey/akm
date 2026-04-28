@@ -221,16 +221,16 @@ describe("compareReports — fixture-hash warnings", () => {
     expect(result.warnings.some((w) => w.includes("current") && w.includes("fixtureContentHash"))).toBe(true);
   });
 
-  test("missing on both: two warnings, still ok", () => {
+  test("missing on both: two fixture warnings (#250 also adds two corpus warnings)", () => {
     const base = makeReport();
     const current = makeReport();
     const result = compareReports(base, current);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.warnings.length).toBe(2);
+    expect(result.warnings.filter((w) => w.includes("fixtureContentHash")).length).toBe(2);
   });
 
-  test("matching hash: no warnings", () => {
+  test("matching fixture hash: no fixture warnings", () => {
     const base = makeReport({
       corpus: { domains: 2, tasks: 2, slice: "all", seedsPerArm: 5, fixtureContentHash: "abc123" },
     });
@@ -240,7 +240,112 @@ describe("compareReports — fixture-hash warnings", () => {
     const result = compareReports(base, current);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(result.warnings.filter((w) => w.includes("fixtureContentHash")).length).toBe(0);
+  });
+});
+
+describe("compareReports — corpus identity (#250)", () => {
+  function withCorpusIdentity(taskCorpusHash: string, selectedTaskIds: string[], fixtureContentHash?: string) {
+    return makeReport({
+      corpus: {
+        domains: 2,
+        tasks: selectedTaskIds.length,
+        slice: "all",
+        seedsPerArm: 5,
+        taskCorpusHash,
+        selectedTaskIds,
+        ...(fixtureContentHash ? { fixtureContentHash } : {}),
+      },
+    });
+  }
+
+  test("matching corpus + fixture hashes: ok=true, no warnings", () => {
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-a");
+    const current = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-a");
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
     expect(result.warnings.length).toBe(0);
+  });
+
+  test("taskCorpusHash mismatch: refuses by default", () => {
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"]);
+    const current = withCorpusIdentity("tc-b", ["a/one", "b/two"]);
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("corpus_mismatch");
+    expect(result.message).toContain("tc-a");
+    expect(result.message).toContain("tc-b");
+    expect(result.baseTaskCorpusHash).toBe("tc-a");
+    expect(result.currentTaskCorpusHash).toBe("tc-b");
+  });
+
+  test("selectedTaskIds differ but hashes both present and matching: still ok", () => {
+    // Defensive: in practice two reports with identical taskCorpusHash should
+    // also share IDs; but if a producer ever forgets to align them, the hash
+    // dominates so we don't false-positive.
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"]);
+    const current = withCorpusIdentity("tc-a", ["a/one", "b/two", "c/three"]);
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(true);
+  });
+
+  test("allowCorpusMismatch converts refusal to warning", () => {
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"]);
+    const current = withCorpusIdentity("tc-b", ["a/one", "b/two"]);
+    const result = compareReports(base, current, { allowCorpusMismatch: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings.some((w) => w.includes("--allow-corpus-mismatch"))).toBe(true);
+  });
+
+  test("legacy report (missing taskCorpusHash) gets a warning, not refusal", () => {
+    const base = makeReport(); // no taskCorpusHash
+    const current = withCorpusIdentity("tc-a", ["a/one", "b/two"]);
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings.some((w) => w.includes("base") && w.includes("taskCorpusHash"))).toBe(true);
+  });
+
+  test("legacy on both sides: two warnings, still ok", () => {
+    const base = makeReport();
+    const current = makeReport();
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 2 missing taskCorpusHash + 2 missing fixtureContentHash warnings.
+    expect(result.warnings.filter((w) => w.includes("taskCorpusHash")).length).toBe(2);
+    expect(result.warnings.filter((w) => w.includes("fixtureContentHash")).length).toBe(2);
+  });
+
+  test("fixture-content hash mismatch: refuses by default (existing behaviour)", () => {
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-a");
+    const current = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-b");
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("hash_mismatch");
+  });
+
+  test("allowFixtureMismatch converts fixture-hash refusal to warning", () => {
+    const base = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-a");
+    const current = withCorpusIdentity("tc-a", ["a/one", "b/two"], "fh-b");
+    const result = compareReports(base, current, { allowFixtureMismatch: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings.some((w) => w.includes("--allow-fixture-mismatch"))).toBe(true);
+  });
+
+  test("corpus mismatch is checked before fixture mismatch (refusal precedence)", () => {
+    // When both differ and neither flag is set, the corpus refusal wins.
+    const base = withCorpusIdentity("tc-a", ["a/one"], "fh-a");
+    const current = withCorpusIdentity("tc-b", ["a/one"], "fh-b");
+    const result = compareReports(base, current);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("corpus_mismatch");
   });
 });
 
@@ -391,6 +496,90 @@ describe("runCompareCli", () => {
       },
       baseWithRuns,
       baseWithRuns,
+    );
+  });
+
+  test("corpus mismatch: exit 1 (#250)", () => {
+    withTmpFiles(
+      ({ basePath, currentPath }) => {
+        const result = runCompareCli({ basePath, currentPath, json: false });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("task corpora");
+      },
+      makeReport({
+        corpus: {
+          domains: 2,
+          tasks: 2,
+          slice: "all",
+          seedsPerArm: 5,
+          taskCorpusHash: "tc1",
+          selectedTaskIds: ["a/one", "b/two"],
+        },
+      }),
+      makeReport({
+        corpus: {
+          domains: 2,
+          tasks: 2,
+          slice: "all",
+          seedsPerArm: 5,
+          taskCorpusHash: "tc2",
+          selectedTaskIds: ["a/one", "b/two"],
+        },
+      }),
+    );
+  });
+
+  test("corpus mismatch with --allow-corpus-mismatch: exit 0 + warning (#250)", () => {
+    withTmpFiles(
+      ({ basePath, currentPath }) => {
+        const result = runCompareCli({
+          basePath,
+          currentPath,
+          json: false,
+          allowCorpusMismatch: true,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toContain("warning");
+        expect(result.stderr).toContain("task corpus");
+      },
+      makeReport({
+        corpus: {
+          domains: 2,
+          tasks: 2,
+          slice: "all",
+          seedsPerArm: 5,
+          taskCorpusHash: "tc1",
+          selectedTaskIds: ["a/one", "b/two"],
+        },
+      }),
+      makeReport({
+        corpus: {
+          domains: 2,
+          tasks: 2,
+          slice: "all",
+          seedsPerArm: 5,
+          taskCorpusHash: "tc2",
+          selectedTaskIds: ["a/one", "b/two"],
+        },
+      }),
+    );
+  });
+
+  test("fixture mismatch with --allow-fixture-mismatch: exit 0 + warning (#250)", () => {
+    withTmpFiles(
+      ({ basePath, currentPath }) => {
+        const result = runCompareCli({
+          basePath,
+          currentPath,
+          json: false,
+          allowFixtureMismatch: true,
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toContain("warning");
+        expect(result.stderr).toContain("fixture-content");
+      },
+      makeReport({ corpus: { domains: 2, tasks: 2, slice: "all", seedsPerArm: 5, fixtureContentHash: "h1" } }),
+      makeReport({ corpus: { domains: 2, tasks: 2, slice: "all", seedsPerArm: 5, fixtureContentHash: "h2" } }),
     );
   });
 

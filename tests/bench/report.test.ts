@@ -109,6 +109,36 @@ const utilSample: UtilityRunReport = {
   warnings: [],
 };
 
+describe("renderUtilityReport JSON corpus identity (#250)", () => {
+  test("emits selectedTaskIds, taskCorpusHash, fixtures, fixtureContentHash when present", () => {
+    const stamped: UtilityRunReport = {
+      ...utilSample,
+      corpus: {
+        ...utilSample.corpus,
+        selectedTaskIds: ["domain-a/task-1", "domain-b/task-2"],
+        taskCorpusHash: "deadbeef".repeat(8),
+        fixtures: { "fixture-a": "aa".repeat(32), "fixture-b": "bb".repeat(32) },
+        fixtureContentHash: "ff".repeat(32),
+      },
+    };
+    const { json } = renderUtilityReport(stamped);
+    const corpus = (json as { corpus: Record<string, unknown> }).corpus;
+    expect(corpus.selectedTaskIds).toEqual(["domain-a/task-1", "domain-b/task-2"]);
+    expect(corpus.taskCorpusHash).toBe("deadbeef".repeat(8));
+    expect(corpus.fixtureContentHash).toBe("ff".repeat(32));
+    expect(corpus.fixtures).toEqual({ "fixture-a": "aa".repeat(32), "fixture-b": "bb".repeat(32) });
+  });
+
+  test("legacy reports without identity stamps still render (#250 backward compat)", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const corpus = (json as { corpus: Record<string, unknown> }).corpus;
+    // The four #250 keys are absent on legacy inputs and the renderer does
+    // not synthesise placeholders.
+    expect(corpus.taskCorpusHash).toBeUndefined();
+    expect(corpus.fixtureContentHash).toBeUndefined();
+  });
+});
+
 describe("renderUtilityReport JSON", () => {
   test("conforms to the §13.3 shape", () => {
     const { json } = renderUtilityReport(utilSample);

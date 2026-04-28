@@ -71,11 +71,17 @@ evolve flags:
   --json                   suppress the markdown summary on stderr.
 
 compare flags:
-  --base <path>            path to baseline UtilityRunReport JSON file. REQUIRED.
-  --current <path>         path to current  UtilityRunReport JSON file. REQUIRED.
-  --json                   emit the structured CompareResult JSON to stdout instead
-                           of a markdown diff.
-  Exit codes: 0 on successful diff, 1 on refusal (model/hash/schema/track mismatch),
+  --base <path>                 path to baseline UtilityRunReport JSON file. REQUIRED.
+  --current <path>              path to current  UtilityRunReport JSON file. REQUIRED.
+  --json                        emit the structured CompareResult JSON to stdout instead
+                                of a markdown diff.
+  --allow-corpus-mismatch       proceed even when the two reports disagree on the
+                                selected task IDs / taskCorpusHash. The diff is
+                                rendered with a warning instead of being refused.
+  --allow-fixture-mismatch      proceed even when the two reports disagree on the
+                                fixtureContentHash. Renders a warning instead of
+                                refusing.
+  Exit codes: 0 on successful diff, 1 on refusal (model/corpus/fixture-hash/schema/track mismatch),
               2 on input errors (missing files, malformed JSON, unknown flags).
 
 attribute flags:
@@ -197,6 +203,10 @@ export interface CompareCliOptions {
   basePath: string;
   currentPath: string;
   json: boolean;
+  /** #250 — accept mismatched task corpora and emit a warning instead. */
+  allowCorpusMismatch?: boolean;
+  /** #250 — accept mismatched fixture-content hashes and emit a warning instead. */
+  allowFixtureMismatch?: boolean;
 }
 
 /**
@@ -251,7 +261,10 @@ export function runCompareCli(options: CompareCliOptions): UtilityCliResult {
     };
   }
 
-  const result = compareReports(base, current);
+  const result = compareReports(base, current, {
+    ...(options.allowCorpusMismatch ? { allowCorpusMismatch: true } : {}),
+    ...(options.allowFixtureMismatch ? { allowFixtureMismatch: true } : {}),
+  });
   const stdout = options.json ? `${JSON.stringify(result, null, 2)}\n` : `${renderCompareMarkdown(result)}\n`;
   let stderr = "";
   if (!result.ok) {
@@ -747,6 +760,8 @@ async function main(argv: string[]): Promise<number> {
         basePath,
         currentPath,
         json: parsed.bool.has("json"),
+        allowCorpusMismatch: parsed.bool.has("allow-corpus-mismatch"),
+        allowFixtureMismatch: parsed.bool.has("allow-fixture-mismatch"),
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);

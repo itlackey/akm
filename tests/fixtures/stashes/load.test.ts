@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { fixtureContentHash, listFixtures, loadFixtureStash } from "./load";
+import { computeFixtureContentHash, fixtureContentHash, listFixtures, loadFixtureStash } from "./load";
 
 describe("loadFixtureStash", () => {
   test("materialises the minimal fixture and cleanup removes it", () => {
@@ -81,6 +81,14 @@ describe("fixtureContentHash", () => {
     const b = fixtureContentHash("minimal");
     expect(a).toBe(b);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("computeFixtureContentHash is the same implementation (#250)", () => {
+    // Critical addendum: there must be exactly one fixture-content hash
+    // function. Two diverging hash implementations for the same content
+    // would be a bug.
+    expect(computeFixtureContentHash).toBe(fixtureContentHash);
+    expect(computeFixtureContentHash("minimal")).toBe(fixtureContentHash("minimal"));
   });
 });
 
