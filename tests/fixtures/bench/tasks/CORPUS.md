@@ -42,6 +42,55 @@ workflow-compliance contributes 4 train + 2 eval).
 | workflow-compliance/repeated-fail-storage-lifecycle-a | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, or `daysAfterModificationGreaterThan`. |
 | workflow-compliance/repeated-fail-storage-lifecycle-b | workflow-compliance | train | az-cli | script | gold ref does not contain `management-policy`, `blockBlob`, `daysAfterLastAccessTimeGreaterThan`, or `tierToCool`. |
 
+## Memory-operation tags (#262)
+
+Every real corpus task carries at minimum a `memory_ability` and `task_family`
+tag. Both are OPTIONAL in the schema — the loader leaves them undefined for
+legacy tasks and `aggregateBy*` helpers skip rows where the keying tag is
+missing.
+
+`memory_ability` (closed set, see `tests/bench/corpus.ts`):
+
+| value | what the task exercises |
+|-------|--------------------------|
+| `procedural_lookup` | find and apply a single procedural skill |
+| `multi_asset_composition` | combine guidance from two+ assets |
+| `temporal_update` | apply newer guidance over older versions |
+| `conflict_resolution` | choose between conflicting assets |
+| `abstention` | recognise no relevant asset exists and decline to load |
+| `noisy_retrieval` | succeed despite distractor / irrelevant assets |
+
+`task_family` follows `<domain>/<short-name>` (e.g.
+`docker-homelab/compose-basics`). Tasks sharing a family are expected to
+transfer knowledge between each other; the utility report aggregates pass
+rate / akm − noakm delta per family.
+
+Optional booleans (`abstention_case`, `conflict_case`, `stale_guidance_case`)
+flag the structural shape of the task. `expected_transfer_from[]` lists
+families the agent should benefit from when memory carries over.
+`workflow_focus` names the declarative workflow (#255) the task targets.
+
+The utility report's `corpus_coverage` block surfaces:
+- counts per memory-ability label (closed set + `untagged`),
+- per-memory-ability pass-rate / delta / negative-transfer counts,
+- per-task-family rollups when ≥ 2 families are tagged,
+- workflow-compliance means when the runner plumbs the trace.
+
+### Coverage in this release
+
+The seeded `release/1.0.0` corpus tags every real task as
+`memory_ability: procedural_lookup` (single-skill lookup-and-apply tasks).
+Per-domain task families:
+
+| family | tasks |
+|--------|-------|
+| `az-cli/commands` | 6 |
+| `docker-homelab/compose-basics` | 6 |
+| `opencode/config-basics` | 5 |
+
+Future waves will broaden coverage. The report intentionally surfaces zero
+counts for absent abilities so the gaps are visible.
+
 ## Leakage discipline (spec §7.4)
 
 The `tests/bench/leakage.test.ts` suite enforces a substring check between

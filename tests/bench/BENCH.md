@@ -116,6 +116,14 @@ Tasks live at `tests/fixtures/bench/tasks/<domain>/<task-id>/` and consist of:
 
 - `task.yaml` — metadata (id, title, domain, difficulty, slice, gold_ref,
   stash, verifier, budget). See `docs/technical/benchmark.md` §13.1.
+  Optional memory-operation tags (#262): `memory_ability` (closed set —
+  see `tests/bench/corpus.ts` `MEMORY_ABILITY_VALUES`), `task_family`
+  (`<domain>/<short-name>`), `workflow_focus`, `expected_transfer_from`,
+  `abstention_case`, `conflict_case`, `stale_guidance_case`. The utility
+  report's `corpus_coverage` block aggregates pass rate / delta / negative
+  transfer per ability and per family. See
+  `tests/fixtures/bench/tasks/CORPUS.md` for the closed set + current
+  per-family coverage.
 - `workspace/` — initial files copied into the agent's cwd.
 - `verify.sh` (script verifier), `tests/test_*.py` (pytest), or
   `expected_match` regex in `task.yaml` (regex verifier).

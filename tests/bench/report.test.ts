@@ -540,3 +540,68 @@ describe("git resolvers", () => {
     }
   });
 });
+
+// ── Corpus-coverage block (#262) ───────────────────────────────────────────
+
+describe("renderUtilityReport corpus_coverage (#262)", () => {
+  test("JSON envelope always carries a corpus_coverage block, zero-valued when no tags", () => {
+    const { json } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    const cov = obj.corpus_coverage as Record<string, unknown>;
+    expect(cov).toBeDefined();
+    const coverage = cov.coverage as Record<string, unknown>;
+    expect(coverage.totalTasks).toBe(0);
+    expect(cov.by_memory_ability).toEqual([]);
+    expect(cov.by_task_family).toEqual([]);
+  });
+
+  test("JSON envelope groups tasks by memory_ability when taskMetadata is plumbed", () => {
+    const sample: UtilityRunReport = {
+      ...utilSample,
+      taskMetadata: [
+        {
+          id: "domain-a/task-1",
+          title: "t1",
+          domain: "domain-a",
+          difficulty: "easy",
+          stash: "minimal",
+          verifier: "regex",
+          budget: { tokens: 1, wallMs: 1 },
+          taskDir: "/tmp",
+          memoryAbility: "procedural_lookup",
+          taskFamily: "domain-a/family-1",
+        },
+        {
+          id: "domain-b/task-2",
+          title: "t2",
+          domain: "domain-b",
+          difficulty: "easy",
+          stash: "minimal",
+          verifier: "regex",
+          budget: { tokens: 1, wallMs: 1 },
+          taskDir: "/tmp",
+          memoryAbility: "procedural_lookup",
+          taskFamily: "domain-b/family-2",
+        },
+      ],
+    };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const cov = obj.corpus_coverage as Record<string, unknown>;
+    const coverage = cov.coverage as { totalTasks: number; memoryAbilityCounts: Record<string, number> };
+    expect(coverage.totalTasks).toBe(2);
+    expect(coverage.memoryAbilityCounts.procedural_lookup).toBe(2);
+    expect(coverage.memoryAbilityCounts.abstention).toBe(0);
+    const byAbility = cov.by_memory_ability as Array<Record<string, unknown>>;
+    expect(byAbility).toHaveLength(1);
+    expect(byAbility[0]?.category).toBe("procedural_lookup");
+    expect(byAbility[0]?.task_count).toBe(2);
+    expect(markdown).toContain("## Corpus coverage");
+    expect(markdown).toContain("procedural_lookup");
+  });
+
+  test("markdown corpus-coverage section is omitted when no tasks carry memory_ability", () => {
+    const { markdown } = renderUtilityReport(utilSample);
+    expect(markdown).not.toContain("## Corpus coverage");
+  });
+});

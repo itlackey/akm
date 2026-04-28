@@ -14,12 +14,14 @@
  */
 
 import { execSync } from "node:child_process";
-import type { TaskMetadata } from "./corpus";
+import type { MemoryAbility, TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import type {
   AssetRegressionCandidateRow,
+  CategoryAggregateRow,
   CompareResult,
   CompareTaskRow,
+  CorpusCoverage,
   CorpusDelta,
   CorpusMetrics,
   DeltaSign,
@@ -32,12 +34,16 @@ import type {
   OutcomeAggregate,
   PerAssetAttribution,
   PerTaskMetrics,
+  PerTaskTagEntry,
   ProposalQualityMetrics,
   SearchBridgeMetrics,
   TrajectoryAggregate,
 } from "./metrics";
 import {
+  aggregateByMemoryAbility,
+  aggregateByTaskFamily,
   computeAssetRegressionCandidates,
+  computeCorpusCoverage,
   computeDomainAggregates,
   computeNegativeTransfer,
   histogramKeys,
@@ -176,6 +182,12 @@ export interface UtilityReportTaskEntry {
    * default two-arm envelope is byte-identical to the pre-#261 output.
    */
   synthetic?: PerTaskMetrics;
+  /**
+   * Optional workflow-compliance fraction `[0, 1]` for the akm arm (#255 +
+   * #262). When present the corpus_coverage section folds it into the mean
+   * compliance per `memory_ability` / `task_family` group.
+   */
+  workflowCompliance?: number;
 }
 
 /**
@@ -364,6 +376,7 @@ function buildUtilityJson(input: UtilityRunReport): object {
     })),
     domain_level_deltas: domainDeltas.map(serialiseDomainAggregate),
     asset_regression_candidates: assetRegressionCandidates.map(serialiseAssetRegressionCandidate),
+    corpus_coverage: buildCorpusCoverageBlock(input),
     warnings,
     ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
@@ -462,6 +475,78 @@ function serialiseDomainAggregate(row: DomainAggregateRow): {
     pass_rate_delta: row.passRateDelta,
     tokens_per_pass_delta: row.tokensPerPassDelta,
     wallclock_ms_delta: row.wallclockMsDelta,
+  };
+}
+
+// ── Corpus coverage block (#262) ───────────────────────────────────────────
+
+/**
+ * Build the §13.3 `corpus_coverage` block from a UtilityRunReport (#262).
+ * Folds three pieces:
+ * - `coverage`: counts per `memory_ability` (closed set + `untagged`) and
+ *   `task_family`. Operators see at a glance which abilities the corpus
+ *   covers and which are missing.
+ * - `by_memory_ability` / `by_task_family`: per-category aggregates of pass
+ *   rate, akm − noakm delta, negative transfer count, and (when supplied)
+ *   workflow-compliance mean.
+ *
+ * When the runner did not plumb `taskMetadata` (legacy code paths) we emit a
+ * skeleton block with zero counts so JSON consumers don't see the key flicker
+ * in and out depending on the runner version.
+ */
+function buildCorpusCoverageBlock(input: UtilityRunReport): {
+  coverage: CorpusCoverage;
+  by_memory_ability: ReturnType<typeof serialiseCategoryRow>[];
+  by_task_family: ReturnType<typeof serialiseCategoryRow>[];
+} {
+  const taskMetadata = input.taskMetadata ?? [];
+  const metaById = new Map<string, TaskMetadata>();
+  for (const m of taskMetadata) metaById.set(m.id, m);
+
+  const tagEntries: PerTaskTagEntry[] = input.tasks.map((t) => {
+    const meta = metaById.get(t.id);
+    const entry: PerTaskTagEntry = {
+      id: t.id,
+      noakm: t.noakm,
+      akm: t.akm,
+    };
+    if (meta?.memoryAbility) entry.memoryAbility = meta.memoryAbility;
+    if (meta?.taskFamily) entry.taskFamily = meta.taskFamily;
+    if (meta?.workflowFocus) entry.workflowFocus = meta.workflowFocus;
+    if (typeof t.workflowCompliance === "number" && Number.isFinite(t.workflowCompliance)) {
+      entry.workflowCompliance = t.workflowCompliance;
+    }
+    return entry;
+  });
+
+  const coverage = computeCorpusCoverage(taskMetadata);
+  const byAbility = aggregateByMemoryAbility(tagEntries);
+  const byFamily = aggregateByTaskFamily(tagEntries);
+
+  return {
+    coverage,
+    by_memory_ability: byAbility.map(serialiseCategoryRow),
+    by_task_family: byFamily.map(serialiseCategoryRow),
+  };
+}
+
+function serialiseCategoryRow(row: CategoryAggregateRow): {
+  category: string;
+  task_count: number;
+  pass_rate_noakm: number;
+  pass_rate_akm: number;
+  pass_rate_delta: number;
+  negative_transfer_count: number;
+  workflow_compliance: number | null;
+} {
+  return {
+    category: row.category,
+    task_count: row.taskCount,
+    pass_rate_noakm: row.passRateNoakm,
+    pass_rate_akm: row.passRateAkm,
+    pass_rate_delta: row.passRateDelta,
+    negative_transfer_count: row.negativeTransferCount,
+    workflow_compliance: row.workflowCompliance,
   };
 }
 
@@ -616,6 +701,14 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   const sorted = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
   for (const t of sorted) {
     lines.push(taskRow(t, input.aggregateSynth !== undefined));
+  }
+  // Corpus-coverage section (#262). Renders only when at least one task was
+  // tagged with a `memory_ability`; without tags the section adds no signal
+  // and would just churn snapshots.
+  const coverageSection = renderCorpusCoverageSection(input);
+  if (coverageSection.length > 0) {
+    lines.push("");
+    lines.push(coverageSection);
   }
   // Negative-transfer + domain diagnostics (#260). The section stays quiet
   // ("none") when no regressions were observed so green corpora don't fill
@@ -1073,6 +1166,77 @@ export function renderNegativeTransferSection(input: UtilityRunReport): string {
       lines.push(`| \`${row.assetRef}\` | ${row.regressedTaskCount} | ${row.totalLoadCount} |`);
     }
   }
+  return lines.join("\n");
+}
+
+// ── Corpus-coverage markdown (#262) ────────────────────────────────────────
+
+/**
+ * Render the §13.3 corpus_coverage markdown section (#262). Returns "" when
+ * no task carries a `memory_ability` tag — at that point the section adds
+ * no signal and only churns markdown snapshots.
+ *
+ * Sections rendered:
+ * - Coverage counts per memory-ability label (closed set + `untagged`).
+ * - Per-memory-ability pass-rate / akm − noakm delta / negative-transfer
+ *   counts, plus workflow compliance when at least one task supplied it.
+ * - A compact `## Task families` rollup when ≥ 2 families are tagged.
+ */
+export function renderCorpusCoverageSection(input: UtilityRunReport): string {
+  const block = buildCorpusCoverageBlock(input);
+  const taggedAbility = Object.entries(block.coverage.memoryAbilityCounts).some(([k, v]) => k !== "untagged" && v > 0);
+  if (!taggedAbility) return "";
+
+  const lines: string[] = [];
+  lines.push("## Corpus coverage");
+  lines.push("");
+  lines.push("| memory_ability | tasks |");
+  lines.push("|----------------|-------|");
+  // Sort keys: known abilities alphabetically, `untagged` last.
+  const counts = block.coverage.memoryAbilityCounts;
+  const knownKeys = Object.keys(counts)
+    .filter((k) => k !== "untagged")
+    .sort();
+  for (const k of knownKeys) lines.push(`| ${k} | ${counts[k as MemoryAbility]} |`);
+  if ((counts.untagged ?? 0) > 0) lines.push(`| untagged | ${counts.untagged} |`);
+
+  if (block.by_memory_ability.length > 0) {
+    lines.push("");
+    lines.push("### By memory_ability");
+    lines.push("");
+    const anyCompliance = block.by_memory_ability.some((r) => r.workflow_compliance !== null);
+    if (anyCompliance) {
+      lines.push("| memory_ability | tasks | noakm | akm | delta | neg.transfer | workflow_compliance |");
+      lines.push("|----------------|-------|-------|-----|-------|--------------|---------------------|");
+    } else {
+      lines.push("| memory_ability | tasks | noakm | akm | delta | neg.transfer |");
+      lines.push("|----------------|-------|-------|-----|-------|--------------|");
+    }
+    for (const row of block.by_memory_ability) {
+      const base = `| ${row.category} | ${row.task_count} | ${row.pass_rate_noakm.toFixed(2)} | ${row.pass_rate_akm.toFixed(2)} | ${signed(row.pass_rate_delta.toFixed(2))} | ${row.negative_transfer_count} |`;
+      if (anyCompliance) {
+        const wc = row.workflow_compliance === null ? "n/a" : row.workflow_compliance.toFixed(2);
+        lines.push(`${base} ${wc} |`);
+      } else {
+        lines.push(base);
+      }
+    }
+  }
+
+  const families = block.by_task_family;
+  if (families.length >= 2) {
+    lines.push("");
+    lines.push("### By task_family");
+    lines.push("");
+    lines.push("| task_family | tasks | noakm | akm | delta |");
+    lines.push("|-------------|-------|-------|-----|-------|");
+    for (const row of families) {
+      lines.push(
+        `| ${row.category} | ${row.task_count} | ${row.pass_rate_noakm.toFixed(2)} | ${row.pass_rate_akm.toFixed(2)} | ${signed(row.pass_rate_delta.toFixed(2))} |`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }
 
