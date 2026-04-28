@@ -39,6 +39,7 @@ import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
 import { registerCleanup } from "./cleanup";
 import type { TaskMetadata, TaskSlice } from "./corpus";
+import { computeLessonMetrics, type LessonMetrics } from "./evolve-metrics";
 import {
   computeFeedbackIntegrity,
   computeLongitudinalMetrics,
@@ -124,6 +125,13 @@ export interface EvolveRunReport {
   proposalLog: ProposalLogEntry[];
   /** Aggregate proposal-quality metrics. */
   proposals: ProposalQualityMetrics;
+  /**
+   * Per-lesson quality + reuse metrics (#264). One row per `kind === "lesson"`
+   * proposal, joined to the post-arm `assetsLoaded` stream for reuse stats and
+   * to the pre-arm runs for negative-transfer attribution. Always present —
+   * `lessons.lessons` is `[]` when no lesson-kind proposals were generated.
+   */
+  lessons: LessonMetrics;
   /** Aggregate longitudinal metrics. */
   longitudinal: LongitudinalMetrics;
   /**
@@ -523,6 +531,17 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
   const proposalsMetrics = computeProposalQualityMetrics(proposalLog);
   const longitudinal = computeLongitudinalMetrics(preReport, postReport, syntheticReport);
   const feedbackIntegrity = computeFeedbackIntegrity({ phase1: phase1Report, feedbackLog });
+  // #264 — lesson quality + reuse metrics. The runner doesn't (yet) read
+  // accepted lesson bodies off disk or load verifier source text; we pass
+  // empty maps so the leakage check defaults to "low" until the read seam
+  // lands. Reuse + negative-transfer attribution work today off the
+  // pre/post arm `assetsLoaded` stream.
+  const lessons = computeLessonMetrics({
+    proposalLog,
+    feedbackLog,
+    preRuns: preReport.akmRuns ?? [],
+    postRuns: postReport.akmRuns ?? [],
+  });
 
   return {
     timestamp: options.timestamp ?? new Date().toISOString(),
@@ -534,6 +553,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
     feedbackLog,
     proposalLog,
     proposals: proposalsMetrics,
+    lessons,
     longitudinal,
     feedbackIntegrity,
     phase1: phase1Report,
