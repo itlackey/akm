@@ -342,6 +342,157 @@ describe("runEvolve — leakage prevention (§7.4)", () => {
     expect(distillCalls.length).toBe(0);
     expect(report.warnings.some((w) => w.includes("eval-slice gold ref"))).toBe(true);
   });
+
+  test("emits the generic '--exclude-gold-ref' warning at most once per Phase 2", async () => {
+    const observed = { calls: [] as string[][], envSeen: [] as Record<string, string>[] };
+    // Three distinct failing-train refs all cross threshold. None of them
+    // overlap an eval gold ref, so the per-ref skip warning never fires;
+    // the generic warning should appear exactly once regardless of count.
+    const tasks = [
+      fakeTask(taskDir, { id: "fake-d/loser-a", goldRef: "skill:loser-a", slice: "train", expectedMatch: "WONT" }),
+      fakeTask(taskDir, { id: "fake-d/loser-b", goldRef: "skill:loser-b", slice: "train", expectedMatch: "WONT" }),
+      fakeTask(taskDir, { id: "fake-d/loser-c", goldRef: "skill:loser-c", slice: "train", expectedMatch: "WONT" }),
+      fakeTask(taskDir, { id: "fake-d/eval", goldRef: "skill:eval-target", slice: "eval", expectedMatch: "ok" }),
+    ];
+    const spawn = buildFakeSpawn({});
+    const akmCli = buildFakeAkmCli({ observed });
+    const report = await runEvolve({
+      tasks,
+      model: "test-model",
+      seedsPerArm: 3,
+      spawn,
+      akmCli,
+      materialiseStash: false,
+    });
+    const generic = report.warnings.filter((w) =>
+      w.includes("distill/reflect cannot today filter their own LLM input"),
+    );
+    expect(generic.length).toBe(1);
+    // And we did actually evolve all three refs (so the loop body ran 3×).
+    const distillCalls = observed.calls.filter((c) => c[0] === "distill");
+    expect(distillCalls.length).toBe(3);
+  });
+});
+
+describe("runEvolve — Phase 1 fault tolerance", () => {
+  let workspaceRoot: string;
+  let taskDir: string;
+  beforeAll(() => {
+    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-faulty-"));
+    taskDir = path.join(workspaceRoot, "task");
+    fs.mkdirSync(taskDir, { recursive: true });
+  });
+  afterAll(() => {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("a throwing akmCli on one feedback ref does not halt Phase 2", async () => {
+    const observed = { calls: [] as string[][], envSeen: [] as Record<string, string>[] };
+    // Two failing train tasks. The akmCli throws on `feedback skill:bomb`
+    // but otherwise behaves normally. Phase 2 should still proceed and
+    // distill the surviving refs.
+    const tasks = [
+      fakeTask(taskDir, { id: "fake-d/bomb", goldRef: "skill:bomb", slice: "train", expectedMatch: "WONT" }),
+      fakeTask(taskDir, { id: "fake-d/loser", goldRef: "skill:loser", slice: "train", expectedMatch: "WONT" }),
+      fakeTask(taskDir, { id: "fake-d/eval", goldRef: "skill:eval-target", slice: "eval", expectedMatch: "ok" }),
+    ];
+    const spawn = buildFakeSpawn({});
+    const inner = buildFakeAkmCli({ observed });
+    const akmCli: AkmCliFn = async (args, cwd, env) => {
+      if (args[0] === "feedback" && args[1] === "skill:bomb") {
+        throw new Error("subprocess crashed");
+      }
+      return inner(args, cwd, env);
+    };
+    const report = await runEvolve({
+      tasks,
+      model: "test-model",
+      seedsPerArm: 2,
+      spawn,
+      akmCli,
+      materialiseStash: false,
+      negativeThreshold: { absoluteCount: 2, ratio: 0.5 },
+    });
+    // The throwing ref produced a warning of the documented shape.
+    expect(report.warnings.some((w) => w.includes("phase1.feedback_dispatch_failed: skill:bomb"))).toBe(true);
+    // Phase 2 still ran for the surviving ref (skill:loser crosses threshold).
+    const distillCalls = observed.calls.filter((c) => c[0] === "distill");
+    expect(distillCalls.map((c) => c[1])).toContain("skill:loser");
+    // The throwing entries are still in feedbackLog (with ok:false).
+    const bombEntries = report.feedbackLog.filter((e) => e.goldRef === "skill:bomb");
+    expect(bombEntries.length).toBe(2);
+    expect(bombEntries.every((e) => e.ok === false)).toBe(true);
+  });
+});
+
+describe("runEvolve — operator stash sandboxing", () => {
+  let workspaceRoot: string;
+  let taskDir: string;
+  beforeAll(() => {
+    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-evolve-sandbox-"));
+    taskDir = path.join(workspaceRoot, "task");
+    fs.mkdirSync(taskDir, { recursive: true });
+  });
+  afterAll(() => {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("does not mutate process.env.AKM_STASH_DIR", async () => {
+    const sentinel = "/tmp/sentinel-operator-stash-must-not-change";
+    const before = process.env.AKM_STASH_DIR;
+    process.env.AKM_STASH_DIR = sentinel;
+    try {
+      const tasks = [
+        fakeTask(taskDir, { id: "fake-d/loser", goldRef: "skill:loser", slice: "train", expectedMatch: "WONT" }),
+        fakeTask(taskDir, { id: "fake-d/eval", goldRef: "skill:eval-target", slice: "eval", expectedMatch: "ok" }),
+      ];
+      const spawn = buildFakeSpawn({});
+      const akmCli = buildFakeAkmCli({});
+      await runEvolve({
+        tasks,
+        model: "test-model",
+        seedsPerArm: 2,
+        spawn,
+        akmCli,
+        materialiseStash: false,
+      });
+      expect(process.env.AKM_STASH_DIR).toBe(sentinel);
+    } finally {
+      if (before === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = before;
+    }
+  });
+
+  test("akmCli env never carries the operator's AKM_STASH_DIR (materialiseStash:false strips it)", async () => {
+    const sentinel = "/tmp/sentinel-operator-stash-leak-test";
+    const before = process.env.AKM_STASH_DIR;
+    process.env.AKM_STASH_DIR = sentinel;
+    try {
+      const observed = { calls: [] as string[][], envSeen: [] as Record<string, string>[] };
+      const tasks = [
+        fakeTask(taskDir, { id: "fake-d/loser", goldRef: "skill:loser", slice: "train", expectedMatch: "WONT" }),
+        fakeTask(taskDir, { id: "fake-d/eval", goldRef: "skill:eval-target", slice: "eval", expectedMatch: "ok" }),
+      ];
+      const spawn = buildFakeSpawn({});
+      const akmCli = buildFakeAkmCli({ observed });
+      await runEvolve({
+        tasks,
+        model: "test-model",
+        seedsPerArm: 2,
+        spawn,
+        akmCli,
+        materialiseStash: false,
+      });
+      // Every recorded env passed to the fake akmCli must NOT carry the
+      // operator's sentinel value — the runEvolve sandbox strips it.
+      for (const env of observed.envSeen) {
+        expect(env.AKM_STASH_DIR).not.toBe(sentinel);
+      }
+    } finally {
+      if (before === undefined) delete process.env.AKM_STASH_DIR;
+      else process.env.AKM_STASH_DIR = before;
+    }
+  });
 });
 
 describe("computeLongitudinalMetrics", () => {

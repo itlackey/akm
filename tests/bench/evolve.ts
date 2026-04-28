@@ -32,8 +32,6 @@
  * real `loadFixtureStash`.
  */
 
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
@@ -144,6 +142,15 @@ interface FeedbackCounts {
  *
  * Pre: `tasks` is already filtered to one domain (or `all`). The runner
  * partitions internally on `task.slice`.
+ *
+ * Sandboxing: at the start of every real run the runner materialises one
+ * dedicated tmp stash per fixture (the `evolveStash`) plus a fresh sibling
+ * snapshot per fixture (the `preStash`). Phase 1 + Phase 2 pin
+ * `AKM_STASH_DIR` to the appropriate `evolveStash` for every spawned `akm`
+ * invocation; Phase 3's pre arm uses `preStash`, the post arm uses
+ * `evolveStash`, and the synthetic arm uses no stash. The operator's real
+ * `process.env.AKM_STASH_DIR` is never read or written by `runEvolve`. All
+ * stashes are cleaned up in a top-level try/finally.
  */
 export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunReport> {
   const seedsPerArm = options.seedsPerArm ?? 5;
@@ -161,183 +168,234 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
   // already filtered to one domain; this is just for the report header.
   const domain = uniqueDomain(options.tasks);
 
-  // ── Phase 1: accumulate signal on the train slice (akm arm only). ────────
-  const phase1Report = await runUtility({
-    tasks: trainTasks,
-    arms: ["akm"],
-    model: options.model,
-    seedsPerArm,
-    budgetTokens,
-    budgetWallMs,
-    slice: "train",
-    ...(options.spawn ? { spawn: options.spawn } : {}),
-    materialiseStash,
-    ...(options.timestamp ? { timestamp: options.timestamp } : {}),
-    ...(options.branch ? { branch: options.branch } : {}),
-    ...(options.commit ? { commit: options.commit } : {}),
-  });
+  // ── Sandbox setup: per-fixture evolveStash + preStash. ───────────────────
+  // We materialise one tmp stash per unique `task.stash` so Phase 1
+  // accumulates feedback into the same on-disk stash that Phase 2 mutates,
+  // and that Phase 3's post arm reads back. The operator's real
+  // AKM_STASH_DIR is never touched. The pre arm gets a fresh snapshot of
+  // the same starting fixture (no Phase 2 mutations applied).
+  const fixtureNames = new Set<string>();
+  for (const t of options.tasks) fixtureNames.add(t.stash);
 
-  // Issue feedback events per (task, seed) outcome on the akm arm.
-  const feedbackLog: FeedbackLogEntry[] = [];
-  const feedbackByRef = new Map<string, FeedbackCounts>();
-  const phase1Cwd = options.tasks[0]?.taskDir ?? process.cwd();
-  for (const run of phase1Report.akmRuns ?? []) {
-    const taskMeta = options.tasks.find((t) => t.id === run.taskId);
-    const goldRef = taskMeta?.goldRef;
-    if (!goldRef) continue;
-    if (run.outcome === "harness_error") continue;
-    const signal: "positive" | "negative" = run.outcome === "pass" ? "positive" : "negative";
-    const args = ["feedback", goldRef, signal === "positive" ? "--positive" : "--negative"];
-    const cliResult = await akmCli(args, phase1Cwd, process.env as Record<string, string>);
-    feedbackLog.push({ taskId: run.taskId, seed: run.seed, goldRef, signal, ok: cliResult.exitCode === 0 });
-    if (cliResult.exitCode !== 0) {
-      warnings.push(`phase1: akm feedback for ${goldRef} (${signal}) failed: ${cliResult.stderr.trim()}`);
-    }
-    const counts = feedbackByRef.get(goldRef) ?? { positive: 0, negative: 0 };
-    if (signal === "positive") counts.positive += 1;
-    else counts.negative += 1;
-    feedbackByRef.set(goldRef, counts);
-  }
+  const evolveStashes = new Map<string, LoadedFixtureStash>();
+  const preStashes = new Map<string, LoadedFixtureStash>();
+  const evolveDirByFixture = new Map<string, string>();
+  const preDirByFixture = new Map<string, string>();
 
-  // ── Phase 2: evolve. ─────────────────────────────────────────────────────
-  const proposalLog: ProposalLogEntry[] = [];
-  const evalGoldRefs = new Set<string>();
-  for (const t of evalTasks) {
-    if (t.goldRef) evalGoldRefs.add(t.goldRef);
-  }
-
-  const refsToEvolve: string[] = [];
-  for (const [ref, counts] of feedbackByRef.entries()) {
-    if (crossesNegativeThreshold(counts, negativeThreshold)) refsToEvolve.push(ref);
-  }
-  refsToEvolve.sort();
-
-  for (const ref of refsToEvolve) {
-    // §7.4 leakage prevention: if this ref is also an eval-slice gold ref,
-    // we skip evolving it entirely so post-evolve eval can't gain an unfair
-    // advantage. Tasks that share refs across slices are flagged.
-    if (evalGoldRefs.has(ref)) {
-      warnings.push(
-        `phase2: skipping distill/reflect on ${ref} — it is an eval-slice gold ref (§7.4 leakage prevention).`,
-      );
-      continue;
-    }
-    // Pass the eval-gold ref list through env so a future akm version can
-    // honour it. Today's `akm distill` ignores `AKM_BENCH_EXCLUDE_GOLD_REFS`;
-    // we still warn so operators know the protection is partial.
-    const evolveEnv: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      AKM_BENCH_EXCLUDE_GOLD_REFS: [...evalGoldRefs].join(","),
-    };
-    if (evalGoldRefs.size > 0) {
-      warnings.push(
-        "phase2: distill/reflect cannot today filter their own LLM input by --exclude-gold-ref; relying on per-ref skip + env hint only.",
-      );
-    }
-
-    const distillResult = await akmCli(["distill", ref], phase1Cwd, evolveEnv);
-    if (distillResult.exitCode !== 0) {
-      warnings.push(`phase2: akm distill ${ref} failed: ${distillResult.stderr.trim()}`);
-    }
-    const reflectResult = await akmCli(["reflect", ref], phase1Cwd, evolveEnv);
-    if (reflectResult.exitCode !== 0) {
-      // `reflect` requires `agent.default` to be configured — a missing
-      // config is non-fatal for the bench; we record and continue.
-      warnings.push(`phase2: akm reflect ${ref} skipped/failed: ${reflectResult.stderr.trim()}`);
-    }
-  }
-
-  // Walk the proposal queue.
-  const listResult = await akmCli(["proposal", "list", "--json"], phase1Cwd, process.env as Record<string, string>);
-  const proposals = parseProposalList(listResult.stdout);
-  for (const p of proposals) {
-    const showResult = await akmCli(
-      ["proposal", "show", p.id, "--json"],
-      phase1Cwd,
-      process.env as Record<string, string>,
-    );
-    const lintInfo = parseProposalShow(showResult.stdout);
-    const lintPass = lintInfo.lintPass;
-    if (lintPass) {
-      const acceptResult = await akmCli(["proposal", "accept", p.id], phase1Cwd, process.env as Record<string, string>);
-      proposalLog.push({
-        proposalId: p.id,
-        assetRef: p.assetRef,
-        kind: p.kind,
-        lintPass: true,
-        decision: acceptResult.exitCode === 0 ? "accept" : "reject",
-        ...(acceptResult.exitCode === 0 ? {} : { rejectReason: `accept failed: ${acceptResult.stderr.trim()}` }),
-      });
-    } else {
-      const reason = lintInfo.lintMessage ?? "lint failed";
-      const rejectResult = await akmCli(
-        ["proposal", "reject", p.id, "--reason", `lint failed: ${reason}`],
-        phase1Cwd,
-        process.env as Record<string, string>,
-      );
-      proposalLog.push({
-        proposalId: p.id,
-        assetRef: p.assetRef,
-        kind: p.kind,
-        lintPass: false,
-        decision: "reject",
-        rejectReason: reason,
-      });
-      if (rejectResult.exitCode !== 0) {
-        warnings.push(`phase2: akm proposal reject ${p.id} failed: ${rejectResult.stderr.trim()}`);
-      }
-    }
-  }
-
-  // Rebuild the index so accepted lessons surface in Phase 3.
-  const indexResult = await akmCli(["index"], phase1Cwd, process.env as Record<string, string>);
-  if (indexResult.exitCode !== 0) {
-    warnings.push(`phase2: akm index rebuild failed: ${indexResult.stderr.trim()}`);
-  }
-
-  // ── Phase 3: re-evaluate (eval slice). ───────────────────────────────────
-  // pre: original fixture (un-evolved). We snapshot the original by passing
-  // `materialiseStash: true` and trusting the runner to clone the named
-  // fixture from disk fresh — the on-disk fixture was never mutated by
-  // Phase 2 (distill/reflect write to the runtime stash, not the fixture).
-  const preReport = await runUtility({
-    tasks: evalTasks,
-    arms: ["akm"],
-    model: options.model,
-    seedsPerArm,
-    budgetTokens,
-    budgetWallMs,
-    slice: "eval",
-    ...(options.spawn ? { spawn: options.spawn } : {}),
-    materialiseStash,
-    ...(options.timestamp ? { timestamp: options.timestamp } : {}),
-    ...(options.branch ? { branch: options.branch } : {}),
-    ...(options.commit ? { commit: options.commit } : {}),
-  });
-
-  // post: same as pre, but we attach the evolved-stash overlay path via env
-  // so the agent harness picks up the accepted lessons. The default akm CLI
-  // discovers them through the live AKM_STASH_DIR — we override per arm via
-  // the spawn injection seam. Real-runs reuse `loadFixtureStash` then layer
-  // accepted proposals on top; tests use the materialiseStash=false seam.
-  let postStash: LoadedFixtureStash | undefined;
-  let postReport: UtilityRunReport;
-  try {
-    if (materialiseStash && evalTasks.length > 0) {
-      // Try to layer accepted lessons onto a fresh tmp stash. If the source
-      // fixture is missing or `loadFixtureStash` fails, we fall back to the
-      // un-evolved stash with a warning.
+  if (materialiseStash) {
+    for (const name of fixtureNames) {
       try {
-        postStash = loadFixtureStash(evalTasks[0].stash, { skipIndex: true });
-        // The accepted-proposal materialisation is handled by the akm CLI's
-        // own stash; we have no portable way to "merge" two stashes here.
-        // Operators running the full bench rely on the operator-managed
-        // AKM_STASH_DIR; tests skip materialiseStash entirely.
+        const evolved = loadFixtureStash(name, { skipIndex: false });
+        evolveStashes.set(name, evolved);
+        evolveDirByFixture.set(name, evolved.stashDir);
       } catch (err) {
-        warnings.push(`phase3 post-arm: failed to materialise evolved stash: ${(err as Error).message}`);
+        warnings.push(`evolve: failed to materialise evolve stash for fixture "${name}": ${(err as Error).message}`);
+      }
+      try {
+        const pre = loadFixtureStash(name, { skipIndex: false });
+        preStashes.set(name, pre);
+        preDirByFixture.set(name, pre.stashDir);
+      } catch (err) {
+        warnings.push(`evolve: failed to materialise pre stash for fixture "${name}": ${(err as Error).message}`);
       }
     }
-    postReport = await runUtility({
+  }
+
+  // Resolve the evolveStash dir for a given asset ref. We map ref → fixture
+  // by looking up which task's gold ref it matches; if no task owns it (or
+  // multiple do, which is unusual), we fall back to the first available
+  // evolveStash. The simple — and most common — case is a single fixture
+  // per `--tasks <domain>` invocation.
+  const refToFixture = new Map<string, string>();
+  for (const t of options.tasks) {
+    if (t.goldRef) refToFixture.set(t.goldRef, t.stash);
+  }
+  const fallbackEvolveDir = [...evolveDirByFixture.values()][0];
+  function envForRef(ref: string | undefined): Record<string, string> {
+    const baseEnv = { ...(process.env as Record<string, string>) };
+    if (!materialiseStash) {
+      // Tests opt out of fixture materialisation entirely; we still strip
+      // the operator's AKM_STASH_DIR so the fake CLI sees a known sentinel.
+      delete baseEnv.AKM_STASH_DIR;
+      return baseEnv;
+    }
+    const fixture = ref ? refToFixture.get(ref) : undefined;
+    const dir = (fixture && evolveDirByFixture.get(fixture)) ?? fallbackEvolveDir;
+    if (dir) baseEnv.AKM_STASH_DIR = dir;
+    else delete baseEnv.AKM_STASH_DIR;
+    return baseEnv;
+  }
+
+  let preReport: UtilityRunReport;
+  let postReport: UtilityRunReport;
+  let syntheticReport: UtilityRunReport;
+  let phase1Report: UtilityRunReport;
+  const feedbackLog: FeedbackLogEntry[] = [];
+  const proposalLog: ProposalLogEntry[] = [];
+
+  try {
+    // ── Phase 1: accumulate signal on the train slice (akm arm only). ─────
+    phase1Report = await runUtility({
+      tasks: trainTasks,
+      arms: ["akm"],
+      model: options.model,
+      seedsPerArm,
+      budgetTokens,
+      budgetWallMs,
+      slice: "train",
+      ...(options.spawn ? { spawn: options.spawn } : {}),
+      // We pre-materialised the per-fixture evolve stash above; tell the
+      // runner to forward those dirs and skip its own per-task materialise.
+      materialiseStash,
+      ...(materialiseStash ? { stashDirByFixture: evolveDirByFixture } : {}),
+      ...(options.timestamp ? { timestamp: options.timestamp } : {}),
+      ...(options.branch ? { branch: options.branch } : {}),
+      ...(options.commit ? { commit: options.commit } : {}),
+    });
+
+    // Issue feedback events per (task, seed) outcome on the akm arm.
+    const feedbackByRef = new Map<string, FeedbackCounts>();
+    const phase1Cwd = options.tasks[0]?.taskDir ?? process.cwd();
+    for (const run of phase1Report.akmRuns ?? []) {
+      const taskMeta = options.tasks.find((t) => t.id === run.taskId);
+      const goldRef = taskMeta?.goldRef;
+      if (!goldRef) continue;
+      if (run.outcome === "harness_error") continue;
+      const signal: "positive" | "negative" = run.outcome === "pass" ? "positive" : "negative";
+      const args = ["feedback", goldRef, signal === "positive" ? "--positive" : "--negative"];
+      // Wrap in try/catch so a single throwing akmCli (e.g. subprocess
+      // crash) cannot leave `feedbackByRef` partially populated and let
+      // Phase 2 proceed on corrupt state.
+      try {
+        const cliResult = await akmCli(args, phase1Cwd, envForRef(goldRef));
+        feedbackLog.push({ taskId: run.taskId, seed: run.seed, goldRef, signal, ok: cliResult.exitCode === 0 });
+        if (cliResult.exitCode !== 0) {
+          warnings.push(`phase1: akm feedback for ${goldRef} (${signal}) failed: ${cliResult.stderr.trim()}`);
+        }
+      } catch (err) {
+        feedbackLog.push({ taskId: run.taskId, seed: run.seed, goldRef, signal, ok: false });
+        warnings.push(`phase1.feedback_dispatch_failed: ${goldRef} ${(err as Error).message}`);
+      }
+      const counts = feedbackByRef.get(goldRef) ?? { positive: 0, negative: 0 };
+      if (signal === "positive") counts.positive += 1;
+      else counts.negative += 1;
+      feedbackByRef.set(goldRef, counts);
+    }
+
+    // ── Phase 2: evolve. ────────────────────────────────────────────────────
+    const evalGoldRefs = new Set<string>();
+    for (const t of evalTasks) {
+      if (t.goldRef) evalGoldRefs.add(t.goldRef);
+    }
+
+    const refsToEvolve: string[] = [];
+    for (const [ref, counts] of feedbackByRef.entries()) {
+      if (crossesNegativeThreshold(counts, negativeThreshold)) refsToEvolve.push(ref);
+    }
+    refsToEvolve.sort();
+
+    // Emit the generic leakage warning at most once per Phase 2 invocation;
+    // per-ref skip warnings (which name the specific ref) stay in the loop.
+    let leakageWarningEmitted = false;
+    for (const ref of refsToEvolve) {
+      // §7.4 leakage prevention: if this ref is also an eval-slice gold ref,
+      // we skip evolving it entirely so post-evolve eval can't gain an unfair
+      // advantage. Tasks that share refs across slices are flagged.
+      if (evalGoldRefs.has(ref)) {
+        warnings.push(
+          `phase2: skipping distill/reflect on ${ref} — it is an eval-slice gold ref (§7.4 leakage prevention).`,
+        );
+        continue;
+      }
+      // Pass the eval-gold ref list through env so a future akm version can
+      // honour it. Today's `akm distill` ignores `AKM_BENCH_EXCLUDE_GOLD_REFS`;
+      // we still warn so operators know the protection is partial — but only
+      // once per phase, regardless of how many refs we evolve.
+      const evolveEnv: Record<string, string> = {
+        ...envForRef(ref),
+        AKM_BENCH_EXCLUDE_GOLD_REFS: [...evalGoldRefs].join(","),
+      };
+      if (evalGoldRefs.size > 0 && !leakageWarningEmitted) {
+        warnings.push(
+          "phase2: distill/reflect cannot today filter their own LLM input by --exclude-gold-ref; relying on per-ref skip + env hint only.",
+        );
+        leakageWarningEmitted = true;
+      }
+
+      const distillResult = await akmCli(["distill", ref], phase1Cwd, evolveEnv);
+      if (distillResult.exitCode !== 0) {
+        warnings.push(`phase2: akm distill ${ref} failed: ${distillResult.stderr.trim()}`);
+      }
+      const reflectResult = await akmCli(["reflect", ref], phase1Cwd, evolveEnv);
+      if (reflectResult.exitCode !== 0) {
+        // `reflect` requires `agent.default` to be configured — a missing
+        // config is non-fatal for the bench; we record and continue.
+        warnings.push(`phase2: akm reflect ${ref} skipped/failed: ${reflectResult.stderr.trim()}`);
+      }
+    }
+
+    // Walk the proposal queue per fixture (each evolveStash has its own
+    // proposal log on disk). When we materialised stashes we iterate every
+    // fixture that produced proposals; in the common single-fixture case
+    // this is one pass.
+    const proposalFixtures = materialiseStash ? [...evolveDirByFixture.keys()] : [undefined];
+    for (const fixtureName of proposalFixtures) {
+      const proposalEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+      if (materialiseStash && fixtureName) {
+        const dir = evolveDirByFixture.get(fixtureName);
+        if (dir) proposalEnv.AKM_STASH_DIR = dir;
+      } else if (!materialiseStash) {
+        delete proposalEnv.AKM_STASH_DIR;
+      }
+      const listResult = await akmCli(["proposal", "list", "--json"], phase1Cwd, proposalEnv);
+      const proposals = parseProposalList(listResult.stdout);
+      for (const p of proposals) {
+        const showResult = await akmCli(["proposal", "show", p.id, "--json"], phase1Cwd, proposalEnv);
+        const lintInfo = parseProposalShow(showResult.stdout);
+        const lintPass = lintInfo.lintPass;
+        if (lintPass) {
+          const acceptResult = await akmCli(["proposal", "accept", p.id], phase1Cwd, proposalEnv);
+          proposalLog.push({
+            proposalId: p.id,
+            assetRef: p.assetRef,
+            kind: p.kind,
+            lintPass: true,
+            decision: acceptResult.exitCode === 0 ? "accept" : "reject",
+            ...(acceptResult.exitCode === 0 ? {} : { rejectReason: `accept failed: ${acceptResult.stderr.trim()}` }),
+          });
+        } else {
+          const reason = lintInfo.lintMessage ?? "lint failed";
+          const rejectResult = await akmCli(
+            ["proposal", "reject", p.id, "--reason", `lint failed: ${reason}`],
+            phase1Cwd,
+            proposalEnv,
+          );
+          proposalLog.push({
+            proposalId: p.id,
+            assetRef: p.assetRef,
+            kind: p.kind,
+            lintPass: false,
+            decision: "reject",
+            rejectReason: reason,
+          });
+          if (rejectResult.exitCode !== 0) {
+            warnings.push(`phase2: akm proposal reject ${p.id} failed: ${rejectResult.stderr.trim()}`);
+          }
+        }
+      }
+
+      // Rebuild the index so accepted lessons surface in Phase 3.
+      const indexResult = await akmCli(["index"], phase1Cwd, proposalEnv);
+      if (indexResult.exitCode !== 0) {
+        warnings.push(`phase2: akm index rebuild failed: ${indexResult.stderr.trim()}`);
+      }
+    }
+
+    // ── Phase 3: re-evaluate (eval slice). ─────────────────────────────────
+    // pre arm: fresh snapshot of the starting fixture (no Phase 2 mutations
+    // applied). post arm: the mutated evolveStash so accepted lessons reach
+    // the eval slice. synthetic arm: no stash.
+    preReport = await runUtility({
       tasks: evalTasks,
       arms: ["akm"],
       model: options.model,
@@ -346,52 +404,65 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       budgetWallMs,
       slice: "eval",
       ...(options.spawn ? { spawn: options.spawn } : {}),
+      materialiseStash,
+      ...(materialiseStash ? { stashDirByFixture: preDirByFixture } : {}),
+      ...(options.timestamp ? { timestamp: options.timestamp } : {}),
+      ...(options.branch ? { branch: options.branch } : {}),
+      ...(options.commit ? { commit: options.commit } : {}),
+    });
+
+    postReport = await runUtility({
+      tasks: evalTasks,
+      arms: ["akm"],
+      model: options.model,
+      seedsPerArm,
+      budgetTokens,
+      budgetWallMs,
+      slice: "eval",
       // Stamp arm metadata so spawn fakes can distinguish pre-vs-post via
-      // an env probe (BENCH_EVOLVE_ARM is set on every run by the
-      // wrapping runUtility call). We thread it via a fresh `spawn` wrapper
-      // when one was supplied.
+      // an env probe. We thread it via a fresh `spawn` wrapper when one
+      // was supplied.
+      materialiseStash,
+      ...(materialiseStash ? { stashDirByFixture: evolveDirByFixture } : {}),
+      ...(options.timestamp ? { timestamp: options.timestamp } : {}),
+      ...(options.branch ? { branch: options.branch } : {}),
+      ...(options.commit ? { commit: options.commit } : {}),
+      ...(options.spawn ? { spawn: wrapSpawnWithArm(options.spawn, "post") } : {}),
+    });
+
+    // synthetic: no stash. We pass a spawn wrapper that strips
+    // AKM_STASH_DIR and injects the "Bring Your Own Skills" tag so test
+    // fakes (and a future real harness) can branch.
+    syntheticReport = await runUtility({
+      tasks: evalTasks,
+      arms: ["akm"],
+      model: options.model,
+      seedsPerArm,
+      budgetTokens,
+      budgetWallMs,
+      slice: "eval",
       materialiseStash: false,
       ...(options.timestamp ? { timestamp: options.timestamp } : {}),
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
-      // Forward the post stashDir override via spawn wrapper.
-      ...(options.spawn
-        ? {
-            spawn: wrapSpawnWithArm(options.spawn, "post", postStash?.stashDir),
-          }
-        : {}),
+      ...(options.spawn ? { spawn: wrapSpawnWithArm(options.spawn, "synthetic", undefined, true) } : {}),
     });
   } finally {
-    postStash?.cleanup();
+    for (const s of evolveStashes.values()) {
+      try {
+        s.cleanup();
+      } catch {
+        /* swallow — best-effort tmp cleanup */
+      }
+    }
+    for (const s of preStashes.values()) {
+      try {
+        s.cleanup();
+      } catch {
+        /* swallow — best-effort tmp cleanup */
+      }
+    }
   }
-
-  // synthetic: no stash. We pass `materialiseStash: false` and a prompt seam
-  // that injects the "Bring Your Own Skills" instruction. Since `runUtility`
-  // doesn't expose a prompt override, we tag the spawn wrapper with the arm
-  // so test fakes can branch; the production agent harness falls back to
-  // its default prompt (same as noakm) when AKM_STASH_DIR is absent.
-  const syntheticReport = await runUtility({
-    tasks: evalTasks,
-    arms: ["akm"],
-    model: options.model,
-    seedsPerArm,
-    budgetTokens,
-    budgetWallMs,
-    slice: "eval",
-    materialiseStash: false,
-    ...(options.timestamp ? { timestamp: options.timestamp } : {}),
-    ...(options.branch ? { branch: options.branch } : {}),
-    ...(options.commit ? { commit: options.commit } : {}),
-    ...(options.spawn
-      ? {
-          // For the synthetic arm we strip the AKM_STASH_DIR and tell the
-          // agent to write its own scratchpad. The wrapSpawnWithArm helper
-          // adds BENCH_EVOLVE_ARM=synthetic + BENCH_EVOLVE_SCRATCHPAD=1 so
-          // fakes (and a future real harness) can branch.
-          spawn: wrapSpawnWithArm(options.spawn, "synthetic", undefined, true),
-        }
-      : {}),
-  });
 
   // ── Compute aggregates. ──────────────────────────────────────────────────
   const proposalsMetrics = computeProposalQualityMetrics(proposalLog);
@@ -575,10 +646,3 @@ export function buildSyntheticPrompt(taskId: string): string {
     "can attribute the approach to your own reasoning rather than retrieved guidance.",
   ].join("\n");
 }
-
-// `os` is imported because Phase 3 may want to materialise a fresh tmp dir
-// for the post-arm overlay. We intentionally keep that path narrow today.
-void os;
-// Re-export the writable file system module so future variants of evolve
-// (e.g. seeding feedback files into a tmp stash) can use the same import.
-void fs;

@@ -148,6 +148,15 @@ single domain (or `--tasks all` for the whole corpus):
    accepted lessons + revisions), and `synthetic` (no stash; the agent
    writes its own scratchpad — "Bring Your Own Skills").
 
+`bench evolve` runs **entirely in tmp directories**. Before Phase 1 starts,
+the runner materialises one dedicated tmp stash per fixture (the
+`evolveStash`) plus a fresh sibling snapshot per fixture (the `preStash`).
+Phase 1 + Phase 2 pin `AKM_STASH_DIR` to the appropriate evolveStash for
+every spawned `akm` invocation; Phase 3's pre arm reads from preStash, the
+post arm reads from the mutated evolveStash, and the synthetic arm reads
+no stash at all. **The operator's real `AKM_STASH_DIR` is never read or
+written.** All tmp stashes are torn down in a top-level try/finally.
+
 The report (§6.3 + §6.4 envelope) carries:
 
 - `proposals` — `acceptance_rate`, `lint_pass_rate`, plus a per-asset table.
