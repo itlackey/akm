@@ -51,12 +51,24 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
   });
 
-  test("evolve / attribute remain not-implemented", () => {
-    for (const sub of ["evolve", "attribute"]) {
+  test("evolve remains not-implemented", () => {
+    for (const sub of ["evolve"]) {
       const r = run([sub]);
       expect(r.exitCode).toBe(2);
       expect(r.stderr).toContain("not yet implemented");
     }
+  });
+
+  test("attribute without --base exits 2", () => {
+    const r = run(["attribute"]);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--base");
+  });
+
+  test("attribute with missing --base file exits 2", () => {
+    const r = run(["attribute", "--base", "/nonexistent/run.json"]);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("not found");
   });
 
   test("utility --tasks train --seeds 1 --json produces a §13.3 envelope", () => {
