@@ -25,7 +25,7 @@ function configWith(features: Record<string, boolean>): AkmConfig {
   return {
     stashDir: "/tmp/stash",
     llm: { ...baseLlm, features },
-  } as AkmConfig;
+  } as unknown as AkmConfig;
 }
 
 describe("isLlmFeatureEnabled", () => {

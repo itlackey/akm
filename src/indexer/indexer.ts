@@ -4,7 +4,7 @@ import path from "node:path";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
-import { warn } from "../core/warn";
+import { isVerbose, warn } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
@@ -27,7 +27,14 @@ import {
 } from "./db";
 import { runGraphExtractionPass } from "./graph-extraction";
 import { runMemoryInferencePass } from "./memory-inference";
-import { generateMetadataFlat, loadStashFile, type StashEntry, type StashFile, shouldIndexStashFile } from "./metadata";
+import {
+  generateMetadataFlat,
+  isWorkflowSkipWarning,
+  loadStashFile,
+  type StashEntry,
+  type StashFile,
+  shouldIndexStashFile,
+} from "./metadata";
 import { buildSearchText } from "./search-fields";
 import type { SearchSource } from "./search-source";
 import {
@@ -214,6 +221,23 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       phase: "scan",
       message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
     });
+
+    // Workflow validation noise gate (issue #273): per-spec stderr lines from
+    // `buildMetadataSkipWarning` are suppressed at default verbosity in
+    // `metadata.ts`. Replace them with a single summary line so operators
+    // running a cold-start search against a fresh registry-cloned source
+    // don't get the impression akm is broken. Verbose mode keeps the
+    // per-spec output instead of (not in addition to) the summary.
+    if (!isVerbose()) {
+      const skippedWorkflowCount = warnings.filter(isWorkflowSkipWarning).length;
+      if (skippedWorkflowCount > 0) {
+        const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
+        warn(
+          `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
+            "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
+        );
+      }
+    }
 
     const tWalkEnd = Date.now();
 

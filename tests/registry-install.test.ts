@@ -90,11 +90,12 @@ function runRealSpawnSync(
   options?: Parameters<typeof childProcess.spawnSync>[2],
 ): ReturnType<typeof childProcess.spawnSync> {
   const result = Bun.spawnSync([command, ...args], {
-    cwd: options?.cwd,
+    cwd: typeof options?.cwd === "string" ? options.cwd : options?.cwd?.toString(),
     env: options?.env ? Object.fromEntries(Object.entries(options.env).map(([k, v]) => [k, String(v)])) : undefined,
     stdout: "pipe",
     stderr: "pipe",
   });
+  const resultRecord = result as unknown as { success: boolean; error?: unknown };
   return {
     pid: 0,
     output: [null, result.stdout, result.stderr],
@@ -102,7 +103,7 @@ function runRealSpawnSync(
     stderr: Buffer.from(result.stderr).toString(options?.encoding === "buffer" ? undefined : "utf8"),
     status: result.exitCode,
     signal: result.signalCode,
-    error: result.success ? undefined : result.error,
+    error: resultRecord.success ? undefined : (resultRecord.error as Error | undefined),
   } as ReturnType<typeof childProcess.spawnSync>;
 }
 
@@ -212,10 +213,19 @@ async function withMockedNpmPackage<T>(packageName: string, archivePath: string,
     return new Response("not found", { status: 404 });
   }) as typeof fetch;
 
+  // The mock serves tarballs from example.test, so trust that host for the
+  // duration of the run via the operator-configurable npm registry override.
+  const originalRegistry = process.env.AKM_NPM_REGISTRY;
+  process.env.AKM_NPM_REGISTRY = "https://example.test";
   try {
     return await run();
   } finally {
     globalThis.fetch = originalFetch;
+    if (originalRegistry === undefined) {
+      delete process.env.AKM_NPM_REGISTRY;
+    } else {
+      process.env.AKM_NPM_REGISTRY = originalRegistry;
+    }
   }
 }
 
@@ -239,7 +249,7 @@ describe("local directory installs", () => {
       expect(result.sourceAdded?.type).toBe("filesystem");
       expect(result.sourceAdded?.stashRoot).toBe(stashDir2);
       expect(result.installed).toBeUndefined();
-      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot as string, "scripts", "hello.sh"))).toBe(true);
 
       const config = loadConfig();
       const stashPaths = (config.sources ?? []).map((s) => s.path);
@@ -249,7 +259,7 @@ describe("local directory installs", () => {
         akmShow({ ref: "script:hello.sh" }),
       );
       expect(shown.type).toBe("script");
-      expect(shown.path).toContain(result.sourceAdded?.stashRoot);
+      expect(shown.path).toContain(result.sourceAdded?.stashRoot as string);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -272,7 +282,7 @@ describe("local directory installs", () => {
       expect(result.sourceAdded?.type).toBe("filesystem");
       // stashRoot points directly at the source, no cache directory
       expect(result.sourceAdded?.stashRoot).toBe(stashDir2);
-      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot as string, "scripts", "hello.sh"))).toBe(true);
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -297,8 +307,10 @@ describe("local directory installs", () => {
       expect(result.sourceAdded).toBeDefined();
       // stashRoot should point to the nested my-stash dir, not the project root
       expect(result.sourceAdded?.stashRoot).toBe(path.join(projectDir, "my-stash"));
-      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "scripts", "hello.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot, "skills", "review", "SKILL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot as string, "scripts", "hello.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(result.sourceAdded?.stashRoot as string, "skills", "review", "SKILL.md"))).toBe(
+        true,
+      );
     } finally {
       fs.rmSync(stashDir, { recursive: true, force: true });
       fs.rmSync(cacheHome, { recursive: true, force: true });
@@ -549,8 +561,12 @@ describe("local directory installs", () => {
     let gitLsRemoteCalls = 0;
     let gitCloneCalls = 0;
 
-    globalThis.fetch = (async () => new Response("not found", { status: 404 })) as typeof fetch;
-    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation((command, args, options) => {
+    globalThis.fetch = (async () => new Response("not found", { status: 404 })) as unknown as typeof fetch;
+    const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockImplementation(((
+      command: string,
+      args: readonly string[] | undefined,
+      options: Parameters<typeof childProcess.spawnSync>[2],
+    ) => {
       if (command === "git" && Array.isArray(args) && args[0] === "ls-remote") {
         gitLsRemoteCalls += 1;
         const nextArgs = [...args];
@@ -565,7 +581,7 @@ describe("local directory installs", () => {
         return runRealSpawnSync(command, nextArgs, options);
       }
       return runRealSpawnSync(command, args as string[], options);
-    });
+    }) as unknown as typeof childProcess.spawnSync);
 
     try {
       const result = await withEnv({ XDG_CACHE_HOME: cacheHome }, () => installRegistryRef("github:owner/repo"));

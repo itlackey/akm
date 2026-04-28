@@ -145,7 +145,7 @@ describe("FTS5 field weighting", () => {
         name: "cloud-guide",
         type: "knowledge",
         description: "Guide to cloud architecture patterns",
-        toc: [{ text: "terraform setup", depth: 2 }],
+        toc: [{ text: "terraform setup", level: 2, line: 1 }],
       });
       insertEntry(db, "content-tf", contentEntry, "terraform");
 
@@ -270,8 +270,8 @@ describe("buildSearchFields", () => {
       tags: ["deploy", "production"],
       searchHints: ["release management", "rollout"],
       toc: [
-        { text: "Getting Started", depth: 1 },
-        { text: "Configuration", depth: 2 },
+        { text: "Getting Started", level: 1, line: 1 },
+        { text: "Configuration", level: 2, line: 5 },
       ],
     });
 

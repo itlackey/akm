@@ -217,7 +217,7 @@ describe("estimatedTokens in search hits", () => {
       query: "test",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allStashDirs: [tmpDir],
+      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -250,7 +250,7 @@ describe("estimatedTokens approximation", () => {
       query: "sized",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allStashDirs: [tmpDir],
+      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });
@@ -277,7 +277,7 @@ describe("estimatedTokens approximation", () => {
       query: "no",
       rankingMode: "fts",
       defaultStashDir: tmpDir,
-      allStashDirs: [tmpDir],
+      allSourceDirs: [tmpDir],
       sources: [{ path: tmpDir }],
       config: { semanticSearchMode: "off" },
     });

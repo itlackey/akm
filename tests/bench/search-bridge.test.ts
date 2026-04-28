@@ -33,6 +33,7 @@ function fakeResult(stdout: string, overrides: Partial<RunResult> = {}): RunResu
     events: [],
     verifierStdout: stdout,
     verifierExitCode: 0,
+    assetsLoaded: [],
     ...overrides,
   };
 }

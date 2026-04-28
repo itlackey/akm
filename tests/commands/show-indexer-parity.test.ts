@@ -118,7 +118,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     const shownBare = await akmShowUnified({ ref: "skill:origin-skill" });
     const shownLocal = await akmShowUnified({ ref: "local//skill:origin-skill" });
     expect(shownBare.path).toBe(shownLocal.path);
-    expect(shownBare.path).toBe(bare?.filePath);
+    expect(shownBare.path).toBe(bare?.filePath as string);
   });
 
   test("missing asset: lookup returns null", async () => {

@@ -93,7 +93,7 @@ describe("regression guard: src/integrations/agent/** never imports LLM SDKs", (
     expect(files.length).toBeGreaterThan(0);
   });
 
-  test.each(FORBIDDEN_LLM_SDK_PACKAGES)("no file imports %s", (pkg) => {
+  test.each([...FORBIDDEN_LLM_SDK_PACKAGES])("no file imports %s", (pkg: string) => {
     const re = buildImportRegex(pkg);
     const offenders: string[] = [];
     for (const file of listAgentSourceFiles()) {

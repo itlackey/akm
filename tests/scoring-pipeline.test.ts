@@ -204,8 +204,8 @@ describe("Issue #1: Two-phase boost — score/rank consistency", () => {
       query: "test",
       rankingMode: "fts",
       defaultStashDir: stashDir,
-      allStashDirs: [stashDir],
-      sources: [{ path: stashDir, type: "filesystem" }],
+      allSourceDirs: [stashDir],
+      sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });
 
@@ -699,8 +699,8 @@ describe("Issue #15: Hybrid ranking mode label", () => {
       query: "hybrid",
       rankingMode: "hybrid",
       defaultStashDir: stashDir,
-      allStashDirs: [stashDir],
-      sources: [{ path: stashDir, type: "filesystem" }],
+      allSourceDirs: [stashDir],
+      sources: [{ path: stashDir }],
       config: { semanticSearchMode: "off" },
     });
 

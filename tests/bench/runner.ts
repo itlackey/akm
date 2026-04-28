@@ -21,7 +21,6 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { warn } from "../../src/core/warn";
@@ -47,6 +46,7 @@ import {
   type PerTaskMetrics,
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
+import { benchMkdtemp } from "./tmp";
 import { computeTrajectory } from "./trajectory";
 import {
   evaluateRunAgainstAllSpecs,
@@ -410,7 +410,7 @@ async function runOneIsolated(args: {
   warnings: string[];
   prompt?: string;
 }): Promise<RunResult> {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-ws-${args.task.domain}-`));
+  const workspace = benchMkdtemp(`akm-bench-ws-${args.task.domain}-`);
   // SIGINT trap: register workspace cleanup so external signals don't leak
   // tmp dirs. Deregistered in `finally` before we do the synchronous rm so
   // the handler doesn't double-fire (per cleanup.ts contract).

@@ -11,12 +11,12 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 import type { TaskMetadata } from "./corpus";
 import { runUtility } from "./runner";
+import { benchMkdtemp } from "./tmp";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(text);
@@ -94,7 +94,7 @@ describe("runUtility", () => {
   let taskDir: string;
 
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-runner-test-"));
+    workspaceRoot = benchMkdtemp("bench-runner-test-");
     taskDir = path.join(workspaceRoot, "task-a");
     fs.mkdirSync(taskDir, { recursive: true });
     // No workspace template — runs start with empty cwd, which is valid.
@@ -392,7 +392,7 @@ describe("runUtility", () => {
         kill() {},
       };
     };
-    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-override-"));
+    const overrideDir = benchMkdtemp("akm-bench-251-override-");
     try {
       await runUtility({
         tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir })],
@@ -430,8 +430,8 @@ describe("runUtility", () => {
         kill() {},
       };
     };
-    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-prec-"));
-    const fixtureMapDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-mapdir-"));
+    const overrideDir = benchMkdtemp("akm-bench-251-prec-");
+    const fixtureMapDir = benchMkdtemp("akm-bench-251-mapdir-");
     try {
       await runUtility({
         tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir, stash: "ignored-fixture" })],
@@ -762,7 +762,7 @@ describe("runUtility workflow compliance (#257)", () => {
   let taskDir: string;
 
   beforeAll(() => {
-    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-runner-wf-"));
+    workspaceRoot = benchMkdtemp("bench-runner-wf-");
     taskDir = path.join(workspaceRoot, "task");
     fs.mkdirSync(taskDir, { recursive: true });
   });
@@ -843,7 +843,7 @@ describe("runUtility workflow compliance (#257)", () => {
   });
 
   test("passes search/result and test-presence flags into workflow evaluation", async () => {
-    const workflowsDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-workflow-flags-"));
+    const workflowsDir = benchMkdtemp("akm-bench-workflow-flags-");
     const spawn: SpawnFn = (cmd, opts) => {
       const isAgent = cmd[0] === "opencode";
       if (isAgent && opts.env?.XDG_CACHE_HOME) {
@@ -939,7 +939,7 @@ scoring:
   });
 
   test("skips required_if workflow steps when runner-derived flags are false", async () => {
-    const workflowsDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-workflow-flags-off-"));
+    const workflowsDir = benchMkdtemp("akm-bench-workflow-flags-off-");
     const spawn: SpawnFn = (cmd, opts) => {
       const isAgent = cmd[0] === "opencode";
       if (isAgent && opts.env?.XDG_CACHE_HOME) {

@@ -44,6 +44,7 @@ function fakeRun(overrides: Partial<RunResult> = {}): RunResult {
     events: [],
     verifierStdout: "",
     verifierExitCode: 1,
+    assetsLoaded: [],
     ...overrides,
   };
 }

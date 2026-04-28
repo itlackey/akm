@@ -337,8 +337,10 @@ describe("graph boost — search-time integration (#207)", () => {
     expect(typeof boostedHit?.score).toBe("number");
 
     // Same hit shape, same score field — just (weakly) higher.
-    expect(boostedHit?.path).toBe(baselineHit?.path);
-    expect(boostedHit?.ref).toBe(baselineHit?.ref);
+    expect((boostedHit as { path?: string } | undefined)?.path).toBe(
+      (baselineHit as { path?: string } | undefined)?.path,
+    );
+    expect((boostedHit as { ref?: string } | undefined)?.ref).toBe((baselineHit as { ref?: string } | undefined)?.ref);
     expect(boostedHit?.score ?? 0).toBeGreaterThanOrEqual(baselineHit?.score ?? 0);
   });
 });

@@ -22,11 +22,11 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
+import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
 /** Run option envelope (spec §5.2). */
@@ -139,6 +139,46 @@ export interface RunResult {
 const ISOLATED_ENV_NAMES = ["OPENCODE_CONFIG", "AKM_STASH_DIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"] as const;
 
 /**
+ * Operator-env names that MUST be stripped from `envSource` before the bench
+ * driver hands it to `runAgent`. These are credentials and config-dir hints
+ * that belong to the operator's *interactive* environment and have no
+ * business inside a bench-arm child:
+ *
+ *   • `OPENCODE_API_KEY` / `ANTHROPIC_API_KEY` — real-money credentials. The
+ *     opencode profile lists `OPENCODE_API_KEY` in `envPassthrough`, so
+ *     without explicit scrubbing the bench would forward the operator's key
+ *     into every (task × arm × seed) child. Bench is hermetic by design;
+ *     credentials must be supplied through the bench's own config surface,
+ *     not inherited.
+ *   • `AKM_CONFIG_DIR` — points akm at the operator's stash config. Letting
+ *     this leak defeats the per-run isolation tmpdirs `createIsolationDirs`
+ *     materialises (XDG_CACHE_HOME / XDG_CONFIG_HOME) and would cause
+ *     bench runs to read the operator's writable config.
+ *
+ * Recurrence guard for #271 (mirrors the #243/#251 fixup pattern of
+ * pinning isolation behaviour with regression tests).
+ */
+const SCRUBBED_OPERATOR_ENV_NAMES = ["OPENCODE_API_KEY", "ANTHROPIC_API_KEY", "AKM_CONFIG_DIR"] as const;
+
+/**
+ * Build the `envSource` passed to `runAgent`. Returns a copy of `source`
+ * (default: `process.env`) with `SCRUBBED_OPERATOR_ENV_NAMES` removed so
+ * profile-level passthrough (`profile.envPassthrough`) cannot drag operator
+ * credentials/config-dir hints into the bench-arm child.
+ *
+ * The returned object is a shallow copy — callers may mutate it without
+ * touching the real `process.env`.
+ */
+export function buildSanitizedEnvSource(source?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const src = source ?? process.env;
+  const out: NodeJS.ProcessEnv = { ...src };
+  for (const name of SCRUBBED_OPERATOR_ENV_NAMES) {
+    delete out[name];
+  }
+  return out;
+}
+
+/**
  * Materialise per-run isolation directories. Returns the env overrides that
  * the caller will pass to `runAgent` so the child sees ONLY these tmpdirs.
  */
@@ -151,7 +191,7 @@ export interface IsolationDirs {
 }
 
 export function createIsolationDirs(stashDir?: string): IsolationDirs {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-run-"));
+  const root = benchMkdtemp("akm-bench-run-");
   const cacheHome = path.join(root, "cache");
   const configHome = path.join(root, "config");
   const opencodeConfig = path.join(root, "opencode-config");
@@ -364,6 +404,12 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
   try {
     const agentResult = await runAgent(profile, options.prompt ?? defaultPrompt(options), {
       env,
+      // #271: scrub operator credentials + config-dir hints from the env
+      // source BEFORE profile.envPassthrough copies them into the child.
+      // Without this, OPENCODE_API_KEY (in opencode's passthrough list) and
+      // AKM_CONFIG_DIR (read by akm at startup) would leak the operator's
+      // interactive environment into every bench child.
+      envSource: buildSanitizedEnvSource(),
       cwd: options.workspace,
       timeoutMs: options.budgetWallMs,
       stdio: "captured",
@@ -430,3 +476,9 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
 
 /** Exposed for the unit test that asserts operator env never leaks. */
 export const _ISOLATED_ENV_NAMES = ISOLATED_ENV_NAMES;
+
+/**
+ * Exposed for the #271 regression test that asserts operator credentials +
+ * `AKM_CONFIG_DIR` never reach a bench-arm child via profile.envPassthrough.
+ */
+export const _SCRUBBED_OPERATOR_ENV_NAMES = SCRUBBED_OPERATOR_ENV_NAMES;

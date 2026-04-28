@@ -85,6 +85,43 @@ are capped at 16 MiB each. A runaway agent that produces more than that does
 not OOM the bench; trajectory is computed from the prefix and a warning is
 appended to the report's top-level `warnings[]`.
 
+## Bench tmp root (#276)
+
+Every bench tmp directory — per-(task, arm, seed) workspace, per-task
+fixture stash, per-fixture evolveStash + preStash, plus the scratch dirs
+spun up inside unit tests — lives under `${AKM_CACHE_DIR}/bench/`, NOT
+`/tmp`. The CLI's own `/tmp` usage is unaffected.
+
+Why:
+
+- A single command purges all bench scratch:
+  `rm -rf "$(akm config get cache.dir)/bench"` (or `rm -rf ~/.cache/akm/bench`
+  on Linux defaults).
+- Long workflow runs that crash mid-flight previously left orphan dirs
+  under `/tmp` and eventually filled the OS partition. Pinning bench tmp
+  to the akm cache dir keeps the operator's `/tmp` untouched.
+- XDG-style cache eviction is fine for bench artifacts.
+
+Helpers (in `tests/bench/tmp.ts`):
+
+- `benchTmpRoot()` — returns `${AKM_CACHE_DIR}/bench/`, created lazily.
+- `benchMkdtemp(prefix)` — drop-in for
+  `fs.mkdtempSync(path.join(os.tmpdir(), prefix))`.
+
+Garbage collection: the FIRST `registerCleanup` call in
+`tests/bench/cleanup.ts` sweeps any `${AKM_CACHE_DIR}/bench/*` entry
+whose mtime is older than 6 hours. This catches orphans from prior
+crashed runs that bypassed `try/finally`. The sweep is install-once —
+subsequent `registerCleanup` calls never re-trigger it. Per-entry
+removal failures are swallowed (warned via `warn()` from
+`src/core/warn.ts`) so a single permission-bound dir does not abort the
+install.
+
+The invariant test `tests/bench/no-os-tmpdir-invariant.test.ts`
+asserts that no `tests/bench/*.ts` file (apart from `tmp.ts` itself)
+references `os.tmpdir`. This blocks future contributors from
+re-introducing the leak.
+
 ## Per-run isolation
 
 Every (task, arm, seed) triple gets a fresh tmp dir holding:

@@ -14,7 +14,6 @@
 import { describe, expect, test } from "bun:test";
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import {
@@ -29,6 +28,7 @@ import {
   readTaskBody,
   type TaskMetadata,
 } from "./corpus";
+import { benchMkdtemp } from "./tmp";
 
 describe("listTasks", () => {
   test("the corpus root resolves under tests/fixtures/bench/tasks", () => {
@@ -257,14 +257,14 @@ describe("memory-operation tags (#262)", () => {
   test("every seeded corpus task carries memory_ability + task_family", () => {
     for (const task of listTasks()) {
       expect(task.memoryAbility).toBeDefined();
-      expect(MEMORY_ABILITY_VALUES).toContain(task.memoryAbility as string);
+      expect(MEMORY_ABILITY_VALUES as readonly string[]).toContain(task.memoryAbility as string);
       expect(task.taskFamily).toBeDefined();
       expect(task.taskFamily).toMatch(/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/);
     }
   });
 
   test("invalid memory_ability values are dropped (loader stays permissive)", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-tag-"));
+    const dir = benchMkdtemp("akm-bench-tag-");
     try {
       const taskDir = path.join(dir, "_example", "bad-tag");
       fs.mkdirSync(taskDir, { recursive: true });

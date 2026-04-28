@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
-import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../../src/sources/providers/git";
+import { ensureGitMirror, getCachePaths, parseGitRepoUrl, saveGitStash } from "../../src/sources/providers/git";
 
 // Trigger self-registration
 import "../../src/sources/providers/git";
@@ -248,5 +248,81 @@ describe("GitSourceProvider", () => {
     const sources = resolveSourceEntries(undefined, config);
     const gitSource = sources.find((s) => s.path.includes(path.basename(cachePaths.rootDir)));
     expect(gitSource).toBeDefined();
+  });
+});
+
+// ── saveGitStash commit message sanitization (issue #270) ───────────────────
+
+describe("saveGitStash — commit message sanitization (issue #270)", () => {
+  /** Initialise an empty git repo at the given dir. */
+  function initRepo(dir: string): void {
+    for (const args of [
+      ["init", "--initial-branch=main"],
+      ["config", "user.email", "test@akm.local"],
+      ["config", "user.name", "akm-test"],
+      ["config", "commit.gpgsign", "false"],
+    ] as string[][]) {
+      const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+      if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+    }
+  }
+
+  test("--message with embedded newlines is collapsed to a single line", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    // Stage some change to commit.
+    writeFile(path.join(stashDir, "skills", "x.md"), "x\n");
+
+    const malign = "feat: add skill\n\nCo-Authored-By: attacker <evil@example>";
+    const result = saveGitStash(undefined, malign);
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", stashDir, "log", "--format=%B%x00", "-1"], { encoding: "utf8" });
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL is the explicit record separator.
+    const body = log.stdout.replace(/\x00\s*$/, "").replace(/\n$/, "");
+    expect(body.includes("\n")).toBe(false);
+    expect(body).toBe("feat: add skill Co-Authored-By: attacker <evil@example>");
+  });
+
+  test("--message with NUL byte is sanitized so commit succeeds", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "skills", "y.md"), "y\n");
+
+    const malign = "subject\x00embedded";
+    const result = saveGitStash(undefined, malign);
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", stashDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.includes("\x00")).toBe(false);
+    expect(log.stdout.trim()).toBe("subjectembedded");
+  });
+
+  test("--message that sanitizes to empty falls back to the timestamped default", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "skills", "z.md"), "z\n");
+
+    // Whitespace + control chars only — must NOT result in an empty commit
+    // subject; fall back to the timestamped default.
+    const result = saveGitStash(undefined, "\n\r\x00 \t");
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", stashDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.startsWith("akm save ")).toBe(true);
+  });
+
+  test("--message exceeding 4096 chars is clamped", () => {
+    const stashDir = process.env.AKM_STASH_DIR as string;
+    initRepo(stashDir);
+    writeFile(path.join(stashDir, "skills", "w.md"), "w\n");
+
+    const longMessage = `prefix-${"x".repeat(5000)}`;
+    const result = saveGitStash(undefined, longMessage);
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", stashDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim().length).toBeLessThanOrEqual(4096);
+    expect(log.stdout.trim().startsWith("prefix-xxxx")).toBe(true);
   });
 });
