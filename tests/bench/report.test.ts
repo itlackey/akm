@@ -605,3 +605,133 @@ describe("renderUtilityReport corpus_coverage (#262)", () => {
     expect(markdown).not.toContain("## Corpus coverage");
   });
 });
+
+// ── AKM overhead block (#263) ──────────────────────────────────────────────
+
+describe("akm_overhead block (#263)", () => {
+  function fakeRun(overrides: Partial<import("./driver").RunResult>): import("./driver").RunResult {
+    return {
+      schemaVersion: 1,
+      taskId: "t",
+      arm: "akm",
+      seed: 0,
+      model: "m",
+      outcome: "pass",
+      tokens: { input: 0, output: 0 },
+      tokenMeasurement: "parsed",
+      wallclockMs: 0,
+      trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      events: [],
+      verifierStdout: "",
+      verifierExitCode: 0,
+      assetsLoaded: [],
+      ...overrides,
+    };
+  }
+
+  test("emits empty/zero envelope when no akm runs are attached", () => {
+    const { json, markdown } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    expect("akm_overhead" in obj).toBe(true);
+    const ov = obj.akm_overhead as Record<string, unknown>;
+    expect((ov.aggregate as { total_runs: number }).total_runs).toBe(0);
+    expect((ov.aggregate as { tool_calls_per_success: number | null }).tool_calls_per_success).toBeNull();
+    expect((ov.aggregate as { cost_per_success: number | null }).cost_per_success).toBeNull();
+    expect(ov.per_run).toEqual([]);
+    // Markdown section is gated on having akm runs to summarise.
+    expect(markdown).not.toContain("## AKM overhead");
+  });
+
+  test("populates per-run rows + aggregate from akmRuns + taskMetadata", () => {
+    const akmRuns = [
+      fakeRun({
+        taskId: "domain-a/task-1",
+        seed: 0,
+        outcome: "pass",
+        tokens: { input: 100, output: 50 },
+        events: [
+          {
+            schemaVersion: 1,
+            id: 0,
+            ts: "2026-04-27T10:00:00.000Z",
+            eventType: "search",
+          },
+          {
+            schemaVersion: 1,
+            id: 1,
+            ts: "2026-04-27T10:00:00.500Z",
+            eventType: "show",
+            ref: "skill:gold",
+          },
+        ],
+      }),
+    ];
+    const taskMetadata = [
+      {
+        id: "domain-a/task-1",
+        title: "T1",
+        domain: "domain-a",
+        difficulty: "easy" as const,
+        stash: "fixture-a",
+        verifier: "regex" as const,
+        budget: { tokens: 1000, wallMs: 1000 },
+        taskDir: "/tmp/ignored",
+        goldRef: "skill:gold",
+        expectedTransferFrom: [],
+      },
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns, taskMetadata };
+    const { json, markdown } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const ov = obj.akm_overhead as Record<string, unknown>;
+    const perRun = ov.per_run as Array<Record<string, unknown>>;
+    expect(perRun).toHaveLength(1);
+    expect(perRun[0].search_count).toBe(1);
+    expect(perRun[0].show_count).toBe(1);
+    expect(perRun[0].assets_loaded_count).toBe(1);
+    expect(perRun[0].irrelevant_assets_loaded_count).toBe(0);
+    expect(perRun[0].time_to_first_correct_asset_ms).toBe(500);
+    expect(perRun[0].context_bytes_loaded).toBeNull();
+    expect(perRun[0].asset_bytes_loaded).toBeNull();
+
+    const agg = ov.aggregate as Record<string, unknown>;
+    expect(agg.total_runs).toBe(1);
+    expect(agg.passing_runs).toBe(1);
+    expect(agg.tool_calls_per_success).toBe(2);
+    expect(agg.cost_per_success).toBe(150);
+    expect(agg.mean_context_bytes_loaded).toBeNull();
+
+    expect(markdown).toContain("## AKM overhead");
+    expect(markdown).toContain("tool_calls_per_success");
+    expect(markdown).toContain("context_bytes_loaded: n/a");
+  });
+
+  test("excessive AKM calls produce high tool_calls_per_success in markdown", () => {
+    const akmRuns = [
+      fakeRun({
+        taskId: "domain-a/task-1",
+        outcome: "fail",
+        events: [
+          { schemaVersion: 1, id: 0, ts: "2026-04-27T10:00:00.000Z", eventType: "search" },
+          { schemaVersion: 1, id: 1, ts: "2026-04-27T10:00:00.001Z", eventType: "search" },
+          { schemaVersion: 1, id: 2, ts: "2026-04-27T10:00:00.002Z", eventType: "show", ref: "skill:wrong" },
+        ],
+      }),
+      fakeRun({
+        taskId: "domain-a/task-1",
+        seed: 1,
+        outcome: "pass",
+        tokens: { input: 1, output: 1 },
+        events: [{ schemaVersion: 1, id: 0, ts: "2026-04-27T10:00:00.000Z", eventType: "search" }],
+      }),
+    ];
+    const sampleWithRuns: UtilityRunReport = { ...utilSample, akmRuns };
+    const { json } = renderUtilityReport(sampleWithRuns);
+    const obj = json as Record<string, unknown>;
+    const ov = obj.akm_overhead as Record<string, unknown>;
+    const agg = ov.aggregate as Record<string, unknown>;
+    expect(agg.total_tool_calls).toBe(4);
+    expect(agg.passing_runs).toBe(1);
+    expect(agg.tool_calls_per_success).toBe(4);
+  });
+});
