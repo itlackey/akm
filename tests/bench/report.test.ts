@@ -89,6 +89,7 @@ const utilSample: UtilityRunReport = {
   aggregateAkm: { passRate: 0.7, tokensPerPass: 14000, wallclockMs: 36000 },
   aggregateDelta: { passRate: 0.3, tokensPerPass: -4000, wallclockMs: -5000 },
   trajectoryAkm: { correctAssetLoaded: 0.78, feedbackRecorded: 0.65 },
+  failureModes: { byLabel: {}, byTask: {} },
   tasks: [
     {
       id: "domain-a/task-1",
