@@ -6,10 +6,13 @@ import { describe, expect, test } from "bun:test";
 
 import type { RunResult } from "./driver";
 import {
+  aggregateByMemoryAbility,
+  aggregateByTaskFamily,
   aggregateCorpus,
   aggregatePerTask,
   aggregateTrajectory,
   computeAssetRegressionCandidates,
+  computeCorpusCoverage,
   computeCorpusDelta,
   computeDomainAggregates,
   computeNegativeTransfer,
@@ -17,6 +20,7 @@ import {
   computePerTaskDelta,
   domainOfTaskId,
   type PerTaskMetrics,
+  type PerTaskTagEntry,
 } from "./metrics";
 
 function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
@@ -513,5 +517,88 @@ describe("computeAssetRegressionCandidates", () => {
     if (!bar) throw new Error("bar missing");
     expect(bar.regressedTaskCount).toBe(1);
     expect(bar.totalLoadCount).toBe(1);
+  });
+});
+
+// ── Memory-operation aggregations (#262) ───────────────────────────────────
+
+describe("aggregateByMemoryAbility / aggregateByTaskFamily (#262)", () => {
+  function entry(
+    id: string,
+    noakmPass: number,
+    akmPass: number,
+    extras: Partial<PerTaskTagEntry> = {},
+  ): PerTaskTagEntry {
+    return {
+      id,
+      noakm: ptm({ passRate: noakmPass }),
+      akm: ptm({ passRate: akmPass }),
+      ...extras,
+    };
+  }
+
+  test("returns empty when no entries carry the keying tag", () => {
+    const entries = [entry("d/a", 0.4, 0.6), entry("d/b", 0.5, 0.7)];
+    expect(aggregateByMemoryAbility(entries)).toEqual([]);
+    expect(aggregateByTaskFamily(entries)).toEqual([]);
+  });
+
+  test("aggregateByMemoryAbility groups tasks, computes deltas + negative transfer", () => {
+    const entries = [
+      entry("d/lookup-1", 0.4, 0.8, { memoryAbility: "procedural_lookup" }),
+      entry("d/lookup-2", 0.6, 0.4, { memoryAbility: "procedural_lookup" }),
+      entry("d/compose-1", 0.0, 1.0, { memoryAbility: "multi_asset_composition" }),
+      entry("d/no-tag", 0.5, 0.7),
+    ];
+    const rows = aggregateByMemoryAbility(entries);
+    expect(rows.map((r) => r.category)).toEqual(["multi_asset_composition", "procedural_lookup"]);
+    const lookup = rows.find((r) => r.category === "procedural_lookup");
+    expect(lookup?.taskCount).toBe(2);
+    expect(lookup?.passRateNoakm).toBeCloseTo(0.5);
+    expect(lookup?.passRateAkm).toBeCloseTo(0.6);
+    expect(lookup?.passRateDelta).toBeCloseTo(0.1);
+    // d/lookup-2 regressed (akm < noakm).
+    expect(lookup?.negativeTransferCount).toBe(1);
+    expect(lookup?.workflowCompliance).toBeNull();
+  });
+
+  test("aggregateByMemoryAbility folds workflow_compliance when at least one task supplies it", () => {
+    const entries = [
+      entry("d/a", 0.5, 0.7, { memoryAbility: "procedural_lookup", workflowCompliance: 0.8 }),
+      entry("d/b", 0.5, 0.7, { memoryAbility: "procedural_lookup" }),
+      entry("d/c", 0.5, 0.7, { memoryAbility: "procedural_lookup", workflowCompliance: 0.6 }),
+    ];
+    const [row] = aggregateByMemoryAbility(entries);
+    expect(row?.workflowCompliance).toBeCloseTo(0.7);
+  });
+
+  test("aggregateByTaskFamily groups by family", () => {
+    const entries = [
+      entry("d/a", 0.4, 0.6, { taskFamily: "d/group-1" }),
+      entry("d/b", 0.4, 0.4, { taskFamily: "d/group-1" }),
+      entry("d/c", 0.0, 1.0, { taskFamily: "d/group-2" }),
+    ];
+    const rows = aggregateByTaskFamily(entries);
+    expect(rows.map((r) => r.category)).toEqual(["d/group-1", "d/group-2"]);
+    const g1 = rows.find((r) => r.category === "d/group-1");
+    expect(g1?.taskCount).toBe(2);
+    expect(g1?.passRateDelta).toBeCloseTo(0.1);
+  });
+
+  test("computeCorpusCoverage counts every closed-set ability + an untagged bucket", () => {
+    const cov = computeCorpusCoverage([
+      { memoryAbility: "procedural_lookup", taskFamily: "d/family-a" },
+      { memoryAbility: "procedural_lookup", taskFamily: "d/family-a" },
+      { memoryAbility: "abstention", taskFamily: "d/family-b" },
+      { taskFamily: "d/family-c" },
+      {},
+    ]);
+    expect(cov.totalTasks).toBe(5);
+    expect(cov.memoryAbilityCounts.procedural_lookup).toBe(2);
+    expect(cov.memoryAbilityCounts.abstention).toBe(1);
+    expect(cov.memoryAbilityCounts.conflict_resolution).toBe(0);
+    expect(cov.memoryAbilityCounts.untagged).toBe(2);
+    expect(cov.taskFamilyCounts["d/family-a"]).toBe(2);
+    expect(cov.taskFamilyCounts.untagged).toBe(1);
   });
 });
