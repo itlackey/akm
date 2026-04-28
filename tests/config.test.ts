@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  _resetConfigWarnings,
   DEFAULT_CONFIG,
   getConfigDir,
   getConfigPath,
@@ -38,6 +39,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = testConfigHome;
   process.chdir(originalCwd);
   resetConfigCache();
+  _resetConfigWarnings();
 });
 
 afterEach(() => {
@@ -577,6 +579,56 @@ describe("legacy stashes → sources migration", () => {
       );
       loadConfig();
       expect(warnings).toEqual([]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  // ── stashes[] read-time deprecation pointer (issue #273) ──────────────────
+
+  test("emits a deprecation pointer when raw config still carries stashes[] alongside sources[]", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      // Both keys present: maybeAutoMigrateLegacyStashes early-returns (does
+      // not rewrite), so the parsed raw object still has `stashes` at parseConfig
+      // time. The deprecation pointer must fire to alert the user.
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          sources: [{ type: "filesystem", path: "/new-path" }],
+          stashes: [{ type: "filesystem", path: "/old-path" }],
+        }),
+      );
+      loadConfig();
+      const deprecation = warnings.find((w) => w.startsWith('Deprecated: config key "stashes"'));
+      expect(deprecation).toBeDefined();
+      expect(deprecation).toContain("renamed to");
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("the stashes[] deprecation pointer fires at most once per process", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn.bind(console);
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          sources: [{ type: "filesystem", path: "/new-path" }],
+          stashes: [{ type: "filesystem", path: "/old-path" }],
+        }),
+      );
+      loadConfig();
+      resetConfigCache();
+      loadConfig();
+      resetConfigCache();
+      loadConfig();
+      const deprecations = warnings.filter((w) => w.startsWith('Deprecated: config key "stashes"'));
+      expect(deprecations).toHaveLength(1);
     } finally {
       console.warn = originalWarn;
     }

@@ -561,6 +561,15 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   }
 
   // Load `sources` (new key) first, then fall back to legacy `stashes` key.
+  // Whenever the raw object still carries `stashes[]` at parse time (i.e. the
+  // on-disk auto-migration in `maybeAutoMigrateLegacyStashes` did not run or
+  // failed to rewrite the file), emit a one-shot deprecation pointer so users
+  // on a 0.5.x config aren't silently relying on the legacy key. See
+  // issue #273 for context. The auto-migration's "Config migrated" /
+  // "Failed to migrate" messages still own the success / write-failure paths.
+  if (Object.hasOwn(raw, "stashes")) {
+    warnLegacyStashesObserved();
+  }
   const sources = parseStashesConfig(raw.sources);
   if (sources) {
     config.sources = sources;
@@ -701,6 +710,35 @@ function parseConfigObjectFromText(text: string): Record<string, unknown> | unde
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Module-level latch so the legacy-`stashes[]`-observed deprecation pointer
+ * fires at most once per process. Reset between tests via `_resetConfigWarnings`
+ * to keep test isolation deterministic. See issue #273.
+ */
+let legacyStashesObservedWarned = false;
+
+function warnLegacyStashesObserved(): void {
+  if (legacyStashesObservedWarned) return;
+  legacyStashesObservedWarned = true;
+  warn(
+    'Deprecated: config key "stashes" is renamed to "sources". ' +
+      "Support will be removed in a future release. " +
+      'Either re-run `akm` (the loader rewrites "stashes" -> "sources" on disk when writable) ' +
+      "or rename the key by hand in your config.json.",
+  );
+}
+
+/**
+ * Reset the once-per-process deprecation latches owned by this module. Tests
+ * that exercise multiple `loadConfig()` calls under different inputs use this
+ * so each scenario starts from a clean slate. Not part of the public API.
+ *
+ * @internal
+ */
+export function _resetConfigWarnings(): void {
+  legacyStashesObservedWarned = false;
 }
 
 /**

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDbPath } from "../../src/core/paths";
+import { resetQuiet, resetVerbose, setVerbose } from "../../src/core/warn";
 import { closeDatabase, openDatabase } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
 
@@ -25,6 +26,12 @@ beforeEach(() => {
       /* ignore */
     }
   }
+  // Defensive: other test files may have left the warn module's quiet/verbose
+  // latches on. Reset both before each test so the noise-gate assertions read
+  // a clean state.
+  resetQuiet();
+  resetVerbose();
+  delete process.env.AKM_VERBOSE;
 });
 
 afterEach(() => {
@@ -40,6 +47,8 @@ afterEach(() => {
     fs.rmSync(testCacheDir, { recursive: true, force: true });
     testCacheDir = "";
   }
+  resetVerbose();
+  delete process.env.AKM_VERBOSE;
 });
 
 function tmpStash(): string {
@@ -147,4 +156,91 @@ test("indexer rejects broken workflows and surfaces every error in IndexResponse
   } finally {
     closeDatabase(db);
   }
+});
+
+// ── Workflow validation noise gate (issue #273) ─────────────────────────────
+
+async function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const originalWarn = console.warn.bind(console);
+  console.warn = (...args: unknown[]) => {
+    lines.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  };
+  try {
+    const result = await fn();
+    return { result, lines };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
+test("default verbosity emits one summary line, not per-spec workflow warnings", async () => {
+  const stashDir = tmpStash();
+  // Two broken workflows so we can prove the summary line is emitted instead
+  // of two separate per-spec warnings on stderr.
+  writeWorkflow(stashDir, "bad1", BROKEN_WORKFLOW);
+  writeWorkflow(stashDir, "bad2", BROKEN_WORKFLOW);
+
+  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
+
+  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
+  expect(perSpec).toHaveLength(0);
+
+  const summary = lines.filter((l) => l.includes("workflow specs skipped due to validation errors"));
+  expect(summary).toHaveLength(1);
+  expect(summary[0]).toMatch(/^2 workflow specs skipped/);
+  expect(summary[0]).toContain("--verbose");
+  expect(summary[0]).toContain("AKM_VERBOSE");
+});
+
+test("default verbosity uses singular 'workflow spec' when only one was skipped", async () => {
+  const stashDir = tmpStash();
+  writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
+
+  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
+
+  const summary = lines.filter((l) => l.includes("workflow spec skipped"));
+  expect(summary).toHaveLength(1);
+  expect(summary[0]).toMatch(/^1 workflow spec skipped/);
+});
+
+test("--verbose flag restores per-spec workflow warnings and suppresses the summary", async () => {
+  const stashDir = tmpStash();
+  writeWorkflow(stashDir, "bad1", BROKEN_WORKFLOW);
+  writeWorkflow(stashDir, "bad2", BROKEN_WORKFLOW);
+
+  setVerbose(true);
+  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
+
+  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
+  expect(perSpec).toHaveLength(2);
+  const summary = lines.filter((l) => l.includes("workflow specs skipped due to validation errors"));
+  expect(summary).toHaveLength(0);
+});
+
+test("AKM_VERBOSE=1 restores per-spec output even with the verbose flag unset", async () => {
+  const stashDir = tmpStash();
+  writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
+
+  process.env.AKM_VERBOSE = "1";
+  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
+
+  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
+  expect(perSpec).toHaveLength(1);
+  const summary = lines.filter((l) => l.includes("workflow spec skipped"));
+  expect(summary).toHaveLength(0);
+});
+
+test("AKM_VERBOSE=0 hard-disables verbose output even when --verbose flag was set", async () => {
+  const stashDir = tmpStash();
+  writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
+
+  setVerbose(true);
+  process.env.AKM_VERBOSE = "0";
+  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
+
+  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
+  expect(perSpec).toHaveLength(0);
+  const summary = lines.filter((l) => l.includes("workflow spec skipped"));
+  expect(summary).toHaveLength(1);
 });

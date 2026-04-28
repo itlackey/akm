@@ -43,7 +43,7 @@ import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig }
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
-import { setQuiet, warn } from "./core/warn";
+import { setQuiet, setVerbose, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
@@ -147,7 +147,8 @@ function output(command: string, result: unknown): void {
 const setupCommand = defineCommand({
   meta: {
     name: "setup",
-    description: "Interactive configuration wizard for embeddings, LLM, registries, and stash sources",
+    description:
+      "Interactive configuration wizard: detects services and walks you through embeddings, LLM, registries, sources, and agent profiles. Writes config once at the end.",
   },
   async run() {
     await runWithJsonErrors(async () => {
@@ -2790,6 +2791,12 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
     // Apply --quiet flag early so warnings inside the command are suppressed
     if (process.argv.includes("--quiet") || process.argv.includes("-q")) {
       setQuiet(true);
+    }
+    // Apply --verbose flag early so per-spec diagnostics (gated behind
+    // `isVerbose()` in src/core/warn.ts) are restored. The `AKM_VERBOSE`
+    // env var still wins regardless — see warn.ts for the precedence rule.
+    if (process.argv.includes("--verbose")) {
+      setVerbose(true);
     }
     await fn();
   } catch (error: unknown) {
