@@ -362,7 +362,7 @@ function buildWorkflowTaskMetadata(
   trace: ReturnType<typeof normalizeRunToTrace>,
 ): { goldRef?: string; flags?: Record<string, boolean> } {
   const flags: Record<string, boolean> = {
-    search_has_relevant_result: hasRelevantSearchResult(trace, task.goldRef),
+    search_has_relevant_result: searchResultIncludesGoldRef(trace, task.goldRef),
     task_has_tests: taskHasTests(task),
   };
   return {
@@ -371,7 +371,10 @@ function buildWorkflowTaskMetadata(
   };
 }
 
-function hasRelevantSearchResult(trace: ReturnType<typeof normalizeRunToTrace>, goldRef: string | undefined): boolean {
+function searchResultIncludesGoldRef(
+  trace: ReturnType<typeof normalizeRunToTrace>,
+  goldRef: string | undefined,
+): boolean {
   if (!goldRef) return false;
   for (const event of trace.events) {
     if (event.type !== "akm_search") continue;
