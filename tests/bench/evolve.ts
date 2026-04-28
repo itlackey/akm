@@ -38,8 +38,10 @@ import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
 import type { TaskMetadata, TaskSlice } from "./corpus";
 import {
+  computeFeedbackIntegrity,
   computeLongitudinalMetrics,
   computeProposalQualityMetrics,
+  type FeedbackIntegrityMetrics,
   type LongitudinalMetrics,
   type ProposalLogEntry,
   type ProposalQualityMetrics,
@@ -122,6 +124,20 @@ export interface EvolveRunReport {
   proposals: ProposalQualityMetrics;
   /** Aggregate longitudinal metrics. */
   longitudinal: LongitudinalMetrics;
+  /**
+   * Feedback-signal integrity 2x2 confusion matrix (§6.8). Joins each
+   * Phase 1 feedback event to the akm-arm run that produced it (per
+   * `feedbackLog[i].taskId`/`seed`) and labels TP/FP/TN/FN per the run's
+   * outcome. Computed by `computeFeedbackIntegrity`.
+   */
+  feedbackIntegrity: FeedbackIntegrityMetrics;
+  /**
+   * Phase 1 utility report (akm arm only, train slice). Exposed so
+   * downstream metrics like `computeFeedbackIntegrity` can join feedback
+   * events back to the run that produced them. Additive in the report
+   * envelope.
+   */
+  phase1: UtilityRunReport;
   /** Phase 3 arm reports. Each is a §13.3-shape utility report. */
   arms: { pre: UtilityRunReport; post: UtilityRunReport; synthetic: UtilityRunReport };
   /** Operator-visible warnings. */
@@ -467,6 +483,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
   // ── Compute aggregates. ──────────────────────────────────────────────────
   const proposalsMetrics = computeProposalQualityMetrics(proposalLog);
   const longitudinal = computeLongitudinalMetrics(preReport, postReport, syntheticReport);
+  const feedbackIntegrity = computeFeedbackIntegrity({ phase1: phase1Report, feedbackLog });
 
   return {
     timestamp: options.timestamp ?? new Date().toISOString(),
@@ -479,6 +496,8 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
     proposalLog,
     proposals: proposalsMetrics,
     longitudinal,
+    feedbackIntegrity,
+    phase1: phase1Report,
     arms: { pre: preReport, post: postReport, synthetic: syntheticReport },
     warnings: [
       ...warnings,
