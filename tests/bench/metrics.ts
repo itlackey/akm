@@ -30,14 +30,23 @@ export interface OutcomeAggregate {
   /** Fraction of runs whose outcome is `pass`. Zero when results is empty. */
   passRate: number;
   /**
-   * Mean total tokens across runs that passed; `0` when there are no passes
-   * (avoids `Infinity` and `NaN` polluting downstream JSON).
+   * Mean total tokens across runs that passed AND have a parsed token
+   * measurement; `0` when no such runs exist (avoids `Infinity` and `NaN`
+   * polluting downstream JSON). Runs with `tokenMeasurement !== "parsed"`
+   * are deliberately skipped so a `0` here means "no parsed passes" rather
+   * than "free run" (issue #252).
    */
   tokensPerPass: number;
   /** Mean wallclock ms across all runs (not just passes). */
   wallclockMs: number;
   /** Number of runs whose outcome is `budget_exceeded`. */
   budgetExceeded: number;
+  /**
+   * Total runs (any outcome) with `tokenMeasurement === "parsed"`. Reports
+   * use this to surface token-measurement coverage; aggregations with low
+   * coverage cannot be trusted for token economics (issue #252).
+   */
+  runsWithMeasuredTokens: number;
 }
 
 /**
@@ -49,27 +58,47 @@ export interface OutcomeAggregate {
  */
 export function computeOutcomeAggregate(results: RunResult[]): OutcomeAggregate {
   if (results.length === 0) {
-    return { passRate: 0, tokensPerPass: 0, wallclockMs: 0, budgetExceeded: 0 };
+    return { passRate: 0, tokensPerPass: 0, wallclockMs: 0, budgetExceeded: 0, runsWithMeasuredTokens: 0 };
   }
   let passes = 0;
   let budgetExceeded = 0;
-  let totalTokensInPasses = 0;
+  let totalTokensInMeasuredPasses = 0;
+  let measuredPasses = 0;
+  let runsWithMeasuredTokens = 0;
   let totalWallclock = 0;
   for (const r of results) {
     totalWallclock += r.wallclockMs;
+    if (isMeasured(r)) {
+      runsWithMeasuredTokens += 1;
+    }
     if (r.outcome === "pass") {
       passes += 1;
-      totalTokensInPasses += r.tokens.input + r.tokens.output;
+      // Only fold tokens into the mean when we actually measured them
+      // (issue #252) — otherwise a `0` would silently understate cost.
+      if (isMeasured(r)) {
+        measuredPasses += 1;
+        totalTokensInMeasuredPasses += r.tokens.input + r.tokens.output;
+      }
     } else if (r.outcome === "budget_exceeded") {
       budgetExceeded += 1;
     }
   }
   return {
     passRate: passes / results.length,
-    tokensPerPass: passes === 0 ? 0 : totalTokensInPasses / passes,
+    tokensPerPass: measuredPasses === 0 ? 0 : totalTokensInMeasuredPasses / measuredPasses,
     wallclockMs: totalWallclock / results.length,
     budgetExceeded,
+    runsWithMeasuredTokens,
   };
+}
+
+/**
+ * Treat older artefacts without `tokenMeasurement` as `"parsed"` for backward
+ * compatibility — pre-#252 reports always returned numeric zero, and rejecting
+ * them entirely would break compare/attribute over historical runs.
+ */
+function isMeasured(r: RunResult): boolean {
+  return (r.tokenMeasurement ?? "parsed") === "parsed";
 }
 
 // ── Per-task aggregation (§6.1, K seeds per arm) ───────────────────────────
@@ -86,7 +115,12 @@ export interface PerTaskMetrics {
   passRate: number;
   /** Pass-or-fail of seed 0 (or first run when seed 0 is absent). */
   passAt1: 0 | 1;
-  /** Mean total tokens in passing runs. `null` when 0 passes. */
+  /**
+   * Mean total tokens in passing runs that also carry a parsed token
+   * measurement. `null` when 0 passes OR when every passing run has missing /
+   * unsupported token measurement (issue #252) — downstream renderers must
+   * treat `null` as "not enough measurement to know" rather than zero cost.
+   */
   tokensPerPass: number | null;
   /** Mean wallclock ms across all K runs. */
   wallclockMs: number;
@@ -98,6 +132,12 @@ export interface PerTaskMetrics {
   harnessErrorCount: number;
   /** Number of runs aggregated. Useful when K varies (last seed dropped, etc.). */
   count: number;
+  /**
+   * Count of runs (any outcome) with `tokenMeasurement === "parsed"` (issue
+   * #252). Reports use this to surface token-measurement coverage so
+   * operators can tell when token economics are unreliable.
+   */
+  runsWithMeasuredTokens: number;
 }
 
 /**
@@ -115,23 +155,35 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
       budgetExceededCount: 0,
       harnessErrorCount: 0,
       count: 0,
+      runsWithMeasuredTokens: 0,
     };
   }
 
   let passes = 0;
-  let totalTokensInPasses = 0;
+  let measuredPasses = 0;
+  let totalTokensInMeasuredPasses = 0;
   let totalWallclock = 0;
   let budgetExceeded = 0;
   let harnessError = 0;
+  let runsWithMeasuredTokens = 0;
   // For the standard deviation we need a fixed-iteration buffer of pass/fail.
   const passSamples: number[] = [];
   for (const r of results) {
     totalWallclock += r.wallclockMs;
+    if (isMeasured(r)) {
+      runsWithMeasuredTokens += 1;
+    }
     const isPass = r.outcome === "pass" ? 1 : 0;
     passSamples.push(isPass);
     if (isPass === 1) {
       passes += 1;
-      totalTokensInPasses += r.tokens.input + r.tokens.output;
+      // Only count tokens for measured passes (issue #252). A pass with
+      // missing measurement contributes to `passRate` but NOT to
+      // `tokensPerPass` — preserving "tokens per measured pass" semantics.
+      if (isMeasured(r)) {
+        measuredPasses += 1;
+        totalTokensInMeasuredPasses += r.tokens.input + r.tokens.output;
+      }
     } else if (r.outcome === "budget_exceeded") {
       budgetExceeded += 1;
     } else if (r.outcome === "harness_error") {
@@ -145,12 +197,13 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
   return {
     passRate: passes / results.length,
     passAt1,
-    tokensPerPass: passes === 0 ? null : totalTokensInPasses / passes,
+    tokensPerPass: measuredPasses === 0 ? null : totalTokensInMeasuredPasses / measuredPasses,
     wallclockMs: totalWallclock / results.length,
     passRateStdev: stdev(passSamples),
     budgetExceededCount: budgetExceeded,
     harnessErrorCount: harnessError,
     count: results.length,
+    runsWithMeasuredTokens,
   };
 }
 
