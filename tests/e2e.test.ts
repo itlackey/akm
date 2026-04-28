@@ -1192,6 +1192,23 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     expect(output).toContain("help");
     expect(output).toContain("focused help topics");
   });
+
+  test("cli: akm setup --help shows the wizard description (issue #273)", async () => {
+    // The setup subcommand should advertise its purpose so operators can
+    // see what the wizard configures (embeddings, LLM, registries, sources,
+    // agent profiles) without running the interactive flow.
+    const result = spawnSync("bun", [CLI, "setup", "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(output).toContain("Interactive configuration wizard");
+    expect(output).toContain("embeddings");
+    expect(output).toContain("LLM");
+    expect(output).toContain("registries");
+    expect(output).toContain("sources");
+    expect(output).toContain("agent profiles");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

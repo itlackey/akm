@@ -11,13 +11,50 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 const warnings: string[] = [];
 
+// NOTE: `mock.module` in Bun is process-global — once installed it persists
+// across test files run in the same `bun test` invocation. So this mock has
+// to remain a faithful drop-in for the real `src/core/warn` module:
+//
+//   1. Every export that the real module ships must be represented here,
+//      otherwise tests in other files that import a missing export get
+//      `undefined` and silently break (issue #273).
+//   2. `warn()` must also forward to `console.warn` so other test files that
+//      capture stderr (e.g. the noise-gate tests in
+//      tests/workflows/indexer-rejection.test.ts) continue to see the calls.
+//      We push to the local `warnings[]` so this file's own assertions still
+//      work, AND forward to `console.warn` so callers that intercept it
+//      still observe what was emitted.
+let mockedQuiet = false;
+let mockedVerbose = false;
 mock.module("../../src/core/warn", () => ({
   warn: (...args: unknown[]) => {
     warnings.push(args.join(" "));
+    if (!mockedQuiet) console.warn(...args);
   },
-  setQuiet: () => {},
-  resetQuiet: () => {},
-  isQuiet: () => false,
+  warnVerbose: (...args: unknown[]) => {
+    if (!mockedVerbose) return;
+    warnings.push(args.join(" "));
+    if (!mockedQuiet) console.warn(...args);
+  },
+  setQuiet: (value: boolean) => {
+    mockedQuiet = value;
+  },
+  resetQuiet: () => {
+    mockedQuiet = false;
+  },
+  isQuiet: () => mockedQuiet,
+  setVerbose: (value: boolean) => {
+    mockedVerbose = value;
+  },
+  resetVerbose: () => {
+    mockedVerbose = false;
+  },
+  isVerbose: () => {
+    const env = process.env.AKM_VERBOSE?.trim().toLowerCase();
+    if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
+    if (env === "0" || env === "false" || env === "no" || env === "off") return false;
+    return mockedVerbose;
+  },
 }));
 
 beforeEach(() => {

@@ -8,7 +8,7 @@ import {
 import { isAssetType } from "../core/common";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import type { TocHeading } from "../core/markdown";
-import { warn } from "../core/warn";
+import { isVerbose, warn } from "../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -788,8 +788,28 @@ function buildMetadataSkipWarning(filePath: string, assetType: string, error: un
     assetType === "workflow"
       ? `Skipped workflow ${filePath}:\n${detail}`
       : `Skipped malformed ${assetType} asset at ${filePath}: ${detail}`;
+  // Workflow validation warnings are noisy on cold-start search against fresh
+  // registry-cloned content (see issue #273). At default verbosity we suppress
+  // the per-spec stderr line and rely on a one-line summary emitted by the
+  // indexer driver after the run completes. The full per-file detail is still
+  // returned in the warnings[] array (and IndexResponse.warnings) for
+  // programmatic consumers, and verbose mode restores the immediate stderr
+  // print so workflow authors keep the rich feedback they expect.
+  if (assetType === "workflow" && !isVerbose()) {
+    return warning;
+  }
   warn(warning);
   return warning;
+}
+
+/**
+ * Returns true when a metadata-skip warning was produced by the workflow
+ * validator. Used by the indexer driver to count workflow skips for the
+ * default-verbosity summary line. Matches the prefix produced by
+ * `buildMetadataSkipWarning` for `assetType === "workflow"`.
+ */
+export function isWorkflowSkipWarning(warning: string): boolean {
+  return warning.startsWith("Skipped workflow ");
 }
 
 function normalizeTerms(values: string[]): string[] {
