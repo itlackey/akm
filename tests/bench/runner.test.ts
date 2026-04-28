@@ -369,6 +369,86 @@ describe("runUtility", () => {
     expect(noakmInvocation?.some((t) => t.startsWith("BYOS"))).toBe(false);
   });
 
+  // ── #251: TaskMetadata.stashDirOverride ───────────────────────────────────
+
+  test("stashDirOverride: AKM_STASH_DIR points at the override, never at __no-stash__", async () => {
+    // Issue #251 regression. Before the fix, `runMaskedCorpus` mutated
+    // `task.stash` and called the runner with `materialiseStash: false`,
+    // which ended up wiring `AKM_STASH_DIR` to `<taskDir>/__no-stash__` —
+    // so masked re-runs never saw the masked content. The fix is a
+    // dedicated `stashDirOverride` field that the runner consults FIRST.
+    const observedAkmStashDirs: string[] = [];
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.AKM_STASH_DIR) {
+        observedAkmStashDirs.push(opts.env.AKM_STASH_DIR);
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-override-"));
+    try {
+      await runUtility({
+        tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+      });
+      expect(observedAkmStashDirs.length).toBe(1);
+      expect(observedAkmStashDirs[0]).toBe(overrideDir);
+      // Critical: the runner MUST NOT have fallen back to the __no-stash__
+      // placeholder. This is the regression guard.
+      expect(observedAkmStashDirs[0]?.endsWith("__no-stash__")).toBe(false);
+    } finally {
+      fs.rmSync(overrideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("stashDirOverride: takes precedence over stashDirByFixture and materialised stash", async () => {
+    // Resolution order acceptance criterion: per-task override beats both
+    // the per-fixture map and the runner's own loadFixtureStash.
+    const observedAkmStashDirs: string[] = [];
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.AKM_STASH_DIR) {
+        observedAkmStashDirs.push(opts.env.AKM_STASH_DIR);
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-prec-"));
+    const fixtureMapDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-251-mapdir-"));
+    try {
+      await runUtility({
+        tasks: [fakeTask(taskDir, { stashDirOverride: overrideDir, stash: "ignored-fixture" })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        stashDirByFixture: new Map([["ignored-fixture", fixtureMapDir]]),
+      });
+      expect(observedAkmStashDirs).toEqual([overrideDir]);
+    } finally {
+      fs.rmSync(overrideDir, { recursive: true, force: true });
+      fs.rmSync(fixtureMapDir, { recursive: true, force: true });
+    }
+  });
+
   test("buildPrompt returning undefined keeps the default prompt path", async () => {
     const capturedAgentCmds: string[][] = [];
     const spawn: SpawnFn = (cmd, _opts) => {

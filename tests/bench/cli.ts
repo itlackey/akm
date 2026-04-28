@@ -442,7 +442,16 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     schemaVersion: 1,
     track: "attribute",
     base: { path: options.basePath, model },
-    maskingStrategy: "leave-one-out",
+    // Issue #251: surface the masking strategy + the exact masked refs in
+    // the JSON envelope so operators can audit the marginal-contribution
+    // numbers without re-running the masker. The `maskedRefs` order matches
+    // `attributions[]`. Strategy is currently always `"leave-one-out"`;
+    // future strategies extend the union in `MaskedCorpusResult`.
+    attribution: {
+      maskingStrategy: maskedResult.maskingStrategy,
+      maskedRefs: maskedResult.maskedRefs,
+    },
+    maskingStrategy: maskedResult.maskingStrategy,
     runsPerformed: maskedResult.runsPerformed,
     perAsset: {
       total_akm_runs: perAsset.totalAkmRuns,

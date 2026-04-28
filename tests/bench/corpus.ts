@@ -39,6 +39,21 @@ export interface TaskMetadata {
   budget: { tokens: number; wallMs: number };
   /** Absolute path to the directory containing `task.yaml`. */
   taskDir: string;
+  /**
+   * Optional override for the akm-arm `stashDir` plumbed into `runOne`.
+   *
+   * Used by `runMaskedCorpus` (#251) to redirect the runner at a tmp stash
+   * with one asset removed without mutating the on-disk fixture stash named
+   * by `stash`. When set, the runner forwards this directory verbatim as
+   * `AKM_STASH_DIR` for every akm-arm invocation of this task — bypassing
+   * the per-task `loadFixtureStash` step (which would otherwise re-resolve
+   * `stash` against `tests/fixtures/stashes/`) and the `__no-stash__`
+   * placeholder used when `materialiseStash` is `false`.
+   *
+   * MUST be a directory the caller created and is responsible for cleaning
+   * up. The runner does not delete it.
+   */
+  stashDirOverride?: string;
 }
 
 const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
