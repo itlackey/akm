@@ -847,7 +847,7 @@ export interface CompareReportSuccess {
 /** Failure envelope. `reason` is the discrete refusal cause; `message` is human-readable. */
 export interface CompareReportFailure {
   ok: false;
-  reason: "model_mismatch" | "hash_mismatch" | "schema_mismatch" | "track_mismatch";
+  reason: "model_mismatch" | "hash_mismatch" | "corpus_mismatch" | "schema_mismatch" | "track_mismatch";
   message: string;
   baseModel?: string;
   currentModel?: string;
@@ -855,6 +855,26 @@ export interface CompareReportFailure {
   currentFixtureContentHash?: string | null;
   /** When `reason === "hash_mismatch"`, the affected fixtures (best-effort). */
   affectedFixtures?: string[];
+  /** #250 — task corpus hashes when `reason === "corpus_mismatch"`. */
+  baseTaskCorpusHash?: string | null;
+  currentTaskCorpusHash?: string | null;
+  /** #250 — selected task IDs that diverge between base and current. */
+  baseSelectedTaskIds?: string[];
+  currentSelectedTaskIds?: string[];
+}
+
+/**
+ * Caller-controlled overrides for `compareReports` (#250). When both flags
+ * are false (the default), the comparator refuses mismatched corpora /
+ * fixtures. Setting a flag converts the corresponding refusal into a
+ * warning so an operator can still inspect a cross-corpus or cross-fixture
+ * diff when they explicitly opt in.
+ */
+export interface CompareOptions {
+  /** When true, accept mismatched task IDs / `taskCorpusHash`; emit a warning instead. */
+  allowCorpusMismatch?: boolean;
+  /** When true, accept mismatched `fixtureContentHash`; emit a warning instead. */
+  allowFixtureMismatch?: boolean;
 }
 
 export type CompareResult = CompareReportSuccess | CompareReportFailure;
@@ -897,6 +917,12 @@ export interface ParsedReportJson {
     slice?: string;
     seedsPerArm?: number;
     fixtureContentHash?: string | null;
+    /** #250 — stable-sorted list of task IDs the run selected. */
+    selectedTaskIds?: string[];
+    /** #250 — deterministic hash over `selectedTaskIds` + per-task body bytes. */
+    taskCorpusHash?: string | null;
+    /** #250 — per-fixture content hash (fixture name → sha256 hex). */
+    fixtures?: Record<string, string>;
   };
   aggregate?: {
     noakm?: { pass_rate?: number; tokens_per_pass?: number | null; wallclock_ms?: number };
@@ -919,6 +945,24 @@ function readModel(r: ParsedReportJson): string {
 function readFixtureHash(r: ParsedReportJson): string | null {
   const v = r.corpus?.fixtureContentHash;
   return v === undefined || v === null ? null : v;
+}
+
+function readTaskCorpusHash(r: ParsedReportJson): string | null {
+  const v = r.corpus?.taskCorpusHash;
+  return v === undefined || v === null ? null : v;
+}
+
+function readSelectedTaskIds(r: ParsedReportJson): string[] | null {
+  const v = r.corpus?.selectedTaskIds;
+  return Array.isArray(v) ? v : null;
+}
+
+function arraysEqualIgnoringOrder(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i += 1) if (sa[i] !== sb[i]) return false;
+  return true;
 }
 
 function akmAgg(r: ParsedReportJson): { pass_rate: number; tokens_per_pass: number | null; wallclock_ms: number } {
@@ -947,7 +991,11 @@ function akmAgg(r: ParsedReportJson): { pass_rate: number; tokens_per_pass: numb
  * higher is better; `tokens_per_pass` and `wallclock_ms` are counts, lower
  * is better.
  */
-export function compareReports(base: ParsedReportJson, current: ParsedReportJson): CompareResult {
+export function compareReports(
+  base: ParsedReportJson,
+  current: ParsedReportJson,
+  options: CompareOptions = {},
+): CompareResult {
   // Schema-version gate.
   if (base.schemaVersion !== 1 || current.schemaVersion !== 1) {
     return {
@@ -984,16 +1032,75 @@ export function compareReports(base: ParsedReportJson, current: ParsedReportJson
   const baseHash = readFixtureHash(base);
   const currentHash = readFixtureHash(current);
   const warnings: string[] = [];
+
+  // #250 — task corpus hash + selected task IDs. Refused unless either side
+  // is legacy (missing the hash) or the operator passed
+  // `allowCorpusMismatch`. Legacy reports (no taskCorpusHash) degrade to a
+  // warning so older artefacts can still be diffed.
+  const baseTaskHash = readTaskCorpusHash(base);
+  const currentTaskHash = readTaskCorpusHash(current);
+  const baseIds = readSelectedTaskIds(base);
+  const currentIds = readSelectedTaskIds(current);
+  if (baseTaskHash !== null && currentTaskHash !== null && baseTaskHash !== currentTaskHash) {
+    if (!options.allowCorpusMismatch) {
+      return {
+        ok: false,
+        reason: "corpus_mismatch",
+        message: `cannot compare across different task corpora: base taskCorpusHash="${baseTaskHash}", current="${currentTaskHash}". Rerun against the same task selection or pass --allow-corpus-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseTaskCorpusHash: baseTaskHash,
+        currentTaskCorpusHash: currentTaskHash,
+        ...(baseIds ? { baseSelectedTaskIds: baseIds } : {}),
+        ...(currentIds ? { currentSelectedTaskIds: currentIds } : {}),
+      };
+    }
+    warnings.push(
+      `task corpus hashes differ (base="${baseTaskHash}", current="${currentTaskHash}") — diff requested via --allow-corpus-mismatch`,
+    );
+  } else if (
+    baseTaskHash === null &&
+    currentTaskHash === null &&
+    baseIds !== null &&
+    currentIds !== null &&
+    !arraysEqualIgnoringOrder(baseIds, currentIds)
+  ) {
+    // Both sides legacy (no taskCorpusHash) but both expose selectedTaskIds
+    // and they differ. We can still detect a mismatched corpus from the ID
+    // list alone — refuse unless the operator opted in.
+    if (!options.allowCorpusMismatch) {
+      return {
+        ok: false,
+        reason: "corpus_mismatch",
+        message: `cannot compare across different selected task IDs. Rerun against the same task selection or pass --allow-corpus-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseSelectedTaskIds: baseIds,
+        currentSelectedTaskIds: currentIds,
+      };
+    }
+    warnings.push("selected task IDs differ — diff requested via --allow-corpus-mismatch");
+  }
+  if (baseTaskHash === null)
+    warnings.push("base report has no corpus.taskCorpusHash; proceeding without task-corpus-pin check");
+  if (currentTaskHash === null)
+    warnings.push("current report has no corpus.taskCorpusHash; proceeding without task-corpus-pin check");
+
   if (baseHash !== null && currentHash !== null && baseHash !== currentHash) {
-    return {
-      ok: false,
-      reason: "hash_mismatch",
-      message: `cannot compare across different fixture-content hashes: base="${baseHash}", current="${currentHash}". Rerun against matching fixtures.`,
-      baseModel,
-      currentModel,
-      baseFixtureContentHash: baseHash,
-      currentFixtureContentHash: currentHash,
-    };
+    if (!options.allowFixtureMismatch) {
+      return {
+        ok: false,
+        reason: "hash_mismatch",
+        message: `cannot compare across different fixture-content hashes: base="${baseHash}", current="${currentHash}". Rerun against matching fixtures or pass --allow-fixture-mismatch to override.`,
+        baseModel,
+        currentModel,
+        baseFixtureContentHash: baseHash,
+        currentFixtureContentHash: currentHash,
+      };
+    }
+    warnings.push(
+      `fixture-content hashes differ (base="${baseHash}", current="${currentHash}") — diff requested via --allow-fixture-mismatch`,
+    );
   }
   if (baseHash === null)
     warnings.push("base report has no corpus.fixtureContentHash; proceeding without fixture-pin check");

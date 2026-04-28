@@ -49,6 +49,50 @@ export function getTasksRoot(): string {
 }
 
 /**
+ * Compute a deterministic SHA-256 hash over a selected task corpus (#250).
+ *
+ * Two reports with the same selected task IDs and the same task body bytes
+ * produce the same hash. The hash is order-independent: callers may pass IDs
+ * in any order — the function sorts them lexicographically before hashing.
+ *
+ * The `taskBodies` map is keyed by task id and carries the raw `task.yaml`
+ * bytes (or any deterministic per-task identity payload). Tasks present in
+ * `taskIds` but missing from `taskBodies` are hashed with an empty body so
+ * the hash still distinguishes the selection.
+ *
+ * Encoding (per id, in sorted order):
+ *   `<id>\0<body-bytes>\0`
+ *
+ * Used by `bench compare` to refuse mismatched corpora unless the operator
+ * explicitly opts in via `--allow-corpus-mismatch`.
+ */
+export function computeTaskCorpusHash(taskIds: string[], taskBodies: Map<string, string>): string {
+  const sortedIds = [...taskIds].sort();
+  const hash = createHash("sha256");
+  for (const id of sortedIds) {
+    hash.update(id);
+    hash.update("\0");
+    hash.update(taskBodies.get(id) ?? "");
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Read the raw `task.yaml` bytes for a task whose `taskDir` is known. Returns
+ * the empty string when the file is missing — callers should still hash the
+ * id so the selection's identity is preserved.
+ */
+export function readTaskBody(taskDir: string): string {
+  const yamlPath = path.join(taskDir, "task.yaml");
+  try {
+    return fs.readFileSync(yamlPath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/**
  * The `_example/` task tree is reserved for loader unit tests; real corpus
  * statistics must exclude it. The path-prefix check matches both POSIX (`/`)
  * and Windows (`\`) separators.

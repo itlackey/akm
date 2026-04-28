@@ -104,6 +104,44 @@ describe("runUtility", () => {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
+  test("stamps corpus identity (selectedTaskIds, taskCorpusHash, fixtures, fixtureContentHash) (#250)", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "domain-a/task-z" }), fakeTask(taskDir, { id: "domain-a/task-a" })],
+      arms: ["noakm"],
+      model: "test-model",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      branch: "test-branch",
+      commit: "abc123",
+      timestamp: "2026-04-27T00:00:00Z",
+    });
+    // selectedTaskIds is sorted alphabetically.
+    expect(report.corpus.selectedTaskIds).toEqual(["domain-a/task-a", "domain-a/task-z"]);
+    expect(report.corpus.taskCorpusHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(report.corpus.fixtureContentHash).toMatch(/^[0-9a-f]{64}$/);
+    // The "minimal" fixture is referenced by both fakeTasks; one entry expected.
+    expect(report.corpus.fixtures).toBeDefined();
+    expect(Object.keys(report.corpus.fixtures ?? {})).toEqual(["minimal"]);
+    expect(report.corpus.fixtures?.minimal).toMatch(/^[0-9a-f]{64}$/);
+
+    // Re-running with the same inputs yields the same hashes (determinism).
+    const report2 = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "domain-a/task-z" }), fakeTask(taskDir, { id: "domain-a/task-a" })],
+      arms: ["noakm"],
+      model: "test-model",
+      seedsPerArm: 1,
+      spawn: fakeSpawnFactory({ noakm: "ok", akm: "ok" }).spawn,
+      materialiseStash: false,
+      branch: "test-branch",
+      commit: "abc123",
+      timestamp: "2026-04-27T00:00:00Z",
+    });
+    expect(report2.corpus.taskCorpusHash).toBe(report.corpus.taskCorpusHash);
+    expect(report2.corpus.fixtureContentHash).toBe(report.corpus.fixtureContentHash);
+  });
+
   test("produces tasks × arms × seeds run records (cardinality)", async () => {
     const { spawn, observed } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
     const report = await runUtility({

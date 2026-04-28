@@ -114,6 +114,16 @@ export interface UtilityRunReport {
     tasks: number;
     slice: "all" | "train" | "eval";
     seedsPerArm: number;
+    /**
+     * Identity stamps used by `bench compare` to refuse cross-corpus diffs
+     * (#250). All four are populated by `runUtility` at finalize time. Older
+     * reports (pre-#250) lack these keys and degrade to a warning instead of
+     * a refusal — see `compareReports`.
+     */
+    selectedTaskIds?: string[];
+    taskCorpusHash?: string;
+    fixtures?: Record<string, string>;
+    fixtureContentHash?: string;
   };
   aggregateNoakm: CorpusMetrics;
   aggregateAkm: CorpusMetrics;
@@ -472,6 +482,29 @@ function renderCompareFailure(result: Extract<CompareResult, { ok: false }>): st
       lines.push("");
       lines.push("affected fixtures:");
       for (const f of result.affectedFixtures) lines.push(`- ${f}`);
+    }
+  }
+  if (result.reason === "corpus_mismatch") {
+    if (result.baseTaskCorpusHash !== undefined || result.currentTaskCorpusHash !== undefined) {
+      lines.push("");
+      lines.push(`- base taskCorpusHash:    \`${String(result.baseTaskCorpusHash ?? "n/a")}\``);
+      lines.push(`- current taskCorpusHash: \`${String(result.currentTaskCorpusHash ?? "n/a")}\``);
+    }
+    if (result.baseSelectedTaskIds && result.currentSelectedTaskIds) {
+      const baseSet = new Set(result.baseSelectedTaskIds);
+      const currentSet = new Set(result.currentSelectedTaskIds);
+      const addedToCurrent = result.currentSelectedTaskIds.filter((id) => !baseSet.has(id)).sort();
+      const droppedFromBase = result.baseSelectedTaskIds.filter((id) => !currentSet.has(id)).sort();
+      if (addedToCurrent.length > 0) {
+        lines.push("");
+        lines.push("only in current:");
+        for (const id of addedToCurrent) lines.push(`- ${id}`);
+      }
+      if (droppedFromBase.length > 0) {
+        lines.push("");
+        lines.push("only in base:");
+        for (const id of droppedFromBase) lines.push(`- ${id}`);
+      }
     }
   }
   return lines.join("\n");
