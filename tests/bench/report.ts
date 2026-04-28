@@ -169,6 +169,13 @@ export interface UtilityReportTaskEntry {
   noakm: PerTaskMetrics;
   akm: PerTaskMetrics;
   delta: CorpusDelta;
+  /**
+   * Per-task synthetic-arm metrics (#261). Present only on reports built by
+   * `runUtility({ includeSynthetic: true, ... })`. When absent the per-task
+   * row in the §13.3 envelope omits the `synthetic` key entirely so the
+   * default two-arm envelope is byte-identical to the pre-#261 output.
+   */
+  synthetic?: PerTaskMetrics;
 }
 
 /**
@@ -199,6 +206,14 @@ export interface UtilityRunReport {
   aggregateNoakm: CorpusMetrics;
   aggregateAkm: CorpusMetrics;
   aggregateDelta: CorpusDelta;
+  /**
+   * Synthetic-arm corpus aggregate (#261). Present only when `runUtility`
+   * was called with `includeSynthetic: true`. Renderers gate every
+   * synthetic-related output (`arms.synthetic`, `akm_over_synthetic_lift`,
+   * markdown subsection) on the presence of this field so the default
+   * two-arm envelope stays byte-identical to the pre-#261 shape.
+   */
+  aggregateSynth?: CorpusMetrics;
   trajectoryAkm: TrajectoryAggregate;
   /**
    * Failure-mode taxonomy aggregate (§6.6). Counts and per-task breakdown
@@ -262,11 +277,17 @@ export function renderUtilityReport(input: UtilityRunReport): { json: object; ma
 }
 
 function buildUtilityJson(input: UtilityRunReport): object {
+  const includeSynth = input.aggregateSynth !== undefined;
   const tasks = input.tasks.map((t) => ({
     id: t.id,
     noakm: serialisePerTaskMetrics(t.noakm),
     akm: serialisePerTaskMetrics(t.akm),
     delta: serialiseDelta(t.delta),
+    // #261: per-task synthetic block is emitted ONLY when the runner opted
+    // into the synthetic arm AND this task carries a synthetic aggregate.
+    // When the arm was not run we leave the key absent — a missing arm is
+    // not a zero-pass arm.
+    ...(includeSynth && t.synthetic ? { synthetic: serialisePerTaskMetrics(t.synthetic) } : {}),
   }));
 
   // Negative-transfer + domain-level diagnostics (#260). Pure post-processing
@@ -300,6 +321,17 @@ function buildUtilityJson(input: UtilityRunReport): object {
       noakm: serialiseCorpus(input.aggregateNoakm),
       akm: serialiseCorpus(input.aggregateAkm),
       delta: serialiseDelta(input.aggregateDelta),
+      // #261: synthetic aggregate is emitted ONLY when includeSynthetic
+      // was set on the runner. Absent otherwise — byte-identical to the
+      // pre-#261 envelope.
+      ...(input.aggregateSynth ? { synthetic: serialiseCorpus(input.aggregateSynth) } : {}),
+      // #261: akm_over_synthetic_lift = passRate(akm) - passRate(synthetic).
+      // Only computed when the synthetic arm ran. Positive => AKM beats the
+      // synthetic-notes baseline; non-positive flags AKM is not adding value
+      // beyond what the model can synthesise on its own.
+      ...(input.aggregateSynth
+        ? { akm_over_synthetic_lift: input.aggregateAkm.passRate - input.aggregateSynth.passRate }
+        : {}),
     },
     trajectory: {
       akm: {
@@ -540,8 +572,29 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("| arm | pass_rate | tokens_per_pass | wallclock_ms |");
   lines.push("|-----|-----------|-----------------|--------------|");
   lines.push(corpusRow("noakm", input.aggregateNoakm));
+  // #261: synthetic row sits between noakm and akm so the columns read
+  // baseline → synthetic → akm in the natural progression. Only rendered
+  // when the runner opted into the synthetic arm.
+  if (input.aggregateSynth) {
+    lines.push(corpusRow("synthetic", input.aggregateSynth));
+  }
   lines.push(corpusRow("akm", input.aggregateAkm));
   lines.push(deltaRow(input.aggregateDelta));
+  // #261: akm_over_synthetic_lift summary line. When AKM does not beat the
+  // synthetic baseline (lift <= 0) we surface a warning marker so operators
+  // cannot miss the regression. Otherwise we render the lift as an
+  // informative line.
+  if (input.aggregateSynth) {
+    const lift = input.aggregateAkm.passRate - input.aggregateSynth.passRate;
+    lines.push("");
+    if (lift <= 0) {
+      lines.push(
+        `:warning: **akm_over_synthetic_lift = ${signedFixed(lift, 2)}** — AKM did not beat the synthetic-notes baseline.`,
+      );
+    } else {
+      lines.push(`**akm_over_synthetic_lift: ${signedFixed(lift, 2)}**`);
+    }
+  }
   lines.push("");
   lines.push("## Trajectory (akm)");
   lines.push("");
@@ -550,12 +603,19 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("");
   lines.push("## Per-task pass rates");
   lines.push("");
-  lines.push("| task | noakm | akm | delta |");
-  lines.push("|------|-------|-----|-------|");
+  // #261: synthetic column is rendered only when the synthetic arm ran.
+  // The default header/row stays identical to the pre-#261 output.
+  if (input.aggregateSynth) {
+    lines.push("| task | noakm | synthetic | akm | delta |");
+    lines.push("|------|-------|-----------|-----|-------|");
+  } else {
+    lines.push("| task | noakm | akm | delta |");
+    lines.push("|------|-------|-----|-------|");
+  }
   // Sort tasks alphabetically for byte-stable markdown output.
   const sorted = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
   for (const t of sorted) {
-    lines.push(taskRow(t));
+    lines.push(taskRow(t, input.aggregateSynth !== undefined));
   }
   // Negative-transfer + domain diagnostics (#260). The section stays quiet
   // ("none") when no regressions were observed so green corpora don't fill
@@ -668,7 +728,14 @@ function deltaRow(d: CorpusDelta): string {
   return `| **delta** | ${signed(d.passRate.toFixed(2))} | ${tpp} | ${signed(d.wallclockMs.toFixed(0))} |`;
 }
 
-function taskRow(t: UtilityReportTaskEntry): string {
+function taskRow(t: UtilityReportTaskEntry, includeSynthetic = false): string {
+  if (includeSynthetic) {
+    // #261: render the synthetic-arm pass-rate when present; "n/a" when the
+    // arm did not run for this task. A missing arm is NOT a zero-pass arm —
+    // a 0.00 cell would be misleading because the model never tried.
+    const synth = t.synthetic ? t.synthetic.passRate.toFixed(2) : "n/a";
+    return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${synth} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
+  }
   return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
 }
 
