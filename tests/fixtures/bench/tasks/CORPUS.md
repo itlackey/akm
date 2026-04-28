@@ -78,7 +78,7 @@ The utility report's `corpus_coverage` block surfaces:
 
 ### Coverage in this release
 
-The seeded `release/1.0.0` corpus tags every real task as
+The seeded `release/0.7.0` corpus tags every real task as
 `memory_ability: procedural_lookup` (single-skill lookup-and-apply tasks).
 Per-domain task families:
 
@@ -98,7 +98,7 @@ each verifier's *structural* assertions (regex literals, Python subscript
 chains, shell `grep`/`jq` patterns) and the gold-ref SKILL.md content. The
 table above is the human-reviewed counterpart: each row records the manual
 check the corpus author performed against the shipped fixture stash content
-on `release/1.0.0`.
+on `release/0.7.0`.
 
 If a fixture stash skill is later expanded to include a fragment that
 satisfies a verifier directly, both the table entry and the automated test

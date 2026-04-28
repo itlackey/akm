@@ -95,7 +95,7 @@ function pt(passRate: number, tokens: number | null, wall: number, count = 5): P
 
 const utilSample: UtilityRunReport = {
   timestamp: "2026-04-27T12:00:00Z",
-  branch: "release/1.0.0",
+  branch: "release/0.7.0",
   commit: "deadbee",
   model: "anthropic/claude-opus-4-7",
   corpus: { domains: 3, tasks: 2, slice: "all", seedsPerArm: 5 },
@@ -157,7 +157,7 @@ describe("renderUtilityReport JSON", () => {
     const obj = json as Record<string, unknown>;
     expect(obj.schemaVersion).toBe(1);
     expect(obj.track).toBe("utility");
-    expect(obj.branch).toBe("release/1.0.0");
+    expect(obj.branch).toBe("release/0.7.0");
     expect(obj.commit).toBe("deadbee");
     expect(obj.timestamp).toBe("2026-04-27T12:00:00Z");
     expect((obj.agent as Record<string, unknown>).harness).toBe("opencode");
@@ -194,7 +194,7 @@ describe("renderUtilityReport markdown", () => {
     const { markdown } = renderUtilityReport(utilSample);
     expect(markdown).toContain("# akm-bench utility");
     expect(markdown).toContain("anthropic/claude-opus-4-7");
-    expect(markdown).toContain("release/1.0.0");
+    expect(markdown).toContain("release/0.7.0");
     expect(markdown).toContain("## Aggregate");
     expect(markdown).toContain("## Trajectory (akm)");
     expect(markdown).toContain("## Per-task pass rates");

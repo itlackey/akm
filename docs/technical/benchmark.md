@@ -1,7 +1,7 @@
 # akm-bench: Evaluation & Benchmarking Framework — Detailed Plan
 
 **Status:** Proposal (2026-04-27).
-**Target branch:** `release/1.0.0`.
+**Target branch:** `release/0.7.0`.
 **Companion docs:** `docs/technical/v1-architecture-spec.md`, `docs/reviews/v1-agent-reflection-issues.md`, `tests/BENCHMARKS.md`.
 
 ## 1. What this is and why
@@ -35,7 +35,7 @@ The closest existing artifact in the akm repo is `tests/benchmark-suite.ts`, whi
 
 Before designing new infrastructure, what's already there:
 
-| Capability | Where | Status on `release/1.0.0` |
+| Capability | Where | Status on `release/0.7.0` |
 |---|---|---|
 | Append-only events stream | `src/core/events.ts`, `events.jsonl` | shipped |
 | Feedback event recording | `akm feedback <ref> --positive\|--negative` | shipped |
@@ -650,7 +650,7 @@ Per-task expected behavior:
 {
   "schemaVersion": 1,
   "track": "utility",
-  "branch": "release/1.0.0",
+  "branch": "release/0.7.0",
   "commit": "6ffc762",
   "timestamp": "2026-04-27T12:00:00Z",
   "agent": { "harness": "opencode", "model": "anthropic/claude-opus-4-7" },

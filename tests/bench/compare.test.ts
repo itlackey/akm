@@ -25,7 +25,7 @@ function makeReport(overrides: Partial<ParsedReportJson> = {}): ParsedReportJson
   return {
     schemaVersion: 1,
     track: "utility",
-    branch: "release/1.0.0",
+    branch: "release/0.7.0",
     commit: "deadbee",
     timestamp: "2026-04-27T12:00:00Z",
     agent: { harness: "opencode", model: MODEL },

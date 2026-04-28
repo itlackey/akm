@@ -5,7 +5,7 @@
  * task is a flat YAML record (see §13.1). The schema lands in #237 and grows
  * over time; #236 only ships the loader and one sample task fixture.
  *
- * The `tests/fixtures/bench/tasks/` directory may not exist on `release/1.0.0`
+ * The `tests/fixtures/bench/tasks/` directory may not exist on `release/0.7.0`
  * yet — that's #237's deliverable. `listTasks()` MUST return `[]` cleanly when
  * the directory is missing rather than throwing, so consumers degrade gracefully.
  */
