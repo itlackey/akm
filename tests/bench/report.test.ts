@@ -682,9 +682,9 @@ describe("renderUtilityReport workflow compliance (#257)", () => {
       }),
     ];
     // Tag task outcomes so the cross-tab populates pass/fail rows.
-    (checks[0] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "pass";
-    (checks[1] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "pass";
-    (checks[2] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "fail";
+    checks[0].taskOutcome = "pass";
+    checks[1].taskOutcome = "pass";
+    checks[2].taskOutcome = "fail";
 
     const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
     const { json, markdown } = renderUtilityReport(sample);

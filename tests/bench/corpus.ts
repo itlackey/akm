@@ -337,6 +337,10 @@ function readTask(taskDir: string): TaskMetadata | undefined {
   } catch {
     return undefined;
   }
+  return parseTaskYaml(text, taskDir);
+}
+
+export function parseTaskYaml(text: string, taskDir: string): TaskMetadata | undefined {
   let raw: RawTask;
   try {
     raw = parseYaml(text) as RawTask;

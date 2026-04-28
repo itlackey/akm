@@ -91,6 +91,7 @@ export interface WorkflowCheckResult {
   taskId: string;
   arm: string;
   seed: number;
+  taskOutcome?: string;
   status: WorkflowCheckStatus;
   /** [0, 1], higher = better. 0 for harness_error / fully-failed. */
   score: number;
@@ -240,6 +241,7 @@ export function evaluateRunAgainstSpec(
     taskId: run.taskId,
     arm: run.arm,
     seed: run.seed,
+    ...(typeof run.outcome === "string" ? { taskOutcome: run.outcome } : {}),
     status,
     score,
     requiredPassed,
@@ -617,6 +619,7 @@ function makeNotApplicable(spec: WorkflowSpec, run: WorkflowEvalRunContext): Wor
     taskId: run.taskId,
     arm: run.arm,
     seed: run.seed,
+    ...(typeof run.outcome === "string" ? { taskOutcome: run.outcome } : {}),
     status: "not_applicable",
     score: 0,
     requiredPassed: 0,
@@ -677,6 +680,7 @@ function harnessError(
     taskId: safeRun.taskId,
     arm: safeRun.arm,
     seed: safeRun.seed,
+    ...(typeof run?.outcome === "string" ? { taskOutcome: run.outcome } : {}),
     status: "harness_error",
     score: 0,
     requiredPassed: 0,

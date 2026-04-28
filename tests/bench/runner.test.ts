@@ -837,9 +837,104 @@ describe("runUtility workflow compliance (#257)", () => {
       spawn,
       materialiseStash: false,
     });
-    type CheckWithTaskOutcome = (typeof report.workflowChecks)[number] & { taskOutcome?: string };
-    const c = (report.workflowChecks ?? [])[0] as CheckWithTaskOutcome | undefined;
+    const c = (report.workflowChecks ?? [])[0];
     expect(c).toBeDefined();
     expect(typeof c?.taskOutcome).toBe("string");
+  });
+
+  test("passes search/result and test-presence flags into workflow evaluation", async () => {
+    const workflowsDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bench-workflow-flags-"));
+    const spawn: SpawnFn = (cmd, opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && opts.env?.XDG_CACHE_HOME) {
+        const akmDir = path.join(opts.env.XDG_CACHE_HOME, "akm");
+        fs.mkdirSync(akmDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(akmDir, "events.jsonl"),
+          [
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:00Z",
+              eventType: "search",
+              metadata: { query: "deploy", resultRefs: ["skill:foo"] },
+            }),
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:01Z",
+              eventType: "propose_invoked",
+            }),
+            JSON.stringify({
+              schemaVersion: 1,
+              ts: "2026-04-27T00:00:02Z",
+              eventType: "promoted",
+            }),
+          ].join("\n"),
+        );
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    try {
+      fs.writeFileSync(
+        path.join(workflowsDir, "search.yaml"),
+        `id: search-guard
+title: search guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_search
+  - event: akm_show
+    required_if: search_has_relevant_result
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(workflowsDir, "tests.yaml"),
+        `id: tests-guard
+title: tests guard
+applies_to:
+  arms: ["akm"]
+required_sequence:
+  - event: akm_propose
+  - event: test_run
+    required_if: task_has_tests
+  - event: akm_proposal_accept
+scoring:
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+`,
+        "utf8",
+      );
+      const testsDir = path.join(taskDir, "tests");
+      fs.mkdirSync(testsDir, { recursive: true });
+      fs.writeFileSync(path.join(testsDir, "test_sample.py"), "def test_ok():\n    assert True\n");
+
+      const report = await runUtility({
+        tasks: [fakeTask(taskDir, { verifier: "pytest", goldRef: "skill:foo" })],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        workflowsDir,
+      });
+      const byId = new Map((report.workflowChecks ?? []).map((check) => [check.workflowId, check]));
+      expect(byId.get("search-guard")?.violations.some((v) => v.code === "missing_required_event")).toBe(true);
+      expect(byId.get("tests-guard")?.violations.some((v) => v.code === "missing_required_event")).toBe(true);
+    } finally {
+      fs.rmSync(workflowsDir, { recursive: true, force: true });
+      fs.rmSync(path.join(taskDir, "tests"), { recursive: true, force: true });
+    }
   });
 });

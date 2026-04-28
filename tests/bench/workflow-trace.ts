@@ -219,11 +219,16 @@ export function normalizeRunToTrace(run: RunResult, options: NormalizeOptions = 
         orderHint: options.harness?.agentFinishedTs ?? "~workspace",
         sourceRank: SOURCE_RANK.filesystem_diff,
         originalIndex: originalIndex++,
-        partial: makePartial(run, options, {
-          type: isFirst ? "first_workspace_write" : "workspace_write",
-          source: "filesystem_diff",
-          filePath: clamp(filePath),
-        }),
+        partial: (() => {
+          const clampedFilePath = clamp(filePath);
+          const partial = makePartial(run, options, {
+            type: isFirst ? "first_workspace_write" : "workspace_write",
+            source: "filesystem_diff",
+            filePath: clampedFilePath.value,
+          });
+          if (clampedFilePath.truncated) partial.bytesTruncated = true;
+          return partial;
+        })(),
       });
       isFirst = false;
     }
@@ -325,33 +330,44 @@ function fromAkmEvent(
     source: "akm_events",
     ts,
   });
-  if (ref) partial.assetRef = clamp(ref);
+  let bytesTruncated = false;
+  if (ref) {
+    const clampedRef = clamp(ref);
+    partial.assetRef = clampedRef.value;
+    bytesTruncated ||= clampedRef.truncated;
+  }
 
   // Pull useful structured fields off metadata when present. We deliberately
   // probe a small whitelist so a malicious agent can't smuggle arbitrary
   // payloads into the trace.
   if (meta && typeof meta === "object") {
     const q = (meta as Record<string, unknown>).query;
-    if (typeof q === "string") partial.query = clamp(q);
+    if (typeof q === "string") {
+      const clampedQuery = clamp(q);
+      partial.query = clampedQuery.value;
+      bytesTruncated ||= clampedQuery.truncated;
+    }
     const fp = (meta as Record<string, unknown>).path ?? (meta as Record<string, unknown>).filePath;
-    if (typeof fp === "string") partial.filePath = clamp(fp);
+    if (typeof fp === "string") {
+      const clampedFilePath = clamp(fp);
+      partial.filePath = clampedFilePath.value;
+      bytesTruncated ||= clampedFilePath.truncated;
+    }
     const ec = (meta as Record<string, unknown>).exitCode;
     if (typeof ec === "number" && Number.isFinite(ec)) partial.exitCode = ec;
     const refs = (meta as Record<string, unknown>).resultRefs;
     if (Array.isArray(refs)) {
-      partial.resultRefs = refs.filter((r): r is string => typeof r === "string").map((r) => clamp(r));
+      partial.resultRefs = refs
+        .filter((r): r is string => typeof r === "string")
+        .map((r) => {
+          const clampedRef = clamp(r);
+          bytesTruncated ||= clampedRef.truncated;
+          return clampedRef.value;
+        });
     }
   }
 
-  // Mark truncation if any clamp tripped (best-effort; we observe by inspection).
-  if (
-    didClamp(partial.assetRef) ||
-    didClamp(partial.query) ||
-    didClamp(partial.filePath) ||
-    (partial.resultRefs?.some((r) => didClamp(r)) ?? false)
-  ) {
-    partial.bytesTruncated = true;
-  }
+  if (bytesTruncated) partial.bytesTruncated = true;
 
   return {
     orderHint: ts ?? "￿akm-events", // events without ts sort after timestamped ones
@@ -394,17 +410,31 @@ function fromAgentStdout(
     const line = lines[lineNo];
     const match = parseAkmCli(line);
     if (!match) continue;
+    const clampedCommand = clamp(match.command);
+    let bytesTruncated = clampedCommand.truncated;
     const partial: Omit<WorkflowTraceEvent, "id"> = makePartial(run, options, {
       type: match.type,
       source: "agent_stdout",
-      command: clamp(match.command),
+      command: clampedCommand.value,
     });
-    if (match.assetRef) partial.assetRef = clamp(match.assetRef);
-    if (match.query) partial.query = clamp(match.query);
-    if (match.args) partial.args = match.args.map((a) => clamp(a));
-    if (didClamp(partial.assetRef) || didClamp(partial.query) || didClamp(partial.command)) {
-      partial.bytesTruncated = true;
+    if (match.assetRef) {
+      const clampedRef = clamp(match.assetRef);
+      partial.assetRef = clampedRef.value;
+      bytesTruncated ||= clampedRef.truncated;
     }
+    if (match.query) {
+      const clampedQuery = clamp(match.query);
+      partial.query = clampedQuery.value;
+      bytesTruncated ||= clampedQuery.truncated;
+    }
+    if (match.args) {
+      partial.args = match.args.map((arg) => {
+        const clampedArg = clamp(arg);
+        bytesTruncated ||= clampedArg.truncated;
+        return clampedArg.value;
+      });
+    }
+    if (bytesTruncated) partial.bytesTruncated = true;
     out.push({
       // Stdout has no native timestamp; lexically place after timestamped events
       // by using a leading `~` sentinel (sorts after all printable ASCII timestamps),
@@ -530,15 +560,18 @@ function makePartial(
   return base;
 }
 
-/** Clamp a single string to MAX_EVENT_BYTES utf-8-ish bytes. */
-function clamp(value: string): string {
-  if (typeof value !== "string") return value;
-  // Use `Buffer.byteLength` for accuracy; if string is short-circuit, return as-is.
-  if (value.length <= MAX_EVENT_BYTES) return value;
-  return value.slice(0, MAX_EVENT_BYTES);
-}
-
-function didClamp(value: string | undefined): boolean {
-  if (typeof value !== "string") return false;
-  return value.length === MAX_EVENT_BYTES;
+/** Clamp a single string to MAX_EVENT_BYTES UTF-8 bytes without splitting code points. */
+function clamp(value: string): { value: string; truncated: boolean } {
+  if (Buffer.byteLength(value, "utf8") <= MAX_EVENT_BYTES) {
+    return { value, truncated: false };
+  }
+  let out = "";
+  let bytes = 0;
+  for (const ch of value) {
+    const nextBytes = Buffer.byteLength(ch, "utf8");
+    if (bytes + nextBytes > MAX_EVENT_BYTES) break;
+    out += ch;
+    bytes += nextBytes;
+  }
+  return { value: out, truncated: true };
 }

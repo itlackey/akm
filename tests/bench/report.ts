@@ -1439,23 +1439,6 @@ function buildWorkflowAggregate(checks: readonly WorkflowCheckResult[]): Workflo
   // runs do not contribute to the cross-tab.
   const runHasApplicable = new Set<string>();
 
-  // Collect all check identities so we can pull task_outcome from the
-  // task-side metadata. The run context inside WorkflowCheckResult does not
-  // carry the task outcome — but we can recover the dominant outcome by
-  // looking up the run's underlying outcome via the harness's enrichment
-  // map. For now, derive task outcome via worst-status semantics: the
-  // evaluator already encodes verifierFailed via run.outcome internally.
-  // The check itself does not carry outcome, so we rebuild it from
-  // `WorkflowCheckResult` with a heuristic: if any check status is
-  // `harness_error`, treat the run as failed; otherwise treat as
-  // pass (conservative — cross-tab key uses workflow-side counters).
-  // The runner stamps task outcome onto the check via `WorkflowEvalRunContext`
-  // but the check shape does not preserve it. We accept that limitation
-  // and label cross-tab rows by the `workflowChecks` evaluator's
-  // perspective: `task_outcome=pass` row counts checks emitted on
-  // run.outcome=pass via the `taskOutcome` field added below at #257.
-  // (See `attachTaskOutcomeToChecks` for the wire attribute.)
-
   for (const c of checks) {
     const bucket = bucketWorkflowStatus(c.status);
     const runKey = `${c.taskId}::${c.arm}::${c.seed}`;
@@ -1668,11 +1651,7 @@ function severityRank(b: "pass" | "partial" | "fail"): number {
  * was attached (older callers, hand-written tests).
  */
 function readCheckTaskOutcome(c: WorkflowCheckResult): string | undefined {
-  // Side-channel field added by the runner to ferry run.outcome through the
-  // check. Optional — the WorkflowCheckResult contract does not include
-  // task outcome, so we read it defensively.
-  const maybe = c as WorkflowCheckResult & { taskOutcome?: string };
-  return typeof maybe.taskOutcome === "string" ? maybe.taskOutcome : undefined;
+  return typeof c.taskOutcome === "string" ? c.taskOutcome : undefined;
 }
 
 /**
@@ -1692,7 +1671,7 @@ export function renderWorkflowComplianceSection(input: UtilityRunReport): string
     lines.push("_No workflow specs applied to this corpus._");
     if (Object.keys(agg.by_workflow).length > 0) {
       lines.push("");
-      lines.push("Loaded specs (none matched the run): " + Object.keys(agg.by_workflow).sort().join(", "));
+      lines.push(`Loaded specs (none matched the run): ${Object.keys(agg.by_workflow).sort().join(", ")}`);
     }
     return lines.join("\n");
   }

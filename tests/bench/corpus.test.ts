@@ -24,6 +24,7 @@ import {
   listTasks,
   loadTask,
   MEMORY_ABILITY_VALUES,
+  parseTaskYaml,
   partitionSlice,
   readTaskBody,
   type TaskMetadata,
@@ -284,12 +285,11 @@ describe("memory-operation tags (#262)", () => {
         "",
       ].join("\n");
       fs.writeFileSync(path.join(taskDir, "task.yaml"), yaml, "utf8");
-      // We can't redirect TASKS_ROOT without changing process state, so we
-      // can't assert via listTasks. Instead, exercise the public
-      // `readTaskBody` round-trip + a quick re-parse via the loader on the
-      // shipped sample is sufficient evidence that the schema only rejects
-      // bad values rather than throwing.
-      expect(readTaskBody(taskDir).length).toBeGreaterThan(0);
+      const parsed = parseTaskYaml(readTaskBody(taskDir), taskDir);
+      expect(parsed).toBeDefined();
+      expect(parsed?.id).toBe("_example/bad-tag");
+      expect(parsed?.memoryAbility).toBeUndefined();
+      expect(parsed?.taskFamily).toBe("_example/bad");
     } finally {
       fs.rmSync(dir, { recursive: true });
     }

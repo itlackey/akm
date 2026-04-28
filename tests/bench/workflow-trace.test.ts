@@ -203,15 +203,27 @@ describe("normalizeRunToTrace — malformed/noisy input", () => {
     expect(trace.events.length).toBe(2);
   });
 
-  test("clamps oversized fields to MAX_EVENT_BYTES and flags bytesTruncated", () => {
-    const giantQuery = "x".repeat(MAX_EVENT_BYTES * 2);
+  test("clamps oversized fields to MAX_EVENT_BYTES UTF-8 bytes and flags bytesTruncated", () => {
+    const giantQuery = "😀".repeat(MAX_EVENT_BYTES);
     const run = makeRun({
       events: [ev("search", "2026-04-27T10:00:00.000Z", { metadata: { query: giantQuery } })],
     });
     const trace = normalizeRunToTrace(run);
     const search = trace.events.find((e) => e.type === "akm_search") as WorkflowTraceEvent;
-    expect(search.query?.length).toBe(MAX_EVENT_BYTES);
+    expect(Buffer.byteLength(search.query ?? "", "utf8")).toBeLessThanOrEqual(MAX_EVENT_BYTES);
+    expect(Buffer.byteLength(search.query ?? "", "utf8")).toBeLessThan(Buffer.byteLength(giantQuery, "utf8"));
     expect(search.bytesTruncated).toBe(true);
+  });
+
+  test("does not flag bytesTruncated when a field already fits the byte cap exactly", () => {
+    const exactQuery = "x".repeat(MAX_EVENT_BYTES);
+    const run = makeRun({
+      events: [ev("search", "2026-04-27T10:00:00.000Z", { metadata: { query: exactQuery } })],
+    });
+    const trace = normalizeRunToTrace(run);
+    const search = trace.events.find((e) => e.type === "akm_search") as WorkflowTraceEvent;
+    expect(search.query).toBe(exactQuery);
+    expect(search.bytesTruncated).toBeUndefined();
   });
 
   test("caps total event count at MAX_EVENT_COUNT and surfaces a warning", () => {

@@ -332,14 +332,8 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
               seed: run.seed,
               outcome: run.outcome,
             };
-            const taskMetadata = task.goldRef !== undefined ? { goldRef: task.goldRef } : {};
+            const taskMetadata = buildWorkflowTaskMetadata(task, trace);
             const checks = evaluateRunAgainstAllSpecs(trace, workflowSpecs, runCtx, taskMetadata);
-            // Tag each check with the run's task-side outcome so the report
-            // aggregator can compute the task_outcome × workflow_outcome
-            // cross-tab without re-walking the underlying RunResults.
-            for (const c of checks) {
-              (c as WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = run.outcome;
-            }
             workflowChecks.push(...checks);
           }
         }
@@ -361,6 +355,40 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     goldRankRecords,
     workflowChecks,
   });
+}
+
+function buildWorkflowTaskMetadata(
+  task: TaskMetadata,
+  trace: ReturnType<typeof normalizeRunToTrace>,
+): { goldRef?: string; flags?: Record<string, boolean> } {
+  const flags: Record<string, boolean> = {
+    search_has_relevant_result: hasRelevantSearchResult(trace, task.goldRef),
+    task_has_tests: taskHasTests(task),
+  };
+  return {
+    ...(task.goldRef !== undefined ? { goldRef: task.goldRef } : {}),
+    flags,
+  };
+}
+
+function hasRelevantSearchResult(trace: ReturnType<typeof normalizeRunToTrace>, goldRef: string | undefined): boolean {
+  if (!goldRef) return false;
+  for (const event of trace.events) {
+    if (event.type !== "akm_search") continue;
+    if (event.resultRefs?.includes(goldRef)) return true;
+  }
+  return false;
+}
+
+function taskHasTests(task: TaskMetadata): boolean {
+  if (task.verifier === "pytest") return true;
+  const testsDir = path.join(task.taskDir, "tests");
+  if (!fs.existsSync(testsDir)) return false;
+  try {
+    return fs.readdirSync(testsDir).some((name) => name.endsWith(".py") || name.endsWith(".sh"));
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -312,7 +312,7 @@ export function loadWorkflowSpec(specPath: string, root?: string): WorkflowSpec 
   if (root !== undefined) {
     const absRoot = path.resolve(root);
     const rel = path.relative(absRoot, absSpec);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || rel.length === 0 || path.isAbsolute(rel)) {
       throw new WorkflowSpecError(`Spec path resolves outside workflows root "${absRoot}"`, absSpec);
     }
   }

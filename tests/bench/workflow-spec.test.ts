@@ -397,6 +397,26 @@ scoring:
     expect(() => loadWorkflowSpec(traversal, root)).toThrow(/outside/);
   });
 
+  test("allows in-root spec paths whose filename starts with '..'", () => {
+    const root = path.join(scratch, "workflows");
+    mkdirSync(root, { recursive: true });
+    const inside = path.join(root, "..still-inside.yaml");
+    writeFileSync(
+      inside,
+      `id: ok
+title: ok
+required_sequence:
+  - event: agent_started
+scoring:
+  required_steps_weight: 0.5
+  forbidden_steps_weight: 0.3
+  evidence_quality_weight: 0.2
+`,
+      "utf8",
+    );
+    expect(() => loadWorkflowSpec(inside, root)).not.toThrow();
+  });
+
   test("loadAllWorkflowSpecs ignores non-yaml files in dir", () => {
     const root = path.join(scratch, "workflows");
     mkdirSync(root, { recursive: true });
