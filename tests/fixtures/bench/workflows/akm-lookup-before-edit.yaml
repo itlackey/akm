@@ -6,7 +6,7 @@ description: |
   must show that asset before writing.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "workflow-compliance"]
 required_sequence:
   - event: agent_started
   - event: akm_search

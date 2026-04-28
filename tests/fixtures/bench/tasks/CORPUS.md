@@ -11,7 +11,7 @@ agent follows AKM workflow process even when shortcuts are tempting,
 retrieval is noisy, or feedback requires discipline. See
 `workflow-compliance/README.md` for the per-task breakdown.
 
-Train/eval split: 12 train, 11 eval (~50/50 per task-success domain;
+Train/eval split: 13 train, 10 eval (~50/50 per task-success domain;
 workflow-compliance contributes 4 train + 2 eval).
 
 ## Tasks

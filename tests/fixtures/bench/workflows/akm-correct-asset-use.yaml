@@ -6,7 +6,7 @@ description: |
   the agent loaded the right asset rather than guessing.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "eval"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
   requires_gold_ref: true
 gold_ref: "skill:deploy"
 required_sequence:
