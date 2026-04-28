@@ -400,6 +400,125 @@ describe("token-measurement surface (issue #252)", () => {
   });
 });
 
+describe("renderUtilityReport negative-transfer (#260)", () => {
+  test("JSON envelope carries zeros and empty arrays when no regressions exist", () => {
+    const { json, markdown } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    expect(obj.negative_transfer_count).toBe(0);
+    expect(obj.negative_transfer_severity).toBe(0);
+    expect(obj.top_regressed_tasks).toEqual([]);
+    // Markdown stays QUIET — emits the literal "none" sentinel.
+    expect(markdown).toContain("## Negative transfer");
+    expect(markdown).toContain("none");
+    expect(markdown).not.toContain("### Top regressed tasks");
+  });
+
+  test("JSON envelope groups two domains and surfaces a single regression", () => {
+    const sample: UtilityRunReport = {
+      ...utilSample,
+      tasks: [
+        {
+          id: "domain-a/task-1",
+          noakm: pt(0.4, 20000, 40000),
+          akm: pt(0.8, 13000, 35000),
+          delta: { passRate: 0.4, tokensPerPass: -7000, wallclockMs: -5000 },
+        },
+        {
+          id: "domain-b/task-2",
+          noakm: pt(0.6, 20000, 40000),
+          akm: pt(0.2, 25000, 38000),
+          delta: { passRate: -0.4, tokensPerPass: 5000, wallclockMs: -2000 },
+        },
+      ],
+    };
+    const { json } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    expect(obj.negative_transfer_count).toBe(1);
+    expect(obj.negative_transfer_severity).toBeCloseTo(0.4);
+    const top = obj.top_regressed_tasks as Array<Record<string, unknown>>;
+    expect(top).toHaveLength(1);
+    expect(top[0]?.task_id).toBe("domain-b/task-2");
+    expect(top[0]?.domain).toBe("domain-b");
+    expect(top[0]?.delta).toBeCloseTo(-0.4);
+    expect(top[0]?.severity).toBeCloseTo(0.4);
+
+    const domains = obj.domain_level_deltas as Array<Record<string, unknown>>;
+    expect(domains).toHaveLength(2);
+    expect(domains.map((d) => d.domain)).toEqual(["domain-a", "domain-b"]);
+    const domB = domains.find((d) => d.domain === "domain-b");
+    expect(domB?.regression_count).toBe(1);
+    expect(domB?.pass_rate_delta).toBeCloseTo(-0.4);
+  });
+
+  test("markdown renders the regressed-task table and domain table when regressions exist", () => {
+    const akmRuns: RunResult[] = [
+      {
+        schemaVersion: 1,
+        taskId: "domain-b/task-2",
+        arm: "akm",
+        seed: 0,
+        model: "m",
+        outcome: "fail",
+        tokens: { input: 0, output: 0 },
+        wallclockMs: 0,
+        trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+        events: [],
+        verifierStdout: "",
+        verifierExitCode: 1,
+        assetsLoaded: ["skill:bad-guidance", "knowledge:context"],
+      },
+      {
+        schemaVersion: 1,
+        taskId: "domain-b/task-2",
+        arm: "akm",
+        seed: 1,
+        model: "m",
+        outcome: "fail",
+        tokens: { input: 0, output: 0 },
+        wallclockMs: 0,
+        trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+        events: [],
+        verifierStdout: "",
+        verifierExitCode: 1,
+        assetsLoaded: ["skill:bad-guidance"],
+      },
+    ];
+    const sample: UtilityRunReport = {
+      ...utilSample,
+      tasks: [
+        {
+          id: "domain-a/task-1",
+          noakm: pt(0.4, 20000, 40000),
+          akm: pt(0.8, 13000, 35000),
+          delta: { passRate: 0.4, tokensPerPass: -7000, wallclockMs: -5000 },
+        },
+        {
+          id: "domain-b/task-2",
+          noakm: pt(0.6, 20000, 40000),
+          akm: pt(0.2, 25000, 38000),
+          delta: { passRate: -0.4, tokensPerPass: 5000, wallclockMs: -2000 },
+        },
+      ],
+      akmRuns,
+    };
+    const { json, markdown } = renderUtilityReport(sample);
+    expect(markdown).toContain("## Negative transfer");
+    expect(markdown).toContain("count=1");
+    expect(markdown).toContain("### Top regressed tasks");
+    expect(markdown).toContain("domain-b/task-2");
+    expect(markdown).toContain("### Domain-level deltas");
+    expect(markdown).toContain("### Asset regression candidates");
+    expect(markdown).toContain("skill:bad-guidance");
+
+    const obj = json as Record<string, unknown>;
+    const candidates = obj.asset_regression_candidates as Array<Record<string, unknown>>;
+    expect(candidates.length).toBeGreaterThan(0);
+    const bad = candidates.find((c) => c.asset_ref === "skill:bad-guidance");
+    expect(bad?.regressed_task_count).toBe(1);
+    expect(bad?.total_load_count).toBe(2);
+  });
+});
+
 describe("git resolvers", () => {
   test("resolveGitBranch + resolveGitCommit return non-empty strings in this repo", () => {
     // The bench worktree IS a git repo; these MUST succeed.

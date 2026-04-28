@@ -9,11 +9,30 @@ import {
   aggregateCorpus,
   aggregatePerTask,
   aggregateTrajectory,
+  computeAssetRegressionCandidates,
   computeCorpusDelta,
+  computeDomainAggregates,
+  computeNegativeTransfer,
   computeOutcomeAggregate,
   computePerTaskDelta,
+  domainOfTaskId,
   type PerTaskMetrics,
 } from "./metrics";
+
+function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
+  return {
+    passRate: 0,
+    passAt1: 0,
+    tokensPerPass: null,
+    wallclockMs: 0,
+    passRateStdev: 0,
+    budgetExceededCount: 0,
+    harnessErrorCount: 0,
+    count: 1,
+    runsWithMeasuredTokens: 0,
+    ...overrides,
+  };
+}
 
 function fakeResult(overrides: Partial<RunResult>): RunResult {
   return {
@@ -338,5 +357,161 @@ describe("aggregateTrajectory", () => {
     const t = aggregateTrajectory(runs);
     expect(t.correctAssetLoaded).toBeCloseTo(0.5);
     expect(t.feedbackRecorded).toBe(0);
+  });
+});
+
+describe("domainOfTaskId", () => {
+  test("returns the segment before the first slash", () => {
+    expect(domainOfTaskId("docker-homelab/redis-healthcheck")).toBe("docker-homelab");
+  });
+
+  test("falls back to 'unknown' when there is no slash", () => {
+    expect(domainOfTaskId("noslash")).toBe("unknown");
+  });
+
+  test("falls back to 'unknown' when the slash is at index 0", () => {
+    expect(domainOfTaskId("/leading")).toBe("unknown");
+  });
+});
+
+describe("computeNegativeTransfer", () => {
+  test("returns zero count and severity when no regressions are present", () => {
+    const tasks = [
+      { id: "d/a", noakm: ptm({ passRate: 0.4 }), akm: ptm({ passRate: 0.8 }) },
+      { id: "d/b", noakm: ptm({ passRate: 0.5 }), akm: ptm({ passRate: 0.5 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(0);
+    expect(out.severity).toBe(0);
+    expect(out.topRegressedTasks).toEqual([]);
+  });
+
+  test("captures a single regression with correct delta and severity", () => {
+    const tasks = [
+      { id: "d/a", noakm: ptm({ passRate: 0.4 }), akm: ptm({ passRate: 0.8 }) },
+      { id: "d/regressed", noakm: ptm({ passRate: 0.6 }), akm: ptm({ passRate: 0.2 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(1);
+    expect(out.severity).toBeCloseTo(0.4);
+    expect(out.topRegressedTasks).toHaveLength(1);
+    const row = out.topRegressedTasks[0];
+    if (!row) throw new Error("expected row");
+    expect(row.taskId).toBe("d/regressed");
+    expect(row.domain).toBe("d");
+    expect(row.delta).toBeCloseTo(-0.4);
+    expect(row.severity).toBeCloseTo(0.4);
+  });
+
+  test("multiple regressions are sorted by severity desc with deterministic tiebreak", () => {
+    const tasks = [
+      // Mild regression -0.1.
+      { id: "alpha/x", noakm: ptm({ passRate: 0.6 }), akm: ptm({ passRate: 0.5 }) },
+      // Tied severity -0.3 (first tiebreaks by taskId asc).
+      { id: "beta/y", noakm: ptm({ passRate: 0.8 }), akm: ptm({ passRate: 0.5 }) },
+      { id: "alpha/z", noakm: ptm({ passRate: 0.8 }), akm: ptm({ passRate: 0.5 }) },
+      // Improvement (no regression).
+      { id: "alpha/w", noakm: ptm({ passRate: 0.1 }), akm: ptm({ passRate: 0.9 }) },
+    ];
+    const out = computeNegativeTransfer(tasks);
+    expect(out.count).toBe(3);
+    expect(out.severity).toBeCloseTo(0.7);
+    expect(out.topRegressedTasks.map((r) => r.taskId)).toEqual(["alpha/z", "beta/y", "alpha/x"]);
+  });
+
+  test("a task with equal pass rate is not counted as regressed", () => {
+    const tasks = [{ id: "d/eq", noakm: ptm({ passRate: 0.5 }), akm: ptm({ passRate: 0.5 }) }];
+    expect(computeNegativeTransfer(tasks).count).toBe(0);
+  });
+});
+
+describe("computeDomainAggregates", () => {
+  test("groups tasks by domain prefix", () => {
+    const tasks = [
+      {
+        id: "alpha/a",
+        noakm: ptm({ passRate: 0.4, tokensPerPass: 10000, wallclockMs: 1000 }),
+        akm: ptm({ passRate: 0.8, tokensPerPass: 8000, wallclockMs: 900 }),
+      },
+      {
+        id: "alpha/b",
+        noakm: ptm({ passRate: 0.6, tokensPerPass: 12000, wallclockMs: 2000 }),
+        akm: ptm({ passRate: 0.4, tokensPerPass: 9000, wallclockMs: 1500 }),
+      },
+      {
+        id: "beta/c",
+        noakm: ptm({ passRate: 0.2, tokensPerPass: null, wallclockMs: 500 }),
+        akm: ptm({ passRate: 0.5, tokensPerPass: 5000, wallclockMs: 600 }),
+      },
+    ];
+    const rows = computeDomainAggregates(tasks);
+    expect(rows.map((r) => r.domain)).toEqual(["alpha", "beta"]);
+
+    const alpha = rows.find((r) => r.domain === "alpha");
+    if (!alpha) throw new Error("alpha missing");
+    expect(alpha.taskCount).toBe(2);
+    expect(alpha.regressionCount).toBe(1);
+    expect(alpha.passRateNoakm).toBeCloseTo(0.5);
+    expect(alpha.passRateAkm).toBeCloseTo(0.6);
+    expect(alpha.passRateDelta).toBeCloseTo(0.1);
+    expect(alpha.tokensPerPassDelta).toBeCloseTo(8500 - 11000);
+    expect(alpha.wallclockMsDelta).toBeCloseTo(1200 - 1500);
+
+    const beta = rows.find((r) => r.domain === "beta");
+    if (!beta) throw new Error("beta missing");
+    expect(beta.regressionCount).toBe(0);
+    // Single-side null tokensPerPass yields null delta.
+    expect(beta.tokensPerPassDelta).toBeNull();
+  });
+
+  test("emits an empty array on no tasks", () => {
+    expect(computeDomainAggregates([])).toEqual([]);
+  });
+});
+
+describe("computeAssetRegressionCandidates", () => {
+  function fakeRun(taskId: string, assets: string[]): RunResult {
+    return {
+      schemaVersion: 1,
+      taskId,
+      arm: "akm",
+      seed: 0,
+      model: "m",
+      outcome: "pass",
+      tokens: { input: 0, output: 0 },
+      wallclockMs: 0,
+      trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      events: [],
+      verifierStdout: "",
+      verifierExitCode: 0,
+      assetsLoaded: assets,
+    };
+  }
+
+  test("returns empty when no regressed tasks were provided", () => {
+    expect(computeAssetRegressionCandidates([], [fakeRun("d/a", ["skill:x"])])).toEqual([]);
+  });
+
+  test("counts distinct regressed tasks per asset and totals raw load volume", () => {
+    const akmRuns = [
+      // task d/r1 across two seeds, same asset.
+      fakeRun("d/r1", ["skill:foo", "skill:bar"]),
+      fakeRun("d/r1", ["skill:foo"]),
+      // task d/r2 loads skill:foo (again) plus skill:baz.
+      fakeRun("d/r2", ["skill:foo", "skill:baz"]),
+      // Non-regressed task is ignored entirely.
+      fakeRun("d/clean", ["skill:foo", "skill:bar", "skill:baz"]),
+    ];
+    const rows = computeAssetRegressionCandidates(["d/r1", "d/r2"], akmRuns);
+    expect(rows.map((r) => r.assetRef)).toEqual(["skill:foo", "skill:bar", "skill:baz"]);
+    const foo = rows[0];
+    if (!foo) throw new Error("foo missing");
+    expect(foo.regressedTaskCount).toBe(2);
+    expect(foo.regressedTaskIds).toEqual(["d/r1", "d/r2"]);
+    expect(foo.totalLoadCount).toBe(3);
+    const bar = rows[1];
+    if (!bar) throw new Error("bar missing");
+    expect(bar.regressedTaskCount).toBe(1);
+    expect(bar.totalLoadCount).toBe(1);
   });
 });

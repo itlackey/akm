@@ -160,6 +160,52 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("tasks discovered:");
   }, 60_000);
 
+  // ── #261: --include-synthetic flag ─────────────────────────────────────────
+
+  test("utility help mentions --include-synthetic flag", () => {
+    const r = run(["help"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("--include-synthetic");
+  });
+
+  test("utility --include-synthetic adds aggregate.synthetic + akm_over_synthetic_lift", () => {
+    const r = run(
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "1000",
+        "--budget-wall-ms",
+        "1000",
+        "--include-synthetic",
+        "--json",
+      ],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    const aggregate = parsed.aggregate as Record<string, unknown>;
+    expect(aggregate.synthetic).toBeDefined();
+    expect("akm_over_synthetic_lift" in aggregate).toBe(true);
+  }, 60_000);
+
+  test("utility WITHOUT --include-synthetic: aggregate has no synthetic / akm_over_synthetic_lift", () => {
+    // Byte-identical default contract: no spurious 'synthetic' keys when the
+    // flag is absent.
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    const aggregate = parsed.aggregate as Record<string, unknown>;
+    expect(aggregate.synthetic).toBeUndefined();
+    expect("akm_over_synthetic_lift" in aggregate).toBe(false);
+  }, 60_000);
+
   test("with --json: stderr carries no markdown summary", () => {
     const r = run(
       ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],

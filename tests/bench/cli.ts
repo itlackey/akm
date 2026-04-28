@@ -56,6 +56,9 @@ utility flags:
   --seeds <N>              seeds per arm  (default: 5)
   --budget-tokens <N>      per-run token cap (default: 30000)
   --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
+  --include-synthetic      add a third 'synthetic' arm where the model writes/uses its own
+                           scratch notes (no AKM stash). Reports akm_over_synthetic_lift so
+                           operators can see whether AKM beats a self-notes baseline.
   --json                   suppress the markdown summary on stderr (machine-readable only).
                            Without --json, JSON still goes to stdout and the markdown
                            summary is also written to stderr for human-friendly reads.
@@ -144,6 +147,12 @@ export interface UtilityCliOptions {
   budgetTokens: number;
   budgetWallMs: number;
   model: string;
+  /**
+   * Track A synthetic-arm gate (#261). Threaded into `runUtility` as
+   * `includeSynthetic`. Default `false` keeps the envelope byte-identical to
+   * the pre-#261 two-arm shape.
+   */
+  includeSynthetic?: boolean;
   branch?: string;
   commit?: string;
   timestamp?: string;
@@ -174,6 +183,9 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
     budgetTokens: options.budgetTokens,
     budgetWallMs: options.budgetWallMs,
     slice: options.slice,
+    // #261: thread the synthetic-arm gate. Default off — the envelope shape
+    // is byte-identical to the pre-#261 output unless the operator opts in.
+    ...(options.includeSynthetic ? { includeSynthetic: true } : {}),
     ...(options.branch !== undefined ? { branch: options.branch } : {}),
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
@@ -726,6 +738,7 @@ async function main(argv: string[]): Promise<number> {
         budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
         budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
         model,
+        ...(parsed.bool.has("include-synthetic") ? { includeSynthetic: true } : {}),
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);

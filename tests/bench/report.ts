@@ -17,11 +17,13 @@ import { execSync } from "node:child_process";
 import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import type {
+  AssetRegressionCandidateRow,
   CompareResult,
   CompareTaskRow,
   CorpusDelta,
   CorpusMetrics,
   DeltaSign,
+  DomainAggregateRow,
   FailureMode,
   FailureModeAggregate,
   FeedbackIntegrityMetrics,
@@ -34,7 +36,12 @@ import type {
   SearchBridgeMetrics,
   TrajectoryAggregate,
 } from "./metrics";
-import { histogramKeys } from "./metrics";
+import {
+  computeAssetRegressionCandidates,
+  computeDomainAggregates,
+  computeNegativeTransfer,
+  histogramKeys,
+} from "./metrics";
 
 // ── Legacy envelope (#236) ─────────────────────────────────────────────────
 
@@ -162,6 +169,13 @@ export interface UtilityReportTaskEntry {
   noakm: PerTaskMetrics;
   akm: PerTaskMetrics;
   delta: CorpusDelta;
+  /**
+   * Per-task synthetic-arm metrics (#261). Present only on reports built by
+   * `runUtility({ includeSynthetic: true, ... })`. When absent the per-task
+   * row in the §13.3 envelope omits the `synthetic` key entirely so the
+   * default two-arm envelope is byte-identical to the pre-#261 output.
+   */
+  synthetic?: PerTaskMetrics;
 }
 
 /**
@@ -192,6 +206,14 @@ export interface UtilityRunReport {
   aggregateNoakm: CorpusMetrics;
   aggregateAkm: CorpusMetrics;
   aggregateDelta: CorpusDelta;
+  /**
+   * Synthetic-arm corpus aggregate (#261). Present only when `runUtility`
+   * was called with `includeSynthetic: true`. Renderers gate every
+   * synthetic-related output (`arms.synthetic`, `akm_over_synthetic_lift`,
+   * markdown subsection) on the presence of this field so the default
+   * two-arm envelope stays byte-identical to the pre-#261 shape.
+   */
+  aggregateSynth?: CorpusMetrics;
   trajectoryAkm: TrajectoryAggregate;
   /**
    * Failure-mode taxonomy aggregate (§6.6). Counts and per-task breakdown
@@ -255,12 +277,29 @@ export function renderUtilityReport(input: UtilityRunReport): { json: object; ma
 }
 
 function buildUtilityJson(input: UtilityRunReport): object {
+  const includeSynth = input.aggregateSynth !== undefined;
   const tasks = input.tasks.map((t) => ({
     id: t.id,
     noakm: serialisePerTaskMetrics(t.noakm),
     akm: serialisePerTaskMetrics(t.akm),
     delta: serialiseDelta(t.delta),
+    // #261: per-task synthetic block is emitted ONLY when the runner opted
+    // into the synthetic arm AND this task carries a synthetic aggregate.
+    // When the arm was not run we leave the key absent — a missing arm is
+    // not a zero-pass arm.
+    ...(includeSynth && t.synthetic ? { synthetic: serialisePerTaskMetrics(t.synthetic) } : {}),
   }));
+
+  // Negative-transfer + domain-level diagnostics (#260). Pure post-processing
+  // off `input.tasks` and `input.akmRuns` — runner.ts is intentionally
+  // untouched so this slots in alongside the per-task entries that already
+  // carry both arms via UtilityReportTaskEntry.
+  const negativeTransfer = computeNegativeTransfer(input.tasks);
+  const domainDeltas = computeDomainAggregates(input.tasks);
+  const assetRegressionCandidates = computeAssetRegressionCandidates(
+    negativeTransfer.topRegressedTasks.map((r) => r.taskId),
+    input.akmRuns ?? [],
+  );
 
   // Token-measurement coverage (issue #252). Folds the corpus-wide picture so
   // operators can tell at a glance whether token economics are reliable. The
@@ -282,6 +321,17 @@ function buildUtilityJson(input: UtilityRunReport): object {
       noakm: serialiseCorpus(input.aggregateNoakm),
       akm: serialiseCorpus(input.aggregateAkm),
       delta: serialiseDelta(input.aggregateDelta),
+      // #261: synthetic aggregate is emitted ONLY when includeSynthetic
+      // was set on the runner. Absent otherwise — byte-identical to the
+      // pre-#261 envelope.
+      ...(input.aggregateSynth ? { synthetic: serialiseCorpus(input.aggregateSynth) } : {}),
+      // #261: akm_over_synthetic_lift = passRate(akm) - passRate(synthetic).
+      // Only computed when the synthetic arm ran. Positive => AKM beats the
+      // synthetic-notes baseline; non-positive flags AKM is not adding value
+      // beyond what the model can synthesise on its own.
+      ...(input.aggregateSynth
+        ? { akm_over_synthetic_lift: input.aggregateAkm.passRate - input.aggregateSynth.passRate }
+        : {}),
     },
     trajectory: {
       akm: {
@@ -302,6 +352,18 @@ function buildUtilityJson(input: UtilityRunReport): object {
       reliable: tokenMeasurement.reliable,
     },
     tasks,
+    negative_transfer_count: negativeTransfer.count,
+    negative_transfer_severity: negativeTransfer.severity,
+    top_regressed_tasks: negativeTransfer.topRegressedTasks.map((r) => ({
+      task_id: r.taskId,
+      domain: r.domain,
+      noakm_pass_rate: r.noakmPassRate,
+      akm_pass_rate: r.akmPassRate,
+      delta: r.delta,
+      severity: r.severity,
+    })),
+    domain_level_deltas: domainDeltas.map(serialiseDomainAggregate),
+    asset_regression_candidates: assetRegressionCandidates.map(serialiseAssetRegressionCandidate),
     warnings,
     ...(input.searchBridge ? { searchBridge: serialiseSearchBridge(input.searchBridge) } : {}),
   };
@@ -377,6 +439,44 @@ function serialiseDelta(d: CorpusDelta): { pass_rate: number; tokens_per_pass: n
     pass_rate: d.passRate,
     tokens_per_pass: d.tokensPerPass,
     wallclock_ms: d.wallclockMs,
+  };
+}
+
+/** Snake-case wire shape for one row of `domain_level_deltas` (#260). */
+function serialiseDomainAggregate(row: DomainAggregateRow): {
+  domain: string;
+  task_count: number;
+  regression_count: number;
+  pass_rate_noakm: number;
+  pass_rate_akm: number;
+  pass_rate_delta: number;
+  tokens_per_pass_delta: number | null;
+  wallclock_ms_delta: number;
+} {
+  return {
+    domain: row.domain,
+    task_count: row.taskCount,
+    regression_count: row.regressionCount,
+    pass_rate_noakm: row.passRateNoakm,
+    pass_rate_akm: row.passRateAkm,
+    pass_rate_delta: row.passRateDelta,
+    tokens_per_pass_delta: row.tokensPerPassDelta,
+    wallclock_ms_delta: row.wallclockMsDelta,
+  };
+}
+
+/** Snake-case wire shape for one row of `asset_regression_candidates` (#260). */
+function serialiseAssetRegressionCandidate(row: AssetRegressionCandidateRow): {
+  asset_ref: string;
+  regressed_task_count: number;
+  regressed_task_ids: string[];
+  total_load_count: number;
+} {
+  return {
+    asset_ref: row.assetRef,
+    regressed_task_count: row.regressedTaskCount,
+    regressed_task_ids: row.regressedTaskIds,
+    total_load_count: row.totalLoadCount,
   };
 }
 
@@ -472,8 +572,29 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("| arm | pass_rate | tokens_per_pass | wallclock_ms |");
   lines.push("|-----|-----------|-----------------|--------------|");
   lines.push(corpusRow("noakm", input.aggregateNoakm));
+  // #261: synthetic row sits between noakm and akm so the columns read
+  // baseline → synthetic → akm in the natural progression. Only rendered
+  // when the runner opted into the synthetic arm.
+  if (input.aggregateSynth) {
+    lines.push(corpusRow("synthetic", input.aggregateSynth));
+  }
   lines.push(corpusRow("akm", input.aggregateAkm));
   lines.push(deltaRow(input.aggregateDelta));
+  // #261: akm_over_synthetic_lift summary line. When AKM does not beat the
+  // synthetic baseline (lift <= 0) we surface a warning marker so operators
+  // cannot miss the regression. Otherwise we render the lift as an
+  // informative line.
+  if (input.aggregateSynth) {
+    const lift = input.aggregateAkm.passRate - input.aggregateSynth.passRate;
+    lines.push("");
+    if (lift <= 0) {
+      lines.push(
+        `:warning: **akm_over_synthetic_lift = ${signedFixed(lift, 2)}** — AKM did not beat the synthetic-notes baseline.`,
+      );
+    } else {
+      lines.push(`**akm_over_synthetic_lift: ${signedFixed(lift, 2)}**`);
+    }
+  }
   lines.push("");
   lines.push("## Trajectory (akm)");
   lines.push("");
@@ -482,13 +603,26 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("");
   lines.push("## Per-task pass rates");
   lines.push("");
-  lines.push("| task | noakm | akm | delta |");
-  lines.push("|------|-------|-----|-------|");
+  // #261: synthetic column is rendered only when the synthetic arm ran.
+  // The default header/row stays identical to the pre-#261 output.
+  if (input.aggregateSynth) {
+    lines.push("| task | noakm | synthetic | akm | delta |");
+    lines.push("|------|-------|-----------|-----|-------|");
+  } else {
+    lines.push("| task | noakm | akm | delta |");
+    lines.push("|------|-------|-----|-------|");
+  }
   // Sort tasks alphabetically for byte-stable markdown output.
   const sorted = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
   for (const t of sorted) {
-    lines.push(taskRow(t));
+    lines.push(taskRow(t, input.aggregateSynth !== undefined));
   }
+  // Negative-transfer + domain diagnostics (#260). The section stays quiet
+  // ("none") when no regressions were observed so green corpora don't fill
+  // the report with empty subheaders.
+  const negativeTransferSection = renderNegativeTransferSection(input);
+  lines.push("");
+  lines.push(negativeTransferSection);
   // Failure-mode breakdown (§6.6). Appended near the bottom so the headline
   // pass-rate / trajectory tables stay visually anchored at the top.
   const failureSection = renderFailureModeBreakdown(input);
@@ -594,7 +728,14 @@ function deltaRow(d: CorpusDelta): string {
   return `| **delta** | ${signed(d.passRate.toFixed(2))} | ${tpp} | ${signed(d.wallclockMs.toFixed(0))} |`;
 }
 
-function taskRow(t: UtilityReportTaskEntry): string {
+function taskRow(t: UtilityReportTaskEntry, includeSynthetic = false): string {
+  if (includeSynthetic) {
+    // #261: render the synthetic-arm pass-rate when present; "n/a" when the
+    // arm did not run for this task. A missing arm is NOT a zero-pass arm —
+    // a 0.00 cell would be misleading because the model never tried.
+    const synth = t.synthetic ? t.synthetic.passRate.toFixed(2) : "n/a";
+    return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${synth} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
+  }
   return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
 }
 
@@ -865,6 +1006,72 @@ export function renderFailureModeBreakdown(report: UtilityRunReport): string {
   for (const [label, count] of entries) {
     const percent = ((count / totalFailures) * 100).toFixed(1);
     lines.push(`- ${label} — ${count} (${percent}% of failed runs)`);
+  }
+  return lines.join("\n");
+}
+
+// ── Negative-transfer + domain diagnostics markdown (#260) ─────────────────
+
+/**
+ * Render the §260 negative-transfer section. Stays quiet when no
+ * regressions exist — emits a single `## Negative transfer\n\nnone` block so
+ * the report remains scannable for green corpora. When regressions exist,
+ * renders headline counts, the top-regressed-task table, the per-domain
+ * delta table, and the asset-regression-candidate table.
+ */
+export function renderNegativeTransferSection(input: UtilityRunReport): string {
+  const negativeTransfer = computeNegativeTransfer(input.tasks);
+  const lines: string[] = ["## Negative transfer", ""];
+  if (negativeTransfer.count === 0) {
+    lines.push("none");
+    return lines.join("\n");
+  }
+  lines.push(
+    `count=${negativeTransfer.count}, severity=${negativeTransfer.severity.toFixed(2)} (sum of noakm − akm pass rate over regressed tasks)`,
+  );
+  lines.push("");
+  lines.push("### Top regressed tasks");
+  lines.push("");
+  lines.push("| task | domain | noakm | akm | delta |");
+  lines.push("|------|--------|-------|-----|-------|");
+  for (const row of negativeTransfer.topRegressedTasks) {
+    lines.push(
+      `| ${row.taskId} | ${row.domain} | ${row.noakmPassRate.toFixed(2)} | ${row.akmPassRate.toFixed(2)} | ${signed(row.delta.toFixed(2))} |`,
+    );
+  }
+
+  const domainRows = computeDomainAggregates(input.tasks);
+  if (domainRows.length > 0) {
+    lines.push("");
+    lines.push("### Domain-level deltas");
+    lines.push("");
+    lines.push(
+      "| domain | tasks | regressions | noakm pass | akm pass | delta | tokens delta | wallclock delta (ms) |",
+    );
+    lines.push(
+      "|--------|-------|-------------|------------|----------|-------|--------------|----------------------|",
+    );
+    for (const row of domainRows) {
+      const tppDelta = row.tokensPerPassDelta === null ? "n/a" : signed(row.tokensPerPassDelta.toFixed(0));
+      lines.push(
+        `| ${row.domain} | ${row.taskCount} | ${row.regressionCount} | ${row.passRateNoakm.toFixed(2)} | ${row.passRateAkm.toFixed(2)} | ${signed(row.passRateDelta.toFixed(2))} | ${tppDelta} | ${signed(row.wallclockMsDelta.toFixed(0))} |`,
+      );
+    }
+  }
+
+  const candidates = computeAssetRegressionCandidates(
+    negativeTransfer.topRegressedTasks.map((r) => r.taskId),
+    input.akmRuns ?? [],
+  );
+  if (candidates.length > 0) {
+    lines.push("");
+    lines.push("### Asset regression candidates");
+    lines.push("");
+    lines.push("| asset_ref | regressed tasks | total loads |");
+    lines.push("|-----------|-----------------|-------------|");
+    for (const row of candidates) {
+      lines.push(`| \`${row.assetRef}\` | ${row.regressedTaskCount} | ${row.totalLoadCount} |`);
+    }
   }
   return lines.join("\n");
 }

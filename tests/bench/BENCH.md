@@ -264,8 +264,63 @@ double-fire. On signal, the handler:
 Re-entrant signals while cleanup is in flight are dropped. Operators who
 need a hard kill can press Ctrl-C twice.
 
+### Workflow specs (#255)
+
+Declarative workflow rules live under `tests/fixtures/bench/workflows/*.yaml`
+and define what AKM agent behavior we expect for each task category. They
+are loaded by `tests/bench/workflow-spec.ts` and consumed by Wave 3's
+compliance evaluator (#256).
+
+**Authoring a spec.** Each YAML file holds one `WorkflowSpec`:
+
+```yaml
+id: akm-lookup-before-edit            # unique within the dir
+title: "Agent searches AKM before editing"
+description: "..."                    # optional
+applies_to:                           # optional filters
+  arms: ["akm"]                       # arms this spec applies to
+  task_domains: ["docker-homelab"]    # domain prefixes from task_id
+required_sequence:                    # ordered required events
+  - event: agent_started
+  - event: akm_search
+    before: first_workspace_write     # must occur before this event
+forbidden:                            # events that must NOT occur
+  - event: first_workspace_write
+    before: akm_search
+scoring:                              # weights must sum to 1
+  required_steps_weight: 0.7
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.1
+```
+
+The loader rejects:
+- malformed YAML or missing required fields,
+- unknown event names (validated against the 14-name `KNOWN_EVENT_NAMES`
+  set, hardcoded from #254's brief; Wave 3 will reconcile by importing
+  from `workflow-trace.ts` directly),
+- scoring weights outside `[0,1]` or whose sum is not `1.0` (1e-6
+  tolerance),
+- `gold_ref` values that fail `parseAssetRef` from `src/core/asset-ref.ts`,
+- specs larger than 1 MiB (DoS guard),
+- file paths that resolve outside the supplied workflows root
+  (path-traversal guard via `path.relative` containment),
+- duplicate `id` within a single `loadAllWorkflowSpecs(dir)` call.
+
+**Loading specs.** Use `loadAllWorkflowSpecs(dir)` to load every
+`*.yaml` under `dir`. Use `loadWorkflowSpec(path, root?)` to load one;
+when `root` is supplied the path-traversal guard is enforced.
+
+**Applying specs.** `specApplies(spec, { arm, taskId })` returns whether
+the spec's `applies_to` filters match the run. Wave 3's evaluator calls
+this once per (run, spec) before scoring.
+
+**Errors.** All loader failures throw `WorkflowSpecError`, which carries
+`.code === "WORKFLOW_SPEC_INVALID"` for v1 contract compliance and
+`.specPath` for diagnostics.
+
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.
 - Search-pipeline benchmark sibling: `tests/BENCHMARKS.md`.
 - Fixture stashes: `tests/fixtures/stashes/`.
+- Workflow specs: `tests/fixtures/bench/workflows/`.
