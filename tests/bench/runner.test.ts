@@ -754,3 +754,92 @@ describe("runUtility", () => {
     expect(markdown).toContain("AKM did not beat the synthetic-notes baseline");
   });
 });
+
+// ── Workflow compliance plumbing (#257) ────────────────────────────────────
+
+describe("runUtility workflow compliance (#257)", () => {
+  let workspaceRoot: string;
+  let taskDir: string;
+
+  beforeAll(() => {
+    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bench-runner-wf-"));
+    taskDir = path.join(workspaceRoot, "task");
+    fs.mkdirSync(taskDir, { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+
+  test("loads workflow specs from the default directory and stamps workflowChecks on the report", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [
+        // domain-name needs to match a task_domain in at least one shipping spec
+        // so the evaluator emits applicable checks (not_applicable rows are
+        // expected for the rest).
+        fakeTask(taskDir, { id: "docker-homelab/redis", domain: "docker-homelab" }),
+      ],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+    });
+    expect(Array.isArray(report.workflowChecks)).toBe(true);
+    // At least one shipping spec applies to docker-homelab → some checks emitted.
+    expect((report.workflowChecks ?? []).length).toBeGreaterThan(0);
+  });
+
+  test("workflowsDir: '' disables workflow evaluation and yields no workflowChecks", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      workflowsDir: "",
+    });
+    expect(report.workflowChecks).toEqual([]);
+  });
+
+  test("missing workflowsDir is recorded as a warning, not a crash", async () => {
+    const { setQuiet, resetQuiet } = await import("../../src/core/warn");
+    setQuiet(true);
+    try {
+      const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+      const report = await runUtility({
+        tasks: [fakeTask(taskDir)],
+        arms: ["akm"],
+        model: "test",
+        seedsPerArm: 1,
+        spawn,
+        materialiseStash: false,
+        workflowsDir: "/path/that/does/not/exist",
+      });
+      expect(report.workflowChecks).toEqual([]);
+      const hasWarn = report.warnings.some((w) => w.includes("workflow specs"));
+      expect(hasWarn).toBe(true);
+    } finally {
+      resetQuiet();
+    }
+  });
+
+  test("runner attaches taskOutcome to each workflowCheck so the cross-tab can attribute it", async () => {
+    const { spawn } = fakeSpawnFactory({ noakm: "ok", akm: "ok" });
+    const report = await runUtility({
+      tasks: [fakeTask(taskDir, { id: "docker-homelab/redis", domain: "docker-homelab" })],
+      arms: ["akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+    });
+    type CheckWithTaskOutcome = (typeof report.workflowChecks)[number] & { taskOutcome?: string };
+    const c = (report.workflowChecks ?? [])[0] as CheckWithTaskOutcome | undefined;
+    expect(c).toBeDefined();
+    expect(typeof c?.taskOutcome).toBe("string");
+  });
+});

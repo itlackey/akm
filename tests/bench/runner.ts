@@ -24,6 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { warn } from "../../src/core/warn";
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { computeFixtureContentHash, type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
 import { registerCleanup } from "./cleanup";
@@ -47,6 +48,21 @@ import {
 } from "./metrics";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
 import { computeTrajectory } from "./trajectory";
+import {
+  evaluateRunAgainstAllSpecs,
+  type WorkflowCheckResult,
+  type WorkflowEvalRunContext,
+} from "./workflow-evaluator";
+import { loadAllWorkflowSpecs, type WorkflowSpec } from "./workflow-spec";
+import { normalizeRunToTrace } from "./workflow-trace";
+
+/**
+ * Default workflows directory. Can be overridden by callers (tests) via
+ * `RunUtilityOptions.workflowsDir`. Specs in this directory are loaded ONCE
+ * per `runUtility` call (not per run) — the evaluator filters via each spec's
+ * `applies_to` so we don't I/O in the hot loop.
+ */
+const DEFAULT_WORKFLOWS_DIR = path.resolve(__dirname, "..", "fixtures", "bench", "workflows");
 
 export type Arm = "noakm" | "akm" | "synthetic";
 
@@ -127,6 +143,14 @@ export interface RunUtilityOptions {
    * synthetic-arm orchestration entirely.
    */
   includeSynthetic?: boolean;
+  /**
+   * Override the workflows-spec directory (#257). When omitted, the runner
+   * loads `tests/fixtures/bench/workflows/*.yaml` once per `runUtility` call
+   * and feeds the parsed specs to `evaluateRunAgainstAllSpecs` for every
+   * akm-arm run. When supplied, the directory is loaded instead. Pass an
+   * empty string to disable workflow evaluation entirely (tests).
+   */
+  workflowsDir?: string;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -157,6 +181,24 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
   const goldRankRecords: GoldRankAccumulator = [];
+
+  // #257: load workflow specs ONCE per runUtility call. Skipped when the
+  // caller passes an empty `workflowsDir` string (test escape hatch). Errors
+  // are surfaced as warnings — workflow evaluation is best-effort and a
+  // missing/malformed spec must not abort the whole bench run.
+  const workflowSpecs: WorkflowSpec[] = [];
+  const workflowsDir = options.workflowsDir ?? DEFAULT_WORKFLOWS_DIR;
+  if (workflowsDir.length > 0) {
+    try {
+      const loaded = loadAllWorkflowSpecs(workflowsDir);
+      workflowSpecs.push(...loaded);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      warnings.push(`workflow specs: failed to load from "${workflowsDir}": ${msg}`);
+      warn(`[runUtility] workflow specs unavailable: ${msg}`);
+    }
+  }
+  const workflowChecks: WorkflowCheckResult[] = [];
 
   for (const task of options.tasks) {
     const taskRuns = new Map<Arm, RunResult[]>();
@@ -276,6 +318,30 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
               searches,
             });
           }
+
+          // #257: evaluate the akm-arm run against every workflow spec. The
+          // evaluator's `specApplies` filter handles applicability (arm,
+          // domain, gold ref, repeated-failures threshold), so we hand it the
+          // entire spec list and append whatever it returns. noakm/synthetic
+          // arms are not evaluated — workflow specs target the akm arm.
+          if (arm === "akm" && workflowSpecs.length > 0) {
+            const trace = normalizeRunToTrace(run, { warnings });
+            const runCtx: WorkflowEvalRunContext = {
+              arm: run.arm,
+              taskId: run.taskId,
+              seed: run.seed,
+              outcome: run.outcome,
+            };
+            const taskMetadata = task.goldRef !== undefined ? { goldRef: task.goldRef } : {};
+            const checks = evaluateRunAgainstAllSpecs(trace, workflowSpecs, runCtx, taskMetadata);
+            // Tag each check with the run's task-side outcome so the report
+            // aggregator can compute the task_outcome × workflow_outcome
+            // cross-tab without re-walking the underlying RunResults.
+            for (const c of checks) {
+              (c as WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = run.outcome;
+            }
+            workflowChecks.push(...checks);
+          }
         }
       }
     } finally {
@@ -293,6 +359,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     slice,
     warnings,
     goldRankRecords,
+    workflowChecks,
   });
 }
 
@@ -421,6 +488,8 @@ interface BuildReportArgs {
   slice: "all" | TaskSlice;
   warnings: string[];
   goldRankRecords: GoldRankAccumulator;
+  /** #257: per-(akm-arm-run, spec) workflow checks accumulated across the corpus. */
+  workflowChecks: WorkflowCheckResult[];
 }
 
 function buildReport(args: BuildReportArgs): UtilityRunReport {
@@ -431,6 +500,18 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   const akmRunsAll: RunResult[] = [];
   const allRuns: RunResult[] = [];
   const includeSynth = args.options.includeSynthetic === true;
+
+  // #257: index workflow checks by taskId so we can attach a per-task
+  // mean compliance to each `UtilityReportTaskEntry`. Only `pass` and
+  // `partial` statuses contribute non-zero scores; `not_applicable` is
+  // skipped (the spec did not target this run); `harness_error` rolls in
+  // as a 0 so corrupt traces drag the per-task number down.
+  const checksByTask = new Map<string, WorkflowCheckResult[]>();
+  for (const c of args.workflowChecks) {
+    const arr = checksByTask.get(c.taskId);
+    if (arr) arr.push(c);
+    else checksByTask.set(c.taskId, [c]);
+  }
 
   for (const task of args.options.tasks) {
     const taskRuns = args.grouped.get(task.id);
@@ -462,12 +543,26 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
       allRuns.push(...noakmRuns, ...akmRuns);
     }
 
+    // #257: per-task workflow compliance, mean of `score` over applicable
+    // checks (excludes `not_applicable`). Undefined when this task has no
+    // applicable checks at all so downstream renderers can distinguish
+    // "not measured" from "measured at 0".
+    const taskChecks = checksByTask.get(task.id) ?? [];
+    const applicableTaskChecks = taskChecks.filter((c) => c.status !== "not_applicable");
+    let workflowCompliance: number | undefined;
+    if (applicableTaskChecks.length > 0) {
+      let sum = 0;
+      for (const c of applicableTaskChecks) sum += c.score;
+      workflowCompliance = sum / applicableTaskChecks.length;
+    }
+
     tasks.push({
       id: task.id,
       noakm: noakmMetrics,
       akm: akmMetrics,
       delta,
       ...(includeSynth ? { synthetic: aggregatePerTask(synthRuns) } : {}),
+      ...(workflowCompliance !== undefined ? { workflowCompliance } : {}),
     });
   }
 
@@ -560,6 +655,7 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
     taskMetadata: args.options.tasks,
     goldRankRecords: args.goldRankRecords,
     searchBridge,
+    workflowChecks: args.workflowChecks,
   };
   // Compute per-asset attribution as post-processing on the akm-arm runs
   // we just collected. This is the §6.5 "free" diagnostic — it runs on every

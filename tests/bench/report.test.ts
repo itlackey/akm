@@ -605,3 +605,227 @@ describe("renderUtilityReport corpus_coverage (#262)", () => {
     expect(markdown).not.toContain("## Corpus coverage");
   });
 });
+
+// ── Workflow compliance (#257) ─────────────────────────────────────────────
+
+describe("renderUtilityReport workflow compliance (#257)", () => {
+  function makeCheck(overrides: Partial<import("./workflow-evaluator").WorkflowCheckResult> = {}) {
+    const base: import("./workflow-evaluator").WorkflowCheckResult = {
+      schemaVersion: 1,
+      workflowId: "wf-1",
+      taskId: "domain-a/task-1",
+      arm: "akm",
+      seed: 0,
+      status: "pass",
+      score: 1,
+      requiredPassed: 3,
+      requiredTotal: 3,
+      violations: [],
+      evidence: {
+        matchedEvents: 3,
+        feedbackRecorded: true,
+        goldAssetLoaded: true,
+        traceTruncated: false,
+      },
+    };
+    return { ...base, ...overrides };
+  }
+
+  test("emits an empty workflow object and skips the markdown section when no checks were collected", () => {
+    const { json, markdown } = renderUtilityReport(utilSample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    expect(wf).toBeDefined();
+    expect(wf.total_checks).toBe(0);
+    expect(wf.applicable_checks).toBe(0);
+    expect(wf.overall_compliance).toBe(0);
+    expect(wf.violation_count).toBe(0);
+    expect(wf.by_workflow).toEqual({});
+    expect(wf.top_violations).toEqual([]);
+    expect(wf.cross_tab).toEqual([]);
+    expect(markdown).not.toContain("## Workflow compliance");
+  });
+
+  test("aggregates pass/partial/fail counts and surfaces top violations with evidence", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({
+        workflowId: "wf-1",
+        taskId: "domain-a/task-1",
+        seed: 0,
+        status: "pass",
+        score: 1,
+      }),
+      makeCheck({
+        workflowId: "wf-1",
+        taskId: "domain-a/task-1",
+        seed: 1,
+        status: "partial",
+        score: 0.5,
+        requiredPassed: 1,
+        requiredTotal: 2,
+        violations: [
+          { code: "missing_required_event", message: "expected akm_search", expected: "akm_search x1", observed: "0" },
+        ],
+      }),
+      makeCheck({
+        workflowId: "wf-2",
+        taskId: "domain-b/task-2",
+        seed: 0,
+        status: "fail",
+        score: 0,
+        requiredPassed: 0,
+        requiredTotal: 1,
+        violations: [
+          { code: "missing_required_event", message: "expected akm_search again", observed: "0" },
+          { code: "wrong_feedback_polarity", message: "negative expected", expected: "negative" },
+        ],
+      }),
+    ];
+    // Tag task outcomes so the cross-tab populates pass/fail rows.
+    (checks[0] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "pass";
+    (checks[1] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "pass";
+    (checks[2] as import("./workflow-evaluator").WorkflowCheckResult & { taskOutcome?: string }).taskOutcome = "fail";
+
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    expect(wf.total_checks).toBe(3);
+    expect(wf.applicable_checks).toBe(3);
+    expect(wf.strict_pass_rate).toBeCloseTo(1 / 3);
+    expect(wf.partial_pass_rate).toBeCloseTo(1 / 3);
+    expect(wf.fail_rate).toBeCloseTo(1 / 3);
+    expect(wf.violation_count).toBe(3);
+    // overall_compliance is mean(score): (1 + 0.5 + 0) / 3 ≈ 0.5
+    expect(wf.overall_compliance).toBeCloseTo(0.5);
+
+    const byWorkflow = wf.by_workflow as Record<string, Record<string, unknown>>;
+    expect(byWorkflow["wf-1"]).toBeDefined();
+    expect(byWorkflow["wf-1"].count).toBe(2);
+    expect(byWorkflow["wf-1"].pass_rate).toBeCloseTo(0.5);
+    expect(byWorkflow["wf-1"].partial_rate).toBeCloseTo(0.5);
+    expect(byWorkflow["wf-2"].count).toBe(1);
+    expect(byWorkflow["wf-2"].fail_rate).toBeCloseTo(1);
+
+    const topVio = wf.top_violations as Array<Record<string, unknown>>;
+    // missing_required_event appears twice → ranked first
+    expect(topVio[0]?.code).toBe("missing_required_event");
+    expect(topVio[0]?.count).toBe(2);
+    const evidence = topVio[0]?.evidence as Array<Record<string, unknown>>;
+    expect(evidence.length).toBeGreaterThan(0);
+    // Evidence pointers identify (task, seed, workflow_id).
+    expect(evidence[0]?.task_id).toBeDefined();
+    expect(evidence[0]?.seed).toBeDefined();
+    expect(evidence[0]?.workflow_id).toBeDefined();
+
+    const crossTab = wf.cross_tab as Array<Record<string, unknown>>;
+    const passRow = crossTab.find((r) => r.task_outcome === "pass");
+    const failRow = crossTab.find((r) => r.task_outcome === "fail");
+    expect(passRow).toBeDefined();
+    expect(failRow).toBeDefined();
+    // task pass run with pass + partial workflow checks → worst-status reduction = "partial"
+    expect(passRow?.partial).toBe(1);
+    // task fail run with fail workflow check → fail bucket
+    expect(failRow?.fail).toBe(1);
+
+    expect(markdown).toContain("## Workflow compliance");
+    expect(markdown).toContain("overall_compliance=0.50");
+    expect(markdown).toContain("### By workflow");
+    expect(markdown).toContain("wf-1");
+    expect(markdown).toContain("wf-2");
+    expect(markdown).toContain("### Top violations");
+    expect(markdown).toContain("missing_required_event");
+    expect(markdown).toContain("### Violation evidence");
+    expect(markdown).toContain("### Task outcome × workflow outcome");
+  });
+
+  test("not_applicable checks are excluded from rate denominators but show up in by_workflow.count", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-applies", status: "pass", score: 1 }),
+      makeCheck({ workflowId: "wf-skips", status: "not_applicable", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    expect(wf.total_checks).toBe(2);
+    expect(wf.applicable_checks).toBe(1);
+    expect(wf.strict_pass_rate).toBeCloseTo(1);
+    const byWorkflow = wf.by_workflow as Record<string, Record<string, unknown>>;
+    expect(byWorkflow["wf-skips"].count).toBe(1);
+    expect(byWorkflow["wf-skips"].pass_rate).toBe(0);
+    // Markdown still emits the section because at least one check is applicable.
+    expect(markdown).toContain("## Workflow compliance");
+  });
+
+  test("when every check is not_applicable, markdown surfaces the loaded-but-no-match sentence", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-a", status: "not_applicable", score: 0 }),
+      makeCheck({ workflowId: "wf-b", status: "not_applicable", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json, markdown } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    expect(wf.total_checks).toBe(2);
+    expect(wf.applicable_checks).toBe(0);
+    expect(markdown).toContain("## Workflow compliance");
+    expect(markdown).toContain("No workflow specs applied");
+  });
+
+  test("harness_error checks are bucketed as fail and counted against compliance", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-1", status: "harness_error", score: 0 }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { json } = renderUtilityReport(sample);
+    const obj = json as Record<string, unknown>;
+    const wf = obj.workflow as Record<string, unknown>;
+    expect(wf.applicable_checks).toBe(1);
+    expect(wf.fail_rate).toBeCloseTo(1);
+  });
+
+  test("multiple specs across multiple tasks aggregate per-spec deterministically", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({ workflowId: "wf-a", taskId: "t1", seed: 0, status: "pass", score: 1 }),
+      makeCheck({
+        workflowId: "wf-a",
+        taskId: "t1",
+        seed: 1,
+        status: "fail",
+        score: 0,
+        violations: [{ code: "forbidden_event", message: "x" }],
+      }),
+      makeCheck({
+        workflowId: "wf-b",
+        taskId: "t2",
+        seed: 0,
+        status: "partial",
+        score: 0.5,
+        violations: [{ code: "wrong_order", message: "y" }],
+      }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const { markdown } = renderUtilityReport(sample);
+    // Specs are listed alphabetically.
+    const aIdx = markdown.indexOf("| wf-a ");
+    const bIdx = markdown.indexOf("| wf-b ");
+    expect(aIdx).toBeGreaterThan(0);
+    expect(bIdx).toBeGreaterThan(aIdx);
+  });
+
+  test("markdown is byte-stable across reruns for the workflow section", () => {
+    const checks: import("./workflow-evaluator").WorkflowCheckResult[] = [
+      makeCheck({
+        workflowId: "wf-1",
+        status: "partial",
+        score: 0.5,
+        violations: [{ code: "missing_required_event", message: "x" }],
+      }),
+    ];
+    const sample: UtilityRunReport = { ...utilSample, workflowChecks: checks };
+    const a = renderUtilityReport(sample).markdown;
+    const b = renderUtilityReport(sample).markdown;
+    expect(a).toBe(b);
+  });
+});
