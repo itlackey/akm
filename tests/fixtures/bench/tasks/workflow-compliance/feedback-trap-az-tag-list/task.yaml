@@ -6,6 +6,9 @@ slice: train
 gold_ref: skill:az-cli
 stash: az-cli
 verifier: script
+memory_ability: procedural_lookup
+task_family: workflow-compliance/feedback-polarity
+
 budget:
   tokens: 25000
   wallMs: 90000

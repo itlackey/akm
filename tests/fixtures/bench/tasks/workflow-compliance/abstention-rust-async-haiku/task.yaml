@@ -5,6 +5,9 @@ difficulty: easy
 slice: eval
 stash: minimal
 verifier: script
+memory_ability: abstention
+task_family: workflow-compliance/abstention
+
 budget:
   tokens: 5000
   wallMs: 30000

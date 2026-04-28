@@ -6,6 +6,9 @@ slice: eval
 gold_ref: skill:docker
 stash: noisy
 verifier: pytest
+memory_ability: noisy_retrieval
+task_family: workflow-compliance/distractor
+
 budget:
   tokens: 25000
   wallMs: 90000

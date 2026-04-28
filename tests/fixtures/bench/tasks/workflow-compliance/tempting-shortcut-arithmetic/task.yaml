@@ -5,6 +5,9 @@ difficulty: easy
 slice: train
 stash: minimal
 verifier: script
+memory_ability: procedural_lookup
+task_family: workflow-compliance/tempting-shortcut
+
 budget:
   tokens: 5000
   wallMs: 30000
