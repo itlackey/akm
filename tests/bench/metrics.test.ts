@@ -4,13 +4,17 @@
 
 import { describe, expect, test } from "bun:test";
 
+import type { EventEnvelope } from "../../src/core/events";
+import type { TaskMetadata } from "./corpus";
 import type { RunResult } from "./driver";
 import {
+  aggregateAkmOverhead,
   aggregateByMemoryAbility,
   aggregateByTaskFamily,
   aggregateCorpus,
   aggregatePerTask,
   aggregateTrajectory,
+  computeAkmOverhead,
   computeAssetRegressionCandidates,
   computeCorpusCoverage,
   computeCorpusDelta,
@@ -600,5 +604,226 @@ describe("aggregateByMemoryAbility / aggregateByTaskFamily (#262)", () => {
     expect(cov.memoryAbilityCounts.untagged).toBe(2);
     expect(cov.taskFamilyCounts["d/family-a"]).toBe(2);
     expect(cov.taskFamilyCounts.untagged).toBe(1);
+  });
+});
+
+// ── AKM overhead (#263) ────────────────────────────────────────────────────
+
+function akmEvent(eventType: string, ts: string, ref?: string, metadata?: Record<string, unknown>): EventEnvelope {
+  return {
+    schemaVersion: 1,
+    id: 0,
+    ts,
+    eventType,
+    ...(ref ? { ref } : {}),
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function metaMap(
+  entries: ReadonlyArray<Pick<TaskMetadata, "id" | "goldRef" | "expectedTransferFrom">>,
+): Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">> {
+  const m = new Map<string, Pick<TaskMetadata, "goldRef" | "expectedTransferFrom">>();
+  for (const e of entries) m.set(e.id, { goldRef: e.goldRef, expectedTransferFrom: e.expectedTransferFrom });
+  return m;
+}
+
+describe("computeAkmOverhead — no AKM calls", () => {
+  test("zero counts and null timings when run had no AKM events", () => {
+    const run = fakeResult({ taskId: "demo/none", events: [] });
+    const rows = computeAkmOverhead([run]);
+    expect(rows).toHaveLength(1);
+    const r = rows[0];
+    expect(r.searchCount).toBe(0);
+    expect(r.showCount).toBe(0);
+    expect(r.feedbackCount).toBe(0);
+    expect(r.totalToolCalls).toBe(0);
+    expect(r.assetsLoadedCount).toBe(0);
+    expect(r.timeToFirstSearchMs).toBeNull();
+    expect(r.timeToFirstCorrectAssetMs).toBeNull();
+    expect(r.contextBytesLoaded).toBeNull();
+    expect(r.assetBytesLoaded).toBeNull();
+    // Without metadata, irrelevance is unjudgeable -> null.
+    expect(r.irrelevantAssetsLoadedCount).toBeNull();
+  });
+
+  test("aggregate over empty array is the zero envelope", () => {
+    const agg = aggregateAkmOverhead([]);
+    expect(agg.totalRuns).toBe(0);
+    expect(agg.passingRuns).toBe(0);
+    expect(agg.toolCallsPerSuccess).toBeNull();
+    expect(agg.costPerSuccess).toBeNull();
+    expect(agg.meanTimeToFirstSearchMs).toBeNull();
+  });
+});
+
+describe("computeAkmOverhead — successful AKM use", () => {
+  test("counts search/show/feedback, computes timings and relevance", () => {
+    const run = fakeResult({
+      taskId: "demo/ok",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 100, output: 50 },
+      events: [
+        akmEvent("search", "2026-04-27T10:00:00.000Z", undefined, { query: "deploy" }),
+        akmEvent("show", "2026-04-27T10:00:00.500Z", "skill:deploy"),
+        akmEvent("feedback", "2026-04-27T10:00:01.000Z", "skill:deploy"),
+      ],
+    });
+    const tasks = metaMap([{ id: "demo/ok", goldRef: "skill:deploy", expectedTransferFrom: [] }]);
+    const rows = computeAkmOverhead([run], { taskMetadata: tasks });
+    const r = rows[0];
+    expect(r.searchCount).toBe(1);
+    expect(r.showCount).toBe(1);
+    expect(r.feedbackCount).toBe(1);
+    expect(r.totalToolCalls).toBe(3);
+    expect(r.assetsLoadedCount).toBe(1);
+    expect(r.irrelevantAssetsLoadedCount).toBe(0);
+    expect(r.timeToFirstSearchMs).toBe(0); // first search IS the run-start anchor
+    expect(r.timeToFirstCorrectAssetMs).toBe(500);
+    const agg = aggregateAkmOverhead(rows, [run]);
+    expect(agg.passingRuns).toBe(1);
+    expect(agg.toolCallsPerSuccess).toBe(3);
+    expect(agg.costPerSuccess).toBe(150);
+  });
+
+  test("expected_transfer_from refs are not counted as irrelevant", () => {
+    const run = fakeResult({
+      taskId: "demo/transfer",
+      events: [
+        akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo"),
+        akmEvent("show", "2026-04-27T10:00:01.000Z", "skill:helper"),
+      ],
+    });
+    const tasks = metaMap([{ id: "demo/transfer", goldRef: "skill:foo", expectedTransferFrom: ["skill:helper"] }]);
+    const rows = computeAkmOverhead([run], { taskMetadata: tasks });
+    expect(rows[0].assetsLoadedCount).toBe(2);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBe(0);
+  });
+});
+
+describe("computeAkmOverhead — excessive AKM calls", () => {
+  test("high counts and low calls-per-success are surfaced", () => {
+    const goldRef = "skill:gold";
+    const noisyRun = fakeResult({
+      taskId: "demo/noisy",
+      outcome: "fail",
+      events: [
+        akmEvent("search", "2026-04-27T10:00:00.000Z"),
+        akmEvent("search", "2026-04-27T10:00:00.100Z"),
+        akmEvent("search", "2026-04-27T10:00:00.200Z"),
+        akmEvent("show", "2026-04-27T10:00:00.300Z", "skill:other"),
+        akmEvent("show", "2026-04-27T10:00:00.400Z", "skill:other2"),
+        akmEvent("show", "2026-04-27T10:00:00.500Z", "skill:other3"),
+        akmEvent("show", "2026-04-27T10:00:00.600Z", goldRef),
+      ],
+    });
+    const passingRun = fakeResult({
+      taskId: "demo/easy",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 10, output: 10 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z"), akmEvent("show", "2026-04-27T10:00:00.100Z", goldRef)],
+    });
+    const tasks = metaMap([
+      { id: "demo/noisy", goldRef, expectedTransferFrom: [] },
+      { id: "demo/easy", goldRef, expectedTransferFrom: [] },
+    ]);
+    const rows = computeAkmOverhead([noisyRun, passingRun], { taskMetadata: tasks });
+    expect(rows[0].totalToolCalls).toBe(7);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBe(3);
+    expect(rows[0].timeToFirstCorrectAssetMs).toBe(600);
+    expect(rows[1].totalToolCalls).toBe(2);
+    const agg = aggregateAkmOverhead(rows, [noisyRun, passingRun]);
+    expect(agg.totalToolCalls).toBe(9);
+    expect(agg.passingRuns).toBe(1);
+    // 9 tool calls for one passing run = high overhead per success.
+    expect(agg.toolCallsPerSuccess).toBe(9);
+  });
+});
+
+describe("computeAkmOverhead — missing timing/byte data", () => {
+  test("event without ts -> null first-search timing (NOT zero)", () => {
+    const run = fakeResult({
+      taskId: "demo/notime",
+      events: [
+        // No ts on event — workflow-trace assigns a synthetic order hint but
+        // ts stays undefined, so we cannot anchor a real time-offset.
+        { schemaVersion: 1, id: 0, eventType: "search" } as EventEnvelope,
+      ],
+    });
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].searchCount).toBe(1);
+    expect(rows[0].timeToFirstSearchMs).toBeNull();
+    expect(rows[0].timeToFirstCorrectAssetMs).toBeNull();
+  });
+
+  test("byte sizes are always null for now (NOT zero)", () => {
+    const run = fakeResult({
+      events: [akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo")],
+    });
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].contextBytesLoaded).toBeNull();
+    expect(rows[0].assetBytesLoaded).toBeNull();
+    const agg = aggregateAkmOverhead(rows, [run]);
+    expect(agg.meanContextBytesLoaded).toBeNull();
+    expect(agg.meanAssetBytesLoaded).toBeNull();
+  });
+
+  test("cost_per_success is null when any passing run lacks parsed token measurement", () => {
+    const passParsed = fakeResult({
+      taskId: "t1",
+      outcome: "pass",
+      tokenMeasurement: "parsed",
+      tokens: { input: 10, output: 5 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z")],
+    });
+    const passMissing = fakeResult({
+      taskId: "t2",
+      outcome: "pass",
+      tokenMeasurement: "missing",
+      tokens: { input: 0, output: 0 },
+      events: [akmEvent("search", "2026-04-27T10:00:00.000Z")],
+    });
+    const rows = computeAkmOverhead([passParsed, passMissing]);
+    const agg = aggregateAkmOverhead(rows, [passParsed, passMissing]);
+    expect(agg.passingRuns).toBe(2);
+    expect(agg.costPerSuccess).toBeNull();
+  });
+
+  test("missing task metadata -> irrelevantAssetsLoadedCount is null (not 0)", () => {
+    const run = fakeResult({
+      taskId: "demo/unknown",
+      events: [akmEvent("show", "2026-04-27T10:00:00.000Z", "skill:foo")],
+    });
+    // No metadata supplied for this task.
+    const rows = computeAkmOverhead([run]);
+    expect(rows[0].assetsLoadedCount).toBe(1);
+    expect(rows[0].irrelevantAssetsLoadedCount).toBeNull();
+  });
+
+  test("aggregate skips null timings rather than zero-filling", () => {
+    const noTime = fakeResult({
+      taskId: "t1",
+      outcome: "fail",
+      events: [{ schemaVersion: 1, id: 0, eventType: "search" } as EventEnvelope],
+    });
+    const withTime = fakeResult({
+      taskId: "t2",
+      outcome: "fail",
+      events: [akmEvent("search", "2026-04-27T10:00:01.000Z")],
+    });
+    const rows = computeAkmOverhead([noTime, withTime]);
+    // First run: search event has no ts -> no run-start anchor, timing null.
+    // Second run: search event IS the only event with ts, so it's both the
+    // anchor and the first search -> offset 0.
+    expect(rows[0].timeToFirstSearchMs).toBeNull();
+    expect(rows[1].timeToFirstSearchMs).toBe(0);
+    const agg = aggregateAkmOverhead(rows, [noTime, withTime]);
+    // Mean honours only the parseable observation; the null is skipped, NOT
+    // treated as zero in the numerator.
+    expect(agg.meanTimeToFirstSearchMs).toBe(0);
+    // tool_calls_per_success is null because no run passed.
+    expect(agg.toolCallsPerSuccess).toBeNull();
   });
 });
