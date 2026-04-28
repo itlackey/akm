@@ -24,8 +24,20 @@ const sample: ReportInput = {
   model: "anthropic/claude-opus-4-7",
   track: "utility",
   arms: {
-    noakm: { passRate: 0.4, tokensPerPass: 18000, wallclockMs: 41000, budgetExceeded: 0 },
-    akm: { passRate: 0.7, tokensPerPass: 14000, wallclockMs: 36000, budgetExceeded: 1 },
+    noakm: {
+      passRate: 0.4,
+      tokensPerPass: 18000,
+      wallclockMs: 41000,
+      budgetExceeded: 0,
+      runsWithMeasuredTokens: 4,
+    },
+    akm: {
+      passRate: 0.7,
+      tokensPerPass: 14000,
+      wallclockMs: 36000,
+      budgetExceeded: 1,
+      runsWithMeasuredTokens: 7,
+    },
   },
 };
 
