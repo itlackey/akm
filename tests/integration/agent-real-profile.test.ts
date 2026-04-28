@@ -37,18 +37,27 @@ function makeStashDir(): string {
   return stash;
 }
 
-beforeAll(() => {
-  process.env.XDG_CACHE_HOME = makeTempDir("akm-real-agent-cache-");
-  process.env.XDG_CONFIG_HOME = makeTempDir("akm-real-agent-config-");
-});
-
-afterAll(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REAL_AGENT_TESTS)", () => {
+  let priorXdgCacheHome: string | undefined;
+  let priorXdgConfigHome: string | undefined;
+
+  beforeAll(() => {
+    priorXdgCacheHome = process.env.XDG_CACHE_HOME;
+    priorXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-real-agent-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-real-agent-config-");
+  });
+
+  afterAll(() => {
+    if (priorXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = priorXdgCacheHome;
+    if (priorXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorXdgConfigHome;
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("opencode profile produces a queued proposal via akm propose", async () => {
     const profile = getBuiltinAgentProfile("opencode");
     expect(profile).toBeDefined();

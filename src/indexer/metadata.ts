@@ -132,14 +132,14 @@ const warnedUnknownQualityValues = new Set<string>();
 /**
  * Normalize a `quality` string off a stash entry. Known values pass through
  * untouched. Unknown values are accepted as-is (preserved verbatim on the
- * entry) but trigger a one-time `console.warn` per unique value.
+ * entry) but trigger a one-time warning per unique value via the shared
+ * `warn()` helper (honours --quiet / `setQuiet()`).
  */
 export function normalizeQuality(raw: string): string {
   if (KNOWN_QUALITY_VALUES.has(raw)) return raw;
   if (!warnedUnknownQualityValues.has(raw)) {
     warnedUnknownQualityValues.add(raw);
-    // eslint-disable-next-line no-console
-    console.warn(
+    warn(
       `Warning: unknown quality value "${raw}" — entry remains searchable, but consider using "generated", "curated", or "proposed" (v1 spec §4.2).`,
     );
   }
