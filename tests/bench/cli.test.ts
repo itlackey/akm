@@ -51,8 +51,8 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
   });
 
-  test("evolve / compare / attribute remain not-implemented", () => {
-    for (const sub of ["evolve", "compare", "attribute"]) {
+  test("evolve / attribute remain not-implemented", () => {
+    for (const sub of ["evolve", "attribute"]) {
       const r = run([sub]);
       expect(r.exitCode).toBe(2);
       expect(r.stderr).toContain("not yet implemented");
