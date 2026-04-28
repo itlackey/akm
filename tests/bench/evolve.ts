@@ -14,13 +14,14 @@
  *     original un-evolved fixture), `post` (the evolved fixture), `synthetic`
  *     (no stash, scratchpad-only "Bring Your Own Skills" prompt).
  *
- * Leakage prevention (spec §7.4): before invoking distill/reflect we compute
- * the set of eval-slice gold refs and pass it to the akm CLI as
- * `--exclude-gold-ref` env hints. The current `akm distill` doesn't read
- * that hint — we record a warning when we would have leaked, and the
- * distill input is otherwise unfiltered. The data we DO control (the
- * proposal log + Phase 1 feedback stream) is filtered before
- * computeProposalQualityMetrics ever sees it.
+ * Leakage prevention (spec §7.4): before invoking distill we compute the set
+ * of eval-slice gold refs and pass it to `akm distill` via
+ * `--exclude-feedback-from <csv>` (#267). `akmDistill` filters those
+ * feedback events out of its LLM input before constructing the prompt.
+ * Refs in the exclusion list still see distillation run — but distillation
+ * runs from asset content alone, with no feedback signal that could have
+ * leaked from the eval slice. The proposal log + Phase 1 feedback stream
+ * are also filtered before computeProposalQualityMetrics ever sees them.
  *
  * Test seams: every external interaction is funnelled through one of three
  * injectable functions:
@@ -36,6 +37,7 @@ import path from "node:path";
 
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
+import { registerCleanup } from "./cleanup";
 import type { TaskMetadata, TaskSlice } from "./corpus";
 import {
   computeFeedbackIntegrity,
@@ -198,12 +200,28 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
   const evolveDirByFixture = new Map<string, string>();
   const preDirByFixture = new Map<string, string>();
 
+  // SIGINT trap (#267): every per-fixture stash registers its cleanup with
+  // the shared registry so an external Ctrl-C reaps the tmp dirs even when
+  // the top-level try/finally never runs. We deregister in the matching
+  // finally block before invoking the synchronous cleanup so the handler
+  // doesn't double-fire.
+  const stashDeregistrations: Array<() => void> = [];
+
   if (materialiseStash) {
     for (const name of fixtureNames) {
       try {
         const evolved = loadFixtureStash(name, { skipIndex: false });
         evolveStashes.set(name, evolved);
         evolveDirByFixture.set(name, evolved.stashDir);
+        stashDeregistrations.push(
+          registerCleanup(() => {
+            try {
+              evolved.cleanup();
+            } catch {
+              /* swallow */
+            }
+          }),
+        );
       } catch (err) {
         warnings.push(`evolve: failed to materialise evolve stash for fixture "${name}": ${(err as Error).message}`);
       }
@@ -211,6 +229,15 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
         const pre = loadFixtureStash(name, { skipIndex: false });
         preStashes.set(name, pre);
         preDirByFixture.set(name, pre.stashDir);
+        stashDeregistrations.push(
+          registerCleanup(() => {
+            try {
+              pre.cleanup();
+            } catch {
+              /* swallow */
+            }
+          }),
+        );
       } catch (err) {
         warnings.push(`evolve: failed to materialise pre stash for fixture "${name}": ${(err as Error).message}`);
       }
@@ -310,37 +337,42 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
     }
     refsToEvolve.sort();
 
-    // Emit the generic leakage warning at most once per Phase 2 invocation;
-    // per-ref skip warnings (which name the specific ref) stay in the loop.
-    let leakageWarningEmitted = false;
+    // §7.4 leakage prevention (#267): instead of hard-skipping refs that
+    // overlap eval-slice gold refs, we now pass the gold-ref set through
+    // `--exclude-feedback-from` (and the matching env var) so `akm distill`
+    // filters those events out of its LLM input. The behaviour collapses
+    // back to "no useful feedback shown" for refs that ARE the gold ref —
+    // distill then runs from asset content only, which is what we want.
+    const evalGoldRefList = [...evalGoldRefs].sort();
+    const excludeFeedbackCsv = evalGoldRefList.join(",");
     for (const ref of refsToEvolve) {
-      // §7.4 leakage prevention: if this ref is also an eval-slice gold ref,
-      // we skip evolving it entirely so post-evolve eval can't gain an unfair
-      // advantage. Tasks that share refs across slices are flagged.
-      if (evalGoldRefs.has(ref)) {
-        warnings.push(
-          `phase2: skipping distill/reflect on ${ref} — it is an eval-slice gold ref (§7.4 leakage prevention).`,
-        );
-        continue;
-      }
-      // Pass the eval-gold ref list through env so a future akm version can
-      // honour it. Today's `akm distill` ignores `AKM_BENCH_EXCLUDE_GOLD_REFS`;
-      // we still warn so operators know the protection is partial — but only
-      // once per phase, regardless of how many refs we evolve.
+      // The env var fallback is the contract `akm distill` honours; it lets
+      // the bench keep working even if a hypothetical caller invokes
+      // distill via a wrapper that mangles flags.
       const evolveEnv: Record<string, string> = {
         ...envForRef(ref),
-        AKM_BENCH_EXCLUDE_GOLD_REFS: [...evalGoldRefs].join(","),
+        AKM_BENCH_EXCLUDE_GOLD_REFS: excludeFeedbackCsv,
+        ...(excludeFeedbackCsv ? { AKM_DISTILL_EXCLUDE_FEEDBACK_FROM: excludeFeedbackCsv } : {}),
       };
-      if (evalGoldRefs.size > 0 && !leakageWarningEmitted) {
-        warnings.push(
-          "phase2: distill/reflect cannot today filter their own LLM input by --exclude-gold-ref; relying on per-ref skip + env hint only.",
-        );
-        leakageWarningEmitted = true;
-      }
 
-      const distillResult = await akmCli(["distill", ref], phase1Cwd, evolveEnv);
+      // Pass the eval-gold list explicitly via the CLI flag so the contract
+      // is observable in test logs (the env var is a fallback for harnesses
+      // that strip flags). Reflect doesn't accept this flag — it's a distill
+      // concern only.
+      const distillArgs = ["distill", ref];
+      if (excludeFeedbackCsv) {
+        distillArgs.push("--exclude-feedback-from", excludeFeedbackCsv);
+      }
+      const distillResult = await akmCli(distillArgs, phase1Cwd, evolveEnv);
       if (distillResult.exitCode !== 0) {
         warnings.push(`phase2: akm distill ${ref} failed: ${distillResult.stderr.trim()}`);
+      } else if (evalGoldRefs.has(ref) && excludeFeedbackCsv) {
+        // Per-ref leakage info — replaces the previous "skipped" message.
+        // Operator can audit which refs ran through the filter and confirm
+        // distillation didn't see leaked feedback.
+        warnings.push(
+          `phase2: filtered eval-slice gold-ref feedback from distill input for ${ref} (--exclude-feedback-from ${excludeFeedbackCsv}).`,
+        );
       }
       const reflectResult = await akmCli(["reflect", ref], phase1Cwd, evolveEnv);
       if (reflectResult.exitCode !== 0) {
@@ -448,7 +480,10 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
 
     // synthetic: no stash. We pass a spawn wrapper that strips
     // AKM_STASH_DIR and injects the "Bring Your Own Skills" tag so test
-    // fakes (and a future real harness) can branch.
+    // fakes (and a future real harness) can branch. #267 — also forward a
+    // per-task scratchpad prompt via the runner's `buildPrompt` seam so the
+    // synthetic arm actually exercises the BYOS prompt path rather than
+    // relying on the noakm default.
     syntheticReport = await runUtility({
       tasks: evalTasks,
       arms: ["akm"],
@@ -458,12 +493,16 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       budgetWallMs,
       slice: "eval",
       materialiseStash: false,
+      buildPrompt: (task, _arm) => buildSyntheticPrompt(task.id),
       ...(options.timestamp ? { timestamp: options.timestamp } : {}),
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
       ...(options.spawn ? { spawn: wrapSpawnWithArm(options.spawn, "synthetic", undefined, true) } : {}),
     });
   } finally {
+    // Deregister BEFORE running cleanup so a SIGINT during teardown
+    // doesn't double-fire the cleanup fns (per cleanup.ts contract).
+    for (const deregister of stashDeregistrations) deregister();
     for (const s of evolveStashes.values()) {
       try {
         s.cleanup();

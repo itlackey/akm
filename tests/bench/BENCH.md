@@ -145,8 +145,11 @@ single domain (or `--tasks all` for the whole corpus):
    The index is rebuilt at the end of the phase.
 3. **Phase 3 — re-evaluate.** Eval-slice tasks are run under three arms:
    `pre` (the original un-evolved fixture), `post` (the evolved stash with
-   accepted lessons + revisions), and `synthetic` (no stash; the agent
-   writes its own scratchpad — "Bring Your Own Skills").
+   accepted lessons + revisions), and `synthetic` (no stash; the agent runs
+   the **scratchpad "Bring Your Own Skills" prompt** — `buildSyntheticPrompt(task)`
+   is forwarded into the runner via the per-arm `buildPrompt` seam, so the
+   synthetic arm exercises the BYOS path explicitly rather than falling
+   through to the default akm-arm prompt).
 
 `bench evolve` runs **entirely in tmp directories**. Before Phase 1 starts,
 the runner materialises one dedicated tmp stash per fixture (the
@@ -211,12 +214,55 @@ outcome.
 
 ### Leakage prevention (§7.4)
 
-The evolve runner refuses to invoke `akm distill` / `akm reflect` on any
-ref that is also an eval-slice gold ref. It additionally exports
-`AKM_BENCH_EXCLUDE_GOLD_REFS=<csv>` so a future akm version can filter
-its LLM input. Today's `akm distill` does not honour that hint, so the
-runner records a warning when distillation runs on shared content and
-defers the harder filter to a follow-up.
+The evolve runner now passes the eval-slice gold-ref set into `akm distill`
+via the `--exclude-feedback-from <csv>` flag (and the matching env var
+`AKM_DISTILL_EXCLUDE_FEEDBACK_FROM`, supplied as a fallback for harnesses
+that mangle flags). `akmDistill` filters every event whose `ref` matches
+the exclusion list out of the LLM input *before* the prompt is built; the
+underlying `events.jsonl` is untouched. Distillation still runs on shared
+refs — but only against asset content + non-leaked feedback. When every
+event for the target ref is filtered, the result carries
+`feedbackFullyFiltered: true` so the operator can see which refs ran from
+asset content alone.
+
+Operators can also drive the filter manually:
+
+```sh
+# Flag form (CLI takes precedence over env when both are present):
+akm distill skill:deploy --exclude-feedback-from "team//memory:auth-tips,skill:foo"
+
+# Env-var fallback (used when the flag is absent):
+AKM_DISTILL_EXCLUDE_FEEDBACK_FROM="skill:foo,memory:bar" akm distill skill:deploy
+```
+
+Each ref in the CSV must match `[origin//]type:name`; an invalid ref
+exits 2 (USAGE) with a structured error envelope on stderr. The runner
+adds a per-ref info entry to `warnings[]` of the form
+`phase2: filtered eval-slice gold-ref feedback from distill input for
+<ref> (--exclude-feedback-from <csv>).` so leakage-protection runs are
+visible in the report.
+
+### SIGINT / SIGTERM cleanup contract
+
+The bench creates many tmp directories — per-(task, arm, seed) workspace,
+per-task fixture stash, per-fixture evolveStash + preStash. Each is wrapped
+in a `try/finally` so happy-path runs leave nothing behind, but an external
+`SIGINT`/`SIGTERM` (Ctrl-C, CI cancel) bypasses the `finally` blocks
+entirely on Bun.
+
+`tests/bench/cleanup.ts` installs **one** process-level pair of signal
+handlers on first `registerCleanup` call. Every tmp dir registers its
+cleanup fn at the top of its `try` block and deregisters in the matching
+`finally` *before* running the cleanup itself, so the handler doesn't
+double-fire. On signal, the handler:
+
+1. Walks every registered cleanup fn (swallowing errors).
+2. Removes its own listeners so a second Ctrl-C force-exits via the
+   runtime default.
+3. `process.exit(130)` (POSIX 128 + SIGINT(2)).
+
+Re-entrant signals while cleanup is in flight are dropped. Operators who
+need a hard kill can press Ctrl-C twice.
 
 ## Pointers
 

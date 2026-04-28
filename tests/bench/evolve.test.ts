@@ -306,6 +306,49 @@ describe("runEvolve — Phase 3 three-arm execution", () => {
     expect(text).toContain("Bring Your Own Skills");
     expect(text).toContain("scratchpad");
   });
+
+  test("synthetic arm forwards buildSyntheticPrompt(task) into the agent spawn (#267)", async () => {
+    // Capture every agent cmd; runAgent appends the prompt as its trailing
+    // arg. Phase 3's synthetic arm should now ship the BYOS scratchpad
+    // prompt instead of the driver default.
+    const capturedSyntheticPrompts: string[] = [];
+    const spawn: SpawnFn = (cmd, options) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent && options.env?.BENCH_EVOLVE_SCRATCHPAD === "1") {
+        // Trailing token is the prompt.
+        capturedSyntheticPrompts.push(cmd[cmd.length - 1] ?? "");
+      }
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    const tasks = [
+      fakeTask(taskDir, { id: "fake-d/eval-a", slice: "eval", goldRef: "skill:a", expectedMatch: "ok" }),
+      fakeTask(taskDir, { id: "fake-d/eval-b", slice: "eval", goldRef: "skill:b", expectedMatch: "ok" }),
+    ];
+    const akmCli = buildFakeAkmCli({});
+    await runEvolve({
+      tasks,
+      model: "test-model",
+      seedsPerArm: 1,
+      spawn,
+      akmCli,
+      materialiseStash: false,
+    });
+    expect(capturedSyntheticPrompts.length).toBe(2);
+    for (const prompt of capturedSyntheticPrompts) {
+      expect(prompt).toContain("Bring Your Own Skills");
+      expect(prompt).toContain("scratchpad");
+    }
+    // Per-task ids landed in their respective prompts.
+    expect(capturedSyntheticPrompts.some((p) => p.includes("fake-d/eval-a"))).toBe(true);
+    expect(capturedSyntheticPrompts.some((p) => p.includes("fake-d/eval-b"))).toBe(true);
+  });
 });
 
 describe("runEvolve — leakage prevention (§7.4)", () => {
@@ -320,10 +363,11 @@ describe("runEvolve — leakage prevention (§7.4)", () => {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
-  test("skips distill when ref is also an eval-slice gold ref", async () => {
+  test("invokes distill with --exclude-feedback-from when ref is also an eval-slice gold ref (#267)", async () => {
     const observed = { calls: [] as string[][], envSeen: [] as Record<string, string>[] };
     // The same `skill:shared` is the gold ref for BOTH a failing train task
-    // AND an eval task. We must NOT distill it.
+    // AND an eval task. Distill is now invoked WITH the exclusion flag;
+    // distill itself filters the leaked feedback out of the prompt.
     const tasks = [
       fakeTask(taskDir, { id: "fake-d/train-shared", goldRef: "skill:shared", slice: "train", expectedMatch: "WONT" }),
       fakeTask(taskDir, { id: "fake-d/eval-shared", goldRef: "skill:shared", slice: "eval", expectedMatch: "ok" }),
@@ -339,15 +383,23 @@ describe("runEvolve — leakage prevention (§7.4)", () => {
       materialiseStash: false,
     });
     const distillCalls = observed.calls.filter((c) => c[0] === "distill");
-    expect(distillCalls.length).toBe(0);
-    expect(report.warnings.some((w) => w.includes("eval-slice gold ref"))).toBe(true);
+    // Distill now runs even on shared refs — but with the exclusion flag.
+    expect(distillCalls.length).toBe(1);
+    const flagIdx = distillCalls[0]?.indexOf("--exclude-feedback-from") ?? -1;
+    expect(flagIdx).toBeGreaterThan(-1);
+    expect(distillCalls[0]?.[flagIdx + 1]).toBe("skill:shared");
+    // Per-ref leakage info note replaces the old "skipped" warning.
+    expect(report.warnings.some((w) => w.includes("filtered eval-slice gold-ref feedback"))).toBe(true);
+    // Env var fallback is also threaded through for harnesses that drop flags.
+    const distillEnv = observed.envSeen.find((env) => env.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM !== undefined);
+    expect(distillEnv?.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM).toBe("skill:shared");
   });
 
-  test("emits the generic '--exclude-gold-ref' warning at most once per Phase 2", async () => {
+  test("does not emit the deprecated '--exclude-gold-ref' generic warning (#267)", async () => {
     const observed = { calls: [] as string[][], envSeen: [] as Record<string, string>[] };
-    // Three distinct failing-train refs all cross threshold. None of them
-    // overlap an eval gold ref, so the per-ref skip warning never fires;
-    // the generic warning should appear exactly once regardless of count.
+    // Three distinct failing-train refs all cross threshold. The old runner
+    // would emit a generic "distill ignores the env hint" warning once;
+    // with #267 the filter is real, so that line MUST NOT appear.
     const tasks = [
       fakeTask(taskDir, { id: "fake-d/loser-a", goldRef: "skill:loser-a", slice: "train", expectedMatch: "WONT" }),
       fakeTask(taskDir, { id: "fake-d/loser-b", goldRef: "skill:loser-b", slice: "train", expectedMatch: "WONT" }),
@@ -367,10 +419,15 @@ describe("runEvolve — leakage prevention (§7.4)", () => {
     const generic = report.warnings.filter((w) =>
       w.includes("distill/reflect cannot today filter their own LLM input"),
     );
-    expect(generic.length).toBe(1);
-    // And we did actually evolve all three refs (so the loop body ran 3×).
+    expect(generic.length).toBe(0);
+    // We did still evolve all three refs, each carrying the exclusion flag.
     const distillCalls = observed.calls.filter((c) => c[0] === "distill");
     expect(distillCalls.length).toBe(3);
+    for (const call of distillCalls) {
+      const idx = call.indexOf("--exclude-feedback-from");
+      expect(idx).toBeGreaterThan(-1);
+      expect(call[idx + 1]).toBe("skill:eval-target");
+    }
   });
 });
 

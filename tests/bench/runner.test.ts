@@ -292,4 +292,71 @@ describe("runUtility", () => {
     expect(report.corpus.domains).toBe(2);
     expect(report.corpus.tasks).toBe(2);
   });
+
+  // ── #267: per-arm prompt override ──────────────────────────────────────────
+
+  test("buildPrompt override forwards prompt to runOne when defined", async () => {
+    // Capture the agent command to assert the prompt forms its trailing arg
+    // (runAgent appends `prompt` as the last cmd token).
+    const capturedAgentCmds: string[][] = [];
+    const spawn: SpawnFn = (cmd, _opts) => {
+      const isAgent = cmd[0] === "opencode";
+      if (isAgent) capturedAgentCmds.push([...cmd]);
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm", "akm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      buildPrompt: (task, arm) => (arm === "akm" ? `BYOS scratchpad for ${task.id}` : undefined),
+    });
+    // 1 noakm + 1 akm = 2 agent invocations.
+    expect(capturedAgentCmds.length).toBe(2);
+    const akmInvocation = capturedAgentCmds.find((c) => c.some((t) => t.startsWith("BYOS scratchpad")));
+    expect(akmInvocation).toBeDefined();
+    const noakmInvocation = capturedAgentCmds.find((c) => !c.some((t) => t.startsWith("BYOS scratchpad")));
+    expect(noakmInvocation).toBeDefined();
+    // The noakm arm received the default prompt — assert the override didn't
+    // leak across arms.
+    expect(noakmInvocation?.some((t) => t.startsWith("BYOS"))).toBe(false);
+  });
+
+  test("buildPrompt returning undefined keeps the default prompt path", async () => {
+    const capturedAgentCmds: string[][] = [];
+    const spawn: SpawnFn = (cmd, _opts) => {
+      if (cmd[0] === "opencode") capturedAgentCmds.push([...cmd]);
+      return {
+        exitCode: 0,
+        exited: Promise.resolve(0),
+        stdout: asReadableStream("ok"),
+        stderr: asReadableStream(""),
+        stdin: null,
+        kill() {},
+      };
+    };
+    await runUtility({
+      tasks: [fakeTask(taskDir)],
+      arms: ["noakm"],
+      model: "test",
+      seedsPerArm: 1,
+      spawn,
+      materialiseStash: false,
+      buildPrompt: () => undefined,
+    });
+    // The driver's defaultPrompt() embeds the task id; assert that's what we
+    // got, not a custom prompt.
+    expect(capturedAgentCmds.length).toBe(1);
+    const trailing = capturedAgentCmds[0]?.[capturedAgentCmds[0].length - 1] ?? "";
+    expect(trailing).toContain("Task: fake/task-a");
+  });
 });

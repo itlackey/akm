@@ -103,6 +103,20 @@ export interface AkmDistillOptions {
   lookupFn?: (ref: string) => Promise<string | null>;
   /** Optional source-run identifier propagated onto the queued proposal. */
   sourceRun?: string;
+  /**
+   * Asset refs whose feedback events MUST be filtered out before the LLM
+   * sees them (#267). Each event whose `ref` matches an entry in this list
+   * is dropped from the prompt; the underlying events.jsonl is untouched.
+   *
+   * Used by `bench evolve` to keep eval-slice gold refs out of distillation
+   * input — replacing the previous "hard skip" behaviour with surgical
+   * filtering that still lets distill run on tasks where the target ref is
+   * unrelated to the evaluator's gold refs.
+   *
+   * Each entry MUST be a valid `[origin//]type:name` ref; the CLI validates
+   * before plumbing here.
+   */
+  excludeFeedbackFromRefs?: readonly string[];
 }
 
 export interface AkmDistillResult {
@@ -121,6 +135,21 @@ export interface AkmDistillResult {
   findings?: { kind: string; field: string; message: string }[];
   /** The full proposal object when `outcome === "queued"`. */
   proposal?: Proposal;
+  /**
+   * Diagnostic — number of feedback events filtered out by
+   * `excludeFeedbackFromRefs` (#267). Always present when the option was
+   * supplied, even when the count is 0. Callers (e.g. `bench evolve`) use
+   * this to surface filter-applied notes in their `warnings[]`.
+   */
+  filteredFeedbackCount?: number;
+  /**
+   * True when `excludeFeedbackFromRefs` reduced the feedback set to empty
+   * AND there were originally events for the target ref. Lets callers
+   * distinguish "no feedback was ever recorded" from "we suppressed all
+   * recorded feedback" — the LLM-input contract is identical (no feedback
+   * shown) but the operator-visible meaning differs.
+   */
+  feedbackFullyFiltered?: boolean;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
@@ -231,7 +260,21 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
 
   const { events } = readEventsImpl({ ref: inputRef, type: "feedback" });
-  const feedback = events.slice(-20).map((e) => ({
+
+  // #267 — feedback exclusion. Filter events whose `ref` matches the
+  // exclusion list BEFORE the prompt is built. The original event stream
+  // is never mutated; only the `feedback` slice that reaches the LLM is
+  // affected. The exclusion set is normalised through `parseAssetRef` →
+  // re-serialised so callers can pass canonical or origin-prefixed refs
+  // and the comparison still works against the event payload's `ref`.
+  const exclusionList = options.excludeFeedbackFromRefs ?? [];
+  const exclusionSet = new Set(exclusionList.map((ref) => ref.trim()).filter((ref) => ref.length > 0));
+  const originalEventCount = events.length;
+  const filteredEvents =
+    exclusionSet.size > 0 ? events.filter((e) => !(e.ref !== undefined && exclusionSet.has(e.ref))) : events;
+  const filteredFeedbackCount = originalEventCount - filteredEvents.length;
+  const feedbackFullyFiltered = exclusionSet.size > 0 && originalEventCount > 0 && filteredEvents.length === 0;
+  const feedback = filteredEvents.slice(-20).map((e) => ({
     ts: e.ts,
     eventType: e.eventType,
     ...(e.metadata !== undefined ? { metadata: e.metadata } : {}),
@@ -267,7 +310,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
-      metadata: { outcome: "skipped", lessonRef },
+      metadata: {
+        outcome: "skipped",
+        lessonRef,
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+      },
     });
     return {
       schemaVersion: 1,
@@ -276,6 +323,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       inputRef,
       lessonRef,
       message: "feedback distillation is disabled or the LLM call failed; no proposal created.",
+      ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
     };
   }
 
@@ -295,6 +343,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         outcome: "validation_failed",
         lessonRef,
         findingKinds: lintReport.findings.map((f) => f.kind),
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
       },
     });
     const message = lintReport.findings.map((f) => f.message).join("\n");
@@ -331,6 +380,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       lessonRef,
       proposalId: proposal.id,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+      ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
     },
   });
 
@@ -342,6 +392,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     lessonRef,
     proposalId: proposal.id,
     proposal,
+    ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
   };
 }
 

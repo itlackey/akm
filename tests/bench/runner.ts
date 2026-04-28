@@ -25,6 +25,7 @@ import path from "node:path";
 
 import type { SpawnFn } from "../../src/integrations/agent/spawn";
 import { type LoadedFixtureStash, loadFixtureStash } from "../fixtures/stashes/load";
+import { registerCleanup } from "./cleanup";
 import type { TaskMetadata, TaskSlice } from "./corpus";
 import { type RunOptions, type RunResult, runOne } from "./driver";
 import {
@@ -47,6 +48,19 @@ import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type U
 import { computeTrajectory } from "./trajectory";
 
 export type Arm = "noakm" | "akm";
+
+/**
+ * Optional per-arm prompt-override seam (#267). The runner forwards the
+ * builder's return value into `RunOptions.prompt` for each `runOne` call.
+ * When the builder returns `undefined`, the driver falls back to its
+ * default prompt path. The function is invoked once per (task, arm) and
+ * shared across the K seeds — prompts must not depend on `seed`.
+ *
+ * Picked the single-builder shape (Option B in the brief) because the bench
+ * already has just one synthetic-arm prompt; a per-arm map would be three
+ * keys with two always undefined.
+ */
+export type BuildPromptFn = (task: TaskMetadata, arm: Arm) => string | undefined;
 
 /** Caller-facing options for `runUtility`. */
 export interface RunUtilityOptions {
@@ -85,6 +99,17 @@ export interface RunUtilityOptions {
    * present in this map.
    */
   stashDirByFixture?: Map<string, string>;
+  /**
+   * Optional per-arm prompt override (#267). When supplied and the builder
+   * returns a non-undefined string, that string is forwarded as
+   * `RunOptions.prompt` to `runOne` for the (task, arm) pair. When the
+   * builder returns undefined, the driver's default prompt is used.
+   *
+   * Used by Phase 3 of `runEvolve` to thread `buildSyntheticPrompt(task)`
+   * into the synthetic arm. The pre / post arms keep the default akm-arm
+   * prompt by returning undefined.
+   */
+  buildPrompt?: BuildPromptFn;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -139,6 +164,19 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
       }
     }
 
+    // SIGINT/SIGTERM trap (#267): register the per-task stash cleanup so an
+    // external signal mid-run reaps the tmp dir we just created.
+    const stashSnapshot = stash;
+    const deregisterStash = stashSnapshot
+      ? registerCleanup(() => {
+          try {
+            stashSnapshot.cleanup();
+          } catch {
+            /* swallow */
+          }
+        })
+      : () => {};
+
     try {
       for (const arm of options.arms) {
         const armRuns: RunResult[] = [];
@@ -156,6 +194,10 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             else if (stash) stashDir = stash.stashDir;
             else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
           }
+          // Build the prompt-override (#267). The builder is invoked once
+          // per (task, arm) — seeds share a prompt. `undefined` keeps the
+          // driver's default prompt in play.
+          const promptOverride = options.buildPrompt?.(task, arm);
           const run = await runOneIsolated({
             task,
             arm,
@@ -166,6 +208,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             budgetWallMs,
             spawn: options.spawn,
             warnings,
+            ...(promptOverride !== undefined ? { prompt: promptOverride } : {}),
           });
           armRuns.push(run);
 
@@ -186,6 +229,9 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
         }
       }
     } finally {
+      // Deregister BEFORE running cleanup so a SIGINT arriving during this
+      // block doesn't double-fire the cleanup (per cleanup.ts contract).
+      deregisterStash();
       stash?.cleanup();
     }
   }
@@ -214,8 +260,19 @@ async function runOneIsolated(args: {
   budgetWallMs: number;
   spawn?: SpawnFn;
   warnings: string[];
+  prompt?: string;
 }): Promise<RunResult> {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), `akm-bench-ws-${args.task.domain}-`));
+  // SIGINT trap: register workspace cleanup so external signals don't leak
+  // tmp dirs. Deregistered in `finally` before we do the synchronous rm so
+  // the handler doesn't double-fire (per cleanup.ts contract).
+  const deregisterWorkspace = registerCleanup(() => {
+    try {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    } catch {
+      /* swallow */
+    }
+  });
   try {
     seedWorkspace(args.task.taskDir, workspace);
 
@@ -233,6 +290,7 @@ async function runOneIsolated(args: {
       ...(args.task.expectedMatch ? { expectedMatch: args.task.expectedMatch } : {}),
       ...(args.stashDir ? { stashDir: args.stashDir } : {}),
       ...(args.spawn ? { spawn: args.spawn } : {}),
+      ...(args.prompt !== undefined ? { prompt: args.prompt } : {}),
       warnings: args.warnings,
     };
 
@@ -254,6 +312,7 @@ async function runOneIsolated(args: {
       args.arm === "akm" ? classifyFailureMode(args.task, { ...result, trajectory, assetsLoaded }) : null;
     return { ...result, trajectory, assetsLoaded, failureMode };
   } finally {
+    deregisterWorkspace();
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 }
