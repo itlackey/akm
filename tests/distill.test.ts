@@ -373,3 +373,117 @@ describe("akmDistill — queued proposal", () => {
     expect(receivedPrompt).toContain("body");
   });
 });
+
+// ── #267: excludeFeedbackFromRefs option ─────────────────────────────────────
+
+describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
+  function eventsFor(ref: string, signals: Array<"positive" | "negative">) {
+    return (() => ({
+      events: signals.map((s, i) => ({
+        schemaVersion: 1 as const,
+        id: i,
+        ts: `2026-04-27T00:00:0${i}Z`,
+        eventType: "feedback",
+        ref,
+        metadata: { signal: s },
+      })),
+      nextOffset: 0,
+    })) as unknown as typeof readEvents;
+  }
+
+  test("filters out events whose ref is in the exclusion list", async () => {
+    const stash = makeStashDir();
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        receivedPrompt = messages.map((m) => m.content).join("\n");
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: eventsFor("skill:deploy", ["negative", "negative", "positive"]),
+      excludeFeedbackFromRefs: ["skill:deploy"],
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.filteredFeedbackCount).toBe(3);
+    expect(result.feedbackFullyFiltered).toBe(true);
+    // Prompt should NOT contain any of the dropped feedback events.
+    expect(receivedPrompt).not.toContain('"signal":"negative"');
+    expect(receivedPrompt).not.toContain('"signal":"positive"');
+    expect(receivedPrompt).toContain("(no feedback events recorded");
+  });
+
+  test("does not filter when the ref is absent from the exclusion list", async () => {
+    const stash = makeStashDir();
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        receivedPrompt = messages.map((m) => m.content).join("\n");
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: eventsFor("skill:deploy", ["negative", "positive"]),
+      excludeFeedbackFromRefs: ["memory:other"],
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.filteredFeedbackCount).toBe(0);
+    expect(result.feedbackFullyFiltered).toBe(false);
+    expect(receivedPrompt).toContain('"signal":"negative"');
+    expect(receivedPrompt).toContain('"signal":"positive"');
+  });
+
+  test("empty exclusion list is a no-op (no diagnostic fields stamped)", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: eventsFor("skill:deploy", ["negative"]),
+      excludeFeedbackFromRefs: [],
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.filteredFeedbackCount).toBeUndefined();
+    expect(result.feedbackFullyFiltered).toBeUndefined();
+  });
+
+  test("feedbackFullyFiltered=false when no events were ever recorded", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+      excludeFeedbackFromRefs: ["skill:deploy"],
+    });
+    expect(result.outcome).toBe("queued");
+    expect(result.filteredFeedbackCount).toBe(0);
+    // No events to begin with — this is "no feedback exists", not "we
+    // suppressed it all".
+    expect(result.feedbackFullyFiltered).toBe(false);
+  });
+
+  test("filtered count is recorded on the distill_invoked event metadata", async () => {
+    const stash = makeStashDir();
+    await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: eventsFor("skill:deploy", ["negative", "negative"]),
+      excludeFeedbackFromRefs: ["skill:deploy"],
+    });
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.length).toBe(1);
+    expect(events[0].metadata?.filteredFeedbackCount).toBe(2);
+  });
+});

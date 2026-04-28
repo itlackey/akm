@@ -2557,17 +2557,55 @@ const distillCommand = defineCommand({
       type: "string",
       description: "Optional run id propagated onto the queued proposal for traceability",
     },
+    "exclude-feedback-from": {
+      type: "string",
+      description:
+        "Comma-separated asset refs whose feedback events MUST be filtered out before the LLM input is built. Falls back to AKM_DISTILL_EXCLUDE_FEEDBACK_FROM when omitted.",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const excludeFlag = getHyphenatedArg(args, "exclude-feedback-from");
+      const excludeEnv = process.env.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM;
+      // CLI flag takes precedence over the env var when both are present.
+      const excludeRaw = excludeFlag ?? excludeEnv;
+      const excludeFeedbackFromRefs = parseExcludeFeedbackFromRefs(excludeRaw);
       const result = await akmDistill({
         ref: args.ref,
         sourceRun: getHyphenatedArg(args, "source-run"),
+        ...(excludeFeedbackFromRefs.length > 0 ? { excludeFeedbackFromRefs } : {}),
       });
       output("distill", result);
     });
   },
 });
+
+/**
+ * Parse a comma-separated list of asset refs (#267 — `--exclude-feedback-from`
+ * and `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM`). Each entry is validated against
+ * the canonical `[origin//]type:name` grammar via `parseAssetRef`; an
+ * invalid entry surfaces as a UsageError → exit 2.
+ */
+function parseExcludeFeedbackFromRefs(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  const refs = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  for (const ref of refs) {
+    try {
+      parseAssetRef(ref);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new UsageError(
+        `Invalid --exclude-feedback-from ref "${ref}": ${message}`,
+        "INVALID_FLAG_VALUE",
+        "Each ref must match `[origin//]type:name`, e.g. skill:deploy or team//memory:auth-tips.",
+      );
+    }
+  }
+  return refs;
+}
 
 function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
   if (raw === undefined) return undefined;
