@@ -1,0 +1,27 @@
+id: akm-feedback-after-use
+title: "Agent records feedback after using an AKM asset"
+description: |
+  After akm_show + a successful task, the AKM-armed agent should record
+  feedback so utility scoring can converge. Verifier must have run before
+  feedback so the signal reflects an actual outcome.
+applies_to:
+  arms: ["akm"]
+  task_domains: ["docker-homelab", "az-cli", "opencode", "eval"]
+  outcomes: ["pass"]
+required_sequence:
+  - event: agent_started
+  - event: akm_show
+    before: verifier_run
+  - event: verifier_run
+    before: akm_feedback
+  - event: akm_feedback
+    polarity: positive
+    before: agent_finished
+  - event: agent_finished
+forbidden:
+  - event: akm_feedback
+    before: verifier_run
+scoring:
+  required_steps_weight: 0.5
+  forbidden_steps_weight: 0.2
+  evidence_quality_weight: 0.3
