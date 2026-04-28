@@ -270,6 +270,7 @@ describe("runMaskedCorpus", () => {
 
     let callCount = 0;
     const seenStashDirs: string[] = [];
+    const seenStashFieldUnchanged: boolean[] = [];
     const runUtility = async (
       options: Omit<RunUtilityOptionsForMask, "spawn" | "materialiseStash"> & {
         tasks: TaskMetadata[];
@@ -277,10 +278,14 @@ describe("runMaskedCorpus", () => {
       },
     ): Promise<UtilityRunReport> => {
       callCount += 1;
-      // Each masked re-run sees a different tmp stash dir tunneled through `tasks[].stash`.
-      seenStashDirs.push(options.tasks[0]?.stash ?? "");
+      // Issue #251: masked re-runs receive the tmp dir through the explicit
+      // `stashDirOverride` field, NEVER by mutating `task.stash`. Assert
+      // both sides of the contract here.
+      const task = options.tasks[0];
+      seenStashDirs.push(task?.stashDirOverride ?? "");
+      seenStashFieldUnchanged.push(task?.stash === "fixtureA");
       // Simulate that masking alpha drops the pass rate, masking beta does nothing.
-      const stashDir = options.tasks[0]?.stash ?? "";
+      const stashDir = task?.stashDirOverride ?? "";
       const alphaMissing = !fs.existsSync(path.join(stashDir, "skills", "alpha.md"));
       const passRate = alphaMissing ? 0.25 : 0.6;
       return {
@@ -327,6 +332,185 @@ describe("runMaskedCorpus", () => {
     expect(new Set(seenStashDirs).size).toBe(2);
     for (const d of seenStashDirs) {
       expect(d.startsWith(os.tmpdir())).toBe(true);
+    }
+    // Issue #251: the original `task.stash` field was NEVER mutated.
+    expect(seenStashFieldUnchanged.every(Boolean)).toBe(true);
+    // The masking strategy + masked refs are surfaced on the result envelope.
+    expect(result.maskingStrategy).toBe("leave-one-out");
+    expect(result.maskedRefs).toEqual(["skill:alpha", "skill:beta"]);
+
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
+  });
+
+  test("issue #251: regression — runner uses stashDirOverride, NOT __no-stash__ placeholder", async () => {
+    // Bug under fix: when runMaskedCorpus mutated `task.stash` and called
+    // runUtility with `materialiseStash: false`, the runner was falling back
+    // to `path.join(task.taskDir, "__no-stash__")` for the AKM-arm stashDir,
+    // because the runner only consulted `task.stash` to call
+    // `loadFixtureStash` (which it skipped) — there was no path that
+    // forwarded the masked tmp dir to the agent.
+    //
+    // This test would FAIL before #251: the masked re-run would see the
+    // `__no-stash__` placeholder, `alpha.md` would never appear missing, and
+    // the marginal contribution would be 0 (false negative).
+    const fixturesRoot = makeFixturesRoot();
+    const baseRuns: RunResult[] = [
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+    ];
+    const baseReport = makeReport(baseRuns);
+    baseReport.taskMetadata = [fakeTask({ taskDir: "/some/task/dir" })];
+
+    let observedStashDir: string | undefined;
+    let observedExistedDuringRun = false;
+    let observedAlphaMissing = false;
+    let observedBetaPresent = false;
+    let observedTaskStashUnchanged = false;
+    const result = await runMaskedCorpus({
+      baseReport,
+      topN: 1,
+      runUtility: async (options) => {
+        const task = options.tasks[0];
+        observedStashDir = task?.stashDirOverride;
+        // The runner-equivalent resolution we are guarding: if the override
+        // is missing, the bug would have us fall back to `taskDir/__no-stash__`.
+        // Capture state INSIDE the runUtility callback because the tmp dir is
+        // reaped in `runMaskedCorpus`'s `finally` after this returns.
+        if (observedStashDir) {
+          observedExistedDuringRun = fs.existsSync(observedStashDir);
+          observedAlphaMissing = !fs.existsSync(path.join(observedStashDir, "skills", "alpha.md"));
+          observedBetaPresent = fs.existsSync(path.join(observedStashDir, "skills", "beta.md"));
+        }
+        observedTaskStashUnchanged = task?.stash === "fixtureA";
+        return {
+          ...baseReport,
+          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          akmRuns: [],
+        };
+      },
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+
+    expect(result.runsPerformed).toBe(1);
+    // The override MUST be set — that is the whole fix.
+    expect(observedStashDir).toBeDefined();
+    // It must NOT be the `__no-stash__` placeholder the buggy fallback used.
+    expect(observedStashDir?.endsWith("__no-stash__")).toBe(false);
+    // While the run was active, the override pointed at a real tmp dir with
+    // the masked asset removed and the unmasked asset still present.
+    expect(observedExistedDuringRun).toBe(true);
+    expect(observedAlphaMissing).toBe(true);
+    expect(observedBetaPresent).toBe(true);
+    // The stash (fixture name) field was NEVER mutated.
+    expect(observedTaskStashUnchanged).toBe(true);
+    // After the run, the tmp dir is reaped (cleanup contract).
+    expect(observedStashDir && fs.existsSync(observedStashDir)).toBe(false);
+
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
+  });
+
+  test("issue #251: source fixture sentinel survives masked-corpus run", async () => {
+    // Sentinel-file smoke test (review addendum #251): plant a known file
+    // inside the source fixture stash, run a masked-corpus pass, then assert
+    // the sentinel is byte-identical. Guards against a recurrence of #243's
+    // operator-config-exposure pattern.
+    const fixturesRoot = makeFixturesRoot();
+    const sentinelPath = path.join(fixturesRoot, "fixtureA", "skills", "__sentinel_251__");
+    const sentinelBody = `do-not-touch-${Date.now()}`;
+    fs.writeFileSync(sentinelPath, sentinelBody);
+
+    const baseRuns: RunResult[] = [
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "fail", assetsLoaded: ["skill:beta"] }),
+    ];
+    const baseReport = makeReport(baseRuns);
+    baseReport.taskMetadata = [fakeTask()];
+
+    await runMaskedCorpus({
+      baseReport,
+      topN: 2,
+      runUtility: async () => ({
+        ...baseReport,
+        aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+        akmRuns: [],
+      }),
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+
+    // Sentinel survives unchanged.
+    expect(fs.existsSync(sentinelPath)).toBe(true);
+    expect(fs.readFileSync(sentinelPath, "utf8")).toBe(sentinelBody);
+    // The masked entry's source-fixture content is untouched.
+    expect(fs.existsSync(path.join(fixturesRoot, "fixtureA", "skills", "alpha.md"))).toBe(true);
+    expect(fs.readFileSync(path.join(fixturesRoot, "fixtureA", "skills", "alpha.md"), "utf8")).toBe("# alpha");
+
+    fs.rmSync(fixturesRoot, { recursive: true, force: true });
+  });
+
+  test("issue #251: tmp masked stash dirs are cleaned up after success AND failure", async () => {
+    // Cleanup contract from acceptance criteria: try/finally guarantees the
+    // tmp dirs are reaped whether the injected runner returns normally or
+    // throws. Capture observed dirs from inside the injected runner; after
+    // the await they must NOT exist.
+    const fixturesRoot = makeFixturesRoot();
+    const baseRuns: RunResult[] = [
+      makeRun({ outcome: "pass", assetsLoaded: ["skill:alpha"] }),
+      makeRun({ outcome: "fail", assetsLoaded: ["skill:beta"] }),
+    ];
+    const baseReport = makeReport(baseRuns);
+    baseReport.taskMetadata = [fakeTask()];
+
+    // Success path.
+    const successDirs: string[] = [];
+    await runMaskedCorpus({
+      baseReport,
+      topN: 2,
+      runUtility: async (options) => {
+        const dir = options.tasks[0]?.stashDirOverride;
+        if (dir) successDirs.push(dir);
+        return {
+          ...baseReport,
+          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          akmRuns: [],
+        };
+      },
+      baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+      fixturesRoot,
+    });
+    expect(successDirs.length).toBe(2);
+    for (const d of successDirs) {
+      expect(fs.existsSync(d)).toBe(false);
+    }
+
+    // Failure path: the injected runner throws on the second call.
+    const failureDirs: string[] = [];
+    let calls = 0;
+    await expect(
+      runMaskedCorpus({
+        baseReport,
+        topN: 2,
+        runUtility: async (options) => {
+          calls += 1;
+          const dir = options.tasks[0]?.stashDirOverride;
+          if (dir) failureDirs.push(dir);
+          if (calls === 2) throw new Error("simulated runner failure");
+          return {
+            ...baseReport,
+            aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+            akmRuns: [],
+          };
+        },
+        baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
+        fixturesRoot,
+      }),
+    ).rejects.toThrow("simulated runner failure");
+    // Both tmp dirs created so far are reaped (the second call's dir is
+    // created in the try-block before the throw, and the finally-block
+    // cleans it up).
+    for (const d of failureDirs) {
+      expect(fs.existsSync(d)).toBe(false);
     }
 
     fs.rmSync(fixturesRoot, { recursive: true, force: true });
@@ -627,7 +811,10 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
       baseReport,
       topN: 2,
       runUtility: async (options) => {
-        const stashDir = options.tasks[0]?.stash ?? "";
+        // Issue #251: read the masked tmp dir from the explicit
+        // `stashDirOverride` field — the original `task.stash` (fixture
+        // name) is intentionally unchanged.
+        const stashDir = options.tasks[0]?.stashDirOverride ?? "";
         const alphaMissing = !fs.existsSync(path.join(stashDir, "skills", "alpha.md"));
         const betaMissing = !fs.existsSync(path.join(stashDir, "skills", "beta.md"));
         const masked = alphaMissing ? "skill:alpha" : betaMissing ? "skill:beta" : "none";

@@ -190,7 +190,19 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
           // stable placeholder so the env keys are wired correctly.
           let stashDir: string | undefined;
           if (arm === "akm") {
-            if (overrideStashDir) stashDir = overrideStashDir;
+            // Resolution order (must match the issue #251 acceptance criteria):
+            //   1. Per-task explicit override (used by `runMaskedCorpus` to
+            //      point at a tmp stash with one asset removed). Highest
+            //      priority because attribution correctness depends on this
+            //      branch never being shadowed by the `__no-stash__`
+            //      placeholder fallback.
+            //   2. Per-(task, arm)-call `stashDirByFixture` override (Phase
+            //      3 evolve persistence).
+            //   3. Per-task materialised fixture stash from `loadFixtureStash`.
+            //   4. `materialiseStash: false` placeholder so AKM_STASH_DIR is
+            //      still wired into the child env.
+            if (task.stashDirOverride) stashDir = task.stashDirOverride;
+            else if (overrideStashDir) stashDir = overrideStashDir;
             else if (stash) stashDir = stash.stashDir;
             else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
           }

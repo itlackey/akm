@@ -319,9 +319,37 @@ export function extractAssetLoads(runResult: RunResult): string[] {
   return out;
 }
 
-// Suppress the unused warning for the constant exposed to keep the cap
-// discoverable from this module's surface (mirrors the trajectory cap).
+// Suppress the unused warning for `ASSET_REF_PATTERN` above. The constant is
+// retained as the documentation seam called out by the #251 review addenda,
+// even though `extractAssetLoads` uses inline regexes for its two scan forms.
 void ASSET_REF_PATTERN;
+
+/**
+ * Anchored variant of `ASSET_REF_PATTERN` for whole-string validation.
+ *
+ * Used by `materialiseMaskedStash` (#251) to gate every asset ref BEFORE we
+ * touch the filesystem. The base `ASSET_REF_PATTERN` is `/g`-flagged for
+ * scanning agent stdout; we re-anchor here so a hostile string like
+ * `skill:foo/../../etc` is rejected as a whole even though the regex would
+ * happily match a `skill:foo` substring under `/g`.
+ *
+ * Rejects `..`, absolute paths, drive letters, null bytes, `/`, `\`, and
+ * anything else outside the v1 ref grammar (mirrors src/core/asset-ref.ts).
+ */
+const ASSET_REF_ANCHORED = /^(?:[a-z0-9_-]+\/\/)?[a-z][a-z0-9_-]*:[A-Za-z0-9_-]+$/;
+
+/**
+ * Reject hostile asset refs before they reach any `fs.rmSync` call. The ref
+ * comes from agent stdout (untrusted; the agent could be prompt-injected) so
+ * we apply the anchored grammar pattern first, then the per-segment shape
+ * check after the colon-split. Defense in depth — each layer is sufficient
+ * on its own; the layered structure makes a future grammar relax safe.
+ */
+function isSafeAssetRef(ref: string): boolean {
+  if (!ref) return false;
+  if (ref.includes("\0")) return false;
+  return ASSET_REF_ANCHORED.test(ref);
+}
 
 /** Per-asset attribution row (§6.5). */
 export interface PerAssetAttributionRow {
@@ -438,6 +466,20 @@ export interface MaskedCorpusResult {
    * to verify cost accounting.
    */
   runsPerformed: number;
+  /**
+   * Strategy used to construct each masked stash. Currently always
+   * `"leave-one-out"`: every re-run masks exactly one asset ref from the
+   * source fixture stash. Recorded in the JSON envelope so operators can
+   * tell at a glance whether a future strategy (e.g. `"leave-pair-out"`)
+   * was used.
+   */
+  maskingStrategy: "leave-one-out";
+  /**
+   * The exact asset refs masked, one per masked re-run. Order matches
+   * `attributions[]`. Recorded in the JSON envelope so the operator can
+   * audit which assets contributed to the marginal-contribution numbers.
+   */
+  maskedRefs: string[];
 }
 
 /** Caller-facing options for `runMaskedCorpus`. */
@@ -526,6 +568,7 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
   const baseAkmPassRate = baseReport.aggregateAkm.passRate;
   const top = attribution.rows.slice(0, clamped);
   const attributions: MaskedAttributionRow[] = [];
+  const maskedRefs: string[] = [];
 
   for (const row of top) {
     const maskedTasks: TaskMetadata[] = [];
@@ -534,20 +577,36 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
       for (const baseTask of baseReport.taskMetadata ?? []) {
         const maskedStashDir = materialiseMaskedStash(fixturesRoot, baseTask.stash, row.assetRef);
         if (maskedStashDir) tmpDirs.push(maskedStashDir);
-        // Forward the masked stashDir as a sibling field. Tasks already carry
-        // `stash` (the fixture name), so we tunnel the masked dir through
-        // `taskDir` won't work — instead we mutate `stash` to point at the
-        // tmp dir and rely on the runner's `materialiseStash` flow. The
-        // injected runUtility for masked runs MUST honour `stashDirOverride`.
-        maskedTasks.push({ ...baseTask, stash: maskedStashDir ?? baseTask.stash });
+        // Issue #251: forward the masked stashDir via the explicit
+        // `stashDirOverride` field on the cloned TaskMetadata. We MUST NOT
+        // mutate `baseTask.stash` (the fixture name) — the runner uses that
+        // to call `loadFixtureStash`, and overloading it breaks the
+        // `__no-stash__` resolution branch in runner.ts. The runner's AKM-arm
+        // branch checks `task.stashDirOverride` first.
+        //
+        // When `materialiseMaskedStash` returned `null` (asset not present in
+        // this fixture, or hostile ref shape rejected by the validator), we
+        // intentionally leave both fields untouched. The runner falls back to
+        // the normal materialisation flow against the unchanged source
+        // fixture — so the re-run still happens, but the result mirrors the
+        // base. This is a meaningful diagnostic (the ref didn't bind in this
+        // fixture) and is the same accounting `cost-accounting`-style tests
+        // assert against.
+        if (maskedStashDir) {
+          maskedTasks.push({ ...baseTask, stashDirOverride: maskedStashDir });
+        } else {
+          maskedTasks.push({ ...baseTask });
+        }
       }
 
       const maskedReport = await opts.runUtility({
         ...opts.baseOptions,
         tasks: maskedTasks,
-        // The masked stash already has the correct content on disk, so we
-        // skip the runner's own materialisation step (which would otherwise
-        // try to look up the fixture by name).
+        // The masked stash already has the correct content on disk, and the
+        // runner now resolves it via `task.stashDirOverride`. We still pass
+        // `materialiseStash: false` so the runner does not call
+        // `loadFixtureStash` against the (unmasked) named fixture — that
+        // would waste work and risk re-indexing the source dir.
         materialiseStash: false,
       });
 
@@ -558,7 +617,11 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
         maskedPassRate,
         marginalContribution: baseAkmPassRate - maskedPassRate,
       });
+      maskedRefs.push(row.assetRef);
     } finally {
+      // Cleanup runs in BOTH success and failure paths (acceptance criterion).
+      // Best-effort: a tmpfs failure here is logged via the `try/catch` below
+      // and the host OS reaps the tmp dir on reboot.
       for (const dir of tmpDirs) {
         try {
           fs.rmSync(dir, { recursive: true, force: true });
@@ -573,6 +636,8 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
     baseReport,
     attributions,
     runsPerformed: clamped,
+    maskingStrategy: "leave-one-out",
+    maskedRefs,
   };
 }
 
@@ -592,6 +657,11 @@ export async function runMaskedCorpus(opts: RunMaskedCorpusOptions): Promise<Mas
 function materialiseMaskedStash(fixturesRoot: string, stashName: string, assetRef: string): string | null {
   const sourceDir = path.join(fixturesRoot, stashName);
   if (!fs.existsSync(path.join(sourceDir, "MANIFEST.json"))) return null;
+
+  // Issue #251 review addendum: validate the WHOLE ref against the anchored
+  // grammar before we touch the filesystem. The downstream `isSafeAssetNameSegment`
+  // + `isPathContained` checks are still applied — this is defense in depth.
+  if (!isSafeAssetRef(assetRef)) return null;
 
   const colonIdx = assetRef.indexOf(":");
   if (colonIdx < 0) {
