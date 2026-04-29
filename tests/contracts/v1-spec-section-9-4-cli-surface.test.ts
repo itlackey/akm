@@ -72,8 +72,8 @@ describe("v1 spec §9.4 — CLI command surface", () => {
 describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
-  test("cli.md has a Planned-for-v1 section listing the new commands", () => {
-    const planned = extractSection(cli, "## Planned for v1 — agent, proposal, lesson, and distill");
+  test("cli.md has an Available-since-0.7.0 section listing the 0.7.0 commands", () => {
+    const planned = extractSection(cli, "## Available since 0.7.0 — agent, proposal, lesson, and distill");
     expect(planned).not.toBe("");
     for (const cmd of PLANNED_FOR_V1) {
       expect(planned).toContain(`### ${cmd}`);
@@ -81,7 +81,6 @@ describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   });
 
   test("cli.md uses the documented status legend", () => {
-    expect(cli).toMatch(/Pre-release \(shipping\)/);
-    expect(cli).toMatch(/Planned for v1/);
+    expect(cli).toMatch(/Available since 0\.7\.0/);
   });
 });

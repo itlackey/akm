@@ -5,25 +5,14 @@ JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
 brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
-> **Status legend.** This page documents both **pre-release (shipping)** and
-> **planned for v1** behaviour. Each command section opens with one of the
-> two markers below. Anything marked **Planned for v1** is part of the
-> v1.0-frozen surface declared in
+> **Status legend.** Every command on this page runs today on the
+> current pre-release build. Commands shipped after 0.6.0 — `agent`,
+> `reflect`, `propose`, `proposal`, `distill`, and the `feedback --reason`
+> extension — carry an **Available since 0.7.0** marker so you can tell at
+> a glance which surface arrived in that release. The locked v1.0 surface
+> is declared in
 > [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.4 and is being implemented across milestones 0.7 – 1.0.
->
-> - **Status: Pre-release (shipping)** — the command runs today on the
->   current pre-release build. Behaviour described here is what the binary
->   does.
-> - **Status: Planned for v1** — the command is declared by the v1
->   architecture spec but is not yet wired up. The shape, flags, and exit
->   behaviour described here are the locked target; the binary will return
->   `usage: command not yet implemented` until the milestone lands.
->
-> Sequencing lives in
-> [`docs/reviews/v1-implementation-plan.md`](reviews/v1-implementation-plan.md)
-> and
-> [`docs/reviews/v1-agent-reflection-issues.md`](reviews/v1-agent-reflection-issues.md).
+> §9.4.
 
 ## Global Flags
 
@@ -100,7 +89,7 @@ akm init --stashDir ~/custom-stash # Legacy alias for --dir
 
 Creates one subdirectory per asset type under the stash path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
-`memories/`, `vaults/`, and `wikis/`. See
+`memories/`, `vaults/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ### setup
@@ -182,7 +171,7 @@ akm search "deploy" --include-proposed
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
@@ -247,7 +236,7 @@ akm curate "learn the release workflow" --source both --format text
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
@@ -804,7 +793,7 @@ Use it for audit trails, lifecycle inspection, and debugging utility-score
 shifts without re-deriving an audit log from raw SQL.
 
 `history` is the *per-asset state-change* view. It complements the realtime
-events stream proposed in [#204](https://github.com/itlackey/agentikit/issues/204):
+events stream proposed in [#204](https://github.com/itlackey/akm/issues/204):
 events emit at the moment a mutation happens; `history` is the durable replay
 of what was recorded for an asset (or for the whole stash).
 
@@ -946,7 +935,7 @@ akm registry remove my-team
 
 #### registry build-index
 
-Generate a v2 registry index from npm/GitHub discovery and manual entries.
+Generate a v3 registry index from npm/GitHub discovery and manual entries.
 
 ```sh
 akm registry build-index
@@ -973,7 +962,7 @@ akm registry search "docker" --limit 5
 | Flag | Description |
 | --- | --- |
 | `--limit` | Maximum number of results |
-| `--assets` | Include asset-level results from v2 registry indexes |
+| `--assets` | Include asset-level results from v3 registry indexes |
 
 ### config
 
@@ -1252,17 +1241,17 @@ source <(akm completions)
 
 ---
 
-## Planned for v1 — agent, proposal, lesson, and distill
+## Available since 0.7.0 — agent, proposal, lesson, and distill
 
-The commands below are declared by the v1 architecture spec
+The commands below shipped in 0.7.0 and form part of the locked v1.0
+surface declared by the v1 architecture spec
 ([`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-§9.4, §11–§14) and are part of the locked v1.0 surface. They are not yet
-implemented. The shape and flag set documented here is the locked target —
-implementations across milestones 0.7 – 1.0 must match this contract.
+§9.4, §11–§14). They run today on the current pre-release build; the
+shape and flag set documented here is the locked v1 contract.
 
 ### agent
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Dispatch a configured external agent profile.
 
 ```sh
@@ -1281,7 +1270,7 @@ parse_error`.
 
 ### reflect
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Produce reflection proposals for an existing asset. Proposals land in the
 durable proposal queue and never mutate live stash content.
 
@@ -1303,7 +1292,7 @@ proposal row. Validation/timeout/parse errors return non-zero with a
 
 ### propose
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Generate a brand-new asset proposal from a description. Output is always a
 proposal — never a direct write.
 
@@ -1324,7 +1313,7 @@ Emits `propose_invoked`. Returns the new proposal id. Same failure model as
 
 ### proposal
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Review and operate the proposal queue. Five subcommands.
 
 ```sh
@@ -1351,7 +1340,7 @@ emits the `promoted` event; reject emits `rejected`.
 
 ### distill
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Bounded in-tree LLM call that summarises feedback events for a ref into a
 `lesson` proposal. Gated behind `llm.features.feedback_distillation`.
 
@@ -1365,9 +1354,9 @@ On a successful call, the response is written to the proposal queue as a
 `lesson` (see v1 spec §13). The live stash is never mutated. Emits
 `distill_invoked`.
 
-### feedback (planned `--reason` extension)
+### feedback (`--reason` extension)
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
 `distill_invoked` payloads. Backwards compatible: scripts without `--reason`

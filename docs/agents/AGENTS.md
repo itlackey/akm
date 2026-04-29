@@ -1,6 +1,6 @@
 # akm CLI
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, vaults, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Quick Reference
 
@@ -37,6 +37,7 @@ akm registry search "<query>"                 # Search all registries
 | memory | Recalled context (read the content for background information) |
 | vault | Keys and comments only; values stay on disk and load via `akm vault load` |
 | wiki | A page in a multi-wiki knowledge base. For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. `akm wiki -h` for the full surface. |
+| lesson | A distilled feedback lesson (`when_to_use` plus body). Read before applying related skills. Generated via `akm distill` and the proposal queue. |
 
 When an asset meaningfully helps or fails, record that with `akm feedback` so
 future search ranking can learn from real usage.
@@ -60,5 +61,25 @@ Exit codes:
 
 Check `ok === false` or a non-zero exit code to detect failure. The `hint`
 field, when present, describes a corrective action.
+
+## Proposals & reflection (0.7.0+)
+
+`akm` ships a proposal queue so reflective edits and new asset drafts
+land out-of-band before they touch the live stash. None of these commands
+mutate stash content directly — they always go through `akm proposal
+accept`.
+
+```sh
+akm reflect <ref>                              # Reflect on an existing asset
+akm propose <type> <name> --task "..."         # Draft a new asset proposal
+akm distill <ref>                              # Summarise feedback into a lesson proposal
+akm proposal list                              # List pending proposals
+akm proposal show <id>                         # Render the proposal body
+akm proposal diff <id>                         # See proposed delta vs. live
+akm proposal accept <id>                       # Validate + promote into the stash
+akm proposal reject <id> --reason "..."        # Archive with a reason
+akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
+akm history --ref <ref>                        # Per-asset state-change trail
+```
 
 Run `akm -h` for the full command reference.

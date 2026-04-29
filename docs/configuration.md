@@ -9,13 +9,10 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-> **Status legend.** Sections below are tagged either **Pre-release
-> (shipping)** or **Planned for v1**. Planned-for-v1 keys are part of the
-> locked v1.0 surface declared in
-> [`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.2; the loader will accept them once their milestone lands. Until then,
-> the loader treats unknown top-level keys as warn-and-ignore — your config
-> will not break either way.
+> All configuration keys documented below are accepted by the current
+> pre-release build. The `agent.*` and `llm.features.*` blocks shipped in
+> 0.7.0 (see [release notes](migration/release-notes/0.7.0.md)). Unknown
+> top-level keys are warn-and-ignore.
 
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
@@ -147,7 +144,9 @@ Use staging cluster for blue-green deploys.
 - Memories without any `scope_*` key (legacy content written before 0.7.0)
   load and re-serialize unchanged. They match unfiltered `akm search`
   queries — but a query with any `--filter` excludes them, since they have
-  no scope key to satisfy the filter.
+  no scope key to satisfy the filter. See the
+  [0.7.0 release notes](migration/release-notes/0.7.0.md) for the rollout
+  detail on `scope_*` keys.
 - Each scope key is an opaque string (no validation beyond non-empty +
   trimmed). Use whatever id shape your host system already uses (UUID,
   email, `@handle`, etc.).
@@ -394,11 +393,11 @@ is working. If it shows `"ready-js"`, the JS fallback is in use.
 
 ---
 
-## Planned for v1 — `agent.*` block
+## `agent.*` block
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Configures external agent CLI integration (see
-[CLI: agent / reflect / propose](cli.md#planned-for-v1--agent-proposal-lesson-and-distill)
+[CLI: agent / reflect / propose](cli.md#available-since-070--agent-proposal-lesson-and-distill)
 and v1 spec §12).
 
 ```jsonc
@@ -441,9 +440,9 @@ Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
 disables all agent commands with a `ConfigError` whose hint points at this
 section.
 
-## Planned for v1 — `llm.features.*` map
+## `llm.features.*` map
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Gates the small set of bounded in-tree LLM call sites. All defaults are
 `false` — the v1 contract is "the in-tree LLM does nothing unless you opt
 in, per feature." See v1 spec §14 for the boundary rules.
