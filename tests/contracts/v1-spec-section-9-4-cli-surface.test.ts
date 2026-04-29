@@ -73,7 +73,7 @@ describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
   test("cli.md has an Available-since-0.7.0 section listing the 0.7.0 commands", () => {
-    const planned = extractSection(cli, "## Available since 0.7.0 — agent, proposal, lesson, and distill");
+    const planned = extractSection(cli, "## Agent reflection and proposal queue (0.7.0+)");
     expect(planned).not.toBe("");
     for (const cmd of PLANNED_FOR_V1) {
       expect(planned).toContain(`### ${cmd}`);

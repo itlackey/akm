@@ -397,7 +397,7 @@ is working. If it shows `"ready-js"`, the JS fallback is in use.
 
 **Status: Available since 0.7.0.**
 Configures external agent CLI integration (see
-[CLI: agent / reflect / propose](cli.md#available-since-070--agent-proposal-lesson-and-distill)
+[CLI: agent / reflect / propose](cli.md#agent-reflection-and-proposal-queue-070)
 and v1 spec §12).
 
 ```jsonc
@@ -433,6 +433,7 @@ Per-key contract:
 | `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
 | `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
 | `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
+| `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |
 | `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
 | `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
 
@@ -472,7 +473,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
 | `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
 | `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
-| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
+| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
 | `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 | `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
