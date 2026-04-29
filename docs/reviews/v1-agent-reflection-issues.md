@@ -1,13 +1,15 @@
 # GitHub Issue Set: v1 Agent Reflection & Self-Evolution
 
-**Status:** Draft backlog for aggressive pre-release implementation.
+**Status:** Forward-looking design backlog. Wave 1 shipped in 0.7.0; Waves 2-3 remain on the path to the future 1.0 GA freeze.
 **Source proposal:** "Agent Reflection and Self-Evolution for akm" (2026-04-26).
-**Target milestone:** `v1.0` (current train: `v0.6.x` pre-release).
+**Target milestone:** `1.0` GA freeze (current train: 0.7.x pre-release on the path to 1.0).
 
 This document translates the proposal into a smaller, more aggressive GitHub issue set.
 Compared to the earlier draft, it deliberately combines related work, moves contract/doc
-sync to the front of the queue, and removes sequencing traps that only matter once v1 is
-already frozen.
+sync to the front of the queue, and removes sequencing traps that only matter once the
+1.0 GA contract is already frozen.
+
+> _Cross-links: see [`docs/migration/release-notes/0.7.0.md`](../migration/release-notes/0.7.0.md) for what actually shipped in the 0.7.0 pre-release toward the future 1.0 GA freeze, and [`docs/migration/v1.md`](../migration/v1.md) for the per-surface delta from 0.6.x. The 1.0 GA contract surface (locked at 1.0.0) is described in [`docs/technical/v1-architecture-spec.md`](../technical/v1-architecture-spec.md) §9._
 
 ## Planning principles
 
@@ -18,20 +20,22 @@ already frozen.
 
 ---
 
-## Wave 1 — Contract Sync + Agent Foundations (`v0.7`)
+## Wave 1 — Contract Sync + Agent Foundations (`0.7.0`, shipped)
 
-### Issue 1 — Rewrite the v1 contract baseline
+> _Status: Wave 1 shipped in 0.7.0. The surfaces below are committed to but are not contractually frozen until 1.0 GA. See [`docs/migration/release-notes/0.7.0.md`](../migration/release-notes/0.7.0.md)._
+
+### Issue 1 — Rewrite the v1 contract baseline (shipped in 0.7.0 via PR #233)
 - **Title:** `docs(contract): rewrite v1 lock sections for agent/proposal/lesson surfaces`
 - **Labels:** `area:docs`, `area:test`, `v0.7`, `type:chore`
-- **Summary:** Update the architecture spec, CLI/config references, and migration baseline early so implementation proceeds against the intended v1 surface instead of stale `v0.6` refactor docs.
+- **Summary:** Update the architecture spec, CLI/config references, and migration baseline early so 0.7.0 implementation proceeds against the intended 1.0 GA surface instead of stale `v0.6` refactor docs.
 - **Acceptance criteria:**
-  - `docs/technical/v1-architecture-spec.md` reflects proposal queue, agent CLI integration, open quality/type rules, `lesson`, and `llm.features.*` as intended v1 surfaces.
-  - `docs/cli.md` and `docs/configuration.md` clearly distinguish shipped pre-release behavior from planned v1 additions.
-  - `docs/migration/v1.md` is updated to the new pre-release migration baseline instead of implying the earlier refactor is the final v1 story.
-  - Contract tests cover the locked sections that are actually being carried into implementation.
+  - `docs/technical/v1-architecture-spec.md` reflects proposal queue, agent CLI integration, open quality/type rules, `lesson`, and `llm.features.*` as the surfaces 0.7.0 ships toward the future 1.0 GA freeze.
+  - `docs/cli.md` and `docs/configuration.md` clearly distinguish 0.7.0-shipped behavior from surfaces still pending before 1.0 GA.
+  - `docs/migration/v1.md` is updated to the 0.7.0 pre-release migration baseline instead of implying the earlier refactor is the final 1.0 GA story.
+  - Contract tests cover the sections committed-but-not-frozen-until-1.0 that are actually being carried into implementation.
 - **Depends on:** none.
 
-### Issue 2 — Add agent runtime foundations
+### Issue 2 — Add agent runtime foundations (shipped in 0.7.0 via PR #234)
 - **Title:** `feat(agent): add config, profiles, spawn wrapper, and setup detection`
 - **Labels:** `area:agent`, `area:config`, `area:setup`, `v0.7`, `type:feature`
 - **Summary:** Combine the agent config schema, built-in profile registry, CLI spawn wrapper, and setup UX into one foundation issue.
@@ -45,7 +49,7 @@ already frozen.
   - Tests cover config parsing, profile command construction, timeout handling, malformed output, and setup detection branches.
 - **Depends on:** #1.
 
-### Issue 3 — Lock bounded LLM/agent architecture rules
+### Issue 3 — Lock bounded LLM/agent architecture rules (shipped in 0.7.0)
 - **Title:** `docs(test): enforce stateless in-tree LLM and shell-out-only agent invariants`
 - **Labels:** `area:docs`, `area:test`, `v0.7`, `type:chore`
 - **Summary:** Document and test the intended boundary: in-tree LLM helpers stay bounded and stateless; external agents are invoked via CLI shell-out only.
@@ -55,7 +59,7 @@ already frozen.
   - The rules are narrow enough to be maintained without brittle grep-only enforcement.
 - **Depends on:** #1.
 
-### Issue 4 — Clean up registry/search naming before proposal semantics land
+### Issue 4 — Clean up registry/search naming before proposal semantics land (shipped in 0.7.0)
 - **Title:** `feat(search): remove registry curated field and align search hit projections`
 - **Labels:** `area:search`, `area:registry`, `v0.7`, `type:feature`
 - **Summary:** Remove the vestigial registry `curated` boolean and align hit projections before new `quality` semantics are introduced elsewhere.
@@ -68,7 +72,9 @@ already frozen.
 
 ---
 
-## Wave 2 — Proposal Workflow + Search Semantics (`v0.8`)
+## Wave 2 — Proposal Workflow + Search Semantics (`0.8.0` pre-release toward 1.0 GA)
+
+> _Status: planned. The proposal queue scaffolding shipped in 0.7.0 ([`docs/migration/release-notes/0.7.0.md`](../migration/release-notes/0.7.0.md)); the surfaces below remain committed-but-not-frozen until the future 1.0 GA freeze._
 
 ### Issue 5 — Add quality/proposal semantics
 - **Title:** `feat(search): add proposed quality semantics and filtering`
@@ -99,7 +105,9 @@ already frozen.
 
 ---
 
-## Wave 3 — Reflection, Generation, Distillation, and v1 Lock (`v0.9 -> v1.0`)
+## Wave 3 — Reflection, Generation, Distillation, and 1.0 GA Lock (`0.9.x -> 1.0` GA)
+
+> _Status: planned. This is the wave that drives toward the 1.0 GA contract freeze (spec §9). Surfaces are committed but not frozen until 1.0 GA. See [`docs/migration/v1.md`](../migration/v1.md) for the path-to-1.0 narrative._
 
 ### Issue 7 — Implement `akm reflect` and `akm propose`
 - **Title:** `feat(agent): implement reflect/propose commands on top of the proposal queue`
@@ -138,25 +146,25 @@ already frozen.
   - Failures degrade cleanly when the feature is disabled or the LLM call fails.
 - **Depends on:** #6, #8.
 
-### Issue 10 — Finalize v1 docs, migration notes, and contract locks
-- **Title:** `test(docs): finalize v1 contract suite, migration docs, and release notes`
+### Issue 10 — Finalize 1.0 GA docs, migration notes, and contract locks
+- **Title:** `test(docs): finalize 1.0 GA contract suite, migration docs, and release notes`
 - **Labels:** `area:test`, `area:docs`, `v1.0`, `type:chore`
-- **Summary:** Finish the lock phase by ensuring the shipped docs, migration notes, and contract tests all describe the same surfaces that the code now implements.
+- **Summary:** Finish the lock phase by ensuring the shipped docs, migration notes, and contract tests all describe the same surfaces that the code now implements at the 1.0 GA freeze.
 - **Acceptance criteria:**
   - One test file exists per locked contract section.
   - Locked docs reflect proposal-backed workflows, new quality/type semantics, and final config/CLI surfaces.
   - Migration guidance explains proposal queue, `quality` extensions, `lesson`, `llm.features.*`, and any removed legacy fields such as registry `curated`.
-  - Release notes call out the major pre-v1 behavioral changes.
+  - Release notes call out the major behavioral changes between 0.6.x and the 1.0 GA freeze.
 - **Depends on:** #5, #7, #9.
 
 ---
 
 ## Suggested Milestones
-- **v0.7:** #1-#4
-- **v0.8:** #5-#6
-- **v0.9:** #7-#8
-- **v0.10:** #9
-- **v1.0 lock + docs:** #10
+- **0.7.0** (shipped): #1-#4
+- **0.8.0** (pre-release toward 1.0 GA): #5-#6
+- **0.9.0** (pre-release toward 1.0 GA): #7-#8
+- **0.10.0** (pre-release toward 1.0 GA): #9
+- **1.0 GA lock + docs:** #10
 
 ## Suggested Tracking Labels
 - `wave:contract-foundations`
