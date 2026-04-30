@@ -175,6 +175,54 @@ describe("runAgent — JSON parse mode", () => {
     expect(result.reason).toBe("parse_error");
     expect(result.error).toBeTruthy();
   });
+
+  // ── #284 GAP-HIGH 10: parseOutput=json + non-zero exit + non-JSON stderr ──
+
+  test("parseOutput=json + non-zero exit: non_zero_exit precedence (parse_error suppressed)", async () => {
+    // Non-zero exit must surface as `non_zero_exit`, not `parse_error`, even
+    // when the stdout/stderr payload is malformed JSON. The exit code is the
+    // primary failure signal; parse failures are downstream of a successful run.
+    const { spawn } = fakeSpawnFn({
+      exitCode: 5,
+      stdout: "not json {",
+      stderr: "agent panic: kernel ate my JSON",
+    });
+    const result = await runAgent(makeProfile({ parseOutput: "json" }), "go", { spawn });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.exitCode).toBe(5);
+    expect(result.stderr).toBe("agent panic: kernel ate my JSON");
+    expect(result.parsed).toBeUndefined();
+  });
+});
+
+// ── #284 GAP-HIGH 11: timeoutMs precedence ────────────────────────────────
+
+describe("runAgent — timeoutMs precedence", () => {
+  test("options.timeoutMs overrides profile.timeoutMs", async () => {
+    // Both profile and options carry a timeoutMs. Options must win.
+    let timerCallback: (() => void) | undefined;
+    let observedDeadlineMs: number | undefined;
+    const fakeSet = ((cb: () => void, ms: number) => {
+      timerCallback = cb;
+      observedDeadlineMs = ms;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+    const fakeClear = (() => {}) as unknown as typeof clearTimeout;
+
+    const { spawn } = fakeSpawnFn({ exitCode: 0, hangsUntilKilled: true });
+    const profile = makeProfile({ timeoutMs: 999_999 } as Partial<AgentProfile>);
+    const promise = runAgent(profile, "go", {
+      spawn,
+      setTimeoutFn: fakeSet,
+      clearTimeoutFn: fakeClear,
+      timeoutMs: 250,
+    });
+    expect(observedDeadlineMs).toBe(250); // override won
+    timerCallback?.();
+    const result = await promise;
+    expect(result.reason).toBe("timeout");
+  });
 });
 
 describe("runAgent — argument and env construction", () => {

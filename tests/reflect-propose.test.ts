@@ -426,6 +426,38 @@ describe("akm propose", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
+  // ── #284 GAP-HIGH 3: registered custom type ──────────────────────────────
+  test("akmPropose accepts a custom type registered via registerAssetType", async () => {
+    const { registerAssetType, deregisterAssetType } = await import("../src/core/asset-spec");
+    registerAssetType("widget", {
+      stashDir: "widgets",
+      isRelevantFile: (f: string) => f.endsWith(".md"),
+      toCanonicalName: (_root: string, fp: string) => fp,
+      toAssetPath: (root: string, name: string) => `${root}/${name}.md`,
+    } as never);
+    try {
+      const stash = makeStashDir();
+      fs.mkdirSync(path.join(stash, "widgets"), { recursive: true });
+      const widgetPayload = JSON.stringify({
+        ref: "widget:gear",
+        content: "---\ndescription: a gear widget\nwhen_to_use: when grinding\n---\n\nbody.\n",
+      });
+      const result = await akmPropose({
+        type: "widget",
+        name: "gear",
+        task: "Build a gear widget",
+        stashDir: stash,
+        agentProfile: makeProfile(),
+        runAgentOptions: { spawn: fakeSpawn(widgetPayload, "", 0) },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected ok");
+      expect(result.proposal.ref).toBe("widget:gear");
+    } finally {
+      deregisterAssetType("widget");
+    }
+  });
+
   test("never writes to live stash content (only proposal queue)", async () => {
     const stash = makeStashDir();
     const result = await akmPropose({

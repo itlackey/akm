@@ -137,6 +137,44 @@ describe("akm feedback", () => {
     });
   });
 
+  // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────
+  test("feedback --note threads metadata into events.jsonl", async () => {
+    const stashDir = makeTempDir("akm-feedback-stash-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex(stashDir);
+
+    const result = runCli([
+      "feedback",
+      "memory:deployment-notes",
+      "--positive",
+      "--note",
+      "saved me 30 minutes",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    const parsed = parseJsonOutput(result);
+    expect(parsed).toMatchObject({
+      ok: true,
+      ref: "memory:deployment-notes",
+      signal: "positive",
+      note: "saved me 30 minutes",
+    });
+
+    // Read events.jsonl directly and verify the note was persisted in metadata.
+    const { readEvents } = await import("../src/core/events");
+    const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
+    expect(events.length).toBeGreaterThan(0);
+    const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
+    expect(md.note).toBe("saved me 30 minutes");
+    expect(md.signal).toBe("positive");
+  });
+
   test("positive feedback affects subsequent ranking after re-indexing", async () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
