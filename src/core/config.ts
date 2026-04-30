@@ -38,10 +38,6 @@ export interface EmbeddingConnectionConfig extends BaseConnectionConfig {
 export interface LlmCapabilities {
   /** Model emits strict JSON reliably (probed during setup). */
   structuredOutput?: boolean;
-  /** Model handles long-context inputs (>32k tokens). */
-  longContext?: boolean;
-  /** Model supports tool/function calling. */
-  toolUse?: boolean;
 }
 
 export interface LlmConnectionConfig extends BaseConnectionConfig {
@@ -49,8 +45,6 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   temperature?: number;
   /** Optional response token limit */
   maxTokens?: number;
-  /** Approximate context window in tokens. Used to size ingest/lint chunks. */
-  contextWindow?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
@@ -80,26 +74,11 @@ export interface LlmFeatureFlags {
    */
   curate_rerank?: boolean;
   /**
-   * Gates indexer LLM tag de-duplication (#227). Default: false.
-   * When false, dedup uses a deterministic string-equality pass.
-   */
-  tag_dedup?: boolean;
-  /**
-   * Gates `akm remember --enrich` consolidation (#227). Default: false.
-   * When false, `--enrich` is a no-op and a warning is printed.
-   */
-  memory_consolidation?: boolean;
-  /**
    * Gates `akm distill <ref>` (§14.5, #227). Default: false.
    * When false (or absent), `akm distill` is skipped as a no-op rather than
    * failing with `ConfigError`.
    */
   feedback_distillation?: boolean;
-  /**
-   * Gates the scorer LLM fallback when no embeddings are available (#227).
-   * Default: false. When false, the scorer uses lexical-only score.
-   */
-  embedding_fallback_score?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -144,7 +123,7 @@ export type SourceSpec =
  * Iteration order convention (see `resolveConfiguredSources()`):
  *   1. The entry marked `primary: true` (or, as a backwards-compat shim,
  *      a synthetic filesystem entry built from the top-level `stashDir`).
- *   2. Remaining `stashes[]` entries in declared order.
+ *   2. Remaining `sources[]` entries in declared order.
  *   3. Legacy `installed[]` entries last.
  */
 export interface ConfiguredSource {
@@ -158,7 +137,7 @@ export interface ConfiguredSource {
   enabled?: boolean;
   /** Whether the underlying repo accepts writes (e.g. git push). */
   writable?: boolean;
-  /** Marks one entry in `stashes[]` as the primary working stash. */
+  /** Marks one entry in `sources[]` as the primary working stash. */
   primary?: boolean;
   /** Pass-through provider-specific options. */
   options?: Record<string, unknown>;
@@ -244,18 +223,14 @@ export interface AkmConfig {
    * - `"replace"`: discard the inherited stashes before applying this layer's.
    */
   stashInheritance?: "merge" | "replace";
-  /**
-   * @deprecated Use `stashInheritance: "replace"` instead. Retained for one
-   * minor-release cycle so existing config files continue to work; the loader
-   * coerces this boolean into `stashInheritance` when the new field is absent.
-   */
-  disableGlobalStashes?: boolean;
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
   /**
-   * @deprecated Use `sources` instead. Legacy key retained for one release cycle
-   * so existing configs load without manual edits. The loader migrates `stashes`
-   * to `sources` on first load and rewrites the config file in place.
+   * @deprecated Removed. The legacy `stashes[]` config key is no longer
+   * loaded or persisted (one-cycle compat shim retired in #284). The field
+   * is retained on the runtime type only as a structural placeholder for
+   * defensive `config.sources ?? config.stashes ?? []` reads in downstream
+   * call sites; it is never populated by the loader.
    */
   stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
@@ -404,7 +379,7 @@ export function loadUserConfig(): AkmConfig {
     return cachedUserConfig.config;
   }
 
-  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(configPath, text));
+  const config = mergeLoadedConfig(DEFAULT_CONFIG, readNormalizedConfigFromText(text));
   const finalConfig = applyRuntimeEnvApiKeys(config);
   cachedUserConfig = {
     config: finalConfig,
@@ -516,24 +491,6 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
     config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
   } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
     config.semanticSearchMode = raw.semanticSearchMode;
-  } else if (typeof (raw as { semanticSearch?: unknown }).semanticSearch === "boolean") {
-    // Legacy config: older versions used `semanticSearch` (boolean) instead of `semanticSearchMode`
-    const legacySemanticSearch = (raw as { semanticSearch: boolean }).semanticSearch;
-    config.semanticSearchMode = legacySemanticSearch ? "auto" : "off";
-  }
-
-  // Migrate legacy searchPaths into sources
-  if (Array.isArray(raw.searchPaths)) {
-    const legacyPaths = raw.searchPaths.filter((d): d is string => typeof d === "string");
-    if (legacyPaths.length > 0) {
-      const existing = config.sources ?? [];
-      const migrated: SourceConfigEntry[] = legacyPaths
-        .filter((p) => !existing.some((s) => s.type === "filesystem" && s.path === p))
-        .map((p) => ({ type: "filesystem", path: p }));
-      if (migrated.length > 0) {
-        config.sources = [...existing, ...migrated];
-      }
-    }
   }
 
   const embedding = parseEmbeddingConfig(raw.embedding);
@@ -551,36 +508,13 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
 
-  // Prefer the new `stashInheritance` field; fall back to the legacy boolean
-  // `disableGlobalStashes` so existing config files keep working unchanged.
   if (raw.stashInheritance === "replace" || raw.stashInheritance === "merge") {
     config.stashInheritance = raw.stashInheritance;
-  } else if (typeof raw.disableGlobalStashes === "boolean") {
-    config.stashInheritance = raw.disableGlobalStashes ? "replace" : "merge";
-    config.disableGlobalStashes = raw.disableGlobalStashes;
   }
 
-  // Load `sources` (new key) first, then fall back to legacy `stashes` key.
-  // Whenever the raw object still carries `stashes[]` at parse time (i.e. the
-  // on-disk auto-migration in `maybeAutoMigrateLegacyStashes` did not run or
-  // failed to rewrite the file), emit a one-shot deprecation pointer so users
-  // on a 0.5.x config aren't silently relying on the legacy key. See
-  // issue #273 for context. The auto-migration's "Config migrated" /
-  // "Failed to migrate" messages still own the success / write-failure paths.
-  if (Object.hasOwn(raw, "stashes")) {
-    warnLegacyStashesObserved();
-  }
-  const sources = parseStashesConfig(raw.sources);
+  const sources = parseSourcesConfig(raw.sources);
   if (sources) {
     config.sources = sources;
-  } else {
-    const legacyStashes = parseStashesConfig(raw.stashes);
-    if (legacyStashes) {
-      // Backwards-compat fallback: configs that still carry `stashes[]` are
-      // normalized to `sources[]` after the raw file loader has had a chance to
-      // auto-migrate the on-disk key.
-      config.sources = legacyStashes;
-    }
   }
 
   const security = parseSecurityConfig(raw.security);
@@ -616,16 +550,14 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
 
 function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
   const raw = readConfigObject(configPath);
-  const migrated = raw ? maybeAutoMigrateLegacyStashes(configPath, raw) : undefined;
-  const expanded = migrated ? expandEnvVars(migrated) : undefined;
+  const expanded = raw ? expandEnvVars(raw) : undefined;
   return expanded ? pickKnownKeys(expanded) : undefined;
 }
 
-function readNormalizedConfigFromText(configPath: string, text: string): Partial<AkmConfig> | undefined {
+function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
   const raw = parseConfigObjectFromText(text);
   if (!raw) return undefined;
-  const migrated = maybeAutoMigrateLegacyStashes(configPath, raw);
-  const expanded = expandEnvVars(migrated);
+  const expanded = expandEnvVars(raw);
   return pickKnownKeys(expanded);
 }
 
@@ -712,66 +644,6 @@ function parseConfigObjectFromText(text: string): Record<string, unknown> | unde
   }
 }
 
-/**
- * Module-level latch so the legacy-`stashes[]`-observed deprecation pointer
- * fires at most once per process. Reset between tests via `_resetConfigWarnings`
- * to keep test isolation deterministic. See issue #273.
- */
-let legacyStashesObservedWarned = false;
-
-function warnLegacyStashesObserved(): void {
-  if (legacyStashesObservedWarned) return;
-  legacyStashesObservedWarned = true;
-  warn(
-    'Deprecated: config key "stashes" is renamed to "sources". ' +
-      "Support will be removed in a future release. " +
-      'Either re-run `akm` (the loader rewrites "stashes" -> "sources" on disk when writable) ' +
-      "or rename the key by hand in your config.json.",
-  );
-}
-
-/**
- * Reset the once-per-process deprecation latches owned by this module. Tests
- * that exercise multiple `loadConfig()` calls under different inputs use this
- * so each scenario starts from a clean slate. Not part of the public API.
- *
- * @internal
- */
-export function _resetConfigWarnings(): void {
-  legacyStashesObservedWarned = false;
-}
-
-/**
- * Best-effort on-disk config migration for the legacy `stashes` key.
- *
- * When a config file still uses `stashes` and does not already define
- * `sources`, rewrite the file in place with `sources` replacing `stashes`,
- * emit a one-time notice on success, and return the migrated object. If the
- * rewrite fails, emit a warning and return the original object so the loader
- * can still continue with an in-memory fallback.
- */
-function maybeAutoMigrateLegacyStashes(configPath: string, raw: Record<string, unknown>): Record<string, unknown> {
-  if (Object.hasOwn(raw, "sources") || !Object.hasOwn(raw, "stashes")) {
-    return raw;
-  }
-
-  const migrated = Object.fromEntries(
-    Object.entries(raw).map(([key, value]) => (key === "stashes" ? ["sources", value] : [key, value])),
-  );
-
-  try {
-    writeConfigObject(configPath, migrated);
-    warn('Config migrated: "stashes" → "sources" in config.json');
-    return migrated;
-  } catch {
-    warn(
-      'Failed to migrate "stashes" → "sources" in config.json; continuing with the legacy key in memory. ' +
-        "Check file permissions or rename the key manually if this persists.",
-    );
-    return raw;
-  }
-}
-
 function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
   const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
   try {
@@ -852,9 +724,7 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     return undefined;
   }
   if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    console.warn(
-      `[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`,
-    );
+    warn(`[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
     // Still return localModel-only config if localModel was set
     if (localModel) {
       return { endpoint: "", model: "", localModel };
@@ -864,7 +734,7 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   if (typeof obj.model !== "string" || !obj.model) {
     // No remote model, but localModel may still be valid
     if (localModel) {
-      console.warn(
+      warn(
         `[akm] Embedding endpoint "${obj.endpoint as string}" ignored: model is required for remote embeddings. Using local model only.`,
       );
       return { endpoint: "", model: "", localModel };
@@ -903,7 +773,7 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   const obj = value as Record<string, unknown>;
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
   if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    console.warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
+    warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
     return undefined;
   }
   const model = typeof obj.model === "string" ? obj.model : "";
@@ -931,20 +801,10 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
   }
-  if (
-    typeof obj.contextWindow === "number" &&
-    Number.isFinite(obj.contextWindow) &&
-    Number.isInteger(obj.contextWindow) &&
-    obj.contextWindow > 0
-  ) {
-    result.contextWindow = obj.contextWindow;
-  }
   if (typeof obj.capabilities === "object" && obj.capabilities !== null && !Array.isArray(obj.capabilities)) {
     const capsRaw = obj.capabilities as Record<string, unknown>;
     const caps: LlmConnectionConfig["capabilities"] = {};
     if (typeof capsRaw.structuredOutput === "boolean") caps.structuredOutput = capsRaw.structuredOutput;
-    if (typeof capsRaw.longContext === "boolean") caps.longContext = capsRaw.longContext;
-    if (typeof capsRaw.toolUse === "boolean") caps.toolUse = capsRaw.toolUse;
     if (Object.keys(caps).length > 0) result.capabilities = caps;
   }
   if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
@@ -963,10 +823,7 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
  */
 const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "curate_rerank",
-  "tag_dedup",
-  "memory_consolidation",
   "feedback_distillation",
-  "embedding_fallback_score",
   "memory_inference",
   "graph_extraction",
 ]);
@@ -975,11 +832,11 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
   const out: LlmFeatureFlags = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!LOCKED_LLM_FEATURE_KEYS.has(key)) {
-      console.warn(`[akm] Ignoring unknown llm.features key "${key}".`);
+      warn(`[akm] Ignoring unknown llm.features key "${key}".`);
       continue;
     }
     if (typeof value !== "boolean") {
-      console.warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
+      warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
       continue;
     }
     switch (key) {
@@ -992,17 +849,8 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
       case "curate_rerank":
         out.curate_rerank = value;
         break;
-      case "tag_dedup":
-        out.tag_dedup = value;
-        break;
-      case "memory_consolidation":
-        out.memory_consolidation = value;
-        break;
       case "feedback_distillation":
         out.feedback_distillation = value;
-        break;
-      case "embedding_fallback_score":
-        out.embedding_fallback_score = value;
         break;
       // No default: LOCKED_LLM_FEATURE_KEYS is the source of truth for which
       // keys are accepted. Adding a new locked key requires an arm here AND a
@@ -1026,7 +874,6 @@ const PROVIDER_CONFIG_KEYS = new Set([
   "baseUrl",
   "temperature",
   "maxTokens",
-  "contextWindow",
   "capabilities",
 ]);
 
@@ -1162,7 +1009,7 @@ function parseRegistriesConfig(value: unknown): RegistryConfigEntry[] | undefine
   return entries;
 }
 
-function parseStashesConfig(value: unknown): SourceConfigEntry[] | undefined {
+function parseSourcesConfig(value: unknown): SourceConfigEntry[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
   const entries = value
@@ -1221,25 +1068,14 @@ function parseInstallAuditAllowedFinding(value: unknown): InstallAuditAllowedFin
   return finding;
 }
 
-/**
- * Legacy stash type aliases that are normalized to canonical types at
- * config-load time. Both "context-hub" and "github" were never distinct
- * provider types — they were always git stashes — so we normalize them in
- * memory to "git" without rewriting `config.json` on disk.
- */
-const STASH_TYPE_ALIASES: Record<string, string> = {
-  "context-hub": "git",
-  github: "git",
-};
-
 function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
 
-  const rawType = asNonEmptyString(obj.type);
-  if (!rawType) return undefined;
+  const type = asNonEmptyString(obj.type);
+  if (!type) return undefined;
 
-  if (rawType === "openviking") {
+  if (type === "openviking") {
     const name = asNonEmptyString(obj.name) ?? "unnamed";
     throw new ConfigError(
       `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
@@ -1247,8 +1083,6 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
       `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${_getConfigPath()} to remove the openviking entry.`,
     );
   }
-
-  const type = STASH_TYPE_ALIASES[rawType] ?? rawType;
 
   const entry: SourceConfigEntry = { type };
   const entryPath = asNonEmptyString(obj.path);
@@ -1304,19 +1138,15 @@ function deriveStashEntryName(entry: SourceConfigEntry): string {
  * entry is missing the fields its provider type requires (e.g. a
  * `filesystem` entry with no `path`); callers should drop or warn for those.
  *
- * Unknown provider types fall back to `{ type: "filesystem", path: ... }` so
- * legacy aliases (`"context-hub"`, `"github"` for git) still produce a usable
- * runtime value when a path/url is supplied.
+ * Unknown provider types fall back to `{ type: "filesystem", path: ... }` when
+ * a `path` is supplied, so future provider types still produce a usable
+ * runtime value.
  */
 export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefined {
   switch (entry.type) {
     case "filesystem":
       return entry.path ? { type: "filesystem", path: entry.path } : undefined;
     case "git":
-    case "context-hub":
-    case "github":
-      // Note: a configured `github` provider entry historically meant "git
-      // repo over the GitHub web URL", not the registry-install `github:` ref.
       return entry.url ? { type: "git", url: entry.url } : undefined;
     case "website":
       return entry.url
@@ -1351,12 +1181,10 @@ export function parseSourceSpec(entry: SourceConfigEntry): SourceSpec | undefine
  */
 export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] {
   const entries: ConfiguredSource[] = [];
-  // `sources` is the canonical key. `stashes` is the legacy key that the loader
-  // migrates in-memory; only one of the two should be set at runtime.
-  const stashes = config.sources ?? config.stashes ?? [];
+  const sources = config.sources ?? [];
 
   // (1) Primary entry: explicit `primary: true` wins; fall back to top-level stashDir.
-  let primary = stashes.find((entry) => entry.primary === true);
+  let primary = sources.find((entry) => entry.primary === true);
   if (!primary && config.stashDir) {
     primary = { type: "filesystem", path: config.stashDir, primary: true };
   }
@@ -1365,8 +1193,8 @@ export function resolveConfiguredSources(config: AkmConfig): ConfiguredSource[] 
     if (runtime) entries.push(runtime);
   }
 
-  // (2) Declared stashes (skip the primary entry — already added).
-  for (const entry of stashes) {
+  // (2) Declared sources (skip the primary entry — already added).
+  for (const entry of sources) {
     if (entry === primary) continue;
     const runtime = toConfiguredSource(entry, false);
     if (runtime) entries.push(runtime);
@@ -1459,9 +1287,8 @@ function mergeInstallAuditConfig(
  *
  * Scalar fields follow normal override semantics. Known nested objects are
  * deep-merged so project config files can override individual fields without
- * clobbering sibling settings. `stashes` are additive by default, but a later
- * layer can set `stashInheritance: "replace"` (or the legacy
- * `disableGlobalStashes: true`) to drop inherited stashes first.
+ * clobbering sibling settings. `sources` are additive by default, but a later
+ * layer can set `stashInheritance: "replace"` to drop inherited sources first.
  */
 function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmConfig {
   if (!override) return { ...base };
@@ -1495,24 +1322,16 @@ function mergeLoadedConfig(base: AkmConfig, override?: Partial<AkmConfig>): AkmC
   if (base.agent && override.agent) {
     merged.agent = mergeAgentConfig(base.agent, override.agent);
   }
-  // The new `stashInheritance` field wins; fall back to the legacy
-  // `disableGlobalStashes` boolean so old config files behave identically.
-  const replaceStashes =
-    override.stashInheritance === "replace" ||
-    (override.stashInheritance === undefined && override.disableGlobalStashes === true);
-  // Merge `sources` (canonical key). Legacy `stashes` key is handled via the
-  // pickKnownKeys migration which promotes it to `sources` at load time.
-  const overrideSources = override.sources ?? override.stashes ?? [];
-  const baseSources = base.sources ?? base.stashes ?? [];
-  if (replaceStashes) {
+  const replaceSources = override.stashInheritance === "replace";
+  const overrideSources = override.sources ?? [];
+  const baseSources = base.sources ?? [];
+  if (replaceSources) {
     merged.sources = [...overrideSources];
   } else if (overrideSources.length > 0) {
     merged.sources = [...baseSources, ...overrideSources];
   } else if (baseSources.length > 0) {
     merged.sources = [...baseSources];
   }
-  // Clear deprecated stashes field on the merged result — sources is canonical.
-  delete merged.stashes;
 
   return merged;
 }

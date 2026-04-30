@@ -113,20 +113,6 @@ function getCachePaths(repoUrl: string): {
   const cacheRoot = getRegistryIndexCacheDir();
   const rootDir = path.join(cacheRoot, `git-${key}`);
 
-  // One-time silent migration: legacy `context-hub-${key}` directories were
-  // created for ALL git stashes (not just the andrewyng/context-hub repo). If
-  // the new path doesn't yet exist but the legacy one does, rename it in place
-  // so existing clones aren't silently invalidated. Failures are non-fatal —
-  // worst case the repo is re-cloned on the next refresh.
-  try {
-    const legacyRootDir = path.join(cacheRoot, `context-hub-${key}`);
-    if (!fs.existsSync(rootDir) && fs.existsSync(legacyRootDir)) {
-      fs.renameSync(legacyRootDir, rootDir);
-    }
-  } catch {
-    /* migration is best-effort */
-  }
-
   return {
     rootDir,
     repoDir: path.join(rootDir, "repo"),

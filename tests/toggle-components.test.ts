@@ -55,7 +55,7 @@ describe("component toggles", () => {
     expect(skillsRegistry?.enabled).toBe(false);
   });
 
-  test("akm enable context-hub exits with usage error directing user to akm add", () => {
+  test("akm enable <unsupported-target> exits with usage error", () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const stashDir = makeTempDir("akm-toggle-stash-");
@@ -69,11 +69,10 @@ describe("component toggles", () => {
 
     expect(result.status).not.toBe(0);
     const combined = `${result.stdout}\n${result.stderr}`;
-    expect(combined).toContain("akm add");
-    expect(combined).toContain("context-hub");
+    expect(combined).toContain("Unsupported target");
   });
 
-  test("akm disable context-hub exits with usage error directing user to akm add", () => {
+  test("akm disable <unsupported-target> exits with usage error", () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
     const stashDir = makeTempDir("akm-toggle-stash-");
@@ -87,6 +86,6 @@ describe("component toggles", () => {
 
     expect(result.status).not.toBe(0);
     const combined = `${result.stdout}\n${result.stderr}`;
-    expect(combined).toContain("akm add");
+    expect(combined).toContain("Unsupported target");
   });
 });

@@ -1725,11 +1725,6 @@ const completionsCommand = defineCommand({
 function normalizeToggleTarget(target: string): "skills.sh" {
   const normalized = target.trim().toLowerCase();
   if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
-  if (normalized === "context-hub") {
-    throw new UsageError(
-      'The "context-hub" component is no longer toggleable. Run `akm add github:andrewyng/context-hub --name context-hub` to add it as a git stash.',
-    );
-  }
   throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
 }
 
