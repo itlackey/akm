@@ -2,7 +2,8 @@
  * Config-load contract for `llm.features.*` (v1 spec §14, #227).
  *
  * Locks:
- *   - All seven locked keys parse through into the runtime `LlmFeatureFlags`.
+ *   - All locked keys with runtime consumers parse through into the runtime
+ *     `LlmFeatureFlags`.
  *   - Defaults are absent (interpreted as `false` at every call site —
  *     `isLlmFeatureEnabled` is the seam, see tests/llm-feature-gate.test.ts).
  *   - Non-boolean values are warn-and-skipped (no throw, the rest of the
@@ -50,17 +51,14 @@ afterEach(() => {
 });
 
 describe("loadConfig — llm.features (v1 spec §14)", () => {
-  test("parses all seven locked feature keys", () => {
+  test("parses all locked feature keys with runtime consumers", () => {
     writeConfig({
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
         features: {
           curate_rerank: true,
-          tag_dedup: true,
-          memory_consolidation: true,
           feedback_distillation: true,
-          embedding_fallback_score: true,
           memory_inference: true,
           graph_extraction: true,
         },
@@ -69,10 +67,7 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     const cfg = loadConfig();
     expect(cfg.llm?.features).toEqual({
       curate_rerank: true,
-      tag_dedup: true,
-      memory_consolidation: true,
       feedback_distillation: true,
-      embedding_fallback_score: true,
       memory_inference: true,
       graph_extraction: true,
     });
@@ -88,10 +83,9 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     });
     const cfg = loadConfig();
     expect(cfg.llm?.features?.curate_rerank).toBe(true);
-    expect(cfg.llm?.features?.tag_dedup).toBeUndefined();
-    expect(cfg.llm?.features?.memory_consolidation).toBeUndefined();
     expect(cfg.llm?.features?.feedback_distillation).toBeUndefined();
-    expect(cfg.llm?.features?.embedding_fallback_score).toBeUndefined();
+    expect(cfg.llm?.features?.memory_inference).toBeUndefined();
+    expect(cfg.llm?.features?.graph_extraction).toBeUndefined();
   });
 
   test("non-boolean values warn and are skipped without breaking siblings", () => {
@@ -103,19 +97,19 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
           model: "llama3.2",
           features: {
             curate_rerank: "yes" as unknown as boolean,
-            tag_dedup: 1 as unknown as boolean,
+            graph_extraction: 1 as unknown as boolean,
             feedback_distillation: true,
           },
         },
       });
       const cfg = loadConfig();
       expect(cfg.llm?.features?.curate_rerank).toBeUndefined();
-      expect(cfg.llm?.features?.tag_dedup).toBeUndefined();
+      expect(cfg.llm?.features?.graph_extraction).toBeUndefined();
       // The valid sibling continues to parse.
       expect(cfg.llm?.features?.feedback_distillation).toBe(true);
       const messages = warnSpy.mock.calls.map((c) => String(c[0]));
       expect(messages.some((m) => m.includes("curate_rerank") && m.includes("expected boolean"))).toBe(true);
-      expect(messages.some((m) => m.includes("tag_dedup") && m.includes("expected boolean"))).toBe(true);
+      expect(messages.some((m) => m.includes("graph_extraction") && m.includes("expected boolean"))).toBe(true);
     } finally {
       warnSpy.mockRestore();
     }

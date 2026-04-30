@@ -56,33 +56,9 @@ export interface LockfileEntry {
 // ── Paths ───────────────────────────────────────────────────────────────────
 
 const LOCKFILE_NAME = "akm.lock";
-const LEGACY_LOCKFILE_NAME = "stash.lock";
 
 function getLockfilePath(): string {
   return path.join(getConfigDir(), LOCKFILE_NAME);
-}
-
-function getLegacyLockfilePath(): string {
-  return path.join(getConfigDir(), LEGACY_LOCKFILE_NAME);
-}
-
-/**
- * One-time migration: if the new `akm.lock` does not exist but the legacy
- * `stash.lock` does, copy it across so installed-stash tracking survives the
- * rename. Best-effort; failures are silent because the lockfile loader treats
- * a missing file as an empty lockfile.
- */
-function migrateLegacyLockfileIfNeeded(): void {
-  const newPath = getLockfilePath();
-  const legacyPath = getLegacyLockfilePath();
-  try {
-    if (fs.existsSync(newPath)) return;
-    if (!fs.existsSync(legacyPath)) return;
-    fs.mkdirSync(path.dirname(newPath), { recursive: true });
-    fs.copyFileSync(legacyPath, newPath);
-  } catch {
-    /* best-effort — fall through to empty lockfile */
-  }
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────
@@ -156,7 +132,6 @@ function releaseLockSentinel(): void {
 // ── Read / Write ────────────────────────────────────────────────────────────
 
 export function readLockfile(): LockfileEntry[] {
-  migrateLegacyLockfileIfNeeded();
   const lockfilePath = getLockfilePath();
   try {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));

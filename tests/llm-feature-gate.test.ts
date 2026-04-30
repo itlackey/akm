@@ -36,12 +36,12 @@ describe("isLlmFeatureEnabled", () => {
 
   test("returns false when the features block is missing", () => {
     const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
-    expect(isLlmFeatureEnabled(cfg, "tag_dedup")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
   });
 
   test("returns false when the key is absent (default-false)", () => {
     const cfg = configWith({});
-    expect(isLlmFeatureEnabled(cfg, "memory_consolidation")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(false);
   });
 
   test("returns true only on literal boolean true", () => {
@@ -72,8 +72,8 @@ describe("tryLlmFeature", () => {
   test("invokes a thunk fallback only on the fallback path", async () => {
     let fallbackInvocations = 0;
     const result = await tryLlmFeature(
-      "tag_dedup",
-      configWith({ tag_dedup: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       async () => "real",
       () => {
         fallbackInvocations += 1;
@@ -103,8 +103,8 @@ describe("tryLlmFeature", () => {
 
   test("returns the fallback on an async rejection", async () => {
     const result = await tryLlmFeature(
-      "embedding_fallback_score",
-      configWith({ embedding_fallback_score: true }),
+      "graph_extraction",
+      configWith({ graph_extraction: true }),
       async () => {
         throw new Error("kaboom");
       },
@@ -116,8 +116,8 @@ describe("tryLlmFeature", () => {
   test("returns the fallback on hard timeout", async () => {
     const events: { reason: string; error?: Error }[] = [];
     const result = await tryLlmFeature(
-      "memory_consolidation",
-      configWith({ memory_consolidation: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
       "fallback",
       { timeoutMs: 25, onFallback: (e) => events.push({ reason: e.reason, error: e.error }) },
