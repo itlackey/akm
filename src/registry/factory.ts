@@ -29,12 +29,3 @@ export function registerProvider(type: string, factory: RegistryProviderFactory)
 export function resolveProviderFactory(type: string): RegistryProviderFactory | null {
   return registry.resolve(type);
 }
-
-/**
- * Iterate over all registered registry providers. Used by the orchestrator
- * (`src/commands/registry-search.ts`) to fan out queries through the same
- * `RegistryProvider` interface regardless of provider kind.
- */
-export function listProviderTypes(): string[] {
-  return registry.list();
-}

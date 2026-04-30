@@ -1,0 +1,20 @@
+{
+  "entries": [
+    {
+      "name": "docker-homelab",
+      "type": "skill",
+      "description": "Manage docker-compose stacks in a single-host homelab environment",
+      "tags": ["docker", "compose", "homelab", "containers"],
+      "aliases": ["docker-compose", "homelab"],
+      "searchHints": [
+        "run docker-compose stack",
+        "homelab service deployment",
+        "manage compose project",
+        "docker single-host"
+      ],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.95
+    }
+  ]
+}

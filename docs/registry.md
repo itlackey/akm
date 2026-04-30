@@ -14,7 +14,7 @@ https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json
 ```
 
 The [akm-registry](https://github.com/itlackey/akm-registry) repo publishes
-a static `index.json` (v2 format). It merges three sources:
+a static `index.json` (v3 format). It merges three sources:
 
 - npm packages with the `akm-stash` keyword
 - GitHub repos with the `akm-stash` topic
@@ -94,7 +94,7 @@ akm search "deploy" --source both
 # Search registries directly via the registry subcommand
 akm registry search "deploy"
 
-# Include asset-level results from v2 indexes
+# Include asset-level results from v3 indexes
 akm registry search "deploy" --assets
 ```
 
@@ -109,13 +109,13 @@ Each registry hit includes:
 | `id` | Unique identifier (e.g. `npm:@scope/stash`) |
 | `description` | Summary from the registry |
 | `action` | Ready-to-run next step such as `akm add ... -> then search again` |
-| `curated` | Whether the entry was manually reviewed |
+| `quality` | Optional provenance marker — `"generated"`, `"curated"`, or `"proposed"`. Replaces the legacy `curated` boolean removed in 0.7.0 |
 
 Use `--detail full` to include ranking metadata like `score`.
 
 ### The `--assets` Flag
 
-When a registry publishes a v2 index (see below), `akm registry search` can
+When a registry publishes a v3 index (see below), `akm registry search` can
 return individual asset-level hits in addition to stash-level hits. Pass
 `--assets` to enable this:
 
@@ -308,15 +308,17 @@ a managed source -- it only extracts the single requested asset.
 
 ## Search Priority
 
-When multiple sources provide the same asset name, the first match wins:
+`akm search` and `akm show` query a single local FTS5 index that covers
+every configured source's directory. There is no fixed lookup order —
+results are ranked by relevance and utility, and precedence is expressed
+through ranking rather than a per-source fan-out (see
+[concepts.md](concepts.md#search-priority)).
 
-1. **Working stash** -- Your personal assets in `AKM_STASH_DIR` (`~/akm`)
-2. **Local sources** -- Directories added via `akm add`
-3. **Managed sources** -- Packages added via `akm add`, cached in `~/.cache/akm/`
-4. **Remote sources** -- Providers queried at search time
-
-This means your local assets always override managed package versions. Use
-`akm clone` to copy an asset into your working stash for editing.
+When two sources contain an asset with the same name, the working stash
+typically wins by convention because its files are usually more recent.
+Use `akm clone` to copy an asset into your working stash for local
+editing — your edits then override the upstream copy in subsequent
+searches.
 
 ## Registry Providers
 
@@ -332,7 +334,7 @@ entry that the indexer walks like any other source.
 
 #### `static-index` (default)
 
-Fetches a static JSON v2 index from the configured URL and performs
+Fetches a static JSON v3 index from the configured URL and performs
 client-side scoring. The index is cached locally with a 1-hour TTL and a
 7-day stale fallback.
 
@@ -365,15 +367,6 @@ To install a skill found via skills.sh, use the `ref` field (GitHub
 akm add vercel-labs/agent-skills
 ```
 
-### Future Provider Candidates
-
-| Provider | API | Notes |
-| --- | --- | --- |
-| ClawdHub | `https://clawhub.com` | OpenClaw/Clawdbot skill registry with vector search |
-| LobeHub | `https://lobehub.com/skills/` | Skills marketplace with reviews |
-| npm keyword | `https://registry.npmjs.org/-/v1/search` | Real-time npm search by keyword |
-| GitHub topic | GitHub API `search/repositories` | Live search by topic |
-
 ## Hosting Your Own Registry
 
 A registry is a static JSON file conforming to the registry index schema.
@@ -383,7 +376,7 @@ Minimal example:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "updatedAt": "2026-03-12T00:00:00Z",
   "stashes": [
     {
@@ -411,20 +404,21 @@ To generate the index automatically, use the built-in `build-index` subcommand:
 akm registry build-index --out dist/index.json
 ```
 
-This scans the current directory for asset type directories and produces a v2
+This scans the current directory for asset type directories and produces a v3
 index with stash and asset entries. You can also use the tooling in the
 [akm-registry](https://github.com/itlackey/akm-registry) repository used by the
 official registry.
 
-## Registry Index v2
+## Registry Index v3
 
-Version 2 of the registry index schema adds an optional `assets` array to
-each stash entry. This enables asset-level search without installing the stash
+Version 3 of the registry index schema is the only format `akm-cli >=
+0.6.0` parses. It carries an `assets` array on each stash entry so
+clients can perform asset-level search without installing the stash
 first.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "updatedAt": "2026-03-12T00:00:00Z",
   "stashes": [
     {
@@ -448,13 +442,16 @@ Each asset entry supports:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `type` | yes | Asset type (`script`, `skill`, `command`, `agent`, `knowledge`, `memory`) |
+| `type` | yes | Any registered asset type (e.g. `script`, `skill`, `command`, `agent`, `knowledge`, `memory`, `workflow`, `vault`, `wiki`, `lesson`). The renderer registry is the authority — see v1 spec §4.1. |
 | `name` | yes | Asset name |
 | `description` | no | One-line summary |
 | `tags` | no | Searchable keywords |
 
-v1 indexes (without `assets`) remain fully supported. akm treats the
-`version` field as forward-compatible: unknown fields are ignored.
+The 0.6.0 release dropped support for the legacy v1 / v2 indexes;
+publishers must regenerate `index.json` with `akm registry build-index`
+or the [akm-registry](https://github.com/itlackey/akm-registry) tooling
+(see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md)). akm
+treats unknown fields inside a v3 entry as forward-compatible.
 
 ## Cache Layout
 

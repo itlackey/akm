@@ -1,0 +1,13 @@
+id: opencode/opencode-config-model
+title: "Pin opencode model to anthropic/claude-opus-4-7 via opencode.json"
+domain: opencode
+difficulty: easy
+slice: train
+gold_ref: skill:opencode
+stash: multi-domain
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: opencode/config-basics

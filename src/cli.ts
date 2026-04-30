@@ -5,12 +5,22 @@ import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
+import { akmDistill } from "./commands/distill";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
 import { renderMigrationHelp } from "./commands/migration-help";
+import {
+  akmProposalAccept,
+  akmProposalDiff,
+  akmProposalList,
+  akmProposalReject,
+  akmProposalShow,
+} from "./commands/proposal";
+import { akmPropose } from "./commands/propose";
+import { akmReflect } from "./commands/reflect";
 import { searchRegistry } from "./commands/registry-search";
 import {
   buildMemoryFrontmatter,
@@ -33,7 +43,7 @@ import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig }
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
-import { setQuiet, warn } from "./core/warn";
+import { setQuiet, setVerbose, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
@@ -96,6 +106,10 @@ function parseAllFlagValues(flag: string): string[] {
     const arg = process.argv[i];
     if (arg === flag && i + 1 < process.argv.length) {
       values.push(process.argv[i + 1] as string);
+      // BUG-M4: skip the value index so `--tag --tag` (literal `--tag`
+      // value) does not double-count the second `--tag` as a separate
+      // flag occurrence.
+      i++;
     } else if (arg.startsWith(`${flag}=`)) {
       values.push(arg.slice(flag.length + 1));
     }
@@ -137,7 +151,8 @@ function output(command: string, result: unknown): void {
 const setupCommand = defineCommand({
   meta: {
     name: "setup",
-    description: "Interactive configuration wizard for embeddings, LLM, registries, and stash sources",
+    description:
+      "Interactive configuration wizard: detects services and walks you through embeddings, LLM, registries, sources, and agent profiles. Writes config once at the end.",
   },
   async run() {
     await runWithJsonErrors(async () => {
@@ -200,7 +215,7 @@ const searchCommand = defineCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, or any). Use workflow to find step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -208,6 +223,11 @@ const searchCommand = defineCommand({
       type: "string",
       description:
         "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
+    },
+    "include-proposed": {
+      type: "boolean",
+      description: 'Include entries with quality:"proposed" in the result set. Excluded by default (v1 spec §4.2).',
+      default: false,
     },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
@@ -219,6 +239,7 @@ const searchCommand = defineCommand({
         throw new UsageError(
           'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
           "MISSING_REQUIRED_ARGUMENT",
+          "Provide a query string. Filter by type with --type skill|command|...; limit results with --limit N.",
         );
       }
       const type = args.type as string | undefined;
@@ -232,7 +253,8 @@ const searchCommand = defineCommand({
       // occurrences directly from argv (same pattern as `--tag`).
       const filterTokens = parseAllFlagValues("--filter");
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
-      const result = await akmSearch({ query, type, limit, source, filters });
+      const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
+      const result = await akmSearch({ query, type, limit, source, filters, includeProposed });
       output("search", result);
     });
   },
@@ -241,17 +263,27 @@ const searchCommand = defineCommand({
 const curateCommand = defineCommand({
   meta: { name: "curate", description: "Curate the best matching assets for a task or prompt" },
   args: {
-    query: { type: "positional", description: "Task or prompt to curate assets for", required: true },
+    // Optional in citty so run() is invoked when omitted; we re-validate
+    // below to surface a structured UsageError (exit 2) instead of citty's
+    // default help-banner exit-0.
+    query: { type: "positional", description: "Task or prompt to curate assets for", required: false },
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, or any). Use workflow to curate step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (!args.query || !String(args.query).trim()) {
+        throw new UsageError(
+          'A curate query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
+          "MISSING_REQUIRED_ARGUMENT",
+          'Describe the task you want assets for, e.g. `akm curate "deploy to prod"`.',
+        );
+      }
       const type = args.type as string | undefined;
       const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
       if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
@@ -295,16 +327,30 @@ const addCommand = defineCommand({
     },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
+    "allow-insecure": {
+      type: "boolean",
+      description: "Allow a plain HTTP source URL (otherwise rejected for non-localhost hosts)",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
+      const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
         if (shouldWarnOnPlainHttp(ref)) {
+          if (!allowInsecure) {
+            throw new UsageError(
+              "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
+                "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+              "INVALID_FLAG_VALUE",
+              "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
+            );
+          }
           warn(
-            "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+            "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
           );
         }
         let parsedOptions: Record<string, unknown> | undefined;
@@ -336,8 +382,16 @@ const addCommand = defineCommand({
       }
 
       if (shouldWarnOnPlainHttp(ref)) {
+        if (!allowInsecure) {
+          throw new UsageError(
+            "Source URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious payload. " +
+              "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+            "INVALID_FLAG_VALUE",
+            "Re-run with `--allow-insecure` only after confirming the URL is trusted.",
+          );
+        }
         warn(
-          "Warning: source URL uses plain HTTP (not HTTPS). For security, prefer https:// to protect against eavesdropping and tampering.",
+          "Warning: source URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious payload.",
         );
       }
       const websiteOptions = buildWebsiteOptions(args);
@@ -520,7 +574,12 @@ const showCommand = defineCommand({
       "Show a stash asset by ref (e.g. akm show knowledge:guide.md toc, akm show knowledge:guide.md section 'Auth')",
   },
   args: {
-    ref: { type: "positional", description: "Asset ref (type:name)", required: true },
+    ref: {
+      type: "positional",
+      description:
+        'Asset ref ([origin//]type:name) optionally followed by a view mode. View modes: `toc` (table of contents), `section "Heading"` (extract one section), `lines <start> <end>` (line range), `frontmatter` (YAML metadata only), `full` (raw file). Example: `akm show knowledge:guide.md section "Auth"`.',
+      required: true,
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
     scope: {
@@ -935,16 +994,23 @@ const feedbackCommand = defineCommand({
     description: "Record positive or negative feedback for any indexed stash asset",
   },
   args: {
-    ref: { type: "positional", description: "Asset ref (type:name)", required: true },
+    // Optional in citty so run() is invoked even when omitted; we re-validate
+    // and throw a structured UsageError below so exit code is 2 (USAGE) rather
+    // than citty's default 0 (help banner).
+    ref: { type: "positional", description: "Asset ref (type:name)", required: false },
     positive: { type: "boolean", description: "Record positive feedback", default: false },
     negative: { type: "boolean", description: "Record negative feedback", default: false },
     note: { type: "string", description: "Optional note to attach to the feedback" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      const ref = args.ref.trim();
+      const ref = (args.ref ?? "").trim();
       if (!ref) {
-        throw new UsageError("Asset ref is required. Usage: akm feedback <ref> --positive|--negative");
+        throw new UsageError(
+          "Asset ref is required. Usage: akm feedback <ref> --positive|--negative",
+          "MISSING_REQUIRED_ARGUMENT",
+          "Pass a ref like `skill:deploy` and either --positive or --negative.",
+        );
       }
       parseAssetRef(ref);
       if (args.positive && args.negative) {
@@ -1141,11 +1207,41 @@ const workflowNextCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
+      // If the target looks like a UUID-style run id (no `:` and matches the
+      // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
+      // error before parseAssetRef gets to throw an unhelpful ref-parse error.
+      if (looksLikeWorkflowRunId(args.target)) {
+        const { listWorkflowRuns: listRuns } = await import("./workflows/runs.js");
+        const { runs: existingRuns } = listRuns({});
+        if (!existingRuns.some((r) => r.id === args.target)) {
+          throw new NotFoundError(
+            `Workflow run "${args.target}" not found.`,
+            "WORKFLOW_NOT_FOUND",
+            "Run `akm workflow list --active` to see runs.",
+          );
+        }
+      }
       const result = await getNextWorkflowStep(args.target, parsedParams);
       output("workflow-next", result);
     });
   },
 });
+
+/**
+ * Heuristic: a workflow run id is a UUID-shaped or hex-id-shaped string with
+ * no `:` separator (refs always contain a colon: `workflow:<name>` or
+ * `<origin>//workflow:<name>`). When this matches we can give a much better
+ * error than parseAssetRef's "Invalid asset type" failure.
+ */
+function looksLikeWorkflowRunId(target: string): boolean {
+  if (target.includes(":")) return false;
+  if (target.includes("/")) return false;
+  // UUID v4-ish: 8-4-4-4-12 hex digits separated by dashes.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target)) return true;
+  // Bare hex/alphanumeric run ids of >=8 chars (covers shortened ids).
+  if (/^[0-9a-z][0-9a-z_-]{7,}$/i.test(target) && /[0-9]/.test(target)) return true;
+  return false;
+}
 
 const workflowCompleteCommand = defineCommand({
   meta: {
@@ -1630,7 +1726,12 @@ const hintsCommand = defineCommand({
     description: "Print agent instructions on how to use akm, use --detail full for a complete guide",
   },
   args: {
-    detail: { type: "string", description: "Detail level (normal|full)", default: "normal" },
+    detail: {
+      type: "string",
+      description:
+        "Hints detail level — accepts only `normal` or `full`. Differs from the global --detail flag (brief|normal|full|summary|agent); other values are rejected with INVALID_DETAIL_VALUE.",
+      default: "normal",
+    },
   },
   run({ args }) {
     if (args.detail !== "normal" && args.detail !== "full") {
@@ -1656,14 +1757,26 @@ const helpCommand = defineCommand({
           "Print release notes and migration guidance for a version. Bundled notes live in docs/migration/release-notes/<version>.md; an unknown version lists what's available.",
       },
       args: {
+        // Optional in citty so run() is invoked even when omitted; we
+        // re-validate below to surface a structured UsageError (exit 2)
+        // instead of citty's default help-banner exit-0.
         version: {
           type: "positional",
           description: "Version to review (for example 0.6.0, v0.6.0, 0.6.0-rc1, or latest)",
-          required: true,
+          required: false,
         },
       },
       run({ args }) {
-        process.stdout.write(renderMigrationHelp(args.version));
+        return runWithJsonErrors(() => {
+          if (!args.version || !String(args.version).trim()) {
+            throw new UsageError(
+              "Usage: akm help migrate <version>.",
+              "MISSING_REQUIRED_ARGUMENT",
+              "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
+            );
+          }
+          process.stdout.write(renderMigrationHelp(args.version));
+        });
       },
     }),
   },
@@ -1704,11 +1817,6 @@ const completionsCommand = defineCommand({
 function normalizeToggleTarget(target: string): "skills.sh" {
   const normalized = target.trim().toLowerCase();
   if (normalized === "skills.sh" || normalized === "skills-sh") return "skills.sh";
-  if (normalized === "context-hub") {
-    throw new UsageError(
-      'The "context-hub" component is no longer toggleable. Run `akm add github:andrewyng/context-hub --name context-hub` to add it as a git stash.',
-    );
-  }
   throw new UsageError(`Unsupported target "${target}". Supported targets: skills.sh`);
 }
 
@@ -2008,6 +2116,22 @@ const vaultLoadCommand = defineCommand({
       const script = buildShellExportScript(absPath);
 
       // Write to a mode-0600 temp file the shell can source.
+      //
+      // INTENTIONAL: this site uses `os.tmpdir()` (i.e. `/tmp` on Unix)
+      // rather than `${getCacheDir()}/vault/`. The temp file is written
+      // mode-0600, sourced by the parent shell via `eval`, and immediately
+      // `rm -f`'d on the same line of the emitted snippet. `/tmp` is the
+      // conventional location for short-lived shell-eval scratch files and
+      // benefits from tmp-cleanup-on-reboot semantics, which operators
+      // expect for ephemeral secret material. Moving to `~/.cache/akm/`
+      // would surprise those operators and also persist the file across
+      // reboots if the eval is interrupted before the inline `rm -f` runs.
+      // The bench/registry-build rationale (#276/#284) — orphan dirs
+      // accumulating under `/tmp` from long-running builds — does not
+      // apply here: the file is single-shot, a few hundred bytes, and
+      // removed by the same shell command that sources it.
+      // Regression test: tests/vault-load-error.test.ts verifies the
+      // emitted snippet contains both `. <path>` and `rm -f <path>`.
       const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
       fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
       try {
@@ -2432,6 +2556,257 @@ const eventsCommand = defineCommand({
   },
 });
 
+// ── proposal substrate (#225) ────────────────────────────────────────────────
+
+const proposalListCommand = defineCommand({
+  meta: { name: "list", description: "List pending proposals (use --include-archive to see decided ones)" },
+  args: {
+    status: { type: "string", description: "Filter by status (pending|accepted|rejected)" },
+    ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    "include-archive": {
+      type: "boolean",
+      description: "Include accepted/rejected proposals from the archive",
+      default: false,
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const status = parseProposalStatus(args.status);
+      const result = akmProposalList({
+        status,
+        ref: args.ref,
+        includeArchive: getHyphenatedBoolean(args, "include-archive"),
+      });
+      output("proposal-list", result);
+    });
+  },
+});
+
+const proposalShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a proposal's metadata, payload, and validation report" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalShow({ id: args.id });
+      output("proposal-show", result);
+    });
+  },
+});
+
+const proposalAcceptCommand = defineCommand({
+  meta: { name: "accept", description: "Validate and promote a proposal to a real asset" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmProposalAccept({ id: args.id, target: args.target });
+      output("proposal-accept", result);
+    });
+  },
+});
+
+const proposalRejectCommand = defineCommand({
+  meta: { name: "reject", description: "Archive a pending proposal with an optional reason" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    reason: { type: "string", description: "Reason for rejection (recorded in the archived proposal)" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalReject({ id: args.id, reason: args.reason });
+      output("proposal-reject", result);
+    });
+  },
+});
+
+const proposalDiffCommand = defineCommand({
+  meta: { name: "diff", description: "Show the diff between an existing asset and a pending proposal" },
+  args: {
+    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    target: { type: "string", description: "Override the write target by source name" },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmProposalDiff({ id: args.id, target: args.target });
+      output("proposal-diff", result);
+    });
+  },
+});
+
+const proposalCommand = defineCommand({
+  meta: {
+    name: "proposal",
+    description: "Review and promote queued asset proposals (durable storage under .akm/proposals/)",
+  },
+  subCommands: {
+    list: proposalListCommand,
+    show: proposalShowCommand,
+    accept: proposalAcceptCommand,
+    reject: proposalRejectCommand,
+    diff: proposalDiffCommand,
+  },
+});
+
+// ── distill (#228) ──────────────────────────────────────────────────────────
+
+const distillCommand = defineCommand({
+  meta: {
+    name: "distill",
+    description:
+      "Distil feedback for an asset into a queued lesson proposal (gated on llm.features.feedback_distillation)",
+  },
+  args: {
+    ref: { type: "positional", description: "Asset ref (type:name) to distil from", required: true },
+    "source-run": {
+      type: "string",
+      description: "Optional run id propagated onto the queued proposal for traceability",
+    },
+    "exclude-feedback-from": {
+      type: "string",
+      description:
+        "Comma-separated asset refs whose feedback events MUST be filtered out before the LLM input is built. Falls back to AKM_DISTILL_EXCLUDE_FEEDBACK_FROM when omitted.",
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const excludeFlag = getHyphenatedArg(args, "exclude-feedback-from");
+      const excludeEnv = process.env.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM;
+      // CLI flag takes precedence over the env var when both are present.
+      const excludeRaw = excludeFlag ?? excludeEnv;
+      const excludeFeedbackFromRefs = parseExcludeFeedbackFromRefs(excludeRaw);
+      const result = await akmDistill({
+        ref: args.ref,
+        sourceRun: getHyphenatedArg(args, "source-run"),
+        ...(excludeFeedbackFromRefs.length > 0 ? { excludeFeedbackFromRefs } : {}),
+      });
+      output("distill", result);
+    });
+  },
+});
+
+/**
+ * Parse a comma-separated list of asset refs (#267 — `--exclude-feedback-from`
+ * and `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM`). Each entry is validated against
+ * the canonical `[origin//]type:name` grammar via `parseAssetRef`; an
+ * invalid entry surfaces as a UsageError → exit 2.
+ */
+function parseExcludeFeedbackFromRefs(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  const refs = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  for (const ref of refs) {
+    try {
+      parseAssetRef(ref);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new UsageError(
+        `Invalid --exclude-feedback-from ref "${ref}": ${message}`,
+        "INVALID_FLAG_VALUE",
+        "Each ref must match `[origin//]type:name`, e.g. skill:deploy or team//memory:auth-tips.",
+      );
+    }
+  }
+  return refs;
+}
+
+function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === "pending" || trimmed === "accepted" || trimmed === "rejected") return trimmed;
+  throw new UsageError(
+    `Invalid --status value: "${raw}". Expected one of: pending, accepted, rejected.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
+// ── reflect / propose (agent proposal-producers, #226) ──────────────────────
+
+const reflectCommand = defineCommand({
+  meta: {
+    name: "reflect",
+    description: "Ask the configured agent CLI to review an asset (or recent feedback) and queue a revised proposal",
+  },
+  args: {
+    ref: {
+      type: "positional",
+      description: "Asset ref (type:name) to reflect on. Optional — omit to reflect across recent feedback.",
+      required: false,
+    },
+    task: { type: "string", description: "Optional task hint passed into the reflection prompt" },
+    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
+      const timeoutMs =
+        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const result = await akmReflect({
+        ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
+        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
+        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+      output("reflect", result);
+      if (result.ok === false) {
+        process.exit(EXIT_GENERAL);
+      }
+    });
+  },
+});
+
+const proposeCommand = defineCommand({
+  meta: {
+    name: "propose",
+    description: "Ask the configured agent CLI to author a brand-new asset and queue it as a proposal",
+  },
+  args: {
+    // Optional in citty so run() is invoked when omitted; we re-validate
+    // below to surface a structured UsageError (exit 2) instead of citty's
+    // default help-banner exit-0.
+    type: { type: "positional", description: "Asset type (skill, command, knowledge, lesson, ...)", required: false },
+    name: { type: "positional", description: "Asset name (slug or path under the type dir)", required: false },
+    task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
+    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      // citty silently shows help and exits 0 when required positionals are
+      // omitted. Re-validate explicitly so the exit code is 2 (USAGE) and a
+      // structured JSON error reaches scripted callers.
+      if (!args.type || !args.name || !args.task) {
+        throw new UsageError(
+          "Usage: akm propose <type> <name> --task '<task>'.",
+          "MISSING_REQUIRED_ARGUMENT",
+          "Provide the asset type, name, and a --task description, e.g. `akm propose skill deploy --task 'Deploy a service'`.",
+        );
+      }
+      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
+      const timeoutMs =
+        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const result = await akmPropose({
+        type: String(args.type),
+        name: String(args.name),
+        task: String(args.task ?? ""),
+        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+      output("propose", result);
+      if (result.ok === false) {
+        process.exit(EXIT_GENERAL);
+      }
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -2439,9 +2814,14 @@ const main = defineCommand({
     description: "Agent Kit Manager — search, show, and manage assets from your stash.",
   },
   args: {
-    format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
-    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
+    format: { type: "string", description: "Output format (json|jsonl|text|yaml)", default: "json" },
+    detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)", default: "brief" },
     quiet: { type: "boolean", alias: "q", description: "Suppress stderr warnings", default: false },
+    verbose: {
+      type: "boolean",
+      description: "Print per-spec diagnostics to stderr (also honours AKM_VERBOSE env var)",
+      default: false,
+    },
   },
   subCommands: {
     setup: setupCommand,
@@ -2468,6 +2848,10 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
+    proposal: proposalCommand,
+    reflect: reflectCommand,
+    propose: proposeCommand,
+    distill: distillCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
@@ -2532,6 +2916,12 @@ async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Prom
     // Apply --quiet flag early so warnings inside the command are suppressed
     if (process.argv.includes("--quiet") || process.argv.includes("-q")) {
       setQuiet(true);
+    }
+    // Apply --verbose flag early so per-spec diagnostics (gated behind
+    // `isVerbose()` in src/core/warn.ts) are restored. The `AKM_VERBOSE`
+    // env var still wins regardless — see warn.ts for the precedence rule.
+    if (process.argv.includes("--verbose")) {
+      setVerbose(true);
     }
     await fn();
   } catch (error: unknown) {

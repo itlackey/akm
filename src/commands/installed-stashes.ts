@@ -378,7 +378,7 @@ function selectTargets(
     );
   }
 
-  throw new NotFoundError(`No matching source for target: ${target}`);
+  throw new NotFoundError(`No matching source for target: ${target}`, "SOURCE_NOT_FOUND");
 }
 
 function tryResolveInstalledTarget(installed: InstalledStashEntry[], target: string): InstalledStashEntry | undefined {

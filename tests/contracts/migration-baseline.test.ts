@@ -21,8 +21,9 @@ describe("docs/migration/v1.md — pre-release migration baseline", () => {
     expect(doc).toContain("Proposal queue");
   });
 
-  test("describes proposal.db as a sibling SQLite store", () => {
-    expect(doc).toContain("proposal.db");
+  test("describes the proposal queue as durable filesystem state under .akm/proposals/", () => {
+    expect(doc).toContain("<stashRoot>/.akm/proposals/");
+    expect(doc).toContain("proposal.json");
   });
 
   test("calls out the registry `curated` removal as a planned change", () => {

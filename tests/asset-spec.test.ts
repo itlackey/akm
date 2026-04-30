@@ -41,7 +41,8 @@ describe("getAssetTypes", () => {
     expect(types).toContain("memory");
     expect(types).toContain("vault");
     expect(types).toContain("wiki");
-    expect(types).toHaveLength(9);
+    expect(types).toContain("lesson");
+    expect(types).toHaveLength(10);
   });
 });
 
@@ -55,6 +56,7 @@ describe("TYPE_DIRS", () => {
     expect(TYPE_DIRS.script).toBe("scripts");
     expect(TYPE_DIRS.memory).toBe("memories");
     expect(TYPE_DIRS.vault).toBe("vaults");
+    expect(TYPE_DIRS.lesson).toBe("lessons");
   });
 });
 

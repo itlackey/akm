@@ -38,7 +38,24 @@ import { getCacheDir } from "./paths";
  * them required a larger refactor than this issue scoped. Reintroduce them as
  * literal members here when those emit sites land.
  */
-export type EventType = "add" | "remove" | "update" | "remember" | "import" | "save" | "feedback" | string;
+export type EventType =
+  | "add"
+  | "remove"
+  | "update"
+  | "remember"
+  | "import"
+  | "save"
+  | "feedback"
+  // Proposal substrate (#225). `promoted` and `rejected` are emitted by the
+  // `akm proposal accept` / `akm proposal reject` flows. The `*_invoked`
+  // events are emitted by the `akm reflect` (#226), `akm propose`, and
+  // `akm distill` (#228) command flows.
+  | "promoted"
+  | "rejected"
+  | "reflect_invoked"
+  | "propose_invoked"
+  | "distill_invoked"
+  | string;
 
 export interface AppendEventInput {
   eventType: EventType;

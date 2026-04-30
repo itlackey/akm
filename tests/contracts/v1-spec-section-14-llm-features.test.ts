@@ -1,20 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../src/llm/feature-gate";
 import { CONFIG_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 // Pins v1 spec §14 — `llm.features.*` (Planned for v1).
 //
-// The five locked feature keys cannot be renamed after v1.0. New keys may
-// be added; these five must not move.
+// The locked feature keys cannot be renamed after v1.0. New keys may be
+// added; these must not move. Spec §14 retains the historical phantom keys
+// (`tag_dedup`, `memory_consolidation`, `embedding_fallback_score`) so the
+// spec text continues to compile, but they are not in the runtime schema or
+// in user-facing configuration.md (issue #284 phantom-flag cleanup).
 
-const LOCKED_FEATURE_KEYS = [
-  "curate_rerank",
-  "tag_dedup",
-  "memory_consolidation",
-  "feedback_distillation",
-  "embedding_fallback_score",
-  "memory_inference",
-  "graph_extraction",
-];
+const LOCKED_FEATURE_KEYS = ["curate_rerank", "feedback_distillation", "memory_inference", "graph_extraction"];
 
 describe("v1 spec §14 — llm.features.*", () => {
   const spec = readDoc(SPEC_PATH);
@@ -70,7 +66,7 @@ describe("v1 spec §14 — llm.features.*", () => {
 
 describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## Planned for v1 — `llm.features.*` map");
+  const block = extractSection(config, "## `llm.features.*` map");
 
   test("configuration.md has the llm.features section", () => {
     expect(block).not.toBe("");
@@ -84,5 +80,43 @@ describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
 
   test("configuration.md says unknown llm.features keys are warn-and-ignore", () => {
     expect(block).toMatch(/Unknown keys.*warn-and-ignore/i);
+  });
+});
+
+describe("v1 spec §14 — runtime gate seam", () => {
+  // The graceful-fallback contract says: disabled gate returns the fallback
+  // without ever calling fn; throws are swallowed and return fallback. We
+  // pin the seam shape here so renames trigger the contract test.
+  test("isLlmFeatureEnabled is exported and pure", () => {
+    expect(typeof isLlmFeatureEnabled).toBe("function");
+    expect(isLlmFeatureEnabled(undefined, "curate_rerank")).toBe(false);
+  });
+
+  test("tryLlmFeature returns fallback when the gate is disabled (no fn call)", async () => {
+    let called = false;
+    const result = await tryLlmFeature(
+      "curate_rerank",
+      undefined,
+      () => {
+        called = true;
+        return "ran";
+      },
+      "fallback",
+    );
+    expect(result).toBe("fallback");
+    expect(called).toBe(false);
+  });
+
+  test("tryLlmFeature swallows throws and returns fallback when enabled", async () => {
+    const config = { llm: { features: { curate_rerank: true } } } as never;
+    const result = await tryLlmFeature(
+      "curate_rerank",
+      config,
+      () => {
+        throw new Error("boom");
+      },
+      "fallback",
+    );
+    expect(result).toBe("fallback");
   });
 });

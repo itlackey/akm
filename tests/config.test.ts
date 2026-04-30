@@ -159,17 +159,8 @@ describe("loadConfig", () => {
     expect((config as unknown as Record<string, unknown>).anotherKey).toBeUndefined();
   });
 
-  test("converts legacy searchPaths into stashes with type filesystem", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ searchPaths: ["/valid", 123, null, "/also-valid"] }));
-    const config = loadConfig();
-    expect(config.sources).toEqual([
-      { type: "filesystem", path: "/valid" },
-      { type: "filesystem", path: "/also-valid" },
-    ]);
-  });
-
   test("ignores wrong types for known keys", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "yes", searchPaths: "not-an-array" }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "yes", sources: "not-an-array" }));
     const config = loadConfig();
     expect(config.semanticSearchMode).toBe("auto");
     expect(config.sources).toBeUndefined();
@@ -200,19 +191,9 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
-  test("migrates legacy semanticSearch: true to semanticSearchMode: 'auto'", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: true }));
-    expect(loadConfig().semanticSearchMode).toBe("auto");
-  });
-
-  test("migrates legacy semanticSearch: false to semanticSearchMode: 'off'", () => {
+  test("ignores legacy semanticSearch boolean (compat shim retired)", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearch: false }));
-    expect(loadConfig().semanticSearchMode).toBe("off");
-  });
-
-  test("semanticSearchMode takes precedence over legacy semanticSearch", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ semanticSearchMode: "off", semanticSearch: true }));
-    expect(loadConfig().semanticSearchMode).toBe("off");
+    expect(loadConfig().semanticSearchMode).toBe("auto");
   });
 
   test("ignores stash-root config.json files", () => {
@@ -272,7 +253,7 @@ describe("loadConfig", () => {
     }
   });
 
-  test("project config can disable inherited sources while keeping project sources", () => {
+  test("project config can replace inherited sources while keeping project sources", () => {
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
@@ -285,7 +266,7 @@ describe("loadConfig", () => {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
-          disableGlobalStashes: true,
+          stashInheritance: "replace",
           sources: [{ type: "filesystem", path: "/project-stash" }],
         }),
       );
@@ -298,7 +279,7 @@ describe("loadConfig", () => {
     }
   });
 
-  test("project config can disable inherited sources without defining replacements", () => {
+  test("project config can replace inherited sources without defining replacements", () => {
     const projectDir = makeTmpDir();
     try {
       writeRawConfig(
@@ -311,7 +292,7 @@ describe("loadConfig", () => {
       writeRawConfig(
         path.join(projectDir, ".akm", "config.json"),
         JSON.stringify({
-          disableGlobalStashes: true,
+          stashInheritance: "replace",
         }),
       );
 
@@ -327,7 +308,7 @@ describe("loadConfig", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
       }),
     );
     expect(() => loadConfig()).toThrow(ConfigError);
@@ -339,7 +320,7 @@ describe("loadConfig", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
       }),
     );
     try {
@@ -355,7 +336,7 @@ describe("loadConfig", () => {
     writeRawConfig(
       getConfigPath(),
       JSON.stringify({
-        stashes: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
+        sources: [{ type: "openviking", url: "https://ov.example.com", name: "my-ov" }],
       }),
     );
     try {
@@ -488,98 +469,6 @@ describe("output config", () => {
   test("ignores invalid output config values", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ output: { format: "xml", detail: "max" } }));
     expect(loadConfig().output).toEqual({ format: "json", detail: "brief" });
-  });
-});
-
-// ── stashes → sources migration ─────────────────────────────────────────────
-
-describe("legacy stashes → sources migration", () => {
-  test("loads legacy config with stashes key and maps to sources in-memory", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        semanticSearchMode: "off",
-        stashes: [{ type: "filesystem", path: "/legacy-path" }],
-      }),
-    );
-    const config = loadConfig();
-    // The loader migrates the legacy `stashes` key to `sources` in-memory.
-    expect(config.sources).toEqual([{ type: "filesystem", path: "/legacy-path" }]);
-    // The deprecated `stashes` field should NOT be present on the loaded config.
-    expect(config.stashes).toBeUndefined();
-  });
-
-  test("prefers sources over stashes when both are present in raw config", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        semanticSearchMode: "off",
-        sources: [{ type: "filesystem", path: "/new-path" }],
-        stashes: [{ type: "filesystem", path: "/old-path" }],
-      }),
-    );
-    const config = loadConfig();
-    expect(config.sources).toEqual([{ type: "filesystem", path: "/new-path" }]);
-    expect(config.stashes).toBeUndefined();
-  });
-
-  test("migration rewrites legacy stashes key on first load and emits a notice", () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn.bind(console);
-    console.warn = (msg: string) => warnings.push(msg);
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          stashes: [{ type: "filesystem", path: "/legacy-path" }],
-        }),
-      );
-      loadConfig();
-      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).toEqual({
-        sources: [{ type: "filesystem", path: "/legacy-path" }],
-      });
-      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  test("migration notice is not repeated after the config file has been rewritten", () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn.bind(console);
-    console.warn = (msg: string) => warnings.push(msg);
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          stashes: [{ type: "filesystem", path: "/legacy-path" }],
-        }),
-      );
-      loadConfig();
-      resetConfigCache();
-      expect(loadConfig().sources).toEqual([{ type: "filesystem", path: "/legacy-path" }]);
-      expect(warnings).toEqual(['Config migrated: "stashes" → "sources" in config.json']);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  test("no migration notice when config already uses the sources key", () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn.bind(console);
-    console.warn = (msg: string) => warnings.push(msg);
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          sources: [{ type: "filesystem", path: "/new-path" }],
-        }),
-      );
-      loadConfig();
-      expect(warnings).toEqual([]);
-    } finally {
-      console.warn = originalWarn;
-    }
   });
 });
 
@@ -805,56 +694,5 @@ describe("stashDir config", () => {
   test("ignores empty stashDir", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ stashDir: "   " }));
     expect(loadConfig().stashDir).toBeUndefined();
-  });
-});
-
-describe("stash type alias normalization", () => {
-  test('normalizes legacy type "context-hub" to "git" at load time', () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        semanticSearchMode: "auto",
-        // Uses legacy `stashes` key — migrated to `sources` in-memory at load time.
-        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
-      }),
-    );
-
-    const loaded = loadConfig();
-    expect(loaded.sources).toHaveLength(1);
-    expect(loaded.sources?.[0].type).toBe("git");
-    expect(loaded.sources?.[0].url).toBe("https://github.com/andrewyng/context-hub");
-    expect(loaded.sources?.[0].name).toBe("context-hub");
-  });
-
-  test('normalizes legacy type "github" to "git" at load time', () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        semanticSearchMode: "auto",
-        // Uses legacy `stashes` key — migrated to `sources` in-memory at load time.
-        stashes: [{ type: "github", url: "https://github.com/example/repo", name: "example" }],
-      }),
-    );
-
-    const loaded = loadConfig();
-    expect(loaded.sources).toHaveLength(1);
-    expect(loaded.sources?.[0].type).toBe("git");
-  });
-
-  test("rewrites stashes to sources without rewriting alias types on disk", () => {
-    const raw = JSON.stringify(
-      {
-        semanticSearchMode: "auto",
-        stashes: [{ type: "context-hub", url: "https://github.com/andrewyng/context-hub", name: "context-hub" }],
-      },
-      null,
-      2,
-    );
-    writeRawConfig(getConfigPath(), raw);
-
-    loadConfig();
-
-    const onDisk = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(onDisk.sources?.[0]?.type).toBe("context-hub");
   });
 });

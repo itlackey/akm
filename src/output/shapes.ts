@@ -27,9 +27,250 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "events-list":
     case "events-tail":
       return shapeEventsOutput(result as Record<string, unknown>, detail);
-    default:
+    // Output shape registration for `akm proposal {list,show,accept,reject,diff}`
+    // (#225). Each verb gets its own arm so the registry stays exhaustive (no
+    // silent JSON.stringify fallback). The proposal payload is reshaped per
+    // detail level — `brief` omits the full content body, while some proposal
+    // shapers still retain normal-level metadata such as review details;
+    // `full`/`agent` includes everything.
+    case "proposal-list":
+      return shapeProposalListOutput(result as Record<string, unknown>, detail);
+    case "proposal-show":
+      return shapeProposalShowOutput(result as Record<string, unknown>, detail);
+    case "proposal-accept":
+      return shapeProposalAcceptOutput(result as Record<string, unknown>, detail);
+    case "proposal-reject":
+      return shapeProposalRejectOutput(result as Record<string, unknown>, detail);
+    case "proposal-diff":
+      return shapeProposalDiffOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm reflect` and `akm propose` (#226).
+    // Both share the proposal-producer envelope shape (success carries a
+    // proposal entry; failure carries an AgentFailureReason discriminant).
+    case "reflect":
+    case "propose":
+      return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
+    // Output shape registration for `akm distill <ref>` (#228). The shape is
+    // simple — outcome + ids + optional payload — so `brief` strips the full
+    // proposal blob, `normal` keeps the headline fields, and `full` projects
+    // everything for downstream automation.
+    case "distill":
+      return shapeDistillOutput(result as Record<string, unknown>, detail);
+    // Identity-passthrough commands — registered here so the registry stays
+    // exhaustive (v1 spec §9). Each result object is already shaped at the
+    // command boundary; the registry just confirms there's no surprise
+    // command name slipping through.
+    case "add":
+    case "clone":
+    case "config":
+    case "curate":
+    case "disable":
+    case "enable":
+    case "feedback":
+    case "import":
+    case "index":
+    case "info":
+    case "init":
+    case "list":
+    case "registry-add":
+    case "registry-build-index":
+    case "registry-list":
+    case "registry-remove":
+    case "remember":
+    case "remove":
+    case "save":
+    case "update":
+    case "upgrade":
+    case "vault-create":
+    case "vault-list":
+    case "vault-set":
+    case "vault-unset":
+    case "wiki-create":
+    case "wiki-ingest":
+    case "wiki-lint":
+    case "wiki-list":
+    case "wiki-pages":
+    case "wiki-register":
+    case "wiki-remove":
+    case "wiki-show":
+    case "wiki-stash":
+    case "workflow-complete":
+    case "workflow-create":
+    case "workflow-list":
+    case "workflow-next":
+    case "workflow-resume":
+    case "workflow-start":
+    case "workflow-status":
+    case "workflow-validate":
       return result;
+    default:
+      // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
+      // fallback. A missing case here is a registration bug — fail loudly so
+      // the caller (or its tests) sees the missing command name.
+      throw new Error(`output shape not registered for command: ${command}`);
   }
+}
+
+/**
+ * Shape the result of `akm reflect` / `akm propose`. On success we surface
+ * the queued proposal entry (using the standard proposal-entry shaper so
+ * detail levels behave uniformly with `akm proposal show`). On failure we
+ * surface the structured failure-reason envelope as-is — the failure
+ * surface is small and the reason / error text is always load-bearing.
+ */
+export function shapeProposalProducerOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  if (result.ok === false) {
+    const base: Record<string, unknown> = {
+      ok: false,
+      reason: result.reason,
+      error: result.error,
+      ...(result.ref !== undefined ? { ref: result.ref } : {}),
+      ...(result.type !== undefined ? { type: result.type } : {}),
+      ...(result.name !== undefined ? { name: result.name } : {}),
+      ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+    };
+    if (detail === "full") {
+      return {
+        schemaVersion: result.schemaVersion ?? 1,
+        ...base,
+        ...(result.stdout !== undefined ? { stdout: result.stdout } : {}),
+        ...(result.stderr !== undefined ? { stderr: result.stderr } : {}),
+      };
+    }
+    return base;
+  }
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: true,
+    ref: result.ref,
+    ...(result.agentProfile !== undefined ? { agentProfile: result.agentProfile } : {}),
+    ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  if (detail === "brief") {
+    return pickFields(entry, ["id", "ref", "status", "source", "createdAt"]);
+  }
+  if (detail === "normal" || detail === "summary") {
+    return pickFields(entry, ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt", "review"]);
+  }
+  // full / agent: project everything including the payload.
+  return pickFields(entry, [
+    "id",
+    "ref",
+    "status",
+    "source",
+    "sourceRun",
+    "createdAt",
+    "updatedAt",
+    "payload",
+    "review",
+  ]);
+}
+
+export function shapeProposalListOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposals = Array.isArray(result.proposals) ? (result.proposals as Record<string, unknown>[]) : [];
+  const shaped = proposals.map((p) => shapeProposalEntry(p, detail));
+  const base: Record<string, unknown> = {
+    totalCount: result.totalCount ?? shaped.length,
+    proposals: shaped,
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const validation = result.validation as Record<string, unknown> | undefined;
+  const base: Record<string, unknown> = {
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+    ...(validation ? { validation } : {}),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalAcceptOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    assetPath: result.assetPath,
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalRejectOutput(
+  result: Record<string, unknown>,
+  detail: DetailLevel,
+): Record<string, unknown> {
+  const proposal = (result.proposal as Record<string, unknown>) ?? {};
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    id: result.id,
+    ref: result.ref,
+    ...(result.reason !== undefined ? { reason: result.reason } : {}),
+    proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeDistillOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const proposal = result.proposal as Record<string, unknown> | undefined;
+  if (detail === "brief") {
+    return pickFields(result, ["ok", "outcome", "inputRef", "lessonRef", "proposalId", "message"]);
+  }
+  const base: Record<string, unknown> = {
+    ok: result.ok ?? true,
+    outcome: result.outcome,
+    inputRef: result.inputRef,
+    lessonRef: result.lessonRef,
+    ...(result.proposalId !== undefined ? { proposalId: result.proposalId } : {}),
+    ...(result.message !== undefined ? { message: result.message } : {}),
+    ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
+    ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
+}
+
+export function shapeProposalDiffOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    id: result.id,
+    ref: result.ref,
+    isNew: result.isNew,
+    unified: result.unified,
+    ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
+  };
+  if (detail === "full") {
+    return { schemaVersion: result.schemaVersion ?? 1, ...base };
+  }
+  return base;
 }
 
 export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -209,9 +450,11 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
-    // visible without forcing callers up to `--detail full`.
+    // visible without forcing callers up to `--detail full`. Optional
+    // `quality` (v1 spec §4.2) is also surfaced when present so callers
+    // can see why a `proposed` entry showed up under `--include-proposed`.
     return capDescription(
-      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings"]),
+      pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
   }

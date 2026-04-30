@@ -29,6 +29,13 @@ describe("v1 spec §4.2 — asset quality rules", () => {
     expect(section).toMatch(/--include-proposed|akm proposal/);
   });
 
+  test("§4.2 names the `--include-proposed` opt-in flag explicitly", () => {
+    // Locked CLI surface — this flag is the single way to surface
+    // `proposed`-quality rows from `akm search` without going through
+    // `akm proposal *`. Renaming is a major bump.
+    expect(section).toContain("--include-proposed");
+  });
+
   test("§4.2 declares unknown quality values parse-warn-include", () => {
     expect(section).toMatch(/Unknown quality values/i);
     expect(section).toMatch(/parse,?\s*warn/i);

@@ -1,5 +1,6 @@
 import { toErrorMessage } from "../core/common";
 import { DEFAULT_CONFIG, loadConfig, type RegistryConfigEntry } from "../core/config";
+import { warn } from "../core/warn";
 import { resolveProviderFactory } from "../registry/factory";
 import type { RegistryAssetSearchHit, RegistrySearchHit, RegistrySearchResponse } from "../registry/types";
 
@@ -116,7 +117,7 @@ export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): Reg
       const url = raw.trim();
       if (!url) continue;
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        console.warn(`[akm] Ignoring AKM_REGISTRY_URL entry: must start with http:// or https://, got "${url}"`);
+        warn(`[akm] Ignoring AKM_REGISTRY_URL entry: must start with http:// or https://, got "${url}"`);
         continue;
       }
       entries.push({ url });

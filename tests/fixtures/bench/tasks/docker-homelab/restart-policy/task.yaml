@@ -1,0 +1,13 @@
+id: docker-homelab/restart-policy
+title: "Apply restart: unless-stopped to the web service"
+domain: docker-homelab
+difficulty: easy
+slice: train
+gold_ref: skill:docker-homelab
+stash: docker-homelab
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: docker-homelab/compose-basics

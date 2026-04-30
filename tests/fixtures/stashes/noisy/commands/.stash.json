@@ -1,0 +1,112 @@
+{
+  "entries": [
+    {
+      "name": "docker-up",
+      "type": "command",
+      "description": "Bring up a docker-compose stack with healthcheck wait",
+      "tags": ["docker", "compose", "deploy"],
+      "filename": "docker-up.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "az-login",
+      "type": "command",
+      "description": "Log into Azure and select a subscription",
+      "tags": ["azure", "az", "login"],
+      "filename": "az-login.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "kubectl-apply",
+      "type": "command",
+      "description": "Apply Kubernetes manifests and wait for rollout",
+      "tags": ["kubernetes", "k8s", "deploy"],
+      "filename": "kubectl-apply.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "terraform-apply",
+      "type": "command",
+      "description": "Run terraform plan and apply with guarded auto-approve",
+      "tags": ["terraform", "iac", "deploy"],
+      "filename": "terraform-apply.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "gha-lint",
+      "type": "command",
+      "description": "Lint GitHub Actions workflows with actionlint",
+      "tags": ["github", "actions", "lint", "ci"],
+      "filename": "gha-lint.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "gha-trigger",
+      "type": "command",
+      "description": "Trigger a GitHub Actions workflow_dispatch run via gh CLI",
+      "tags": ["github", "actions", "ci", "trigger"],
+      "filename": "gha-trigger.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "opencode-run",
+      "type": "command",
+      "description": "Run a single opencode task against the current workspace",
+      "tags": ["opencode", "agent", "run"],
+      "filename": "opencode-run.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "opencode-init",
+      "type": "command",
+      "description": "Scaffold an opencode.json in a new project",
+      "tags": ["opencode", "config", "init"],
+      "filename": "opencode-init.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "random-quote",
+      "type": "command",
+      "description": "Print a randomly chosen pithy quote",
+      "tags": ["novelty", "noise"],
+      "filename": "random-quote.md",
+      "quality": "curated",
+      "confidence": 0.3
+    },
+    {
+      "name": "fortune",
+      "type": "command",
+      "description": "Print a fortune cookie message",
+      "tags": ["novelty", "noise"],
+      "filename": "fortune.md",
+      "quality": "curated",
+      "confidence": 0.3
+    },
+    {
+      "name": "joke",
+      "type": "command",
+      "description": "Tell a programming joke",
+      "tags": ["novelty", "noise"],
+      "filename": "joke.md",
+      "quality": "curated",
+      "confidence": 0.3
+    },
+    {
+      "name": "cat-fact",
+      "type": "command",
+      "description": "Print a random cat fact",
+      "tags": ["novelty", "noise"],
+      "filename": "cat-fact.md",
+      "quality": "curated",
+      "confidence": 0.3
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+id: workflow-compliance/distractor-docker-port-publish
+title: "Publish a port from a docker-compose web service"
+domain: workflow-compliance
+difficulty: medium
+slice: eval
+gold_ref: skill:docker
+stash: noisy
+verifier: pytest
+memory_ability: noisy_retrieval
+task_family: workflow-compliance/distractor
+
+budget:
+  tokens: 25000
+  wallMs: 90000
+
+# --- Workflow-compliance metadata (issue #259) ---
+# Category: distractor-heavy.
+#
+# The `noisy` fixture stash contains plausible distractors (terraform,
+# k8s, github-actions, az, opencode, plus a `lorem-generator` noise skill)
+# alongside the relevant `skill:docker` asset. A compliant agent must
+# either show the docker skill specifically or, at minimum, avoid acting
+# only on a distractor.
+#
+# The agent's failure mode this task exposes: loading and acting on
+# `skill:terraform` or `skill:k8s` when the workspace is plain compose,
+# or skipping akm_show entirely after an akm_search that returned mostly
+# distractors. The workflow check `akm-correct-asset-use` enforces that
+# the loaded ref equals `gold_ref` when one is declared.
+workflow_failure_category: distractor-heavy
+expected_workflows:
+  - akm-lookup-before-edit
+  - akm-correct-asset-use
+abstention_case: false

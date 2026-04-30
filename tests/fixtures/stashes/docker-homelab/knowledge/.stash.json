@@ -1,0 +1,40 @@
+{
+  "entries": [
+    {
+      "name": "healthcheck-patterns",
+      "type": "knowledge",
+      "description": "Common docker-compose healthcheck recipes for typical homelab services",
+      "tags": ["docker", "compose", "healthcheck", "reference"],
+      "filename": "healthcheck-patterns.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "compose-conventions",
+      "type": "knowledge",
+      "description": "Project conventions for docker-compose files in a homelab repo",
+      "tags": ["docker", "compose", "conventions"],
+      "filename": "compose-conventions.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "networking",
+      "type": "knowledge",
+      "description": "Networking patterns for multi-stack homelab compose setups",
+      "tags": ["docker", "networking", "compose", "proxy"],
+      "filename": "networking.md",
+      "quality": "curated",
+      "confidence": 0.85
+    },
+    {
+      "name": "troubleshooting",
+      "type": "knowledge",
+      "description": "First-line troubleshooting steps for compose-based homelab incidents",
+      "tags": ["docker", "troubleshooting", "compose", "operations"],
+      "filename": "troubleshooting.md",
+      "quality": "curated",
+      "confidence": 0.85
+    }
+  ]
+}

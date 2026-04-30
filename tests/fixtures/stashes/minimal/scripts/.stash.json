@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "noop",
+      "type": "script",
+      "description": "Trivial no-op script that exits successfully",
+      "tags": ["demo", "minimal"],
+      "filename": "noop.sh",
+      "quality": "curated",
+      "confidence": 0.5
+    }
+  ]
+}

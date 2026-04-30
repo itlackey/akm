@@ -1,0 +1,13 @@
+id: docker-homelab/named-volume
+title: "Mount a named pgdata volume on the postgres service"
+domain: docker-homelab
+difficulty: medium
+slice: eval
+gold_ref: skill:docker-homelab
+stash: docker-homelab
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: docker-homelab/compose-basics

@@ -19,6 +19,10 @@ my-stash/
   commands/       # .md prompt templates (agent frontmatter, $ARGUMENTS)
   agents/         # .md files with model, tools, or toolPolicy frontmatter
   knowledge/      # .md reference documents
+  vaults/         # .env environment vaults (mode-0600 files)
+  workflows/      # .md step-by-step workflow documents
+  wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
+  lessons/        # .md distilled feedback lessons
   memories/       # .md recalled context fragments
 ```
 

@@ -9,13 +9,10 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-> **Status legend.** Sections below are tagged either **Pre-release
-> (shipping)** or **Planned for v1**. Planned-for-v1 keys are part of the
-> locked v1.0 surface declared in
-> [`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.2; the loader will accept them once their milestone lands. Until then,
-> the loader treats unknown top-level keys as warn-and-ignore — your config
-> will not break either way.
+> All configuration keys documented below are accepted by the current
+> pre-release build. The `agent.*` and `llm.features.*` blocks shipped in
+> 0.7.0 (see [release notes](migration/release-notes/0.7.0.md)). Unknown
+> top-level keys are warn-and-ignore.
 
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
@@ -65,11 +62,10 @@ directory. Project config files are meant to be edited directly in the project.
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
 | `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
 
-> **Legacy `stashes` key:** `sources` was previously named `stashes`. Configs
-> that still use `stashes[]` continue to load — the loader migrates the value
-> in-memory and emits a one-time deprecation warning. The renamed key is
-> persisted on the next `akm config set/unset` write. New configs should use
-> `sources[]`.
+> **Legacy `stashes` key removed:** `sources` was previously named `stashes`.
+> The one-cycle compat shim is gone — configs that still use `stashes[]` will
+> not load. Rename the key to `sources[]` in your `config.json` before
+> upgrading.
 
 ### Source entry schema
 
@@ -147,7 +143,9 @@ Use staging cluster for blue-green deploys.
 - Memories without any `scope_*` key (legacy content written before 0.7.0)
   load and re-serialize unchanged. They match unfiltered `akm search`
   queries — but a query with any `--filter` excludes them, since they have
-  no scope key to satisfy the filter.
+  no scope key to satisfy the filter. See the
+  [0.7.0 release notes](migration/release-notes/0.7.0.md) for the rollout
+  detail on `scope_*` keys.
 - Each scope key is an opaque string (no validation beyond non-empty +
   trimmed). Use whatever id shape your host system already uses (UUID,
   email, `@handle`, etc.).
@@ -394,11 +392,11 @@ is working. If it shows `"ready-js"`, the JS fallback is in use.
 
 ---
 
-## Planned for v1 — `agent.*` block
+## `agent.*` block
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Configures external agent CLI integration (see
-[CLI: agent / reflect / propose](cli.md#planned-for-v1--agent-proposal-lesson-and-distill)
+[CLI: agent / reflect / propose](cli.md#agent-reflection-and-proposal-queue-070)
 and v1 spec §12).
 
 ```jsonc
@@ -434,6 +432,7 @@ Per-key contract:
 | `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
 | `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
 | `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
+| `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |
 | `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
 | `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
 
@@ -441,9 +440,9 @@ Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
 disables all agent commands with a `ConfigError` whose hint points at this
 section.
 
-## Planned for v1 — `llm.features.*` map
+## `llm.features.*` map
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Gates the small set of bounded in-tree LLM call sites. All defaults are
 `false` — the v1 contract is "the in-tree LLM does nothing unless you opt
 in, per feature." See v1 spec §14 for the boundary rules.
@@ -456,13 +455,10 @@ in, per feature." See v1 spec §14 for the boundary rules.
     "temperature": 0.3,
     "maxTokens": 512,
     "features": {
-      "curate_rerank":            false,
-      "tag_dedup":                false,
-      "memory_consolidation":     false,
-      "feedback_distillation":    false,
-      "embedding_fallback_score": false,
-      "memory_inference":         true,
-      "graph_extraction":         false
+      "curate_rerank":         false,
+      "feedback_distillation": false,
+      "memory_inference":      true,
+      "graph_extraction":      false
     }
   }
 }
@@ -471,10 +467,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | Feature flag | Use site | Behaviour when disabled |
 | --- | --- | --- |
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
-| `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
-| `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
-| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
-| `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
+| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 | `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 
@@ -485,3 +478,33 @@ are locked and cannot be renamed after v1.0.
 bounded request/response cycle with a hard timeout. There are no caches
 keyed on prior responses, no streaming sessions, and no persistent
 connections. Long-lived state belongs in the agent path, not here.
+
+**Graceful-fallback contract.** Each gated feature uses the
+`tryLlmFeature(feature, config, fn, fallback)` wrapper from
+`src/llm/feature-gate.ts`. The wrapper returns `fallback` on disablement
+(`llm.features.<key>` not `true`), on timeout (default 30s; the wrapper
+raises `LlmFeatureTimeoutError`), or on any thrown error from `fn`. Call
+sites may pass an `onFallback` sink to surface a structured `warnings`
+entry per spec §14.2 — the gate itself never throws and never blocks the
+caller's command.
+
+## Environment variables
+
+akm reads a small set of environment variables in addition to `config.json`.
+Variables with a literal-or-env config form (e.g. `apiKey: "${MY_KEY}"`) are
+documented inline next to the relevant config key; the table below covers
+the variables that are read directly by the CLI.
+
+| Variable | Purpose | Default | Notes |
+| --- | --- | --- | --- |
+| `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) / `%APPDATA%\akm` | Overrides the table at the top of this page. |
+| `AKM_CACHE_DIR` | Override the platform cache directory used for indexes, registry mirrors, and bench tmp roots. | `~/.cache/akm` (XDG) | Read at startup; takes precedence over `XDG_CACHE_HOME`. |
+| `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation override; never persisted. |
+| `AKM_EMBED_API_KEY` | API key applied to `embedding` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
+| `AKM_LLM_API_KEY` | API key applied to `llm` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
+| `AKM_NPM_REGISTRY` | npm registry used when resolving `npm:` install refs and tarballs. | `https://registry.npmjs.org` | Honour your private registry without rewriting refs. |
+| `AKM_REGISTRY_URL` | Comma-separated list of registry index URLs to use *instead of* the configured `registries[]`. | unset (use `config.registries`) | Intended as a CI / one-shot override; does not persist to `config.json`. |
+| `HF_HOME` | Hugging Face cache root for the local embedder (`@huggingface/transformers`). | `<AKM_CACHE_DIR>/hf` | akm sets this at process start when unset, so model downloads land in the akm cache rather than `~/.cache/huggingface`. Pre-set it in your environment to opt out. |
+| `GITHUB_TOKEN` | Token used for authenticated GitHub API calls (private repos, higher rate limits). | — | Read alongside `GH_TOKEN`. |
+| `GH_TOKEN` | Same as `GITHUB_TOKEN`; honoured for compatibility with the `gh` CLI. | — | Either name works; if both are set, `GITHUB_TOKEN` wins. |
+| `AKM_VERBOSE` | When truthy (`1`, `true`, `yes`, `on`), print verbose diagnostics. When falsy (`0`, `false`, `no`, `off`), force quiet even if `--verbose` is passed. | unset | Env wins over the `--verbose` / `--quiet` flags. |

@@ -52,6 +52,7 @@ type CliJsonHit = {
   origin?: string | null;
   action?: string;
   size?: string;
+  score?: number;
   whyMatched?: string;
   editable?: boolean;
   editHint?: string;
@@ -81,13 +82,19 @@ function copyFixturesToTmp(): string {
   return tmpStash;
 }
 
-function copyDirRecursive(src: string, dest: string): void {
+// `tests/fixtures/stashes/` is the shared fixture-stash tree (issue #235); it
+// must not be copied into the per-scenario e2e fixture root or its assets
+// will leak into search results.
+const E2E_FIXTURE_SKIP_AT_ROOT = new Set(["stashes"]);
+
+function copyDirRecursive(src: string, dest: string, depth = 0): void {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (depth === 0 && E2E_FIXTURE_SKIP_AT_ROOT.has(entry.name)) continue;
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
+      copyDirRecursive(srcPath, destPath, depth + 1);
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
@@ -1185,6 +1192,23 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     const output = (result.stdout ?? "") + (result.stderr ?? "");
     expect(output).toContain("help");
     expect(output).toContain("focused help topics");
+  });
+
+  test("cli: akm setup --help shows the wizard description (issue #273)", async () => {
+    // The setup subcommand should advertise its purpose so operators can
+    // see what the wizard configures (embeddings, LLM, registries, sources,
+    // agent profiles) without running the interactive flow.
+    const result = spawnSync("bun", [CLI, "setup", "--help"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(output).toContain("Interactive configuration wizard");
+    expect(output).toContain("embeddings");
+    expect(output).toContain("LLM");
+    expect(output).toContain("registries");
+    expect(output).toContain("sources");
+    expect(output).toContain("agent profiles");
   });
 });
 

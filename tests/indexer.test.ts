@@ -340,9 +340,9 @@ test("akmIndex --full mode returns mode full", async () => {
 
 test("akmIndex reports progress events and semantic-search verification details", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
+  globalThis.fetch = (async () => {
     throw new Error("TEST_EMBEDDING_ERROR");
-  };
+  }) as unknown as typeof fetch;
   const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 
   try {

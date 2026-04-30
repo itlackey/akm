@@ -58,9 +58,6 @@ function makeEntry(type: string, name: string): StashEntry {
   return {
     type,
     name,
-    ref: `${type}:${name}`,
-    filePath: `/fake/${type}/${name}`,
-    dirPath: `/fake/${type}`,
     description: `A test ${type}`,
     tags: ["test"],
   };

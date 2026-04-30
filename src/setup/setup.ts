@@ -378,6 +378,10 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       bge: 384,
     };
     const guessedDim = Object.entries(knownDims).find(([k]) => embChoice.includes(k))?.[1] ?? 384;
+    p.note(
+      "Embedding dimension must match the model. Common values: 384 (BGE small), 768 (BGE base), 1024 (BGE large). Press Enter to accept the detected default.",
+      "Embedding dimension",
+    );
     const dimChoice = await prompt(() =>
       p.text({
         message: `Embedding dimension for ${embChoice}:`,
@@ -413,8 +417,6 @@ interface LlmPreset {
   endpoint: string;
   defaultModel: string;
   hint?: string;
-  /** Default context window for the preset's recommended model. */
-  contextWindow?: number;
 }
 
 const LLM_PRESETS: LlmPreset[] = [
@@ -424,7 +426,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://api.anthropic.com/v1/chat/completions",
     defaultModel: "claude-sonnet-4-5",
     hint: "beta OpenAI-compat layer; set AKM_LLM_API_KEY; override the model if the default is unavailable",
-    contextWindow: 200_000,
   },
   {
     value: "openai",
@@ -432,7 +433,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://api.openai.com/v1/chat/completions",
     defaultModel: "gpt-4o-mini",
     hint: "AKM_LLM_API_KEY required",
-    contextWindow: 128_000,
   },
   {
     value: "google",
@@ -440,7 +440,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     defaultModel: "gemini-2.0-flash",
     hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
-    contextWindow: 1_000_000,
   },
 ];
 
@@ -555,7 +554,6 @@ export async function stepLlm(
       model: model.trim() || preset.defaultModel,
       temperature: 0.3,
       maxTokens: 1024,
-      contextWindow: preset.contextWindow,
     };
   }
 
@@ -1023,7 +1021,7 @@ export async function runSetupWizard(): Promise<void> {
   const embedding = newConfig.embedding;
   const llm = newConfig.llm;
   const registries = newConfig.registries;
-  const allStashes = newConfig.stashes ?? [];
+  const allStashes = newConfig.sources ?? newConfig.stashes ?? [];
 
   // Confirm before saving
   const effectiveRegistries = registries ?? DEFAULT_CONFIG.registries ?? [];

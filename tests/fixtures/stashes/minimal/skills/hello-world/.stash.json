@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "hello-world",
+      "type": "skill",
+      "description": "Trivial demonstration skill that prints a greeting",
+      "tags": ["demo", "minimal"],
+      "filename": "SKILL.md",
+      "quality": "curated",
+      "confidence": 0.5
+    }
+  ]
+}

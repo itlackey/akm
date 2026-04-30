@@ -1,0 +1,13 @@
+id: az-cli/query-by-tag
+title: "Produce the az command to list resources tagged env=prod"
+domain: az-cli
+difficulty: easy
+slice: train
+gold_ref: skill:az-cli
+stash: az-cli
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: az-cli/commands

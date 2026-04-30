@@ -7,6 +7,7 @@ import type { SourceConfigEntry } from "../../core/config";
 import { loadConfig } from "../../core/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths";
+import { sanitizeCommitMessage } from "../../core/write-source";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../../registry/resolve";
 import type { ParsedGitRef } from "../../registry/types";
 import type { ProviderContext, SourceProvider } from "../provider";
@@ -111,20 +112,6 @@ function getCachePaths(repoUrl: string): {
   const key = createHash("sha256").update(repoUrl).digest("hex").slice(0, 16);
   const cacheRoot = getRegistryIndexCacheDir();
   const rootDir = path.join(cacheRoot, `git-${key}`);
-
-  // One-time silent migration: legacy `context-hub-${key}` directories were
-  // created for ALL git stashes (not just the andrewyng/context-hub repo). If
-  // the new path doesn't yet exist but the legacy one does, rename it in place
-  // so existing clones aren't silently invalidated. Failures are non-fatal —
-  // worst case the repo is re-cloned on the next refresh.
-  try {
-    const legacyRootDir = path.join(cacheRoot, `context-hub-${key}`);
-    if (!fs.existsSync(rootDir) && fs.existsSync(legacyRootDir)) {
-      fs.renameSync(legacyRootDir, rootDir);
-    }
-  } catch {
-    /* migration is best-effort */
-  }
 
   return {
     rootDir,
@@ -466,7 +453,12 @@ export interface SaveGitStashResult {
  */
 export function saveGitStash(name?: string, message?: string, writableOverride?: boolean): SaveGitStashResult {
   const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
-  const commitMessage = message?.trim() || `akm save ${timestamp}`;
+  // Sanitize the user-supplied message: strip CR/LF/NUL, collapse whitespace,
+  // clamp length. An attacker can otherwise pass `--message "subject\n\n\
+  // Co-Authored-By: someone-else"` and forge trailers in the commit log.
+  // Empty result falls back to the timestamped default.
+  const sanitized = message ? sanitizeCommitMessage(message) : "";
+  const commitMessage = sanitized || `akm save ${timestamp}`;
 
   let repoDir: string;
   let writable = false;

@@ -51,7 +51,7 @@ describe("v1 spec §12 — agent CLI integration", () => {
 
 describe("v1 spec §12 — configuration.md mirrors the agent block", () => {
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## Planned for v1 — `agent.*` block");
+  const block = extractSection(config, "## `agent.*` block");
 
   test("configuration.md has the agent block section", () => {
     expect(block).not.toBe("");

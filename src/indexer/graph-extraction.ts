@@ -41,9 +41,6 @@ import { extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import type { SearchSource } from "./search-source";
 
-// Re-export for graph-boost.ts so a single import root covers both modules.
-export type { GraphRelation };
-
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
 export const GRAPH_FILE_SCHEMA_VERSION = 1;
 

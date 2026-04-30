@@ -298,7 +298,14 @@ function ensureSchema(db: Database, embeddingDim: number): void {
  */
 function handleVersionUpgrade(db: Database): UsageEventRow[] {
   const storedVersion = getMeta(db, "version");
-  if (!storedVersion || storedVersion === String(DB_VERSION)) return [];
+  // BUG-L4: distinguish "missing" (undefined) from "present but empty" — both
+  // were previously coerced through `!storedVersion` and treated as "no
+  // upgrade needed", which caused fresh databases (with no version row) to
+  // skip the upgrade path correctly, but also caused the upgrade path to be
+  // taken when a corrupted/empty version string was persisted. The current
+  // tables get dropped only when the stored version exists AND differs from
+  // DB_VERSION; missing or empty version means a fresh DB and no upgrade.
+  if (storedVersion === undefined || storedVersion === "" || storedVersion === String(DB_VERSION)) return [];
 
   let usageBackup: UsageEventRow[] = [];
   try {
@@ -317,7 +324,7 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   db.exec("DROP TABLE IF EXISTS entries");
   db.exec("DELETE FROM index_meta");
 
-  console.warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
+  warn("[akm] Index rebuilt due to version upgrade. Run 'akm index' to repopulate.");
   return usageBackup;
 }
 
@@ -331,20 +338,61 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
 function restoreUsageEventsBackup(db: Database, backup: UsageEventRow[]): void {
   if (backup.length === 0) return;
   try {
+    // BUG-H4: introspect the *target* table's columns rather than relying on
+    // `row[0]`'s keys. The backup may carry columns the new schema dropped,
+    // and the new schema may have NOT-NULL columns without DEFAULT that the
+    // old backup never carried. Project the backup onto the intersection so
+    // we don't silently lose every row to per-row INSERT errors, and warn
+    // once if any backup column was dropped from the new schema.
+    const targetCols = (db.prepare("PRAGMA table_info(usage_events)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
+    if (targetCols.length === 0) {
+      warn("[db] restoreUsageEventsBackup: usage_events table missing — discarding %d backup row(s)", backup.length);
+      return;
+    }
+    const targetSet = new Set(targetCols);
+    const backupCols = Object.keys(backup[0] ?? {});
+    const projectedCols = backupCols.filter((c) => targetSet.has(c));
+    const droppedCols = backupCols.filter((c) => !targetSet.has(c));
+    if (projectedCols.length === 0) {
+      warn(
+        "[db] restoreUsageEventsBackup: no overlapping columns between backup and current schema — discarding %d row(s); dropped: %s",
+        backup.length,
+        droppedCols.join(", ") || "(none)",
+      );
+      return;
+    }
+    if (droppedCols.length > 0) {
+      warn(
+        "[db] restoreUsageEventsBackup: dropping columns no longer in usage_events schema: %s",
+        droppedCols.join(", "),
+      );
+    }
+
+    let restored = 0;
+    let failed = 0;
     db.transaction(() => {
-      const cols = Object.keys(backup[0]);
-      const placeholders = cols.map(() => "?").join(", ");
-      const insert = db.prepare(`INSERT INTO usage_events (${cols.join(", ")}) VALUES (${placeholders})`);
+      const placeholders = projectedCols.map(() => "?").join(", ");
+      const insert = db.prepare(`INSERT INTO usage_events (${projectedCols.join(", ")}) VALUES (${placeholders})`);
       for (const row of backup) {
         try {
-          insert.run(...cols.map((c) => row[c]));
+          insert.run(...projectedCols.map((c) => row[c]));
+          restored++;
         } catch {
-          /* skip rows that fail */
+          failed++;
         }
       }
     })();
-  } catch {
-    /* schema changed too much — discard backup gracefully */
+    if (failed > 0) {
+      warn("[db] restoreUsageEventsBackup: restored %d row(s); skipped %d incompatible row(s)", restored, failed);
+    }
+  } catch (err) {
+    warn(
+      "[db] restoreUsageEventsBackup: discarded %d backup row(s) — %s",
+      backup.length,
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -577,16 +625,15 @@ export function rebuildFts(db: Database, options?: { incremental?: boolean }): v
       warn(`[db] rebuildFts: skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} with invalid entry_json`);
     }
 
-    // Always drain the dirty queue — if it exists. A full rebuild also
-    // clears it because the full path covers everything the dirty list
-    // tracks.
-    if (incremental) {
-      db.exec("DELETE FROM entries_fts_dirty");
-    } else {
-      // Full path: drain the dirty queue too. The table is created by
-      // ensureSchema(), so it always exists at this point.
-      db.exec("DELETE FROM entries_fts_dirty");
-    }
+    // Always drain the dirty queue — both paths converge here. The
+    // incremental path drains it because we just consumed every dirty row;
+    // the full path drains it because a full rebuild covers everything the
+    // dirty list tracks. The table is guaranteed to exist (created by
+    // ensureSchema()).
+    //
+    // BUG-L1: previously the if/else arms ran identical statements — the
+    // duplication has been collapsed.
+    db.exec("DELETE FROM entries_fts_dirty");
   })();
 }
 
@@ -633,8 +680,31 @@ function float32Buffer(vec: number[]): Buffer {
   return Buffer.from(f32.buffer);
 }
 
-function bufferToFloat32(buf: Buffer): number[] {
-  const f32 = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+/**
+ * Decode a stored embedding BLOB into a Float32 array of `expectedDim`
+ * dimensions. Returns `null` (and emits a warning) when the byte length does
+ * not exactly match `expectedDim * 4`, including the legacy partial-trailing
+ * float case the previous truncating-divide silently swallowed.
+ *
+ * BUG-M2: the previous `buf.byteLength / 4` divide would truncate any
+ * trailing partial float and a misaligned `byteOffset` would throw — both
+ * surfaced as opaque generic errors caught upstream.
+ */
+function bufferToFloat32(buf: Buffer, expectedDim: number): number[] | null {
+  if (buf.byteLength !== expectedDim * 4) {
+    warn(
+      "[db] bufferToFloat32: skipping embedding row — expected %d bytes (%d dim x 4), got %d",
+      expectedDim * 4,
+      expectedDim,
+      buf.byteLength,
+    );
+    return null;
+  }
+  // Copy into a fresh ArrayBuffer to sidestep any byteOffset alignment
+  // requirements imposed by Float32Array's typed-array view contract.
+  const aligned = new ArrayBuffer(buf.byteLength);
+  new Uint8Array(aligned).set(buf);
+  const f32 = new Float32Array(aligned);
   return Array.from(f32);
 }
 
@@ -644,9 +714,11 @@ function searchBlobVec(db: Database, queryEmbedding: EmbeddingVector, k: number)
 
     if (rows.length === 0) return [];
 
+    const expectedDim = queryEmbedding.length;
     const scored: Array<{ id: number; similarity: number }> = [];
     for (const row of rows) {
-      const embedding = bufferToFloat32(row.embedding);
+      const embedding = bufferToFloat32(row.embedding, expectedDim);
+      if (embedding === null) continue;
       const similarity = cosineSimilarity(queryEmbedding, embedding);
       scored.push({ id: row.id, similarity });
     }

@@ -105,7 +105,7 @@ describe("detectOllama", () => {
         );
       }
       return new Response("", { status: 404 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { detectOllama } = await import("../src/setup/detect");
     const result = await detectOllama();
@@ -123,7 +123,7 @@ describe("detectOllama", () => {
         }),
         { status: 200 },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { detectOllama } = await import("../src/setup/detect");
     const result = await detectOllama();
@@ -135,7 +135,7 @@ describe("detectOllama", () => {
   test("returns available=false when fetch fails", async () => {
     globalThis.fetch = (async () => {
       throw new Error("Connection refused");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { detectOllama } = await import("../src/setup/detect");
     const result = await detectOllama();
@@ -153,7 +153,7 @@ describe("detectOllama", () => {
         }),
         { status: 200 },
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { detectOllama } = await import("../src/setup/detect");
     const result = await detectOllama();

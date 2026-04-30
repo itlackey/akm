@@ -671,8 +671,9 @@ Renaming or removing any command above after v1.0 is a major version bump.
   rebuild. `usage_events` is preserved across schema bumps.
 - `workflow.db` (durable workflow run state) is never touched by index
   schema migrations.
-- **`Planned for v1`** — `proposal.db` (durable proposal queue, §11) is
-  managed by the proposal subsystem and survives index rebuilds.
+- **`Planned for v1`** — the proposal queue (§11) is durable filesystem
+  state under `<stashRoot>/.akm/proposals/`, managed by the proposal
+  subsystem and untouched by index rebuilds.
 
 ### 9.7 LLM/agent boundary (planned)
 
@@ -787,17 +788,29 @@ content is never mutated by reflection, generation, or distillation paths.
 
 ### 11.1 Storage
 
-- Proposals live in `proposal.db` (a sibling SQLite DB to `index.db` and
-  `workflow.db`). The DB survives `akm index --full` and binary upgrades.
-- A single proposal row stores: `id`, `ref` (the target asset ref it would
-  propose), `status`
-  (`pending` | `accepted` | `rejected` | `archived`), `source`
-  (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id), `source_run`
-  (opaque correlation id), `created_at`, `updated_at`, `body`,
-  `frontmatter`, `review_notes`, `review_outcome`. Multiple proposals for
-  the same `ref` coexist without path collisions.
-- Invalid proposal rows are surfaced via `akm proposal list` with a clear
-  `warnings` entry. They do not crash the queue.
+- Proposals live as one directory per proposal under
+  `<stashRoot>/.akm/proposals/<id>/`, each containing a single
+  `proposal.json` file. The store is plain filesystem state and survives
+  `akm index --full` and binary upgrades. Directory-per-id is what
+  guarantees multiple proposals can coexist for the same `ref` without
+  path collisions.
+- A single `proposal.json` carries: `id` (UUID), `ref` (the target asset
+  ref it would propose), `status` (`pending` | `accepted` | `rejected`),
+  `source` (e.g. `"reflect"`, `"propose"`, `"distill"`, plugin id),
+  `sourceRun` (opaque correlation id), `createdAt`, `updatedAt`,
+  `payload.frontmatter`, `payload.content`, and an optional `review`
+  block (`outcome`, `reason`, `decidedAt`).
+- Rejected proposals are physically moved to
+  `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
+  state — there is no separate `archived` status, so the on-disk
+  location is the source of truth for "active vs. archived" listings.
+- Invalid `proposal.json` files are surfaced via `akm proposal list`
+  with a clear warning entry. They do not crash the queue.
+- The proposal store is queue state, not asset state, so it does **not**
+  go through `writeAssetToSource()` for proposal writes themselves
+  (only the eventual promotion in `accept` does). This is the single
+  documented carve-out from the §5.4 write-helper rule, recorded in the
+  module docblock of `src/core/proposals.ts`.
 
 ### 11.2 Commands
 
@@ -815,8 +828,9 @@ write-source policy) **before** promoting. Promotion calls
 `writeAssetToSource()` for the configured write target (§5.4) — same path
 as `akm remember` / `akm import`.
 
-`reject` writes review metadata and moves the row to `archived`. The body
-is preserved.
+`reject` writes review metadata (outcome, reason, decidedAt) and moves
+the proposal directory under `<stashRoot>/.akm/proposals/archive/<id>/`.
+The body is preserved.
 
 `diff` shows the proposed delta against the live asset (or the empty file
 if the proposal would create a new ref).
@@ -880,7 +894,7 @@ change the default with `akm config set agent.default <name>`.
 
 ```sh
 akm agent <profile> [args...]            # raw shell-out
-akm reflect <ref> [--task ...]           # produces reflection proposals
+akm reflect [ref] [--task ...]           # produces reflection proposals
 akm propose <type> <name> --task "..."   # produces generation proposals
 ```
 
@@ -989,17 +1003,40 @@ Failure is observable but never blocks unrelated commands.
     "temperature": 0.3,
     "maxTokens": 512,
     "features": {
-      "curate_rerank": true,
-      "tag_dedup": true,
-      "memory_consolidation": false,
-      "feedback_distillation": false,
-      "embedding_fallback_score": false
+      "curate_rerank":            false,
+      "tag_dedup":                false,
+      "memory_consolidation":     false,
+      "feedback_distillation":    false,
+      "embedding_fallback_score": false,
+      "memory_inference":         true,
+      "graph_extraction":         false
     }
   }
 }
 ```
 
+All seven keys are configurable, default `false`, and must be set to the
+literal boolean `true` to opt in. (`memory_inference` and `graph_extraction`
+were the first two to ship; the remaining five — `curate_rerank`,
+`tag_dedup`, `memory_consolidation`, `feedback_distillation`,
+`embedding_fallback_score` — landed alongside the lesson asset type.)
 Unknown keys under `llm.features` warn and are ignored (§9.2).
+
+#### Graceful-fallback contract
+
+Every gated call site must use the `tryLlmFeature(feature, config, fn,
+fallback, opts?)` wrapper (`src/llm/feature-gate.ts`) or follow the
+equivalent inline pattern. The wrapper guarantees:
+
+- **Disabled** → `fallback` is returned without ever calling `fn`.
+- **Throw** → `fn`'s error is swallowed; `fallback` is returned. The
+  caller may pass `onFallback` to surface a structured `warnings` entry.
+- **Timeout** → a hard timeout (default 30s, override via `timeoutMs`)
+  produces an `LlmFeatureTimeoutError`; `fallback` is returned.
+
+Pure-predicate access is via `isLlmFeatureEnabled(config, feature)` — used
+when the call site needs to branch on the gate without invoking the wrapper
+(for example, to short-circuit before assembling the prompt).
 
 ### 14.4 Statelessness invariant
 

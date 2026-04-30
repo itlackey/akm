@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "name": "echo",
+      "type": "command",
+      "description": "Echo back any arguments passed to the command",
+      "tags": ["demo", "minimal"],
+      "filename": "echo.md",
+      "quality": "curated",
+      "confidence": 0.5
+    }
+  ]
+}

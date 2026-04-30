@@ -130,7 +130,7 @@ export function isWithin(candidate: string, root: string): boolean {
  * consistent even when the directory hierarchy contains symlinks (e.g.
  * macOS /tmp → /private/tmp, or a HOME that is itself a symlink).
  */
-function safeRealpath(p: string): string {
+export function safeRealpath(p: string): string {
   const resolved = path.resolve(p);
   try {
     return fs.realpathSync(resolved);

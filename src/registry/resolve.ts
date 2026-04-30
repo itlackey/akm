@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
-import { UsageError } from "../core/errors";
+import { NotFoundError, UsageError } from "../core/errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
 import type {
   ParsedGithubRef,
@@ -236,7 +236,11 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
   } catch {
     // Explicit paths (./foo, ../bar, /abs) should throw on missing
     if (explicitPath) {
-      throw new Error(`Local path not found: ${resolvedPath}`);
+      throw new NotFoundError(
+        `Local path not found: ${resolvedPath}`,
+        "FILE_NOT_FOUND",
+        "Check the path exists and is readable.",
+      );
     }
     // Bare names that don't exist on disk — let caller fall through to npm/github
     return undefined;
@@ -268,6 +272,78 @@ function isPathLikeRef(ref: string): boolean {
     return true;
   }
   return ref.includes("/") || ref.includes("\\");
+}
+
+/** Default public npm registry host. */
+const DEFAULT_NPM_REGISTRY_HOST = "registry.npmjs.org";
+
+/**
+ * Typed error raised when the npm registry returns a tarball URL on a host
+ * that is not the public registry or the operator-configured mirror. Carries
+ * a stable `.code` so callers (and JSON envelope output) can branch on it
+ * without parsing the message string.
+ */
+export class UntrustedNpmTarballError extends Error {
+  readonly code = "UNTRUSTED_NPM_TARBALL" as const;
+  private readonly _hint?: string;
+  constructor(msg: string, hint?: string) {
+    super(msg);
+    this.name = "UntrustedNpmTarballError";
+    this._hint = hint;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+  hint(): string | undefined {
+    return (
+      this._hint ??
+      "Set AKM_NPM_REGISTRY to your private npm mirror's base URL if you install from a non-default registry."
+    );
+  }
+}
+
+/**
+ * Resolve the set of npm registry hosts whose tarballs are considered trusted.
+ * Always includes the public npm registry, plus the host of an operator-set
+ * `AKM_NPM_REGISTRY` environment variable (if it parses to a valid URL).
+ */
+export function trustedNpmTarballHosts(): Set<string> {
+  const hosts = new Set<string>([DEFAULT_NPM_REGISTRY_HOST]);
+  const override = process.env.AKM_NPM_REGISTRY?.trim();
+  if (override) {
+    try {
+      const overrideHost = new URL(override).hostname.toLowerCase();
+      if (overrideHost) hosts.add(overrideHost);
+    } catch {
+      // Ignore unparseable overrides; the default host still applies.
+    }
+  }
+  return hosts;
+}
+
+/**
+ * Validate that an npm tarball URL points at a trusted registry host. A
+ * compromised mirror could otherwise return an attacker-controlled
+ * `dist.tarball` field, redirecting installs to a third-party host.
+ */
+export function validateNpmTarballUrl(tarballUrl: string, packageRef: string): void {
+  let url: URL;
+  try {
+    url = new URL(tarballUrl);
+  } catch {
+    throw new UntrustedNpmTarballError(`npm package ${packageRef} returned an invalid tarball URL: ${tarballUrl}`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new UntrustedNpmTarballError(
+      `npm package ${packageRef} returned a tarball with disallowed scheme "${url.protocol}".`,
+    );
+  }
+  const trusted = trustedNpmTarballHosts();
+  const host = url.hostname.toLowerCase();
+  if (!trusted.has(host)) {
+    const allowed = Array.from(trusted).join(", ");
+    throw new UntrustedNpmTarballError(
+      `npm package ${packageRef} returned a tarball URL on untrusted host "${host}" (allowed: ${allowed}).`,
+    );
+  }
 }
 
 async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistryArtifact> {
@@ -304,6 +380,7 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
   if (!tarballUrl) {
     throw new Error(`npm package ${parsed.packageName}@${resolvedVersion} does not expose a tarball URL.`);
   }
+  validateNpmTarballUrl(tarballUrl, `${parsed.packageName}@${resolvedVersion}`);
 
   const resolvedRevision = asString(dist.shasum) ?? asString(dist.integrity);
 

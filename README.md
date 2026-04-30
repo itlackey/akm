@@ -67,7 +67,7 @@ more detailed version with advanced usage):
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, workflows, vaults, wikis, and memories via the `akm` CLI. Use `akm -h` for details.
+knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI. Use `akm -h` for details.
 ~~~
 
 No plugins, SDKs, or integration code required. Platform-specific plugins
@@ -191,7 +191,10 @@ akm show skill:akm-quickstart
 | [Configuration](docs/configuration.md) | Settings, providers, and Ollama setup |
 | [Concepts](docs/concepts.md) | Sources, registries, asset types |
 | [Stash Maker's Guide](docs/stash-makers.md) | Build and share assets |
-| [Registry](docs/registry.md) | Registries, search, and the v2 index format |
+| [Registry](docs/registry.md) | Registries, search, and the v3 index format |
+| [Wikis](docs/wikis.md) | Multi-wiki knowledge bases (Karpathy-style) |
+| [v1 Migration Guide](docs/migration/v1.md) | The path from 0.x to v1.0 |
+| [Release Notes — 0.7.0](docs/migration/release-notes/0.7.0.md) | Latest release notes |
 | [Blog Posts](docs/posts/) | Articles and posts about akm |
 
 ## License

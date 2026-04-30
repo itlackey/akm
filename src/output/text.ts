@@ -190,9 +190,370 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "events-tail": {
       return formatEventsPlain(r);
     }
+    // Output shape registration for `akm proposal *` (#225).
+    case "proposal-list": {
+      return formatProposalListPlain(r);
+    }
+    case "proposal-show": {
+      return formatProposalShowPlain(r);
+    }
+    case "proposal-accept": {
+      return formatProposalAcceptPlain(r);
+    }
+    case "proposal-reject": {
+      return formatProposalRejectPlain(r);
+    }
+    case "proposal-diff": {
+      return formatProposalDiffPlain(r);
+    }
+    // Output shape registration for `akm reflect` / `akm propose` (#226).
+    case "reflect":
+    case "propose": {
+      return formatProposalProducerPlain(command, r);
+    }
+    // Output shape registration for `akm distill <ref>` (#228). Three branches
+    // mirror the three terminal `outcome` values.
+    case "distill": {
+      return formatDistillPlain(r);
+    }
+    case "info":
+      return formatInfoPlain(r);
+    case "config":
+      return formatConfigPlain(r);
+    case "feedback":
+      return formatFeedbackPlain(r);
+    case "remember":
+      return formatRememberPlain(r);
+    case "import":
+      return formatImportPlain(r);
+    case "save":
+      return formatSavePlain(r);
+    case "enable":
+    case "disable":
+      return formatToggleComponentPlain(command, r);
+    case "registry-list":
+      return formatRegistryListPlain(r);
+    case "registry-add":
+      return formatRegistryAddPlain(r);
+    case "registry-remove":
+      return formatRegistryRemovePlain(r);
+    case "registry-search":
+      return formatRegistrySearchPlain(r, detail);
+    case "registry-build-index":
+      return formatRegistryBuildIndexPlain(r);
+    case "vault-list":
+      return formatVaultListPlain(r);
+    case "vault-create":
+      return `Created vault ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
+    case "vault-set":
+      return `Set ${String(r.key ?? "?")} in ${String(r.ref ?? "?")} (value not displayed)`;
+    case "vault-unset": {
+      const removed = r.removed === true;
+      const head = removed
+        ? `Removed ${String(r.key ?? "?")} from ${String(r.ref ?? "?")}`
+        : `Key ${String(r.key ?? "?")} was not present in ${String(r.ref ?? "?")}`;
+      return head;
+    }
+    case "wiki-register":
+      return formatWikiRegisterPlain(r);
+    case "workflow-resume":
+      return formatWorkflowStatusPlain(r) ?? `Resumed workflow run ${String(r.id ?? r.runId ?? "?")}`;
+    case "workflow-validate":
+      return formatWorkflowValidatePlain(r);
     default:
       return null; // fall through to YAML
   }
+}
+
+export function formatInfoPlain(r: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (r.version) lines.push(`version: ${String(r.version)}`);
+  if (r.stashDir) lines.push(`stashDir: ${String(r.stashDir)}`);
+  if (r.configPath) lines.push(`configPath: ${String(r.configPath)}`);
+  if (r.cacheDir) lines.push(`cacheDir: ${String(r.cacheDir)}`);
+  if (r.dbPath) lines.push(`dbPath: ${String(r.dbPath)}`);
+  const capabilities = r.capabilities as Record<string, unknown> | undefined;
+  if (capabilities) {
+    lines.push("capabilities:");
+    for (const [k, v] of Object.entries(capabilities)) {
+      lines.push(`  ${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+    }
+  }
+  const indexStats = r.index as Record<string, unknown> | undefined;
+  if (indexStats) {
+    lines.push("index:");
+    for (const [k, v] of Object.entries(indexStats)) {
+      lines.push(`  ${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+    }
+  }
+  if (lines.length === 0) return JSON.stringify(r, null, 2);
+  return lines.join("\n");
+}
+
+export function formatConfigPlain(r: Record<string, unknown>): string {
+  // Recursive flattener: prints `key=value` lines, and nested objects as
+  // `parent.child=value`. Arrays render as JSON for compactness.
+  const lines: string[] = [];
+  const walk = (obj: Record<string, unknown>, prefix: string): void => {
+    for (const [k, v] of Object.entries(obj)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      if (v === null || v === undefined) {
+        lines.push(`${path}=`);
+      } else if (Array.isArray(v)) {
+        lines.push(`${path}=${JSON.stringify(v)}`);
+      } else if (typeof v === "object") {
+        walk(v as Record<string, unknown>, path);
+      } else {
+        lines.push(`${path}=${String(v)}`);
+      }
+    }
+  };
+  walk(r, "");
+  if (lines.length === 0) return "(empty config)";
+  return lines.join("\n");
+}
+
+export function formatFeedbackPlain(r: Record<string, unknown>): string {
+  const ref = String(r.ref ?? "?");
+  const signal = String(r.signal ?? "?");
+  const note = typeof r.note === "string" && r.note ? ` — ${r.note}` : "";
+  return `Recorded ${signal} feedback for ${ref}${note}`;
+}
+
+export function formatRememberPlain(r: Record<string, unknown>): string {
+  const ref = String(r.ref ?? "?");
+  const pathValue = String(r.path ?? "?");
+  return `Saved ${ref} at ${pathValue}`;
+}
+
+export function formatImportPlain(r: Record<string, unknown>): string {
+  const ref = String(r.ref ?? "?");
+  const source = String(r.source ?? "?");
+  const pathValue = String(r.path ?? "?");
+  return `Imported ${source} → ${ref} at ${pathValue}`;
+}
+
+export function formatSavePlain(r: Record<string, unknown>): string {
+  if (r.ok === false) {
+    const reason = typeof r.reason === "string" ? r.reason : "unknown";
+    return `save: failed (${reason})`;
+  }
+  const name = typeof r.name === "string" ? r.name : "primary stash";
+  const committed = r.committed === true;
+  const pushed = r.pushed === true;
+  const parts = [`save: ${name}`];
+  parts.push(committed ? "committed" : "no changes");
+  if (pushed) parts.push("pushed");
+  return parts.join(" — ");
+}
+
+export function formatToggleComponentPlain(command: string, r: Record<string, unknown>): string {
+  const verb = command === "enable" ? "Enabled" : "Disabled";
+  const component = String(r.component ?? "?");
+  const changed = r.changed === true;
+  return changed ? `${verb} ${component}` : `${component} was already ${command}d`;
+}
+
+export function formatRegistryListPlain(r: Record<string, unknown>): string {
+  const registries = Array.isArray(r.registries) ? (r.registries as Array<Record<string, unknown>>) : [];
+  if (registries.length === 0) {
+    return "No registries configured. Add one with `akm registry add <url>`.";
+  }
+  const lines: string[] = [];
+  for (const reg of registries) {
+    const url = String(reg.url ?? "?");
+    const name = typeof reg.name === "string" ? reg.name : "";
+    const provider = typeof reg.provider === "string" ? ` (${reg.provider})` : "";
+    const enabled = reg.enabled === false ? " [disabled]" : "";
+    const head = name ? `${name}: ${url}` : url;
+    lines.push(`${head}${provider}${enabled}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatRegistryAddPlain(r: Record<string, unknown>): string {
+  if (r.added === false) {
+    return typeof r.message === "string" ? r.message : "Registry already configured.";
+  }
+  const registries = Array.isArray(r.registries) ? r.registries.length : 0;
+  return `Registry added (${registries} total).`;
+}
+
+export function formatRegistryRemovePlain(r: Record<string, unknown>): string {
+  if (r.removed === false) {
+    return typeof r.message === "string" ? r.message : "No matching registry found.";
+  }
+  const entry = r.entry as Record<string, unknown> | undefined;
+  const url = entry ? String(entry.url ?? entry.name ?? "?") : "?";
+  return `Removed registry ${url}`;
+}
+
+export function formatRegistrySearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
+  // Reuse the same renderer as `search` — both share `hits` / `registryHits`.
+  return formatSearchPlain(r, detail);
+}
+
+export function formatRegistryBuildIndexPlain(r: Record<string, unknown>): string {
+  const outPath = String(r.outPath ?? "?");
+  const total = typeof r.totalKits === "number" ? r.totalKits : 0;
+  const version = typeof r.version === "number" ? `v${r.version}` : "";
+  return `Wrote registry index ${version} (${total} kits) → ${outPath}`.replace(/\s+/g, " ").trim();
+}
+
+export function formatVaultListPlain(r: Record<string, unknown>): string {
+  // Single-vault listing: { ref, path, entries: [{ key, comment? }, ...] }
+  if (typeof r.ref === "string" && Array.isArray(r.entries)) {
+    const ref = r.ref;
+    const entries = r.entries as Array<Record<string, unknown>>;
+    if (entries.length === 0) {
+      return `No keys in ${ref}. Set one with \`akm vault set ${ref} KEY=VALUE\`.`;
+    }
+    const lines = [ref];
+    for (const e of entries) {
+      const key = String(e.key ?? "?");
+      const comment = typeof e.comment === "string" && e.comment ? `  # ${e.comment}` : "";
+      lines.push(`  ${key}${comment}`);
+    }
+    return lines.join("\n");
+  }
+  // Multi-vault listing: { vaults: [{ ref, path, keyCount }, ...] }
+  const vaults = Array.isArray(r.vaults) ? (r.vaults as Array<Record<string, unknown>>) : [];
+  if (vaults.length === 0) {
+    return "No vaults. Create one with `akm vault create <name>` then `akm vault set vault:<name> KEY=VALUE`.";
+  }
+  const lines: string[] = [];
+  for (const v of vaults) {
+    const ref = String(v.ref ?? "?");
+    const keyCount = typeof v.keyCount === "number" ? v.keyCount : 0;
+    lines.push(`${ref}\t${keyCount} key(s)`);
+  }
+  return lines.join("\n");
+}
+
+export function formatWikiRegisterPlain(r: Record<string, unknown>): string {
+  const name = String(r.name ?? r.wiki ?? "?");
+  const ref = String(r.ref ?? r.path ?? r.url ?? "?");
+  return `Registered wiki ${name} → ${ref}`;
+}
+
+export function formatWorkflowValidatePlain(r: Record<string, unknown>): string {
+  const ok = r.ok !== false;
+  const pathValue = String(r.path ?? "?");
+  if (!ok) return `workflow validate: failed (${pathValue})`;
+  const title = typeof r.title === "string" ? r.title : "";
+  const stepCount = typeof r.stepCount === "number" ? r.stepCount : 0;
+  return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
+}
+
+export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {
+  if (r.ok === false) {
+    const reason = String(r.reason ?? "unknown");
+    const error = typeof r.error === "string" ? r.error : "";
+    const lines = [`${command}: failed (${reason})`];
+    if (error) lines.push(`  error: ${error}`);
+    if (r.ref) lines.push(`  ref: ${String(r.ref)}`);
+    if (r.exitCode !== undefined && r.exitCode !== null) {
+      lines.push(`  exitCode: ${String(r.exitCode)}`);
+    }
+    return lines.join("\n");
+  }
+  const proposal = (r.proposal as Record<string, unknown>) ?? {};
+  const id = String(proposal.id ?? "?");
+  const ref = String(r.ref ?? proposal.ref ?? "?");
+  const status = String(proposal.status ?? "pending");
+  return `${command}: queued proposal ${id} (${ref}) [${status}]`;
+}
+
+export function formatProposalListPlain(r: Record<string, unknown>): string {
+  const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
+  const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
+  if (proposals.length === 0) {
+    return `${total} proposal(s).\nNo proposals.\nGenerate one with \`akm reflect <ref>\`, \`akm propose <type> <name> --task ...\`, or \`akm distill <ref>\`.`;
+  }
+  const lines = [`${total} proposal(s)`, ""];
+  for (const p of proposals) {
+    const id = String(p.id ?? "?");
+    const ref = String(p.ref ?? "?");
+    const status = String(p.status ?? "?");
+    const source = String(p.source ?? "?");
+    const created = String(p.createdAt ?? "?");
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}`);
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatProposalShowPlain(r: Record<string, unknown>): string {
+  const p = (r.proposal as Record<string, unknown>) ?? {};
+  const lines: string[] = [];
+  lines.push(`# proposal ${String(p.id ?? "?")}`);
+  lines.push(`ref: ${String(p.ref ?? "?")}`);
+  lines.push(`status: ${String(p.status ?? "?")}`);
+  lines.push(`source: ${String(p.source ?? "?")}`);
+  if (p.sourceRun) lines.push(`sourceRun: ${String(p.sourceRun)}`);
+  if (p.createdAt) lines.push(`createdAt: ${String(p.createdAt)}`);
+  if (p.updatedAt) lines.push(`updatedAt: ${String(p.updatedAt)}`);
+  const review = p.review as Record<string, unknown> | undefined;
+  if (review) {
+    lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
+    if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
+    if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
+  }
+  const validation = r.validation as Record<string, unknown> | undefined;
+  if (validation) {
+    const ok = validation.ok === true;
+    const findings = Array.isArray(validation.findings) ? (validation.findings as Array<Record<string, unknown>>) : [];
+    lines.push("");
+    lines.push(`validation: ${ok ? "ok" : `${findings.length} finding(s)`}`);
+    for (const f of findings) {
+      lines.push(`  - [${String(f.kind)}] ${String(f.message)}`);
+    }
+  }
+  const payload = p.payload as Record<string, unknown> | undefined;
+  if (payload && typeof payload.content === "string") {
+    lines.push("");
+    lines.push("payload:");
+    lines.push(payload.content);
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
+  return `Accepted proposal ${String(r.id ?? "?")} → ${String(r.ref ?? "?")} at ${String(r.assetPath ?? "?")}`;
+}
+
+export function formatProposalRejectPlain(r: Record<string, unknown>): string {
+  const reason = r.reason ? ` (${String(r.reason)})` : "";
+  return `Rejected proposal ${String(r.id ?? "?")} (${String(r.ref ?? "?")})${reason}`;
+}
+
+export function formatDistillPlain(r: Record<string, unknown>): string {
+  const outcome = String(r.outcome ?? "unknown");
+  const inputRef = String(r.inputRef ?? "?");
+  const lessonRef = String(r.lessonRef ?? "?");
+  if (outcome === "queued") {
+    const id = String(r.proposalId ?? "?");
+    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm proposal show ${id}\` to review.`;
+  }
+  if (outcome === "validation_failed") {
+    const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
+    const lines = [`Distillation produced an invalid lesson for ${inputRef}; no proposal queued.`];
+    for (const f of findings) {
+      lines.push(`  - ${String(f.message ?? f.kind ?? "validation finding")}`);
+    }
+    return lines.join("\n");
+  }
+  // skipped
+  const message = typeof r.message === "string" ? r.message : "feature disabled or LLM unavailable";
+  return `Distill skipped for ${inputRef}: ${message}`;
+}
+
+export function formatProposalDiffPlain(r: Record<string, unknown>): string {
+  const header = r.isNew
+    ? `# proposal ${String(r.id ?? "?")} (new asset: ${String(r.ref ?? "?")})`
+    : `# proposal ${String(r.id ?? "?")} (update: ${String(r.ref ?? "?")})`;
+  const unified = typeof r.unified === "string" ? r.unified : "";
+  if (!unified) return `${header}\n(no changes)`;
+  return `${header}\n${unified}`;
 }
 
 export function formatEventsPlain(r: Record<string, unknown>): string {
@@ -319,7 +680,9 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
 
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
   const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
-  if (runs.length === 0) return "No workflow runs found.";
+  if (runs.length === 0) {
+    return "No workflow runs. Start one with `akm workflow next workflow:<name>` or author one with `akm workflow create <name>`.";
+  }
 
   return runs
     .map((run) => {
@@ -413,6 +776,8 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
+    // Optional v1 spec §4.2 quality marker (e.g. "curated" / "proposed").
+    if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
     // Surface optional hit-level warnings (v1 spec §4.2). The legacy
     // `curated` boolean was removed in v1.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
