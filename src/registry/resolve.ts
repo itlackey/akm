@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
-import { UsageError } from "../core/errors";
+import { NotFoundError, UsageError } from "../core/errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
 import type {
   ParsedGithubRef,
@@ -236,7 +236,11 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
   } catch {
     // Explicit paths (./foo, ../bar, /abs) should throw on missing
     if (explicitPath) {
-      throw new Error(`Local path not found: ${resolvedPath}`);
+      throw new NotFoundError(
+        `Local path not found: ${resolvedPath}`,
+        "FILE_NOT_FOUND",
+        "Check the path exists and is readable.",
+      );
     }
     // Bare names that don't exist on disk — let caller fall through to npm/github
     return undefined;

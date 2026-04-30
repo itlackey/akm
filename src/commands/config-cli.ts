@@ -77,9 +77,12 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
     case "security.installAudit.allowedFindings":
       return { security: { installAudit: { allowedFindings: parseAllowedFindingsValue(value, key) } } };
     default:
-      throw new UsageError(`Unknown config key: ${key}`);
+      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
   }
 }
+
+const UNKNOWN_CONFIG_KEY_HINT =
+  "Valid top-level keys: stashDir, embedding, llm, registries, sources, agent, output, semanticSearchMode. Use dotted paths like `embedding.endpoint` or `output.format` for nested values.";
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
   switch (key) {
@@ -130,7 +133,7 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
     case "security.installAudit.allowedFindings":
       return config.security?.installAudit?.allowedFindings ?? null;
     default:
-      throw new UsageError(`Unknown config key: ${key}`);
+      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
   }
 }
 
@@ -187,7 +190,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
       return { ...config, defaultWriteTarget: name };
     }
     default:
-      throw new UsageError(`Unknown config key: ${key}`);
+      throw new UsageError(`Unknown config key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
   }
 }
 
@@ -259,7 +262,7 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
         }),
       };
     default:
-      throw new UsageError(`Unknown or unsupported unset key: ${key}`);
+      throw new UsageError(`Unknown or unsupported unset key: ${key}`, "INVALID_FLAG_VALUE", UNKNOWN_CONFIG_KEY_HINT);
   }
 }
 

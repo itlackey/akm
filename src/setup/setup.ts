@@ -378,6 +378,10 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       bge: 384,
     };
     const guessedDim = Object.entries(knownDims).find(([k]) => embChoice.includes(k))?.[1] ?? 384;
+    p.note(
+      "Embedding dimension must match the model. Common values: 384 (BGE small), 768 (BGE base), 1024 (BGE large). Press Enter to accept the detected default.",
+      "Embedding dimension",
+    );
     const dimChoice = await prompt(() =>
       p.text({
         message: `Embedding dimension for ${embChoice}:`,
@@ -1017,7 +1021,7 @@ export async function runSetupWizard(): Promise<void> {
   const embedding = newConfig.embedding;
   const llm = newConfig.llm;
   const registries = newConfig.registries;
-  const allStashes = newConfig.stashes ?? [];
+  const allStashes = newConfig.sources ?? newConfig.stashes ?? [];
 
   // Confirm before saving
   const effectiveRegistries = registries ?? DEFAULT_CONFIG.registries ?? [];

@@ -112,10 +112,10 @@ describe("error hint rendering (#8)", () => {
     expect(err.hint()).toContain("stash");
   });
 
-  test("NotFoundError with ASSET_NOT_FOUND has no default hint (expected)", () => {
+  test("NotFoundError with ASSET_NOT_FOUND has a canned hint (Wave C #284)", () => {
     const err = new NotFoundError("not found");
-    // ASSET_NOT_FOUND is not in NOT_FOUND_HINTS by design
-    expect(err.hint()).toBeUndefined();
+    // Wave C added a default hint for ASSET_NOT_FOUND pointing at search/index.
+    expect(err.hint()).toContain("akm search");
   });
 
   test("NotFoundError with explicit hint returns it", () => {

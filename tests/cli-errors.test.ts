@@ -161,19 +161,18 @@ describe("error class hints", () => {
   });
 
   test("UsageError without a code-mapped hint returns undefined", () => {
-    expect(new UsageError("bad flag", "INVALID_FLAG_VALUE").hint()).toBeUndefined();
+    // INVALID_FLAG_VALUE is intentionally a generic fallback — points at --help.
+    expect(new UsageError("bad flag", "INVALID_FLAG_VALUE").hint()).toContain("akm <command> --help");
     expect(new UsageError("unknown key", "UNKNOWN_CONFIG_KEY").hint()).toBeUndefined();
     expect(new UsageError("bad json arg", "INVALID_JSON_ARGUMENT").hint()).toBeUndefined();
   });
 
   test("NotFoundError derives hint from code by default", () => {
+    // Wave C #284 added canned hints for the remaining codes.
     expect(new NotFoundError("missing source", "SOURCE_NOT_FOUND").hint()).toContain("akm list");
-  });
-
-  test("NotFoundError without a code-mapped hint returns undefined", () => {
-    expect(new NotFoundError("missing asset", "ASSET_NOT_FOUND").hint()).toBeUndefined();
-    expect(new NotFoundError("missing wf", "WORKFLOW_NOT_FOUND").hint()).toBeUndefined();
-    expect(new NotFoundError("missing file", "FILE_NOT_FOUND").hint()).toBeUndefined();
+    expect(new NotFoundError("missing asset", "ASSET_NOT_FOUND").hint()).toContain("akm search");
+    expect(new NotFoundError("missing wf", "WORKFLOW_NOT_FOUND").hint()).toContain("akm workflow list");
+    expect(new NotFoundError("missing file", "FILE_NOT_FOUND").hint()).toContain("path exists");
   });
 
   test("explicit hint at construction overrides the code-derived default", () => {

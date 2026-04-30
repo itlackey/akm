@@ -83,14 +83,15 @@ export function parseAssetRef(ref: string): AssetRef {
 // ── Validation ──────────────────────────────────────────────────────────────
 
 function validateName(name: string): void {
-  if (!name) throw new UsageError("Empty asset name.");
-  if (name.includes("\0")) throw new UsageError("Null byte in asset name.");
-  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.");
+  if (!name) throw new UsageError("Empty asset name.", "MISSING_REQUIRED_ARGUMENT");
+  if (name.includes("\0")) throw new UsageError("Null byte in asset name.", "MISSING_REQUIRED_ARGUMENT");
+  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.", "MISSING_REQUIRED_ARGUMENT");
 
   const normalized = path.posix.normalize(name.replace(/\\/g, "/"));
-  if (path.posix.isAbsolute(normalized)) throw new UsageError("Absolute path in asset name.");
+  if (path.posix.isAbsolute(normalized))
+    throw new UsageError("Absolute path in asset name.", "MISSING_REQUIRED_ARGUMENT");
   if (normalized === ".." || normalized.startsWith("../")) {
-    throw new UsageError("Path traversal in asset name.");
+    throw new UsageError("Path traversal in asset name.", "MISSING_REQUIRED_ARGUMENT");
   }
 }
 
