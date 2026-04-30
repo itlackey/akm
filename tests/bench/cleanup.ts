@@ -139,21 +139,31 @@ function installSignalHandlers(): void {
 }
 
 async function runAllAndExit(fns: CleanupFn[]): Promise<void> {
-  for (const fn of fns) {
-    try {
-      await fn();
-    } catch {
-      // Best-effort: cleanup must never throw out of the signal path.
+  // BUG-H5: wrap the body in try/finally so a synchronous throw outside the
+  // per-fn try/catch (e.g. an exception thrown by `process.off` on a
+  // pathological listener list) does not leave `registry.running = true`.
+  // Without this guard, a subsequent registerCleanup() call would re-install
+  // listeners but the new handler would short-circuit on the stale flag and
+  // skip cleanup on the next signal.
+  try {
+    for (const fn of fns) {
+      try {
+        await fn();
+      } catch {
+        // Best-effort: cleanup must never throw out of the signal path.
+      }
     }
+    // Remove our listeners so a second Ctrl-C force-exits via the default.
+    if (registry.handlerSigint) process.off("SIGINT", registry.handlerSigint);
+    if (registry.handlerSigterm) process.off("SIGTERM", registry.handlerSigterm);
+    registry.installed = false;
+    registry.handlerSigint = undefined;
+    registry.handlerSigterm = undefined;
+  } finally {
+    registry.running = false;
+    // 128 + SIGINT(2) — POSIX convention for signal-induced exits.
+    process.exit(130);
   }
-  // Remove our listeners so a second Ctrl-C force-exits via the default.
-  if (registry.handlerSigint) process.off("SIGINT", registry.handlerSigint);
-  if (registry.handlerSigterm) process.off("SIGTERM", registry.handlerSigterm);
-  registry.installed = false;
-  registry.handlerSigint = undefined;
-  registry.handlerSigterm = undefined;
-  // 128 + SIGINT(2) — POSIX convention for signal-induced exits.
-  process.exit(130);
 }
 
 // ── Test-only seam ──────────────────────────────────────────────────────────

@@ -413,8 +413,6 @@ interface LlmPreset {
   endpoint: string;
   defaultModel: string;
   hint?: string;
-  /** Default context window for the preset's recommended model. */
-  contextWindow?: number;
 }
 
 const LLM_PRESETS: LlmPreset[] = [
@@ -424,7 +422,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://api.anthropic.com/v1/chat/completions",
     defaultModel: "claude-sonnet-4-5",
     hint: "beta OpenAI-compat layer; set AKM_LLM_API_KEY; override the model if the default is unavailable",
-    contextWindow: 200_000,
   },
   {
     value: "openai",
@@ -432,7 +429,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://api.openai.com/v1/chat/completions",
     defaultModel: "gpt-4o-mini",
     hint: "AKM_LLM_API_KEY required",
-    contextWindow: 128_000,
   },
   {
     value: "google",
@@ -440,7 +436,6 @@ const LLM_PRESETS: LlmPreset[] = [
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     defaultModel: "gemini-2.0-flash",
     hint: "OpenAI-compat endpoint, AKM_LLM_API_KEY required",
-    contextWindow: 1_000_000,
   },
 ];
 
@@ -555,7 +550,6 @@ export async function stepLlm(
       model: model.trim() || preset.defaultModel,
       temperature: 0.3,
       maxTokens: 1024,
-      contextWindow: preset.contextWindow,
     };
   }
 

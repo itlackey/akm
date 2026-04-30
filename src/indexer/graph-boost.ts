@@ -19,13 +19,7 @@
 
 import fs from "node:fs";
 import { warn } from "../core/warn";
-import {
-  GRAPH_FILE_SCHEMA_VERSION,
-  type GraphFile,
-  type GraphFileNode,
-  type GraphRelation,
-  getGraphFilePath,
-} from "./graph-extraction";
+import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, type GraphFileNode, getGraphFilePath } from "./graph-extraction";
 
 /**
  * Per-query state for the graph boost. Built once per search invocation by
@@ -199,6 +193,3 @@ function isGraphFile(value: unknown): value is GraphFile {
   }
   return true;
 }
-
-// re-export GraphRelation so other modules can use a single import root.
-export type { GraphRelation };

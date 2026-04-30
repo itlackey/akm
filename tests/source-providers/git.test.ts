@@ -160,34 +160,6 @@ describe("GitSourceProvider", () => {
     expect(path.basename(cachePaths.rootDir).startsWith("context-hub-")).toBe(false);
   });
 
-  test("getCachePaths silently migrates legacy context-hub cache directories", () => {
-    const url = "https://github.com/example/migration-test";
-
-    // Compute expected key using the same hashing strategy used by getCachePaths.
-    // We do this by calling getCachePaths once to learn the new path, then
-    // deriving the legacy path from the same suffix.
-    const newPaths = getCachePaths(url);
-    const cacheRoot = path.dirname(newPaths.rootDir);
-    const newBase = path.basename(newPaths.rootDir);
-    expect(newBase.startsWith("git-")).toBe(true);
-    const key = newBase.slice("git-".length);
-    const legacyRoot = path.join(cacheRoot, `context-hub-${key}`);
-
-    // Clean any state from the prior call.
-    fs.rmSync(newPaths.rootDir, { recursive: true, force: true });
-    fs.rmSync(legacyRoot, { recursive: true, force: true });
-
-    // Seed a legacy cache dir with a marker file.
-    fs.mkdirSync(path.join(legacyRoot, "repo", "content"), { recursive: true });
-    fs.writeFileSync(path.join(legacyRoot, "marker"), "legacy", "utf8");
-
-    // Trigger the migration.
-    const migrated = getCachePaths(url);
-    expect(fs.existsSync(legacyRoot)).toBe(false);
-    expect(fs.existsSync(migrated.rootDir)).toBe(true);
-    expect(fs.readFileSync(path.join(migrated.rootDir, "marker"), "utf8")).toBe("legacy");
-  });
-
   test("cache mirror clones content to disk via git", async () => {
     const localRepoPath = createLocalGitRepo();
     // Construct ParsedRepoUrl directly to point at the local repo
@@ -231,10 +203,9 @@ describe("GitSourceProvider", () => {
     fs.mkdirSync(path.join(cachePaths.repoDir, "content"), { recursive: true });
     fs.writeFileSync(cachePaths.indexPath, "[]", { encoding: "utf8", mode: 0o600 });
 
-    // Verify legacy "context-hub" type alias is still accepted (normalized at load).
     saveConfig({
       semanticSearchMode: "off",
-      stashes: [{ type: "context-hub", url: stashUrl, name: "context-hub" }],
+      sources: [{ type: "git", url: stashUrl, name: "context-hub" }],
     });
     resetConfigCache();
 

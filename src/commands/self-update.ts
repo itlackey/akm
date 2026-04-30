@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fetchWithRetry, IS_WINDOWS } from "../core/common";
+import { warn } from "../core/warn";
 import { githubHeaders } from "../integrations/github";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../sources/types";
 
@@ -187,7 +188,7 @@ export async function performUpgrade(
     const checksumsResponse = await fetchWithRetry(checksumsUrl);
     if (!checksumsResponse.ok) {
       if (skipChecksum) {
-        console.warn(
+        warn(
           `WARNING: checksums.txt fetch failed (HTTP ${checksumsResponse.status}). Proceeding without verification because --skip-checksum was provided.`,
         );
       } else {
@@ -209,7 +210,7 @@ export async function performUpgrade(
         checksumVerified = true;
       } else {
         if (skipChecksum) {
-          console.warn(
+          warn(
             `WARNING: ${binaryName} not found in checksums.txt. Proceeding without verification because --skip-checksum was provided.`,
           );
         } else {
@@ -229,7 +230,7 @@ export async function performUpgrade(
     }
     // Network or parse failure
     if (skipChecksum) {
-      console.warn(
+      warn(
         `WARNING: Could not fetch or parse checksums: ${err instanceof Error ? err.message : String(err)}. Proceeding because --skip-checksum was provided.`,
       );
     } else {

@@ -190,23 +190,16 @@ export async function runAgent(
     };
   }
 
-  // Optional stdin payload (captured mode only).
-  if (options.stdin !== undefined && stdioMode === "captured" && proc.stdin) {
-    try {
-      const writer = proc.stdin.getWriter();
-      const bytes = new TextEncoder().encode(options.stdin);
-      await writer.write(bytes);
-      await writer.close();
-    } catch {
-      // Best-effort: ignore stdin write failures, the child will get EOF.
-    }
-  }
-
   // Hard timeout. We prefer SIGTERM, then SIGKILL if SIGTERM is ignored,
   // but Bun.spawn only exposes a single .kill() — one signal is enough
   // for the structured-failure contract.
+  //
+  // BUG-M3: only flag `timedOut` when the child has not already exited. A
+  // timer firing in the same microtask as `proc.exited` resolving could
+  // otherwise label a clean exit as a timeout.
   let timedOut = false;
   const timer = setTimeoutImpl(() => {
+    if (proc.exitCode !== null) return;
     timedOut = true;
     try {
       proc.kill("SIGTERM");
@@ -218,11 +211,39 @@ export async function runAgent(
   const stdoutPromise = stdioMode === "captured" ? readStream(proc.stdout ?? null) : Promise.resolve("");
   const stderrPromise = stdioMode === "captured" ? readStream(proc.stderr ?? null) : Promise.resolve("");
 
+  // Optional stdin payload (captured mode only).
+  //
+  // BUG-H1: race the stdin write/close against `proc.exited` and the
+  // timeout timer. If the child never drains stdin, an unraced
+  // `await writer.write()` would block forever and prevent `runAgent`
+  // from ever returning.
+  if (options.stdin !== undefined && stdioMode === "captured" && proc.stdin) {
+    const stdinPayload = options.stdin;
+    const stdinStream = proc.stdin;
+    const stdinDone = (async () => {
+      try {
+        const writer = stdinStream.getWriter();
+        const bytes = new TextEncoder().encode(stdinPayload);
+        await writer.write(bytes);
+        await writer.close();
+      } catch {
+        // Best-effort: ignore stdin write failures, the child will get EOF.
+      }
+    })();
+    // Resolve as soon as either the write completes or the child exits.
+    // We don't await the result — only that one of the two has settled —
+    // so a stuck writer cannot keep us pinned past the timeout.
+    await Promise.race([stdinDone, proc.exited.catch(() => undefined)]);
+  }
+
   let exitCode: number | null = null;
   try {
     exitCode = await proc.exited;
   } catch (err) {
     clearTimeoutImpl(timer);
+    // BUG-H2: drain stream readers before the early return so they don't
+    // surface as unhandled rejections after the function resolves.
+    await Promise.allSettled([stdoutPromise, stderrPromise]);
     const durationMs = Date.now() - start;
     return {
       ok: false,

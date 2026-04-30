@@ -487,3 +487,78 @@ describe("akmDistill — excludeFeedbackFromRefs (#267)", () => {
     expect(events[0].metadata?.filteredFeedbackCount).toBe(2);
   });
 });
+
+// ── #284 GAP-MED 3: success envelope shape contract ─────────────────────────
+
+// ── #284 GAP-HIGH 7: feature gate ON but llm config missing ────────────────
+
+describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
+  test("feature_distillation: true but no `llm` block → outcome=skipped, no crash", async () => {
+    const stash = makeStashDir();
+    // Construct a config WITH features enabled but WITHOUT the `llm` block.
+    // Validation in parseLlmFeatures requires `llm`; we bypass that by
+    // assembling the shape directly (this mimics a partial / racy config).
+    const config = {
+      stashDir: stash,
+      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      defaultWriteTarget: "stash",
+      llm: { features: { feedback_distillation: true } },
+    } as unknown as AkmConfig;
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config,
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("must not be called when llm.endpoint/model missing");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("skipped");
+    expect(result.proposalId).toBeUndefined();
+    expect(listProposals(stash)).toEqual([]);
+  });
+});
+
+describe("akmDistill — success envelope shape contract (#284)", () => {
+  test("queued result carries the locked field set", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+      sourceRun: "run-shape-contract",
+    });
+    // Locked envelope keys (v1 §11/§14): ok, outcome, inputRef, lessonRef,
+    // proposalId. Queued path additionally carries proposal stub fields via
+    // `result.proposal` if present.
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("queued");
+    expect(result.inputRef).toBe("skill:deploy");
+    expect(result.lessonRef).toBe("lesson:skill-deploy-lesson");
+    expect(typeof result.proposalId).toBe("string");
+    // schemaVersion present at the top level (v1 spec lock)
+    expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
+  });
+
+  test("skipped result preserves the same outer shape but omits proposalId", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skill:deploy",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("must not be called");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe("skipped");
+    expect(result.proposalId).toBeUndefined();
+    expect((result as unknown as { schemaVersion: number }).schemaVersion).toBe(1);
+  });
+});

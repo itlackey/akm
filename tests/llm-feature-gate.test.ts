@@ -36,12 +36,12 @@ describe("isLlmFeatureEnabled", () => {
 
   test("returns false when the features block is missing", () => {
     const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
-    expect(isLlmFeatureEnabled(cfg, "tag_dedup")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
   });
 
   test("returns false when the key is absent (default-false)", () => {
     const cfg = configWith({});
-    expect(isLlmFeatureEnabled(cfg, "memory_consolidation")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(false);
   });
 
   test("returns true only on literal boolean true", () => {
@@ -72,8 +72,8 @@ describe("tryLlmFeature", () => {
   test("invokes a thunk fallback only on the fallback path", async () => {
     let fallbackInvocations = 0;
     const result = await tryLlmFeature(
-      "tag_dedup",
-      configWith({ tag_dedup: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       async () => "real",
       () => {
         fallbackInvocations += 1;
@@ -103,8 +103,8 @@ describe("tryLlmFeature", () => {
 
   test("returns the fallback on an async rejection", async () => {
     const result = await tryLlmFeature(
-      "embedding_fallback_score",
-      configWith({ embedding_fallback_score: true }),
+      "graph_extraction",
+      configWith({ graph_extraction: true }),
       async () => {
         throw new Error("kaboom");
       },
@@ -116,8 +116,8 @@ describe("tryLlmFeature", () => {
   test("returns the fallback on hard timeout", async () => {
     const events: { reason: string; error?: Error }[] = [];
     const result = await tryLlmFeature(
-      "memory_consolidation",
-      configWith({ memory_consolidation: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
       "fallback",
       { timeoutMs: 25, onFallback: (e) => events.push({ reason: e.reason, error: e.error }) },
@@ -137,4 +137,81 @@ describe("tryLlmFeature", () => {
     );
     expect(result).toEqual({ ok: true });
   });
+});
+
+// ── #284 GAP-LOW: parametrise over the stable feature keys ─────────────────
+//
+// Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`
+// — we restrict this parametrised sweep to the 4 keys that are
+// definitely actually-implemented and used by the current code.
+const STABLE_FEATURE_KEYS = ["feedback_distillation", "memory_inference", "graph_extraction", "curate_rerank"] as const;
+
+describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)", () => {
+  for (const key of STABLE_FEATURE_KEYS) {
+    test(`${key}: default-false when features block is missing`, () => {
+      const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
+      // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(false);
+    });
+
+    test(`${key}: false when key is absent (default-false)`, () => {
+      const cfg = configWith({});
+      // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(false);
+    });
+
+    test(`${key}: literal true → enabled`, () => {
+      // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+      expect(isLlmFeatureEnabled(configWith({ [key]: true }), key as any)).toBe(true);
+    });
+
+    test(`${key}: literal false → disabled`, () => {
+      // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+      expect(isLlmFeatureEnabled(configWith({ [key]: false }), key as any)).toBe(false);
+    });
+  }
+});
+
+describe("tryLlmFeature — parametrised over stable feature keys (#284)", () => {
+  for (const key of STABLE_FEATURE_KEYS) {
+    test(`${key}: disabled → returns fallback, never calls fn`, async () => {
+      let called = false;
+      const result = await tryLlmFeature(
+        // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+        key as any,
+        configWith({}),
+        async () => {
+          called = true;
+          return "real";
+        },
+        "fallback",
+      );
+      expect(result).toBe("fallback");
+      expect(called).toBe(false);
+    });
+
+    test(`${key}: enabled + happy → returns fn's result`, async () => {
+      const result = await tryLlmFeature(
+        // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+        key as any,
+        configWith({ [key]: true }),
+        async () => "real",
+        "fallback",
+      );
+      expect(result).toBe("real");
+    });
+
+    test(`${key}: enabled + throw → returns fallback`, async () => {
+      const result = await tryLlmFeature(
+        // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
+        key as any,
+        configWith({ [key]: true }),
+        async () => {
+          throw new Error("boom");
+        },
+        "fallback",
+      );
+      expect(result).toBe("fallback");
+    });
+  }
 });

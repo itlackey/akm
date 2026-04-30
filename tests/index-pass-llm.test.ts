@@ -127,7 +127,7 @@ describe("config loader: `index` block parsing", () => {
   });
 
   test("rejects per-pass `provider`, `apiKey`, `temperature`, etc.", () => {
-    for (const key of ["provider", "apiKey", "temperature", "maxTokens", "baseUrl", "contextWindow", "capabilities"]) {
+    for (const key of ["provider", "apiKey", "temperature", "maxTokens", "baseUrl", "capabilities"]) {
       writeUserConfig({
         llm: SAMPLE_LLM,
         index: { enrichment: { [key]: "anything" } },

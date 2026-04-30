@@ -62,11 +62,10 @@ directory. Project config files are meant to be edited directly in the project.
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
 | `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
 
-> **Legacy `stashes` key:** `sources` was previously named `stashes`. Configs
-> that still use `stashes[]` continue to load — the loader migrates the value
-> in-memory and emits a one-time deprecation warning. The renamed key is
-> persisted on the next `akm config set/unset` write. New configs should use
-> `sources[]`.
+> **Legacy `stashes` key removed:** `sources` was previously named `stashes`.
+> The one-cycle compat shim is gone — configs that still use `stashes[]` will
+> not load. Rename the key to `sources[]` in your `config.json` before
+> upgrading.
 
 ### Source entry schema
 
@@ -456,13 +455,10 @@ in, per feature." See v1 spec §14 for the boundary rules.
     "temperature": 0.3,
     "maxTokens": 512,
     "features": {
-      "curate_rerank":            false,
-      "tag_dedup":                false,
-      "memory_consolidation":     false,
-      "feedback_distillation":    false,
-      "embedding_fallback_score": false,
-      "memory_inference":         true,
-      "graph_extraction":         false
+      "curate_rerank":         false,
+      "feedback_distillation": false,
+      "memory_inference":      true,
+      "graph_extraction":      false
     }
   }
 }
@@ -471,10 +467,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | Feature flag | Use site | Behaviour when disabled |
 | --- | --- | --- |
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
-| `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
-| `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
 | `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
-| `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 | `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 
@@ -494,3 +487,24 @@ raises `LlmFeatureTimeoutError`), or on any thrown error from `fn`. Call
 sites may pass an `onFallback` sink to surface a structured `warnings`
 entry per spec §14.2 — the gate itself never throws and never blocks the
 caller's command.
+
+## Environment variables
+
+akm reads a small set of environment variables in addition to `config.json`.
+Variables with a literal-or-env config form (e.g. `apiKey: "${MY_KEY}"`) are
+documented inline next to the relevant config key; the table below covers
+the variables that are read directly by the CLI.
+
+| Variable | Purpose | Default | Notes |
+| --- | --- | --- | --- |
+| `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) / `%APPDATA%\akm` | Overrides the table at the top of this page. |
+| `AKM_CACHE_DIR` | Override the platform cache directory used for indexes, registry mirrors, and bench tmp roots. | `~/.cache/akm` (XDG) | Read at startup; takes precedence over `XDG_CACHE_HOME`. |
+| `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation override; never persisted. |
+| `AKM_EMBED_API_KEY` | API key applied to `embedding` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
+| `AKM_LLM_API_KEY` | API key applied to `llm` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
+| `AKM_NPM_REGISTRY` | npm registry used when resolving `npm:` install refs and tarballs. | `https://registry.npmjs.org` | Honour your private registry without rewriting refs. |
+| `AKM_REGISTRY_URL` | Comma-separated list of registry index URLs to use *instead of* the configured `registries[]`. | unset (use `config.registries`) | Intended as a CI / one-shot override; does not persist to `config.json`. |
+| `HF_HOME` | Hugging Face cache root for the local embedder (`@huggingface/transformers`). | `<AKM_CACHE_DIR>/hf` | akm sets this at process start when unset, so model downloads land in the akm cache rather than `~/.cache/huggingface`. Pre-set it in your environment to opt out. |
+| `GITHUB_TOKEN` | Token used for authenticated GitHub API calls (private repos, higher rate limits). | — | Read alongside `GH_TOKEN`. |
+| `GH_TOKEN` | Same as `GITHUB_TOKEN`; honoured for compatibility with the `gh` CLI. | — | Either name works; if both are set, `GITHUB_TOKEN` wins. |
+| `AKM_VERBOSE` | When truthy (`1`, `true`, `yes`, `on`), print verbose diagnostics. When falsy (`0`, `false`, `no`, `off`), force quiet even if `--verbose` is passed. | unset | Env wins over the `--verbose` / `--quiet` flags. |
