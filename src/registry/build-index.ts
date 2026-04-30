@@ -9,9 +9,9 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap } from "../core/common";
+import { getCacheDir } from "../core/paths";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "../indexer/metadata";
 import { walkStashFlat } from "../indexer/walker";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
@@ -268,7 +268,16 @@ async function scanGithub(githubApiBase: string): Promise<RegistryStashEntry[]> 
 }
 
 async function inspectArchive(url: string, headers?: HeadersInit): Promise<PackageInspection> {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-registry-build-"));
+  // Route registry-build scratch space under the akm cache dir instead of
+  // the system temp directory. Long-running registry builds that crash
+  // mid-flight previously left orphan dirs under `/tmp`, which can fill
+  // the OS partition. Pinning to `${getCacheDir()}/registry-build/` keeps
+  // a single `rm -rf` of that directory sufficient to reclaim the space
+  // and leaves the operator's `/tmp` untouched. See #276 for the
+  // bench-tmp precedent and #284 for this non-bench rollout.
+  const tmpRoot = path.join(getCacheDir(), "registry-build");
+  fs.mkdirSync(tmpRoot, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(tmpRoot, "build-"));
   const archivePath = path.join(tempDir, "archive.tgz");
   const extractDir = path.join(tempDir, "extract");
 

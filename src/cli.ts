@@ -2024,6 +2024,22 @@ const vaultLoadCommand = defineCommand({
       const script = buildShellExportScript(absPath);
 
       // Write to a mode-0600 temp file the shell can source.
+      //
+      // INTENTIONAL: this site uses `os.tmpdir()` (i.e. `/tmp` on Unix)
+      // rather than `${getCacheDir()}/vault/`. The temp file is written
+      // mode-0600, sourced by the parent shell via `eval`, and immediately
+      // `rm -f`'d on the same line of the emitted snippet. `/tmp` is the
+      // conventional location for short-lived shell-eval scratch files and
+      // benefits from tmp-cleanup-on-reboot semantics, which operators
+      // expect for ephemeral secret material. Moving to `~/.cache/akm/`
+      // would surprise those operators and also persist the file across
+      // reboots if the eval is interrupted before the inline `rm -f` runs.
+      // The bench/registry-build rationale (#276/#284) — orphan dirs
+      // accumulating under `/tmp` from long-running builds — does not
+      // apply here: the file is single-shot, a few hundred bytes, and
+      // removed by the same shell command that sources it.
+      // Regression test: tests/vault-load-error.test.ts verifies the
+      // emitted snippet contains both `. <path>` and `rm -f <path>`.
       const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
       fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
       try {
