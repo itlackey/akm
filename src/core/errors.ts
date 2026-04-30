@@ -64,6 +64,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
 
 /** Default hint for each UsageError code. */
 const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
+  INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: stash, registry, both.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, text, yaml.",
   INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, summary, agent.",
@@ -77,7 +78,10 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
 
 /** Default hint for each NotFoundError code. */
 const NOT_FOUND_HINTS: Partial<Record<NotFoundErrorCode, string>> = {
+  ASSET_NOT_FOUND: "Run `akm search <query>` or `akm index` to refresh the index.",
   SOURCE_NOT_FOUND: "Run `akm list` to view your sources, then retry with one of those values.",
+  WORKFLOW_NOT_FOUND: "Run `akm workflow list --active` to see runs.",
+  FILE_NOT_FOUND: "Check the path exists and is readable.",
 };
 
 /** Raised when configuration or environment is invalid or missing. */
