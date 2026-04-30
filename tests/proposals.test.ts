@@ -232,3 +232,90 @@ describe("validation failure", () => {
     expect(report.findings.some((f) => f.kind === "empty-content")).toBe(true);
   });
 });
+
+// ── #284 GAP-HIGH backfill ───────────────────────────────────────────────────
+
+describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
+  test("rejecting an already-archived proposal → UsageError with .code INVALID_FLAG_VALUE", async () => {
+    const stash = makeStashDir();
+    const created = createProposal(stash, {
+      ref: "lesson:once",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    // First reject moves it to the archive.
+    akmProposalReject({ stashDir: stash, id: created.id });
+    // Second reject must fail with a typed UsageError (.code load-bearing).
+    let thrown: unknown;
+    try {
+      akmProposalReject({ stashDir: stash, id: created.id });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("UsageError");
+    expect(e.code).toBe("INVALID_FLAG_VALUE");
+    expect(e.message).toMatch(/not pending|already/i);
+  });
+});
+
+describe("akmProposalShow / akmProposalDiff — missing id (#284 HIGH 5)", () => {
+  test("akmProposalShow on missing id → NotFoundError with .code FILE_NOT_FOUND", () => {
+    const stash = makeStashDir();
+    let thrown: unknown;
+    try {
+      akmProposalShow({ stashDir: stash, id: "deadbeef-0000-0000-0000-000000000000" });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("NotFoundError");
+    expect(e.code).toBe("FILE_NOT_FOUND");
+  });
+
+  test("akmProposalDiff on missing id → NotFoundError with .code FILE_NOT_FOUND", () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    let thrown: unknown;
+    try {
+      akmProposalDiff({ stashDir: stash, id: "deadbeef-0000-0000-0000-000000000001", config });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const e = thrown as Error & { code?: string; name: string };
+    expect(e.name).toBe("NotFoundError");
+    expect(e.code).toBe("FILE_NOT_FOUND");
+  });
+});
+
+describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
+  test("validation failure → no `promoted` event emitted; proposal stays pending", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    // Empty content — fails the lesson lint.
+    const proposal = createProposal(stash, {
+      ref: "lesson:invalid",
+      source: "distill",
+      payload: { content: "" },
+    });
+
+    let threw = false;
+    try {
+      await akmProposalAccept({ stashDir: stash, id: proposal.id, config });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    // Critical: `promoted` event must NOT be emitted on validation failure.
+    const promoted = readEvents({ type: "promoted" });
+    expect(promoted.events.length).toBe(0);
+
+    // And the proposal stays pending.
+    const stillPending = getProposal(stash, proposal.id);
+    expect(stillPending.status).toBe("pending");
+  });
+});
