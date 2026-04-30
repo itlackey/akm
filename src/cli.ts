@@ -106,6 +106,10 @@ function parseAllFlagValues(flag: string): string[] {
     const arg = process.argv[i];
     if (arg === flag && i + 1 < process.argv.length) {
       values.push(process.argv[i + 1] as string);
+      // BUG-M4: skip the value index so `--tag --tag` (literal `--tag`
+      // value) does not double-count the second `--tag` as a separate
+      // flag occurrence.
+      i++;
     } else if (arg.startsWith(`${flag}=`)) {
       values.push(arg.slice(flag.length + 1));
     }

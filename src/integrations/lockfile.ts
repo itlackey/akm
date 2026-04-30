@@ -9,42 +9,19 @@ import type { KitSource } from "../registry/types";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /**
- * StashLockEntry — install-time provenance for a stash.
+ * LockfileEntry — install-time provenance for an installed source.
  *
- * Companion to `StashEntry`: the StashEntry describes *where* a stash is
- * configured to come from (declared in config); the StashLockEntry records
- * *what was actually installed* (resolved version, integrity hash, etc.).
+ * Companion to the source config entry: the config describes *where* a
+ * source is configured to come from (declared in config); the LockfileEntry
+ * records *what was actually installed* (resolved version, integrity hash,
+ * etc.).
  *
- * Lock entries are keyed by `name` (the stable identifier shared with the
- * matching StashEntry). The lockfile lives at `<configDir>/akm.lock` and is
- * managed independently from `config.json`.
- */
-export interface StashLockEntry {
-  /** Stable identifier; matches the name on the corresponding StashEntry. */
-  name: string;
-  /** Resolved package version (npm registry). */
-  resolvedVersion?: string;
-  /** Resolved git commit SHA / revision. */
-  resolvedRevision?: string;
-  /** Final URL the artifact was downloaded from (post-resolution). */
-  artifactUrl?: string;
-  /** Filesystem directory containing the indexable content (the "stashRoot"). */
-  contentDir?: string;
-  /** ISO-8601 timestamp when the install completed. */
-  installedAt?: string;
-  /** Integrity hash (SRI / sha1 hex / sha256:hex). */
-  integrity?: string;
-}
-
-/**
- * @deprecated Use {@link StashLockEntry}. Maintained for backwards
- * compatibility with code that still consumes the old shape.
+ * Lock entries are keyed by `id` (the stable identifier shared with the
+ * matching source config). The lockfile lives at `<configDir>/akm.lock` and
+ * is managed independently from `config.json`.
  */
 export interface LockfileEntry {
-  /**
-   * Stable identifier. Older callers used `id`; aligned with
-   * {@link StashLockEntry.name} so both shapes can coexist during migration.
-   */
+  /** Stable identifier. */
   id: string;
   source: KitSource;
   ref: string;

@@ -251,7 +251,22 @@ export function resolveWriteTarget(akmConfig: AkmConfig, explicitTarget?: string
   // 2. config.defaultWriteTarget.
   if (akmConfig.defaultWriteTarget) {
     const match = configuredSources.find((s) => s.name === akmConfig.defaultWriteTarget);
-    if (match) return adaptConfiguredSource(match);
+    if (match) {
+      // BUG-H3: mirror the --target writability gate so a misconfigured
+      // defaultWriteTarget pointed at a non-writable kind (website/npm) or
+      // an explicit `writable: false` filesystem entry fails fast with a
+      // ConfigError, rather than surfacing as a generic UsageError after
+      // path-building has already begun.
+      const effectiveWritable = resolveWritable({ type: match.type, writable: match.writable });
+      if (!effectiveWritable) {
+        throw new ConfigError(
+          `defaultWriteTarget "${akmConfig.defaultWriteTarget}" is not writable`,
+          "INVALID_CONFIG_FILE",
+          `Set \`writable: true\` on the "${akmConfig.defaultWriteTarget}" source in your config, or change \`defaultWriteTarget\` to a writable source.`,
+        );
+      }
+      return adaptConfiguredSource(match);
+    }
     // Fall through if the named target no longer exists — surface a clear error.
     throw new ConfigError(
       `defaultWriteTarget "${akmConfig.defaultWriteTarget}" does not match any configured source.`,
@@ -413,8 +428,19 @@ function adaptConfiguredSource(runtime: ConfiguredSource): ResolvedWriteTarget {
     );
   }
   // Map the runtime kind to the write helper's `kind` discriminator. Only
-  // filesystem and git produce writable sources at v1.
-  const kind = runtime.type === "filesystem" || runtime.type === "git" ? runtime.type : runtime.type;
+  // filesystem and git produce writable sources at v1; any other kind
+  // reaching this point is a config-loader bug (assertWritableAllowedForKind
+  // should have rejected it). Throw a ConfigError rather than silently
+  // forwarding an unsupported kind.
+  if (runtime.type !== "filesystem" && runtime.type !== "git") {
+    throw new ConfigError(
+      `write-source: source "${runtime.name}" has unsupported kind "${runtime.type}" for writes. ` +
+        "Writes are only defined for `filesystem` and `git` sources.",
+      "INVALID_CONFIG_FILE",
+      'Use `kind: "filesystem"` or `kind: "git"` for writable sources.',
+    );
+  }
+  const kind: "filesystem" | "git" = runtime.type;
 
   const config: SourceConfigEntry = {
     type: runtime.type,
