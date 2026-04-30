@@ -5,25 +5,14 @@ JSON at `--detail brief`. Use `--format json|jsonl|text|yaml` and `--detail
 brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
-> **Status legend.** This page documents both **pre-release (shipping)** and
-> **planned for v1** behaviour. Each command section opens with one of the
-> two markers below. Anything marked **Planned for v1** is part of the
-> v1.0-frozen surface declared in
+> **Status legend.** Every command on this page runs today on the
+> current pre-release build. Commands shipped after 0.6.0 — `agent`,
+> `reflect`, `propose`, `proposal`, `distill`, and the `feedback --reason`
+> extension — carry an **Available since 0.7.0** marker so you can tell at
+> a glance which surface arrived in that release. The locked v1.0 surface
+> is declared in
 > [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.4 and is being implemented across milestones 0.7 – 1.0.
->
-> - **Status: Pre-release (shipping)** — the command runs today on the
->   current pre-release build. Behaviour described here is what the binary
->   does.
-> - **Status: Planned for v1** — the command is declared by the v1
->   architecture spec but is not yet wired up. The shape, flags, and exit
->   behaviour described here are the locked target; the binary will return
->   `usage: command not yet implemented` until the milestone lands.
->
-> Sequencing lives in
-> [`docs/reviews/v1-implementation-plan.md`](reviews/v1-implementation-plan.md)
-> and
-> [`docs/reviews/v1-agent-reflection-issues.md`](reviews/v1-agent-reflection-issues.md).
+> §9.4.
 
 ## Global Flags
 
@@ -35,6 +24,7 @@ These flags are accepted by all commands:
 | `--detail` | `brief`, `normal`, `full`, `summary`, `agent` | `brief` | Output detail level |
 | `--for-agent` | boolean | `false` | **Deprecated alias** for `--detail=agent`; kept for one release cycle. Prefer `--detail=agent` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
+| `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
 ### `--format jsonl`
 
@@ -47,7 +37,7 @@ Useful for streaming consumption by scripts or agents.
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens`
-- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`
+- **show**: keeps `type`, `name`, `description`, `action`, `content`, `template`, `prompt`, `run`, `setup`, `cwd`, `toolPolicy`, `modelHint`, `agent`, `parameters`, `workflowTitle`, `workflowParameters`, `steps`, `keys`, `comments`
 
 Prefer `--detail=agent` going forward. The `--for-agent` boolean is kept as
 a deprecated alias for one release cycle and will be removed in a future
@@ -58,8 +48,8 @@ minor release — see the [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6
 Available for `show` and `search`. Returns a compact view suitable for
 capability discovery:
 
-- **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`
-- **search**: metadata-only view (no full content), under 200 tokens
+- **show**: `type`, `name`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `comments`
+- **search**: For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release.
 
 ## Exit Codes and Error Envelope
 
@@ -100,7 +90,7 @@ akm init --stashDir ~/custom-stash # Legacy alias for --dir
 
 Creates one subdirectory per asset type under the stash path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
-`memories/`, `vaults/`, and `wikis/`. See
+`memories/`, `vaults/`, `wikis/`, and `lessons/`. See
 [technical/filesystem.md](technical/filesystem.md) for config file locations.
 
 ### setup
@@ -182,13 +172,13 @@ akm search "deploy" --include-proposed
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter by asset type |
 | `--limit` | number | `20` | Maximum results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search (`local` is an alias for `stash`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--format` | `json`, `text`, `yaml`, `jsonl` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level (`summary` returns metadata-only, under 200 tokens) |
+| `--detail` | `brief`, `normal`, `full`, `summary` | `brief` | Output detail level. For `search`, `summary` currently behaves the same as the default `brief` envelope; per-hit content shaping is reserved for a future minor release. |
 
 `--filter` flags AND-join: every supplied key must match the entry's
 `scope` for the entry to appear in the result set. Entries without any scope
@@ -212,7 +202,7 @@ detail level matches `src/output/shapes.ts`:
 | `brief` (default) | `type`, `name`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | adds `description`, `score`, optional `warnings`, optional `quality` | adds `description`, `action`, `installRef`, `score`, and optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, stash metadata) | full hit object |
-| `summary` | metadata-only view (no content), under 200 tokens | — |
+| `summary` | currently identical to `brief`; per-hit content shaping is reserved for a future minor release | — |
 | `agent` (preferred since 0.6.0; `--for-agent` is the deprecated alias) | `name`, `ref`, `type`, `description`, `action`, `score`, `estimatedTokens` | — |
 
 The legacy registry boolean `curated` is removed in v1 (spec §4.2). Renderers
@@ -247,7 +237,7 @@ akm curate "learn the release workflow" --source both --format text
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `memory`, `script`, `vault`, `wiki`, `lesson`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--source` | `stash`, `registry`, `both` | `stash` | Where to search before curating |
 
@@ -304,6 +294,7 @@ Returns type-specific payloads:
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` |
 | vault | `keys`, `comments` |
+| lesson | `content` plus `when_to_use` surfaced from frontmatter |
 
 Assets from non-writable sources (git clones, npm packages, websites) return
 `editable: false`. `akm show` queries the local FTS5 index directly — there
@@ -407,7 +398,7 @@ akm workflow complete <run-id> --step <step-id> --state skipped
 ```
 
 `--state` defaults to `completed` when omitted. Accepted values: `completed`,
-`skipped`, `failed`.
+`blocked`, `failed`, `skipped`.
 
 #### workflow status
 
@@ -718,6 +709,7 @@ akm remember "Use staging cluster for blue-green" \
 | --- | --- |
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
 | `--force` | Overwrite an existing memory with the same name |
+| `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
 | `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
@@ -804,7 +796,7 @@ Use it for audit trails, lifecycle inspection, and debugging utility-score
 shifts without re-deriving an audit log from raw SQL.
 
 `history` is the *per-asset state-change* view. It complements the realtime
-events stream proposed in [#204](https://github.com/itlackey/agentikit/issues/204):
+events stream proposed in [#204](https://github.com/itlackey/akm/issues/204):
 events emit at the moment a mutation happens; `history` is the durable replay
 of what was recorded for an asset (or for the whole stash).
 
@@ -875,7 +867,7 @@ akm events tail --format jsonl                    # Stream as JSONL
 | Flag | Description |
 | --- | --- |
 | `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
-| `--type` | Filter by event type (`add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`). |
+| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `reflect_invoked`, `propose_invoked`, `distill_invoked`. |
 | `--ref` | Filter by asset ref (`[origin//]type:name`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
@@ -946,7 +938,7 @@ akm registry remove my-team
 
 #### registry build-index
 
-Generate a v2 registry index from npm/GitHub discovery and manual entries.
+Generate a v3 registry index from npm/GitHub discovery and manual entries.
 
 ```sh
 akm registry build-index
@@ -973,7 +965,7 @@ akm registry search "docker" --limit 5
 | Flag | Description |
 | --- | --- |
 | `--limit` | Maximum number of results |
-| `--assets` | Include asset-level results from v2 registry indexes |
+| `--assets` | Include asset-level results from v3 registry indexes |
 
 ### config
 
@@ -1252,15 +1244,17 @@ source <(akm completions)
 
 ---
 
-## Planned for v1 — agent, proposal, lesson, and distill
+## Agent reflection and proposal queue (0.7.0+)
 
-The commands below are declared by the v1 architecture spec
+The commands below shipped in 0.7.0 and form part of the locked v1.0
+surface declared by the v1 architecture spec
 ([`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-§9.4, §11–§14) and are part of the locked v1.0 surface. They are not yet
-implemented. The shape and flag set documented here is the locked target —
-implementations across milestones 0.7 – 1.0 must match this contract.
+§9.4, §11–§14). They run today on the current pre-release build; the
+shape and flag set documented here is the locked v1 contract. The
+`agent` subcommand itself remains the one piece of this group that is
+still on the roadmap — see its subsection below.
 
-### agent
+### agent (Planned for v1)
 
 **Status: Planned for v1.**
 Dispatch a configured external agent profile.
@@ -1281,7 +1275,7 @@ parse_error`.
 
 ### reflect
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Produce reflection proposals for an existing asset. Proposals land in the
 durable proposal queue and never mutate live stash content.
 
@@ -1303,7 +1297,7 @@ proposal row. Validation/timeout/parse errors return non-zero with a
 
 ### propose
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Generate a brand-new asset proposal from a description. Output is always a
 proposal — never a direct write.
 
@@ -1317,14 +1311,14 @@ akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
 | --- | --- |
 | `--task` | Required. Free-form description of what the asset should do |
 | `--profile` | Override the default agent profile |
-| `--timeout` | Override `agent.timeoutMs` for this call |
+| `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
 Emits `propose_invoked`. Returns the new proposal id. Same failure model as
 `reflect`.
 
 ### proposal
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Review and operate the proposal queue. Five subcommands.
 
 ```sh
@@ -1344,6 +1338,20 @@ akm proposal reject <id> --reason "..."
 | `accept <id>` | Validate and promote via `writeAssetToSource` |
 | `reject <id>` | Archive with a reason; body is preserved |
 
+#### proposal list flags
+
+| Flag | Description |
+| --- | --- |
+| `--status` | Filter by status (`pending`, `accepted`, or `rejected`) |
+| `--ref` | Filter by asset ref (`[origin//]type:name`) |
+| `--include-archive` | Include accepted/rejected proposals from the archive (default: `false`, pending only) |
+
+#### proposal accept / diff flags
+
+| Flag | Description |
+| --- | --- |
+| `--target <name>` | Override the write destination by source name. Same semantics as `akm import --target`: `--target` → `defaultWriteTarget` → `stashDir`. Applies to both `accept` and `diff` so previews match the target you would actually promote to. |
+
 `accept` runs full validation (frontmatter, type-renderer, ref grammar,
 write-source policy) **before** promoting. Failures keep the proposal in
 `pending` and emit a structured `warnings` array. Successful promotion
@@ -1351,23 +1359,30 @@ emits the `promoted` event; reject emits `rejected`.
 
 ### distill
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Bounded in-tree LLM call that summarises feedback events for a ref into a
 `lesson` proposal. Gated behind `llm.features.feedback_distillation`.
 
 ```sh
 akm distill <ref>
+akm distill skill:deploy --source-run run-42
+akm distill skill:deploy --exclude-feedback-from "memory:retro,lesson:flaky-tests"
 ```
 
+| Flag | Description |
+| --- | --- |
+| `--source-run <id>` | Optional run id propagated onto the queued proposal for traceability |
+| `--exclude-feedback-from <refs>` | Comma-separated asset refs whose feedback events are filtered out before the LLM input is built. Falls back to the `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM` env var when the flag is omitted; the flag wins when both are set. |
+
 If `llm.features.feedback_distillation` is `false` (the default), the
-command exits with `ConfigError` and a hint pointing at the feature flag.
+command exits 0 with `outcome: "skipped"` when the feature gate is false.
 On a successful call, the response is written to the proposal queue as a
 `lesson` (see v1 spec §13). The live stash is never mutated. Emits
 `distill_invoked`.
 
-### feedback (planned `--reason` extension)
+### feedback (`--reason` extension)
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
 `distill_invoked` payloads. Backwards compatible: scripts without `--reason`

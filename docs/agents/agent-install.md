@@ -184,7 +184,7 @@ Or add it manually:
 ## Resources & Capabilities
 
 You have access to a searchable library of scripts, skills, commands, agents,
-knowledge, and memories via the `akm` CLI.
+knowledge, workflows, vaults, wikis, lessons, and memories via the `akm` CLI.
 
 Use `akm search "<query>"` to find assets and `akm show <ref>` to inspect them.
 Run `akm -h` for the full command reference.

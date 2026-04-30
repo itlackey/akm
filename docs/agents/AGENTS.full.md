@@ -1,6 +1,6 @@
 # akm CLI — Full Reference
 
-You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via `akm`. Search your sources first before writing something from scratch.
+You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, vaults, wikis, lessons, and memories via `akm`. Search your sources first before writing something from scratch.
 
 ## Search
 
@@ -16,7 +16,7 @@ akm curate "<task>"                          # Curate the best matches for a tas
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `wiki`, `any` | `any` |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `vault`, `wiki`, `lesson`, `any` | `any` |
 | `--source` | `stash`, `registry`, `both` | `stash` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml` | `json` |
@@ -50,6 +50,7 @@ akm show wiki:research                        # Wiki summary (same as akm wiki s
 | memory | `content` (recalled context) |
 | vault | `keys`, `comments` (values are never returned) |
 | wiki | `content` (same view modes as knowledge). For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. |
+| lesson | `content` plus `when_to_use` from frontmatter — read both before applying the lesson |
 
 `akm show wiki:<name>` returns the same summary as `akm wiki show <name>`: path,
 description from `schema.md`, page and raw counts, and the last 3 `log.md`
@@ -71,6 +72,34 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
+
+## Proposals & reflection (0.7.0+)
+
+Reflective edits, new asset drafts, and feedback-distilled lessons land
+in a durable proposal queue first — `akm proposal accept` is the only
+path that mutates the live stash.
+
+```sh
+akm reflect <ref>                              # Produce a reflection proposal for an existing asset
+akm reflect <ref> --task "tighten the description"
+akm propose <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
+akm distill <ref>                              # Summarise feedback events into a lesson proposal
+akm proposal list                              # List pending proposals
+akm proposal list --status pending|accepted|rejected
+akm proposal show <id>                         # Render the proposal body and metadata
+akm proposal diff <id>                         # Show the proposed delta vs. the live ref
+akm proposal accept <id>                       # Validate and promote via writeAssetToSource
+akm proposal reject <id> --reason "..."        # Archive with a reason; body is preserved
+akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
+akm history                                    # Per-asset (or stash-wide) state-change trail
+akm history --ref <ref>
+```
+
+`akm distill` is gated by `llm.features.feedback_distillation` — when the
+flag is `false` (the default), the command exits with a `ConfigError`.
+The five `proposal` subcommands are `list`, `show`, `diff`, `accept`, and
+`reject`.
 
 ## Wikis
 

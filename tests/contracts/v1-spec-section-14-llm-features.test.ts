@@ -71,7 +71,7 @@ describe("v1 spec §14 — llm.features.*", () => {
 
 describe("v1 spec §14 — configuration.md mirrors the feature gates", () => {
   const config = readDoc(CONFIG_DOC_PATH);
-  const block = extractSection(config, "## Planned for v1 — `llm.features.*` map");
+  const block = extractSection(config, "## `llm.features.*` map");
 
   test("configuration.md has the llm.features section", () => {
     expect(block).not.toBe("");

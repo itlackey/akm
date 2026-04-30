@@ -6,9 +6,12 @@
 - [Getting Started](getting-started.md) -- Quick setup guide
 - [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated install for agents
 - [Stash Maker's Guide](stash-makers.md) -- Build and share a stash on GitHub, npm, or a network directory
+- [Wikis](wikis.md) -- Multi-wiki knowledge bases (Karpathy-style)
 
 ## Upgrading
 
+- [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0
+- [Release notes (latest: 0.7.0)](migration/release-notes/0.7.0.md) -- Per-release notes drop into `migration/release-notes/`
 - [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting
 
 ## Reference
@@ -28,3 +31,8 @@
 - [Ref Format](technical/ref.md) -- Wire format for asset references
 - [Test Coverage Guide](technical/test-coverage-guide.md) -- High-value testing areas
 - [Core Principles](technical/akm-core-principles.md) -- Design principles and constraints
+- [akm-bench](technical/benchmark.md) -- Search-quality benchmark suite
+
+## Posts
+
+- [Blog posts](posts/) -- Articles and posts about akm

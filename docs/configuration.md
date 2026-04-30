@@ -9,13 +9,10 @@ akm stores configuration in a platform-standard config directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-> **Status legend.** Sections below are tagged either **Pre-release
-> (shipping)** or **Planned for v1**. Planned-for-v1 keys are part of the
-> locked v1.0 surface declared in
-> [`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-> §9.2; the loader will accept them once their milestone lands. Until then,
-> the loader treats unknown top-level keys as warn-and-ignore — your config
-> will not break either way.
+> All configuration keys documented below are accepted by the current
+> pre-release build. The `agent.*` and `llm.features.*` blocks shipped in
+> 0.7.0 (see [release notes](migration/release-notes/0.7.0.md)). Unknown
+> top-level keys are warn-and-ignore.
 
 When akm runs inside a project, it also looks for project config files named
 `.akm/config.json` in the current directory and each parent directory, then
@@ -147,7 +144,9 @@ Use staging cluster for blue-green deploys.
 - Memories without any `scope_*` key (legacy content written before 0.7.0)
   load and re-serialize unchanged. They match unfiltered `akm search`
   queries — but a query with any `--filter` excludes them, since they have
-  no scope key to satisfy the filter.
+  no scope key to satisfy the filter. See the
+  [0.7.0 release notes](migration/release-notes/0.7.0.md) for the rollout
+  detail on `scope_*` keys.
 - Each scope key is an opaque string (no validation beyond non-empty +
   trimmed). Use whatever id shape your host system already uses (UUID,
   email, `@handle`, etc.).
@@ -394,11 +393,11 @@ is working. If it shows `"ready-js"`, the JS fallback is in use.
 
 ---
 
-## Planned for v1 — `agent.*` block
+## `agent.*` block
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Configures external agent CLI integration (see
-[CLI: agent / reflect / propose](cli.md#planned-for-v1--agent-proposal-lesson-and-distill)
+[CLI: agent / reflect / propose](cli.md#agent-reflection-and-proposal-queue-070)
 and v1 spec §12).
 
 ```jsonc
@@ -434,6 +433,7 @@ Per-key contract:
 | `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
 | `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
 | `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
+| `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |
 | `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
 | `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
 
@@ -441,9 +441,9 @@ Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
 disables all agent commands with a `ConfigError` whose hint points at this
 section.
 
-## Planned for v1 — `llm.features.*` map
+## `llm.features.*` map
 
-**Status: Planned for v1.**
+**Status: Available since 0.7.0.**
 Gates the small set of bounded in-tree LLM call sites. All defaults are
 `false` — the v1 contract is "the in-tree LLM does nothing unless you opt
 in, per feature." See v1 spec §14 for the boundary rules.
@@ -473,7 +473,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
 | `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
 | `memory_consolidation` | `akm remember --enrich` consolidation | `--enrich` is a no-op; warning printed |
-| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits with `ConfigError` and a hint |
+| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
 | `embedding_fallback_score` | scorer fallback when no embeddings exist | Scorer uses lexical-only score |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 | `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |

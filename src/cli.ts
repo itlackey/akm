@@ -211,7 +211,7 @@ const searchCommand = defineCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, or any). Use workflow to find step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
@@ -262,7 +262,7 @@ const curateCommand = defineCommand({
     type: {
       type: "string",
       description:
-        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, or any). Use workflow to curate step-by-step task assets.",
+        "Asset type filter (skill, command, agent, knowledge, workflow, script, memory, vault, wiki, lesson, or any). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     source: { type: "string", description: "Search source (stash|registry|both)", default: "stash" },
