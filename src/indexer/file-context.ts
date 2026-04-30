@@ -181,10 +181,6 @@ const renderers = new Map<string, AssetRenderer>();
 
 let builtinsPromise: Promise<void> | undefined;
 
-export function resetBuiltinsCache(): void {
-  builtinsPromise = undefined;
-}
-
 /**
  * Ensure that built-in matchers and renderers are registered.
  * Called lazily on first use of runMatchers/getRenderer.
