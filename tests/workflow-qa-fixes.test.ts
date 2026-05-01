@@ -353,6 +353,28 @@ describe("workflow status with workflow ref", () => {
     const err = JSON.parse(status.stderr) as { error: string };
     expect(err.error).toContain("No workflow runs found");
   });
+
+  test("next with an unknown run id returns WORKFLOW_NOT_FOUND", () => {
+    const env = createWorkflowEnv();
+    setupWorkflow(env);
+
+    const next = runCli(["workflow", "next", "bogus-run-id"], env);
+    expect(next.status).toBe(1);
+    const err = JSON.parse(next.stderr) as { code: string; hint?: string };
+    expect(err.code).toBe("WORKFLOW_NOT_FOUND");
+    expect(err.hint).toContain("akm workflow list --active");
+  });
+
+  test("status with an unknown run id returns WORKFLOW_NOT_FOUND", () => {
+    const env = createWorkflowEnv();
+    setupWorkflow(env);
+
+    const status = runCli(["workflow", "status", "bogus-run-id"], env);
+    expect(status.status).toBe(1);
+    const err = JSON.parse(status.stderr) as { code: string; hint?: string };
+    expect(err.code).toBe("WORKFLOW_NOT_FOUND");
+    expect(err.hint).toContain("akm workflow list --active");
+  });
 });
 
 // ---------------------------------------------------------------------------

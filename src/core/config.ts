@@ -482,6 +482,14 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const config: Partial<AkmConfig> = {};
 
+  if (Array.isArray(raw.stashes)) {
+    throw new ConfigError(
+      "The legacy `stashes[]` config key is no longer supported; rename it to `sources[]`.",
+      "INVALID_CONFIG_FILE",
+      `Edit ${_getConfigPath()} and replace \`stashes\` with \`sources\`.`,
+    );
+  }
+
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
   }
@@ -971,6 +979,13 @@ function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefin
     installedAt,
   };
   if (typeof obj.writable === "boolean") entry.writable = obj.writable;
+  if (entry.writable === true && entry.source !== "git") {
+    throw new ConfigError(
+      `writable: true is only supported on filesystem and git sources (got "${entry.source}" on installed entry "${entry.id}").`,
+      "INVALID_CONFIG_FILE",
+      "Remove `writable: true` from the installed entry or re-add it as a git source instead.",
+    );
+  }
   const resolvedVersion = asNonEmptyString(obj.resolvedVersion);
   if (resolvedVersion) entry.resolvedVersion = resolvedVersion;
   const resolvedRevision = asNonEmptyString(obj.resolvedRevision);

@@ -21,8 +21,6 @@ import { extractTarGzSecure } from "../sources/providers/tar-utils";
 import { parseRegistryIndex, type RegistryIndex, type RegistryStashEntry } from "./providers/static-index";
 
 const DEFAULT_NPM_REGISTRY_BASE = "https://registry.npmjs.org";
-const DEFAULT_MANUAL_ENTRIES_PATH = path.resolve("manual-entries.json");
-const DEFAULT_OUTPUT_PATH = path.resolve("index.json");
 const REQUIRED_KEYWORDS = ["akm-stash"];
 const GITHUB_TOPICS = ["akm-stash"];
 const EXCLUDED_REPOS = new Set(["itlackey/akm"]);
@@ -87,8 +85,14 @@ interface PackageInspection {
 
 const EMPTY_INSPECTION: PackageInspection = {};
 
+function getDefaultRegistryBuildDir(): string {
+  return path.join(getCacheDir(), "registry-build");
+}
+
 export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): Promise<BuildRegistryIndexResult> {
-  const manualEntriesPath = path.resolve(options?.manualEntriesPath ?? DEFAULT_MANUAL_ENTRIES_PATH);
+  const manualEntriesPath = path.resolve(
+    options?.manualEntriesPath ?? path.join(getDefaultRegistryBuildDir(), "manual-entries.json"),
+  );
   const npmRegistryBase = trimTrailingSlash(options?.npmRegistryBase ?? DEFAULT_NPM_REGISTRY_BASE);
   const githubApiBase = trimTrailingSlash(options?.githubApiBase ?? GITHUB_API_BASE);
 
@@ -122,7 +126,7 @@ export async function buildRegistryIndex(options?: BuildRegistryIndexOptions): P
 }
 
 export function writeRegistryIndex(index: RegistryIndex, outPath?: string): string {
-  const resolved = path.resolve(outPath ?? DEFAULT_OUTPUT_PATH);
+  const resolved = path.resolve(outPath ?? path.join(getDefaultRegistryBuildDir(), "index.json"));
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   fs.writeFileSync(resolved, `${JSON.stringify(index, null, 2)}\n`, "utf8");
   return resolved;

@@ -175,6 +175,18 @@ test("akmIndex handles markdown assets", async () => {
   expect(result.totalEntries).toBe(2);
 });
 
+test("akmIndex classifies flat markdown files under skills/ as skill assets", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "skills", "deploy.md"), "---\ndescription: Deploy skill\n---\n# Deploy\n");
+
+  await akmIndex({ stashDir, full: true });
+
+  const db = openDatabase();
+  const skillEntry = getAllEntries(db).find((row) => row.entry.type === "skill" && row.entry.name === "deploy");
+  expect(skillEntry).toBeDefined();
+  closeDatabase(db);
+});
+
 test("akmIndex includes wiki raw files but excludes infrastructure files from the primary stash index", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "wikis", "research", "schema.md"), "---\ndescription: Schema\n---\n# Schema\n");

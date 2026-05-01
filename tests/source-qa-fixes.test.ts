@@ -14,8 +14,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmListSources, akmUpdate } from "../src/commands/installed-stashes";
+import { addStash } from "../src/commands/source-manage";
 import { akmAdd } from "../src/commands/source-add";
 import { loadConfig, saveConfig } from "../src/core/config";
+import { ConfigError } from "../src/core/errors";
 
 const createdTmpDirs: string[] = [];
 
@@ -128,6 +130,27 @@ describe("issue #9: --name flag persisted for filesystem sources", () => {
     expect(added?.name).toBeTruthy();
     // name should not be undefined
     expect(typeof added?.name).toBe("string");
+  });
+});
+
+describe("manual QA add validation", () => {
+  test("akmAdd rejects writable installs for npm refs before syncing", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmAdd({ ref: "npm:left-pad", writable: true })).rejects.toThrow(ConfigError);
+  });
+
+  test("addStash rejects openviking providers before persisting config", () => {
+    saveConfig({ semanticSearchMode: "off" });
+    expect(() => addStash({ target: "https://example.com", providerType: "openviking" })).toThrow(ConfigError);
+    expect(loadConfig().sources).toBeUndefined();
+  });
+
+  test("addStash rejects writable website sources before persisting config", () => {
+    saveConfig({ semanticSearchMode: "off" });
+    expect(() =>
+      addStash({ target: "https://example.com", providerType: "website", writable: true }),
+    ).toThrow(ConfigError);
+    expect(loadConfig().sources).toBeUndefined();
   });
 });
 

@@ -52,12 +52,12 @@ XDG_CACHE_HOME XDG_DATA_HOME AKM_STASH_DIR`.
 
 ## 2. Fixtures
 
-The repo ships pre-built ranking fixtures at `tests/ranking-fixtures/stash/`.
+The repo ships pre-built ranking fixtures at `tests/fixtures/stashes/ranking-baseline/`.
 Use them as a synthetic stash so search/show output is deterministic.
 
 ```sh
 # 2.1 Mirror the fixture stash into the sandbox
-cp -r tests/ranking-fixtures/stash/* "$AKM_STASH_DIR/"
+cp -r tests/fixtures/stashes/ranking-baseline/* "$AKM_STASH_DIR/"
 ls "$AKM_STASH_DIR"
 # expect: agents commands knowledge memories scripts skills vaults wikis workflows
 ```

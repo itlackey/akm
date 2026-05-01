@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { SourceConfigEntry } from "../core/config";
 import { loadConfig, loadUserConfig, saveConfig } from "../core/config";
-import { UsageError } from "../core/errors";
+import { ConfigError, UsageError } from "../core/errors";
 import { resolveSourceEntries } from "../indexer/search-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -42,6 +42,12 @@ export function addStash(opts: {
   writable?: boolean;
 }): SourceAddResult {
   const { target, name, providerType, options: providerOptions, writable } = opts;
+  if (providerType === "openviking") {
+    throw new ConfigError("openviking is not supported in akm v1.", "INVALID_CONFIG_FILE");
+  }
+  if (writable === true && providerType && providerType !== "filesystem" && providerType !== "git") {
+    throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
+  }
   const config = loadUserConfig();
   const sources = [...(config.sources ?? config.stashes ?? [])];
   const isRemoteUrl =

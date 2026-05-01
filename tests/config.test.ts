@@ -352,6 +352,41 @@ describe("loadConfig", () => {
     }
   });
 
+  test("throws ConfigError when config contains legacy stashes[]", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        stashes: [{ type: "filesystem", path: "/legacy-stash" }],
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow("legacy `stashes[]` config key");
+  });
+
+  test("throws ConfigError when installed npm entry is marked writable", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        installed: [
+          {
+            id: "npm:left-pad",
+            source: "npm",
+            ref: "npm:left-pad",
+            artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+            stashRoot: "/tmp/left-pad",
+            cacheDir: "/tmp/cache",
+            installedAt: "2026-05-01T00:00:00.000Z",
+            writable: true,
+          },
+        ],
+      }),
+    );
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow("writable: true is only supported on filesystem and git sources");
+  });
+
   test("recomputes merged config when cwd changes", () => {
     const firstProject = makeTmpDir();
     const secondProject = makeTmpDir();

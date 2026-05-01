@@ -3,11 +3,11 @@ import path from "node:path";
 import { isHttpUrl, resolveStashDir } from "../core/common";
 import type { SourceConfigEntry, SourceSpec } from "../core/config";
 import { loadConfig, loadUserConfig, saveConfig } from "../core/config";
-import { UsageError } from "../core/errors";
+import { ConfigError, UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import { akmIndex } from "../indexer/indexer";
-import { upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/resolve";
+import { upsertLockEntry } from "../integrations/lockfile";
 import type { InstalledStashEntry } from "../registry/types";
 import { detectStashRoot } from "../sources/providers/provider-utils";
 import { syncFromRef } from "../sources/providers/sync-from-ref";
@@ -248,6 +248,14 @@ async function addRegistryStash(
   writable?: boolean,
   wikiName?: string,
 ): Promise<AddResponse> {
+  const parsedRef = parseRegistryRef(ref);
+  if (writable === true && parsedRef.source !== "git") {
+    throw new ConfigError(
+      "writable: true is only supported on filesystem and git sources",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   // Pre-sync registry-policy enforcement uses just the parsed ref (no fetch needed),
   // so we keep parity with the historical behavior where `enforceRegistryInstallPolicy`
   // ran before `extractTarGzSecure` etc.
