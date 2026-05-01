@@ -14,8 +14,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmListSources, akmUpdate } from "../src/commands/installed-stashes";
-import { addStash } from "../src/commands/source-manage";
 import { akmAdd } from "../src/commands/source-add";
+import { addStash } from "../src/commands/source-manage";
 import { loadConfig, saveConfig } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
 
@@ -147,9 +147,9 @@ describe("manual QA add validation", () => {
 
   test("addStash rejects writable website sources before persisting config", () => {
     saveConfig({ semanticSearchMode: "off" });
-    expect(() =>
-      addStash({ target: "https://example.com", providerType: "website", writable: true }),
-    ).toThrow(ConfigError);
+    expect(() => addStash({ target: "https://example.com", providerType: "website", writable: true })).toThrow(
+      ConfigError,
+    );
     expect(loadConfig().sources).toBeUndefined();
   });
 });

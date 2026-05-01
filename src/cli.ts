@@ -1566,7 +1566,8 @@ const rememberCommand = defineCommand({
       if (typeof args.channel === "string" && args.channel.trim()) scopeFields.channel = args.channel.trim();
       const hasScope = Object.keys(scopeFields).length > 0;
 
-      const hasTagRequiringArgs = rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.enrich;
+      const hasTagRequiringArgs =
+        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.enrich;
       const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
 
       if (!hasStructuredArgs) {
@@ -1705,7 +1706,11 @@ function resolveRememberContentArg(content: string | undefined): string | undefi
   return content;
 }
 
-function wasRememberFlagValueConsumedAsContent(content: string, flagValue: string, flagName: "--format" | "--detail"): boolean {
+function wasRememberFlagValueConsumedAsContent(
+  content: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
   const argv = process.argv.slice(2);
   const rememberIndex = argv.indexOf("remember");
   const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
