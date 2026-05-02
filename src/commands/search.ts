@@ -193,6 +193,17 @@ function resolveEntryIds(
 /**
  * Fire-and-forget: log a search event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
+ *
+ * Result count semantics:
+ *   - `stashHitCount`: number of local stash hits (response.hits, source-only
+ *     entries). Always 0 for registry-only searches.
+ *   - `registryHitCount`: number of registry hits (response.registryHits).
+ *     Only non-zero when source is "registry" or "both".
+ *   - `resultCount`: total across both pools so telemetry reflects the actual
+ *     number of results the user saw, regardless of source mode.
+ *
+ * Per-entry events are recorded only for stash hits because registry hits
+ * have no local entry_id to reference.
  */
 function logSearchEvent(query: string, response: SearchResponse, existingDb?: import("bun:sqlite").Database): void {
   try {
@@ -208,10 +219,19 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
           entry_ref: ref,
         });
       }
+      // Count registry hits separately so registry-only searches record a
+      // non-zero resultCount. response.hits is always [] when source="registry".
+      const stashHitCount = response.hits.length;
+      const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
       insertUsageEvent(db, {
         event_type: "search",
         query,
-        metadata: JSON.stringify({ resultCount: response.hits.length, resolvedCount: resolved.length }),
+        metadata: JSON.stringify({
+          resultCount: stashHitCount + registryHitCount,
+          stashHitCount,
+          registryHitCount,
+          resolvedCount: resolved.length,
+        }),
       });
     } finally {
       if (!existingDb) closeDatabase(db);

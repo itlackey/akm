@@ -317,6 +317,10 @@ export function shapeHistoryOutput(result: Record<string, unknown>, detail: Deta
       ...(result.since !== undefined ? { since: result.since } : {}),
       totalCount: result.totalCount ?? shapedEntries.length,
       entries: shapedEntries,
+      // `sources` lists the event sources included in this response.
+      // Always contains "usage_events"; also "events.jsonl" when
+      // --include-proposals was specified.
+      ...(Array.isArray(result.sources) ? { sources: result.sources } : {}),
       ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     };
   }
@@ -325,6 +329,7 @@ export function shapeHistoryOutput(result: Record<string, unknown>, detail: Deta
     ...(result.since !== undefined ? { since: result.since } : {}),
     totalCount: result.totalCount ?? shapedEntries.length,
     entries: shapedEntries,
+    ...(Array.isArray(result.sources) ? { sources: result.sources } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
   };
 }
