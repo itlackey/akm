@@ -47,6 +47,9 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   );
 
   // Merge results grouped by provider
+  // Each provider batch is normalized to [0, 1] before merging so that raw
+  // scores from different providers (e.g. static-index can exceed 1.85 while
+  // skills-sh uses installs-relative scoring) are comparable in the merged list.
   const allHits: RegistrySearchHit[] = [];
   const allAssetHits: RegistryAssetSearchHit[] = [];
 
@@ -61,29 +64,43 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
 
     const registryLabel = entries[i].name ? `"${entries[i].name}"` : entries[i].url;
     let dropped = 0;
+
+    const validHits: RegistrySearchHit[] = [];
     for (const hit of value.hits) {
       if (isCompleteHit(hit)) {
-        allHits.push(hit);
+        validHits.push(hit);
       } else {
         dropped++;
       }
     }
+    // Normalize scores within this provider's batch before merging
+    normalizeScores(validHits);
+    for (const hit of validHits) {
+      allHits.push(hit);
+    }
+
     if (value.assetHits) {
+      const validAssetHits: RegistryAssetSearchHit[] = [];
       for (const hit of value.assetHits) {
         if (isCompleteAssetHit(hit)) {
-          allAssetHits.push(hit);
+          validAssetHits.push(hit);
         } else {
           dropped++;
         }
       }
+      normalizeScores(validAssetHits);
+      for (const hit of validAssetHits) {
+        allAssetHits.push(hit);
+      }
     }
+
     if (dropped > 0) {
       warnings.push(`Registry ${registryLabel} returned ${dropped} incomplete hit(s); dropped from response.`);
     }
     if (value.warnings) warnings.push(...value.warnings);
   }
 
-  // Sort merged hits by score descending, apply limit
+  // Sort merged hits by normalized score descending, apply limit
   allHits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const limitedHits = allHits.slice(0, limit);
 
@@ -107,6 +124,11 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
  * 1. AKM_REGISTRY_URL env var (CI override, comma-separated)
  * 2. config.registries (filtered by enabled !== false)
  * 3. Default registries from DEFAULT_CONFIG
+ *
+ * AKM_REGISTRY_URL syntax (comma-separated):
+ *   - Bare URL: `https://example.com/index.json`  → defaults to provider "static-index"
+ *   - Typed URL: `skills-sh::https://skills.sh/api`  → explicit provider type
+ *     Format: `<provider-type>::<url>`
  */
 export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): RegistryConfigEntry[] {
   // Allow env var override (comma-separated URLs) — CI escape hatch
@@ -114,13 +136,30 @@ export function resolveRegistries(configRegistries?: RegistryConfigEntry[]): Reg
   if (envUrls) {
     const entries: RegistryConfigEntry[] = [];
     for (const raw of envUrls.split(",")) {
-      const url = raw.trim();
-      if (!url) continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      // Parse optional `<provider-type>::<url>` prefix
+      let provider: string | undefined;
+      let url: string;
+      const colonColonIdx = trimmed.indexOf("::");
+      if (colonColonIdx !== -1 && !trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        // Only treat as `provider::url` if the prefix doesn't look like a URL scheme itself
+        provider = trimmed.slice(0, colonColonIdx).trim();
+        url = trimmed.slice(colonColonIdx + 2).trim();
+        if (!provider) {
+          warn(`[akm] Ignoring AKM_REGISTRY_URL entry: empty provider type before "::" in "${trimmed}"`);
+          continue;
+        }
+      } else {
+        url = trimmed;
+      }
+
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         warn(`[akm] Ignoring AKM_REGISTRY_URL entry: must start with http:// or https://, got "${url}"`);
         continue;
       }
-      entries.push({ url });
+      entries.push(provider ? { url, provider } : { url });
     }
     return entries;
   }
@@ -143,6 +182,33 @@ function createProvider(entry: RegistryConfigEntry, warnings: string[]) {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
+
+/**
+ * Normalize the `score` field of a batch of hits in-place to [0, 1].
+ *
+ * Different registry providers use incompatible score scales
+ * (static-index can exceed 1.85; skills-sh uses installs-relative values
+ * in [0, 1]).  Normalizing each provider's batch independently before merging
+ * makes the merged sort order meaningful.
+ *
+ * When all scores are identical (or absent), scores are left unchanged so
+ * relative ordering within the batch is preserved (all-same is effectively
+ * already normalized).
+ */
+function normalizeScores(hits: Array<{ score?: number }>): void {
+  if (hits.length === 0) return;
+  const rawScores = hits.map((h) => h.score ?? 0);
+  const max = Math.max(...rawScores);
+  if (max <= 0) return; // all zero or negative — leave as-is
+  const min = Math.min(...rawScores);
+  const range = max - min;
+  for (let i = 0; i < hits.length; i++) {
+    const raw = rawScores[i];
+    // Min-max normalize: [0, 1]. When all scores are equal (range === 0),
+    // fall back to dividing by max so the value stays in [0, 1].
+    hits[i].score = range > 0 ? (raw - min) / range : raw / max;
+  }
+}
 
 function clampLimit(limit: number | undefined): number {
   if (!limit || !Number.isFinite(limit)) return 20;
