@@ -67,6 +67,9 @@ utility flags:
                            (default: 1 — sequential). Clamped to [1, 8]. Values > 4
                            print a warning unless --force-parallel is also set.
   --force-parallel         suppress the high-parallelism warning when --parallel > 4.
+  --include-noakm          include the noakm baseline arm (default: off). The fictional eval
+                           corpus has ~0% noakm pass rate by design — only needed to validate
+                           task calibration, not for measuring AKM utility.
   --include-synthetic      add a third 'synthetic' arm where the model writes/uses its own
                            scratch notes (no AKM stash). Reports akm_over_synthetic_lift so
                            operators can see whether AKM beats a self-notes baseline.
@@ -242,6 +245,13 @@ export interface UtilityCliOptions {
    */
   includeSynthetic?: boolean;
   /**
+   * Include the noakm baseline arm. Default `false` for eval runs where the
+   * fictional task corpus guarantees a ~0% noakm pass rate, making the arm
+   * redundant for utility measurement. Pass `--include-noakm` to add it back
+   * for task calibration validation.
+   */
+  includeNoakm?: boolean;
+  /**
    * Number of (task, arm, seed) triples to run concurrently. Forwarded into
    * `runUtility` as `parallel`. Default 1 (sequential). Clamped to [1, 8].
    */
@@ -272,9 +282,13 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   const sliceFilter = options.slice === "all" ? undefined : options.slice;
   const tasks = listTasks(sliceFilter ? { slice: sliceFilter } : {});
 
+  // noakm arm is opt-in: on fictional eval tasks it has ~0% pass rate so it
+  // adds cost without utility signal. Include it only for calibration checks.
+  const arms: ("noakm" | "akm")[] = options.includeNoakm ? ["noakm", "akm"] : ["akm"];
+
   const report = await runUtility({
     tasks,
-    arms: ["noakm", "akm"],
+    arms,
     model: options.model,
     seedsPerArm: options.seedsPerArm,
     budgetTokens: options.budgetTokens,
@@ -865,6 +879,7 @@ async function main(argv: string[]): Promise<number> {
           parallel: parseInt32(parsed.flags.get("parallel"), 1),
           ...(parsed.bool.has("force-parallel") ? { forceParallel: true } : {}),
           ...(parsed.bool.has("include-synthetic") ? { includeSynthetic: true } : {}),
+          ...(parsed.bool.has("include-noakm") ? { includeNoakm: true } : {}),
           ...(opencodeProviders ? { opencodeProviders } : {}),
         });
       } finally {

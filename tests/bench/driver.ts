@@ -387,21 +387,27 @@ function defaultPrompt(options: RunOptions): string {
   // Derive search keywords: prefer explicit field, fall back to task domain.
   const keywords = options.akmKeywords ?? options.taskId.split("/")[0].replace(/-/g, " ");
 
-  // CRITICAL: put the concrete search command on the very first line so the
-  // model's first action is a shell invocation, not reasoning about the task.
-  // Numbered lists let smaller models skip to the last (most concrete) step;
-  // instead, we make the search command grammatically unavoidable.
+  // Force the model to use the bash tool to run akm CLI commands before
+  // writing any output. Each step is an explicit bash invocation so the
+  // model cannot skip to writing the answer without executing the commands.
   return [
-    `Your FIRST shell command MUST be: akm search ${keywords}`,
+    `You have access to a knowledge stash via the akm CLI tool.`,
     ``,
-    `Do NOT read any file or produce any output until you have run that command.`,
+    `Step 1 — open a terminal and execute this bash command:`,
+    `  bash: akm search ${keywords}`,
+    ``,
+    `Step 2 — from the search results, execute:`,
+    `  bash: akm show <ref>   (e.g. akm show skill:${keywords.split(" ")[0]})`,
+    ``,
+    `Step 3 — read the output of akm show carefully, then complete the task.`,
+    ``,
+    `Step 4 — execute:`,
+    `  bash: akm feedback <ref> --positive   (or --negative)`,
+    ``,
+    `DO NOT write any output file before running steps 1 and 2.`,
     ``,
     taskLine,
     `Workspace: ${options.workspace}`,
-    ``,
-    `After running akm search, run akm show <ref> on the most relevant result,`,
-    `then complete the task using the retrieved guidance.`,
-    `When done, run: akm feedback <ref> --positive   (or --negative if it did not help).`,
   ].join("\n");
 }
 
