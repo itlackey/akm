@@ -999,15 +999,28 @@ const registryCommand = defineCommand({
 const feedbackCommand = defineCommand({
   meta: {
     name: "feedback",
-    description: "Record positive or negative feedback for any indexed stash asset",
+    description:
+      "Record positive or negative feedback for any indexed stash asset.\n\n" +
+      "Positive feedback boosts an asset's EMA utility score, making it rank higher\n" +
+      "in future searches without requiring a full reindex.\n\n" +
+      "Negative feedback records a negative signal in usage_events and events.jsonl.\n" +
+      "It does NOT immediately lower the asset's ranking — the EMA utility score is\n" +
+      "updated the next time `akm index` runs (incremental or full). Run `akm index`\n" +
+      "after recording negative feedback to have it reflected in search results.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
     // and throw a structured UsageError below so exit code is 2 (USAGE) rather
     // than citty's default 0 (help banner).
     ref: { type: "positional", description: "Asset ref (type:name)", required: false },
-    positive: { type: "boolean", description: "Record positive feedback", default: false },
-    negative: { type: "boolean", description: "Record negative feedback", default: false },
+    positive: { type: "boolean", description: "Record positive feedback (boosts ranking immediately)", default: false },
+    negative: {
+      type: "boolean",
+      description:
+        "Record negative feedback (suppresses ranking after next `akm index`). " +
+        "Reindexing is required for the signal to affect search results.",
+      default: false,
+    },
     note: { type: "string", description: "Optional note to attach to the feedback" },
   },
   run({ args }) {
@@ -1036,6 +1049,11 @@ const feedbackCommand = defineCommand({
         if (entryId === undefined) {
           throw new UsageError(`Ref "${ref}" is not in the current index. Run "akm index" and try again.`);
         }
+        // Persist the feedback signal into usage_events. For positive signals,
+        // the EMA utility score is updated immediately on the next read path.
+        // For negative signals, the score is adjusted the next time `akm index`
+        // runs — the signal is durable in the DB but does NOT suppress ranking
+        // in search results until after reindexing.
         insertUsageEvent(db, {
           event_type: "feedback",
           entry_ref: ref,
@@ -1061,11 +1079,23 @@ const historyCommand = defineCommand({
   meta: {
     name: "history",
     description:
-      "Show mutation/usage history for a single asset (--ref) or stash-wide. Backed by the internal usage_events log.",
+      "Show mutation/usage history for a single asset (--ref) or stash-wide.\n\n" +
+      "Event sources:\n" +
+      "  usage_events (default): search, show, and feedback events from the local index.\n" +
+      "  events.jsonl (--include-proposals): proposal lifecycle events (promoted, rejected)\n" +
+      "    emitted by `akm proposal accept` / `akm proposal reject`.\n\n" +
+      "Results from all active sources are merged and sorted chronologically.",
   },
   args: {
     ref: { type: "string", description: "Asset ref (type:name). Omit for stash-wide history." },
     since: { type: "string", description: "ISO timestamp or epoch ms — only events on/after this time" },
+    "include-proposals": {
+      type: "boolean",
+      description:
+        "Also include proposal lifecycle events (promoted, rejected) from events.jsonl. " +
+        "Default: false (usage_events only).",
+      default: false,
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
   },
   run({ args }) {
@@ -1073,6 +1103,7 @@ const historyCommand = defineCommand({
       const result = await akmHistory({
         ref: args.ref,
         since: args.since,
+        includeProposals: args["include-proposals"],
       });
       output("history", result);
     });

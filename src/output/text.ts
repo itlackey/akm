@@ -594,6 +594,10 @@ export function formatHistoryPlain(r: Record<string, unknown>): string {
   if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : entries.length;
   headerParts.push(`${totalCount} event(s)`);
+  // Show active event sources so operators know which streams were consulted.
+  if (Array.isArray(r.sources) && r.sources.length > 0) {
+    headerParts.push(`sources: ${(r.sources as string[]).join(", ")}`);
+  }
   const header = headerParts.join("  ");
 
   if (entries.length === 0) {
