@@ -364,14 +364,22 @@ export function readRunEvents(cacheHome: string, opts?: { warnings?: string[] })
 
 /** Default prompt forwarded to opencode when caller omits one. */
 function defaultPrompt(options: RunOptions): string {
-  return [
-    `Task: ${options.taskId}`,
-    `Arm: ${options.arm}`,
-    `Workspace: ${options.workspace}`,
+  const akmInstructions =
     options.arm === "akm"
-      ? "An akm stash is configured via AKM_STASH_DIR. Use `akm search` and `akm show` to find relevant assets before acting."
-      : "",
-  ]
+      ? [
+          "",
+          "## Required: use the AKM stash",
+          "An akm knowledge stash is available (AKM_STASH_DIR is set).",
+          "BEFORE editing any file you MUST:",
+          "  1. Run `akm search <keywords>` to find relevant assets.",
+          "  2. Run `akm show <ref>` to read the top result.",
+          "  3. Apply the guidance from the stash to complete the task.",
+          "  4. Run `akm feedback <ref> --positive` or `--negative` after finishing.",
+          "Skipping the search step is not acceptable.",
+        ].join("\n")
+      : "";
+
+  return [`Task: ${options.taskId}`, `Arm: ${options.arm}`, `Workspace: ${options.workspace}`, akmInstructions]
     .filter(Boolean)
     .join("\n");
 }
