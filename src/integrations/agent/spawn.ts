@@ -206,6 +206,15 @@ export async function runAgent(
     } catch {
       /* ignore */
     }
+    // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
+    setTimeoutImpl(() => {
+      if (proc.exitCode !== null) return;
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* ignore */
+      }
+    }, 5000);
   }, timeoutMs);
 
   const stdoutPromise = stdioMode === "captured" ? readStream(proc.stdout ?? null) : Promise.resolve("");
