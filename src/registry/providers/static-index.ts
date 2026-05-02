@@ -251,7 +251,9 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   const obj = data as Record<string, unknown>;
 
-  if (typeof obj.version !== "number" || obj.version !== 3) return null;
+  // Accept version 2 and 3 — both use the same stashes[] wire format.
+  // The live official registry currently publishes version 2.
+  if (typeof obj.version !== "number" || (obj.version !== 2 && obj.version !== 3)) return null;
   if (typeof obj.updatedAt !== "string") return null;
   if (!Array.isArray(obj.stashes)) return null;
 

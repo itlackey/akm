@@ -255,7 +255,9 @@ function isValidDirectory(dir: string): boolean {
  */
 export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
   const cfg = config ?? loadConfig();
-  for (const entry of cfg.stashes ?? []) {
+  // Use sources[] (current key) with fallback to stashes[] (deprecated, one-release compat).
+  const entries = cfg.sources ?? cfg.stashes ?? [];
+  for (const entry of entries) {
     if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
     try {
       const repo = parseGitRepoUrl(entry.url);
@@ -267,7 +269,7 @@ export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
       );
     }
   }
-  for (const entry of cfg.stashes ?? []) {
+  for (const entry of entries) {
     if (entry.type !== "website" || !entry.url || entry.enabled === false) continue;
     try {
       await ensureWebsiteMirror(entry, { requireStashDir: true });
