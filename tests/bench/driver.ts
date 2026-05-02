@@ -220,7 +220,7 @@ export function buildIsolatedEnv(dirs: IsolationDirs, model: string): Record<str
   const env: Record<string, string> = {
     XDG_CACHE_HOME: dirs.cacheHome,
     XDG_CONFIG_HOME: dirs.configHome,
-    OPENCODE_CONFIG: dirs.opencodeConfig,
+    OPENCODE_CONFIG: path.join(dirs.opencodeConfig, "opencode.json"),
     BENCH_OPENCODE_MODEL: model,
   };
   if (dirs.akmStashDir) env.AKM_STASH_DIR = dirs.akmStashDir;
@@ -409,17 +409,26 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     stripAkmStashDir(env);
   }
 
-  // Materialise the opencode provider config into the isolated OPENCODE_CONFIG
-  // dir. Must happen after createIsolationDirs (which creates the dir) and
-  // before runAgent (which points the child env at the dir via OPENCODE_CONFIG).
+  // Materialise the opencode provider config. OPENCODE_CONFIG points to the
+  // file path (not the dir), so we must always write opencode.json — even when
+  // no custom providers are configured — so opencode doesn't error on a missing
+  // file. When providers are supplied, materializeOpencodeConfig writes the full
+  // provider block; otherwise we write a minimal stub that lets env-var-based
+  // cloud providers (Anthropic, OpenAI) resolve normally.
   if (options.opencodeProviders) {
     try {
       const selected = selectProviderForModel(options.opencodeProviders, options.model);
-      materializeOpencodeConfig(dirs.opencodeConfig, selected);
+      materializeOpencodeConfig(dirs.opencodeConfig, selected, options.model);
     } catch (err) {
       result.verifierStdout = `harness: opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`;
       return result;
     }
+  } else {
+    fs.writeFileSync(
+      path.join(dirs.opencodeConfig, "opencode.json"),
+      JSON.stringify({ $schema: "https://opencode.ai/config.json", model: options.model }),
+      { mode: 0o600 },
+    );
   }
 
   try {

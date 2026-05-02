@@ -52,7 +52,7 @@ const BUILTINS: Record<string, AgentProfile> = {
   opencode: {
     name: "opencode",
     bin: "opencode",
-    args: [],
+    args: ["run"],
     stdio: "interactive",
     envPassthrough: [...COMMON_PASSTHROUGH, "OPENCODE_API_KEY", "OPENCODE_CONFIG"],
     parseOutput: "text",

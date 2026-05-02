@@ -349,8 +349,8 @@ describe("runOne", () => {
       const env = options.env as Record<string, string> | undefined;
       if (env?.OPENCODE_CONFIG) {
         capturedOpencodeCfgDir = env.OPENCODE_CONFIG;
-        const cfgPath = `${env.OPENCODE_CONFIG}/opencode.json`;
-        fileExistedAtSpawnTime = require("node:fs").existsSync(cfgPath);
+        // OPENCODE_CONFIG now points directly to the opencode.json file.
+        fileExistedAtSpawnTime = require("node:fs").existsSync(env.OPENCODE_CONFIG);
       }
       // Behave like the normal fake (agent exits 0, stdout = "ok").
       const { spawn: inner } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
@@ -390,16 +390,19 @@ describe("runOne", () => {
     }
   });
 
-  test("runOne WITHOUT opencodeProviders leaves OPENCODE_CONFIG dir empty (regression guard)", async () => {
+  test("runOne WITHOUT opencodeProviders writes minimal stub to OPENCODE_CONFIG (regression guard)", async () => {
     let capturedDir: string | undefined;
     let filesAtSpawnTime: string[] = [];
+    let stubContent: string | undefined;
 
     const checkingSpawn: SpawnFn = (cmd, options) => {
       const env = options.env as Record<string, string> | undefined;
       if (env?.OPENCODE_CONFIG) {
         capturedDir = env.OPENCODE_CONFIG;
         try {
-          filesAtSpawnTime = require("node:fs").readdirSync(env.OPENCODE_CONFIG) as string[];
+          // OPENCODE_CONFIG points to the file, so read it directly.
+          stubContent = require("node:fs").readFileSync(env.OPENCODE_CONFIG, "utf8") as string;
+          filesAtSpawnTime = ["opencode.json"];
         } catch {
           filesAtSpawnTime = [];
         }
@@ -416,8 +419,12 @@ describe("runOne", () => {
     });
 
     expect(capturedDir).toBeDefined();
-    // Without opencodeProviders, the dir should be empty at spawn time.
-    expect(filesAtSpawnTime).toEqual([]);
+    // Without opencodeProviders, the driver writes a minimal stub opencode.json.
+    expect(filesAtSpawnTime).toEqual(["opencode.json"]);
+    expect(stubContent).toBeDefined();
+    const parsed = JSON.parse(stubContent ?? "{}");
+    expect(parsed.$schema).toBe("https://opencode.ai/config.json");
+    expect(parsed.provider).toBeUndefined();
   });
 
   test("runOne returns harness_error when provider materialise throws", async () => {
@@ -513,7 +520,7 @@ describe("driver helpers", () => {
       const env = buildIsolatedEnv(dirs, "model-x");
       expect(env.XDG_CACHE_HOME).toBe(dirs.cacheHome);
       expect(env.XDG_CONFIG_HOME).toBe(dirs.configHome);
-      expect(env.OPENCODE_CONFIG).toBe(dirs.opencodeConfig);
+      expect(env.OPENCODE_CONFIG).toBe(path.join(dirs.opencodeConfig, "opencode.json"));
       expect(env.AKM_STASH_DIR).toBe("/tmp/stash");
       expect(env.BENCH_OPENCODE_MODEL).toBe("model-x");
     } finally {

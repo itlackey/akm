@@ -359,7 +359,7 @@ describe("materializeOpencodeConfig", () => {
     fs.mkdirSync(configDir, { recursive: true });
 
     const entry = { npm: "@ai-sdk/openai-compatible", name: "Test Provider" };
-    materializeOpencodeConfig(configDir, { providerKey: "test", entry });
+    materializeOpencodeConfig(configDir, { providerKey: "test", entry }, "test/my-model");
 
     const outPath = path.join(configDir, "opencode.json");
     expect(fs.existsSync(outPath)).toBe(true);
@@ -367,7 +367,8 @@ describe("materializeOpencodeConfig", () => {
     const contents = JSON.parse(fs.readFileSync(outPath, "utf8")) as Record<string, unknown>;
     // Must have exactly $schema and provider — nothing else.
     const keys = Object.keys(contents).sort();
-    expect(keys).toEqual(["$schema", "provider"]);
+    expect(keys).toEqual(["$schema", "model", "provider"]);
+    expect(contents.model).toBe("test/my-model");
     expect(contents.$schema).toBe("https://opencode.ai/config.json");
     const provider = contents.provider as Record<string, unknown>;
     expect(Object.keys(provider)).toEqual(["test"]);
@@ -378,7 +379,7 @@ describe("materializeOpencodeConfig", () => {
     const configDir = path.join(tmp, "run-config-2");
     fs.mkdirSync(configDir, { recursive: true });
 
-    materializeOpencodeConfig(configDir, { providerKey: "p", entry: {} });
+    materializeOpencodeConfig(configDir, { providerKey: "p", entry: {} }, "p/model");
 
     const contents = JSON.parse(fs.readFileSync(path.join(configDir, "opencode.json"), "utf8")) as Record<
       string,
@@ -393,7 +394,7 @@ describe("materializeOpencodeConfig", () => {
     const configDir = path.join(tmp, "run-config-3");
     fs.mkdirSync(configDir, { recursive: true });
 
-    materializeOpencodeConfig(configDir, { providerKey: "p", entry: {} });
+    materializeOpencodeConfig(configDir, { providerKey: "p", entry: {} }, "p/model");
 
     const stat = fs.statSync(path.join(configDir, "opencode.json"));
     // Mode 0o600 means only owner can read/write (no group or other bits).
@@ -406,8 +407,8 @@ describe("materializeOpencodeConfig", () => {
     const configDir = path.join(tmp, "run-config-4");
     fs.mkdirSync(configDir, { recursive: true });
 
-    materializeOpencodeConfig(configDir, { providerKey: "a", entry: { name: "first" } });
-    materializeOpencodeConfig(configDir, { providerKey: "b", entry: { name: "second" } });
+    materializeOpencodeConfig(configDir, { providerKey: "a", entry: { name: "first" } }, "a/m1");
+    materializeOpencodeConfig(configDir, { providerKey: "b", entry: { name: "second" } }, "b/m2");
 
     const contents = JSON.parse(fs.readFileSync(path.join(configDir, "opencode.json"), "utf8")) as Record<
       string,

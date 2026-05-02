@@ -237,9 +237,13 @@ export function selectProviderForModel(
 export function materializeOpencodeConfig(
   opencodeConfigDir: string,
   selected: { providerKey: string; entry: unknown },
+  /** Full model id (e.g. "don/mlx-community/qwen3.6-35b-a3b") written as the
+   *  top-level `model` key so opencode uses it without a --model flag. */
+  modelId: string,
 ): void {
   const config = {
     $schema: "https://opencode.ai/config.json",
+    model: modelId,
     provider: {
       [selected.providerKey]: selected.entry,
     },
