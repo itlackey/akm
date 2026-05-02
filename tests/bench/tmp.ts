@@ -43,3 +43,95 @@ export function benchTmpRoot(): string {
 export function benchMkdtemp(prefix: string): string {
   return fs.mkdtempSync(path.join(benchTmpRoot(), prefix));
 }
+
+// ── PID file ────────────────────────────────────────────────────────────────
+
+/** Absolute path to the bench PID file: `${AKM_CACHE_DIR}/bench/bench.pid`. */
+export function benchPidPath(): string {
+  return path.join(benchTmpRoot(), "bench.pid");
+}
+
+/**
+ * Write `process.pid` to `bench.pid`.
+ *
+ * If a stale PID file exists and the referenced process is no longer running,
+ * it is removed with a warning before writing the new one.
+ *
+ * Returns a cleanup function that removes the PID file. Call it in a
+ * `finally` block so the file is removed on both clean exit and exceptions.
+ */
+export function writeBenchPid(): () => void {
+  const pidPath = benchPidPath();
+
+  // Check for an existing PID file and warn if stale.
+  if (fs.existsSync(pidPath)) {
+    let existingPid: number | undefined;
+    try {
+      const raw = fs.readFileSync(pidPath, "utf8").trim();
+      existingPid = Number.parseInt(raw, 10);
+    } catch {
+      // Unreadable — treat as stale.
+    }
+
+    if (existingPid !== undefined && Number.isFinite(existingPid) && !isPidRunning(existingPid)) {
+      // Stale PID — warn and remove.
+      process.stderr.write(`bench: removing stale PID file for PID ${existingPid} (process not running)\n`);
+      try {
+        fs.rmSync(pidPath, { force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  try {
+    fs.writeFileSync(pidPath, String(process.pid), "utf8");
+  } catch {
+    /* best-effort — PID file is diagnostic, not critical */
+  }
+
+  return () => {
+    try {
+      // Only remove if it still contains our PID (guard against races).
+      const current = fs.readFileSync(pidPath, "utf8").trim();
+      if (current === String(process.pid)) {
+        fs.rmSync(pidPath, { force: true });
+      }
+    } catch {
+      /* best-effort */
+    }
+  };
+}
+
+/**
+ * Read the PID from `bench.pid`. Returns `undefined` when the file does not
+ * exist or cannot be parsed.
+ */
+export function readBenchPid(): number | undefined {
+  const pidPath = benchPidPath();
+  if (!fs.existsSync(pidPath)) return undefined;
+  try {
+    const raw = fs.readFileSync(pidPath, "utf8").trim();
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Return `true` when the process with the given PID is running on this host.
+ * Uses `process.kill(pid, 0)` — signal 0 is a no-op probe that throws ESRCH
+ * when the process does not exist and EPERM when it exists but is owned by
+ * another user (in which case it IS running).
+ */
+export function isPidRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // EPERM means the process exists but we don't have permission to signal it.
+    return code === "EPERM";
+  }
+}

@@ -91,6 +91,18 @@ export interface RunUtilityOptions {
   budgetTokens?: number;
   /** Wallclock budget per run in ms. Defaults to 120000. */
   budgetWallMs?: number;
+  /**
+   * Number of (task, arm, seed) triples to execute concurrently. Defaults to
+   * 1 (sequential). Clamped to [1, 8] — values above 8 are silently capped.
+   * Values above 4 trigger a stderr warning unless `forceParallel` is set.
+   */
+  parallel?: number;
+  /**
+   * Suppress the high-parallelism warning when `parallel > 4`. Tests and
+   * operators who understand the resource implications may set this to avoid
+   * the noisy stderr message.
+   */
+  forceParallel?: boolean;
   /** Slice label stamped into the report's `corpus.slice` field. */
   slice?: TaskSlice | "all";
   /** Override timestamp (tests). Defaults to `new Date().toISOString()`. */
@@ -172,12 +184,28 @@ type GroupedRuns = Map<string, Map<Arm, RunResult[]>>;
 type GoldRankAccumulator = GoldRankRunRecord[];
 
 /**
+ * Run `items` in batches of `n` concurrently, calling `fn` for each item.
+ * Batches are executed sequentially; within each batch all items run with
+ * `Promise.all`. This gives bounded concurrency without a full work-queue.
+ */
+async function runInBatches<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += n) {
+    await Promise.all(items.slice(i, i + n).map(fn));
+  }
+}
+
+/**
  * Run K seeds × len(arms) × len(tasks) and return the §13.3 report.
  *
  * The function is robust to per-run failures — `runOne` already captures
  * every failure path into a RunResult, so the runner only has to worry
  * about its own infrastructure (stash materialisation, workspace copy).
  * Those failures are recorded as `harness_error` runs.
+ *
+ * When `options.parallel > 1`, work items are batched and run concurrently
+ * via `runInBatches`. The shared `warnings`, `goldRankRecords`, and
+ * `workflowChecks` arrays are updated atomically at the end of each item so
+ * no JS-level races occur (Node/Bun is single-threaded).
  */
 export async function runUtility(options: RunUtilityOptions): Promise<UtilityRunReport> {
   const seedsPerArm = options.seedsPerArm ?? 5;
@@ -185,6 +213,15 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
   const budgetWallMs = options.budgetWallMs ?? 120000;
   const slice = options.slice ?? "all";
   const materialiseStash = options.materialiseStash ?? true;
+  // Clamp parallel to [1, 8].
+  const parallel = Math.min(8, Math.max(1, options.parallel ?? 1));
+
+  if (parallel > 4 && !options.forceParallel) {
+    process.stderr.write(
+      `bench: --parallel ${parallel} exceeds 4; high concurrency may overwhelm local providers. ` +
+        `Pass --force-parallel to suppress this warning.\n`,
+    );
+  }
 
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
@@ -255,98 +292,121 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
       return [...options.arms, "synthetic"];
     })();
 
-    try {
-      for (const arm of armsForTask) {
-        const armRuns: RunResult[] = [];
-        taskRuns.set(arm, armRuns);
-        for (let seed = 0; seed < seedsPerArm; seed += 1) {
-          // Resolve the stashDir we'll forward to the agent. The akm arm
-          // always carries a stashDir so AKM_STASH_DIR is set in the child
-          // env — this is how downstream tooling (and the trajectory parser
-          // event-stream lookup) distinguishes arms. When the operator opted
-          // out of fixture materialisation (tests, dry-run), we still pass a
-          // stable placeholder so the env keys are wired correctly.
-          let stashDir: string | undefined;
-          if (arm === "akm") {
-            // Resolution order (must match the issue #251 acceptance criteria):
-            //   1. Per-task explicit override (used by `runMaskedCorpus` to
-            //      point at a tmp stash with one asset removed). Highest
-            //      priority because attribution correctness depends on this
-            //      branch never being shadowed by the `__no-stash__`
-            //      placeholder fallback.
-            //   2. Per-(task, arm)-call `stashDirByFixture` override (Phase
-            //      3 evolve persistence).
-            //   3. Per-task materialised fixture stash from `loadFixtureStash`.
-            //   4. `materialiseStash: false` placeholder so AKM_STASH_DIR is
-            //      still wired into the child env.
-            if (task.stashDirOverride) stashDir = task.stashDirOverride;
-            else if (overrideStashDir) stashDir = overrideStashDir;
-            else if (stash) stashDir = stash.stashDir;
-            else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
-          }
-          // Build the prompt-override (#267). The builder is invoked once
-          // per (task, arm) — seeds share a prompt. `undefined` keeps the
-          // driver's default prompt in play.
-          //
-          // #261: the synthetic arm has a scratch-notes prompt contract —
-          // the model is told no AKM stash is available and instructed to
-          // write/use its own procedural notes. When the caller does not
-          // supply a `buildPrompt` override for the synthetic arm we fall
-          // back to a built-in scratch-notes prompt so the contract is
-          // honoured by every utility-track caller, not just `runEvolve`.
-          let promptOverride = options.buildPrompt?.(task, arm);
-          if (promptOverride === undefined && arm === "synthetic") {
-            promptOverride = buildUtilitySyntheticPrompt(task.id);
-          }
-          const run = await runOneIsolated({
-            task,
-            arm,
-            seed,
-            model: options.model,
-            stashDir,
-            budgetTokens,
-            budgetWallMs,
-            spawn: options.spawn,
-            warnings,
-            ...(promptOverride !== undefined ? { prompt: promptOverride } : {}),
-            ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
-          });
-          armRuns.push(run);
-
-          // §6.7 search-pipeline bridge: only the akm arm consults the stash,
-          // and we only attribute ranks for tasks with a gold ref. Both
-          // guards mean noakm and gold-less runs are silently excluded.
-          if (arm === "akm" && task.goldRef) {
-            const searches = extractGoldRanks(run, task.goldRef);
-            goldRankRecords.push({
-              taskId: task.id,
-              arm,
-              seed,
-              outcome: run.outcome,
-              goldRef: task.goldRef,
-              searches,
-            });
-          }
-
-          // #257: evaluate the akm-arm run against every workflow spec. The
-          // evaluator's `specApplies` filter handles applicability (arm,
-          // domain, gold ref, repeated-failures threshold), so we hand it the
-          // entire spec list and append whatever it returns. noakm/synthetic
-          // arms are not evaluated — workflow specs target the akm arm.
-          if (arm === "akm" && workflowSpecs.length > 0) {
-            const trace = normalizeRunToTrace(run, { warnings });
-            const runCtx: WorkflowEvalRunContext = {
-              arm: run.arm,
-              taskId: run.taskId,
-              seed: run.seed,
-              outcome: run.outcome,
-            };
-            const taskMetadata = buildWorkflowTaskMetadata(task, trace);
-            const checks = evaluateRunAgainstAllSpecs(trace, workflowSpecs, runCtx, taskMetadata);
-            workflowChecks.push(...checks);
-          }
-        }
+    // Build the flat work-item list for this task: every (arm, seed) pair.
+    // Initialise each arm's RunResult[] array now so parallel workers can
+    // push into the correct bucket without races (JS push is atomic within
+    // the single-threaded event loop).
+    type WorkItem = { arm: Arm; seed: number };
+    const workItems: WorkItem[] = [];
+    for (const arm of armsForTask) {
+      taskRuns.set(arm, []);
+      for (let seed = 0; seed < seedsPerArm; seed += 1) {
+        workItems.push({ arm, seed });
       }
+    }
+
+    // Per-run worker: resolves stash/prompt, executes runOneIsolated, then
+    // splices the result into the shared accumulators. Because Bun/Node is
+    // single-threaded these splices are race-free even across concurrent
+    // awaits — only one microtask runs at a time between yield points.
+    const runItem = async ({ arm, seed }: WorkItem): Promise<void> => {
+      // Resolve the stashDir we'll forward to the agent. The akm arm
+      // always carries a stashDir so AKM_STASH_DIR is set in the child
+      // env — this is how downstream tooling (and the trajectory parser
+      // event-stream lookup) distinguishes arms. When the operator opted
+      // out of fixture materialisation (tests, dry-run), we still pass a
+      // stable placeholder so the env keys are wired correctly.
+      let stashDir: string | undefined;
+      if (arm === "akm") {
+        // Resolution order (must match the issue #251 acceptance criteria):
+        //   1. Per-task explicit override (used by `runMaskedCorpus` to
+        //      point at a tmp stash with one asset removed). Highest
+        //      priority because attribution correctness depends on this
+        //      branch never being shadowed by the `__no-stash__`
+        //      placeholder fallback.
+        //   2. Per-(task, arm)-call `stashDirByFixture` override (Phase
+        //      3 evolve persistence).
+        //   3. Per-task materialised fixture stash from `loadFixtureStash`.
+        //   4. `materialiseStash: false` placeholder so AKM_STASH_DIR is
+        //      still wired into the child env.
+        if (task.stashDirOverride) stashDir = task.stashDirOverride;
+        else if (overrideStashDir) stashDir = overrideStashDir;
+        else if (stash) stashDir = stash.stashDir;
+        else if (!materialiseStash) stashDir = path.join(task.taskDir, "__no-stash__");
+      }
+      // Build the prompt-override (#267). The builder is invoked once
+      // per (task, arm) — seeds share a prompt. `undefined` keeps the
+      // driver's default prompt in play.
+      //
+      // #261: the synthetic arm has a scratch-notes prompt contract —
+      // the model is told no AKM stash is available and instructed to
+      // write/use its own procedural notes. When the caller does not
+      // supply a `buildPrompt` override for the synthetic arm we fall
+      // back to a built-in scratch-notes prompt so the contract is
+      // honoured by every utility-track caller, not just `runEvolve`.
+      let promptOverride = options.buildPrompt?.(task, arm);
+      if (promptOverride === undefined && arm === "synthetic") {
+        promptOverride = buildUtilitySyntheticPrompt(task.id);
+      }
+
+      // Collect per-run warnings separately and merge after the run so
+      // concurrent runs don't interleave partial warning sequences.
+      const runWarnings: string[] = [];
+      const run = await runOneIsolated({
+        task,
+        arm,
+        seed,
+        model: options.model,
+        stashDir,
+        budgetTokens,
+        budgetWallMs,
+        spawn: options.spawn,
+        warnings: runWarnings,
+        ...(promptOverride !== undefined ? { prompt: promptOverride } : {}),
+        ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
+      });
+
+      // Merge per-run warnings into the shared array.
+      if (runWarnings.length > 0) warnings.push(...runWarnings);
+
+      taskRuns.get(arm)?.push(run);
+
+      // §6.7 search-pipeline bridge: only the akm arm consults the stash,
+      // and we only attribute ranks for tasks with a gold ref. Both
+      // guards mean noakm and gold-less runs are silently excluded.
+      if (arm === "akm" && task.goldRef) {
+        const searches = extractGoldRanks(run, task.goldRef);
+        goldRankRecords.push({
+          taskId: task.id,
+          arm,
+          seed,
+          outcome: run.outcome,
+          goldRef: task.goldRef,
+          searches,
+        });
+      }
+
+      // #257: evaluate the akm-arm run against every workflow spec. The
+      // evaluator's `specApplies` filter handles applicability (arm,
+      // domain, gold ref, repeated-failures threshold), so we hand it the
+      // entire spec list and append whatever it returns. noakm/synthetic
+      // arms are not evaluated — workflow specs target the akm arm.
+      if (arm === "akm" && workflowSpecs.length > 0) {
+        const trace = normalizeRunToTrace(run, { warnings: runWarnings });
+        const runCtx: WorkflowEvalRunContext = {
+          arm: run.arm,
+          taskId: run.taskId,
+          seed: run.seed,
+          outcome: run.outcome,
+        };
+        const taskMetadata = buildWorkflowTaskMetadata(task, trace);
+        const checks = evaluateRunAgainstAllSpecs(trace, workflowSpecs, runCtx, taskMetadata);
+        workflowChecks.push(...checks);
+      }
+    };
+
+    try {
+      await runInBatches(workItems, parallel, runItem);
     } finally {
       // Deregister BEFORE running cleanup so a SIGINT arriving during this
       // block doesn't double-fire the cleanup (per cleanup.ts contract).
