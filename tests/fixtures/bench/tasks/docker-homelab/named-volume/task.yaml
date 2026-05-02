@@ -2,7 +2,7 @@ id: docker-homelab/named-volume
 title: "Mount a named pgdata volume on the postgres service"
 domain: docker-homelab
 difficulty: medium
-slice: eval
+slice: train
 gold_ref: skill:docker-homelab
 stash: docker-homelab
 verifier: pytest

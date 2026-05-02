@@ -1,0 +1,14 @@
+id: drillbit/provision-edge
+title: "Provision a drillbit edge node named sentinel-1 in az-west"
+domain: drillbit
+difficulty: easy
+slice: eval
+gold_ref: skill:drillbit
+stash: drillbit
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: drillbit/provision
+akm_keywords: "drillbit provision cluster tier region replicas"

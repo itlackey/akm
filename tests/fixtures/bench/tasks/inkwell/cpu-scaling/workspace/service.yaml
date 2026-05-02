@@ -1,0 +1,8 @@
+apiVersion: inkwell/v2
+kind: Service
+metadata:
+  name: batch-processor
+spec:
+  runtime:
+    image: batch:v1.0.0
+    port: 7070

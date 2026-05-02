@@ -2,7 +2,7 @@ id: docker-homelab/bridge-network
 title: "Attach two services to a custom internal bridge network"
 domain: docker-homelab
 difficulty: medium
-slice: eval
+slice: train
 gold_ref: skill:docker-homelab
 stash: docker-homelab
 verifier: pytest

@@ -372,12 +372,17 @@ export function readRunEvents(cacheHome: string, opts?: { warnings?: string[] })
 
 /** Default prompt forwarded to opencode when caller omits one. */
 function defaultPrompt(options: RunOptions): string {
+  // For non-akm arms: keep the minimal format so the model is forced to read
+  // the workspace README.md to discover task specifics. Injecting the title
+  // here causes the model to answer from the prompt alone and skip the README,
+  // which breaks tasks where specific parameter values (names, IDs) only appear
+  // in the workspace files.
+  if (options.arm !== "akm") {
+    return [`Task: ${options.taskId}`, `Arm: ${options.arm}`, `Workspace: ${options.workspace}`].join("\n");
+  }
+
   const title = options.taskTitle ? `\n${options.taskTitle}` : "";
   const taskLine = `Task: ${options.taskId}${title}`;
-
-  if (options.arm !== "akm") {
-    return [taskLine, `Workspace: ${options.workspace}`].join("\n");
-  }
 
   // Derive search keywords: prefer explicit field, fall back to task domain.
   const keywords = options.akmKeywords ?? options.taskId.split("/")[0].replace(/-/g, " ");

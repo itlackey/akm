@@ -1,0 +1,8 @@
+apiVersion: inkwell/v2
+kind: Service
+metadata:
+  name: web-frontend
+spec:
+  runtime:
+    image: frontend:v1.4.0
+    port: 3000

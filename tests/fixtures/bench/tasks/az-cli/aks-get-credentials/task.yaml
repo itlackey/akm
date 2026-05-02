@@ -2,7 +2,7 @@ id: az-cli/aks-get-credentials
 title: "Produce the az command to fetch AKS kubeconfig for mycluster"
 domain: az-cli
 difficulty: easy
-slice: eval
+slice: train
 gold_ref: skill:az-cli
 stash: az-cli
 verifier: script

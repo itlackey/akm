@@ -1,0 +1,14 @@
+id: inkwell/new-service
+title: "Create a new inkwell Service definition for api-gateway"
+domain: inkwell
+difficulty: easy
+slice: eval
+gold_ref: skill:inkwell
+stash: inkwell
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: inkwell/service
+akm_keywords: "inkwell service apiVersion kind metadata spec runtime image port"

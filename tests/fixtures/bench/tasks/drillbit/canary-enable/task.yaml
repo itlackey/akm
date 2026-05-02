@@ -1,0 +1,14 @@
+id: drillbit/canary-enable
+title: "Enable canary traffic splitting for drillbit cluster staging-west at 20%"
+domain: drillbit
+difficulty: easy
+slice: eval
+gold_ref: skill:drillbit
+stash: drillbit
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: drillbit/canary
+akm_keywords: "drillbit canary enable weight traffic splitting"

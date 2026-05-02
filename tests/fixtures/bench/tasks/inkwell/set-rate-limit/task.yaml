@@ -1,0 +1,14 @@
+id: inkwell/set-rate-limit
+title: "Configure rate limiting on an inkwell service"
+domain: inkwell
+difficulty: easy
+slice: eval
+gold_ref: skill:inkwell
+stash: inkwell
+verifier: pytest
+budget:
+  tokens: 25000
+  wallMs: 90000
+memory_ability: procedural_lookup
+task_family: inkwell/limits
+akm_keywords: "inkwell service limits rate rps burst"
