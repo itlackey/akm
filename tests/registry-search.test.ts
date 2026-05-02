@@ -513,6 +513,217 @@ describe("AKM_REGISTRY_URL env var", () => {
       srv2.close();
     }
   });
+
+  // Problem A: env-based override must preserve provider type
+  test("provider::url syntax routes to the declared provider type", async () => {
+    // Stand up a skills-sh-shaped endpoint
+    const skillsSrv = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          JSON.stringify({
+            skills: [{ id: "org/tools/my-skill", name: "my-skill", installs: 200, source: "org/tools" }],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+    process.env.AKM_REGISTRY_URL = `skills-sh::http://localhost:${skillsSrv.port}`;
+    try {
+      const result = await searchRegistry("my-skill");
+      // skills-sh provider should have handled this — hits use skills-sh id format
+      expect(result.hits.length).toBeGreaterThan(0);
+      expect(result.hits[0].id).toBe("skills-sh:org/tools/my-skill");
+      expect(result.hits[0].installRef).toBe("github:org/tools");
+      expect(result.warnings).toEqual([]);
+    } finally {
+      skillsSrv.stop(true);
+    }
+  });
+
+  test("bare URL in env var defaults to static-index provider", async () => {
+    const srv = serveIndex(FIXTURE_INDEX);
+    process.env.AKM_REGISTRY_URL = srv.url;
+    try {
+      const result = await searchRegistry("openkit");
+      expect(result.hits.length).toBeGreaterThan(0);
+      // static-index uses the stash id directly
+      expect(result.hits[0].id).toBe("npm:@itlackey/openkit");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("unknown provider type in env var produces warning, not crash", async () => {
+    process.env.AKM_REGISTRY_URL = `no-such-provider::http://127.0.0.1:1/index.json`;
+    const result = await searchRegistry("anything");
+    expect(result.hits).toEqual([]);
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0]).toContain("no-such-provider");
+  });
+
+  test("mixed provider types in comma-separated env var", async () => {
+    const staticSrv = serveIndex({
+      version: 3,
+      updatedAt: "2026-01-01T00:00:00Z",
+      stashes: [
+        {
+          id: "npm:env-static-stash",
+          name: "env-static-stash",
+          ref: "env-static-stash",
+          source: "npm",
+          tags: ["deploy"],
+        },
+      ],
+    });
+    const skillsSrv = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          JSON.stringify({
+            skills: [{ id: "user/tools/env-skill", name: "env-skill", installs: 100, source: "user/tools" }],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+    process.env.AKM_REGISTRY_URL = `${staticSrv.url},skills-sh::http://localhost:${skillsSrv.port}`;
+    try {
+      const result = await searchRegistry("env");
+      const ids = result.hits.map((h) => h.id);
+      expect(ids).toContain("npm:env-static-stash");
+      expect(ids).toContain("skills-sh:user/tools/env-skill");
+      expect(result.warnings).toEqual([]);
+    } finally {
+      staticSrv.close();
+      skillsSrv.stop(true);
+    }
+  });
+});
+
+// ── Score normalization (Problem B) ─────────────────────────────────────────
+
+describe("cross-provider score normalization", () => {
+  test("scores from all providers are in [0, 1] after normalization", async () => {
+    // static-index raw scores can exceed 1 (e.g. exact name + tag + description).
+    // After normalization, all scores in the merged response must be <= 1.
+    const srv = serveIndex(FIXTURE_INDEX);
+    try {
+      const result = await searchRegistry("openkit bun typescript starter", {
+        registries: [{ url: srv.url }],
+      });
+      for (const hit of result.hits) {
+        if (hit.score !== undefined) {
+          expect(hit.score).toBeGreaterThanOrEqual(0);
+          expect(hit.score).toBeLessThanOrEqual(1);
+        }
+      }
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("top hit within a provider batch retains score = 1 after normalization", async () => {
+    // The highest-scored hit in each provider batch should map to exactly 1.0.
+    const srv = serveIndex(FIXTURE_INDEX);
+    try {
+      const result = await searchRegistry("openkit", {
+        registries: [{ url: srv.url }],
+      });
+      expect(result.hits.length).toBeGreaterThan(0);
+      const topScore = result.hits[0].score;
+      expect(topScore).toBe(1);
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("merged multi-provider results are ordered by normalized score", async () => {
+    // Provider A: static-index with a moderate-relevance match.
+    // Provider B: skills-sh with a high-installs match.
+    // After normalization each batch has max=1; the better-matched kit wins.
+    const staticSrv = serveIndex({
+      version: 3,
+      updatedAt: "2026-01-01T00:00:00Z",
+      stashes: [
+        {
+          id: "npm:exact-name-match",
+          name: "deploy",
+          description: "exact match",
+          ref: "exact-name-match",
+          source: "npm",
+          tags: ["deploy"],
+        },
+        {
+          id: "npm:partial-match",
+          name: "deployment-helper",
+          description: "partial",
+          ref: "partial-match",
+          source: "npm",
+          tags: [],
+        },
+      ],
+    });
+    const skillsSrv = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          JSON.stringify({
+            skills: [
+              { id: "org/deploy-skill", name: "deploy-skill", installs: 1000, source: "org/deploy-skill" },
+              { id: "org/other-skill", name: "other-skill", installs: 100, source: "org/other" },
+            ],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+    try {
+      const result = await searchRegistry("deploy", {
+        registries: [{ url: staticSrv.url }, { url: `http://localhost:${skillsSrv.port}`, provider: "skills-sh" }],
+      });
+      // All scores in [0, 1]
+      for (const hit of result.hits) {
+        if (hit.score !== undefined) {
+          expect(hit.score).toBeGreaterThanOrEqual(0);
+          expect(hit.score).toBeLessThanOrEqual(1);
+        }
+      }
+      // Results should be sorted descending
+      for (let i = 1; i < result.hits.length; i++) {
+        expect((result.hits[i - 1].score ?? 0) >= (result.hits[i].score ?? 0)).toBe(true);
+      }
+    } finally {
+      staticSrv.close();
+      skillsSrv.stop(true);
+    }
+  });
+
+  test("single-hit provider batch normalizes to score 1", async () => {
+    const srv = serveIndex({
+      version: 3,
+      updatedAt: "2026-01-01T00:00:00Z",
+      stashes: [
+        {
+          id: "npm:only-stash",
+          name: "only-stash",
+          description: "only one",
+          ref: "only-stash",
+          source: "npm",
+          tags: ["unique"],
+        },
+      ],
+    });
+    try {
+      const result = await searchRegistry("unique", {
+        registries: [{ url: srv.url }],
+      });
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0].score).toBe(1);
+    } finally {
+      srv.close();
+    }
+  });
 });
 
 // ── Provenance tagging ──────────────────────────────────────────────────────
