@@ -83,7 +83,7 @@ function listAgentSourceFiles(): string[] {
  */
 function buildImportRegex(pkg: string): RegExp {
   const escaped = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(String.raw`(?:from|import\(|require\()\s*['"]` + escaped + `(?:/[^'"]*)?['"]`);
+  return new RegExp(`${String.raw`(?:from|import\(|require\()\s*['"]` + escaped}(?:/[^'"]*)?['"]`);
 }
 
 describe("regression guard: src/integrations/agent/** never imports LLM SDKs", () => {
