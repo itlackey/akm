@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { EmbeddingConnectionConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/indexer/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer/indexer";
@@ -654,6 +655,7 @@ test("usage_events are re-linked after full reindex", async () => {
 test("incremental reindex clears embeddings when provider fingerprint changes", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fp-"));
   process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "auto" });
   embedBatchImpl = async (texts) =>
     texts.map((_text, index) => {
       const embedding = new Float32Array(384);
