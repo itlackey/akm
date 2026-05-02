@@ -36,13 +36,20 @@ function run(args: string[], env: Record<string, string> = {}): SpawnResult {
 }
 
 describe("bench CLI", () => {
-  test("`help` subcommand exits 0 and lists the four subcommands", () => {
+  test("`help` subcommand exits 0 and lists the five subcommands", () => {
     const r = run(["help"]);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("utility");
     expect(r.stdout).toContain("evolve");
     expect(r.stdout).toContain("compare");
     expect(r.stdout).toContain("attribute");
+    expect(r.stdout).toContain("clean");
+  });
+
+  test("`clean` subcommand exits 0 and removes bench tmp root", () => {
+    const r = run(["clean"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain("bench clean:");
   });
 
   test("utility without BENCH_OPENCODE_MODEL exits 2 when no providers file supplies defaultModel", () => {

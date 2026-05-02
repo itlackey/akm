@@ -19,6 +19,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { getCacheDir } from "../../src/core/paths";
+
 import { listTasks, type TaskMetadata } from "./corpus";
 import { runEvolve } from "./evolve";
 import {
@@ -51,6 +53,7 @@ Subcommands:
   evolve        Track B: longitudinal feedback → distill → propose loop.
   compare       Diff two report JSON files (refuses cross-model diffs).
   attribute     Per-asset marginal pass-rate contribution.
+  clean         Remove all bench tmp dirs under \${AKM_CACHE_DIR}/bench/.
 
 utility flags:
   --tasks <slice>          train | eval | all  (default: all)
@@ -920,6 +923,17 @@ async function main(argv: string[]): Promise<number> {
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
       return result.exitCode;
+    }
+    case "clean": {
+      const benchRoot = path.join(getCacheDir(), "bench");
+      try {
+        fs.rmSync(benchRoot, { recursive: true, force: true });
+        process.stderr.write(`bench clean: removed ${benchRoot}\n`);
+      } catch (err) {
+        process.stderr.write(`bench clean: failed to remove ${benchRoot}: ${(err as Error).message}\n`);
+        return 1;
+      }
+      return 0;
     }
     default:
       process.stderr.write(`unknown subcommand: ${parsed.subcommand}\n`);

@@ -24,6 +24,8 @@ export interface SpawnedSubprocess {
   stdout?: ReadableStream<Uint8Array> | null;
   stderr?: ReadableStream<Uint8Array> | null;
   stdin?: WritableStream<Uint8Array> | null;
+  /** PID of the spawned process. Present on real Bun subprocesses; may be absent on test fakes. */
+  pid?: number;
   kill(signal?: number | string): void;
 }
 
@@ -40,8 +42,34 @@ export type SpawnFn = (
     stderr?: "inherit" | "pipe" | "ignore";
     env?: Record<string, string>;
     cwd?: string;
+    detached?: boolean;
   },
 ) => SpawnedSubprocess;
+
+/**
+ * Kill the process group of `proc` with `signal`, falling back to
+ * `proc.kill(signal)` when `proc.pid` is unavailable (e.g. test fakes).
+ *
+ * Passing a negative PID to `process.kill` targets the entire process
+ * group, so opencode's child processes (the .opencode binary, etc.) are
+ * reaped alongside the node wrapper. The fallback keeps test fakes working
+ * without modification.
+ */
+export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
+  if (typeof proc.pid === "number") {
+    try {
+      process.kill(-proc.pid, signal);
+      return;
+    } catch {
+      // Process may have already exited; fall through to direct kill.
+    }
+  }
+  try {
+    proc.kill(signal);
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * Per-call options for {@link runAgent}. All fields are optional. Caller
@@ -185,6 +213,11 @@ export async function runAgent(
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
       env,
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      // Spawn in its own process group so killGroup(-pid, signal) reaches all
+      // descendants (e.g. the .opencode binary that opencode's node wrapper forks).
+      // Only applied in captured mode — interactive mode inherits the parent
+      // terminal's process group intentionally.
+      ...(stdioMode === "captured" ? { detached: true } : {}),
     });
   } catch (err) {
     const durationMs = Date.now() - start;
@@ -210,19 +243,11 @@ export async function runAgent(
   const timer = setTimeoutImpl(() => {
     if (proc.exitCode !== null) return;
     timedOut = true;
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      /* ignore */
-    }
+    killGroup(proc, "SIGTERM");
     // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
     setTimeoutImpl(() => {
       if (proc.exitCode !== null) return;
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
+      killGroup(proc, "SIGKILL");
     }, 5000);
   }, timeoutMs);
 
