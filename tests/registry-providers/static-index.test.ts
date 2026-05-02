@@ -226,4 +226,42 @@ describe("StaticIndexProvider", () => {
       expect(hit?.installRef).toBe("github:vercel-labs/agent-skills");
     });
   });
+
+  describe("registry version contract", () => {
+    test("version 3 index parses without warnings (canonical format)", async () => {
+      const srv = serveJson(FIXTURE_INDEX); // FIXTURE_INDEX has version: 3
+      const provider = makeProvider(srv.url);
+      const result = await provider.search({ query: "agent", limit: 10 });
+      expect(result.warnings ?? []).toHaveLength(0);
+      expect(result.hits.length).toBeGreaterThan(0);
+    });
+
+    test("version 2 index parses without warnings (live official registry format)", async () => {
+      const v2Index = { ...FIXTURE_INDEX, version: 2 };
+      const srv = serveJson(v2Index);
+      const provider = makeProvider(srv.url);
+      const result = await provider.search({ query: "agent", limit: 10 });
+      expect(result.warnings ?? []).toHaveLength(0);
+      expect(result.hits.length).toBeGreaterThan(0);
+    });
+
+    test("version 2 index returns correct kit hits", async () => {
+      const v2Index = { ...FIXTURE_INDEX, version: 2 };
+      const srv = serveJson(v2Index);
+      const provider = makeProvider(srv.url);
+      const kits = await provider.searchKits({ text: "agent", limit: 10 });
+      expect(kits.length).toBeGreaterThan(0);
+      expect(kits.some((k) => k.id === "github:vercel-labs/agent-skills")).toBe(true);
+    });
+
+    test("version 1 index returns null (unsupported)", async () => {
+      // version 1 is explicitly unsupported per schema comment
+      const v1Index = { ...FIXTURE_INDEX, version: 1 };
+      const srv = serveJson(v1Index);
+      const provider = makeProvider(srv.url);
+      const result = await provider.search({ query: "agent", limit: 10 });
+      // No hits because the parser returns null for unsupported versions
+      expect(result.hits).toHaveLength(0);
+    });
+  });
 });

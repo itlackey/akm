@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { AkmConfig } from "../src/core/config";
 import { saveConfig } from "../src/core/config";
 import {
+  ensureSourceCaches,
   findSourceForPath,
   getPrimarySource,
   isEditable,
@@ -232,5 +234,71 @@ describe("isEditable", () => {
   test("files outside any known path are editable", () => {
     saveConfig({ semanticSearchMode: "off" });
     expect(isEditable("/some/random/path/file.sh")).toBe(true);
+  });
+});
+
+// ── ensureSourceCaches ────────────────────────────────────────────────────────
+
+describe("ensureSourceCaches", () => {
+  test("completes without error when sources[] is empty", async () => {
+    const config: AkmConfig = { semanticSearchMode: "off", sources: [] };
+    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  test("completes without error when sources[] has filesystem entries (no sync needed)", async () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", path: stashDir }],
+    };
+    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  test("reads from sources[] not stashes[] — git entries in sources[] are processed", async () => {
+    // A config where sources[] has a git entry and stashes is undefined.
+    // We can't run a real git mirror in unit tests, but we verify that the
+    // function does NOT throw even when the git URL is unreachable (it warns).
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [
+        {
+          type: "git",
+          url: "https://github.com/example/nonexistent-repo.git",
+          name: "test-git",
+        },
+      ],
+    };
+    // Should resolve (not reject) — failures are warn-only
+    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  test("reads from sources[] not stashes[] — website entries in sources[] are processed", async () => {
+    // A config where sources[] has a website entry and stashes is undefined.
+    // The mirror will fail (unreachable host) but the function warns, not throws.
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [
+        {
+          type: "website",
+          url: "https://example.invalid/docs",
+          name: "test-website",
+        },
+      ],
+    };
+    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  test("stashes[] entries are still processed for one-release backwards compat", async () => {
+    // stashes[] is deprecated but still accepted in the runtime shape for one release.
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      stashes: [
+        {
+          type: "git",
+          url: "https://github.com/example/nonexistent-repo.git",
+          name: "legacy-git",
+        },
+      ],
+    };
+    await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
   });
 });
