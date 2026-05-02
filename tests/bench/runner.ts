@@ -47,7 +47,7 @@ import {
 } from "./metrics";
 import type { LoadedOpencodeProviders } from "./opencode-config";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
-import { benchMkdtemp } from "./tmp";
+import { benchMkdtemp, benchTmpRoot } from "./tmp";
 import { computeTrajectory } from "./trajectory";
 import {
   evaluateRunAgainstAllSpecs,
@@ -56,6 +56,82 @@ import {
 } from "./workflow-evaluator";
 import { loadAllWorkflowSpecs, type WorkflowSpec } from "./workflow-spec";
 import { normalizeRunToTrace } from "./workflow-trace";
+
+/** Checkpoint write interval: write a partial file every N completed runs. */
+const CHECKPOINT_INTERVAL = 5;
+
+/** Partial file max age before cleanup: 24 hours in milliseconds. */
+const PARTIAL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Emit a one-line progress update to stderr after each (task, arm, seed)
+ * completes. Goes to stderr even when --json is passed so operators always
+ * have a heartbeat signal during long runs.
+ *
+ * Format: `[<completed>/<total>] <taskId> <arm> <outcome> <wallclockSeconds>s`
+ */
+function emitProgress(completed: number, total: number, run: RunResult): void {
+  const secs = Math.round(run.wallclockMs / 1000);
+  process.stderr.write(`[${completed}/${total}] ${run.taskId} ${run.arm} ${run.outcome} ${secs}s\n`);
+}
+
+/**
+ * Write a partial checkpoint file under `${AKM_CACHE_DIR}/bench/`.
+ * The file contains the runs completed so far plus a `partial: true` marker
+ * and a `summary.total_runs_completed` counter. Old partial files (>24h)
+ * are not cleaned up here — that is done at startup via `cleanupOldPartials`.
+ */
+function writePartialCheckpoint(runs: RunResult[], timestamp: string): void {
+  try {
+    const root = benchTmpRoot();
+    const filename = `bench-partial-${timestamp.replace(/[:.]/g, "-")}.json`;
+    const outPath = path.join(root, filename);
+    const envelope = {
+      partial: true,
+      summary: {
+        total_runs_completed: runs.length,
+      },
+      timestamp,
+      runs: runs.map((r) => ({
+        task_id: r.taskId,
+        arm: r.arm,
+        seed: r.seed,
+        model: r.model,
+        outcome: r.outcome,
+        wallclock_ms: r.wallclockMs,
+      })),
+    };
+    fs.writeFileSync(outPath, JSON.stringify(envelope, null, 2), "utf8");
+  } catch {
+    // Checkpoint writes are best-effort — never abort a run for a write failure.
+  }
+}
+
+/**
+ * Remove partial checkpoint files older than 24 hours from the bench tmp root.
+ * Called once at the start of `runUtility` to reap orphans from prior crashed runs.
+ */
+function cleanupOldPartials(): void {
+  try {
+    const root = benchTmpRoot();
+    const now = Date.now();
+    const entries = fs.readdirSync(root);
+    for (const entry of entries) {
+      if (!entry.startsWith("bench-partial-")) continue;
+      const fullPath = path.join(root, entry);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (now - stat.mtimeMs > PARTIAL_MAX_AGE_MS) {
+          fs.unlinkSync(fullPath);
+        }
+      } catch {
+        /* swallow per-file errors */
+      }
+    }
+  } catch {
+    /* swallow — cleanup is best-effort */
+  }
+}
 
 /**
  * Default workflows directory. Can be overridden by callers (tests) via
@@ -223,9 +299,25 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     );
   }
 
+  // Clean up orphaned partial files from prior crashed runs (best-effort).
+  cleanupOldPartials();
+
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
   const goldRankRecords: GoldRankAccumulator = [];
+
+  // Progress tracking: compute total run count upfront so progress lines show
+  // `[7/40]` rather than an unbounded counter.
+  const armsForProgress = options.includeSynthetic
+    ? [...new Set([...options.arms, "synthetic" as const])]
+    : options.arms;
+  const totalRuns = options.tasks.length * armsForProgress.length * seedsPerArm;
+  let completedRuns = 0;
+
+  // Partial checkpoint accumulator: collects all RunResults as they land so
+  // we can write a partial envelope periodically without keeping duplicates.
+  const allCompletedRuns: RunResult[] = [];
+  const runTimestamp = options.timestamp ?? new Date().toISOString();
 
   // #257: load workflow specs ONCE per runUtility call. Skipped when the
   // caller passes an empty `workflowsDir` string (test escape hatch). Errors
@@ -370,6 +462,17 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
       if (runWarnings.length > 0) warnings.push(...runWarnings);
 
       taskRuns.get(arm)?.push(run);
+
+      // Emit a compact progress line to stderr (unconditional — even under
+      // --json so operators have a heartbeat during long runs).
+      completedRuns += 1;
+      emitProgress(completedRuns, totalRuns, run);
+
+      // Accumulate for partial checkpointing.
+      allCompletedRuns.push(run);
+      if (completedRuns % CHECKPOINT_INTERVAL === 0) {
+        writePartialCheckpoint(allCompletedRuns, runTimestamp);
+      }
 
       // §6.7 search-pipeline bridge: only the akm arm consults the stash,
       // and we only attribute ranks for tasks with a gold ref. Both
