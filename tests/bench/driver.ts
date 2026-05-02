@@ -22,6 +22,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
@@ -206,6 +207,21 @@ export function createIsolationDirs(stashDir?: string): IsolationDirs {
   fs.mkdirSync(cacheHome, { recursive: true });
   fs.mkdirSync(configHome, { recursive: true });
   fs.mkdirSync(opencodeConfig, { recursive: true });
+
+  // Symlink the real opencode config dir into XDG_CONFIG_HOME so opencode
+  // can find its installed npm provider packages (node_modules). Without
+  // this, overriding XDG_CONFIG_HOME produces an empty opencode config dir
+  // and provider plugins (e.g. @ai-sdk/openai-compatible) fail to load.
+  // OPENCODE_CONFIG still points to our materialised file, which opencode
+  // reads in preference to XDG_CONFIG_HOME/opencode/opencode.json.
+  const realOpencodeConfigDir = path.join(os.homedir(), ".config", "opencode");
+  const isolatedOpencodeConfigDir = path.join(configHome, "opencode");
+  if (fs.existsSync(realOpencodeConfigDir)) {
+    fs.symlinkSync(realOpencodeConfigDir, isolatedOpencodeConfigDir);
+  } else {
+    fs.mkdirSync(isolatedOpencodeConfigDir, { recursive: true });
+  }
+
   return {
     root,
     cacheHome,
