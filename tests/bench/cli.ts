@@ -7,6 +7,7 @@
  *   • `compare`    — diff two report JSON files; refuses on hash/model mismatch.
  *   • `attribute`  — per-asset marginal contribution via leave-one-out masking.
  *   • `evolve`     — longitudinal evolution loop (Track B). Stub.
+ *   • `kill`       — send SIGTERM to a running bench process (reads bench.pid).
  *
  * Implementation status and validity rules live in `tests/bench/BENCH.md`.
  *
@@ -40,6 +41,7 @@ import {
   type UtilityRunReport,
 } from "./report";
 import { runUtility } from "./runner";
+import { isPidRunning, readBenchPid, writeBenchPid } from "./tmp";
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
 
@@ -51,12 +53,17 @@ Subcommands:
   evolve        Track B: longitudinal feedback → distill → propose loop.
   compare       Diff two report JSON files (refuses cross-model diffs).
   attribute     Per-asset marginal pass-rate contribution.
+  kill          Send SIGTERM to a running bench process (reads bench.pid).
 
 utility flags:
   --tasks <slice>          train | eval | all  (default: all)
   --seeds <N>              seeds per arm  (default: 5)
   --budget-tokens <N>      per-run token cap (default: 30000)
   --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
+  --parallel <N>           number of (task, arm, seed) triples to run concurrently
+                           (default: 1 — sequential). Clamped to [1, 8]. Values > 4
+                           print a warning unless --force-parallel is also set.
+  --force-parallel         suppress the high-parallelism warning when --parallel > 4.
   --include-synthetic      add a third 'synthetic' arm where the model writes/uses its own
                            scratch notes (no AKM stash). Reports akm_over_synthetic_lift so
                            operators can see whether AKM beats a self-notes baseline.
@@ -73,6 +80,8 @@ evolve flags:
   --seeds <N>              seeds per arm (default: 5)
   --budget-tokens <N>      per-run token cap (default: 30000)
   --budget-wall-ms <N>     per-run wallclock cap in ms (default: 120000)
+  --parallel <N>           same as utility --parallel (default: 1).
+  --force-parallel         suppress the high-parallelism warning when --parallel > 4.
   --negative-threshold-count <N>  absolute negative-feedback count to evolve (default: 2)
   --negative-threshold-ratio <R>  ratio of negatives to total feedback (default: 0.5)
   --opencode-config <path> path to a bench opencode providers JSON file (same as utility).
@@ -97,6 +106,11 @@ attribute flags:
   --top <N>                number of top-loaded assets to mask (default: 5; clamped).
   --opencode-config <path> path to a bench opencode providers JSON file (same as utility).
   --json                   suppress the markdown summary on stderr.
+
+kill flags:
+  (none)        Reads \${AKM_CACHE_DIR}/bench/bench.pid and sends SIGTERM.
+                Prints "no bench running" and exits 0 when the PID file is absent.
+                Run again (or press Ctrl-C) to escalate to SIGKILL.
 
 Environment:
   BENCH_OPENCODE_MODEL      model id stamped into every RunResult. REQUIRED for utility/evolve
@@ -224,6 +238,13 @@ export interface UtilityCliOptions {
    * the pre-#261 two-arm shape.
    */
   includeSynthetic?: boolean;
+  /**
+   * Number of (task, arm, seed) triples to run concurrently. Forwarded into
+   * `runUtility` as `parallel`. Default 1 (sequential). Clamped to [1, 8].
+   */
+  parallel?: number;
+  /** Suppress the high-parallelism warning when parallel > 4. */
+  forceParallel?: boolean;
   branch?: string;
   commit?: string;
   timestamp?: string;
@@ -259,6 +280,8 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
     // #261: thread the synthetic-arm gate. Default off — the envelope shape
     // is byte-identical to the pre-#261 output unless the operator opts in.
     ...(options.includeSynthetic ? { includeSynthetic: true } : {}),
+    ...(options.parallel !== undefined ? { parallel: options.parallel } : {}),
+    ...(options.forceParallel ? { forceParallel: true } : {}),
     ...(options.branch !== undefined ? { branch: options.branch } : {}),
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
@@ -742,6 +765,10 @@ export interface EvolveCliOptions {
   budgetWallMs: number;
   model: string;
   negativeThreshold: { absoluteCount: number; ratio: number };
+  /** Number of (task, arm, seed) triples to run concurrently. Default 1. */
+  parallel?: number;
+  /** Suppress the high-parallelism warning when parallel > 4. */
+  forceParallel?: boolean;
   branch?: string;
   commit?: string;
   timestamp?: string;
@@ -820,16 +847,26 @@ async function main(argv: string[]): Promise<number> {
         process.stderr.write("bench utility: BENCH_OPENCODE_MODEL environment variable is required.\n");
         return 2;
       }
-      const result = await runUtilityCli({
-        slice,
-        json: parsed.bool.has("json"),
-        seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
-        budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
-        budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
-        model,
-        ...(parsed.bool.has("include-synthetic") ? { includeSynthetic: true } : {}),
-        ...(opencodeProviders ? { opencodeProviders } : {}),
-      });
+
+      // Write PID file so `bench kill` can terminate this run.
+      const removePid = writeBenchPid();
+      let result: UtilityCliResult;
+      try {
+        result = await runUtilityCli({
+          slice,
+          json: parsed.bool.has("json"),
+          seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
+          budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
+          budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
+          model,
+          parallel: parseInt32(parsed.flags.get("parallel"), 1),
+          ...(parsed.bool.has("force-parallel") ? { forceParallel: true } : {}),
+          ...(parsed.bool.has("include-synthetic") ? { includeSynthetic: true } : {}),
+          ...(opencodeProviders ? { opencodeProviders } : {}),
+        });
+      } finally {
+        removePid();
+      }
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
       return result.exitCode;
@@ -856,22 +893,32 @@ async function main(argv: string[]): Promise<number> {
         process.stderr.write("bench evolve: BENCH_OPENCODE_MODEL environment variable is required.\n");
         return 2;
       }
-      const result = await runEvolveCli({
-        domain,
-        json: parsed.bool.has("json"),
-        seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
-        budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
-        budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
-        model,
-        negativeThreshold: {
-          absoluteCount: parseInt32(parsed.flags.get("negative-threshold-count"), 2),
-          ratio: parseFloatArg(parsed.flags.get("negative-threshold-ratio"), 0.5),
-        },
-        ...(opencodeProvidersEvolve ? { opencodeProviders: opencodeProvidersEvolve } : {}),
-      });
-      if (result.stdout) process.stdout.write(result.stdout);
-      if (result.stderr) process.stderr.write(result.stderr);
-      return result.exitCode;
+
+      // Write PID file so `bench kill` can terminate this run.
+      const removePidEvolve = writeBenchPid();
+      let resultEvolve: UtilityCliResult;
+      try {
+        resultEvolve = await runEvolveCli({
+          domain,
+          json: parsed.bool.has("json"),
+          seedsPerArm: parseInt32(parsed.flags.get("seeds"), 5),
+          budgetTokens: parseInt32(parsed.flags.get("budget-tokens"), 30000),
+          budgetWallMs: parseInt32(parsed.flags.get("budget-wall-ms"), 120000),
+          model,
+          parallel: parseInt32(parsed.flags.get("parallel"), 1),
+          ...(parsed.bool.has("force-parallel") ? { forceParallel: true } : {}),
+          negativeThreshold: {
+            absoluteCount: parseInt32(parsed.flags.get("negative-threshold-count"), 2),
+            ratio: parseFloatArg(parsed.flags.get("negative-threshold-ratio"), 0.5),
+          },
+          ...(opencodeProvidersEvolve ? { opencodeProviders: opencodeProvidersEvolve } : {}),
+        });
+      } finally {
+        removePidEvolve();
+      }
+      if (resultEvolve.stdout) process.stdout.write(resultEvolve.stdout);
+      if (resultEvolve.stderr) process.stderr.write(resultEvolve.stderr);
+      return resultEvolve.exitCode;
     }
     case "compare": {
       const basePath = parsed.flags.get("base");
@@ -920,6 +967,35 @@ async function main(argv: string[]): Promise<number> {
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
       return result.exitCode;
+    }
+    case "kill": {
+      const pid = readBenchPid();
+      if (pid === undefined) {
+        process.stdout.write("no bench running\n");
+        return 0;
+      }
+      if (!isPidRunning(pid)) {
+        process.stdout.write(`no bench running (stale PID file for PID ${pid} — cleaning up)\n`);
+        try {
+          const { benchPidPath } = await import("./tmp");
+          const { default: nodeFs } = await import("node:fs");
+          nodeFs.rmSync(benchPidPath(), { force: true });
+        } catch {
+          /* best-effort */
+        }
+        return 0;
+      }
+      try {
+        process.kill(pid, "SIGTERM");
+        process.stdout.write(`sent SIGTERM to bench process ${pid}\n`);
+        process.stdout.write("run `bench kill` again to escalate to SIGKILL if the process does not exit.\n");
+      } catch (err) {
+        process.stderr.write(
+          `bench kill: failed to signal PID ${pid}: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        return 1;
+      }
+      return 0;
     }
     default:
       process.stderr.write(`unknown subcommand: ${parsed.subcommand}\n`);
