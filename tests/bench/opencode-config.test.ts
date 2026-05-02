@@ -55,8 +55,8 @@ describe("loadOpencodeProviders", () => {
     expect(loaded.source).toBe(FIXTURE_PATH);
     expect(loaded.providers).toBeDefined();
     expect(typeof loaded.providers).toBe("object");
-    expect(loaded.defaultModel).toBe("opencode/big-pickle");
-    expect("don" in loaded.providers).toBe(true);
+    expect(loaded.defaultModel).toBe("shredder/qwen/qwen3.6-27b");
+    expect("shredder" in loaded.providers).toBe(true);
   });
 
   // ── File not found ────────────────────────────────────────────────────────

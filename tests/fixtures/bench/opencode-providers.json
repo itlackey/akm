@@ -1,8 +1,23 @@
 {
   "$schema": "../../../schemas/bench-opencode-providers.schema.json",
   "schemaVersion": 1,
-  "defaultModel": "opencode/big-pickle",
+  "defaultModel": "shredder/qwen/qwen3.6-27b",
   "providers": {
+    "shredder": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Shredder LM Studio (bench)",
+      "options": {
+        "baseURL": "http://192.168.0.99:1234/v1",
+        "timeout": 600000
+      },
+      "models": {
+        "qwen/qwen3.6-27b": {
+          "name": "Qwen3.6 27B (Shredder LM Studio)",
+          "limit": { "context": 32768, "output": 8192 },
+          "capabilities": { "tool": true }
+        }
+      }
+    },
     "don": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Don LM Studio (bench)",
