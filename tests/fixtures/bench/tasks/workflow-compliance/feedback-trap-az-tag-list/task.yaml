@@ -37,3 +37,4 @@ expected_workflows:
   - akm-lookup-before-edit
   - akm-negative-feedback-on-failure
 abstention_case: false
+akm_keywords: "az cli resource tag list compound selector"

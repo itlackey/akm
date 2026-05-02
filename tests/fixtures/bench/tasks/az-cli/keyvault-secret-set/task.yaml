@@ -11,3 +11,4 @@ budget:
   wallMs: 90000
 memory_ability: procedural_lookup
 task_family: az-cli/commands
+akm_keywords: "az cli keyvault secret set"

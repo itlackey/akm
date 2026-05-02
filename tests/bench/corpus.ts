@@ -132,6 +132,14 @@ export interface TaskMetadata {
    * a newer asset. Optional.
    */
   staleGuidanceCase?: boolean;
+
+  /**
+   * Pre-resolved akm search keywords for the akm-arm prompt. When present,
+   * the bench driver injects these directly into the prompt so the model
+   * does not have to infer search terms from the task ID.
+   * Optional; when absent the driver derives keywords from the task domain.
+   */
+  akmKeywords?: string;
 }
 
 const TASKS_ROOT = path.resolve(__dirname, "..", "fixtures", "bench", "tasks");
@@ -327,6 +335,7 @@ interface RawTask {
   abstention_case?: unknown;
   conflict_case?: unknown;
   stale_guidance_case?: unknown;
+  akm_keywords?: unknown;
 }
 
 function readTask(taskDir: string): TaskMetadata | undefined {
@@ -400,6 +409,9 @@ export function parseTaskYaml(text: string, taskDir: string): TaskMetadata | und
   if (conflictCase !== undefined) meta.conflictCase = conflictCase;
   const staleGuidanceCase = asBoolean(raw.stale_guidance_case);
   if (staleGuidanceCase !== undefined) meta.staleGuidanceCase = staleGuidanceCase;
+
+  const akmKeywords = asString(raw.akm_keywords);
+  if (akmKeywords !== undefined) meta.akmKeywords = akmKeywords;
 
   return meta;
 }

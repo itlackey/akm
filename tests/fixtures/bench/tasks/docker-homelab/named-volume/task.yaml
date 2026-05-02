@@ -11,3 +11,4 @@ budget:
   wallMs: 90000
 memory_ability: procedural_lookup
 task_family: docker-homelab/compose-basics
+akm_keywords: "docker compose volume named pgdata postgres"

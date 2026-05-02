@@ -30,3 +30,4 @@ expected_workflows:
   - akm-negative-feedback-on-failure
   - akm-reflect-after-repeated-failure
 abstention_case: false
+akm_keywords: "az cli storage lifecycle tier cool"

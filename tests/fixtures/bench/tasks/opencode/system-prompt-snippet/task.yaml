@@ -11,3 +11,4 @@ budget:
   wallMs: 90000
 memory_ability: procedural_lookup
 task_family: opencode/config-basics
+akm_keywords: "opencode system prompt akm feedback"

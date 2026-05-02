@@ -103,7 +103,12 @@ export async function runVerifier(
   }
 
   if (kind === "pytest") {
-    return runProcess(["pytest", "-q", "--tb=line"], workspace, resolveSpawn(config));
+    // Test files live at <taskDir>/tests/, not inside the workspace copy.
+    // Pass the absolute path so pytest discovers them while running with
+    // cwd=workspace (which lets relative paths like pathlib.Path("file.yml") work).
+    const testsDir = path.join(taskDir, "tests");
+    const testArgs = fs.existsSync(testsDir) ? [testsDir] : [];
+    return runProcess(["pytest", "-q", "--tb=line", ...testArgs], workspace, resolveSpawn(config));
   }
 
   if (kind === "regex") {

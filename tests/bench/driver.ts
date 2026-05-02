@@ -62,6 +62,14 @@ export interface RunOptions {
   expectedMatch?: string;
   /** Prompt forwarded to opencode. Defaults to a stub if omitted. */
   prompt?: string;
+  /** Human-readable task title from task.yaml, injected into the prompt. */
+  taskTitle?: string;
+  /**
+   * Pre-resolved akm search keywords from task.yaml `akm_keywords` field.
+   * When set, the driver puts a concrete `akm search <keywords>` command on
+   * line 1 of the akm-arm prompt. When absent, falls back to the task domain.
+   */
+  akmKeywords?: string;
   /**
    * Injected `Bun.spawn` replacement for unit tests. When supplied it is
    * used for BOTH the agent spawn and the verifier spawn. Real runs leave
@@ -364,24 +372,32 @@ export function readRunEvents(cacheHome: string, opts?: { warnings?: string[] })
 
 /** Default prompt forwarded to opencode when caller omits one. */
 function defaultPrompt(options: RunOptions): string {
-  const akmInstructions =
-    options.arm === "akm"
-      ? [
-          "",
-          "## Required: use the AKM stash",
-          "An akm knowledge stash is available (AKM_STASH_DIR is set).",
-          "BEFORE editing any file you MUST:",
-          "  1. Run `akm search <keywords>` to find relevant assets.",
-          "  2. Run `akm show <ref>` to read the top result.",
-          "  3. Apply the guidance from the stash to complete the task.",
-          "  4. Run `akm feedback <ref> --positive` or `--negative` after finishing.",
-          "Skipping the search step is not acceptable.",
-        ].join("\n")
-      : "";
+  const title = options.taskTitle ? `\n${options.taskTitle}` : "";
+  const taskLine = `Task: ${options.taskId}${title}`;
 
-  return [`Task: ${options.taskId}`, `Arm: ${options.arm}`, `Workspace: ${options.workspace}`, akmInstructions]
-    .filter(Boolean)
-    .join("\n");
+  if (options.arm !== "akm") {
+    return [taskLine, `Workspace: ${options.workspace}`].join("\n");
+  }
+
+  // Derive search keywords: prefer explicit field, fall back to task domain.
+  const keywords = options.akmKeywords ?? options.taskId.split("/")[0].replace(/-/g, " ");
+
+  // CRITICAL: put the concrete search command on the very first line so the
+  // model's first action is a shell invocation, not reasoning about the task.
+  // Numbered lists let smaller models skip to the last (most concrete) step;
+  // instead, we make the search command grammatically unavoidable.
+  return [
+    `Your FIRST shell command MUST be: akm search ${keywords}`,
+    ``,
+    `Do NOT read any file or produce any output until you have run that command.`,
+    ``,
+    taskLine,
+    `Workspace: ${options.workspace}`,
+    ``,
+    `After running akm search, run akm show <ref> on the most relevant result,`,
+    `then complete the task using the retrieved guidance.`,
+    `When done, run: akm feedback <ref> --positive   (or --negative if it did not help).`,
+  ].join("\n");
 }
 
 /**

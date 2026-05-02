@@ -32,3 +32,4 @@ expected_workflows:
   - akm-lookup-before-edit
   - akm-correct-asset-use
 abstention_case: false
+akm_keywords: "docker compose port publish web service"
