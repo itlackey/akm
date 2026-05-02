@@ -26,6 +26,7 @@ import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
+import { type LoadedOpencodeProviders, materializeOpencodeConfig, selectProviderForModel } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
@@ -67,6 +68,13 @@ export interface RunOptions {
    * top-level report's `warnings[]` aggregates every cap hit.
    */
   warnings?: string[];
+  /**
+   * Pre-loaded opencode provider config. When supplied, `runOne` materialises
+   * the provider entry matching `options.model` into the per-run
+   * `OPENCODE_CONFIG` directory before spawning the agent. When omitted, the
+   * dir is left empty and opencode falls back to its cloud-provider defaults.
+   */
+  opencodeProviders?: LoadedOpencodeProviders;
 }
 
 /**
@@ -399,6 +407,19 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
   const env = buildIsolatedEnv(dirs, options.model);
   if (options.arm === "synthetic") {
     stripAkmStashDir(env);
+  }
+
+  // Materialise the opencode provider config into the isolated OPENCODE_CONFIG
+  // dir. Must happen after createIsolationDirs (which creates the dir) and
+  // before runAgent (which points the child env at the dir via OPENCODE_CONFIG).
+  if (options.opencodeProviders) {
+    try {
+      const selected = selectProviderForModel(options.opencodeProviders, options.model);
+      materializeOpencodeConfig(dirs.opencodeConfig, selected);
+    } catch (err) {
+      result.verifierStdout = `harness: opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`;
+      return result;
+    }
   }
 
   try {

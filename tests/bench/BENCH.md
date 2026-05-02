@@ -481,9 +481,112 @@ this once per (run, spec) before scoring.
 `.code === "WORKFLOW_SPEC_INVALID"` for v1 contract compliance and
 `.specPath` for diagnostics.
 
+## Config-driven opencode provider
+
+By default, `bench utility` and `bench evolve` leave the per-run
+`OPENCODE_CONFIG` directory empty and rely on opencode's built-in cloud-
+provider defaults. For local inference (LM Studio, Ollama, vLLM, etc.) you
+can point the bench at a provider config without touching your personal
+`~/.config/opencode` directory.
+
+### Provider file format
+
+The provider file is a minimal JSON (distinct from a full opencode user config):
+
+```json
+{
+  "$schema": "../../../schemas/bench-opencode-providers.schema.json",
+  "schemaVersion": 1,
+  "defaultModel": "local/my-model",
+  "providers": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local LM Studio",
+      "options": {
+        "baseURL": "http://localhost:1234/v1",
+        "timeout": 600000
+      },
+      "models": {
+        "my-model": {
+          "name": "My Model",
+          "limit": { "context": 32768, "output": 8192 },
+          "capabilities": { "tool": true }
+        }
+      }
+    }
+  }
+}
+```
+
+The schema (`schemas/bench-opencode-providers.schema.json`) validates the
+file. The following top-level keys are **forbidden** (they belong in a full
+opencode user config, not the bench provider file): `plugin`, `mcp`,
+`permission`, `disabled_providers`, `small_model`, `snapshot`.
+
+Credential safety rules:
+- Any `apiKey` string under `providers` must be an env-ref placeholder
+  (`{env:VAR_NAME}`), not a literal value.
+- Any string anywhere in the file matching the `sk-XXXX` heuristic is
+  rejected at load time.
+
+### Auto-discovery order
+
+On `bench utility`, `bench evolve`, and `bench attribute`, the first
+existing file in this list is loaded:
+
+1. `--opencode-config <path>` flag value.
+2. `BENCH_OPENCODE_CONFIG` env var.
+3. `tests/fixtures/bench/opencode-providers.local.json` (gitignored
+   operator overlay — create this file to override the committed fixture
+   without touching version control).
+4. `tests/fixtures/bench/opencode-providers.json` (committed fixture —
+   contains a sample LM Studio provider).
+5. None found → empty isolated dir, opencode falls back to its cloud-provider
+   defaults (OPENCODE_API_KEY must be set in the environment).
+
+### Model resolution
+
+`BENCH_OPENCODE_MODEL` is resolved in this order:
+
+1. `BENCH_OPENCODE_MODEL` env var (explicit override — takes precedence).
+2. `defaultModel` from the loaded providers file.
+3. Neither set → exit 2 with a usage error.
+
+### Operator workflow
+
+For a local bench run against LM Studio:
+
+```sh
+# Copy the template and fill in your baseURL + model details.
+cp tests/fixtures/bench/opencode-providers.json \
+   tests/fixtures/bench/opencode-providers.local.json
+$EDITOR tests/fixtures/bench/opencode-providers.local.json
+
+# Run — model is picked up from opencode-providers.local.json's defaultModel.
+bun run tests/bench/cli.ts utility --tasks train --seeds 1
+
+# Or override explicitly:
+BENCH_OPENCODE_MODEL=local/my-model \
+  bun run tests/bench/cli.ts utility --tasks all
+```
+
+The `.local.json` file is gitignored so operator-specific baseURLs never land
+in the repo. The committed `opencode-providers.json` is the team's reference
+fixture; it ships a sample LM Studio config and is safe to commit because it
+contains no credentials.
+
+### Security
+
+`materializeOpencodeConfig` writes `opencode.json` with mode `0o600`
+(owner-read/write only). The file is ephemeral — it lives inside the per-run
+isolated `OPENCODE_CONFIG` tmpdir and is removed when the run finishes.
+
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.
 - Search-pipeline benchmark sibling: `tests/BENCHMARKS.md`.
 - Fixture stashes: `tests/fixtures/stashes/`.
 - Workflow specs: `tests/fixtures/bench/workflows/`.
+- Provider file schema: `schemas/bench-opencode-providers.schema.json`.
+- Committed provider fixture: `tests/fixtures/bench/opencode-providers.json`.
+- Operator overlay (gitignored): `tests/fixtures/bench/opencode-providers.local.json`.

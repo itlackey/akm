@@ -45,6 +45,7 @@ import {
   type GoldRankRunRecord,
   type PerTaskMetrics,
 } from "./metrics";
+import type { LoadedOpencodeProviders } from "./opencode-config";
 import { resolveGitBranch, resolveGitCommit, type UtilityReportTaskEntry, type UtilityRunReport } from "./report";
 import { benchMkdtemp } from "./tmp";
 import { computeTrajectory } from "./trajectory";
@@ -151,6 +152,13 @@ export interface RunUtilityOptions {
    * empty string to disable workflow evaluation entirely (tests).
    */
   workflowsDir?: string;
+  /**
+   * Pre-loaded opencode provider config. Loaded ONCE per `runUtility` call
+   * (not per run) and forwarded into every `runOneIsolated` / `runOne` call.
+   * When omitted, the per-run `OPENCODE_CONFIG` dir is left empty and
+   * opencode falls back to its cloud-provider defaults.
+   */
+  opencodeProviders?: LoadedOpencodeProviders;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -301,6 +309,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
             spawn: options.spawn,
             warnings,
             ...(promptOverride !== undefined ? { prompt: promptOverride } : {}),
+            ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
           });
           armRuns.push(run);
 
@@ -409,6 +418,7 @@ async function runOneIsolated(args: {
   spawn?: SpawnFn;
   warnings: string[];
   prompt?: string;
+  opencodeProviders?: LoadedOpencodeProviders;
 }): Promise<RunResult> {
   const workspace = benchMkdtemp(`akm-bench-ws-${args.task.domain}-`);
   // SIGINT trap: register workspace cleanup so external signals don't leak
@@ -440,6 +450,7 @@ async function runOneIsolated(args: {
       ...(args.spawn ? { spawn: args.spawn } : {}),
       ...(args.prompt !== undefined ? { prompt: args.prompt } : {}),
       warnings: args.warnings,
+      ...(args.opencodeProviders ? { opencodeProviders: args.opencodeProviders } : {}),
     };
 
     const result = await runOne(runOptions);

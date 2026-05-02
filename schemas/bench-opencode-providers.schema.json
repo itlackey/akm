@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "bench-opencode-providers",
+  "description": "Provider config for the akm-bench opencode harness. Materialised into each run's isolated OPENCODE_CONFIG directory.",
+  "type": "object",
+  "required": ["schemaVersion", "providers"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version sentinel. Must be 1."
+    },
+    "defaultModel": {
+      "type": "string",
+      "description": "Default model ID (e.g. 'don/mlx-community/qwen3.6-35b-a3b'). Used when BENCH_OPENCODE_MODEL is not set."
+    },
+    "providers": {
+      "type": "object",
+      "description": "Map of provider key to provider entry. Keys become the first segment of a model ID.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "A single provider entry forwarded verbatim into opencode.json."
+      }
+    }
+  }
+}

@@ -49,6 +49,7 @@ import {
   type ProposalLogEntry,
   type ProposalQualityMetrics,
 } from "./metrics";
+import type { LoadedOpencodeProviders } from "./opencode-config";
 import type { UtilityRunReport } from "./report";
 import { runUtility } from "./runner";
 
@@ -94,6 +95,12 @@ export interface RunEvolveOptions {
   branch?: string;
   /** Override commit (tests). */
   commit?: string;
+  /**
+   * Pre-loaded opencode provider config. Loaded ONCE by the CLI and forwarded
+   * into every `runUtility` phase (Phase 1, Phase 3 pre/post/synthetic).
+   * When omitted, the per-run `OPENCODE_CONFIG` dir is left empty.
+   */
+  opencodeProviders?: LoadedOpencodeProviders;
 }
 
 /** One Phase-1 feedback event the runner emitted (or attempted). */
@@ -302,6 +309,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       ...(options.timestamp ? { timestamp: options.timestamp } : {}),
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
+      ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     });
 
     // Issue feedback events per (task, seed) outcome on the akm arm.
@@ -465,6 +473,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       ...(options.timestamp ? { timestamp: options.timestamp } : {}),
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
+      ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     });
 
     postReport = await runUtility({
@@ -484,6 +493,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
       ...(options.spawn ? { spawn: wrapSpawnWithArm(options.spawn, "post") } : {}),
+      ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     });
 
     // synthetic: no stash. We pass a spawn wrapper that strips
@@ -506,6 +516,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.commit ? { commit: options.commit } : {}),
       ...(options.spawn ? { spawn: wrapSpawnWithArm(options.spawn, "synthetic", undefined, true) } : {}),
+      ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     });
   } finally {
     // Deregister BEFORE running cleanup so a SIGINT during teardown

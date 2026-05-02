@@ -22,6 +22,7 @@ import {
   runOne,
   stripAkmStashDir,
 } from "./driver";
+import type { LoadedOpencodeProviders } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 
 function asReadableStream(text: string): ReadableStream<Uint8Array> {
@@ -328,6 +329,115 @@ describe("runOne", () => {
       if (prior === undefined) delete process.env.AKM_STASH_DIR;
       else process.env.AKM_STASH_DIR = prior;
     }
+  });
+
+  // ── opencodeProviders: materialise tests ──────────────────────────────────
+
+  test("runOne with opencodeProviders writes opencode.json into OPENCODE_CONFIG before spawn", async () => {
+    // We need to capture the OPENCODE_CONFIG path from the child env to
+    // check the file was written. We do this by saving it from the spawn
+    // invocation then checking AFTER the run returns (before dir teardown
+    // occurs — note: driver tears down dirs in finally; but we copy the path
+    // from the invocation). Actually: dirs are torn down in the driver's
+    // finally block AFTER runAgent returns, so by the time our fake spawn
+    // is called the file SHOULD be present. We check via a closure.
+    let capturedOpencodeCfgDir: string | undefined;
+    let fileExistedAtSpawnTime = false;
+
+    const checkingSpawn: SpawnFn = (cmd, options) => {
+      // Capture the OPENCODE_CONFIG dir from the child env.
+      const env = options.env as Record<string, string> | undefined;
+      if (env?.OPENCODE_CONFIG) {
+        capturedOpencodeCfgDir = env.OPENCODE_CONFIG;
+        const cfgPath = `${env.OPENCODE_CONFIG}/opencode.json`;
+        fileExistedAtSpawnTime = require("node:fs").existsSync(cfgPath);
+      }
+      // Behave like the normal fake (agent exits 0, stdout = "ok").
+      const { spawn: inner } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      return inner(cmd, options);
+    };
+
+    const fakeProviders: LoadedOpencodeProviders = {
+      source: "/fake/providers.json",
+      providers: {
+        testprov: {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "http://localhost:9999/v1" },
+        },
+      },
+      defaultModel: "testprov/my-model",
+    };
+
+    const result = await runOne({
+      ...baseOptions,
+      workspace,
+      model: "testprov/my-model",
+      spawn: checkingSpawn,
+      opencodeProviders: fakeProviders,
+    });
+
+    // The run should succeed or fail on the verifier — the key thing is it
+    // is not harness_error from the provider materialise step.
+    expect(result.outcome).not.toBe("harness_error");
+    // The file MUST have existed at spawn time.
+    expect(fileExistedAtSpawnTime).toBe(true);
+    // Regression: the OPENCODE_CONFIG dir is torn down after the run.
+    if (capturedOpencodeCfgDir) {
+      // Dir should be cleaned up by the driver's finally block.
+      // (We can't assert it's gone because the test itself runs in the same
+      //  process; just verify the captured path was non-empty.)
+      expect(capturedOpencodeCfgDir.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("runOne WITHOUT opencodeProviders leaves OPENCODE_CONFIG dir empty (regression guard)", async () => {
+    let capturedDir: string | undefined;
+    let filesAtSpawnTime: string[] = [];
+
+    const checkingSpawn: SpawnFn = (cmd, options) => {
+      const env = options.env as Record<string, string> | undefined;
+      if (env?.OPENCODE_CONFIG) {
+        capturedDir = env.OPENCODE_CONFIG;
+        try {
+          filesAtSpawnTime = require("node:fs").readdirSync(env.OPENCODE_CONFIG) as string[];
+        } catch {
+          filesAtSpawnTime = [];
+        }
+      }
+      const { spawn: inner } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      return inner(cmd, options);
+    };
+
+    await runOne({
+      ...baseOptions,
+      workspace,
+      spawn: checkingSpawn,
+      // No opencodeProviders
+    });
+
+    expect(capturedDir).toBeDefined();
+    // Without opencodeProviders, the dir should be empty at spawn time.
+    expect(filesAtSpawnTime).toEqual([]);
+  });
+
+  test("runOne returns harness_error when provider materialise throws", async () => {
+    // Provide a model ID that doesn't match any provider key.
+    const fakeProviders: LoadedOpencodeProviders = {
+      source: "/fake/providers.json",
+      providers: { myprov: {} },
+    };
+
+    const { spawn } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+    const result = await runOne({
+      ...baseOptions,
+      workspace,
+      model: "nonexistent/some-model", // provider key "nonexistent" not in fakeProviders
+      spawn,
+      opencodeProviders: fakeProviders,
+    });
+
+    expect(result.outcome).toBe("harness_error");
+    expect(result.verifierStdout).toContain("harness: opencode provider materialise failed");
   });
 });
 

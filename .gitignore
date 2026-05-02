@@ -11,3 +11,4 @@ tests/fixtures/openviking/workspace/viking/_system/accounts.json
 .akm/state/
 .claude/scheduled_tasks.lock
 .akm-run/
+tests/fixtures/bench/opencode-providers.local.json

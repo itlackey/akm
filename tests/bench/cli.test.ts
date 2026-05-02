@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -44,11 +45,26 @@ describe("bench CLI", () => {
     expect(r.stdout).toContain("attribute");
   });
 
-  test("utility without BENCH_OPENCODE_MODEL exits 2", () => {
-    // Strip out any inherited model env so the missing-model branch fires.
-    const r = run(["utility", "--tasks", "train"], { BENCH_OPENCODE_MODEL: "" });
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
+  test("utility without BENCH_OPENCODE_MODEL exits 2 when no providers file supplies defaultModel", () => {
+    // When BENCH_OPENCODE_MODEL is unset AND the providers file has no
+    // defaultModel, exit 2 fires. We supply a minimal no-defaultModel file
+    // via --opencode-config to prevent the committed fixture's defaultModel
+    // from satisfying the model requirement.
+    const tmpDir = fs.mkdtempSync("/tmp/bench-cli-nomodel-test-");
+    const noModelPath = path.join(tmpDir, "no-default.json");
+    try {
+      fs.writeFileSync(
+        noModelPath,
+        JSON.stringify({ schemaVersion: 1, providers: { p: { npm: "@ai-sdk/openai-compatible" } } }),
+      );
+      const r = run(["utility", "--tasks", "train", "--opencode-config", noModelPath], {
+        BENCH_OPENCODE_MODEL: "",
+      });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test("evolve without --tasks exits 2 with usage error", () => {
@@ -57,10 +73,24 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("--tasks");
   });
 
-  test("evolve without BENCH_OPENCODE_MODEL exits 2", () => {
-    const r = run(["evolve", "--tasks", "docker-homelab"], { BENCH_OPENCODE_MODEL: "" });
-    expect(r.exitCode).toBe(2);
-    expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
+  test("evolve without BENCH_OPENCODE_MODEL exits 2 when no providers file supplies defaultModel", () => {
+    // Same pattern as utility: supply a no-defaultModel providers file so the
+    // model-required check fires.
+    const tmpDir = fs.mkdtempSync("/tmp/bench-cli-nomodel-evolve-test-");
+    const noModelPath = path.join(tmpDir, "no-default.json");
+    try {
+      fs.writeFileSync(
+        noModelPath,
+        JSON.stringify({ schemaVersion: 1, providers: { p: { npm: "@ai-sdk/openai-compatible" } } }),
+      );
+      const r = run(["evolve", "--tasks", "docker-homelab", "--opencode-config", noModelPath], {
+        BENCH_OPENCODE_MODEL: "",
+      });
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("BENCH_OPENCODE_MODEL");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   test("attribute without --base exits 2", () => {
@@ -219,5 +249,64 @@ describe("bench CLI", () => {
     expect(r.stderr).not.toContain("## Aggregate");
     // The minor trace line is fine.
     expect(r.stderr).toContain("tasks discovered:");
+  }, 60_000);
+
+  // ── --opencode-config tests ───────────────────────────────────────────────
+
+  test("utility help mentions --opencode-config and BENCH_OPENCODE_CONFIG", () => {
+    const r = run(["help"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("--opencode-config");
+    expect(r.stdout).toContain("BENCH_OPENCODE_CONFIG");
+  });
+
+  test("--opencode-config <missing path> exits 2 (usage error — file not found)", () => {
+    const r = run(["utility", "--tasks", "train", "--opencode-config", "/nonexistent/providers.json"], {
+      BENCH_OPENCODE_MODEL: "test-model",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("not found");
+  });
+
+  test("--opencode-config <invalid JSON file> exits 78 (config error)", () => {
+    // Write a temp file with bad JSON then pass its path.
+    const tmpDir = fs.mkdtempSync("/tmp/bench-cli-test-");
+    const badJsonPath = path.join(tmpDir, "bad.json");
+    try {
+      fs.writeFileSync(badJsonPath, "{ this is not valid json }");
+      const r = run(["utility", "--tasks", "train", "--opencode-config", badJsonPath], {
+        BENCH_OPENCODE_MODEL: "test-model",
+      });
+      expect(r.exitCode).toBe(78);
+      expect(r.stderr).toContain("JSON parse error");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("BENCH_OPENCODE_CONFIG env var pointing to missing file exits 2", () => {
+    const r = run(["utility", "--tasks", "train"], {
+      BENCH_OPENCODE_MODEL: "test-model",
+      BENCH_OPENCODE_CONFIG: "/nonexistent/path.json",
+    });
+    expect(r.exitCode).toBe(2);
+  });
+
+  test("auto-discovers committed fixture when no flag or env var is set", () => {
+    // The committed fixture exists at tests/fixtures/bench/opencode-providers.json.
+    // With no --opencode-config and no BENCH_OPENCODE_CONFIG, the CLI should
+    // auto-discover it and NOT fail on provider loading. The model must match
+    // the fixture's provider prefix or we'd get a materialise error at runtime;
+    // but here we use a tiny budget so it all goes through harness_error anyway.
+    // The point is: exit code 0 (not 78) when the default fixture is auto-discovered.
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "100", "--budget-wall-ms", "100", "--json"],
+      {
+        BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+        BENCH_OPENCODE_CONFIG: "", // blank — let auto-discovery run
+      },
+    );
+    // Should exit 0 — the auto-discovered fixture is valid.
+    expect(r.exitCode).toBe(0);
   }, 60_000);
 });
