@@ -11,6 +11,32 @@
  * Principle: "akm surfaces. The agent writes." akm owns lifecycle, raw-slug
  * generation, structural lint, and `index.md` regeneration. The agent uses
  * its native file tools for every other page operation.
+ *
+ * ## Canonical wiki content contract
+ *
+ * The three "infrastructure" files at the wiki root — `schema.md`, `index.md`,
+ * and `log.md` — are excluded from all user-facing content surfaces:
+ *
+ *   | Surface              | schema/index/log | raw/<slug>.md | <page>.md |
+ *   | -------------------- | ---------------- | ------------- | --------- |
+ *   | `wiki pages`         | excluded         | included      | included  |
+ *   | scoped wiki search   | excluded         | included      | included  |
+ *   | stash-wide FTS index | excluded         | included      | included  |
+ *   | `wiki lint`          | excluded         | tracked       | tracked   |
+ *
+ * `raw/` files are first-class addressable content (`wiki:<n>/raw/<slug>`),
+ * searchable, and listed. They are NOT authored pages — they are source
+ * material the agent turns into pages. `lint` tracks whether each raw file
+ * has been cited by a page's `sources:` frontmatter field.
+ *
+ * ## Regeneration contract
+ *
+ * `regenerateWikiIndex` / `regenerateAllWikiIndexes` apply ONLY to
+ * stash-owned wikis (directories under `<stashDir>/wikis/`).  External wikis
+ * registered via `akm wiki register` are read-only caches; mutating their
+ * `index.md` would corrupt source-of-truth content that akm does not own.
+ * The indexer therefore calls `regenerateAllWikiIndexes(stashDir)` — which
+ * only iterates `<stashDir>/wikis/` — and never touches registered sources.
  */
 
 import fs from "node:fs";
@@ -590,10 +616,15 @@ function readPageFrontmatter(absPath: string): {
 }
 
 /**
- * List the addressable markdown entries in a wiki, excluding only the
- * infrastructure files `schema.md`, `index.md`, and `log.md`. This includes
- * both authored pages and `raw/` sources so `wiki pages` can inventory content
- * written via `akm wiki stash`.
+ * List all addressable wiki content entries.
+ *
+ * Per the canonical wiki contract: `schema.md`, `index.md`, and `log.md` at
+ * the wiki root are infrastructure files and are excluded. Everything else —
+ * authored pages AND `raw/<slug>.md` sources — is included and addressable as
+ * `wiki:<name>/<rel-path-without-.md>`.
+ *
+ * Callers that need to distinguish authored pages from raw sources should
+ * check whether the returned `name` starts with `"raw/"`.
  */
 export function listPages(stashDir: string, name: string): WikiPageEntry[] {
   const wikiDir = resolveWikiSource(stashDir, name).path;
@@ -624,6 +655,10 @@ export interface WikiSearchInput {
  *
  * Uses `akmSearch({ type: "wiki" })` to reuse the full FTS5+boost pipeline,
  * then drops hits that aren't inside `wikis/<name>/`. No parallel scorer.
+ *
+ * Per the canonical wiki contract: infrastructure files (`schema.md`,
+ * `index.md`, `log.md`) at the wiki root are excluded. `raw/<slug>.md`
+ * sources are included — they are first-class addressable content.
  *
  * When the index is absent (e.g. fresh stash), `akmSearch` falls back to its
  * substring walker; hits still come through path-filtered here.
@@ -957,7 +992,13 @@ export function lintWiki(stashDir: string, name: string): WikiLintReport {
 // ── Index regeneration ─────────────────────────────────────────────────────
 
 /**
- * Rebuild a wiki's `index.md` from its pages' frontmatter.
+ * Rebuild a stash-owned wiki's `index.md` from its pages' frontmatter.
+ *
+ * This function uses `resolveWikiDir` (not `resolveWikiSource`) so it only
+ * ever operates on the stash-owned path `<stashDir>/wikis/<name>/`. External
+ * wikis registered via `akm wiki register` are never regenerated here — they
+ * are read-only caches. See the canonical wiki contract at the top of this
+ * file for the full regeneration rule.
  *
  * Pages are grouped by `pageKind` (falling back to `uncategorised`) and
  * listed alphabetically inside each group. If the wiki directory doesn't
@@ -1024,7 +1065,14 @@ export function regenerateWikiIndex(stashDir: string, name: string): boolean {
 }
 
 /**
- * Regenerate `index.md` for every wiki found under `<stashDir>/wikis/`.
+ * Regenerate `index.md` for every stash-owned wiki under `<stashDir>/wikis/`.
+ *
+ * Per the canonical wiki contract: regeneration applies ONLY to stash-owned
+ * wikis. External wikis registered via `akm wiki register` are read-only
+ * caches whose source-of-truth lives outside this stash; mutating their
+ * `index.md` would corrupt content that akm does not own. Those wikis
+ * therefore appear only in the FTS index (read), never in regeneration
+ * (write).
  *
  * Called from `akmIndex()` as a side effect after the FTS rebuild. Never
  * throws; returns the list of wiki names that were regenerated.

@@ -146,7 +146,7 @@ akm wiki list                                  # List wikis (name, pages, raws, 
 akm wiki create research                       # Scaffold a new wiki
 akm wiki register ics-docs ~/code/ics-documentation # Register an external wiki
 akm wiki show research                         # Path, description, counts, last 3 log entries
-akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log/raw)
+akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log; includes raw/)
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
 echo "..." | akm wiki stash research -         # stdin form
