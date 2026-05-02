@@ -175,9 +175,9 @@ describe("akmListSources", () => {
       semanticSearchMode: "off",
       installed: [
         {
-          id: "github:owner/repo",
-          source: "github",
-          ref: "github:owner/repo",
+          id: "git:https://github.com/owner/repo",
+          source: "git",
+          ref: "git:https://github.com/owner/repo.git",
           artifactUrl: "https://github.com/owner/repo.git",
           stashRoot,
           cacheDir,
