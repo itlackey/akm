@@ -310,6 +310,10 @@ async function resolveRunSpecifier(
     return { run: explicitRun, autoStarted: false };
   }
 
+  if (!specifier.includes(":")) {
+    throw new NotFoundError(`Workflow run "${specifier}" not found.`, "WORKFLOW_NOT_FOUND");
+  }
+
   const parsed = parseAssetRef(specifier);
   if (parsed.type !== "workflow") {
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
@@ -453,7 +457,7 @@ function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null 
 function readWorkflowRun(db: import("bun:sqlite").Database, runId: string): WorkflowRunRow {
   const run = db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(runId) as WorkflowRunRow | undefined;
   if (!run) {
-    throw new NotFoundError(`Workflow run not found: ${runId}`);
+    throw new NotFoundError(`Workflow run "${runId}" not found.`, "WORKFLOW_NOT_FOUND");
   }
   return run;
 }

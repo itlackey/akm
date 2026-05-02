@@ -79,6 +79,14 @@ describe("zero-flag remember", () => {
     const content = fs.readFileSync(json.path, "utf8");
     expect(content.startsWith("---")).toBe(false);
   });
+
+  test("reads stdin when --format json is present", () => {
+    const { result } = runCli(["remember", "--name", "from-stdin", "--format", "json"], { input: "stdin body" });
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { path: string };
+    expect(fs.readFileSync(json.path, "utf8")).toContain("stdin body");
+    expect(fs.readFileSync(json.path, "utf8")).not.toContain("\njson");
+  });
 });
 
 // ── CLI args (Mode 1) ────────────────────────────────────────────────────────
@@ -274,20 +282,12 @@ describe("remember --auto", () => {
     void result; // suppress unused variable warning
   });
 
-  test("--auto without any tags from heuristics or CLI rejects with missing-fields error", () => {
+  test("--auto without any tags from heuristics or CLI still writes the memory", () => {
     // Plain text body — no code block, no URL. Heuristics won't derive any tags.
     const { result } = runCli(["remember", "Plain text note without any tags derivable", "--auto"]);
-    // If no heuristic tags are derived and no CLI tags provided, should fail
-    // (The auto heuristic only adds "code" for code blocks, none for plain text)
-    // This tests that the guard fires correctly
-    if (result.status !== 0) {
-      const json = JSON.parse(result.stderr) as { error: string };
-      expect(json.error).toContain("tags");
-    } else {
-      // If some future heuristic adds tags for plain text, just verify the file is written
-      const json = JSON.parse(result.stdout) as { path: string };
-      expect(fs.existsSync(json.path)).toBe(true);
-    }
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { path: string };
+    expect(fs.existsSync(json.path)).toBe(true);
   });
 
   test("--auto + explicit --tag satisfies required-field check", () => {

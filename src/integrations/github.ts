@@ -5,8 +5,13 @@ export const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_TOKEN_DOMAINS = new Set(["api.github.com", "github.com", "uploads.github.com"]);
 
 function readGithubTokenFromEnv(): string | undefined {
-  const token = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim();
-  return token || undefined;
+  if (process.env.GITHUB_TOKEN !== undefined) {
+    return process.env.GITHUB_TOKEN.trim();
+  }
+  if (process.env.GH_TOKEN !== undefined) {
+    return process.env.GH_TOKEN.trim();
+  }
+  return undefined;
 }
 
 function readGithubTokenFromGhCli(): string | undefined {
@@ -21,7 +26,8 @@ function readGithubTokenFromGhCli(): string | undefined {
 }
 
 function resolveGithubToken(): string | undefined {
-  return readGithubTokenFromEnv() ?? readGithubTokenFromGhCli();
+  const token = readGithubTokenFromEnv();
+  return token !== undefined ? token || undefined : readGithubTokenFromGhCli();
 }
 
 /**

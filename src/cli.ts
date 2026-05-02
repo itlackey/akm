@@ -590,6 +590,14 @@ const showCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      try {
+        parseAssetRef(args.ref);
+      } catch (error) {
+        if (error instanceof UsageError && error.code === "MISSING_REQUIRED_ARGUMENT") {
+          throw new UsageError(error.message, "INVALID_FLAG_VALUE", error.hint());
+        }
+        throw error;
+      }
       // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
       // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
       // by `normalizeShowArgv` before citty parses argv. We read those values
@@ -961,8 +969,8 @@ const registryCommand = defineCommand({
     "build-index": defineCommand({
       meta: { name: "build-index", description: "Build a v2 registry index from discovery and manual entries" },
       args: {
-        out: { type: "string", description: "Output path for the generated index", default: "index.json" },
-        manual: { type: "string", description: "Manual entries JSON file", default: "manual-entries.json" },
+        out: { type: "string", description: "Output path for the generated index" },
+        manual: { type: "string", description: "Manual entries JSON file" },
         "npm-registry": { type: "string", description: "Override npm registry base URL" },
         "github-api": { type: "string", description: "Override GitHub API base URL" },
       },
@@ -1541,7 +1549,7 @@ const rememberCommand = defineCommand({
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
-      const body = readMemoryContent(args.content);
+      const body = readMemoryContent(resolveRememberContentArg(args.content));
 
       // Determine if the user has requested any structured metadata mode.
       // Collect all --tag occurrences directly from process.argv because citty
@@ -1559,8 +1567,8 @@ const rememberCommand = defineCommand({
       const hasScope = Object.keys(scopeFields).length > 0;
 
       const hasTagRequiringArgs =
-        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.auto || args.enrich;
-      const hasStructuredArgs = hasTagRequiringArgs || hasScope;
+        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.enrich;
+      const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
 
       if (!hasStructuredArgs) {
         const result = await writeMarkdownAsset({
@@ -1620,10 +1628,12 @@ const rememberCommand = defineCommand({
       }
 
       // ── Required-field check (before any write) ───────────────────────────
-      // Tags remain required when the user opted into a tag-producing mode
-      // (--tag / --auto / --enrich / --description / --source / --expires).
-      // Scope-only writes (`akm remember "..." --user u1`) skip this check —
-      // scope is independent metadata and a memory with only scope is valid.
+      // Tags remain required when the user explicitly asked for tag-bearing
+      // metadata (--tag / --enrich / --description / --source / --expires).
+      // `--auto` alone is allowed even when its heuristics derive zero tags.
+      // Scope-only writes (`akm remember "..." --user u1`) also skip this
+      // check — scope is independent metadata and a memory with only scope is
+      // valid.
       const missing: string[] = [];
       if (hasTagRequiringArgs && tags.length === 0) missing.push("tags");
 
@@ -1671,6 +1681,63 @@ const rememberCommand = defineCommand({
     });
   },
 });
+
+function resolveRememberContentArg(content: string | undefined): string | undefined {
+  if (content === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    content === parsedFormat &&
+    wasRememberFlagValueConsumedAsContent(content, parsedFormat, "--format")
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    content === parsedDetail &&
+    wasRememberFlagValueConsumedAsContent(content, parsedDetail, "--detail")
+  ) {
+    return undefined;
+  }
+
+  return content;
+}
+
+function wasRememberFlagValueConsumedAsContent(
+  content: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
+  const argv = process.argv.slice(2);
+  const rememberIndex = argv.indexOf("remember");
+  const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
+
+  let flagIndex = -1;
+  let flagConsumesNextToken = false;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === flagName) {
+      flagIndex = i;
+      flagConsumesNextToken = true;
+      break;
+    }
+    if (token === `${flagName}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (tokens.slice(0, flagIndex).includes(content)) return false;
+
+  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
+  if (tokens.slice(firstTokenAfterFlag).includes(content)) return false;
+
+  return true;
+}
 
 const importKnowledgeCommand = defineCommand({
   meta: {

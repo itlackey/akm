@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { EmbeddingConnectionConfig } from "../src/core/config";
+import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/indexer/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer/indexer";
@@ -18,7 +19,7 @@ const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 
-mock.module("../src/embedder.js", () => ({
+mock.module("../src/llm/embedder.js", () => ({
   ...embedderModule,
   embedBatch: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) =>
     embedBatchImpl ? embedBatchImpl(texts, embeddingConfig) : actualEmbedBatch(texts, embeddingConfig),
@@ -173,6 +174,18 @@ test("akmIndex handles markdown assets", async () => {
 
   const result = await akmIndex({ stashDir });
   expect(result.totalEntries).toBe(2);
+});
+
+test("akmIndex classifies flat markdown files under skills/ as skill assets", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "skills", "deploy.md"), "---\ndescription: Deploy skill\n---\n# Deploy\n");
+
+  await akmIndex({ stashDir, full: true });
+
+  const db = openDatabase();
+  const skillEntry = getAllEntries(db).find((row) => row.entry.type === "skill" && row.entry.name === "deploy");
+  expect(skillEntry).toBeDefined();
+  closeDatabase(db);
 });
 
 test("akmIndex includes wiki raw files but excludes infrastructure files from the primary stash index", async () => {
@@ -642,6 +655,7 @@ test("usage_events are re-linked after full reindex", async () => {
 test("incremental reindex clears embeddings when provider fingerprint changes", async () => {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fp-"));
   process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "auto" });
   embedBatchImpl = async (texts) =>
     texts.map((_text, index) => {
       const embedding = new Float32Array(384);

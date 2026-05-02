@@ -256,7 +256,7 @@ akm registry add <url> --provider skills-sh   # Specify provider type
 akm registry remove <url-or-name>             # Remove a registry
 akm registry search "<query>"                 # Search all registries
 akm registry search "<query>" --assets        # Include asset-level results
-akm registry build-index                      # Build ./index.json
+akm registry build-index                      # Build the default cache-backed index.json
 akm registry build-index --out dist/index.json # Build to a custom path
 \`\`\`
 

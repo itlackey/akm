@@ -72,6 +72,7 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
   });
 
   test("search --source invalid prints hint about source", () => {

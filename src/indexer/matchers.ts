@@ -118,7 +118,7 @@ export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
     return { type: "script", specificity: 15, renderer: "script-source" };
   }
 
-  if (parentDir === "skills" && fileName === "SKILL.md") {
+  if (parentDir === "skills" && (fileName === "SKILL.md" || ext === ".md")) {
     return { type: "skill", specificity: 15, renderer: "skill-md" };
   }
 
