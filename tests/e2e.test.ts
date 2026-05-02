@@ -625,8 +625,32 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.every((h: CliJsonHit) => h.type === "knowledge")).toBe(true);
   });
 
+  // Issue 9: empty query must list all assets rather than throwing UsageError.
+  // The CLI contract (--help text) promises omitting the query returns all
+  // indexed assets. The akmSearch function handles empty queries end-to-end
+  // via getAllEntries (DB path) and the substring-fallback's query-less branch.
+  test("cli: akm search with no query lists all assets (empty-query listing)", async () => {
+    const result = runCli("search");
+    expect(result.exitCode).toBe(0);
+
+    const json = parseJson(result.stdout);
+    expect(json.hits).toBeInstanceOf(Array);
+    expect(json.hits.length).toBeGreaterThan(0);
+    // Brief output: ref is NOT present (only full/agent levels include ref)
+    expect(json.hits.every((h: CliJsonHit) => h.type !== undefined)).toBe(true);
+    expect(json.hits.every((h: CliJsonHit) => h.name !== undefined)).toBe(true);
+  });
+
+  test("cli: akm search with no query and --type filters by type", async () => {
+    const result = runCli("search", "--type", "skill");
+    expect(result.exitCode).toBe(0);
+
+    const json = parseJson(result.stdout);
+    expect(json.hits).toBeInstanceOf(Array);
+    expect(json.hits.every((h: CliJsonHit) => h.type === "skill")).toBe(true);
+  });
+
   test("cli: akm search --limit 2 respects limit", async () => {
-    // QA #14: empty query now throws UsageError (exit 2); use a real query
     const result = runCli("search", "docker", "--limit", "2");
     expect(result.exitCode).toBe(0);
 

@@ -186,16 +186,21 @@ are excluded as soon as a filter is supplied. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
 
-Local hits include a `ref` handle for use with `akm show`. Key fields in
-search results:
+The `ref` handle for `akm show` is **only present at `full` and `agent` detail
+levels** for local stash hits; `brief` and `normal` omit it intentionally to
+keep the payload compact. Use `--detail=agent` to get `ref` without the full
+hit payload. Key fields by availability:
 
-- **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`)
-- **`name`** -- The asset's filename or identifier
-- **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for managed source assets
+- **`ref`** -- The asset handle to pass to `akm show` (e.g. `script:deploy.sh`);
+  present at `full` and `agent` only (for local hits)
+- **`name`** -- The asset's filename or identifier; present at all levels
+- **`origin`** -- The source stash (e.g. `npm:@scope/pkg`), present only for
+  managed source assets; surfaced at `full` only
 - **`id`** -- Registry-level stash identifier (registry hits only)
 
 The default brief shape is intentionally small. The exact field set per
-detail level matches `src/output/shapes.ts`:
+detail level is authoritative in `src/output/shapes.ts`
+(`shapeSearchHit` / `shapeSearchHitForAgent`):
 
 | Level | Local stash hits | Registry hits |
 | --- | --- | --- |
@@ -219,9 +224,6 @@ populating `warnings` does not affect ranking.
 > compare them numerically against local `SearchHit.score` values or across
 > registries with different scoring formulas. See
 > `docs/technical/v1-architecture-spec.md` §4 for the type-level distinction.
-
-If you want a `ref` handle without the rest of the `full` payload, use
-`--detail=agent`.
 
 ### curate
 
