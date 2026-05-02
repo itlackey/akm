@@ -19,7 +19,7 @@ const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 
-mock.module("../src/embedder.js", () => ({
+mock.module("../src/llm/embedder.js", () => ({
   ...embedderModule,
   embedBatch: (texts: string[], embeddingConfig?: EmbeddingConnectionConfig) =>
     embedBatchImpl ? embedBatchImpl(texts, embeddingConfig) : actualEmbedBatch(texts, embeddingConfig),
