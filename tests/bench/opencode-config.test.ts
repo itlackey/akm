@@ -55,7 +55,7 @@ describe("loadOpencodeProviders", () => {
     expect(loaded.source).toBe(FIXTURE_PATH);
     expect(loaded.providers).toBeDefined();
     expect(typeof loaded.providers).toBe("object");
-    expect(loaded.defaultModel).toBe("don/mlx-community/qwen3.6-35b-a3b");
+    expect(loaded.defaultModel).toBe("don/qwen3.5-9b");
     expect("don" in loaded.providers).toBe(true);
   });
 

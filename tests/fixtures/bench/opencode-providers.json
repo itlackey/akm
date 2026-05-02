@@ -1,7 +1,7 @@
 {
   "$schema": "../../../schemas/bench-opencode-providers.schema.json",
   "schemaVersion": 1,
-  "defaultModel": "don/mlx-community/qwen3.6-35b-a3b",
+  "defaultModel": "don/qwen3.5-9b",
   "providers": {
     "don": {
       "npm": "@ai-sdk/openai-compatible",
@@ -11,6 +11,11 @@
         "timeout": 600000
       },
       "models": {
+        "qwen3.5-9b": {
+          "name": "Qwen3.5 9B (LM Studio)",
+          "limit": { "context": 32768, "output": 8192 },
+          "capabilities": { "tool": true }
+        },
         "mlx-community/qwen3.6-35b-a3b": {
           "name": "Qwen3 35B A3B (LM Studio)",
           "limit": { "context": 32768, "output": 8192 },
