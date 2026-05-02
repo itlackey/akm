@@ -52,6 +52,7 @@ import {
 import type { LoadedOpencodeProviders } from "./opencode-config";
 import type { UtilityRunReport } from "./report";
 import { runUtility } from "./runner";
+import { benchMkdtemp } from "./tmp";
 
 /** Result of an `akm` subprocess invocation. */
 export interface AkmCliResult {
@@ -214,6 +215,8 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
   const preStashes = new Map<string, LoadedFixtureStash>();
   const evolveDirByFixture = new Map<string, string>();
   const preDirByFixture = new Map<string, string>();
+  /** Per-fixture XDG_CACHE_HOME dirs allocated for evolve-stash indexing. */
+  const evolveCacheDirByFixture = new Map<string, string>();
 
   // SIGINT trap (#267): every per-fixture stash registers its cleanup with
   // the shared registry so an external Ctrl-C reaps the tmp dirs even when
@@ -228,6 +231,12 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
         const evolved = loadFixtureStash(name, { skipIndex: false });
         evolveStashes.set(name, evolved);
         evolveDirByFixture.set(name, evolved.stashDir);
+        // Allocate a per-fixture cache dir for the evolve-stash re-index.
+        // `loadFixtureStash` used its own isolated XDG_CACHE_HOME; subsequent
+        // `akmCli` calls (feedback, distill, reflect) must look in the same
+        // cache. We allocate a fresh bench cache dir and pass it through
+        // `indexEvolveStash` + `envForRef` so the FTS5 DB is in a known place.
+        evolveCacheDirByFixture.set(name, benchMkdtemp(`akm-evolve-cache-${name}-`));
         stashDeregistrations.push(
           registerCleanup(() => {
             try {
@@ -269,6 +278,7 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
     if (t.goldRef) refToFixture.set(t.goldRef, t.stash);
   }
   const fallbackEvolveDir = [...evolveDirByFixture.values()][0];
+  const fallbackEvolveCacheDir = [...evolveCacheDirByFixture.values()][0];
   function envForRef(ref: string | undefined): Record<string, string> {
     const baseEnv = { ...(process.env as Record<string, string>) };
     if (!materialiseStash) {
@@ -279,9 +289,35 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
     }
     const fixture = ref ? refToFixture.get(ref) : undefined;
     const dir = (fixture && evolveDirByFixture.get(fixture)) ?? fallbackEvolveDir;
+    const cacheDir = (fixture && evolveCacheDirByFixture.get(fixture)) ?? fallbackEvolveCacheDir;
     if (dir) baseEnv.AKM_STASH_DIR = dir;
     else delete baseEnv.AKM_STASH_DIR;
+    if (cacheDir) baseEnv.XDG_CACHE_HOME = cacheDir;
     return baseEnv;
+  }
+
+  // ── Phase 1 pre-flight: index each evolve stash in its dedicated cache. ───
+  // `loadFixtureStash` already ran `akm index` but used an isolated
+  // XDG_CACHE_HOME that subsequent `akmCli` calls (feedback, distill, reflect)
+  // cannot see. Re-running `akm index` here via `akmCli` with the same
+  // AKM_STASH_DIR + XDG_CACHE_HOME that `envForRef` will produce ensures the
+  // FTS5 database is populated where Phase 1 feedback will look.
+  // Non-zero exit adds a warning but does not abort — Phase 1 can still run
+  // with degraded feedback if the index step fails.
+  if (materialiseStash) {
+    const phase1Cwd = options.tasks[0]?.taskDir ?? process.cwd();
+    for (const [fixtureName, stashDir] of evolveDirByFixture) {
+      const cacheDir = evolveCacheDirByFixture.get(fixtureName);
+      if (!cacheDir) continue;
+      try {
+        const result = await indexEvolveStash(stashDir, cacheDir, akmCli, phase1Cwd);
+        if (!result.ok) {
+          warnings.push(`evolve: pre-flight akm index failed for stash ${stashDir}: ${result.stderr.trim()}`);
+        }
+      } catch (err) {
+        warnings.push(`evolve: pre-flight akm index threw for stash ${stashDir}: ${(err as Error).message}`);
+      }
+    }
   }
 
   let preReport: UtilityRunReport;
@@ -408,6 +444,8 @@ export async function runEvolve(options: RunEvolveOptions): Promise<EvolveRunRep
       if (materialiseStash && fixtureName) {
         const dir = evolveDirByFixture.get(fixtureName);
         if (dir) proposalEnv.AKM_STASH_DIR = dir;
+        const cacheDir = evolveCacheDirByFixture.get(fixtureName);
+        if (cacheDir) proposalEnv.XDG_CACHE_HOME = cacheDir;
       } else if (!materialiseStash) {
         delete proposalEnv.AKM_STASH_DIR;
       }
@@ -723,6 +761,34 @@ function parseProposalShow(stdout: string): ParsedProposalShow {
     }
   }
   return { lintPass, ...(lintMessage ? { lintMessage } : {}) };
+}
+
+/**
+ * Run `akm index` on the evolve stash to populate the FTS5 database in the
+ * cache directory that Phase 1 `akmCli` calls will use.
+ *
+ * `loadFixtureStash` already indexed the stash into an isolated XDG_CACHE_HOME
+ * that is invisible to subsequent `akmCli` calls. Calling this helper with the
+ * same `stashDir` + `cacheDir` that `envForRef` will forward ensures `akm
+ * feedback` (and later `akm distill` / `akm reflect`) can look up refs in the
+ * FTS5 index.
+ *
+ * Returns `{ ok: true }` on exit code 0, `{ ok: false, stderr }` otherwise.
+ * Exported for tests.
+ */
+export async function indexEvolveStash(
+  stashDir: string,
+  cacheDir: string,
+  akmCli: AkmCliFn,
+  cwd: string,
+): Promise<{ ok: boolean; stderr: string }> {
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    AKM_STASH_DIR: stashDir,
+    XDG_CACHE_HOME: cacheDir,
+  };
+  const result = await akmCli(["index"], cwd, env);
+  return { ok: result.exitCode === 0, stderr: result.stderr };
 }
 
 /** Exposed for tests so the synthetic-arm prompt construction can be asserted. */
