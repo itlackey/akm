@@ -234,14 +234,11 @@ const searchCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      // An empty query enumerates all indexed assets (list mode).
+      // The guard that rejected empty queries was removed; akmSearch handles
+      // empty strings end-to-end via getAllEntries (DB path) and the
+      // substring-search fallback's query-less branch.
       const query = (args.query ?? "").trim();
-      if (!query) {
-        throw new UsageError(
-          'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
-          "MISSING_REQUIRED_ARGUMENT",
-          "Provide a query string. Filter by type with --type skill|command|...; limit results with --limit N.",
-        );
-      }
       const type = args.type as string | undefined;
       const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
       if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
