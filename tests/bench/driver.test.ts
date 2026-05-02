@@ -427,24 +427,45 @@ describe("runOne", () => {
     expect(parsed.provider).toBeUndefined();
   });
 
-  test("runOne returns harness_error when provider materialise throws", async () => {
-    // Provide a model ID that doesn't match any provider key.
+  test("runOne falls back to model-only stub when provider prefix not in map (cloud/built-in models)", async () => {
+    // "nonexistent" prefix not in fakeProviders — should write a model-only
+    // stub and proceed rather than returning harness_error. This supports
+    // built-in cloud models like "opencode/big-pickle" that don't need a
+    // custom provider entry.
     const fakeProviders: LoadedOpencodeProviders = {
       source: "/fake/providers.json",
       providers: { myprov: {} },
     };
 
-    const { spawn } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+    let stubContent: string | undefined;
+    const checkingSpawn: SpawnFn = (cmd, options) => {
+      const env = options.env as Record<string, string> | undefined;
+      if (env?.OPENCODE_CONFIG) {
+        try {
+          stubContent = require("node:fs").readFileSync(env.OPENCODE_CONFIG, "utf8") as string;
+        } catch {
+          /* file may not exist */
+        }
+      }
+      const { spawn: inner } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+      return inner(cmd, options);
+    };
+
     const result = await runOne({
       ...baseOptions,
       workspace,
-      model: "nonexistent/some-model", // provider key "nonexistent" not in fakeProviders
-      spawn,
+      model: "nonexistent/some-model",
+      spawn: checkingSpawn,
       opencodeProviders: fakeProviders,
     });
 
-    expect(result.outcome).toBe("harness_error");
-    expect(result.verifierStdout).toContain("harness: opencode provider materialise failed");
+    // Should NOT be harness_error — fell back to stub.
+    expect(result.outcome).not.toBe("harness_error");
+    // The written stub should have model key but no provider block.
+    expect(stubContent).toBeDefined();
+    const written = JSON.parse(stubContent ?? "{}");
+    expect(written.model).toBe("nonexistent/some-model");
+    expect(written.provider).toBeUndefined();
   });
 });
 

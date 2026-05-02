@@ -1,7 +1,7 @@
 {
   "$schema": "../../../schemas/bench-opencode-providers.schema.json",
   "schemaVersion": 1,
-  "defaultModel": "don/qwen3.5-9b",
+  "defaultModel": "opencode/big-pickle",
   "providers": {
     "don": {
       "npm": "@ai-sdk/openai-compatible",

@@ -27,7 +27,12 @@ import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
-import { type LoadedOpencodeProviders, materializeOpencodeConfig, selectProviderForModel } from "./opencode-config";
+import {
+  BenchConfigError,
+  type LoadedOpencodeProviders,
+  materializeOpencodeConfig,
+  selectProviderForModel,
+} from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
@@ -436,8 +441,19 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
       const selected = selectProviderForModel(options.opencodeProviders, options.model);
       materializeOpencodeConfig(dirs.opencodeConfig, selected, options.model);
     } catch (err) {
-      result.verifierStdout = `harness: opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`;
-      return result;
+      // If the model prefix isn't in the providers map (e.g. built-in cloud
+      // models like "opencode/big-pickle"), fall through to the stub path so
+      // opencode can resolve the model via its native provider registry.
+      if (err instanceof BenchConfigError) {
+        fs.writeFileSync(
+          path.join(dirs.opencodeConfig, "opencode.json"),
+          JSON.stringify({ $schema: "https://opencode.ai/config.json", model: options.model }),
+          { mode: 0o600 },
+        );
+      } else {
+        result.verifierStdout = `harness: opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`;
+        return result;
+      }
     }
   } else {
     fs.writeFileSync(

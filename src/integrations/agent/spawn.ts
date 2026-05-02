@@ -123,13 +123,22 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
   return env;
 }
 
-async function readStream(stream: ReadableStream<Uint8Array> | null | undefined): Promise<string> {
+async function readStream(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  opts?: { timeoutMs?: number },
+): Promise<string> {
   if (!stream) return "";
-  try {
-    return await new Response(stream).text();
-  } catch {
-    return "";
-  }
+  const readPromise = new Response(stream).text().catch(() => "");
+  if (!opts?.timeoutMs) return readPromise;
+  // Race the stream read against a timeout so a process that is killed via
+  // SIGTERM/SIGKILL but whose pipe endpoints stay open (e.g. background
+  // threads still holding the fd) cannot block the caller indefinitely.
+  // On timeout we return whatever we received so far (empty string here since
+  // `readPromise` is all-or-nothing with `Response.text()`).
+  const timeoutPromise = new Promise<string>((resolve) => {
+    setTimeout(() => resolve(""), opts.timeoutMs);
+  });
+  return Promise.race([readPromise, timeoutPromise]);
 }
 
 /**
@@ -217,8 +226,21 @@ export async function runAgent(
     }, 5000);
   }, timeoutMs);
 
-  const stdoutPromise = stdioMode === "captured" ? readStream(proc.stdout ?? null) : Promise.resolve("");
-  const stderrPromise = stdioMode === "captured" ? readStream(proc.stderr ?? null) : Promise.resolve("");
+  // Stream-drain timeout: the overall wall-clock budget plus a 2 s grace
+  // period. When a process is killed via SIGTERM/SIGKILL (from our timeout
+  // handler or from outside) some runtimes keep the pipe write-end open in
+  // background threads, which would cause `Response.text()` to block forever.
+  // Capping stream draining at `timeoutMs + 2 000 ms` ensures the caller
+  // never hangs past the wall budget regardless of subprocess pipe behaviour.
+  const streamDrainTimeoutMs = timeoutMs + 2_000;
+  const stdoutPromise =
+    stdioMode === "captured"
+      ? readStream(proc.stdout ?? null, { timeoutMs: streamDrainTimeoutMs })
+      : Promise.resolve("");
+  const stderrPromise =
+    stdioMode === "captured"
+      ? readStream(proc.stderr ?? null, { timeoutMs: streamDrainTimeoutMs })
+      : Promise.resolve("");
 
   // Optional stdin payload (captured mode only).
   //
@@ -252,6 +274,8 @@ export async function runAgent(
     clearTimeoutImpl(timer);
     // BUG-H2: drain stream readers before the early return so they don't
     // surface as unhandled rejections after the function resolves.
+    // The streams already carry a built-in drain timeout so this allSettled
+    // will not block indefinitely.
     await Promise.allSettled([stdoutPromise, stderrPromise]);
     const durationMs = Date.now() - start;
     return {
