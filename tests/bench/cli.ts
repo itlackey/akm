@@ -20,6 +20,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { getCacheDir } from "../../src/core/paths";
+
 import { listTasks, type TaskMetadata } from "./corpus";
 import { runEvolve } from "./evolve";
 import {
@@ -54,6 +56,7 @@ Subcommands:
   compare       Diff two report JSON files (refuses cross-model diffs).
   attribute     Per-asset marginal pass-rate contribution.
   kill          Send SIGTERM to a running bench process (reads bench.pid).
+  clean         Remove all bench tmp dirs under \${AKM_CACHE_DIR}/bench/.
 
 utility flags:
   --tasks <slice>          train | eval | all  (default: all)
@@ -993,6 +996,17 @@ async function main(argv: string[]): Promise<number> {
         process.stderr.write(
           `bench kill: failed to signal PID ${pid}: ${err instanceof Error ? err.message : String(err)}\n`,
         );
+        return 1;
+      }
+      return 0;
+    }
+    case "clean": {
+      const benchRoot = path.join(getCacheDir(), "bench");
+      try {
+        fs.rmSync(benchRoot, { recursive: true, force: true });
+        process.stderr.write(`bench clean: removed ${benchRoot}\n`);
+      } catch (err) {
+        process.stderr.write(`bench clean: failed to remove ${benchRoot}: ${(err as Error).message}\n`);
         return 1;
       }
       return 0;

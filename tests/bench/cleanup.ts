@@ -34,6 +34,36 @@ import * as path from "node:path";
 import { warn } from "../../src/core/warn";
 import { benchTmpRoot } from "./tmp";
 
+/**
+ * Register a process-group kill for a spawned opencode PID.
+ *
+ * On SIGINT/SIGTERM the bench driver must kill the entire opencode process
+ * group (not just the node wrapper) so .opencode children don't become orphans
+ * that keep pipes open and block subsequent runs.
+ *
+ * Call this immediately after spawning opencode. Returns a deregister thunk
+ * that should be called once the process has exited (in the run's finally
+ * block).
+ *
+ * The SIGKILL is sent to the process group (`-pid`) if available, falling back
+ * to the individual PID for environments where group-kill is unavailable.
+ */
+export function registerProcessGroupCleanup(pid: number): () => void {
+  const fn = (): void => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // Process group may not exist (process already exited or pid unavailable).
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  };
+  return registerCleanup(fn);
+}
+
 export type CleanupFn = () => void | Promise<void>;
 
 interface Registry {
