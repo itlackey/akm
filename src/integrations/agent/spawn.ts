@@ -171,7 +171,7 @@ export async function runAgent(
   try {
     const spawnFn = resolveSpawnFn(options);
     proc = spawnFn([profile.bin, ...args], {
-      stdin: stdioMode === "captured" ? "pipe" : "inherit",
+      stdin: stdioMode === "captured" ? (options.stdin !== undefined ? "pipe" : "ignore") : "inherit",
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",
       env,
