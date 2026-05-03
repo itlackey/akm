@@ -25,6 +25,7 @@ import path from "node:path";
 import { type AssetRef, parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import { appendEvent } from "../core/events";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
@@ -202,6 +203,11 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
 }
 
 function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): void {
+  // Emit a structured event to events.jsonl so workflow-trace consumers
+  // detect akm show invocations without relying on stdout scraping.
+  const parsed = parseAssetRef(ref);
+  appendEvent({ eventType: "show", ref, metadata: { type: parsed.type, name: parsed.name } });
+
   try {
     const db = existingDb ?? openDatabase();
     try {

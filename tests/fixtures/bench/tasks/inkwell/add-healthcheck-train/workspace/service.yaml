@@ -1,0 +1,8 @@
+apiVersion: inkwell/v2
+kind: Service
+metadata:
+  name: data-ingest
+spec:
+  runtime:
+    image: ingest:v2.1.0
+    port: 7000

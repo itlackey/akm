@@ -11,6 +11,7 @@
 
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
+import { appendEvent } from "../core/events";
 import { closeDatabase, openDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
@@ -206,11 +207,18 @@ function resolveEntryIds(
  * have no local entry_id to reference.
  */
 function logSearchEvent(query: string, response: SearchResponse, existingDb?: import("bun:sqlite").Database): void {
+  // Emit a structured event to events.jsonl so workflow-trace consumers
+  // detect akm search invocations without relying on stdout scraping.
+  const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+  appendEvent({
+    eventType: "search",
+    metadata: { query, hitCount: stashHits.length, resultRefs: stashHits.map((h) => h.ref) },
+  });
+
   try {
     const db = existingDb ?? openDatabase();
     try {
-      const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry").slice(0, 50);
-      const resolved = resolveEntryIds(db, stashHits);
+      const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
       for (const { entryId, ref } of resolved) {
         insertUsageEvent(db, {
           event_type: "search",

@@ -158,6 +158,18 @@ export interface RunResult {
    * populates this field.
    */
   failureMode?: import("./metrics").FailureMode | null;
+  /**
+   * ISO-8601 timestamp recorded immediately before the agent is spawned.
+   * Used by `normalizeRunToTrace` to anchor `agent_started` / `agent_finished`
+   * harness lifecycle events in the workflow trace.
+   */
+  startedAt?: string;
+  /**
+   * ISO-8601 timestamp recorded immediately after the agent exits (or times
+   * out). Populated by `runOne`; used by `normalizeRunToTrace` for
+   * `agent_finished`.
+   */
+  finishedAt?: string;
 }
 
 /** Operator-config env names that MUST NOT leak into per-run children. */
@@ -482,6 +494,7 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
   const { dirs, env } = benchEnv;
 
   try {
+    result.startedAt = new Date().toISOString();
     const agentResult = await runAgent(profile, options.prompt ?? defaultPrompt(options), {
       env,
       // #271: scrub operator credentials + config-dir hints from the env
@@ -495,6 +508,7 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
       stdio: "captured",
       ...(options.spawn ? { spawn: options.spawn } : {}),
     });
+    result.finishedAt = new Date().toISOString();
 
     result.wallclockMs = agentResult.durationMs;
     const parsed = parseTokenUsage(agentResult.stdout);

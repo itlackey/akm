@@ -509,7 +509,13 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
       // entire spec list and append whatever it returns. noakm/synthetic
       // arms are not evaluated — workflow specs target the akm arm.
       if (arm === "akm" && workflowSpecs.length > 0) {
-        const trace = normalizeRunToTrace(run, { warnings: runWarnings });
+        const trace = normalizeRunToTrace(run, {
+          warnings: runWarnings,
+          harness: {
+            agentStartedTs: run.startedAt,
+            agentFinishedTs: run.finishedAt,
+          },
+        });
         const runCtx: WorkflowEvalRunContext = {
           arm: run.arm,
           taskId: run.taskId,

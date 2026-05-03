@@ -428,10 +428,10 @@ describe("runOne", () => {
   });
 
   test("runOne falls back to model-only stub when provider prefix not in map (cloud/built-in models)", async () => {
-    // "nonexistent" prefix not in fakeProviders — should write a model-only
-    // stub and proceed rather than returning harness_error. This supports
-    // built-in cloud models like "opencode/big-pickle" that don't need a
-    // custom provider entry.
+    // "opencode" is a BUILTIN_CLOUD_PREFIX — not in fakeProviders — should write
+    // a model-only stub and proceed rather than returning harness_error. Built-in
+    // cloud models like "opencode/big-pickle" resolve via opencode's own registry
+    // and do NOT need a custom provider entry.
     const fakeProviders: LoadedOpencodeProviders = {
       source: "/fake/providers.json",
       providers: { myprov: {} },
@@ -454,17 +454,17 @@ describe("runOne", () => {
     const result = await runOne({
       ...baseOptions,
       workspace,
-      model: "nonexistent/some-model",
+      model: "opencode/big-pickle",
       spawn: checkingSpawn,
       opencodeProviders: fakeProviders,
     });
 
-    // Should NOT be harness_error — fell back to stub.
+    // Should NOT be harness_error — built-in cloud prefix falls back to stub.
     expect(result.outcome).not.toBe("harness_error");
     // The written stub should have model key but no provider block.
     expect(stubContent).toBeDefined();
     const written = JSON.parse(stubContent ?? "{}");
-    expect(written.model).toBe("nonexistent/some-model");
+    expect(written.model).toBe("opencode/big-pickle");
     expect(written.provider).toBeUndefined();
   });
 

@@ -110,7 +110,18 @@ export function writeOpencodeJson(
       providerBlock = { [selected.providerKey]: selected.entry };
     } catch (err) {
       if (err instanceof BenchConfigError) {
-        // Model not in the providers map — treat as a built-in cloud model.
+        // Check if this is a local-provider model that MUST have a provider block.
+        const modelPrefix = model.split("/")[0];
+        if (modelPrefix && !BUILTIN_CLOUD_PREFIXES.has(modelPrefix)) {
+          // Local-prefix model not in providers map — this is a hard error, not a
+          // fallback. Writing opencode.json without a provider block would cause
+          // opencode to use cloud resolution, skewing results and incurring costs.
+          throw new BenchConfigError(
+            `model "${model}" uses local prefix "${modelPrefix}" but was not found in the providers config. ` +
+              `Add it to the providers file or use a built-in cloud model prefix.`,
+            true, // isUsageError
+          );
+        }
         warnings.push(
           `model "${model}" not found in providers config; writing stub (expected for built-in cloud models)`,
         );

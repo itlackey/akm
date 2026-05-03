@@ -1,0 +1,14 @@
+id: drillbit/backup-policy-train
+title: "Configure drillbit backup for logs-archive: 30-day retention, 14 snapshots"
+domain: drillbit
+difficulty: easy
+slice: train
+gold_ref: skill:drillbit
+stash: drillbit
+verifier: script
+budget:
+  tokens: 25000
+  wallMs: 360000
+memory_ability: procedural_lookup
+task_family: drillbit/backup
+akm_keywords: "drillbit backup retention snapshots cluster"

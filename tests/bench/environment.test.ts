@@ -79,6 +79,39 @@ describe("writeOpencodeJson", () => {
     expect(config.plugin).toEqual([]);
   });
 
+  test("throws BenchConfigError for local-prefix model not found in providers map", () => {
+    const dir = path.join(tmp, "local-prefix-missing");
+    fs.mkdirSync(dir, { recursive: true });
+
+    const providers: LoadedOpencodeProviders = {
+      source: "/fake/providers.json",
+      providers: { otherprov: {} },
+    };
+
+    // "shredder" is not in BUILTIN_CLOUD_PREFIXES and not in the providers map.
+    expect(() => writeOpencodeJson(dir, "shredder/qwen3.5-9b", providers)).toThrow(/local prefix/);
+    // The opencode.json must NOT have been written (or if partially written, provider block is absent).
+    // We check that the function threw rather than silently wrote a cloud-fallback stub.
+  });
+
+  test("writes provider block for local-prefix model that IS found in providers map", () => {
+    const dir = path.join(tmp, "local-prefix-found");
+    fs.mkdirSync(dir, { recursive: true });
+
+    const providers: LoadedOpencodeProviders = {
+      source: "/fake/providers.json",
+      providers: { shredder: { npm: "@ai-sdk/openai-compatible", name: "Shredder" } },
+    };
+
+    const result = writeOpencodeJson(dir, "shredder/qwen3.5-9b", providers);
+    expect(result.providerKey).toBe("shredder");
+    expect(result.warnings).toHaveLength(0);
+
+    const config = JSON.parse(fs.readFileSync(path.join(dir, "opencode.json"), "utf8")) as Record<string, unknown>;
+    expect((config.provider as Record<string, unknown>)?.shredder).toBeDefined();
+    expect(config.model).toBe("shredder/qwen3.5-9b");
+  });
+
   test("mode 0o600 (not world-readable)", () => {
     const dir = path.join(tmp, "mode-check");
     fs.mkdirSync(dir, { recursive: true });

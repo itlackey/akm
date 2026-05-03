@@ -6,7 +6,7 @@
  *   • `utility`    — paired noakm vs akm utility benchmark (Track A).
  *   • `compare`    — diff two report JSON files; refuses on hash/model mismatch.
  *   • `attribute`  — per-asset marginal contribution via leave-one-out masking.
- *   • `evolve`     — longitudinal evolution loop (Track B).
+ *   • `evolve`     — longitudinal evolution loop (Track B). Stub.
  *   • `kill`       — send SIGTERM to a running bench process (reads bench.pid).
  *
  * Implementation status and validity rules live in `tests/bench/BENCH.md`.
@@ -432,6 +432,14 @@ export interface AttributeCliOptions {
   fixturesRoot?: string;
   /** Test seam: override the model stamped on masked re-runs. */
   modelOverride?: string;
+  /**
+   * Pre-loaded opencode provider config. Forwarded into the real masked runner
+   * so re-runs use the same local provider config as the original utility run.
+   * When omitted, the masked runner leaves the OPENCODE_CONFIG dir empty and
+   * opencode falls back to cloud-provider defaults — which is unacceptable for
+   * local-provider models.
+   */
+  opencodeProviders?: LoadedOpencodeProviders;
 }
 
 export interface AttributeCliResult {
@@ -547,7 +555,14 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     seedsPerArm,
   };
 
-  const maskedRunner = options.runUtility ?? defaultMaskedRunner;
+  // When using the real (default) masked runner, wrap it to forward
+  // opencodeProviders so masked re-runs use the same local provider config
+  // as the original utility run. Test seams supply their own runner and are
+  // not affected by this wrapping.
+  const maskedRunner =
+    options.runUtility ??
+    ((opts: Parameters<typeof defaultMaskedRunner>[0]) =>
+      defaultMaskedRunner({ ...opts, opencodeProviders: options.opencodeProviders }));
   let maskedResult: MaskedCorpusResult;
   try {
     maskedResult = await runMaskedCorpus({
@@ -618,6 +633,7 @@ async function defaultMaskedRunner(
     tasks: TaskMetadata[];
     spawn?: RunUtilityOptionsForMask["spawn"];
     materialiseStash?: boolean;
+    opencodeProviders?: LoadedOpencodeProviders;
   },
 ): Promise<UtilityRunReport> {
   const arms = options.arms;
@@ -634,6 +650,7 @@ async function defaultMaskedRunner(
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.spawn ? { spawn: options.spawn } : {}),
     ...(options.materialiseStash !== undefined ? { materialiseStash: options.materialiseStash } : {}),
+    ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
   });
 }
 
@@ -817,6 +834,7 @@ export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCl
     budgetTokens: options.budgetTokens,
     budgetWallMs: options.budgetWallMs,
     negativeThreshold: options.negativeThreshold,
+    ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     ...(options.branch !== undefined ? { branch: options.branch } : {}),
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
@@ -972,15 +990,12 @@ async function main(argv: string[]): Promise<number> {
         process.stderr.write(`bench attribute: ${err instanceof Error ? err.message : String(err)}\n`);
         return exitCode;
       }
-      // Suppress unused variable warning — opencodeProvidersAttr is exposed for
-      // future wiring when runMaskedCorpus accepts it. For now it only validates.
-      void opencodeProvidersAttr;
-
       const topN = parseInt32(parsed.flags.get("top"), 5);
       const result = await runAttributeCli({
         basePath,
         topN,
         json: parsed.bool.has("json"),
+        ...(opencodeProvidersAttr ? { opencodeProviders: opencodeProvidersAttr } : {}),
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
