@@ -33,6 +33,12 @@ export interface EmbeddingConnectionConfig extends BaseConnectionConfig {
   dimension?: number;
   /** Optional local transformer model name (e.g. "Xenova/bge-small-en-v1.5"). Overrides the default when using local embeddings. */
   localModel?: string;
+  /** Maximum tokens per document chunk sent to the embedding API */
+  maxTokens?: number;
+  /** Number of documents to embed per API batch */
+  batchSize?: number;
+  /** Maximum characters per text chunk before splitting */
+  chunkSize?: number;
 }
 
 export interface LlmCapabilities {
@@ -772,6 +778,42 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   }
   if (localModel) {
     result.localModel = localModel;
+  }
+  if ("maxTokens" in obj) {
+    if (
+      typeof obj.maxTokens !== "number" ||
+      !Number.isFinite(obj.maxTokens) ||
+      !Number.isInteger(obj.maxTokens) ||
+      obj.maxTokens <= 0
+    ) {
+      warn(`[akm] Ignoring embedding.maxTokens: expected a positive integer, got ${JSON.stringify(obj.maxTokens)}`);
+    } else {
+      result.maxTokens = obj.maxTokens;
+    }
+  }
+  if ("batchSize" in obj) {
+    if (
+      typeof obj.batchSize !== "number" ||
+      !Number.isFinite(obj.batchSize) ||
+      !Number.isInteger(obj.batchSize) ||
+      obj.batchSize <= 0
+    ) {
+      warn(`[akm] Ignoring embedding.batchSize: expected a positive integer, got ${JSON.stringify(obj.batchSize)}`);
+    } else {
+      result.batchSize = obj.batchSize;
+    }
+  }
+  if ("chunkSize" in obj) {
+    if (
+      typeof obj.chunkSize !== "number" ||
+      !Number.isFinite(obj.chunkSize) ||
+      !Number.isInteger(obj.chunkSize) ||
+      obj.chunkSize <= 0
+    ) {
+      warn(`[akm] Ignoring embedding.chunkSize: expected a positive integer, got ${JSON.stringify(obj.chunkSize)}`);
+    } else {
+      result.chunkSize = obj.chunkSize;
+    }
   }
   return result;
 }

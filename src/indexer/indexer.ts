@@ -4,7 +4,7 @@ import path from "node:path";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
-import { isVerbose, warn } from "../core/warn";
+import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
@@ -666,6 +666,7 @@ async function generateEmbeddingsForDb(
 
   try {
     const { embedBatch } = await import("../llm/embedder.js");
+    const { estimateTokenCount } = await import("../llm/embedders/remote.js");
     const allEntries = getAllEntriesForEmbedding(db);
     if (allEntries.length === 0) {
       onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
@@ -677,6 +678,21 @@ async function generateEmbeddingsForDb(
       message: `Generating embeddings for ${allEntries.length} entr${allEntries.length === 1 ? "y" : "ies"}.`,
     });
     const texts = allEntries.map((e) => e.searchText);
+
+    // Verbose: log each document before it is sent to the embedding API so
+    // operators can see exactly where embedding fails without waiting for an error.
+    if (isVerbose()) {
+      const EMBED_BATCH_SIZE = 100; // mirrors REMOTE_BATCH_SIZE in remote.ts
+      const totalBatches = Math.ceil(texts.length / EMBED_BATCH_SIZE);
+      for (let i = 0; i < texts.length; i++) {
+        const batchNum = Math.floor(i / EMBED_BATCH_SIZE) + 1;
+        const chars = texts[i].length;
+        const tokens = estimateTokenCount(texts[i]);
+        const ref = allEntries[i].entryKey.split(":").slice(1).join(":"); // strip stashDir prefix
+        warnVerbose(`[embed] ${ref} (${chars} chars, est. ${tokens} tokens) → batch ${batchNum}/${totalBatches}`);
+      }
+    }
+
     const embeddings = await embedBatch(texts, config.embedding);
     // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
@@ -714,13 +730,15 @@ interface EmbeddingGenerationResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function getAllEntriesForEmbedding(db: Database): Array<{ id: number; searchText: string }> {
+function getAllEntriesForEmbedding(
+  db: Database,
+): Array<{ id: number; searchText: string; entryKey: string; filePath: string }> {
   return db
     .prepare(`
-      SELECT e.id, e.search_text AS searchText FROM entries e
+      SELECT e.id, e.search_text AS searchText, e.entry_key AS entryKey, e.file_path AS filePath FROM entries e
       WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
     `)
-    .all() as Array<{ id: number; searchText: string }>;
+    .all() as Array<{ id: number; searchText: string; entryKey: string; filePath: string }>;
 }
 
 function attachFileSize(entry: StashEntry, entryPath: string): StashEntry {

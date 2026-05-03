@@ -9,7 +9,15 @@ import { fetchWithTimeout, isHttpUrl } from "../../core/common";
 import type { EmbeddingConnectionConfig } from "../../core/config";
 import type { Embedder, EmbeddingVector } from "./types";
 
-const REMOTE_BATCH_SIZE = 100;
+const DEFAULT_REMOTE_BATCH_SIZE = 100;
+
+/**
+ * Estimate token count from character count using the ~4 chars/token heuristic.
+ * No external dependency — pure arithmetic.
+ */
+export function estimateTokenCount(text: string): number {
+  return Math.round(text.length / 4);
+}
 
 export class RemoteEmbedder implements Embedder {
   constructor(private readonly config: EmbeddingConnectionConfig) {}
@@ -51,8 +59,11 @@ export class RemoteEmbedder implements Embedder {
     const results: EmbeddingVector[] = [];
     const headers = this.buildHeaders();
 
-    for (let i = 0; i < texts.length; i += REMOTE_BATCH_SIZE) {
-      const batch = texts.slice(i, i + REMOTE_BATCH_SIZE);
+    const batchSize = this.config.batchSize ?? DEFAULT_REMOTE_BATCH_SIZE;
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(texts.length / batchSize);
       const body: { input: string[]; model: string; dimensions?: number } = {
         input: batch,
         model: this.config.model,
@@ -68,8 +79,51 @@ export class RemoteEmbedder implements Embedder {
       });
 
       if (!response.ok) {
-        const respBody = await response.text().catch(() => "");
-        throw new Error(`Embedding batch request failed (${response.status}): ${respBody}`);
+        const respBody = (await response.text().catch(() => "")).slice(0, 500);
+        const docInfo = batch
+          .map((text, idx) => `  [${i + idx}] ${text.length} chars, est. ${estimateTokenCount(text)} tokens`)
+          .join("\n");
+        const baseMsg =
+          `Embedding API ${response.status} on batch ${batchNum}/${totalBatches} ` +
+          `(${batch.length} doc${batch.length === 1 ? "" : "s"}):\n${docInfo}\nResponse: ${respBody}`;
+
+        // On 400, retry each document individually to isolate the offender.
+        if (response.status === 400 && batch.length > 1) {
+          const offenders: number[] = [];
+          for (let j = 0; j < batch.length; j++) {
+            const singleBody: { input: string; model: string; dimensions?: number } = {
+              input: batch[j],
+              model: this.config.model,
+            };
+            if (this.config.dimension) {
+              singleBody.dimensions = this.config.dimension;
+            }
+            const singleRes = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
+              method: "POST",
+              headers,
+              body: JSON.stringify(singleBody),
+            });
+            if (!singleRes.ok) {
+              offenders.push(i + j);
+            } else {
+              // Consume body to avoid resource leak
+              await singleRes.json().catch(() => {});
+            }
+          }
+          if (offenders.length > 0) {
+            const offenderInfo = offenders
+              .map(
+                (absIdx) =>
+                  `  [${absIdx}] ${batch[absIdx - i].length} chars, est. ${estimateTokenCount(batch[absIdx - i])} tokens`,
+              )
+              .join("\n");
+            throw new Error(
+              `${baseMsg}\nIsolation retry identified ${offenders.length} offending doc${offenders.length === 1 ? "" : "s"} (zero-based indices in full batch):\n${offenderInfo}`,
+            );
+          }
+        }
+
+        throw new Error(baseMsg);
       }
 
       const json = (await response.json()) as {

@@ -46,6 +46,14 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { embedding: mergeLlmLikeEmbedding(undefined, { model: requireNonEmptyString(value, key) }) };
     case "embedding.apiKey":
       return { embedding: mergeLlmLikeEmbedding(undefined, { apiKey: requireNonEmptyString(value, key) }) };
+    case "embedding.dimension":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { dimension: parsePositiveInteger(value, key) }) };
+    case "embedding.maxTokens":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { maxTokens: parsePositiveInteger(value, key) }) };
+    case "embedding.batchSize":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { batchSize: parsePositiveInteger(value, key) }) };
+    case "embedding.chunkSize":
+      return { embedding: mergeLlmLikeEmbedding(undefined, { chunkSize: parsePositiveInteger(value, key) }) };
     case "llm":
       return { llm: parseLlmConnectionValue(value) };
     case "llm.endpoint":
@@ -82,7 +90,7 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
 }
 
 const UNKNOWN_CONFIG_KEY_HINT =
-  "Valid top-level keys: stashDir, embedding, llm, registries, sources, agent, output, semanticSearchMode. Use dotted paths like `embedding.endpoint` or `output.format` for nested values.";
+  "Valid top-level keys: stashDir, embedding, llm, registries, sources, agent, output, semanticSearchMode. Use dotted paths like `embedding.endpoint`, `embedding.dimension`, `embedding.batchSize`, `embedding.chunkSize`, `embedding.maxTokens`, or `output.format` for nested values.";
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
   switch (key) {
@@ -100,6 +108,14 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return config.embedding?.model ?? null;
     case "embedding.apiKey":
       return config.embedding?.apiKey ?? null;
+    case "embedding.dimension":
+      return config.embedding?.dimension ?? null;
+    case "embedding.maxTokens":
+      return config.embedding?.maxTokens ?? null;
+    case "embedding.batchSize":
+      return config.embedding?.batchSize ?? null;
+    case "embedding.chunkSize":
+      return config.embedding?.chunkSize ?? null;
     case "llm":
       return config.llm ?? null;
     case "llm.endpoint":
@@ -171,6 +187,26 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
         ...config,
         embedding: mergeLlmLikeEmbedding(config.embedding, { apiKey: requireNonEmptyString(rawValue, key) }),
       };
+    case "embedding.dimension":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { dimension: parsePositiveInteger(rawValue, key) }),
+      };
+    case "embedding.maxTokens":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { maxTokens: parsePositiveInteger(rawValue, key) }),
+      };
+    case "embedding.batchSize":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { batchSize: parsePositiveInteger(rawValue, key) }),
+      };
+    case "embedding.chunkSize":
+      return {
+        ...config,
+        embedding: mergeLlmLikeEmbedding(config.embedding, { chunkSize: parsePositiveInteger(rawValue, key) }),
+      };
     case "llm.endpoint":
       return { ...config, llm: mergeLlmLike(config.llm, { endpoint: requireNonEmptyString(rawValue, key) }) };
     case "llm.model":
@@ -210,6 +246,26 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
       if (!config.embedding) return config;
       const { apiKey: _a, ...rest } = config.embedding;
       return { ...config, embedding: rest as EmbeddingConnectionConfig };
+    }
+    case "embedding.dimension": {
+      if (!config.embedding) return config;
+      const { dimension: _d, ...restD } = config.embedding;
+      return { ...config, embedding: restD as EmbeddingConnectionConfig };
+    }
+    case "embedding.maxTokens": {
+      if (!config.embedding) return config;
+      const { maxTokens: _mt, ...restMt } = config.embedding;
+      return { ...config, embedding: restMt as EmbeddingConnectionConfig };
+    }
+    case "embedding.batchSize": {
+      if (!config.embedding) return config;
+      const { batchSize: _bs, ...restBs } = config.embedding;
+      return { ...config, embedding: restBs as EmbeddingConnectionConfig };
+    }
+    case "embedding.chunkSize": {
+      if (!config.embedding) return config;
+      const { chunkSize: _cs, ...restCs } = config.embedding;
+      return { ...config, embedding: restCs as EmbeddingConnectionConfig };
     }
     case "llm":
       return { ...config, llm: undefined };
@@ -433,6 +489,12 @@ function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig
   if (typeof parsed.provider === "string" && parsed.provider) result.provider = parsed.provider;
   if (parsed.dimension !== undefined)
     result.dimension = parseUnknownPositiveInteger(parsed.dimension, "embedding.dimension");
+  if (parsed.maxTokens !== undefined)
+    result.maxTokens = parseUnknownPositiveInteger(parsed.maxTokens, "embedding.maxTokens");
+  if (parsed.batchSize !== undefined)
+    result.batchSize = parseUnknownPositiveInteger(parsed.batchSize, "embedding.batchSize");
+  if (parsed.chunkSize !== undefined)
+    result.chunkSize = parseUnknownPositiveInteger(parsed.chunkSize, "embedding.chunkSize");
   if (typeof parsed.apiKey === "string" && parsed.apiKey) result.apiKey = parsed.apiKey;
   if (localModel) result.localModel = localModel;
   return result;
@@ -502,6 +564,15 @@ function parseUnknownPositiveInteger(value: unknown, key: string): number {
     throw new UsageError(`Invalid value for ${key}: expected a positive integer`);
   }
   return value;
+}
+
+/** Parse a CLI string value as a positive integer. */
+function parsePositiveInteger(value: string, key: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new UsageError(`Invalid value for ${key}: expected a positive integer, got "${value}"`);
+  }
+  return n;
 }
 
 function parseStashesValue(value: string): SourceConfigEntry[] | undefined {
