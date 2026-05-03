@@ -28,7 +28,7 @@ import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
 import { setupBenchEnvironment } from "./environment";
-import { BenchConfigError, type LoadedOpencodeProviders } from "./opencode-config";
+import type { LoadedOpencodeProviders } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 

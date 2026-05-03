@@ -269,7 +269,7 @@ export function validateFixtureCorpus(tasks: ReadonlyArray<{ id: string; stash: 
   const byFixture = new Map<string, string[]>();
   for (const t of tasks) {
     if (!byFixture.has(t.stash)) byFixture.set(t.stash, []);
-    byFixture.get(t.stash)!.push(t.id);
+    byFixture.get(t.stash)?.push(t.id);
   }
 
   const valid = new Set<string>();

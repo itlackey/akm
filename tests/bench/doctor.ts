@@ -22,7 +22,7 @@ import process from "node:process";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
 import { buildIsolatedEnv, buildSanitizedEnvSource, createIsolationDirs } from "./driver";
-import { BENCH_OPENCODE_INVARIANTS, validateFixtureCorpus, writeOpencodeJson } from "./environment";
+import { validateFixtureCorpus, writeOpencodeJson } from "./environment";
 import { BenchConfigError, type LoadedOpencodeProviders, selectProviderForModel } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 

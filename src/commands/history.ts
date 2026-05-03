@@ -199,7 +199,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
 
       // Convert sinceNormalized ("YYYY-MM-DD HH:MM:SS") to ISO for readEvents
       // which uses `ts >= since` where `ts` is ISO-8601.
-      const sinceIso = sinceNormalized !== undefined ? sinceNormalized.replace(" ", "T") + "Z" : undefined;
+      const sinceIso = sinceNormalized !== undefined ? `${sinceNormalized.replace(" ", "T")}Z` : undefined;
 
       const { events } = readEvents(
         {
