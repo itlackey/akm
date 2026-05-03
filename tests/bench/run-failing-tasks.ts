@@ -9,12 +9,11 @@ import { loadOpencodeProviders } from "./opencode-config";
 import { runUtility } from "./runner";
 
 const TASK_IDS = [
-  "inkwell/full-config",
-  "inkwell/workflow-configure-scaling",
-  "opencode/select-correct-skill",
+  "inkwell/add-healthcheck",
   "inkwell/configure-scaling",
-  "inkwell/set-rate-limit",
+  "inkwell/cpu-scaling",
   "inkwell/new-service",
+  "inkwell/set-rate-limit",
 ];
 
 const tasks = TASK_IDS.map((id) => loadTask(id));
@@ -39,13 +38,13 @@ process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
 const agg = report.aggregateAkm;
 process.stderr.write(`\n=== RESULTS vs BASELINE ===\n`);
+// Baseline from regression run (2026-05-03, post-improvements)
 const BASELINE: Record<string, number> = {
-  "inkwell/full-config": 0,
-  "inkwell/workflow-configure-scaling": 0,
-  "opencode/select-correct-skill": 0,
+  "inkwell/add-healthcheck": 0.2, // was 100% before regression; regression run showed 20%
   "inkwell/configure-scaling": 0.6,
-  "inkwell/set-rate-limit": 0.6,
-  "inkwell/new-service": 0.4,
+  "inkwell/cpu-scaling": 0.8, // was 100% baseline; regression run showed 80%
+  "inkwell/new-service": 0.8,
+  "inkwell/set-rate-limit": 0.4,
 };
 for (const t of report.tasks ?? []) {
   const rate = t.akm?.passRate ?? 0;
