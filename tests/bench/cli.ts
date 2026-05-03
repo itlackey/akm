@@ -6,7 +6,7 @@
  *   • `utility`    — paired noakm vs akm utility benchmark (Track A).
  *   • `compare`    — diff two report JSON files; refuses on hash/model mismatch.
  *   • `attribute`  — per-asset marginal contribution via leave-one-out masking.
- *   • `evolve`     — longitudinal evolution loop (Track B). Stub.
+ *   • `evolve`     — longitudinal evolution loop (Track B).
  *   • `kill`       — send SIGTERM to a running bench process (reads bench.pid).
  *
  * Implementation status and validity rules live in `tests/bench/BENCH.md`.

@@ -108,6 +108,9 @@ describe("gold-ref leakage check", () => {
       // skipping here previously masked typos and stash-name drift; we now
       // fail loudly so the corpus author is forced to fix the reference.
       if (!goldPath) {
+        // Non-skill refs (workflow:, command:, etc.) are not leakage-checked.
+        // Only skill: refs map to a SKILL.md with content that could leak answers.
+        if (!/^skill:/.test(goldRef)) return;
         throw new Error(
           `${task.id}: gold_ref "${goldRef}" against stash "${task.stash}" did not resolve to a SKILL.md under tests/fixtures/stashes/. Fix the gold_ref, fix the stash name, or remove the gold_ref.`,
         );

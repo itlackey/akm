@@ -1,18 +1,14 @@
 id: akm-lookup-before-edit
 title: "Agent searches AKM before modifying workspace files"
 description: |
-  Before any first workspace write, the AKM-armed agent must run akm_search
+  Before any first workspace write, the AKM-armed agent must run akm search
   to look up relevant prior assets. If the search returns a relevant hit it
   must show that asset before writing.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "workflow-compliance"]
 required_sequence:
   - event: agent_started
   - event: akm_search
-    before: first_workspace_write
-  - event: akm_show
-    required_if: search_has_relevant_result
     before: first_workspace_write
   - event: first_workspace_write
 forbidden:

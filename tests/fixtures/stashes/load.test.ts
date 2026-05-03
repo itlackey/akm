@@ -93,8 +93,17 @@ describe("fixtureContentHash", () => {
 });
 
 describe("listFixtures", () => {
-  test("returns all six shipped fixtures, sorted", () => {
+  test("returns all shipped fixtures, sorted", () => {
     const names = listFixtures();
-    expect(names).toEqual(["az-cli", "docker-homelab", "minimal", "multi-domain", "noisy", "ranking-baseline"]);
+    expect(names).toEqual([
+      "az-cli",
+      "docker-homelab",
+      "drillbit",
+      "inkwell",
+      "minimal",
+      "multi-domain",
+      "noisy",
+      "ranking-baseline",
+    ]);
   });
 });

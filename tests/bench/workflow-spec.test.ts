@@ -27,7 +27,7 @@ const REQUIRED_SPECS = [
   "akm-feedback-after-use",
   "akm-negative-feedback-on-failure",
   "akm-reflect-after-repeated-failure",
-  "akm-proposal-review-before-accept",
+  "akm-workflow-followed",
 ];
 
 // ── Scratch directory helpers ──────────────────────────────────────────────

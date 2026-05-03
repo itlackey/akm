@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
 import { closeDatabase, openDatabase } from "../indexer/db";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -121,7 +122,13 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
       }
     })();
 
-    return getWorkflowStatus(runId);
+    const result = getWorkflowStatus(runId);
+    appendEvent({
+      eventType: "workflow_started",
+      ref: ref,
+      metadata: { runId: result.run.id, title: result.run.workflowTitle },
+    });
+    return result;
   } finally {
     closeWorkflowDatabase(workflowDb);
   }
@@ -287,7 +294,16 @@ export function completeWorkflowStep(input: CompleteWorkflowStepInput): Workflow
       };
     })();
 
-    return buildWorkflowRunDetail(updatedRun as WorkflowRunRow, refreshedSteps);
+    const detail = buildWorkflowRunDetail(updatedRun as WorkflowRunRow, refreshedSteps);
+    appendEvent({
+      eventType: "workflow_step_completed",
+      ref: detail.run.workflowRef,
+      metadata: { runId: input.runId, stepId: input.stepId, notes: input.notes },
+    });
+    if (detail.run.status === "completed") {
+      appendEvent({ eventType: "workflow_finished", ref: detail.run.workflowRef, metadata: { runId: input.runId } });
+    }
+    return detail;
   } finally {
     closeWorkflowDatabase(workflowDb);
   }

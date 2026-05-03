@@ -58,7 +58,7 @@ describe("listTasks", () => {
 
   test("seeds hand-authored tasks across all domains", () => {
     const tasks = listTasks();
-    expect(tasks).toHaveLength(33);
+    expect(tasks).toHaveLength(34);
     const byDomain = new Map<string, TaskMetadata[]>();
     for (const task of tasks) {
       const list = byDomain.get(task.domain) ?? [];
@@ -73,7 +73,7 @@ describe("listTasks", () => {
     expect(byDomain.get("opencode")).toHaveLength(5);
     expect(byDomain.get("workflow-compliance")).toHaveLength(6);
     expect(byDomain.get("drillbit")).toHaveLength(5);
-    expect(byDomain.get("inkwell")).toHaveLength(5);
+    expect(byDomain.get("inkwell")).toHaveLength(6);
   });
 
   test("every task validates against the §13.1 schema", () => {
@@ -100,9 +100,9 @@ describe("listTasks", () => {
     expect(train.every((t) => t.slice === "train")).toBe(true);
     expect(evalTasks.every((t) => t.slice === "eval")).toBe(true);
     // 19 train (original 13 + 6 demoted az-cli/docker eval tasks)
-    // 14 eval  (original 4 remaining + 5 drillbit + 5 inkwell fictional tasks)
+    // 15 eval  (original 4 remaining + 5 drillbit + 5 inkwell fictional tasks + 1 inkwell workflow task)
     expect(train).toHaveLength(19);
-    expect(evalTasks).toHaveLength(14);
+    expect(evalTasks).toHaveLength(15);
   });
 });
 

@@ -49,6 +49,10 @@ export type WorkflowTraceEventType =
   | "akm_distill"
   | "akm_propose"
   | "akm_proposal_accept"
+  | "akm_workflow_start"
+  | "akm_workflow_next"
+  | "akm_workflow_complete"
+  | "akm_workflow_finish"
   | "workspace_read"
   | "workspace_write"
   | "first_workspace_write"
@@ -306,6 +310,9 @@ const AKM_EVENT_TYPE_MAP: Record<string, WorkflowTraceEventType> = {
   distill_invoked: "akm_distill",
   propose_invoked: "akm_propose",
   promoted: "akm_proposal_accept",
+  workflow_started: "akm_workflow_start",
+  workflow_step_completed: "akm_workflow_complete",
+  workflow_finished: "akm_workflow_finish",
 };
 
 function fromAkmEvent(
@@ -501,6 +508,13 @@ function classifyArgs(command: string, argv: string[]): StdoutMatch | null {
       return { type: "akm_distill", command, args: argv };
     case "propose":
       return { type: "akm_propose", command, args: argv };
+    case "workflow": {
+      const sub = rest[0];
+      if (sub === "start") return { type: "akm_workflow_start", command, args: argv, assetRef: rest[1] };
+      if (sub === "next") return { type: "akm_workflow_next", command, args: argv, assetRef: rest[1] };
+      if (sub === "complete") return { type: "akm_workflow_complete", command, args: argv };
+      return null;
+    }
     default:
       return null;
   }

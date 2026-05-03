@@ -14,7 +14,8 @@ drillbit <command> [subcommand] [flags]
 Create a new cluster node.
 
 ```sh
-drillbit provision --cluster <name> --tier <tier> --region <region> --replicas <n>
+drillbit \
+  provision --cluster <name> --tier <tier> --region <region> --replicas <n>
 ```
 
 Flags:
@@ -25,9 +26,12 @@ Flags:
 
 Examples:
 ```sh
-drillbit provision --cluster sentinel-1 --tier edge --region az-west --replicas 3
-drillbit provision --cluster hub-east --tier core --region az-east --replicas 5
-drillbit provision --cluster mgmt --tier control-plane --region eu-central --replicas 1
+drillbit \
+  provision --cluster my-edge-1 --tier edge --region az-west --replicas 3
+drillbit \
+  provision --cluster hub-east --tier core --region az-east --replicas 5
+drillbit \
+  provision --cluster mgmt --tier control-plane --region eu-central --replicas 1
 ```
 
 Note: `--tier` is not `--type` or `--size`. Region values use `az-west` / `az-east` / `eu-central` — not cloud-provider region names like `westus` or `us-west-2`.
@@ -37,13 +41,16 @@ Note: `--tier` is not `--type` or `--size`. Region values use `az-west` / `az-ea
 Adjust the replica count for an existing cluster. The cluster name is positional (not a flag).
 
 ```sh
-drillbit scale <cluster-name> --replicas <n>
+drillbit \
+  scale <cluster-name> --replicas <n>
 ```
 
 Examples:
 ```sh
-drillbit scale prod-core --replicas 8
-drillbit scale sentinel-1 --replicas 2
+drillbit \
+  scale my-core --replicas 8
+drillbit \
+  scale my-edge --replicas 2
 ```
 
 ## secret rotate
@@ -51,15 +58,18 @@ drillbit scale sentinel-1 --replicas 2
 Rotate a cluster secret by path and signing algorithm.
 
 ```sh
-drillbit secret rotate --path <secret-path> --algorithm <algorithm>
+drillbit secret \
+  rotate --path <secret-path> --algorithm <algorithm>
 ```
 
 Algorithms: `sha256`, `ed25519`
 
 Examples:
 ```sh
-drillbit secret rotate --path services/auth/token --algorithm ed25519
-drillbit secret rotate --path services/db/password --algorithm sha256
+drillbit secret \
+  rotate --path services/api/key --algorithm ed25519
+drillbit secret \
+  rotate --path services/db/password --algorithm sha256
 ```
 
 Note: the flag is `--algorithm`, not `--type`, `--cipher`, or `--method`.
@@ -69,7 +79,8 @@ Note: the flag is `--algorithm`, not `--type`, `--cipher`, or `--method`.
 Control canary traffic splitting for a cluster. The cluster name is positional.
 
 ```sh
-drillbit canary enable <cluster-name> --weight <0-100>
+drillbit canary \
+  enable <cluster-name> --weight <0-100>
 drillbit canary disable <cluster-name>
 ```
 
@@ -77,9 +88,11 @@ drillbit canary disable <cluster-name>
 
 Examples:
 ```sh
-drillbit canary enable staging-west --weight 20
-drillbit canary enable prod-core --weight 5
-drillbit canary disable staging-west
+drillbit canary \
+  enable my-cluster-west --weight 20
+drillbit canary \
+  enable my-cluster-prod --weight 5
+drillbit canary disable my-cluster-west
 ```
 
 ## backup
@@ -87,7 +100,8 @@ drillbit canary disable staging-west
 Configure snapshot retention for a cluster.
 
 ```sh
-drillbit backup --cluster <name> --retention <days>d --snapshots <n>
+drillbit \
+  backup --cluster <name> --retention <days>d --snapshots <n>
 ```
 
 Flags:
@@ -97,8 +111,10 @@ Flags:
 
 Examples:
 ```sh
-drillbit backup --cluster vault-primary --retention 90d --snapshots 7
-drillbit backup --cluster prod-core --retention 30d --snapshots 14
+drillbit \
+  backup --cluster my-primary --retention 90d --snapshots 7
+drillbit \
+  backup --cluster my-secondary --retention 30d --snapshots 14
 ```
 
 Note: `--retention` takes the format `<n>d` with a `d` suffix, not a plain number.

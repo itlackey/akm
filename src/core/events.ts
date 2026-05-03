@@ -55,6 +55,9 @@ export type EventType =
   | "reflect_invoked"
   | "propose_invoked"
   | "distill_invoked"
+  | "workflow_started"
+  | "workflow_step_completed"
+  | "workflow_finished"
   | string;
 
 export interface AppendEventInput {

@@ -1,12 +1,10 @@
 id: akm-reflect-after-repeated-failure
-title: "Agent reflects/distills only after enough negative feedback"
+title: "Agent reflects only after enough negative feedback"
 description: |
   Reflect and distill are expensive; they should only fire after the same
   asset has accumulated enough negative feedback to justify revisiting it.
-  This spec asserts the threshold gate, not the content of the reflection.
 applies_to:
   arms: ["akm"]
-  task_domains: ["docker-homelab", "az-cli", "opencode", "eval", "workflow-compliance"]
   min_repeated_failures: 2
 required_sequence:
   - event: agent_started
