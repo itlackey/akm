@@ -107,9 +107,9 @@ spec:
     metric: rps
     target: 200
   healthcheck:
-    path: /healthz
-    interval: 15
-    threshold: 2
+    path: /health
+    interval: 10
+    threshold: 3
   limits:
     rps: 1000
     burst: 2000

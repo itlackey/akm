@@ -14,3 +14,7 @@
 - All values are plain integers — no quotes, no units (e.g. `min: 2` not `min: "2"`)
 - Do NOT write YAML from memory — always consult `akm show skill:inkwell` first
 - This task requires ALL THREE blocks: spec.scaling, spec.healthcheck, spec.limits
+
+## IMPORTANT: schema vs. values
+
+The skill shows field names and value types as a schema reference — its examples use placeholder values. Always use the SPECIFIC VALUES from this workspace's README.md. Do not copy values from the skill's examples verbatim.
