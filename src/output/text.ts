@@ -689,12 +689,10 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   if (assetType === "skill" || assetType === "knowledge") {
     lines.push("");
     lines.push("---");
-    lines.push("APPLY: Copy field names, value types, and formats exactly from the content above.");
     lines.push(
-      "Do not substitute approximations. Run `akm feedback " +
-        (assetRef ? `'${assetRef}'` : "<ref>") +
-        " --positive` after the task succeeds.",
+      "APPLY: Use the field names and structure shown above. Use the specific VALUES your task requires (from the task description or workspace README) — do not copy example values verbatim.",
     );
+    lines.push("Run `akm feedback " + (assetRef ? `'${assetRef}'` : "<ref>") + " --positive` after the task succeeds.");
   } else if (assetType === "workflow") {
     const workflowRef = typeof r.name === "string" ? `workflow:${r.name}` : "<ref>";
     lines.push("");
