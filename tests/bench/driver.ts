@@ -89,6 +89,13 @@ export interface RunOptions {
    * dir is left empty and opencode falls back to its cloud-provider defaults.
    */
   opencodeProviders?: LoadedOpencodeProviders;
+  /**
+   * Path to a pre-built index cache home (`<dir>/akm/index.db` exists here).
+   * When supplied, `runOne` copies the index into the per-run `XDG_CACHE_HOME`
+   * instead of re-running `akm index --full` on every seed. This avoids the
+   * ~300–600ms re-index penalty per (task, arm, seed) triple.
+   */
+  indexCacheHome?: string;
 }
 
 /**
@@ -399,12 +406,16 @@ function defaultPrompt(options: RunOptions): string {
     `Step 2 — from the search results, execute:`,
     `  bash: akm show <ref>   (e.g. akm show skill:${keywords.split(" ")[0]})`,
     ``,
-    `Step 3 — read the output of akm show carefully, then complete the task.`,
+    `Step 3 — read README.md in the workspace to understand the specific task requirements:`,
+    `  bash: cat ${options.workspace}/README.md`,
     ``,
-    `Step 4 — execute:`,
+    `Step 4 — using the skill content from step 2 and the task requirements from step 3,`,
+    `write the answer to ${options.workspace}/commands.txt`,
+    ``,
+    `Step 5 — execute:`,
     `  bash: akm feedback <ref> --positive   (or --negative)`,
     ``,
-    `DO NOT write any output file before running steps 1 and 2.`,
+    `DO NOT write commands.txt before running steps 1 and 2.`,
     ``,
     taskLine,
     `Workspace: ${options.workspace}`,
@@ -471,6 +482,32 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
   // file. When providers are supplied, materializeOpencodeConfig writes the full
   // provider block; otherwise we write a minimal stub that lets env-var-based
   // cloud providers (Anthropic, OpenAI) resolve normally.
+  //
+  // Safety guard: if the model has a custom provider prefix (i.e. the model ID
+  // contains a "/" and the prefix is not one of opencode's built-in cloud
+  // providers) but no opencodeProviders were configured, refuse to run rather
+  // than silently falling back to a cloud model and burning API credits.
+  // Single-segment model IDs (no slash) are passed through unchanged.
+  const BUILTIN_CLOUD_PREFIXES = new Set([
+    "anthropic",
+    "openai",
+    "openrouter",
+    "opencode",
+    "google",
+    "amazon",
+    "azure",
+    "vertex",
+    "bedrock",
+    "mistral",
+    "groq",
+    "together",
+    "fireworks",
+  ]);
+  const modelParts = options.model.split("/");
+  if (modelParts.length >= 2 && !BUILTIN_CLOUD_PREFIXES.has(modelParts[0]) && !options.opencodeProviders) {
+    result.verifierStdout = `harness: model "${options.model}" uses custom provider prefix "${modelParts[0]}" — supply opencodeProviders to avoid silent fallback to a cloud model`;
+    return result;
+  }
   if (options.opencodeProviders) {
     try {
       const selected = selectProviderForModel(options.opencodeProviders, options.model);
@@ -496,6 +533,66 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
       JSON.stringify({ $schema: "https://opencode.ai/config.json", model: options.model }),
       { mode: 0o600 },
     );
+  }
+
+  // Write a minimal akm config into the bench's isolated XDG_CONFIG_HOME so the
+  // akm-opencode plugin discovers the correct stash dir via `akm config get stashDir`.
+  // Without this, the plugin's shell.env hook returns null for stashDir and does NOT
+  // inject AKM_STASH_DIR into bash-tool env, so tool invocations like `akm search`
+  // fall back to the global stash (~/akm) and cannot find fixture-only assets.
+  if (stashDir && !options.spawn) {
+    const akmConfigDir = path.join(dirs.configHome, "akm");
+    fs.mkdirSync(akmConfigDir, { recursive: true });
+    fs.writeFileSync(path.join(akmConfigDir, "config.json"), JSON.stringify({ stashDir }), { mode: 0o600 });
+  }
+
+  // Ensure the FTS5 index exists in the run's isolated XDG_CACHE_HOME before
+  // invoking the agent. Without this, `akm search` returns zero hits.
+  //
+  // Skip when: `spawn` is injected (unit-test mode — the fake doesn't have a
+  // real stash) OR the stash dir does not exist on disk.
+  //
+  // Fast path: if the runner pre-built the index (loadFixtureStash default),
+  // copy the db files from `indexCacheHome` — O(ms), no subprocess.
+  // Slow path: run `akm index --full` when pre-built cache is unavailable
+  // (evolve caller, direct runOne() in tests that set up a real stash).
+  const stashExistsOnDisk = stashDir ? fs.existsSync(stashDir) : false;
+  if (stashDir && stashExistsOnDisk && !options.spawn) {
+    const destAkmDir = path.join(dirs.cacheHome, "akm");
+    fs.mkdirSync(destAkmDir, { recursive: true });
+
+    if (options.indexCacheHome) {
+      // Copy pre-built index files. The index is read-only during bench runs.
+      const srcAkmDir = path.join(options.indexCacheHome, "akm");
+      try {
+        for (const entry of fs.readdirSync(srcAkmDir)) {
+          fs.copyFileSync(path.join(srcAkmDir, entry), path.join(destAkmDir, entry));
+        }
+      } catch (err) {
+        options.warnings?.push(`harness: index copy failed, falling back to re-index: ${(err as Error).message}`);
+        const cliEntry = path.resolve(__dirname, "..", "..", "src", "cli.ts");
+        Bun.spawnSync({
+          cmd: ["bun", "run", cliEntry, "index", "--full"],
+          cwd: stashDir,
+          env: { ...buildSanitizedEnvSource(), ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      }
+    } else {
+      const cliEntry = path.resolve(__dirname, "..", "..", "src", "cli.ts");
+      const indexProc = Bun.spawnSync({
+        cmd: ["bun", "run", cliEntry, "index", "--full"],
+        cwd: stashDir,
+        env: { ...buildSanitizedEnvSource(), ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (indexProc.exitCode !== 0) {
+        const stderr = indexProc.stderr ? new TextDecoder().decode(indexProc.stderr) : "";
+        options.warnings?.push(`harness: akm index failed (exit ${indexProc.exitCode}): ${stderr.trim()}`);
+      }
+    }
   }
 
   try {

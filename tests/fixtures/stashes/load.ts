@@ -25,6 +25,12 @@ export interface LoadedFixtureStash {
   cleanup: () => void;
   /** Deterministic SHA-256 of the fixture's source content (not the tmp copy). */
   contentHash: string;
+  /**
+   * Absolute path to the XDG_CACHE_HOME directory that contains the pre-built
+   * FTS5 index (`<cacheHome>/akm/index.db`). Undefined when `skipIndex: true`.
+   * Callers can copy this into their own isolated cache dirs to avoid re-indexing.
+   */
+  indexCacheHome?: string;
 }
 
 /**
@@ -149,7 +155,7 @@ export function loadFixtureStash(name: string, options: LoadFixtureStashOptions 
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   };
 
-  return { stashDir, cleanup, contentHash };
+  return { stashDir, cleanup, contentHash, ...(!options.skipIndex ? { indexCacheHome: cacheHome } : {}) };
 }
 
 // ── Internals ───────────────────────────────────────────────────────────────

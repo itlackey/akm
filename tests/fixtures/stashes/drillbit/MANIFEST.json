@@ -1,0 +1,9 @@
+{
+  "name": "drillbit",
+  "description": "Fictional drillbit CLI skill stash for benchmark evaluation tasks.",
+  "purpose": "Provides the drillbit skill used by eval tasks that test akm stash lookup with fictional toolchains not in model training data.",
+  "assets": {
+    "skill": 1
+  },
+  "consumers": ["tests/fixtures/bench/tasks/drillbit/*"]
+}

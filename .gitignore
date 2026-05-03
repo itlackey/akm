@@ -13,3 +13,4 @@ tests/fixtures/openviking/workspace/viking/_system/accounts.json
 .akm-run/
 tests/fixtures/bench/opencode-providers.local.json
 tests/bench/*.json
+**/__pycache__/

@@ -467,6 +467,22 @@ describe("runOne", () => {
     expect(written.model).toBe("nonexistent/some-model");
     expect(written.provider).toBeUndefined();
   });
+
+  test("harness_error: custom provider prefix without opencodeProviders refuses to run", async () => {
+    // "shredder/qwen/qwen3.5-9b" has a custom prefix. Without opencodeProviders,
+    // opencode would silently fall back to a cloud model and burn API credits.
+    // The harness must refuse to run rather than allow that.
+    const { spawn } = scriptedSpawn({ exitCode: 0, stdout: "ok" });
+    const result = await runOne({
+      ...baseOptions,
+      workspace,
+      model: "shredder/qwen/qwen3.5-9b",
+      spawn,
+      // opencodeProviders deliberately omitted
+    });
+    expect(result.outcome).toBe("harness_error");
+    expect(result.verifierStdout).toContain("custom provider prefix");
+  });
 });
 
 describe("driver helpers", () => {

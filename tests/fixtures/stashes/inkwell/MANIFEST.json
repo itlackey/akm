@@ -1,0 +1,9 @@
+{
+  "name": "inkwell",
+  "description": "Fictional inkwell YAML config skill stash for benchmark evaluation tasks.",
+  "purpose": "Provides the inkwell skill used by eval tasks that test akm stash lookup with fictional toolchains not in model training data.",
+  "assets": {
+    "skill": 1
+  },
+  "consumers": ["tests/fixtures/bench/tasks/inkwell/*"]
+}

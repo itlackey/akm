@@ -353,7 +353,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
     let stashError: string | undefined;
     if (options.arms.includes("akm") && materialiseStash && !overrideStashDir) {
       try {
-        stash = loadFixtureStash(task.stash, { skipIndex: true });
+        stash = loadFixtureStash(task.stash);
       } catch (err) {
         stashError = err instanceof Error ? err.message : String(err);
         warnings.push(`task ${task.id}: stash "${task.stash}" failed to load: ${stashError}`);
@@ -456,6 +456,7 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
         warnings: runWarnings,
         ...(promptOverride !== undefined ? { prompt: promptOverride } : {}),
         ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
+        ...(stash?.indexCacheHome ? { indexCacheHome: stash.indexCacheHome } : {}),
       });
 
       // Merge per-run warnings into the shared array.
@@ -582,6 +583,7 @@ async function runOneIsolated(args: {
   warnings: string[];
   prompt?: string;
   opencodeProviders?: LoadedOpencodeProviders;
+  indexCacheHome?: string;
 }): Promise<RunResult> {
   const workspace = benchMkdtemp(`akm-bench-ws-${args.task.domain}-`);
   // SIGINT trap: register workspace cleanup so external signals don't leak
@@ -616,6 +618,7 @@ async function runOneIsolated(args: {
       ...(args.prompt !== undefined ? { prompt: args.prompt } : {}),
       warnings: args.warnings,
       ...(args.opencodeProviders ? { opencodeProviders: args.opencodeProviders } : {}),
+      ...(args.indexCacheHome ? { indexCacheHome: args.indexCacheHome } : {}),
     };
 
     const result = await runOne(runOptions);

@@ -1,7 +1,7 @@
 {
   "$schema": "../../../schemas/bench-opencode-providers.schema.json",
   "schemaVersion": 1,
-  "defaultModel": "shredder/qwen3.5-9b",
+  "defaultModel": "shredder/qwen/qwen3.5-9b",
   "providers": {
     "shredder": {
       "npm": "@ai-sdk/openai-compatible",
@@ -11,7 +11,12 @@
         "timeout": 600000
       },
       "models": {
-        "qwen3.5-9b": {
+        "mistralai/devstral-small-2-2512": {
+          "name": "Devstral Small 2.5 (Shredder LM Studio)",
+          "limit": { "context": 32768, "output": 8192 },
+          "capabilities": { "tool": true }
+        },
+        "qwen/qwen3.5-9b": {
           "name": "Qwen3.5 9B (Shredder LM Studio)",
           "limit": { "context": 32768, "output": 8192 },
           "capabilities": { "tool": true }

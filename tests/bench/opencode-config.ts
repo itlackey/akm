@@ -247,6 +247,20 @@ export function materializeOpencodeConfig(
     provider: {
       [selected.providerKey]: selected.entry,
     },
+    // Explicitly allow all tools so opencode run (non-interactive) doesn't
+    // silently skip bash/file operations due to missing permission config.
+    permission: {
+      bash: "allow",
+      edit: "allow",
+      write: "allow",
+      read: "allow",
+      webfetch: "allow",
+    },
+    // Disable operator plugins during bench runs. Plugins like akm-opencode
+    // run their own session lifecycle hooks (warmIndexInBackground, akm setup
+    // prompts, AKM_STASH_DIR overrides in shell.env) that interfere with the
+    // bench's isolated fixture stash and cause stash mismatch failures.
+    plugin: [],
   };
 
   const outPath = path.join(opencodeConfigDir, "opencode.json");
