@@ -700,7 +700,7 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
     lines.push(
       "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
     );
-    lines.push("Run `akm feedback " + (assetRef ? `'${assetRef}'` : "<ref>") + " --positive` after the task succeeds.");
+    lines.push(`Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds.`);
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
     const workflowRef = workflowName ? `workflow:${workflowName}` : "<ref>";
