@@ -100,10 +100,12 @@ describe("shapeSearchHit — local stash hits", () => {
     whyMatched: "name match",
   };
 
-  test("brief keeps only type/name/action/estimatedTokens", () => {
+  test("brief keeps only type/name/ref/action/estimatedTokens", () => {
+    // REC-03: ref is now included at brief so agents can run `akm show <ref>`
     expect(shapeSearchHit(fullHit, "brief")).toEqual({
       type: "skill",
       name: "deploy",
+      ref: "skill:deploy",
       action: "akm show skill:deploy",
       estimatedTokens: 120,
     });

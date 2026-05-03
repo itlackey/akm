@@ -679,6 +679,28 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
     if (lines.length > 0) lines.push("");
     lines.push(...payloads);
   }
+
+  // REC-01 / REC-09: Append a type-specific directive so agents apply the
+  // content rather than substituting training-data approximations.
+  const assetType = typeof r.type === "string" ? r.type : null;
+  const assetRef = typeof r.name === "string" && assetType ? `${assetType}:${r.name}` : null;
+  if (assetType === "skill" || assetType === "knowledge") {
+    lines.push("");
+    lines.push("---");
+    lines.push("APPLY: Copy field names, value types, and formats exactly from the content above.");
+    lines.push(
+      "Do not substitute approximations. Run `akm feedback " +
+        (assetRef ? `'${assetRef}'` : "<ref>") +
+        " --positive` after the task succeeds.",
+    );
+  } else if (assetType === "workflow") {
+    const workflowRef = typeof r.name === "string" ? `workflow:${r.name}` : "<ref>";
+    lines.push("");
+    lines.push("---");
+    lines.push(`NEXT STEP: Run \`akm workflow next '${workflowRef}'\` to see the current workflow step.`);
+    lines.push("Do not edit workspace files before completing each step with `akm workflow complete`.");
+  }
+
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
@@ -808,6 +830,15 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (timing.rankMs != null) parts.push(`rank: ${timing.rankMs}ms`);
     if (timing.embedMs != null) parts.push(`embed: ${timing.embedMs}ms`);
     if (parts.length > 0) lines.push(`timing: ${parts.join(", ")}`);
+  }
+
+  // REC-02: When stash hits exist, tell the agent the next required step so it
+  // doesn't skip `akm show` and write from training memory instead.
+  if (hits.length >= 1) {
+    const topRef = typeof hits[0].ref === "string" ? hits[0].ref : null;
+    if (topRef) {
+      lines.push(`Next: akm show '${topRef}'`);
+    }
   }
 
   return lines.join("\n").trimEnd();

@@ -98,7 +98,8 @@ describe("output baseline", () => {
 
     // hits is always present; warnings may appear when semantic search is pending
     expect(Object.keys(json)).toContain("hits");
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "type"]);
+    // REC-03: ref is now included at brief detail so agents can run `akm show <ref>`
+    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "ref", "type"]);
   });
 
   test("search normal detail includes description capped at 250 characters", () => {

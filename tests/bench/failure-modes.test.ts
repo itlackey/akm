@@ -149,6 +149,72 @@ describe("classifyFailureMode — seven labels", () => {
     const out = classifyFailureMode(fakeTask({ goldRef: undefined }), fakeRun({ verifierStdout: trace }));
     expect(out).toBe("unrelated_bug");
   });
+
+  test("no_events: task has no goldRef and no search in trace", () => {
+    // When there is no goldRef and no search evidence, trajectory.correctAssetLoaded
+    // is always null (metric undefined). We cannot tell whether the agent searched
+    // or whether events data was absent. Surfaces as `no_events`.
+    const out = classifyFailureMode(fakeTask({ goldRef: undefined }), fakeRun({ verifierStdout: "" }));
+    expect(out).toBe("no_events");
+  });
+});
+
+describe("classifyFailureMode — trajectory-aware classification (REC-07 / REC-13)", () => {
+  test("loaded_ignored: correctAssetLoaded=true + fail → loaded_ignored (short-circuit)", () => {
+    // The agent loaded the correct asset (confirmed by trajectory data) but still
+    // produced wrong output. This is the dominant failure pattern in the
+    // 2026-05-03 baseline: 24/25 `search_no_gold` labels were wrong because the
+    // classifier didn't consult trajectory.correctAssetLoaded.
+    const out = classifyFailureMode(
+      fakeTask(),
+      fakeRun({
+        trajectory: { correctAssetLoaded: true, feedbackRecorded: null },
+        verifierStdout: "verifier: field values wrong",
+      }),
+    );
+    expect(out).toBe("loaded_ignored");
+  });
+
+  test("loaded_ignored: correctAssetLoaded=true overrides stdout-scan — fires even with no search in trace", () => {
+    // Trajectory data is authoritative. Even if verifierStdout shows no `akm
+    // search`, the trajectory says the gold was loaded → loaded_ignored, not
+    // no_search.
+    const out = classifyFailureMode(
+      fakeTask(),
+      fakeRun({
+        trajectory: { correctAssetLoaded: true, feedbackRecorded: null },
+        verifierStdout: "",
+      }),
+    );
+    expect(out).toBe("loaded_ignored");
+  });
+
+  test("search_no_gold: correctAssetLoaded=false + search ran + gold absent → search_no_gold", () => {
+    // When trajectory says gold was NOT loaded and search ran but gold ref absent
+    // from results, this is a genuine search failure.
+    const trace = ["$ akm search homelab", "1. skill:foo", "2. skill:bar"].join("\n");
+    const out = classifyFailureMode(
+      fakeTask(),
+      fakeRun({
+        trajectory: { correctAssetLoaded: false, feedbackRecorded: null },
+        verifierStdout: trace,
+      }),
+    );
+    expect(out).toBe("search_no_gold");
+  });
+
+  test("no_search: correctAssetLoaded=false + no search in trace → no_search", () => {
+    // When trajectory says gold was NOT loaded and there is no search evidence,
+    // the agent genuinely didn't search.
+    const out = classifyFailureMode(
+      fakeTask(),
+      fakeRun({
+        trajectory: { correctAssetLoaded: false, feedbackRecorded: null },
+        verifierStdout: "verifier: missing output",
+      }),
+    );
+    expect(out).toBe("no_search");
+  });
 });
 
 describe("classifyFailureMode — tie-breaking and priority", () => {

@@ -665,7 +665,8 @@ describe("Scenario: CLI subprocess execution", () => {
     const json = parseJson(result.stdout);
     expect(json.source).toBeUndefined();
     expect(json.timing).toBeUndefined();
-    expect(json.hits.every((h: CliJsonHit) => h.ref === undefined)).toBe(true);
+    // REC-03: ref is now included at brief detail so agents can run `akm show <ref>`
+    expect(json.hits.every((h: CliJsonHit) => h.ref !== undefined)).toBe(true);
     expect(json.hits.every((h: CliJsonHit) => h.type !== undefined)).toBe(true);
     expect(json.hits.every((h: CliJsonHit) => h.name !== undefined)).toBe(true);
     expect(json.hits.every((h: CliJsonHit) => h.action !== undefined)).toBe(true);

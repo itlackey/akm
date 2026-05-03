@@ -1606,19 +1606,22 @@ export function compareReports(
 // ── Failure-mode taxonomy (§6.6) ───────────────────────────────────────────
 
 /**
- * The seven failure-mode labels defined by spec §6.6. Exactly one applies
- * to every failed run; `unrelated_bug` is the catch-all when nothing more
- * specific matches.
+ * The failure-mode labels defined by spec §6.6. Exactly one applies to every
+ * failed run; `unrelated_bug` is the catch-all when nothing more specific
+ * matches.
  *
  *   no_search       — agent never invoked `akm search`. AGENTS.md problem.
  *   search_no_gold  — search ran but gold ref absent from result list.
  *   search_low_rank — gold ref present at rank > 5.
  *   loaded_wrong    — `akm show` on a non-gold ref before the action AND
  *                     the gold ref was never loaded.
- *   loaded_ignored  — gold ref loaded; action contradicts its content.
+ *   loaded_ignored  — gold ref loaded; agent wrote workspace from memory
+ *                     instead of applying asset content.
  *   followed_wrong  — gold ref loaded and apparently followed; verifier
  *                     still failed (asset itself is wrong).
  *   unrelated_bug   — none of the above; not an akm problem.
+ *   no_events       — trajectory data unavailable (no events stream); cannot
+ *                     determine correctAssetLoaded.
  */
 export type FailureMode =
   | "no_search"
@@ -1627,7 +1630,8 @@ export type FailureMode =
   | "loaded_wrong"
   | "loaded_ignored"
   | "followed_wrong"
-  | "unrelated_bug";
+  | "unrelated_bug"
+  | "no_events";
 
 /** Maximum rank at which the gold ref still counts as "found"; > this is `search_low_rank`. */
 const SEARCH_RANK_CUTOFF = 5;
@@ -1636,48 +1640,77 @@ const SEARCH_RANK_CUTOFF = 5;
 const FAILURE_MODE_STDOUT_SCAN_CAP = 16 * 1024 * 1024;
 
 /**
- * Classify a single failed run into one of the seven §6.6 labels. Pure
- * function — string-matches `runResult.events[]` and `runResult.verifierStdout`,
- * never calls an LLM, never touches the filesystem.
+ * Classify a single failed run into one of the §6.6 labels. Pure function —
+ * consults `runResult.trajectory.correctAssetLoaded` first (trajectory data
+ * is authoritative when present), then falls back to string-matching
+ * `runResult.events[]` and `runResult.verifierStdout`. Never calls an LLM,
+ * never touches the filesystem.
  *
  * Decision tree (priority order — first match wins):
  *   1. Run not failed (`pass`, `budget_exceeded`, `harness_error`) → `null`.
- *   2. No `akm search` call in the trace → `no_search`.
- *   3. Search ran; gold ref absent from search results → `search_no_gold`.
- *   4. Gold ref present in search results at rank > 5 → `search_low_rank`.
- *   5. `akm show` invoked on a non-gold ref AND gold ref never loaded → `loaded_wrong`.
- *   6. Gold ref loaded; verifier output suggests the action contradicts the
- *      asset's guidance (heuristic: verifier mentions the gold pattern was
- *      explicitly NOT followed) → `loaded_ignored`.
- *   7. Gold ref loaded and apparently followed → `followed_wrong`.
- *   8. Default → `unrelated_bug`.
- *
- * Tasks without `goldRef`: rules that depend on the gold ref (3-7) are
- * skipped; only `no_search` and `unrelated_bug` are reachable.
+ *   2. `trajectory.correctAssetLoaded === true` → the agent loaded the gold
+ *      asset but still failed. This is `loaded_ignored` (agent wrote from
+ *      memory instead of applying asset content). This short-circuit fixes
+ *      the 2026-05-03 baseline bug where 24/25 `search_no_gold` labels were
+ *      wrong because the classifier didn't consult trajectory data.
+ *   3. No `akm search` call in the trace:
+ *      a. If task has no `goldRef` (so `correctAssetLoaded` is always null)
+ *         → `no_events` (trajectory metric undefined; cannot distinguish
+ *         "agent ran but events absent" from "agent never ran").
+ *      b. Otherwise → `no_search`.
+ *   4. Search ran, no goldRef → `unrelated_bug`.
+ *   5. Search ran; gold ref absent from results → `search_no_gold`.
+ *      (Only reachable when `correctAssetLoaded` is false or null, since
+ *      true is handled in step 2.)
+ *   6. Gold ref present at rank > 5 → `search_low_rank`.
+ *   7. `akm show` invoked on a non-gold ref AND gold ref never loaded
+ *      → `loaded_wrong`.
+ *   8. Gold ref loaded; verifier output suggests the action contradicts the
+ *      asset's guidance → `loaded_ignored`.
+ *   9. Gold ref loaded and apparently followed → `followed_wrong`.
+ *  10. Default → `unrelated_bug`.
  */
 export function classifyFailureMode(taskMeta: TaskMetadata, runResult: RunResult): FailureMode | null {
   if (runResult.outcome !== "fail") return null;
 
-  const trace = collectTrace(runResult);
   const goldRef = taskMeta.goldRef;
+  const correctAssetLoaded = runResult.trajectory?.correctAssetLoaded;
 
-  // 1. no_search — no `akm search` invocation anywhere in the trace.
+  // 1. Trajectory short-circuit: if events data confirms the gold asset was
+  //    loaded, the failure must be compliance-related, not discovery-related.
+  //    Return `loaded_ignored` immediately without scanning stdout.
+  if (correctAssetLoaded === true) {
+    return "loaded_ignored";
+  }
+
+  const trace = collectTrace(runResult);
+
+  // 2. no_search / no_events — no `akm search` invocation anywhere in the trace.
   if (!hasAkmSearch(trace, runResult)) {
+    // When there is no goldRef, correctAssetLoaded is always null (the metric
+    // is undefined). We cannot tell whether the agent genuinely didn't search
+    // or whether events data was simply absent. Use `no_events` to surface
+    // this ambiguity rather than conflating it with `no_search`.
+    if (!goldRef) {
+      return "no_events";
+    }
     return "no_search";
   }
 
   // Without a gold ref the search-based and load-based checks are undefined.
-  // We can only distinguish "no_search" from everything else.
+  // We can only distinguish "no_search" / "no_events" from everything else.
   if (!goldRef) {
     return "unrelated_bug";
   }
 
   const searchRank = findGoldSearchRank(trace, goldRef);
-  // 2. search_no_gold — search ran (precondition above) but gold ref absent.
+  // 3. search_no_gold — search ran (precondition above) but gold ref absent.
+  //    Only reachable when correctAssetLoaded is false or null (trajectory
+  //    data indicates gold was not loaded), because true is handled above.
   if (searchRank === null) {
     return "search_no_gold";
   }
-  // 3. search_low_rank — present but below the cutoff.
+  // 4. search_low_rank — present but below the cutoff.
   if (searchRank > SEARCH_RANK_CUTOFF) {
     return "search_low_rank";
   }
@@ -1685,7 +1718,7 @@ export function classifyFailureMode(taskMeta: TaskMetadata, runResult: RunResult
   const goldLoaded = hasAkmShow(trace, runResult, goldRef);
   const otherRefLoaded = hasAkmShowOtherRef(trace, runResult, goldRef);
 
-  // 4. loaded_wrong — agent showed a non-gold ref AND never loaded the gold.
+  // 5. loaded_wrong — agent showed a non-gold ref AND never loaded the gold.
   if (otherRefLoaded && !goldLoaded) {
     return "loaded_wrong";
   }
@@ -1698,7 +1731,7 @@ export function classifyFailureMode(taskMeta: TaskMetadata, runResult: RunResult
     return "unrelated_bug";
   }
 
-  // 5. loaded_ignored — verifier diagnostic indicates the action contradicts
+  // 6. loaded_ignored — verifier diagnostic indicates the action contradicts
   //    the loaded asset. Conservative heuristic: look for explicit "ignored"
   //    or "not applied" markers in the verifier stdout. Without an LLM we
   //    cannot detect subtler contradictions, so this branch only fires when
@@ -1707,7 +1740,7 @@ export function classifyFailureMode(taskMeta: TaskMetadata, runResult: RunResult
     return "loaded_ignored";
   }
 
-  // 6. followed_wrong — gold loaded, apparently followed, verifier still
+  // 7. followed_wrong — gold loaded, apparently followed, verifier still
   //    failed. The §6.6 spec maps this to "the asset itself is wrong".
   return "followed_wrong";
 }

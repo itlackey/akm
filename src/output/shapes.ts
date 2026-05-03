@@ -452,7 +452,9 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   }
 
   // Stash hit (local or remote)
-  if (detail === "brief") return pickFields(hit, ["type", "name", "action", "estimatedTokens"]);
+  // `ref` is included at `brief` so agents can run `akm show <ref>` without
+  // needing --detail full or --for-agent (REC-03).
+  if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens"]);
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
     // visible without forcing callers up to `--detail full`. Optional
