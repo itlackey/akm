@@ -632,6 +632,9 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   if (r.type || r.name) {
     lines.push(`# ${String(r.type ?? "asset")}: ${String(r.name ?? "unknown")}`);
   }
+  if (r.path && r.editable !== false) {
+    lines.push(`file: ${String(r.path)}`);
+  }
   if (r.origin !== undefined) lines.push(`# origin: ${String(r.origin)}`);
   if (r.action) lines.push(`# ${String(r.action)}`);
   if (r.description) lines.push(`description: ${String(r.description)}`);
@@ -689,12 +692,30 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   if (assetType === "skill" || assetType === "knowledge") {
     lines.push("");
     lines.push("---");
+    lines.push("APPLY:");
     lines.push(
-      "APPLY: Use the field names and structure shown above. Use the specific VALUES your task requires (from the task description or workspace README) — do not copy example values verbatim.",
+      "  1. Find the workspace file to edit (check README.md in the current directory for the target file name).",
+    );
+    lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
+    lines.push(
+      "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
     );
     lines.push("Run `akm feedback " + (assetRef ? `'${assetRef}'` : "<ref>") + " --positive` after the task succeeds.");
   } else if (assetType === "workflow") {
-    const workflowRef = typeof r.name === "string" ? `workflow:${r.name}` : "<ref>";
+    const workflowName = typeof r.name === "string" ? r.name : null;
+    const workflowRef = workflowName ? `workflow:${workflowName}` : "<ref>";
+    // Insert action directive BEFORE the workflow content by prepending to lines at the
+    // separator position. We find where the header ends and insert after the first `---`.
+    // Since lines already contain the full content at this point, we locate the insertion
+    // index: right after the first `---` separator if present, otherwise after the header.
+    const separatorIdx = lines.indexOf("---");
+    const insertIdx = separatorIdx >= 0 ? separatorIdx + 1 : r.type || r.name ? 1 : 0;
+    const actionDirective = [
+      `ACTION REQUIRED: Do not execute steps manually from this output.`,
+      `Run \`akm workflow next '${workflowRef}'\` to get your current step with exact instructions.`,
+      "---",
+    ];
+    lines.splice(insertIdx, 0, "", ...actionDirective);
     lines.push("");
     lines.push("---");
     lines.push(`NEXT STEP: Run \`akm workflow next '${workflowRef}'\` to see the current workflow step.`);
@@ -772,6 +793,28 @@ export function formatWorkflowNextPlain(result: Record<string, unknown>): string
       lines.push(`    - ${String(criterion)}`);
     }
   }
+
+  // T2-3: surface run-id as labeled field
+  const run =
+    typeof result.run === "object" && result.run !== null ? (result.run as Record<string, unknown>) : undefined;
+  const runId = typeof run?.id === "string" ? run.id : null;
+  const stepId = typeof step?.id === "string" ? step.id : null;
+  if (runId) {
+    lines.push("");
+    lines.push(`runId: ${runId}`);
+  }
+
+  // T1-6: complete command
+  if (runId && stepId) {
+    lines.push("");
+    lines.push("COMPLETE THIS STEP:");
+    lines.push(`  akm workflow complete '${runId}' --step '${stepId}'`);
+  } else if (runId) {
+    lines.push("");
+    lines.push("COMPLETE THIS STEP:");
+    lines.push(`  akm workflow complete '${runId}' --step '<step-id>'`);
+  }
+
   return lines.join("\n");
 }
 
@@ -781,8 +824,15 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   const allHits = [...hits, ...registryHits];
 
   if (allHits.length === 0) {
+    const warnings = Array.isArray(r.warnings) ? (r.warnings as unknown[]) : [];
+    const hasSetupWarning = warnings.some(
+      (w) => String(w).toLowerCase().includes("no stash") || String(w).toLowerCase().includes("not configured"),
+    );
+    if (hasSetupWarning) {
+      return "No stash configured. Run `akm init` to create your working stash, then `akm index` to build the search index.";
+    }
     const base = r.tip ? String(r.tip) : "No matches found.";
-    return `${base}\nTip: try a broader query with \`akm search '<keywords>'\` or list all assets with \`akm list\``;
+    return `${base}\nTry:\n  akm search '<broader-term>'          # fewer keywords\n  akm list                             # see all configured sources\n  akm curate '<query>'                 # let akm select the best match`;
   }
 
   const lines: string[] = [];
@@ -843,9 +893,13 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
         const workflowRef = hits.find((h) => h.type === "workflow");
         const wfRef = workflowRef && typeof workflowRef.ref === "string" ? workflowRef.ref : topRef;
         lines.push(`Next: akm show '${topRef}'  |  To start a workflow: akm workflow next '${wfRef}'`);
-      } else {
         lines.push(
-          `Next: akm show '${topRef}'  |  Tip: use 'akm show <ref>' to see full content and usage instructions`,
+          "After running workflow next: follow each step and run `akm workflow complete <run-id> --step <step-id>` when done.",
+        );
+      } else {
+        lines.push(`Next: akm show '${topRef}'`);
+        lines.push(
+          "After reading the asset: edit the workspace file using the schema fields and your task-specific values.",
         );
       }
     }
@@ -982,7 +1036,11 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
   }
 
   lines.push("");
-  lines.push("Next: akm show <ref>  |  To search further: akm search '<query>'");
+  lines.push("Next steps:");
+  lines.push("  1. Run `akm show <ref>` for the best result above to read the full schema.");
+  lines.push("  2. Edit the workspace file using the schema field names and your task-specific values.");
+  lines.push("  3. Run `akm feedback <ref> --positive` when the task succeeds.");
+  lines.push("To search further: akm search '<query>'");
 
   return lines.join("\n");
 }
