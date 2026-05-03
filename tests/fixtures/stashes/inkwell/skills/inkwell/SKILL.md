@@ -54,7 +54,7 @@ spec:
     target: 65
 ```
 
-Note: `metric: rps` not `requests_per_second` or `request-rate`. No unit suffix on `target`.
+**EXACT field values:** `metric: rps` (not `requests_per_second` or `request-rate`). `target` is a plain integer — no unit suffix (`100` not `100rps` or `"100"`).
 
 ## healthcheck
 
@@ -81,7 +81,7 @@ spec:
     burst: 1000
 ```
 
-Note: `rps` not `rate` or `maxRPS`. `burst` not `burstCapacity`.
+**EXACT field names:** `rps` (not `rate` or `maxRPS`). `burst` (not `burstCapacity`).
 
 ## Full example
 

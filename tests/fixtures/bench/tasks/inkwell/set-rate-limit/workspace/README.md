@@ -1,9 +1,9 @@
 # Task: configure rate limiting
 
-Edit `service.yaml` to add rate limiting to the inkwell service.
+Edit `service.yaml` to add a `limits` block to the inkwell service.
 
 Requirements:
-- maximum 500 requests per second (steady-state)
-- burst capacity of 1000
+- `rps: 500` (steady-state max — use exactly `rps`, not `rate` or `maxRPS`)
+- `burst: 1000` (burst capacity — use exactly `burst`, not `burstCapacity`)
 
-Consult the inkwell skill for the correct field names.
+Use `akm show skill:inkwell` for the complete field reference and a copy-paste example block.

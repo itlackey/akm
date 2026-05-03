@@ -3,9 +3,9 @@
 Edit `service.yaml` to configure autoscaling on the inkwell service.
 
 Requirements:
-- minimum 2 replicas
-- maximum 20 replicas
-- scale based on requests per second
-- target: 100 requests per second
+- `min: 2` (minimum replicas)
+- `max: 20` (maximum replicas)
+- `metric: rps` (scale on requests per second — use exactly `rps`, not `requests_per_second`)
+- `target: 100` (integer, no unit suffix — use exactly `100`, not `"100"` or `100rps`)
 
-Consult the inkwell skill for the correct field names and metric value.
+Use `akm show skill:inkwell` for the complete field reference and a copy-paste example block.
