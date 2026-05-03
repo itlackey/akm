@@ -586,6 +586,20 @@ contains no credentials.
 (owner-read/write only). The file is ephemeral — it lives inside the per-run
 isolated `OPENCODE_CONFIG` tmpdir and is removed when the run finishes.
 
+## Baseline reports
+
+Saved baselines for use with `bench compare` to measure future improvements.
+Use `bench compare <baseline.json> <new.json>` — reports must share the same
+model, schemaVersion, taskCorpusHash, and fixtureContentHash.
+
+| File | Model | Date | Commit | Pass rate | Notes |
+|---|---|---|---|---|---|
+| `tests/bench/baseline-qwen9b-2026-05-03.json` | shredder/qwen/qwen3.5-9b | 2026-05-03 | 32c70aa | 68.2% (58/85) | akm arm, --no-noakm, 17 eval tasks × 5 seeds |
+
+Dominant failure mode: `search_no_gold` (25/27 failures) — model searched but
+did not show the correct asset before writing. Use this baseline when measuring
+the impact of stash search-signal improvements.
+
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.

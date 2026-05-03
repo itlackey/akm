@@ -1,0 +1,4544 @@
+{
+  "schemaVersion": 1,
+  "track": "utility",
+  "branch": "main",
+  "commit": "32c70aa",
+  "timestamp": "2026-05-03T08:02:54.421Z",
+  "agent": {
+    "harness": "opencode",
+    "model": "shredder/qwen/qwen3.5-9b"
+  },
+  "corpus": {
+    "domains": 4,
+    "tasks": 17,
+    "slice": "eval",
+    "seedsPerArm": 5,
+    "selectedTaskIds": [
+      "drillbit/backup-policy",
+      "drillbit/canary-enable",
+      "drillbit/provision-edge",
+      "drillbit/rotate-secret",
+      "drillbit/scale-replicas",
+      "inkwell/add-healthcheck",
+      "inkwell/configure-scaling",
+      "inkwell/cpu-scaling",
+      "inkwell/full-config",
+      "inkwell/new-service",
+      "inkwell/set-rate-limit",
+      "inkwell/workflow-configure-scaling",
+      "opencode/agents-md-akm-snippet",
+      "opencode/provider-akm-feedback",
+      "opencode/select-correct-skill",
+      "workflow-compliance/abstention-rust-async-haiku",
+      "workflow-compliance/distractor-docker-port-publish"
+    ],
+    "taskCorpusHash": "c5ca4dede36e3a020f92aca26cddacab0068d5c9667a2a580588f93e804da264",
+    "fixtures": {
+      "drillbit": "ae780fc04fdf527cc75be85b431034f9159822bd950038d6eb10bac58e4d2baa",
+      "inkwell": "ddd30784577c8d9b85e1d49f987ee56771f8b72c0f7edd1bf2ccbd1eba92f4b8",
+      "minimal": "ef3cdf064ee0ac26b899224181582749182af696ef7f96b649ee1f149d9ce69e",
+      "multi-domain": "53ab3820c132fb3d816bc16611e6a6fd9ad1be319ba11e9b0642a8c9b879c162",
+      "noisy": "63a8780d5a3739f43c2b27e24365894700db5df7e41774199ffa99bb6a3d96c5"
+    },
+    "fixtureContentHash": "322f00c905ebb0c61429d6c3d71cb1d7a243770dd561dff80b411f0bd91acab0"
+  },
+  "aggregate": {
+    "noakm": {
+      "pass_rate": 0,
+      "tokens_per_pass": null,
+      "wallclock_ms": 0
+    },
+    "akm": {
+      "pass_rate": 0.6823529411764706,
+      "tokens_per_pass": null,
+      "wallclock_ms": 64830.81176470588
+    },
+    "delta": {
+      "pass_rate": 0.6823529411764706,
+      "tokens_per_pass": null,
+      "wallclock_ms": 64830.81176470588
+    }
+  },
+  "trajectory": {
+    "akm": {
+      "correct_asset_loaded": 0.975,
+      "feedback_recorded": 0.16470588235294117
+    }
+  },
+  "failure_modes": {
+    "by_label": {
+      "search_no_gold": 25,
+      "unrelated_bug": 2
+    },
+    "by_task": {
+      "inkwell/configure-scaling": {
+        "search_no_gold": 2
+      },
+      "inkwell/full-config": {
+        "search_no_gold": 5
+      },
+      "inkwell/new-service": {
+        "search_no_gold": 3
+      },
+      "inkwell/set-rate-limit": {
+        "search_no_gold": 2
+      },
+      "inkwell/workflow-configure-scaling": {
+        "search_no_gold": 5
+      },
+      "opencode/provider-akm-feedback": {
+        "search_no_gold": 1
+      },
+      "opencode/select-correct-skill": {
+        "search_no_gold": 5
+      },
+      "workflow-compliance/abstention-rust-async-haiku": {
+        "unrelated_bug": 2
+      },
+      "workflow-compliance/distractor-docker-port-publish": {
+        "search_no_gold": 2
+      }
+    }
+  },
+  "token_measurement": {
+    "total_runs": 85,
+    "runs_with_measured_tokens": 0,
+    "runs_missing_measurement": 85,
+    "runs_unsupported_measurement": 0,
+    "coverage": 0,
+    "reliable": false
+  },
+  "tasks": [
+    {
+      "id": "drillbit/backup-policy",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 76522.4,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 76522.4
+      }
+    },
+    {
+      "id": "drillbit/canary-enable",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 46116,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 46116
+      }
+    },
+    {
+      "id": "drillbit/provision-edge",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 44711.6,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 44711.6
+      }
+    },
+    {
+      "id": "drillbit/rotate-secret",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 43825.2,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 43825.2
+      }
+    },
+    {
+      "id": "drillbit/scale-replicas",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49581.6,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49581.6
+      }
+    },
+    {
+      "id": "inkwell/add-healthcheck",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 62826.8,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 62826.8
+      }
+    },
+    {
+      "id": "inkwell/configure-scaling",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.6,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49294.8,
+        "pass_rate_stdev": 0.5477225575051662,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.6,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49294.8
+      }
+    },
+    {
+      "id": "inkwell/cpu-scaling",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 80310.4,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 80310.4
+      }
+    },
+    {
+      "id": "inkwell/full-config",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 79122.4,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 79122.4
+      }
+    },
+    {
+      "id": "inkwell/new-service",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.4,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49589.6,
+        "pass_rate_stdev": 0.5477225575051662,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.4,
+        "tokens_per_pass": null,
+        "wallclock_ms": 49589.6
+      }
+    },
+    {
+      "id": "inkwell/set-rate-limit",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.6,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 67833.8,
+        "pass_rate_stdev": 0.5477225575051662,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.6,
+        "tokens_per_pass": null,
+        "wallclock_ms": 67833.8
+      }
+    },
+    {
+      "id": "inkwell/workflow-configure-scaling",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 136100.6,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 136100.6
+      }
+    },
+    {
+      "id": "opencode/agents-md-akm-snippet",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 1,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 53157.8,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 53157.8
+      }
+    },
+    {
+      "id": "opencode/provider-akm-feedback",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.8,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 69932.6,
+        "pass_rate_stdev": 0.4472135954999579,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.8,
+        "tokens_per_pass": null,
+        "wallclock_ms": 69932.6
+      }
+    },
+    {
+      "id": "opencode/select-correct-skill",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 72340.2,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 72340.2
+      }
+    },
+    {
+      "id": "workflow-compliance/abstention-rust-async-haiku",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.6,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 54901.4,
+        "pass_rate_stdev": 0.5477225575051662,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.6,
+        "tokens_per_pass": null,
+        "wallclock_ms": 54901.4
+      }
+    },
+    {
+      "id": "workflow-compliance/distractor-docker-port-publish",
+      "noakm": {
+        "pass_rate": 0,
+        "pass_at_1": 0,
+        "tokens_per_pass": null,
+        "wallclock_ms": 0,
+        "pass_rate_stdev": 0,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 0,
+        "runs_with_measured_tokens": 0
+      },
+      "akm": {
+        "pass_rate": 0.6,
+        "pass_at_1": 1,
+        "tokens_per_pass": null,
+        "wallclock_ms": 65956.6,
+        "pass_rate_stdev": 0.5477225575051662,
+        "budget_exceeded_count": 0,
+        "harness_error_count": 0,
+        "count": 5,
+        "runs_with_measured_tokens": 0
+      },
+      "delta": {
+        "pass_rate": 0.6,
+        "tokens_per_pass": null,
+        "wallclock_ms": 65956.6
+      }
+    }
+  ],
+  "negative_transfer_count": 0,
+  "negative_transfer_severity": 0,
+  "top_regressed_tasks": [],
+  "domain_level_deltas": [
+    {
+      "domain": "drillbit",
+      "task_count": 5,
+      "regression_count": 0,
+      "pass_rate_noakm": 0,
+      "pass_rate_akm": 1,
+      "pass_rate_delta": 1,
+      "tokens_per_pass_delta": null,
+      "wallclock_ms_delta": 52151.36
+    },
+    {
+      "domain": "inkwell",
+      "task_count": 7,
+      "regression_count": 0,
+      "pass_rate_noakm": 0,
+      "pass_rate_akm": 0.5142857142857143,
+      "pass_rate_delta": 0.5142857142857143,
+      "tokens_per_pass_delta": null,
+      "wallclock_ms_delta": 75011.2
+    },
+    {
+      "domain": "opencode",
+      "task_count": 3,
+      "regression_count": 0,
+      "pass_rate_noakm": 0,
+      "pass_rate_akm": 0.6,
+      "pass_rate_delta": 0.6,
+      "tokens_per_pass_delta": null,
+      "wallclock_ms_delta": 65143.53333333333
+    },
+    {
+      "domain": "workflow-compliance",
+      "task_count": 2,
+      "regression_count": 0,
+      "pass_rate_noakm": 0,
+      "pass_rate_akm": 0.6,
+      "pass_rate_delta": 0.6,
+      "tokens_per_pass_delta": null,
+      "wallclock_ms_delta": 60429
+    }
+  ],
+  "asset_regression_candidates": [],
+  "corpus_coverage": {
+    "coverage": {
+      "totalTasks": 17,
+      "memoryAbilityCounts": {
+        "untagged": 0,
+        "procedural_lookup": 13,
+        "multi_asset_composition": 1,
+        "temporal_update": 0,
+        "conflict_resolution": 1,
+        "abstention": 1,
+        "noisy_retrieval": 1
+      },
+      "taskFamilyCounts": {
+        "drillbit/backup": 1,
+        "drillbit/canary": 1,
+        "drillbit/provision": 1,
+        "drillbit/secret": 1,
+        "drillbit/scale": 1,
+        "inkwell/healthcheck": 1,
+        "inkwell/scaling": 2,
+        "inkwell/full-config": 1,
+        "inkwell/service": 1,
+        "inkwell/limits": 1,
+        "inkwell/workflow": 1,
+        "opencode/config-basics": 2,
+        "opencode/agents-md": 1,
+        "workflow-compliance/abstention": 1,
+        "workflow-compliance/distractor": 1
+      }
+    },
+    "by_memory_ability": [
+      {
+        "category": "abstention",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.6,
+        "pass_rate_delta": 0.6,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.6716666666666665
+      },
+      {
+        "category": "conflict_resolution",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0,
+        "pass_rate_delta": 0,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7891666666666667
+      },
+      {
+        "category": "multi_asset_composition",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0,
+        "pass_rate_delta": 0,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7891666666666663
+      },
+      {
+        "category": "noisy_retrieval",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.6,
+        "pass_rate_delta": 0.6,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7833333333333334
+      },
+      {
+        "category": "procedural_lookup",
+        "task_count": 13,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.8,
+        "pass_rate_delta": 0.8,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8007136752136751
+      }
+    ],
+    "by_task_family": [
+      {
+        "category": "drillbit/backup",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8388888888888888
+      },
+      {
+        "category": "drillbit/canary",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8388888888888888
+      },
+      {
+        "category": "drillbit/provision",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8388888888888888
+      },
+      {
+        "category": "drillbit/scale",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8388888888888888
+      },
+      {
+        "category": "drillbit/secret",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8388888888888888
+      },
+      {
+        "category": "inkwell/full-config",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0,
+        "pass_rate_delta": 0,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7891666666666663
+      },
+      {
+        "category": "inkwell/healthcheck",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 1,
+        "pass_rate_delta": 1,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7658333333333333
+      },
+      {
+        "category": "inkwell/limits",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.6,
+        "pass_rate_delta": 0.6,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.8191666666666668
+      },
+      {
+        "category": "inkwell/scaling",
+        "task_count": 2,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.8,
+        "pass_rate_delta": 0.8,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7791666666666666
+      },
+      {
+        "category": "inkwell/service",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.4,
+        "pass_rate_delta": 0.4,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7924999999999998
+      },
+      {
+        "category": "inkwell/workflow",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0,
+        "pass_rate_delta": 0,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7731666666666667
+      },
+      {
+        "category": "opencode/agents-md",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0,
+        "pass_rate_delta": 0,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7891666666666667
+      },
+      {
+        "category": "opencode/config-basics",
+        "task_count": 2,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.9,
+        "pass_rate_delta": 0.9,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7529166666666667
+      },
+      {
+        "category": "workflow-compliance/abstention",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.6,
+        "pass_rate_delta": 0.6,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.6716666666666665
+      },
+      {
+        "category": "workflow-compliance/distractor",
+        "task_count": 1,
+        "pass_rate_noakm": 0,
+        "pass_rate_akm": 0.6,
+        "pass_rate_delta": 0.6,
+        "negative_transfer_count": 0,
+        "workflow_compliance": 0.7833333333333334
+      }
+    ]
+  },
+  "workflow": {
+    "total_checks": 510,
+    "applicable_checks": 320,
+    "overall_compliance": 0.786864583333333,
+    "strict_pass_rate": 0.003125,
+    "partial_pass_rate": 0.996875,
+    "fail_rate": 0,
+    "violation_count": 496,
+    "by_workflow": {
+      "akm-correct-asset-use": {
+        "workflow_id": "akm-correct-asset-use",
+        "count": 85,
+        "score": 0.8281250000000003,
+        "pass_rate": 0,
+        "partial_rate": 1,
+        "fail_rate": 0,
+        "violation_count": 95
+      },
+      "akm-feedback-after-use": {
+        "workflow_id": "akm-feedback-after-use",
+        "count": 85,
+        "score": 0.8275862068965512,
+        "pass_rate": 0,
+        "partial_rate": 1,
+        "fail_rate": 0,
+        "violation_count": 88
+      },
+      "akm-lookup-before-edit": {
+        "workflow_id": "akm-lookup-before-edit",
+        "count": 85,
+        "score": 0.7584313725490193,
+        "pass_rate": 0,
+        "partial_rate": 1,
+        "fail_rate": 0,
+        "violation_count": 99
+      },
+      "akm-negative-feedback-on-failure": {
+        "workflow_id": "akm-negative-feedback-on-failure",
+        "count": 85,
+        "score": 0.8629629629629627,
+        "pass_rate": 0,
+        "partial_rate": 1,
+        "fail_rate": 0,
+        "violation_count": 35
+      },
+      "akm-reflect-after-repeated-failure": {
+        "workflow_id": "akm-reflect-after-repeated-failure",
+        "count": 85,
+        "score": 0.6280000000000001,
+        "pass_rate": 0,
+        "partial_rate": 1,
+        "fail_rate": 0,
+        "violation_count": 81
+      },
+      "akm-workflow-followed": {
+        "workflow_id": "akm-workflow-followed",
+        "count": 85,
+        "score": 0.7573333333333336,
+        "pass_rate": 0.022222222222222223,
+        "partial_rate": 0.9777777777777777,
+        "fail_rate": 0,
+        "violation_count": 98
+      }
+    },
+    "top_violations": [
+      {
+        "code": "missing_required_event",
+        "count": 411,
+        "evidence": [
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected ≥1 akm_feedback event(s) with polarity=positive, observed 0",
+            "expected": "akm_feedback(positive) x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-lookup-before-edit",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected ≥1 akm_feedback event(s) with polarity=positive, observed 0",
+            "expected": "akm_feedback(positive) x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-lookup-before-edit",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected ≥1 akm_feedback event(s) with polarity=positive, observed 0",
+            "expected": "akm_feedback(positive) x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-lookup-before-edit",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          },
+          {
+            "task_id": "drillbit/backup-policy",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "expected ≥1 first_workspace_write event(s), observed 0",
+            "expected": "first_workspace_write x1",
+            "observed": "0"
+          }
+        ]
+      },
+      {
+        "code": "wrong_feedback_polarity",
+        "count": 56,
+        "evidence": [
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-lookup-before-edit",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-workflow-followed",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-lookup-before-edit",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-workflow-followed",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/configure-scaling",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          },
+          {
+            "task_id": "inkwell/configure-scaling",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "verifier passed but agent recorded no positive feedback",
+            "expected": "positive",
+            "observed": "unknown"
+          }
+        ]
+      },
+      {
+        "code": "wrong_order",
+        "count": 14,
+        "evidence": [
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/configure-scaling",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/cpu-scaling",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/cpu-scaling",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/full-config",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-negative-feedback-on-failure",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/full-config",
+            "arm": "akm",
+            "seed": 3,
+            "workflow_id": "akm-negative-feedback-on-failure",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "inkwell/new-service",
+            "arm": "akm",
+            "seed": 3,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "opencode/provider-akm-feedback",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          },
+          {
+            "task_id": "opencode/provider-akm-feedback",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "expected verifier_run before akm_feedback, but akm_feedback occurred first",
+            "expected": "verifier_run < akm_feedback",
+            "observed": "akm_feedback < verifier_run"
+          }
+        ]
+      },
+      {
+        "code": "late_feedback",
+        "count": 10,
+        "evidence": [
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "inkwell/add-healthcheck",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "inkwell/configure-scaling",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "inkwell/cpu-scaling",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "inkwell/cpu-scaling",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "inkwell/new-service",
+            "arm": "akm",
+            "seed": 3,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "opencode/provider-akm-feedback",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "opencode/provider-akm-feedback",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "workflow-compliance/abstention-rust-async-haiku",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          },
+          {
+            "task_id": "workflow-compliance/abstention-rust-async-haiku",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-feedback-after-use",
+            "message": "akm_feedback occurred before verifier_run",
+            "expected": "akm_feedback after verifier_run",
+            "observed": "akm_feedback before verifier_run"
+          }
+        ]
+      },
+      {
+        "code": "irrelevant_asset_loaded",
+        "count": 5,
+        "evidence": [
+          {
+            "task_id": "inkwell/workflow-configure-scaling",
+            "arm": "akm",
+            "seed": 0,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "akm_show did not load gold_ref=workflow:configure-inkwell-service",
+            "expected": "workflow:configure-inkwell-service",
+            "observed": "skill:inkwell"
+          },
+          {
+            "task_id": "inkwell/workflow-configure-scaling",
+            "arm": "akm",
+            "seed": 1,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "akm_show did not load gold_ref=workflow:configure-inkwell-service",
+            "expected": "workflow:configure-inkwell-service",
+            "observed": "skill:inkwell"
+          },
+          {
+            "task_id": "inkwell/workflow-configure-scaling",
+            "arm": "akm",
+            "seed": 2,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "akm_show did not load gold_ref=workflow:configure-inkwell-service",
+            "expected": "workflow:configure-inkwell-service",
+            "observed": "skill:inkwell"
+          },
+          {
+            "task_id": "inkwell/workflow-configure-scaling",
+            "arm": "akm",
+            "seed": 4,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "akm_show did not load gold_ref=workflow:configure-inkwell-service",
+            "expected": "workflow:configure-inkwell-service",
+            "observed": "skill:inkwell"
+          },
+          {
+            "task_id": "opencode/agents-md-akm-snippet",
+            "arm": "akm",
+            "seed": 3,
+            "workflow_id": "akm-correct-asset-use",
+            "message": "akm_show did not load gold_ref=skill:opencode",
+            "expected": "skill:opencode",
+            "observed": "knowledge:opencode-agents"
+          }
+        ]
+      }
+    ],
+    "cross_tab": [
+      {
+        "task_outcome": "pass",
+        "pass": 0,
+        "partial": 58,
+        "fail": 0,
+        "total": 58
+      },
+      {
+        "task_outcome": "fail",
+        "pass": 0,
+        "partial": 27,
+        "fail": 0,
+        "total": 27
+      }
+    ],
+    "reliability": {
+      "by_workflow": {
+        "akm-correct-asset-use": {
+          "workflow_id": "akm-correct-asset-use",
+          "pass_at_k": 0,
+          "pass_all_k": 0,
+          "tasks": 16,
+          "k": 5
+        },
+        "akm-feedback-after-use": {
+          "workflow_id": "akm-feedback-after-use",
+          "pass_at_k": 0,
+          "pass_all_k": 0,
+          "tasks": 14,
+          "k": 5
+        },
+        "akm-lookup-before-edit": {
+          "workflow_id": "akm-lookup-before-edit",
+          "pass_at_k": 0,
+          "pass_all_k": 0,
+          "tasks": 17,
+          "k": 5
+        },
+        "akm-workflow-followed": {
+          "workflow_id": "akm-workflow-followed",
+          "pass_at_k": 0.1111111111111111,
+          "pass_all_k": 0,
+          "tasks": 9,
+          "k": 5
+        },
+        "akm-negative-feedback-on-failure": {
+          "workflow_id": "akm-negative-feedback-on-failure",
+          "pass_at_k": 0,
+          "pass_all_k": 0,
+          "tasks": 9,
+          "k": 5
+        },
+        "akm-reflect-after-repeated-failure": {
+          "workflow_id": "akm-reflect-after-repeated-failure",
+          "pass_at_k": 0,
+          "pass_all_k": 0,
+          "tasks": 5,
+          "k": 5
+        }
+      },
+      "corpus": {
+        "pass_at_k": 0.014285714285714285,
+        "pass_all_k": 0,
+        "groups": 70,
+        "tasks": 17
+      }
+    }
+  },
+  "warnings": [
+    "token measurement unreliable: 85 missing of 85 akm-arm runs lack parsed token usage; tokens_per_pass and token-budget signals reflect only the 0 measured runs."
+  ],
+  "searchBridge": {
+    "runs_observed": 80,
+    "searches_observed": 5,
+    "gold_rank_distribution": {
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0,
+      "6": 0,
+      "7": 0,
+      "8": 0,
+      "9": 0,
+      "10": 0,
+      "missing": 5
+    },
+    "gold_rank_p50": "missing",
+    "gold_rank_p90": "missing",
+    "gold_at_rank_1": 0,
+    "gold_missing": 1,
+    "pass_rate_by_rank": [
+      {
+        "rank": "missing",
+        "pass_rate": 0,
+        "run_count": 5
+      }
+    ]
+  },
+  "runs": [
+    {
+      "task_id": "drillbit/backup-policy",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 88782,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/backup-policy",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 93533,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/backup-policy",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 105803,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/backup-policy",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 44527,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/backup-policy",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 49967,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/canary-enable",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 51601,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/canary-enable",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 51831,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/canary-enable",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 54266,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/canary-enable",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 36368,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/canary-enable",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 36514,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/provision-edge",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 43212,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/provision-edge",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 44829,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/provision-edge",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47618,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/provision-edge",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 41613,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/provision-edge",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 46286,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/rotate-secret",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50306,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/rotate-secret",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 51760,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/rotate-secret",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 53346,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/rotate-secret",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 30898,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/rotate-secret",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 32816,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/scale-replicas",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 51064,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/scale-replicas",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 56999,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/scale-replicas",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 57229,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/scale-replicas",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 40518,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "drillbit/scale-replicas",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 42098,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:drillbit"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/add-healthcheck",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 67461,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/add-healthcheck",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 76812,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/add-healthcheck",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 79692,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/add-healthcheck",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 45032,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/add-healthcheck",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 45137,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/configure-scaling",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 46339,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/configure-scaling",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 55600,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/configure-scaling",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 69684,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/configure-scaling",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 35554,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/configure-scaling",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 39297,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/cpu-scaling",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 86362,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/cpu-scaling",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 98475,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/cpu-scaling",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 113653,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/cpu-scaling",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50631,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/cpu-scaling",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 52431,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/full-config",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 74669,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/full-config",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 88387,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/full-config",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 98750,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/full-config",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 66391,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/full-config",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 67415,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/new-service",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47233,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/new-service",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47296,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/new-service",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50263,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/new-service",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47517,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/new-service",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 55639,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/set-rate-limit",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 61686,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/set-rate-limit",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 82722,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/set-rate-limit",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 87558,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/set-rate-limit",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 51475,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/set-rate-limit",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 55728,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "inkwell/workflow-configure-scaling",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 98567,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/workflow-configure-scaling",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 104301,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": false,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/workflow-configure-scaling",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 211748,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/workflow-configure-scaling",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 69174,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell", "workflow:configure-inkwell-service"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "inkwell/workflow-configure-scaling",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 196713,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:inkwell"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/agents-md-akm-snippet",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 56570,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/agents-md-akm-snippet",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 63600,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/agents-md-akm-snippet",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 63930,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/agents-md-akm-snippet",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 39457,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": false,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["knowledge:opencode-agents"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/agents-md-akm-snippet",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 42232,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/provider-akm-feedback",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 63538,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/provider-akm-feedback",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 69786,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/provider-akm-feedback",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 77294,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/provider-akm-feedback",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47014,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/provider-akm-feedback",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 92031,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "opencode/select-correct-skill",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 58839,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/select-correct-skill",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 90254,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/select-correct-skill",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 127940,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/select-correct-skill",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 36906,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "opencode/select-correct-skill",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 47762,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:opencode"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "workflow-compliance/abstention-rust-async-haiku",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 54036,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": null,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:hello-world"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "workflow-compliance/abstention-rust-async-haiku",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 58994,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": null,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:hello-world"],
+      "failure_mode": "unrelated_bug"
+    },
+    {
+      "task_id": "workflow-compliance/abstention-rust-async-haiku",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 61213,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": null,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:hello-world"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "workflow-compliance/abstention-rust-async-haiku",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50061,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": null,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:hello-world"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "workflow-compliance/abstention-rust-async-haiku",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50203,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": null,
+        "feedback_recorded": true
+      },
+      "assets_loaded": ["skill:hello-world"],
+      "failure_mode": "unrelated_bug"
+    },
+    {
+      "task_id": "workflow-compliance/distractor-docker-port-publish",
+      "arm": "akm",
+      "seed": 1,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 61888,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:docker"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "workflow-compliance/distractor-docker-port-publish",
+      "arm": "akm",
+      "seed": 2,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 82922,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:docker", "knowledge:docker-compose-basics"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "workflow-compliance/distractor-docker-port-publish",
+      "arm": "akm",
+      "seed": 0,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 89822,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:docker", "knowledge:docker-compose-basics"],
+      "failure_mode": null
+    },
+    {
+      "task_id": "workflow-compliance/distractor-docker-port-publish",
+      "arm": "akm",
+      "seed": 3,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "fail",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 44896,
+      "verifier_exit_code": 1,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:docker", "knowledge:docker-compose-basics"],
+      "failure_mode": "search_no_gold"
+    },
+    {
+      "task_id": "workflow-compliance/distractor-docker-port-publish",
+      "arm": "akm",
+      "seed": 4,
+      "model": "shredder/qwen/qwen3.5-9b",
+      "outcome": "pass",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "wallclock_ms": 50255,
+      "verifier_exit_code": 0,
+      "trajectory": {
+        "correct_asset_loaded": true,
+        "feedback_recorded": false
+      },
+      "assets_loaded": ["skill:docker"],
+      "failure_mode": null
+    }
+  ],
+  "perAsset": {
+    "total_akm_runs": 85,
+    "rows": [
+      {
+        "asset_ref": "skill:inkwell",
+        "load_count": 35,
+        "load_count_passing": 18,
+        "load_count_failing": 17,
+        "load_pass_rate": 0.5142857142857142
+      },
+      {
+        "asset_ref": "skill:drillbit",
+        "load_count": 25,
+        "load_count_passing": 25,
+        "load_count_failing": 0,
+        "load_pass_rate": 1
+      },
+      {
+        "asset_ref": "skill:opencode",
+        "load_count": 14,
+        "load_count_passing": 8,
+        "load_count_failing": 6,
+        "load_pass_rate": 0.5714285714285714
+      },
+      {
+        "asset_ref": "skill:docker",
+        "load_count": 5,
+        "load_count_passing": 3,
+        "load_count_failing": 2,
+        "load_pass_rate": 0.6
+      },
+      {
+        "asset_ref": "skill:hello-world",
+        "load_count": 5,
+        "load_count_passing": 3,
+        "load_count_failing": 2,
+        "load_pass_rate": 0.6
+      },
+      {
+        "asset_ref": "knowledge:docker-compose-basics",
+        "load_count": 3,
+        "load_count_passing": 2,
+        "load_count_failing": 1,
+        "load_pass_rate": 0.6666666666666666
+      },
+      {
+        "asset_ref": "knowledge:opencode-agents",
+        "load_count": 1,
+        "load_count_passing": 1,
+        "load_count_failing": 0,
+        "load_pass_rate": 1
+      },
+      {
+        "asset_ref": "workflow:configure-inkwell-service",
+        "load_count": 1,
+        "load_count_passing": 0,
+        "load_count_failing": 1,
+        "load_pass_rate": 0
+      }
+    ]
+  },
+  "akm_overhead": {
+    "per_run": [
+      {
+        "task_id": "drillbit/backup-policy",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9965,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/backup-policy",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 7880,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/backup-policy",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 11521,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/backup-policy",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5889,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/backup-policy",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5744,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/canary-enable",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9752,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/canary-enable",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10052,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/canary-enable",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9725,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/canary-enable",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5432,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/canary-enable",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5436,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/provision-edge",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9837,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/provision-edge",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9449,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/provision-edge",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9585,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/provision-edge",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5504,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/provision-edge",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 2,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 4,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5599,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/rotate-secret",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10068,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/rotate-secret",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9562,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/rotate-secret",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9857,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/rotate-secret",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5531,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/rotate-secret",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5429,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/scale-replicas",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9438,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/scale-replicas",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9432,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/scale-replicas",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9677,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/scale-replicas",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5413,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "drillbit/scale-replicas",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5439,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/add-healthcheck",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9539,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/add-healthcheck",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10084,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/add-healthcheck",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9846,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/add-healthcheck",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5115,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/add-healthcheck",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5250,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/configure-scaling",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9535,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/configure-scaling",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9787,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/configure-scaling",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9787,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/configure-scaling",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5410,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/configure-scaling",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5411,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/cpu-scaling",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10178,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/cpu-scaling",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10559,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/cpu-scaling",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10274,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/cpu-scaling",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5485,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/cpu-scaling",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5388,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/full-config",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10051,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/full-config",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9668,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/full-config",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "fail",
+        "search_count": 2,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10086,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/full-config",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5357,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/full-config",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5313,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/new-service",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9652,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/new-service",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9648,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/new-service",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9923,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/new-service",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5412,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/new-service",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 2,
+        "show_count": 3,
+        "feedback_count": 0,
+        "total_tool_calls": 5,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5297,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/set-rate-limit",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9708,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/set-rate-limit",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9885,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/set-rate-limit",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 2,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 4,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10011,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/set-rate-limit",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5522,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/set-rate-limit",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5466,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/workflow-configure-scaling",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/workflow-configure-scaling",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/workflow-configure-scaling",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 5,
+        "feedback_count": 0,
+        "total_tool_calls": 6,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/workflow-configure-scaling",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 3,
+        "show_count": 4,
+        "feedback_count": 0,
+        "total_tool_calls": 7,
+        "assets_loaded_count": 2,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 11199,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "inkwell/workflow-configure-scaling",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "fail",
+        "search_count": 2,
+        "show_count": 5,
+        "feedback_count": 0,
+        "total_tool_calls": 7,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/agents-md-akm-snippet",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9374,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/agents-md-akm-snippet",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10075,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/agents-md-akm-snippet",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9693,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/agents-md-akm-snippet",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/agents-md-akm-snippet",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5658,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/provider-akm-feedback",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10211,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/provider-akm-feedback",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9874,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/provider-akm-feedback",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 9973,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/provider-akm-feedback",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5862,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/provider-akm-feedback",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5574,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/select-correct-skill",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 2,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10331,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/select-correct-skill",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "fail",
+        "search_count": 2,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10000,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/select-correct-skill",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10114,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/select-correct-skill",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5607,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "opencode/select-correct-skill",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5709,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/abstention-rust-async-haiku",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/abstention-rust-async-haiku",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/abstention-rust-async-haiku",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/abstention-rust-async-haiku",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/abstention-rust-async-haiku",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 1,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": null,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/distractor-docker-port-publish",
+        "arm": "akm",
+        "seed": 1,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10360,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/distractor-docker-port-publish",
+        "arm": "akm",
+        "seed": 2,
+        "outcome": "pass",
+        "search_count": 2,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 4,
+        "assets_loaded_count": 2,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 28742,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/distractor-docker-port-publish",
+        "arm": "akm",
+        "seed": 0,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 2,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 10747,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/distractor-docker-port-publish",
+        "arm": "akm",
+        "seed": 3,
+        "outcome": "fail",
+        "search_count": 1,
+        "show_count": 2,
+        "feedback_count": 0,
+        "total_tool_calls": 3,
+        "assets_loaded_count": 2,
+        "irrelevant_assets_loaded_count": 1,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5648,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      },
+      {
+        "task_id": "workflow-compliance/distractor-docker-port-publish",
+        "arm": "akm",
+        "seed": 4,
+        "outcome": "pass",
+        "search_count": 1,
+        "show_count": 1,
+        "feedback_count": 0,
+        "total_tool_calls": 2,
+        "assets_loaded_count": 1,
+        "irrelevant_assets_loaded_count": 0,
+        "time_to_first_search_ms": 0,
+        "time_to_first_correct_asset_ms": 5723,
+        "context_bytes_loaded": null,
+        "asset_bytes_loaded": null
+      }
+    ],
+    "aggregate": {
+      "total_runs": 85,
+      "passing_runs": 58,
+      "mean_search_count": 1.1176470588235294,
+      "mean_show_count": 1.2470588235294118,
+      "mean_feedback_count": 0.16470588235294117,
+      "mean_tool_calls": 2.5294117647058822,
+      "mean_assets_loaded": 1.0470588235294118,
+      "mean_irrelevant_assets_loaded": 0.16470588235294117,
+      "mean_time_to_first_search_ms": 0,
+      "mean_time_to_first_correct_asset_ms": 8457.826666666666,
+      "mean_context_bytes_loaded": null,
+      "mean_asset_bytes_loaded": null,
+      "total_tool_calls": 215,
+      "tool_calls_per_success": 3.706896551724138,
+      "cost_per_success": null
+    }
+  }
+}

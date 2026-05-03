@@ -1,5 +1,12 @@
 ---
-description: Define and configure inkwell services using the inkwell/v2 YAML schema
+description: inkwell/v2 YAML schema — apiVersion, kind, spec.scaling, spec.healthcheck, spec.limits — exact field names and integer value types for inkwell service configuration; fields include min, max, metric, rps, target, path, interval, threshold, burst
+tags:
+  - inkwell
+  - inkwell/v2
+  - service-configuration
+  - scaling
+  - healthcheck
+  - limits
 ---
 # inkwell
 

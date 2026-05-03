@@ -1,8 +1,9 @@
 ---
-description: Step-by-step workflow for configuring an inkwell service YAML file
+description: Step-by-step workflow for configuring inkwell service YAML — agent MUST use akm workflow next and akm workflow complete to advance steps; do NOT edit YAML directly without first running akm workflow next
 tags:
   - inkwell
   - configuration
+  - workflow
 params:
   service_name: The name of the service being configured
 ---
