@@ -38,6 +38,7 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import "../sources/providers/index";
 import { resolveAssetPath } from "../sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
+import { getActiveWorkflowRun } from "../workflows/runs";
 
 /**
  * Show a wiki root (no page path) — returns the same payload as
@@ -351,6 +352,11 @@ export async function showLocal(input: {
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
   };
+
+  const activeRun = getActiveWorkflowRun();
+  if (activeRun) {
+    (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
+  }
 
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);

@@ -583,3 +583,19 @@ function parseJsonArray(value: string | null): string[] | undefined {
   }
   return undefined;
 }
+
+export function getActiveWorkflowRun(): { runId: string; stepId: string | null; workflowRef: string } | null {
+  try {
+    const workflowDb = openWorkflowDatabase();
+    const row = workflowDb
+      .query<{ id: string; current_step_id: string | null; workflow_ref: string }, []>(
+        "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
+      )
+      .get();
+    closeWorkflowDatabase(workflowDb);
+    if (!row) return null;
+    return { runId: row.id, stepId: row.current_step_id, workflowRef: row.workflow_ref };
+  } catch {
+    return null; // fail-open: never crash show output due to DB error
+  }
+}

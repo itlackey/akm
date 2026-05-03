@@ -690,18 +690,36 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   const assetType = typeof r.type === "string" ? r.type : null;
   const assetRef = typeof r.name === "string" && assetType ? `${assetType}:${r.name}` : null;
   if (assetType === "skill" || assetType === "knowledge") {
-    lines.push("");
-    lines.push("---");
-    lines.push("APPLY (only if no workflow step is required for this task):");
-    lines.push(
-      "  1. Find the workspace file to edit (check README.md in the current directory for the target file name).",
-    );
-    lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
-    lines.push(
-      "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
-    );
-    lines.push("If a workflow applies, run `akm workflow next` instead of editing directly.");
-    lines.push(`Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds.`);
+    const activeRun = r.activeRun as { runId: string; stepId: string | null; workflowRef: string } | null | undefined;
+    if (activeRun) {
+      // Active workflow: redirect agent to workflow commands instead of direct apply
+      lines.unshift(
+        `  akm workflow complete '${activeRun.runId}'${activeRun.stepId ? ` --step '${activeRun.stepId}'` : ""}`,
+      );
+      lines.unshift("Do NOT apply this asset directly. Complete your workflow step first:");
+      lines.unshift(`WARNING: WORKFLOW ACTIVE (run: ${activeRun.runId})`);
+      lines.unshift("---");
+      lines.unshift("");
+      // Still show feedback line at the end but skip the APPLY directive
+      lines.push("");
+      lines.push(
+        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the workflow completes.`,
+      );
+    } else {
+      // No active workflow: show the normal APPLY directive
+      lines.push("");
+      lines.push("---");
+      lines.push("APPLY (only if no workflow step is required for this task):");
+      lines.push(
+        "  1. Find the workspace file to edit (check README.md in the current directory for the target file name).",
+      );
+      lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
+      lines.push(
+        "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
+      );
+      lines.push("If a workflow applies, run `akm workflow next` instead of editing directly.");
+      lines.push(`Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds.`);
+    }
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
     const workflowRef = workflowName ? `workflow:${workflowName}` : "<ref>";
