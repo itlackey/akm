@@ -428,6 +428,7 @@ async function searchDatabase(
     const TYPE_BOOST: Record<string, number> = {
       skill: 0.4,
       command: 0.35,
+      workflow: 0.35,
       agent: 0.3,
       script: 0.2,
       memory: 0.1,

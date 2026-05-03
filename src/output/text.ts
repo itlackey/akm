@@ -670,7 +670,9 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
       const id = typeof step.id === "string" ? step.id : "unknown";
       lines.push(`  ${index + 1}. ${title} [${id}]`);
       if (typeof step.instructions === "string" && step.instructions.trim()) {
-        lines.push(`     instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
+        const instrLines = step.instructions.trim().split("\n");
+        lines.push(`     instructions: ${instrLines[0]}`);
+        for (const instrLine of instrLines.slice(1)) lines.push(`       ${instrLine}`);
       }
       if (Array.isArray(step.completionCriteria) && step.completionCriteria.length > 0) {
         lines.push("     completion:");
@@ -803,7 +805,9 @@ export function formatWorkflowNextPlain(result: Record<string, unknown>): string
   const lines = base ? [base, "", "next:"] : ["next:"];
   lines.push(`  ${String(step.title ?? "Untitled step")} [${String(step.id ?? "unknown")}]`);
   if (typeof step.instructions === "string" && step.instructions.trim()) {
-    lines.push(`  instructions: ${step.instructions.replace(/\n+/g, " ").trim()}`);
+    const instrLines = step.instructions.trim().split("\n");
+    lines.push(`  instructions: ${instrLines[0]}`);
+    for (const instrLine of instrLines.slice(1)) lines.push(`    ${instrLine}`);
   }
   const completion = Array.isArray(step.completionCriteria) ? step.completionCriteria : [];
   if (completion.length > 0) {
