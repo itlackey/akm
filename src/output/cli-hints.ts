@@ -12,6 +12,19 @@ const EMBEDDED_HINTS = `# akm CLI
 
 You have access to a searchable library of scripts, skills, commands, agents, knowledge documents, workflows, wikis, and memories via \`akm\`. Search your sources first before writing something from scratch.
 
+## Agent Task Loop
+
+For any task, follow this loop:
+1. \`akm curate "<task>"\` — find the best matching asset
+2. \`akm show <ref>\` — read the schema (field names and structure)
+3. Edit the workspace file using schema field names + task-specific values from your README
+4. \`akm feedback <ref> --positive\` — record success
+
+For workflow tasks:
+1. \`akm workflow next workflow:<name>\` — get current step instructions
+2. Do the step work in your workspace
+3. \`akm workflow complete <run-id> --step <step-id>\` — mark done, get next step
+
 ## Quick Reference
 
 \`\`\`sh
