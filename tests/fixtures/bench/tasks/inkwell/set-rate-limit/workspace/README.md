@@ -3,7 +3,7 @@
 Edit `service.yaml` to add a `limits` block to the inkwell service.
 
 Requirements:
-- `rps: 500` (steady-state max — use exactly `rps`, not `rate` or `maxRPS`)
-- `burst: 1000` (burst capacity — use exactly `burst`, not `burstCapacity`)
+- `rps: 500`
+- `burst: 1000`
 
-Use `akm show skill:inkwell` for the complete field reference and a copy-paste example block.
+Use `akm show skill:inkwell` for the exact field names and value format.
