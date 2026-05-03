@@ -22,12 +22,8 @@ import process from "node:process";
 import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
 import { buildIsolatedEnv, buildSanitizedEnvSource, createIsolationDirs } from "./driver";
-import {
-  BenchConfigError,
-  type LoadedOpencodeProviders,
-  materializeOpencodeConfig,
-  selectProviderForModel,
-} from "./opencode-config";
+import { BENCH_OPENCODE_INVARIANTS, validateFixtureCorpus, writeOpencodeJson } from "./environment";
+import { BenchConfigError, type LoadedOpencodeProviders, selectProviderForModel } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 
 // Re-export for external consumers.
@@ -36,15 +32,6 @@ export type { LoadedOpencodeProviders };
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-export interface DoctorOptions {
-  /** The model to test (e.g. "don/mlx-community/qwen3.6-35b-a3b"). */
-  model: string;
-  /** Pre-loaded opencode provider config (from auto-discovery). */
-  opencodeProviders?: LoadedOpencodeProviders;
-  /** Emit detailed diagnostic output to stderr. */
-  verbose?: boolean;
-}
 
 export interface DoctorCheck {
   name: string;
@@ -262,37 +249,14 @@ async function checkMaterialiseAndRun(
   const dirs = createIsolationDirs(undefined);
 
   try {
-    // Materialise opencode.json — same logic as runOne.
-    if (opencodeProviders) {
-      try {
-        const selected = selectProviderForModel(opencodeProviders, model);
-        materializeOpencodeConfig(dirs.opencodeConfig, selected, model);
-        log(verbose, `materialised opencode.json with provider "${selected.providerKey}"`);
-      } catch (err) {
-        if (err instanceof BenchConfigError) {
-          // Built-in cloud model — write the minimal stub.
-          fs.writeFileSync(
-            path.join(dirs.opencodeConfig, "opencode.json"),
-            JSON.stringify({ $schema: "https://opencode.ai/config.json", model }),
-            { mode: 0o600 },
-          );
-          log(verbose, "no provider entry for model — wrote minimal stub opencode.json");
-        } else {
-          return {
-            name,
-            ok: false,
-            severity: "fail",
-            message: `opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`,
-          };
-        }
-      }
+    // Materialise opencode.json using the same writer as runOne. Warnings
+    // (e.g. built-in cloud model stub) are surfaced via verbose log only.
+    const writeResult = writeOpencodeJson(dirs.opencodeConfig, model, opencodeProviders);
+    for (const w of writeResult.warnings) log(verbose, `writeOpencodeJson: ${w}`);
+    if (writeResult.providerKey) {
+      log(verbose, `materialised opencode.json with provider "${writeResult.providerKey}"`);
     } else {
-      fs.writeFileSync(
-        path.join(dirs.opencodeConfig, "opencode.json"),
-        JSON.stringify({ $schema: "https://opencode.ai/config.json", model }),
-        { mode: 0o600 },
-      );
-      log(verbose, "no providers config — wrote minimal stub opencode.json");
+      log(verbose, "no provider entry for model — wrote stub opencode.json with bench invariants");
     }
 
     const env = buildIsolatedEnv(dirs, model);
@@ -493,9 +457,98 @@ async function checkVerifierBinaries(verbose: boolean): Promise<DoctorCheck[]> {
   return checks;
 }
 
+/**
+ * Check 6: generated opencode.json carries bench isolation invariants.
+ *
+ * Materialises an opencode.json exactly as runOne does and asserts that
+ * `plugin` is an empty array and `permission.bash === "allow"`. Catches
+ * any refactor that accidentally drops these fields.
+ */
+async function checkOpencodeJsonInvariants(
+  model: string,
+  opencodeProviders: LoadedOpencodeProviders | undefined,
+  verbose: boolean,
+): Promise<DoctorCheck> {
+  const name = "opencode.json bench invariants";
+  log(verbose, `running check: ${name}`);
+
+  const tmpDir = benchMkdtemp("bench-doctor-invariant-");
+  try {
+    fs.mkdirSync(path.join(tmpDir, "opencode-config"), { recursive: true });
+    writeOpencodeJson(path.join(tmpDir, "opencode-config"), model, opencodeProviders);
+
+    const written = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, "opencode-config", "opencode.json"), "utf8"),
+    ) as Record<string, unknown>;
+
+    const pluginOk = Array.isArray(written.plugin) && written.plugin.length === 0;
+    const permOk =
+      written.permission !== null &&
+      typeof written.permission === "object" &&
+      (written.permission as Record<string, unknown>).bash === "allow";
+
+    if (pluginOk && permOk) {
+      return { name, ok: true, severity: "pass", message: "plugin:[] and permission.bash=allow present" };
+    }
+
+    const issues: string[] = [];
+    if (!pluginOk) issues.push(`plugin=${JSON.stringify(written.plugin)} (expected [])`);
+    if (!permOk)
+      issues.push(
+        `permission.bash=${JSON.stringify((written.permission as Record<string, unknown>)?.bash)} (expected "allow")`,
+      );
+    return { name, ok: false, severity: "fail", message: `invariant violation: ${issues.join("; ")}` };
+  } catch (err) {
+    return {
+      name,
+      ok: false,
+      severity: "fail",
+      message: `invariant check threw: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Check 7 (optional): all task stash references name valid fixtures.
+ *
+ * When `tasks` is provided, validates every `task.stash` against the
+ * fixture directory. Missing fixtures produce `harness_error` at run time —
+ * better to surface them loudly at startup.
+ */
+function checkFixtureCorpus(tasks: ReadonlyArray<{ id: string; stash: string }>, verbose: boolean): DoctorCheck {
+  const name = "fixture corpus";
+  log(verbose, `running check: ${name}`);
+
+  const { valid, missing } = validateFixtureCorpus(tasks);
+  if (missing.size === 0) {
+    return { name, ok: true, severity: "pass", message: `all ${valid.size} fixture(s) found` };
+  }
+
+  const detail = [...missing.entries()].map(([fix, tids]) => `${fix} (used by: ${tids.join(", ")})`).join("; ");
+  return {
+    name,
+    ok: false,
+    severity: "fail",
+    message: `${missing.size} fixture(s) missing MANIFEST.json: ${detail}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
+
+export interface DoctorOptions {
+  /** The model to test (e.g. "don/mlx-community/qwen3.6-35b-a3b"). */
+  model: string;
+  /** Pre-loaded opencode provider config (from auto-discovery). */
+  opencodeProviders?: LoadedOpencodeProviders;
+  /** Emit detailed diagnostic output to stderr. */
+  verbose?: boolean;
+  /** When supplied, check 7 validates all stash references. */
+  tasks?: ReadonlyArray<{ id: string; stash: string }>;
+}
 
 /**
  * Run all doctor checks in order. Returns a structured `DoctorResult`.
@@ -504,7 +557,7 @@ async function checkVerifierBinaries(verbose: boolean): Promise<DoctorCheck[]> {
  * that invoke opencode would also fail in a confusing way.
  */
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
-  const { model, opencodeProviders, verbose = false } = options;
+  const { model, opencodeProviders, verbose = false, tasks } = options;
   const allChecks: DoctorCheck[] = [];
 
   if (verbose) {
@@ -538,6 +591,14 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
 
   // ── Check 5: verifier binaries ────────────────────────────────────────────
   allChecks.push(...(await checkVerifierBinaries(verbose)));
+
+  // ── Check 6: opencode.json invariants ─────────────────────────────────────
+  allChecks.push(await checkOpencodeJsonInvariants(model, opencodeProviders, verbose));
+
+  // ── Check 7 (optional): fixture corpus ───────────────────────────────────
+  if (tasks && tasks.length > 0) {
+    allChecks.push(checkFixtureCorpus(tasks, verbose));
+  }
 
   // overall ok = no "fail" severity checks (warns are ok)
   const ok = allChecks.every((c) => c.severity !== "fail");

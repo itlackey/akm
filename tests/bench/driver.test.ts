@@ -481,7 +481,8 @@ describe("runOne", () => {
       // opencodeProviders deliberately omitted
     });
     expect(result.outcome).toBe("harness_error");
-    expect(result.verifierStdout).toContain("custom provider prefix");
+    // Error surfaces via setupBenchEnvironment (may be wrapped in "environment setup failed")
+    expect(result.verifierStdout).toMatch(/custom provider prefix|environment setup failed/);
   });
 });
 

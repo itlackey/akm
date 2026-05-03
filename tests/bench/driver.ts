@@ -27,12 +27,8 @@ import path from "node:path";
 import type { EventEnvelope } from "../../src/core/events";
 import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent, type SpawnFn } from "../../src/integrations/agent/spawn";
-import {
-  BenchConfigError,
-  type LoadedOpencodeProviders,
-  materializeOpencodeConfig,
-  selectProviderForModel,
-} from "./opencode-config";
+import { setupBenchEnvironment } from "./environment";
+import { BenchConfigError, type LoadedOpencodeProviders } from "./opencode-config";
 import { benchMkdtemp } from "./tmp";
 import { runVerifier } from "./verifier";
 
@@ -463,137 +459,27 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     return result;
   }
 
-  // #261: synthetic-arm runs MUST NOT carry AKM_STASH_DIR. We refuse to
-  // forward a stashDir for the synthetic arm even when the caller mistakenly
-  // supplies one, and we explicitly delete the key from the built env so the
-  // operator's real AKM_STASH_DIR can never leak in through any parent-env
-  // inheritance the harness happens to do downstream. Recurrence guard for
-  // the #243 fixup pattern.
-  const stashDir = options.arm === "synthetic" ? undefined : options.stashDir;
-  const dirs = createIsolationDirs(stashDir);
-  const env = buildIsolatedEnv(dirs, options.model);
-  if (options.arm === "synthetic") {
-    stripAkmStashDir(env);
-  }
-
-  // Materialise the opencode provider config. OPENCODE_CONFIG points to the
-  // file path (not the dir), so we must always write opencode.json — even when
-  // no custom providers are configured — so opencode doesn't error on a missing
-  // file. When providers are supplied, materializeOpencodeConfig writes the full
-  // provider block; otherwise we write a minimal stub that lets env-var-based
-  // cloud providers (Anthropic, OpenAI) resolve normally.
-  //
-  // Safety guard: if the model has a custom provider prefix (i.e. the model ID
-  // contains a "/" and the prefix is not one of opencode's built-in cloud
-  // providers) but no opencodeProviders were configured, refuse to run rather
-  // than silently falling back to a cloud model and burning API credits.
-  // Single-segment model IDs (no slash) are passed through unchanged.
-  const BUILTIN_CLOUD_PREFIXES = new Set([
-    "anthropic",
-    "openai",
-    "openrouter",
-    "opencode",
-    "google",
-    "amazon",
-    "azure",
-    "vertex",
-    "bedrock",
-    "mistral",
-    "groq",
-    "together",
-    "fireworks",
-  ]);
-  const modelParts = options.model.split("/");
-  if (modelParts.length >= 2 && !BUILTIN_CLOUD_PREFIXES.has(modelParts[0]) && !options.opencodeProviders) {
-    result.verifierStdout = `harness: model "${options.model}" uses custom provider prefix "${modelParts[0]}" — supply opencodeProviders to avoid silent fallback to a cloud model`;
+  // Set up the complete bench environment: isolation dirs, opencode.json
+  // (with BENCH_OPENCODE_INVARIANTS), akm config.json, and FTS5 index.
+  // `dryRun: true` when a test-injected spawn is present — the fake stash
+  // doesn't exist on disk so the akm config and index writes are skipped.
+  let benchEnv: ReturnType<typeof setupBenchEnvironment>;
+  try {
+    benchEnv = setupBenchEnvironment({
+      model: options.model,
+      arm: options.arm,
+      stashDir: options.stashDir,
+      indexCacheHome: options.indexCacheHome,
+      providers: options.opencodeProviders,
+      dryRun: !!options.spawn,
+      warnings: options.warnings,
+    });
+  } catch (err) {
+    result.verifierStdout = `harness: environment setup failed: ${err instanceof Error ? err.message : String(err)}`;
     return result;
   }
-  if (options.opencodeProviders) {
-    try {
-      const selected = selectProviderForModel(options.opencodeProviders, options.model);
-      materializeOpencodeConfig(dirs.opencodeConfig, selected, options.model);
-    } catch (err) {
-      // If the model prefix isn't in the providers map (e.g. built-in cloud
-      // models like "opencode/big-pickle"), fall through to the stub path so
-      // opencode can resolve the model via its native provider registry.
-      if (err instanceof BenchConfigError) {
-        fs.writeFileSync(
-          path.join(dirs.opencodeConfig, "opencode.json"),
-          JSON.stringify({ $schema: "https://opencode.ai/config.json", model: options.model }),
-          { mode: 0o600 },
-        );
-      } else {
-        result.verifierStdout = `harness: opencode provider materialise failed: ${err instanceof Error ? err.message : String(err)}`;
-        return result;
-      }
-    }
-  } else {
-    fs.writeFileSync(
-      path.join(dirs.opencodeConfig, "opencode.json"),
-      JSON.stringify({ $schema: "https://opencode.ai/config.json", model: options.model }),
-      { mode: 0o600 },
-    );
-  }
 
-  // Write a minimal akm config into the bench's isolated XDG_CONFIG_HOME so the
-  // akm-opencode plugin discovers the correct stash dir via `akm config get stashDir`.
-  // Without this, the plugin's shell.env hook returns null for stashDir and does NOT
-  // inject AKM_STASH_DIR into bash-tool env, so tool invocations like `akm search`
-  // fall back to the global stash (~/akm) and cannot find fixture-only assets.
-  if (stashDir && !options.spawn) {
-    const akmConfigDir = path.join(dirs.configHome, "akm");
-    fs.mkdirSync(akmConfigDir, { recursive: true });
-    fs.writeFileSync(path.join(akmConfigDir, "config.json"), JSON.stringify({ stashDir }), { mode: 0o600 });
-  }
-
-  // Ensure the FTS5 index exists in the run's isolated XDG_CACHE_HOME before
-  // invoking the agent. Without this, `akm search` returns zero hits.
-  //
-  // Skip when: `spawn` is injected (unit-test mode — the fake doesn't have a
-  // real stash) OR the stash dir does not exist on disk.
-  //
-  // Fast path: if the runner pre-built the index (loadFixtureStash default),
-  // copy the db files from `indexCacheHome` — O(ms), no subprocess.
-  // Slow path: run `akm index --full` when pre-built cache is unavailable
-  // (evolve caller, direct runOne() in tests that set up a real stash).
-  const stashExistsOnDisk = stashDir ? fs.existsSync(stashDir) : false;
-  if (stashDir && stashExistsOnDisk && !options.spawn) {
-    const destAkmDir = path.join(dirs.cacheHome, "akm");
-    fs.mkdirSync(destAkmDir, { recursive: true });
-
-    if (options.indexCacheHome) {
-      // Copy pre-built index files. The index is read-only during bench runs.
-      const srcAkmDir = path.join(options.indexCacheHome, "akm");
-      try {
-        for (const entry of fs.readdirSync(srcAkmDir)) {
-          fs.copyFileSync(path.join(srcAkmDir, entry), path.join(destAkmDir, entry));
-        }
-      } catch (err) {
-        options.warnings?.push(`harness: index copy failed, falling back to re-index: ${(err as Error).message}`);
-        const cliEntry = path.resolve(__dirname, "..", "..", "src", "cli.ts");
-        Bun.spawnSync({
-          cmd: ["bun", "run", cliEntry, "index", "--full"],
-          cwd: stashDir,
-          env: { ...buildSanitizedEnvSource(), ...env },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-      }
-    } else {
-      const cliEntry = path.resolve(__dirname, "..", "..", "src", "cli.ts");
-      const indexProc = Bun.spawnSync({
-        cmd: ["bun", "run", cliEntry, "index", "--full"],
-        cwd: stashDir,
-        env: { ...buildSanitizedEnvSource(), ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      if (indexProc.exitCode !== 0) {
-        const stderr = indexProc.stderr ? new TextDecoder().decode(indexProc.stderr) : "";
-        options.warnings?.push(`harness: akm index failed (exit ${indexProc.exitCode}): ${stderr.trim()}`);
-      }
-    }
-  }
+  const { dirs, env } = benchEnv;
 
   try {
     const agentResult = await runAgent(profile, options.prompt ?? defaultPrompt(options), {
@@ -662,9 +548,9 @@ export async function runOne(options: RunOptions): Promise<RunResult> {
     }
     return result;
   } finally {
-    // Always tear down the isolation tmpdir. We copy events out before
+    // Always tear down the isolation tmpdir. Events are read out before
     // deletion (see readRunEvents above), so this is safe.
-    fs.rmSync(dirs.root, { recursive: true, force: true });
+    benchEnv.teardown();
   }
 }
 

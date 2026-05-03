@@ -29,6 +29,7 @@ import { computeFixtureContentHash, type LoadedFixtureStash, loadFixtureStash } 
 import { registerCleanup } from "./cleanup";
 import { computeTaskCorpusHash, readTaskBody, type TaskMetadata, type TaskSlice } from "./corpus";
 import { type RunOptions, type RunResult, runOne } from "./driver";
+import { validateFixtureCorpus } from "./environment";
 import {
   aggregateCorpus,
   aggregateFailureModes,
@@ -304,6 +305,18 @@ export async function runUtility(options: RunUtilityOptions): Promise<UtilityRun
 
   const grouped: GroupedRuns = new Map();
   const warnings: string[] = [];
+
+  // Validate all task stash references before starting any work. Missing
+  // fixtures produce harness_error at run time; better to surface them loudly
+  // at startup with the fixture name than to discover them per-seed mid-run.
+  if (materialiseStash && options.arms.includes("akm")) {
+    const { missing } = validateFixtureCorpus(options.tasks);
+    for (const [fixture, taskIds] of missing) {
+      const w = `fixture "${fixture}" missing MANIFEST.json — tasks will harness_error: ${taskIds.join(", ")}`;
+      process.stderr.write(`bench: WARNING: ${w}\n`);
+      warnings.push(w);
+    }
+  }
   const goldRankRecords: GoldRankAccumulator = [];
 
   // Progress tracking: compute total run count upfront so progress lines show

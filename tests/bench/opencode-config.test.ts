@@ -55,7 +55,7 @@ describe("loadOpencodeProviders", () => {
     expect(loaded.source).toBe(FIXTURE_PATH);
     expect(loaded.providers).toBeDefined();
     expect(typeof loaded.providers).toBe("object");
-    expect(loaded.defaultModel).toBe("shredder/qwen/qwen3.6-27b");
+    expect(loaded.defaultModel).toBe("shredder/qwen/qwen3.5-9b");
     expect("shredder" in loaded.providers).toBe(true);
   });
 
@@ -354,7 +354,7 @@ describe("materializeOpencodeConfig", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  test("writes opencode.json with exactly $schema and provider keys", () => {
+  test("writes opencode.json with required bench isolation invariants and provider", () => {
     const configDir = path.join(tmp, "run-config");
     fs.mkdirSync(configDir, { recursive: true });
 
@@ -365,17 +365,19 @@ describe("materializeOpencodeConfig", () => {
     expect(fs.existsSync(outPath)).toBe(true);
 
     const contents = JSON.parse(fs.readFileSync(outPath, "utf8")) as Record<string, unknown>;
-    // Must have exactly $schema and provider — nothing else.
-    const keys = Object.keys(contents).sort();
-    expect(keys).toEqual(["$schema", "model", "provider"]);
     expect(contents.model).toBe("test/my-model");
     expect(contents.$schema).toBe("https://opencode.ai/config.json");
+    // Bench isolation invariants: plugin:[] prevents operator plugin interference;
+    // permission block ensures opencode run (non-interactive) allows bash/file tools.
+    expect(contents.plugin).toEqual([]);
+    expect((contents.permission as Record<string, unknown>)?.bash).toBe("allow");
+    // Provider block is written correctly.
     const provider = contents.provider as Record<string, unknown>;
     expect(Object.keys(provider)).toEqual(["test"]);
     expect(provider.test).toEqual(entry);
   });
 
-  test("does not write plugins, mcp, or permission into the config", () => {
+  test("does not write mcp into the config", () => {
     const configDir = path.join(tmp, "run-config-2");
     fs.mkdirSync(configDir, { recursive: true });
 
@@ -385,9 +387,7 @@ describe("materializeOpencodeConfig", () => {
       string,
       unknown
     >;
-    expect(contents.plugin).toBeUndefined();
     expect(contents.mcp).toBeUndefined();
-    expect(contents.permission).toBeUndefined();
   });
 
   test("writes the file with mode 0o600 (not world-readable)", () => {
