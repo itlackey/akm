@@ -692,7 +692,7 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   if (assetType === "skill" || assetType === "knowledge") {
     lines.push("");
     lines.push("---");
-    lines.push("APPLY:");
+    lines.push("APPLY (only if no workflow step is required for this task):");
     lines.push(
       "  1. Find the workspace file to edit (check README.md in the current directory for the target file name).",
     );
@@ -700,6 +700,7 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
     lines.push(
       "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
     );
+    lines.push("If a workflow applies, run `akm workflow next` instead of editing directly.");
     lines.push(`Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds.`);
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
@@ -899,7 +900,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
       } else {
         lines.push(`Next: akm show '${topRef}'`);
         lines.push(
-          "After reading the asset: edit the workspace file using the schema fields and your task-specific values.",
+          "After reading the asset: check whether a workflow applies before editing — if so, use `akm workflow next` instead.",
         );
       }
     }
