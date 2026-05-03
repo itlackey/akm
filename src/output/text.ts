@@ -120,6 +120,8 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
         const flagText = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
         lines.push(`[${kind}] ${name}${ver}${prov}${flagText}`);
       }
+      lines.push("");
+      lines.push("To search: akm search '<query>'  |  To view an asset: akm show <ref>");
       return lines.join("\n");
     }
     case "add": {
@@ -781,7 +783,8 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   const allHits = [...hits, ...registryHits];
 
   if (allHits.length === 0) {
-    return r.tip ? String(r.tip) : "No results found.";
+    const base = r.tip ? String(r.tip) : "No matches found.";
+    return `${base}\nTip: try a broader query with \`akm search '<keywords>'\` or list all assets with \`akm list\``;
   }
 
   const lines: string[] = [];
@@ -836,8 +839,17 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   // doesn't skip `akm show` and write from training memory instead.
   if (hits.length >= 1) {
     const topRef = typeof hits[0].ref === "string" ? hits[0].ref : null;
+    const hasWorkflowHit = hits.some((h) => h.type === "workflow");
     if (topRef) {
-      lines.push(`Next: akm show '${topRef}'`);
+      if (hasWorkflowHit) {
+        const workflowRef = hits.find((h) => h.type === "workflow");
+        const wfRef = workflowRef && typeof workflowRef.ref === "string" ? workflowRef.ref : topRef;
+        lines.push(`Next: akm show '${topRef}'  |  To start a workflow: akm workflow next '${wfRef}'`);
+      } else {
+        lines.push(
+          `Next: akm show '${topRef}'  |  Tip: use 'akm show <ref>' to see full content and usage instructions`,
+        );
+      }
     }
   }
 
@@ -970,6 +982,9 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
       lines.push(`- ${String(warning)}`);
     }
   }
+
+  lines.push("");
+  lines.push("Next: akm show <ref>  |  To search further: akm search '<query>'");
 
   return lines.join("\n");
 }
