@@ -35,9 +35,9 @@ const report = await runUtility({
   opencodeProviders: providers,
 });
 
-process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
-const agg = (report as any).aggregate?.akm;
+const agg = report.aggregateAkm;
 process.stderr.write(`\n=== RESULTS vs BASELINE ===\n`);
 const BASELINE: Record<string, number> = {
   "inkwell/full-config": 0,
@@ -47,8 +47,8 @@ const BASELINE: Record<string, number> = {
   "inkwell/set-rate-limit": 0.6,
   "inkwell/new-service": 0.4,
 };
-for (const t of (report as any).tasks ?? []) {
-  const rate = t.akm?.pass_rate ?? 0;
+for (const t of report.tasks ?? []) {
+  const rate = t.akm?.passRate ?? 0;
   const base = BASELINE[t.id] ?? 0;
   const delta = rate - base;
   const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "=";
@@ -56,4 +56,4 @@ for (const t of (report as any).tasks ?? []) {
   const deltaStr = delta !== 0 ? ` (${arrow}${Math.abs(delta * 100).toFixed(0)}pp)` : "";
   process.stderr.write(`${t.id.padEnd(48)} ${(rate * 100).toFixed(0).padStart(3)}%  ${bar}${deltaStr}\n`);
 }
-process.stderr.write(`\nOverall: ${((agg?.pass_rate ?? 0) * 100).toFixed(1)}%\n`);
+process.stderr.write(`\nOverall: ${((agg?.passRate ?? 0) * 100).toFixed(1)}%\n`);
