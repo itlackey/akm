@@ -855,6 +855,21 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("");
   lines.push(`- correct_asset_loaded: ${formatPercent(input.trajectoryAkm.correctAssetLoaded)}`);
   lines.push(`- feedback_recorded: ${formatPercent(input.trajectoryAkm.feedbackRecorded)}`);
+  // Per-run trajectory detail: when allRuns is present emit a compact table
+  // so operators can distinguish null (harness error — no events captured)
+  // from false (agent ran, behaviour not observed) from true (confirmed).
+  // Symbols: "—" = null, "✗" = false, "✓" = true.
+  const akmRuns = (input.allRuns ?? []).filter((r) => r.arm === "akm");
+  if (akmRuns.length > 0) {
+    lines.push("");
+    lines.push("| task | seed | correct_asset_loaded | feedback_recorded |");
+    lines.push("|------|------|----------------------|-------------------|");
+    for (const r of akmRuns) {
+      lines.push(
+        `| ${r.taskId} | ${r.seed} | ${formatTrajBool(r.trajectory.correctAssetLoaded)} | ${formatTrajBool(r.trajectory.feedbackRecorded)} |`,
+      );
+    }
+  }
   lines.push("");
   lines.push("## Per-task pass rates");
   lines.push("");
@@ -1028,6 +1043,19 @@ function signed(text: string): string {
 function formatPercent(value: number | null): string {
   if (value === null) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+/**
+ * Render a `boolean | null` trajectory field for markdown tables.
+ *
+ * Three-state semantics:
+ * - `null`  → `"—"` — no trajectory data (harness error; events.jsonl not captured).
+ * - `false` → `"✗"` — agent ran but the behaviour was not observed.
+ * - `true`  → `"✓"` — behaviour confirmed.
+ */
+export function formatTrajBool(value: boolean | null): string {
+  if (value === null) return "—";
+  return value ? "✓" : "✗";
 }
 
 // ── Compare rendering (§8) ─────────────────────────────────────────────────

@@ -180,7 +180,20 @@ describe("bench CLI", () => {
 
   test("without --json: JSON still goes to stdout, markdown summary goes to stderr", () => {
     const r = run(
-      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000"],
+      // --no-noakm to keep run count at 1 arm (faster), since this test is
+      // about the stdout/stderr contract, not the noakm arm.
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "1000",
+        "--budget-wall-ms",
+        "1000",
+        "--no-noakm",
+      ],
       { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
     );
     expect(r.exitCode).toBe(0);
@@ -195,6 +208,54 @@ describe("bench CLI", () => {
     expect(r.stderr).toContain("# akm-bench utility");
     expect(r.stderr).toContain("## Aggregate");
     expect(r.stderr).toContain("tasks discovered:");
+  }, 60_000);
+
+  // ── C2: noakm arm now default-on; --no-noakm opts out ────────────────────
+
+  test("utility help mentions --no-noakm flag", () => {
+    const r = run(["help"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("--no-noakm");
+  });
+
+  test("utility default: aggregate includes noakm arm", () => {
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    const aggregate = parsed.aggregate as Record<string, unknown>;
+    expect(aggregate.noakm).toBeDefined();
+    expect(aggregate.akm).toBeDefined();
+    expect(aggregate.delta).toBeDefined();
+  }, 60_000);
+
+  test("utility --no-noakm: envelope is valid and contains akm arm", () => {
+    // When --no-noakm is passed the noakm arm does not run. The JSON envelope
+    // is still valid (aggregate.noakm exists but reflects zero runs); akm
+    // is present with real run data. Exit 0.
+    const r = run(
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "1000",
+        "--budget-wall-ms",
+        "1000",
+        "--no-noakm",
+        "--json",
+      ],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(parsed.schemaVersion).toBe(1);
+    const aggregate = parsed.aggregate as Record<string, unknown>;
+    expect(aggregate.akm).toBeDefined();
   }, 60_000);
 
   // ── #261: --include-synthetic flag ─────────────────────────────────────────
@@ -217,10 +278,8 @@ describe("bench CLI", () => {
         "1000",
         "--budget-wall-ms",
         "1000",
+        "--no-noakm", // isolate: test is about the synthetic arm, not noakm
         "--include-synthetic",
-        "--parallel",
-        "8",
-        "--force-parallel",
         "--json",
       ],
       { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
@@ -234,9 +293,21 @@ describe("bench CLI", () => {
 
   test("utility WITHOUT --include-synthetic: aggregate has no synthetic / akm_over_synthetic_lift", () => {
     // Byte-identical default contract: no spurious 'synthetic' keys when the
-    // flag is absent.
+    // flag is absent. Use --no-noakm for speed — this test is about synthetic, not noakm.
     const r = run(
-      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "1000",
+        "--budget-wall-ms",
+        "1000",
+        "--no-noakm",
+        "--json",
+      ],
       { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
     );
     expect(r.exitCode).toBe(0);
@@ -248,7 +319,20 @@ describe("bench CLI", () => {
 
   test("with --json: stderr carries no markdown summary", () => {
     const r = run(
-      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "1000", "--budget-wall-ms", "1000", "--json"],
+      // --no-noakm for speed — this test is about the json/stderr contract, not noakm.
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "1000",
+        "--budget-wall-ms",
+        "1000",
+        "--no-noakm",
+        "--json",
+      ],
       { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
     );
     expect(r.exitCode).toBe(0);

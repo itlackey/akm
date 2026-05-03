@@ -28,7 +28,7 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getTasksRoot, listTasks, type TaskMetadata } from "./corpus";
+import { effectiveSlice, getTasksRoot, listTasks, type TaskMetadata } from "./corpus";
 
 const STASHES_ROOT = path.resolve(getTasksRoot(), "..", "..", "stashes");
 
@@ -94,6 +94,105 @@ function readVerifierFiles(task: TaskMetadata): string {
   return combined;
 }
 
+/**
+ * Return the verifier assertion fragments for a task, applying an additional
+ * filter suitable for cross-task comparisons. Short two-word domain phrases
+ * (e.g. `akm feedback`, `akm search`) naturally recur across tasks that share
+ * a domain — they are NOT meaningful leakage signals. A fragment is considered
+ * meaningful only when it either:
+ *   • contains at least two spaces (three or more tokens), or
+ *   • contains a structural character (`=`, `[`, `(`) that marks it as a
+ *     complex expression unlikely to appear by coincidence.
+ *
+ * This is more precise than a raw length threshold because it captures the
+ * difference between `akm feedback` (12 chars, 2 tokens, no structure) and
+ * `.model == "anthropic/claude-opus-4-7"` (37 chars, structural `==`).
+ */
+function crossTaskFragments(task: TaskMetadata): string[] {
+  const isMeaningful = (f: string) => {
+    const spaceCount = (f.match(/ /g) ?? []).length;
+    return spaceCount >= 2 || /[=[(]/.test(f);
+  };
+  const raw: string[] = [];
+  if (task.verifier === "regex" && task.expectedMatch) {
+    raw.push(...regexLiterals(task.expectedMatch));
+  } else {
+    const verifierText = readVerifierFiles(task);
+    raw.push(...pytestStructuralFragments(verifierText));
+    raw.push(...shellAssertionFragments(verifierText));
+  }
+  return raw.filter(isMeaningful);
+}
+
+describe("cross-task eval/train verifier leakage check", () => {
+  const allTasks = listTasks();
+
+  // Group tasks by stash name.
+  const byStash = new Map<string, TaskMetadata[]>();
+  for (const task of allTasks) {
+    const group = byStash.get(task.stash) ?? [];
+    group.push(task);
+    byStash.set(task.stash, group);
+  }
+
+  // Only stashes that have BOTH train and eval tasks are interesting.
+  const mixedStashes = [...byStash.entries()].filter(([, tasks]) => {
+    const hasTrain = tasks.some((t) => effectiveSlice(t) === "train");
+    const hasEval = tasks.some((t) => effectiveSlice(t) === "eval");
+    return hasTrain && hasEval;
+  });
+
+  test("at least one stash has both train and eval tasks", () => {
+    expect(mixedStashes.length).toBeGreaterThan(0);
+  });
+
+  for (const [stashName, tasks] of mixedStashes) {
+    const trainTasks = tasks.filter((t) => effectiveSlice(t) === "train");
+    const evalTasks = tasks.filter((t) => effectiveSlice(t) === "eval");
+
+    // Train → Eval: train verifier fragments must not appear in eval verifier text.
+    // Skip pairs that are intentional train/eval variants of the same task family
+    // (e.g. inkwell/add-healthcheck-train vs inkwell/add-healthcheck) — they share
+    // field-access patterns by design, just with different expected values.
+    const isVariantPair = (trainId: string, evalId: string) => {
+      const trainBase = trainId.replace(/-train$/, "");
+      return trainBase === evalId || evalId.startsWith(trainBase + "-");
+    };
+    for (const trainTask of trainTasks) {
+      const trainFragments = crossTaskFragments(trainTask);
+      if (trainFragments.length === 0) continue;
+
+      for (const evalTask of evalTasks) {
+        if (isVariantPair(trainTask.id, evalTask.id)) continue;
+        const evalVerifierText = readVerifierFiles(evalTask);
+        test(`stash:${stashName} — train:${trainTask.id} fragments not in eval:${evalTask.id} verifier`, () => {
+          const leaked = trainFragments.filter((frag) => evalVerifierText.includes(frag));
+          expect(leaked, `fragments leaked from train verifier to eval verifier: ${JSON.stringify(leaked)}`).toEqual(
+            [],
+          );
+        });
+      }
+    }
+
+    // Eval → Train: eval verifier fragments must not appear in train verifier text.
+    for (const evalTask of evalTasks) {
+      const evalFragments = crossTaskFragments(evalTask);
+      if (evalFragments.length === 0) continue;
+
+      for (const trainTask of trainTasks) {
+        if (isVariantPair(trainTask.id, evalTask.id)) continue;
+        const trainVerifierText = readVerifierFiles(trainTask);
+        test(`stash:${stashName} — eval:${evalTask.id} fragments not in train:${trainTask.id} verifier`, () => {
+          const leaked = evalFragments.filter((frag) => trainVerifierText.includes(frag));
+          expect(leaked, `fragments leaked from eval verifier to train verifier: ${JSON.stringify(leaked)}`).toEqual(
+            [],
+          );
+        });
+      }
+    }
+  }
+});
+
 describe("gold-ref leakage check", () => {
   const tasks = listTasks().filter((t) => t.goldRef);
   test("at least one task ships with a gold_ref", () => {
@@ -108,8 +207,8 @@ describe("gold-ref leakage check", () => {
       // skipping here previously masked typos and stash-name drift; we now
       // fail loudly so the corpus author is forced to fix the reference.
       if (!goldPath) {
-        // Non-skill refs (workflow:, command:, etc.) are not leakage-checked.
-        // Only skill: refs map to a SKILL.md with content that could leak answers.
+        // Non-skill refs (workflow:, command:, etc.) are not leakage-checked —
+        // only skill: refs map to a SKILL.md that could leak answers.
         if (!/^skill:/.test(goldRef)) return;
         throw new Error(
           `${task.id}: gold_ref "${goldRef}" against stash "${task.stash}" did not resolve to a SKILL.md under tests/fixtures/stashes/. Fix the gold_ref, fix the stash name, or remove the gold_ref.`,

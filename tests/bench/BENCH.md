@@ -11,11 +11,9 @@ See `docs/technical/benchmark.md` for the full design.
 - `bun >= 1.0` (already required by the rest of the repo).
 - `opencode` CLI on `PATH`. The bench shells out via the built-in
   `opencode` profile in `src/integrations/agent/profiles.ts`.
-- A model to run against — either via `BENCH_OPENCODE_MODEL` env var or via a
-  `defaultModel` entry in the providers file (see "Config-driven opencode
-  provider" below). The model identifier is stamped into every `RunResult` and
-  the report envelope; `bench compare` refuses to diff reports run on different
-  models. If neither is configured, `bench utility` exits 2 with a usage error.
+- `BENCH_OPENCODE_MODEL` env var. The model identifier is stamped into
+  every `RunResult` and the report envelope; `bench compare` refuses to diff
+  reports run on different models.
 - For tasks with `verifier: pytest`, Python + `pytest` on `PATH`. Tasks whose
   runtime is missing produce `harness_error`, not `fail`.
 
@@ -24,15 +22,11 @@ See `docs/technical/benchmark.md` for the full design.
 The CLI is a thin Bun script:
 
 ```sh
-# With a providers file that has defaultModel — no env var needed:
-bun run tests/bench/cli.ts utility --tasks eval
-
-# Explicit model override (takes precedence over providers file):
 BENCH_OPENCODE_MODEL=anthropic/claude-opus-4-7 \
   bun run tests/bench/cli.ts utility --tasks eval
 
-# Machine-readable output:
-bun run tests/bench/cli.ts utility --tasks eval --json > report.json
+BENCH_OPENCODE_MODEL=anthropic/claude-haiku-4-5 \
+  bun run tests/bench/cli.ts utility --tasks all --json > report.json
 ```
 
 Subcommands:
@@ -47,38 +41,12 @@ Subcommands:
 Operators reading this guide want to know what's safe to trust. As of the
 current branch:
 
-| Subcommand | Status |
-|---|---|
-| `utility` | Implemented |
-| `evolve` | Implemented |
-| `compare` | Implemented |
-| `attribute` | Implemented |
-
-Subcommand notes:
-
-- `utility` — Paired `noakm`/`akm` Track A over the seeded corpus. Persists
-  raw `runs[]` (#249), stamps `taskCorpusHash` + `fixtureContentHash` (#250),
-  tracks `token_measurement.coverage` (#252), aggregates `corpus_coverage` per
-  memory ability + task family (#262). Optional `--include-synthetic` adds a
-  third self-notes arm (#261). Evaluates all workflow specs from
-  `tests/fixtures/bench/workflows/` against every run; results appended to
-  `workflowChecks` in the report.
-- `evolve` — Track B longitudinal three-phase runner: Phase 1 accumulates
-  feedback signal, Phase 2 invokes `akm distill` / `akm reflect` and auto-
-  accepts lint-passing proposals, Phase 3 re-evaluates under pre / post /
-  synthetic arms. `feedback_agreement < 0.80` gates the headline numbers
-  (see "Feedback-signal integrity" below). Numbers from `evolve` are
-  exploratory until a full domain run is complete and `feedback_agreement`
-  passes the threshold.
-- `compare` — Refuses model / `taskCorpusHash` / `fixtureContentHash` /
-  schema / track mismatches (exit 1); `--allow-corpus-mismatch` and
-  `--allow-fixture-mismatch` downgrade to warnings (#250). Input/parse errors
-  exit 2.
-- `attribute` — Top-N leave-one-out masking. Hydrates `runs[]` from the base
-  envelope when present (#249), falls back to synthesising runs from the
-  per-asset table for legacy reports. Always run a smoke check that
-  `attribution.maskedRefs` order matches the rows you expect before trusting
-  marginal-contribution numbers.
+| Subcommand | Status | Notes |
+|---|---|---|
+| `utility` | Implemented | Paired `noakm`/`akm` Track A over the seeded corpus. Persists raw `runs[]` (#249), stamps `taskCorpusHash` + `fixtureContentHash` (#250), tracks `token_measurement.coverage` (#252), aggregates `corpus_coverage` per memory ability + task family (#262). Optional `--include-synthetic` adds a third self-notes arm (#261). |
+| `compare` | Implemented | Refuses model / `taskCorpusHash` / `fixtureContentHash` / schema / track mismatches (exit 1); `--allow-corpus-mismatch` and `--allow-fixture-mismatch` downgrade to warnings (#250). Input/parse errors exit 2. |
+| `attribute` | Implemented | Top-N leave-one-out masking. Hydrates `runs[]` from the base envelope when present (#249), falls back to synthesising runs from the per-asset table for legacy reports. Masked-stash wiring fixed by #251 (`TaskMetadata.stashDirOverride`); always run a smoke check that the `attribution.maskedRefs` order matches the rows you expect before trusting marginal-contribution numbers. |
+| `evolve` | Stub | Track B (longitudinal feedback → distill → propose loop) is wired in `runEvolve`/`renderEvolveReport` for the wave-3 corpus, but the auto-accept evolution path is gated behind further validation. Treat numbers as exploratory until announced. |
 
 ### stdout / stderr contract
 
@@ -234,6 +202,11 @@ roadmap doc.
   `token_measurement.coverage < 0.95` or `token_measurement.reliable ===
   false`. Re-run with a model/profile that emits parseable token
   accounting before quoting cost deltas.
+- **Control arm present.** The noakm arm is included by default and is
+  the control condition for the primary utility metric:
+  `pass_rate(akm) − pass_rate(noakm)` (spec §4). Use `--no-noakm` only
+  when you explicitly want workflow-compliance-only measurement. Reports
+  built with `--no-noakm` cannot claim to measure marginal utility.
 - **Outcome distribution.** A meaningful run has both arms producing a
   mix of `pass` / `fail`. If every run is `harness_error`, you're
   measuring opencode availability, not akm utility — fix the runtime
@@ -459,40 +432,12 @@ double-fire. On signal, the handler:
 Re-entrant signals while cleanup is in flight are dropped. Operators who
 need a hard kill can press Ctrl-C twice.
 
-### Workflow eval system
-
-Six workflow spec YAMLs in `tests/fixtures/bench/workflows/` define
-behavioral checks evaluated against every `bench utility` run:
-
-| Spec | Applies to |
-|---|---|
-| `akm-lookup-before-edit` | akm arm; docker-homelab, az-cli, opencode, workflow-compliance domains |
-| `akm-correct-asset-use` | akm arm; docker-homelab, az-cli, opencode, eval, workflow-compliance domains |
-| `akm-feedback-after-use` | akm arm; docker-homelab, az-cli, opencode, eval, workflow-compliance (pass outcomes only) |
-| `akm-negative-feedback-on-failure` | akm arm; docker-homelab, az-cli, opencode, eval, workflow-compliance (fail outcomes only) |
-| `akm-proposal-review-before-accept` | akm arm; docker-homelab, az-cli, opencode, eval, workflow-compliance |
-| `akm-reflect-after-repeated-failure` | akm arm; docker-homelab, az-cli, opencode, eval, workflow-compliance (min 2 prior failures) |
-
-`specApplies(spec, { arm, taskId })` filters each spec against the run's arm
-and domain before scoring. Results for every applicable (run, spec) pair are
-appended to `workflowChecks` in the report envelope. The `corpus_coverage`
-block's workflow-focus rows aggregate per-task pass rate across matching specs.
-
-The `workflow-compliance` task domain has dedicated tasks (6 tasks:
-4 train + 2 eval) that test specific behavioral patterns — e.g. feedback
-polarity correctness, proposal review gates, and abstention. These tasks are
-designed to trigger the behavioral checks above; the workflow-compliance
-pass rate in `corpus_coverage` is the primary signal for spec compliance.
-
-A zero-coverage `corpus_coverage` workflow row indicates the spec was not
-applied (domain filter mismatch or no seeds ran), not that the agent passed.
-
 ### Workflow specs (#255)
 
 Declarative workflow rules live under `tests/fixtures/bench/workflows/*.yaml`
 and define what AKM agent behavior we expect for each task category. They
-are loaded by `tests/bench/workflow-spec.ts` and consumed by the compliance
-evaluator.
+are loaded by `tests/bench/workflow-spec.ts` and consumed by Wave 3's
+compliance evaluator (#256).
 
 **Authoring a spec.** Each YAML file holds one `WorkflowSpec`:
 
@@ -534,8 +479,8 @@ The loader rejects:
 when `root` is supplied the path-traversal guard is enforced.
 
 **Applying specs.** `specApplies(spec, { arm, taskId })` returns whether
-the spec's `applies_to` filters match the run. The evaluator calls this
-once per (run, spec) before scoring.
+the spec's `applies_to` filters match the run. Wave 3's evaluator calls
+this once per (run, spec) before scoring.
 
 **Errors.** All loader failures throw `WorkflowSpecError`, which carries
 `.code === "WORKFLOW_SPEC_INVALID"` for v1 contract compliance and

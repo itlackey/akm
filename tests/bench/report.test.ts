@@ -7,6 +7,7 @@ import fs from "node:fs";
 import type { RunResult } from "./driver";
 import type { PerTaskMetrics } from "./metrics";
 import {
+  formatTrajBool,
   type ReportInput,
   renderJsonReport,
   renderMarkdownSummary,
@@ -287,6 +288,60 @@ describe("serializeRunForReport", () => {
     const row = serializeRunForReport(run);
     expect(row.outcome).toBe("fail");
     expect(row.failure_mode).toBe("wrong_asset");
+  });
+});
+
+// ── formatTrajBool (M3) ───────────────────────────────────────────────────
+
+describe("formatTrajBool", () => {
+  test("null → '—' (harness error, no trajectory data)", () => {
+    expect(formatTrajBool(null)).toBe("—");
+  });
+
+  test("false → '✗' (agent ran, behaviour not observed)", () => {
+    expect(formatTrajBool(false)).toBe("✗");
+  });
+
+  test("true → '✓' (behaviour confirmed)", () => {
+    expect(formatTrajBool(true)).toBe("✓");
+  });
+});
+
+describe("renderUtilityReport per-run trajectory table (M3)", () => {
+  test("markdown includes per-run table when allRuns has akm runs", () => {
+    const allRuns = [
+      makeRun({
+        taskId: "domain-a/task-1",
+        arm: "akm",
+        seed: 0,
+        trajectory: { correctAssetLoaded: true, feedbackRecorded: false },
+      }),
+      makeRun({
+        taskId: "domain-a/task-1",
+        arm: "akm",
+        seed: 1,
+        trajectory: { correctAssetLoaded: null, feedbackRecorded: null },
+      }),
+      // noakm run should be excluded from the table
+      makeRun({
+        taskId: "domain-a/task-1",
+        arm: "noakm",
+        seed: 0,
+        trajectory: { correctAssetLoaded: false, feedbackRecorded: false },
+      }),
+    ];
+    const report: UtilityRunReport = { ...utilSample, allRuns };
+    const { markdown } = renderUtilityReport(report);
+    expect(markdown).toContain("| task | seed | correct_asset_loaded | feedback_recorded |");
+    expect(markdown).toContain("domain-a/task-1 | 0 | ✓ | ✗");
+    expect(markdown).toContain("domain-a/task-1 | 1 | — | —");
+    // noakm run must NOT appear in the akm-only trajectory table
+    // (the table is gated on arm === "akm")
+  });
+
+  test("markdown has no per-run trajectory table when allRuns is absent", () => {
+    const { markdown } = renderUtilityReport(utilSample);
+    expect(markdown).not.toContain("| task | seed | correct_asset_loaded | feedback_recorded |");
   });
 });
 

@@ -58,7 +58,7 @@ describe("listTasks", () => {
 
   test("seeds hand-authored tasks across all domains", () => {
     const tasks = listTasks();
-    expect(tasks).toHaveLength(38);
+    expect(tasks).toHaveLength(40);
     const byDomain = new Map<string, TaskMetadata[]>();
     for (const task of tasks) {
       const list = byDomain.get(task.domain) ?? [];
@@ -70,10 +70,10 @@ describe("listTasks", () => {
     );
     expect(byDomain.get("docker-homelab")).toHaveLength(6);
     expect(byDomain.get("az-cli")).toHaveLength(6);
-    expect(byDomain.get("opencode")).toHaveLength(5);
+    expect(byDomain.get("opencode")).toHaveLength(6);
     expect(byDomain.get("workflow-compliance")).toHaveLength(6);
     expect(byDomain.get("drillbit")).toHaveLength(7);
-    expect(byDomain.get("inkwell")).toHaveLength(8);
+    expect(byDomain.get("inkwell")).toHaveLength(9);
   });
 
   test("every task validates against the §13.1 schema", () => {
@@ -99,10 +99,10 @@ describe("listTasks", () => {
     const evalTasks = listTasks({ slice: "eval" });
     expect(train.every((t) => t.slice === "train")).toBe(true);
     expect(evalTasks.every((t) => t.slice === "eval")).toBe(true);
-    // 23 train (original 19 + 2 drillbit train + 2 inkwell train added in #Issue5)
-    // 15 eval  (14 original + 1 inkwell/workflow-configure-scaling)
+    // 23 train (19 + 2 drillbit train + 2 inkwell train)
+    // 17 eval  (15 prior + 2 new: inkwell/full-config + opencode/select-correct-skill)
     expect(train).toHaveLength(23);
-    expect(evalTasks).toHaveLength(15);
+    expect(evalTasks).toHaveLength(17);
   });
 });
 

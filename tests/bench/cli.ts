@@ -67,9 +67,10 @@ utility flags:
                            (default: 1 — sequential). Clamped to [1, 8]. Values > 4
                            print a warning unless --force-parallel is also set.
   --force-parallel         suppress the high-parallelism warning when --parallel > 4.
-  --include-noakm          include the noakm baseline arm (default: off). The fictional eval
-                           corpus has ~0% noakm pass rate by design — only needed to validate
-                           task calibration, not for measuring AKM utility.
+  --no-noakm               exclude the noakm baseline arm (default: included). The noakm arm is
+                           the control condition — pass_rate(akm) − pass_rate(noakm) is the
+                           primary utility metric. Omit only when you are measuring workflow
+                           compliance rather than marginal utility.
   --include-synthetic      add a third 'synthetic' arm where the model writes/uses its own
                            scratch notes (no AKM stash). Reports akm_over_synthetic_lift so
                            operators can see whether AKM beats a self-notes baseline.
@@ -245,10 +246,10 @@ export interface UtilityCliOptions {
    */
   includeSynthetic?: boolean;
   /**
-   * Include the noakm baseline arm. Default `false` for eval runs where the
-   * fictional task corpus guarantees a ~0% noakm pass rate, making the arm
-   * redundant for utility measurement. Pass `--include-noakm` to add it back
-   * for task calibration validation.
+   * Include the noakm baseline arm. Default `true` — the noakm arm is the
+   * control condition; `pass_rate(akm) − pass_rate(noakm)` is the primary
+   * utility metric (spec §4). Pass `--no-noakm` to exclude it when you are
+   * measuring workflow compliance rather than marginal utility.
    */
   includeNoakm?: boolean;
   /**
@@ -282,9 +283,10 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   const sliceFilter = options.slice === "all" ? undefined : options.slice;
   const tasks = listTasks(sliceFilter ? { slice: sliceFilter } : {});
 
-  // noakm arm is opt-in: on fictional eval tasks it has ~0% pass rate so it
-  // adds cost without utility signal. Include it only for calibration checks.
-  const arms: ("noakm" | "akm")[] = options.includeNoakm ? ["noakm", "akm"] : ["akm"];
+  // noakm arm is included by default: it is the control condition for the
+  // primary utility metric (pass_rate(akm) − pass_rate(noakm), spec §4).
+  // Pass --no-noakm (options.includeNoakm === false) to exclude it.
+  const arms: ("noakm" | "akm")[] = options.includeNoakm === false ? ["akm"] : ["noakm", "akm"];
 
   const report = await runUtility({
     tasks,
@@ -432,14 +434,6 @@ export interface AttributeCliOptions {
   fixturesRoot?: string;
   /** Test seam: override the model stamped on masked re-runs. */
   modelOverride?: string;
-  /**
-   * Pre-loaded opencode provider config. Forwarded into the real masked runner
-   * so re-runs use the same local provider config as the original utility run.
-   * When omitted, the masked runner leaves the OPENCODE_CONFIG dir empty and
-   * opencode falls back to cloud-provider defaults — which is unacceptable for
-   * local-provider models.
-   */
-  opencodeProviders?: LoadedOpencodeProviders;
 }
 
 export interface AttributeCliResult {
@@ -555,14 +549,7 @@ export async function runAttributeCli(options: AttributeCliOptions): Promise<Att
     seedsPerArm,
   };
 
-  // When using the real (default) masked runner, wrap it to forward
-  // opencodeProviders so masked re-runs use the same local provider config
-  // as the original utility run. Test seams supply their own runner and are
-  // not affected by this wrapping.
-  const maskedRunner =
-    options.runUtility ??
-    ((opts: Parameters<typeof defaultMaskedRunner>[0]) =>
-      defaultMaskedRunner({ ...opts, opencodeProviders: options.opencodeProviders }));
+  const maskedRunner = options.runUtility ?? defaultMaskedRunner;
   let maskedResult: MaskedCorpusResult;
   try {
     maskedResult = await runMaskedCorpus({
@@ -633,7 +620,6 @@ async function defaultMaskedRunner(
     tasks: TaskMetadata[];
     spawn?: RunUtilityOptionsForMask["spawn"];
     materialiseStash?: boolean;
-    opencodeProviders?: LoadedOpencodeProviders;
   },
 ): Promise<UtilityRunReport> {
   const arms = options.arms;
@@ -650,7 +636,6 @@ async function defaultMaskedRunner(
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.spawn ? { spawn: options.spawn } : {}),
     ...(options.materialiseStash !== undefined ? { materialiseStash: options.materialiseStash } : {}),
-    ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
   });
 }
 
@@ -834,7 +819,6 @@ export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCl
     budgetTokens: options.budgetTokens,
     budgetWallMs: options.budgetWallMs,
     negativeThreshold: options.negativeThreshold,
-    ...(options.opencodeProviders ? { opencodeProviders: options.opencodeProviders } : {}),
     ...(options.branch !== undefined ? { branch: options.branch } : {}),
     ...(options.commit !== undefined ? { commit: options.commit } : {}),
     ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
@@ -897,7 +881,7 @@ async function main(argv: string[]): Promise<number> {
           parallel: parseInt32(parsed.flags.get("parallel"), 1),
           ...(parsed.bool.has("force-parallel") ? { forceParallel: true } : {}),
           ...(parsed.bool.has("include-synthetic") ? { includeSynthetic: true } : {}),
-          ...(parsed.bool.has("include-noakm") ? { includeNoakm: true } : {}),
+          ...(parsed.bool.has("no-noakm") ? { includeNoakm: false } : {}),
           ...(opencodeProviders ? { opencodeProviders } : {}),
         });
       } finally {
@@ -990,12 +974,15 @@ async function main(argv: string[]): Promise<number> {
         process.stderr.write(`bench attribute: ${err instanceof Error ? err.message : String(err)}\n`);
         return exitCode;
       }
+      // Suppress unused variable warning — opencodeProvidersAttr is exposed for
+      // future wiring when runMaskedCorpus accepts it. For now it only validates.
+      void opencodeProvidersAttr;
+
       const topN = parseInt32(parsed.flags.get("top"), 5);
       const result = await runAttributeCli({
         basePath,
         topN,
         json: parsed.bool.has("json"),
-        ...(opencodeProvidersAttr ? { opencodeProviders: opencodeProvidersAttr } : {}),
       });
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
