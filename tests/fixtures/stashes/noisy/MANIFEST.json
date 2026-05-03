@@ -5,6 +5,7 @@
   "assets": { "skill": 7, "knowledge": 20, "command": 12, "agent": 1, "script": 2 },
   "consumers": [
     "tests/fixtures/bench/tasks/* (Track A — robustness corpus, future)",
-    "tests/ranking-regression.test.ts (noise-tolerance ranking, future)"
+    "tests/ranking-regression.test.ts (noise-tolerance ranking, future)",
+    "tests/fixtures/bench/tasks/workflow-compliance/distractor-docker-port-publish (gold_ref: skill:docker — intentional distractor task)"
   ]
 }

@@ -60,6 +60,28 @@ export type WorkflowTraceEventType =
   | "verifier_run"
   | "agent_finished";
 
+/** Runtime set of all valid workflow trace event names. Single source of truth. */
+export const WORKFLOW_TRACE_EVENT_NAMES = new Set<WorkflowTraceEventType>([
+  "agent_started",
+  "akm_search",
+  "akm_show",
+  "akm_feedback",
+  "akm_reflect",
+  "akm_distill",
+  "akm_propose",
+  "akm_proposal_accept",
+  "akm_workflow_start",
+  "akm_workflow_next",
+  "akm_workflow_complete",
+  "akm_workflow_finish",
+  "workspace_read",
+  "workspace_write",
+  "first_workspace_write",
+  "test_run",
+  "verifier_run",
+  "agent_finished",
+]);
+
 /** Where the evidence for an event came from. */
 export type WorkflowTraceSource = "akm_events" | "agent_stdout" | "filesystem_diff" | "harness" | "verifier";
 

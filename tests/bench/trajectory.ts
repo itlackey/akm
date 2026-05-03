@@ -77,8 +77,8 @@ function computeCorrectAssetLoaded(
   const ref = task.goldRef;
 
   // Search the events stream for any tool-call event that carries the ref.
-  // akm itself does not emit an event for `show`, but third parties might,
-  // and the field is forward-compatible.
+  // akm show emits an event to events.jsonl, so this path is the primary
+  // detection route when the structured event stream is available.
   for (const event of runResult.events) {
     const refField = event.ref;
     if (typeof refField === "string" && matchesRef(refField, ref)) return true;

@@ -1,6 +1,6 @@
 # akm-bench seeded corpus
 
-Thirty-seven hand-authored tasks across six domains. Each task references a
+Thirty-eight hand-authored tasks across six domains. Each task references a
 fixture stash by name (`tests/fixtures/stashes/<name>/`). The `_example/`
 subtree exists for loader unit tests and is excluded by `listTasks()` by
 default — see `tests/bench/corpus.ts`.

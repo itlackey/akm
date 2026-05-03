@@ -58,6 +58,8 @@ export type EventType =
   | "workflow_started"
   | "workflow_step_completed"
   | "workflow_finished"
+  | "search"
+  | "show"
   | string;
 
 export interface AppendEventInput {

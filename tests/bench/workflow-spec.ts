@@ -9,9 +9,8 @@
  *   - `loadWorkflowSpec(path, root?)` — parses + validates one file
  *   - `loadAllWorkflowSpecs(dir)` — walks a workflows directory
  *
- * Event names are validated against a HARDCODED set in this file. Once
- * #254 lands, #256 will reconcile by importing the source-of-truth set
- * from `workflow-trace.ts`. Until then this set is the contract.
+ * Event names are validated against `WORKFLOW_TRACE_EVENT_NAMES` imported from
+ * `workflow-trace.ts` — single source of truth, no dual-maintenance hazard.
  *
  * Asset refs (e.g. `gold_ref`) are validated via `parseAssetRef` from
  * `src/core/asset-ref.ts` — never reinvent ref validation.
@@ -22,40 +21,24 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { parseAssetRef } from "../../src/core/asset-ref";
+import { WORKFLOW_TRACE_EVENT_NAMES } from "./workflow-trace";
 
-// ── Event-name set (hardcoded; reconcile with #254 in wave 3) ──────────────
+// ── Event-name set (derived from workflow-trace.ts — single source of truth) ─
 
 /**
- * Hardcoded event-name allowlist. Mirrors the WorkflowTraceEvent.kind set
- * specified in the #254 brief.
+ * Allowlist of known event names, derived from `WORKFLOW_TRACE_EVENT_NAMES` in
+ * `workflow-trace.ts`. Using the exported runtime Set eliminates the dual-
+ * maintenance hazard: add a new event type once in `workflow-trace.ts` and
+ * both the normalizer and the spec validator see it automatically.
  *
  * `first_workspace_write` is a synthetic marker (the first `workspace_write`
  * for a run) and is included so specs can talk about it directly.
  */
-export const KNOWN_EVENT_NAMES = Object.freeze([
-  "agent_started",
-  "akm_search",
-  "akm_show",
-  "akm_feedback",
-  "akm_reflect",
-  "akm_distill",
-  "akm_propose",
-  "akm_proposal_accept",
-  "akm_workflow_start",
-  "akm_workflow_next",
-  "akm_workflow_complete",
-  "akm_workflow_finish",
-  "workspace_read",
-  "workspace_write",
-  "test_run",
-  "verifier_run",
-  "agent_finished",
-  "first_workspace_write",
-] as const);
+export const KNOWN_EVENT_NAMES = WORKFLOW_TRACE_EVENT_NAMES;
 
-export type WorkflowEventName = (typeof KNOWN_EVENT_NAMES)[number];
+export type WorkflowEventName = typeof WORKFLOW_TRACE_EVENT_NAMES extends Set<infer T> ? T : never;
 
-const EVENT_NAME_SET: ReadonlySet<string> = new Set<string>(KNOWN_EVENT_NAMES);
+const EVENT_NAME_SET: ReadonlySet<string> = KNOWN_EVENT_NAMES;
 
 function isKnownEvent(name: unknown): name is WorkflowEventName {
   return typeof name === "string" && EVENT_NAME_SET.has(name);
@@ -178,7 +161,7 @@ function requireNumber(obj: Record<string, unknown>, key: string, specPath: stri
 function validateEventName(name: unknown, specPath: string, where: string): WorkflowEventName {
   if (!isKnownEvent(name)) {
     throw new WorkflowSpecError(
-      `Unknown event name "${String(name)}" in ${where}. ` + `Allowed: ${KNOWN_EVENT_NAMES.join(", ")}`,
+      `Unknown event name "${String(name)}" in ${where}. ` + `Allowed: ${[...KNOWN_EVENT_NAMES].join(", ")}`,
       specPath,
     );
   }

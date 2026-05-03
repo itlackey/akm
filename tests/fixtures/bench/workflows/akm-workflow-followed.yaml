@@ -7,7 +7,7 @@ description: |
   by writing directly without consulting it.
 applies_to:
   arms: ["akm"]
-  task_domains: ["workflow-compliance"]
+  task_domains: ["workflow-compliance", "inkwell"]
 required_sequence:
   - event: agent_started
   - event: akm_search
