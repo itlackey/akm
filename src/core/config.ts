@@ -33,12 +33,25 @@ export interface EmbeddingConnectionConfig extends BaseConnectionConfig {
   dimension?: number;
   /** Optional local transformer model name (e.g. "Xenova/bge-small-en-v1.5"). Overrides the default when using local embeddings. */
   localModel?: string;
-  /** Maximum tokens per document chunk sent to the embedding API */
+  /** Max tokens per document chunk before splitting. */
   maxTokens?: number;
-  /** Number of documents to embed per API batch */
+  /** Documents per embedding API batch (default 100). */
   batchSize?: number;
-  /** Maximum characters per text chunk before splitting */
+  /** Max characters per text chunk before splitting. */
   chunkSize?: number;
+  /**
+   * Context window size passed as `num_ctx` to Ollama's native `/api/embed` endpoint.
+   * Has no effect on non-Ollama providers. Use when long documents produce 400 errors
+   * from the embedding model's default context limit (e.g. set to 8192 for most models).
+   */
+  contextLength?: number;
+  /**
+   * Arbitrary options forwarded verbatim as the `options` field in the Ollama
+   * native `/api/embed` request body. Takes precedence over `contextLength` when both
+   * are set. Use this for Ollama-specific tunables not covered by first-class fields.
+   * Example: `{ "num_ctx": 8192 }`
+   */
+  ollamaOptions?: { num_ctx?: number };
 }
 
 export interface LlmCapabilities {
@@ -779,40 +792,30 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
   if (localModel) {
     result.localModel = localModel;
   }
-  if ("maxTokens" in obj) {
+  if ("contextLength" in obj) {
     if (
-      typeof obj.maxTokens !== "number" ||
-      !Number.isFinite(obj.maxTokens) ||
-      !Number.isInteger(obj.maxTokens) ||
-      obj.maxTokens <= 0
+      typeof obj.contextLength !== "number" ||
+      !Number.isFinite(obj.contextLength) ||
+      !Number.isInteger(obj.contextLength) ||
+      obj.contextLength <= 0
     ) {
-      warn(`[akm] Ignoring embedding.maxTokens: expected a positive integer, got ${JSON.stringify(obj.maxTokens)}`);
-    } else {
-      result.maxTokens = obj.maxTokens;
+      return undefined;
     }
+    result.contextLength = obj.contextLength;
   }
-  if ("batchSize" in obj) {
+  if (typeof obj.ollamaOptions === "object" && obj.ollamaOptions !== null && !Array.isArray(obj.ollamaOptions)) {
+    const opts = obj.ollamaOptions as Record<string, unknown>;
+    const parsed: EmbeddingConnectionConfig["ollamaOptions"] = {};
     if (
-      typeof obj.batchSize !== "number" ||
-      !Number.isFinite(obj.batchSize) ||
-      !Number.isInteger(obj.batchSize) ||
-      obj.batchSize <= 0
+      typeof opts.num_ctx === "number" &&
+      Number.isFinite(opts.num_ctx) &&
+      Number.isInteger(opts.num_ctx) &&
+      opts.num_ctx > 0
     ) {
-      warn(`[akm] Ignoring embedding.batchSize: expected a positive integer, got ${JSON.stringify(obj.batchSize)}`);
-    } else {
-      result.batchSize = obj.batchSize;
+      parsed.num_ctx = opts.num_ctx;
     }
-  }
-  if ("chunkSize" in obj) {
-    if (
-      typeof obj.chunkSize !== "number" ||
-      !Number.isFinite(obj.chunkSize) ||
-      !Number.isInteger(obj.chunkSize) ||
-      obj.chunkSize <= 0
-    ) {
-      warn(`[akm] Ignoring embedding.chunkSize: expected a positive integer, got ${JSON.stringify(obj.chunkSize)}`);
-    } else {
-      result.chunkSize = obj.chunkSize;
+    if (Object.keys(parsed).length > 0) {
+      result.ollamaOptions = parsed;
     }
   }
   return result;

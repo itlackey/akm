@@ -376,6 +376,7 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       mxbai: 1024,
       minilm: 384,
       bge: 384,
+      qwen3: 1024,
     };
     const guessedDim = Object.entries(knownDims).find(([k]) => embChoice.includes(k))?.[1] ?? 384;
     p.note(
@@ -400,6 +401,18 @@ async function stepOllama(current: AkmConfig): Promise<OllamaChoices> {
       model: embChoice,
       dimension: Number(dimChoice),
     };
+
+    p.note(
+      [
+        "Recommended Qwen embedding models (modern, high context support):",
+        "  • qwen3-embedding-0.6b  — fast and lightweight (ollama pull qwen3-embedding-0.6b)",
+        "  • qwen3-embedding-4b    — higher quality (ollama pull qwen3-embedding-4b)",
+        "",
+        "For long documents (wiki pages, large files), set context length to avoid 400 errors:",
+        "  akm config set embedding.contextLength 8192",
+      ].join("\n"),
+      "Embedding tips",
+    );
   }
   // else: undefined → use built-in local
 

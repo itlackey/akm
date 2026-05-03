@@ -202,11 +202,6 @@ roadmap doc.
   `token_measurement.coverage < 0.95` or `token_measurement.reliable ===
   false`. Re-run with a model/profile that emits parseable token
   accounting before quoting cost deltas.
-- **Control arm present.** The noakm arm is included by default and is
-  the control condition for the primary utility metric:
-  `pass_rate(akm) − pass_rate(noakm)` (spec §4). Use `--no-noakm` only
-  when you explicitly want workflow-compliance-only measurement. Reports
-  built with `--no-noakm` cannot claim to measure marginal utility.
 - **Outcome distribution.** A meaningful run has both arms producing a
   mix of `pass` / `fail`. If every run is `harness_error`, you're
   measuring opencode availability, not akm utility — fix the runtime
@@ -586,20 +581,6 @@ contains no credentials.
 (owner-read/write only). The file is ephemeral — it lives inside the per-run
 isolated `OPENCODE_CONFIG` tmpdir and is removed when the run finishes.
 
-## Baseline reports
-
-Saved baselines for use with `bench compare` to measure future improvements.
-Use `bench compare <baseline.json> <new.json>` — reports must share the same
-model, schemaVersion, taskCorpusHash, and fixtureContentHash.
-
-| File | Model | Date | Commit | Pass rate | Notes |
-|---|---|---|---|---|---|
-| `tests/bench/baseline-qwen9b-2026-05-03.json` | shredder/qwen/qwen3.5-9b | 2026-05-03 | 32c70aa | 68.2% (58/85) | akm arm, --no-noakm, 17 eval tasks × 5 seeds |
-
-Dominant failure mode: `search_no_gold` (25/27 failures) — model searched but
-did not show the correct asset before writing. Use this baseline when measuring
-the impact of stash search-signal improvements.
-
 ## Pointers
 
 - Plan: `docs/technical/benchmark.md`.
@@ -609,3 +590,33 @@ the impact of stash search-signal improvements.
 - Provider file schema: `schemas/bench-opencode-providers.schema.json`.
 - Committed provider fixture: `tests/fixtures/bench/opencode-providers.json`.
 - Operator overlay (gitignored): `tests/fixtures/bench/opencode-providers.local.json`.
+
+## Embedding 400 errors (context too long)
+
+If `akm index` produces 400 errors from the embedding endpoint, the model's
+context window is too small for some documents in the bench corpus.
+
+Solutions (in order of preference):
+
+1. Switch to a model with a larger default context window:
+   ```sh
+   ollama pull qwen3-embedding-0.6b   # fast, lightweight
+   akm config set embedding.model qwen3-embedding-0.6b
+   ```
+
+2. Set context length per-request (Ollama native endpoint, no restart needed):
+   ```sh
+   akm config set embedding.contextLength 8192
+   ```
+   This adds `"options": { "num_ctx": 8192 }` to every `/api/embed` call. Works
+   with any model served by Ollama; has no effect on non-Ollama providers.
+
+3. Set the environment variable before starting Ollama (global, requires restart):
+   ```sh
+   OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+   ```
+
+4. Reduce the indexer chunk size so individual documents fit the default window:
+   ```sh
+   akm config set embedding.chunkSize 2000
+   ```

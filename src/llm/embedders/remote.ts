@@ -11,10 +11,7 @@ import type { Embedder, EmbeddingVector } from "./types";
 
 const DEFAULT_REMOTE_BATCH_SIZE = 100;
 
-/**
- * Estimate token count from character count using the ~4 chars/token heuristic.
- * No external dependency — pure arithmetic.
- */
+/** Cheap token estimator: 4 chars ≈ 1 token. Used in verbose logging and error messages. */
 export function estimateTokenCount(text: string): number {
   return Math.round(text.length / 4);
 }
@@ -24,12 +21,16 @@ export class RemoteEmbedder implements Embedder {
 
   async embed(text: string): Promise<EmbeddingVector> {
     const headers = this.buildHeaders();
-    const body: { input: string; model: string; dimensions?: number } = {
+    const body: { input: string; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
       input: text,
       model: this.config.model,
     };
     if (this.config.dimension) {
       body.dimensions = this.config.dimension;
+    }
+    const ollamaOpts = resolveOllamaOptions(this.config);
+    if (ollamaOpts) {
+      body.options = ollamaOpts;
     }
 
     const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
@@ -59,17 +60,19 @@ export class RemoteEmbedder implements Embedder {
     const results: EmbeddingVector[] = [];
     const headers = this.buildHeaders();
 
+    const ollamaOpts = resolveOllamaOptions(this.config);
     const batchSize = this.config.batchSize ?? DEFAULT_REMOTE_BATCH_SIZE;
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      const batchNum = Math.floor(i / batchSize) + 1;
-      const totalBatches = Math.ceil(texts.length / batchSize);
-      const body: { input: string[]; model: string; dimensions?: number } = {
+      const body: { input: string[]; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
         input: batch,
         model: this.config.model,
       };
       if (this.config.dimension) {
         body.dimensions = this.config.dimension;
+      }
+      if (ollamaOpts) {
+        body.options = ollamaOpts;
       }
 
       const response = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
@@ -79,51 +82,8 @@ export class RemoteEmbedder implements Embedder {
       });
 
       if (!response.ok) {
-        const respBody = (await response.text().catch(() => "")).slice(0, 500);
-        const docInfo = batch
-          .map((text, idx) => `  [${i + idx}] ${text.length} chars, est. ${estimateTokenCount(text)} tokens`)
-          .join("\n");
-        const baseMsg =
-          `Embedding API ${response.status} on batch ${batchNum}/${totalBatches} ` +
-          `(${batch.length} doc${batch.length === 1 ? "" : "s"}):\n${docInfo}\nResponse: ${respBody}`;
-
-        // On 400, retry each document individually to isolate the offender.
-        if (response.status === 400 && batch.length > 1) {
-          const offenders: number[] = [];
-          for (let j = 0; j < batch.length; j++) {
-            const singleBody: { input: string; model: string; dimensions?: number } = {
-              input: batch[j],
-              model: this.config.model,
-            };
-            if (this.config.dimension) {
-              singleBody.dimensions = this.config.dimension;
-            }
-            const singleRes = await fetchWithTimeout(normalizeEmbeddingEndpoint(this.config.endpoint), {
-              method: "POST",
-              headers,
-              body: JSON.stringify(singleBody),
-            });
-            if (!singleRes.ok) {
-              offenders.push(i + j);
-            } else {
-              // Consume body to avoid resource leak
-              await singleRes.json().catch(() => {});
-            }
-          }
-          if (offenders.length > 0) {
-            const offenderInfo = offenders
-              .map(
-                (absIdx) =>
-                  `  [${absIdx}] ${batch[absIdx - i].length} chars, est. ${estimateTokenCount(batch[absIdx - i])} tokens`,
-              )
-              .join("\n");
-            throw new Error(
-              `${baseMsg}\nIsolation retry identified ${offenders.length} offending doc${offenders.length === 1 ? "" : "s"} (zero-based indices in full batch):\n${offenderInfo}`,
-            );
-          }
-        }
-
-        throw new Error(baseMsg);
+        const respBody = await response.text().catch(() => "");
+        throw new Error(`Embedding batch request failed (${response.status}): ${respBody}`);
       }
 
       const json = (await response.json()) as {
@@ -194,6 +154,28 @@ function embeddingEndpointPathHint(endpoint: string): string {
     return ` Check that your endpoint includes the full embeddings path (for example "${normalizedEndpoint}", not just "${endpoint}").`;
   }
   return "";
+}
+
+/**
+ * Resolve Ollama-native `options` from the embedding config.
+ *
+ * Resolution order:
+ *   1. `ollamaOptions` — forwarded verbatim (explicit opt-in, takes precedence).
+ *   2. `contextLength` — wrapped as `{ num_ctx: contextLength }`.
+ *   3. Neither set → returns `undefined` (no `options` field in the request body).
+ *
+ * These options are only meaningful for Ollama's native `/api/embed` endpoint.
+ * OpenAI-compatible endpoints ignore unknown request fields, so passing them to
+ * other providers is harmless but has no effect.
+ */
+function resolveOllamaOptions(config: EmbeddingConnectionConfig): { num_ctx?: number } | undefined {
+  if (config.ollamaOptions && Object.keys(config.ollamaOptions).length > 0) {
+    return config.ollamaOptions;
+  }
+  if (config.contextLength) {
+    return { num_ctx: config.contextLength };
+  }
+  return undefined;
 }
 
 /** Check whether an EmbeddingConnectionConfig has a valid remote endpoint. */
