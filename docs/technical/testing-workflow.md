@@ -136,6 +136,48 @@ The Docker smoke test in `tests/docker/smoke-test.sh` verifies:
 - `akm list`
 - incremental re-index after adding a new asset
 
+### 4. Benchmark (agent utility)
+
+Run benchmarks after any change to `src/output/`, `src/commands/show.ts`, fixture
+stashes, APPLY directives, or other content that affects what agents see.
+
+**Smoke test** (quick, always before pushing after the above changes):
+
+```sh
+bun run tests/bench/run-nano-quick.ts > /tmp/bench-nano-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+tail -f /tmp/bench-nano-*.log   # monitor progress
+```
+
+5 tasks × 2 seeds, ~10 min, model: `shredder/qwen/qwen3.5-9b`.
+
+**Full corpus** (deeper changes or before a release):
+
+```sh
+bun run tests/bench/run-full-bench.ts > /tmp/bench-full-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+```
+
+40 tasks × 5 seeds, ~2–3 hours.
+
+**Targeted batch** (fixing specific tasks):
+
+Copy an existing `run-*-targeted.ts`, edit `TARGET_TASKS`, then run:
+
+```sh
+bun run tests/bench/run-items36-targeted.ts > /tmp/bench-targeted-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+```
+
+**Reading results**: stderr shows `[N/total] task-id arm pass|fail Xs` per run;
+final lines show per-task pass rate and overall. Look for regressions vs baseline.
+
+**Fixture validity**: stash assets must teach HOW (YAML syntax, flags, schema),
+not WHAT (task-specific values). Review new content before committing.
+
+**Doctor check** (if harness was recently modified):
+
+```sh
+bun run tests/bench/doctor.ts
+```
+
 ## Recommended Workflow
 
 ### Normal change

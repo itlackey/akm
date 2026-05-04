@@ -9,7 +9,12 @@ bun test                              # Run all tests
 bunx biome check --write src/ tests/  # Lint and format (run before every commit)
 bunx tsc --noEmit                     # Type-check without emitting
 bun run tests/benchmark-suite.ts      # Scoring benchmarks
+bun run tests/bench/run-nano-quick.ts # Quick agent bench smoke test (5 tasks × 2 seeds, ~10 min)
+bun run tests/bench/run-full-bench.ts # Full 40-task agent bench corpus (~2-3 hours)
+bun run tests/bench/doctor.ts         # Bench harness health check
 ```
+
+Run nano-quick after changes to `src/output/`, `src/commands/show.ts`, or fixture stashes. Bench output goes to stdout (JSON) and stderr (progress); redirect to `/tmp/bench-*.log`. Fixture stash content must teach syntax/schema (HOW), not task-specific answer values (WHAT).
 
 ## Project Structure
 

@@ -1,10 +1,37 @@
-# akm-bench: Evaluation & Benchmarking Framework — Detailed Plan
+# akm-bench: Evaluation & Benchmarking Framework
 
-**Status:** Proposal (2026-04-27).
-**Target branch:** `release/0.7.0`.
-**Companion docs:** `docs/technical/v1-architecture-spec.md`, `docs/reviews/v1-agent-reflection-issues.md`, `tests/BENCHMARKS.md`.
+**Status:** Implemented (v0.7.0+).
+**Location:** `tests/bench/` (harness), `tests/fixtures/bench/` (corpus), `tests/fixtures/stashes/` (shared fixture stashes).
+**Companion docs:** `docs/technical/v1-architecture-spec.md`, `tests/BENCHMARKS.md`.
 
-## 1. What this is and why
+## 1. Quick Start
+
+Run the benchmarks:
+
+```sh
+# 5-task smoke test (~10 min)
+bun run tests/bench/run-nano-quick.ts
+
+# Full 40-task × 5-seed corpus on default model (qwen3.5-9b)
+bun run tests/bench/run-full-bench.ts
+
+# 9 targeted tasks (previously-failing or items 3-6 verification)
+bun run tests/bench/run-waveg-targeted.ts
+bun run tests/bench/run-items36-targeted.ts
+
+# Bench doctor — harness health check
+bun run tests/bench/doctor.ts
+```
+
+Model selection via `tests/fixtures/bench/opencode-providers.json` (or `.local.json` override). Default output goes to stderr (progress lines `[N/total] task-id arm pass|fail Xs`); JSON report to stdout. Redirect to a file:
+
+```sh
+bun run tests/bench/run-full-bench.ts > /tmp/bench-results-$(date +%s).log 2>&1 &
+```
+
+Two arms: `akm` (agent has stash access) and `noakm` (baseline). Targeted scripts often run `akm` arm only via `--no-noakm`. Current baseline (qwen3.5-9b, 2026-05-03): ~67% pass rate on 40 tasks (akm arm).
+
+## 2. What this is and why
 
 akm v1 ships three self-improvement surfaces — `feedback`, `reflect`, `propose`, `distill` — all funneled through a durable proposal queue that a human accepts. The existing `tests/benchmark-suite.ts` and `tests/ranking-regression.test.ts` are excellent at one specific job: validating that the search pipeline returns the right asset for a query, fast, with consistent scoring. They do not measure what the v1 self-improvement surfaces are actually for: making an agent *do its job better* over time.
 
@@ -17,7 +44,7 @@ A third question — "did this akm code change regress the above?" — is answer
 
 The bench is run manually by the operator. It is not wired into CI. The framework produces JSON output and a markdown report, and a `compare` subcommand diffs two reports.
 
-## 2. State of the art (April 2026)
+## 3. Methodology: State of the art (April 2026)
 
 The framework draws on three lines of recent work, none of which fits akm directly but all of which shape the methodology.
 
@@ -31,7 +58,7 @@ The framework draws on three lines of recent work, none of which fits akm direct
 
 The closest existing artifact in the akm repo is `tests/benchmark-suite.ts`, which measures the search subsystem in isolation. akm-bench is its sibling — it measures the agent-plus-akm system end-to-end.
 
-## 3. What akm v1 already gives us
+## 4. v1 contract surfaces
 
 Before designing new infrastructure, what's already there:
 
@@ -49,22 +76,31 @@ Before designing new infrastructure, what's already there:
 | Search ranking regression tests | `tests/ranking-regression.test.ts` | shipped |
 | Search-quality benchmark | `tests/benchmark-suite.ts`, `tests/benchmark-search-quality.ts` | shipped |
 
-The pieces akm-bench needs that *don't* exist yet:
+All pieces are now implemented:
 
-- A small task corpus with ground-truth verifiers.
-- A set of reusable **fixture stashes** — curated bundles of assets that both bench tasks and `bun:test` suites can reference by name, so search behavior verified in unit tests is verified against the same content the benchmark scores on.
-- An opencode-driven harness that can run with akm enabled and disabled, against any model the operator selects.
-- A multi-episode driver that materializes feedback → distill → accept between episodes.
-- Aggregation/comparison across runs (current branch vs main, before evolution vs after).
-- JSON output and a markdown report.
+- **Task corpus with ground-truth verifiers:** `tests/fixtures/bench/tasks/` — deterministic pytest/script/regex verifiers. 40+ tasks across 6 domains (docker-homelab, az-cli, inkwell, opencode, litellm-manager, etc.).
+- **Fixture stashes:** `tests/fixtures/stashes/<name>/` — reusable curated asset bundles referenced by name from both bench tasks and unit tests. Shared `loadFixtureStash()` helper in `tests/fixtures/stashes/load.ts`. MANIFEST.json in each fixture declares purpose and consumers.
+- **Opencode harness:** `tests/bench/driver.ts` — runs with akm enabled and disabled, model-configurable via `tests/fixtures/bench/opencode-providers.json`.
+- **Multi-episode driver:** `tests/bench/run-*-bench.ts` scripts drive the full evaluation loop.
+- **JSON + markdown output:** structured reporting with aggregation, per-task breakdown, trajectory metrics, attribution analysis.
+- **Compare subcommand:** diff two runs, refuse cross-model comparisons, surface deltas.
 
-The plan below builds those pieces. It does not modify any locked v1 contract; it only consumes them.
+The framework is stable and requires no further v1 contract modifications.
 
-## 4. Two benchmark tracks
+## 5. Fixture validity principle
+
+All stash assets in the benchmark corpus must teach *HOW* (syntax, schema, patterns, examples), never *WHAT* (task-specific values that would give away the answer).
+
+**Good:** A skill documenting docker-compose healthcheck patterns with examples, redis-cli usage, and general port-health idioms.
+**Bad:** A skill that says "the answer to the redis-healthcheck task is `healthcheck: { test: redis-cli ping }`."
+
+The same discipline applies to knowledge docs, commands, and agents in fixture stashes. The corpus review process checks for this at task-creation time to prevent data leakage. If an asset revision would leak answers, it's edited or moved out of scope.
+
+## 6. Two benchmark tracks
 
 `akm-bench` ships as two tracks with one shared driver. Each track answers exactly one of the questions in §1.
 
-### Track A — Marginal utility (`bench utility`)
+### 6.1 Track A — Marginal utility
 
 **Question:** With the same model, harness, task, and seed, does giving the agent akm change resolve rate and/or token economics?
 
@@ -87,7 +123,7 @@ Each arm is run `K` times (default 5) with different seeds. The verifier is dete
 
 Trajectory metrics are not pass/fail but they explain pass-rate deltas. If `delta_pass_rate ≤ 0` and `loaded_correct_asset` is also low, the agent isn't using akm — that's an akm UX problem, not a "akm doesn't help" finding.
 
-### Track B — Self-improvement effectiveness (`bench evolve`)
+### 6.2 Track B — Self-improvement effectiveness
 
 **Question:** Does the feedback → distill → propose → accept loop produce assets that measurably improve the agent on a held-out slice?
 
@@ -118,9 +154,9 @@ Proposals are then accepted via `akm proposal accept <id>` by the bench harness 
 
 The `synthetic` baseline matters because SkillsBench's headline finding is that models can't reliably author their own procedural knowledge. If `post` doesn't beat `synthetic` by a meaningful margin, akm's distillation isn't contributing more than free-form scratchpad notes would.
 
-## 5. Architecture
+## 7. Architecture
 
-### 5.1 Directory layout
+### 7.1 Directory layout (implemented)
 
 The harness lives entirely under `tests/bench/` and `tests/fixtures/bench/`. No new top-level directory; no source changes outside `tests/`. This matches the existing `tests/benchmark-suite.ts` placement and keeps the contract surface tight.
 
@@ -150,7 +186,7 @@ tests/
 
 Seven files under `tests/bench/`, one shared fixture tree, one bench-specific fixture tree. The shared `fixtures/stashes/` directory is the architectural shift in this revision — see §5.5.
 
-### 5.2 The driver (`tests/bench/driver.ts`)
+### 7.2 The driver (`tests/bench/driver.ts`)
 
 The driver is the only thing that orchestrates a run. Its job is small and well-bounded so the same code powers all three tracks:
 
@@ -197,7 +233,7 @@ Hard budgets via `budgetTokens` / `budgetWallMs` use `runAgent`'s existing timeo
 
 The model string is stamped into every `RunResult` and every aggregate report. `bench compare` refuses to diff two reports run on different models and prints the mismatch instead.
 
-### 5.3 Verifier (`tests/bench/verifier.ts`)
+### 7.3 Verifier (`tests/bench/verifier.ts`)
 
 One dispatcher, three verifier kinds:
 
@@ -209,7 +245,7 @@ One dispatcher, three verifier kinds:
 
 This mirrors SWE-Skills-Bench's "deterministic verifiers" rule. **No LLM-as-judge anywhere in the verifier path.** Trajectory metrics may use string parsing on the event stream but never an LLM to score outcomes — the published failure rate of LLM judges (>50% per Galileo's 2026 review) makes them unsuitable for measurement, and "let the agent grade itself" defeats the whole point.
 
-### 5.4 Corpus & slicing (`tests/bench/corpus.ts`)
+### 7.4 Corpus & slicing (`tests/fixtures/bench/tasks/`)
 
 Tasks are loaded from `tests/fixtures/bench/tasks/<domain>/<task-id>/`. Each task declares:
 
@@ -234,7 +270,7 @@ The corpus loader produces two slices, deterministically partitioned by `id` has
 
 Initial corpus targets ~30 tasks across 4-6 domains the user already has fixtures for — docker-homelab, az-cli, litellm-manager, opencode are obvious starting points. Each domain contributes 6-10 tasks split roughly 50/50 train/eval. The corpus is meant to grow; the format is the contract, the count is not.
 
-### 5.5 Fixture stashes (`tests/fixtures/stashes/`)
+### 7.5 Fixture stashes (`tests/fixtures/stashes/`)
 
 A reusable fixture stash is a curated, hand-authored bundle of akm assets that lives at `tests/fixtures/stashes/<name>/` and can be referenced by name from any test or bench task. This is the cross-cutting artifact the rest of the framework depends on.
 
@@ -301,9 +337,9 @@ The bench driver uses the same helper, so identical content is loaded the same w
 
 **Versioning rule.** Fixture stashes are content under version control. Any change to a fixture invalidates baseline benchmark results that referenced it — `bench compare` checks the fixture-content hash and refuses to compare runs across fixture changes. This is the same discipline `tests/ranking-fixtures/` already implies but doesn't enforce.
 
-## 6. Metrics catalog
+## 8. Metrics catalog
 
-### 6.1 Outcome metrics
+### 8.1 Outcome metrics
 
 All outcome metrics aggregate over `K` seeds per (task, arm) and produce a per-task value plus a corpus-wide aggregate.
 
@@ -316,7 +352,7 @@ All outcome metrics aggregate over `K` seeds per (task, arm) and produce a per-t
 
 `pass@1` is the headline — it's the single-shot experience the user actually feels. `pass_rate` over K seeds smooths model noise.
 
-### 6.2 Trajectory metrics
+### 8.2 Trajectory metrics
 
 Computed by parsing `events.jsonl` and the agent's tool-call output. None of these affect pass/fail; they exist to *explain* pass-rate deltas.
 
@@ -327,7 +363,7 @@ Computed by parsing `events.jsonl` and the agent's tool-call output. None of the
 
 Trajectory metrics are reported next to outcome metrics — never instead of them. If `delta_pass_rate ≤ 0` and `correct_asset_loaded` is also low, the agent isn't using akm — that's an akm UX problem, not a "akm doesn't help" finding. The two metrics here are the minimum needed to make that distinction; richer trace analysis is post-v1.
 
-### 6.3 Proposal-quality metrics (Track B only)
+### 8.3 Proposal-quality metrics (Track B only)
 
 For each proposal produced during Phase 2:
 
@@ -338,7 +374,7 @@ For each proposal produced during Phase 2:
 
 These are *quality* metrics for the proposal itself, distinct from whether the resulting accepted asset improves agent performance. SkillLearnBench's three-level evaluation insists on this separation and it matters: a lesson can be well-formed (high `lint_pass`) but useless (low `improvement_slope`), or scrappy but transformative — both failure modes are real and they need different fixes.
 
-### 6.4 Longitudinal metrics (Track B only)
+### 8.4 Longitudinal metrics (Track B only)
 
 | Metric | Definition |
 |---|---|
@@ -351,7 +387,7 @@ These are *quality* metrics for the proposal itself, distinct from whether the r
 
 `over_synthetic_lift` is the keystone metric for Track B. If `post` doesn't beat `synthetic`, akm's distill/reflect/propose machinery is, on this corpus, no better than asking the agent to take its own notes. That's a finding worth knowing — it tells the user where to invest improvement effort.
 
-### 6.5 Attribution metrics (per-asset diagnostics)
+### 8.5 Attribution metrics (per-asset diagnostics)
 
 The §6.1-6.4 metrics produce aggregate scores. Aggregate scores tell you whether akm is helping; they don't tell you *which assets* in the stash are doing the work. SWE-Skills-Bench's headline finding — 39 of 49 public skills produced zero pass-rate improvement — applies to any skill library, including the operator's. Without per-asset attribution, the bench can't drive curation decisions.
 
@@ -369,7 +405,7 @@ Two complementary signals, both cheap:
 
 The attribution output is the single most actionable artifact the bench produces: a sorted list of assets whose removal *would* reduce pass rate (keep them, possibly improve them) and assets whose removal *wouldn't* (candidates for deletion, consolidation, or reflection-driven rewrite).
 
-### 6.6 Failure-mode taxonomy (per-task diagnostics)
+### 8.6 Failure-mode taxonomy (per-task diagnostics)
 
 A failed task in the akm arm currently produces one bit (`outcome: "fail"`) plus the verifier's stdout. That bit can hide several distinct failure modes that demand different fixes:
 
@@ -387,7 +423,7 @@ Classification is mechanical — string-matching on `events.jsonl` and the agent
 
 The same taxonomy applies to Track B's `degradation_count` — when `post` underperforms `pre` on a specific eval task, the failure-mode tag tells you whether the regression is from a low-quality lesson (`followed_wrong` flips), context interference (`loaded_wrong` shifts), or unrelated noise.
 
-### 6.7 Search-pipeline bridge
+### 8.7 Search-pipeline bridge
 
 `tests/benchmark-suite.ts` measures MRR and Recall@K against synthetic queries on the `ranking-baseline` fixture. akm-bench measures pass rate against real tasks. The two are completely disconnected — when search MRR moves from 0.92 to 0.95, there's currently no way to know whether the change translates to any task-level lift, or whether agents are robust to ranking slop above rank 3.
 
@@ -403,7 +439,7 @@ The bridge is built from data the bench already collects. For each `akm search` 
 
 The last metric is the bridge. It answers: "if the gold ref was at rank 1, did the agent succeed more than when it was at rank 4?" If yes, ranking improvements above rank-3 actually move outcomes. If not, the agent is robust to rank slop and tuning effort should go elsewhere. Either result is actionable; without this metric, search-pipeline changes get evaluated against synthetic MRR deltas that may or may not matter.
 
-### 6.8 Feedback-signal integrity (Track B only)
+### 8.8 Feedback-signal integrity (Track B only)
 
 Track B's entire loop assumes the agent's `akm feedback ±` calls are accurate. If the agent records `--positive` on a task it actually failed, distillation processes garbage and `improvement_slope` is built on noise. The bench currently has no check for this.
 
@@ -423,23 +459,23 @@ The check is a 2×2 confusion matrix joining each `feedback` event with the veri
 
 Reported per-asset and aggregate. If `feedback_agreement` < 80%, Track B's input signal is noisy and the headline `over_synthetic_lift` number is unreliable until the AGENTS.md guidance gets tightened. This is the metric that protects the integrity of every other Track B number.
 
-## 7. Isolation and reproducibility
+## 9. Isolation and reproducibility
 
-### 7.1 No Docker for v1
+### 9.1 Tmpdirs + env isolation (no Docker required)
 
 Each run uses tmpdirs and per-process env isolation; Docker is not required. `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `AKM_STASH_DIR`, and `OPENCODE_CONFIG` all point at fresh tmpdirs so two parallel runs never collide and the operator's personal config is never touched. Verifiers shell out to `pytest` / `bash` in the workspace; if a task's verifier needs a runtime that isn't on the operator's machine, that task is skipped with a clear message.
 
 Operators who want stronger isolation can wrap the run in `docker run` themselves — the bench is just a Bun process reading and writing tmpdirs, it doesn't care. Containerizing the full corpus is a Phase-3+ activity tied to publishing the corpus externally.
 
-### 7.2 Seed and budget discipline
+### 9.2 Seed and budget discipline
 
 Every run carries an explicit seed (default: `0..K-1` where K=5) recorded in the output. opencode-and-LLM combinations don't honor seeds meaningfully — the seed is logged for traceability but real reproducibility comes from K-seed averaging. Budgets are hard: `budgetTokens` and `budgetWallMs` are enforced via `runAgent`'s existing timeout. The `budget_exceeded` outcome is *not* a fail — it's a third state so cost regressions don't hide as quality regressions.
 
-### 7.3 Model selection is part of the run identity
+### 9.3 Model selection is part of the run identity
 
 Because outcome metrics are model-dependent, the model string is stamped into every output and `bench compare` refuses to diff runs that used different models. The recovery path is "rerun on the same model" — `bench compare` prints the mismatch so the operator knows what to do.
 
-### 7.4 Data leakage prevention
+### 9.4 Data leakage prevention
 
 Following SkillsBench's leakage audit and SWE-Bench Pro's contamination principles:
 
@@ -447,92 +483,24 @@ Following SkillsBench's leakage audit and SWE-Bench Pro's contamination principl
 - Gold assets in the curated stash are **not** identical to the verifier — a skill that documents docker-compose patterns is fine; a skill that says "the answer to `redis-healthcheck` is `healthcheck: { test: redis-cli ping }`" is a leak. The corpus reviewer checks for this.
 - Eval-slice tasks are excluded from any LLM-visible content the akm stash provides during distillation. The driver enforces this by stash-rebuilding between Phase 1 and Phase 3 with the eval slice's gold-ref content stripped, so the agent can't be asked to "distill a lesson from feedback on a task it's about to be re-tested on."
 
-## 8. Wiring into the existing test suite
+## 10. Integration with v1 test infrastructure
 
-The framework reuses what's there rather than duplicating it.
+The benchmark reuses existing akm contract surfaces:
 
-| Existing artifact | Role in akm-bench |
-|---|---|
-| `tests/benchmark-suite.ts` | Independent search-pipeline benchmark; runs alongside the bench, not consumed by it. |
-| `tests/ranking-regression.test.ts` | Pre-flight check: bench refuses to run if any regression test fails. |
-| `tests/distill.test.ts` | Validation harness for proposal-quality metrics. |
-| `tests/proposed-quality.test.ts` | Confirms `quality: "proposed"` filtering — the bench depends on this being correct. |
-| `tests/benchmark-compare.sh` | Template for `bench compare` (two-branch diff). |
-| `src/integrations/agent/profiles.ts` (opencode profile) | The agent surface for every track; bench reuses the locked v1 profile rather than defining its own. |
+- **Fixture stashes shared with unit tests:** `tests/ranking-regression.test.ts` and `tests/benchmark-suite.ts` both use `loadFixtureStash()` helper to reference the same assets the bench runs against. One source of truth.
+- **Event stream and proposal queue:** bench consumes the same `events.jsonl` and proposal validation that `src/core/events.ts` and `src/core/proposals.ts` provide.
+- **Agent profiles:** bench reuses the locked `opencode` profile from `src/integrations/agent/profiles.ts` rather than defining its own harness.
+- **Deterministic verifiers:** no LLM-as-judge anywhere. Tasks use `pytest`, bash scripts, or regex matching — same discipline as the existing search benchmarks.
 
-The new `tests/bench/cli.ts` exposes:
+**K=5 seeds + per-task reporting.** Results are non-deterministic with LLMs; K=5 seeds per task+arm with per-task variance reporting lets operators see which tasks are stable signal vs. flaky. The bench runs manually when measurement is needed, not per-PR.
 
-```sh
-# Track A — paired noakm vs akm utility benchmark
-BENCH_OPENCODE_MODEL=anthropic/claude-opus-4-7 \
-  bun run tests/bench/cli.ts utility --tasks all
+**Corpus quality via leakage review.** The corpus is small and user-authored; every task is reviewed at creation for answer leakage (§5). Deterministic verifiers only (no LLM-as-judge).
 
-# Track B — longitudinal evolution loop
-BENCH_OPENCODE_MODEL=anthropic/claude-opus-4-7 \
-  bun run tests/bench/cli.ts evolve --tasks docker-homelab
+**Auto-accept scoping choice.** Track B accepts all lint-passing proposals automatically; mixing human judgment would break reproducibility. The number reported is "what the loop produces under auto-accept" — operators interpret accordingly. Human review is post-v1.
 
-# Compare two runs (e.g. before/after an akm change). Refuses to diff
-# different models or different tracks.
-bun run tests/bench/cli.ts compare --base path/to/baseline.json --current path/to/current.json
-```
+**No new dependencies.** Bench is pure Bun + stdlib + existing packages. Verifiers shell out to `pytest` / bash. No Docker required for v1.
 
-Output to stdout is a single JSON document; human-readable summary to stderr (matching the `--json` flag convention in `benchmark-suite.ts`). To regression-check an akm change, run Track A on the base branch, run it on the feature branch, and `compare` the two JSON files.
-
-## 9. Phased implementation
-
-Two phases. Each produces something usable on its own. None require modifying `src/` — the bench reads v1 contract surfaces (events, proposal queue, agent profiles) and consumes them from outside.
-
-### Phase 1 — Track A end-to-end (~2 weeks)
-
-The whole utility-benchmark stack plus the cross-cutting fixture-stashes work and the three Track-A diagnostic metrics (attribution, failure-mode taxonomy, search-pipeline bridge).
-
-Deliverables:
-- **Fixture stashes (cross-cutting).** Migrate `tests/ranking-fixtures/stash/` to `tests/fixtures/stashes/ranking-baseline/`; author the four other initial fixtures (`minimal`, `docker-homelab`, `az-cli`, `multi-domain`); write the shared `loadFixtureStash()` helper; update `ranking-regression.test.ts` and `benchmark-suite.ts` to use the new helper. This is a prerequisite for everything else and benefits the existing test suite immediately.
-- **Bench skeleton.** All seven files under `tests/bench/` (cli, driver, corpus, verifier, metrics, report, BENCH.md).
-- **Harness.** `runAgent`-based opencode integration with isolated `OPENCODE_CONFIG`.
-- **Corpus.** 15-20 hand-crafted tasks across 3 domains (docker-homelab, az-cli, opencode), each referencing a fixture stash by name.
-- **Outcome + trajectory metrics.** `bench utility --tasks <slice>` produces a paired `noakm` vs `akm` JSON report with `pass_rate`, `pass@1`, `tokens_per_pass`, `wallclock_ms`, `correct_asset_loaded`, `feedback_recorded`.
-- **Diagnostic metrics (§6.5-6.7).** Per-asset attribution table (`load_pass_rate`, load counts) computed as post-processing on every Track A run. Failure-mode taxonomy classifier producing the labeled failure breakdown. Search-pipeline bridge metrics (`gold_rank_distribution`, `pass_rate_by_rank`).
-- **Attribution subcommand.** `bench attribute --base <run.json> --top N` consumes a Track A run and re-runs the corpus N times with each top-loaded asset masked, producing `marginal_pass_contribution` for those assets.
-- **Compare.** `bench compare --base a.json --current b.json` produces a markdown diff; refuses to compare across models or fixture-content hashes.
-
-Done = a single Track A run produces a JSON+markdown report containing the aggregate score *and* an actionable per-asset attribution table, a per-task failure-mode breakdown, and a search-rank-to-outcome histogram. Comparing two runs surfaces deltas across all of these dimensions.
-
-### Phase 2 — Track B longitudinal driver (~2.5 weeks)
-
-The evolution loop, its scoring, and the feedback-integrity check that gates trust in everything else.
-
-Deliverables:
-- **Three-phase runner.** Signal accumulation on train slice → `akm distill` + `akm reflect` invocation per asset with negative feedback → auto-accept all lint-passing proposals → re-eval on eval slice.
-- **Synthetic arm.** Model is asked to produce its own scratch notes per task and consume them during the run.
-- **Proposal-quality metrics.** Per-asset `lint_pass`, `accepted`.
-- **Longitudinal metrics.** `improvement_slope`, `over_synthetic_lift`, `degradation_count`, `acceptance_rate`.
-- **Feedback-signal integrity (§6.8).** Confusion matrix joining `feedback ±` events with same-run verifier outcomes. `feedback_agreement`, false-positive/negative rates per asset and corpus-wide. Reported alongside Track B's headline numbers so operators can see whether the loop's input signal is trustworthy before reading the slope.
-- **Reuse of Phase 1 diagnostics.** Track B re-uses §6.5-6.7 — attribution shows which evolved assets are doing the work, failure-mode shows whether degradations are content problems or context interference, search bridge shows whether new lessons are findable.
-
-Done = a single command runs the full evolution loop on a domain slice and produces a longitudinal report whose top line is `improvement_slope` and whose second line is `feedback_agreement` — operators see the lift number paired with the integrity number that determines whether to trust it.
-
-## 10. Risks and mitigations
-
-**Risk: real-model bench is non-deterministic, results drift between runs.**
-Mitigation: K=5 seeds per (task, arm) is the floor; report per-task variance alongside means. The bench is run manually when the operator wants a measurement, so the latency cost of K seeds is a one-time choice, not a per-PR friction.
-
-**Risk: corpus quality is the whole game; bad tasks make the bench useless.**
-Mitigation: explicit `slice: train|eval` partitioning. Per-task review for leakage at creation time. Start small (15-20 tasks) and only grow after Phase 1 shows stable signal.
-
-**Risk: SkillsBench/SWE-Skills-Bench results suggest skills often don't help. The bench may produce embarrassing numbers for akm.**
-Mitigation: this is a feature, not a bug. The bench is what tells the operator *which* assets are pulling weight and which are noise — that's the input to curation. Per-task variance is reported prominently rather than buried under a corpus average.
-
-**Risk: auto-accept inflates `improvement_slope` relative to what a human reviewer would actually merge.**
-Acknowledgement, not mitigation: this is a deliberate scoping choice. The bench measures the loop as a system; mixing in human judgment would make runs unrepeatable. The reported number is "what would the loop produce if every lint-passing proposal were accepted" — operators interpret accordingly. Human-in-the-loop is post-v1.
-
-**Risk: trajectory metrics rely on string-matching the event stream; akm changes that rename events silently break the bench.**
-Mitigation: the event-type union is part of the v1 contract (§9.7). Trajectory metrics depend only on contract-stable event names. Contract-test coverage in `tests/architecture/` and `tests/proposed-quality.test.ts` already catches schema violations on the PR that introduces them — the bench depends on `bun test` being green, not on its own schema check.
-
-**Risk: framework grows beyond the user's "low-dependency, composable" aesthetic.**
-Mitigation: bench is pure Bun + standard library + the same packages already in `package.json`. No new prod dependencies. Verifiers shell out to `pytest`/`bash`. No Docker required.
-
-## 11. Out of scope for v1
+## 12. Out of scope for v1
 
 Listed explicitly so the boundary is clear:
 
@@ -545,41 +513,20 @@ Listed explicitly so the boundary is clear:
 - **Public leaderboard / corpus.** Internal only for v1.
 - **MCP-server wrapping.** Bench is CLI in / JSON out, like the rest of akm.
 
-## 12. Future improvements
+## 13. Future enhancements (post-v1)
 
-These are the next-most-valuable additions once Phase 1-2 are landed and have produced enough data to justify investment. They are explicitly *not* in v1 scope but are documented so the framework can grow into them without retrofitting.
+- **Per-seed variance metrics.** Flag flaky tasks (stdev > 0.2) that need verifier hardening. Data is already collected.
+- **Token decomposition by akm phase.** Split `tokens_per_pass` across search-prompt, show-content, action-prompt to validate "every token earns its place."
+- **Run-trace persistence.** Optionally dump full opencode session logs for deep-dive debugging of specific failures.
+- **Prompt-optimization feedback loop.** Wrap bench signal in GEPA (ICLR 2026) to auto-tune akm's own reflect/propose/distill prompts against real-world data.
+- **Multi-objective reporting.** Render Pareto fronts across (pass rate, tokens, wallclock) to surface cost-quality tradeoffs.
+- **Public corpus contribution.** Factor sanitized tasks into an akm registry kit for external users to run and contribute back.
+- **Human-in-the-loop accept gate.** Measure gap between auto-accept slope and human-curated slope to quantify human reviewer value.
+- **Cross-model evaluation matrix.** Run same corpus on multiple models to measure (model × akm) interaction: do gains concentrate on frontier, small, or all tiers equally?
 
-### 12.1 Higher-resolution observability
+## 14. Reference: task schemas
 
-- **Per-seed variance as a first-class metric.** K=5 seeds are currently averaged. Surface stdev per task and flag tasks with stdev > 0.2 as "flaky" — they contaminate aggregates and probably need verifier hardening before they belong in the corpus. Cheap to add; the data is already collected, only the reporting changes.
-- **Token decomposition by akm phase.** Total `tokens_per_pass` is one number; in the akm arm those tokens split across search-prompt, show-content, and action-prompt phases. Splitting them tells you whether the "Every token must earn its place" principle is paying off. Requires logging per-tool-call token usage, which opencode supports.
-- **Run-trace persistence behind a flag.** RunResult already carries `events`; add `--save-traces` that dumps the full opencode session log next to each run's JSON. Don't default it — traces are MB per run — but make them retrievable when a failure deserves a deep dive. Pairs naturally with the failure-mode taxonomy in §6.6: a `followed_wrong` run is more useful when its trace is on disk and reviewable.
-
-### 12.2 Reflective optimization of akm's own prompts
-
-The bench produces structured per-task signal (outcome, trajectory, failure-mode label). Wrapping that signal in the `dspy.Prediction(score=..., feedback=...)` shape lets the operator run akm's `buildReflectPrompt` / `buildProposePrompt` / distill `SYSTEM_PROMPT` through GEPA (ICLR 2026 oral, +13-20% over MIPROv2/GRPO at 35× fewer rollouts). This is prompt optimization for *akm itself*, not for the user's stash — it would tune the prompts in `src/integrations/agent/prompts.ts` and `src/commands/distill.ts` against real-world bench data.
-
-The integration is mostly an output-format adapter. The constraint is that GEPA needs a Python toolchain alongside Bun, which is a meaningful new dependency for the project's CLI-first aesthetic. A reasonable shape is a separate `tests/bench/gepa/` Python script that consumes the bench's JSON output and emits prompt-optimization runs — keeping the dependency optional and out-of-process.
-
-### 12.3 Multi-objective reporting
-
-SkillMOO (Apr 2026) optimizes skill bundles on (pass rate, cost) jointly via NSGA-II. The bench's `tokens_per_pass` is a natural second axis, and `wallclock_ms` is a natural third. Rendering Pareto fronts across runs surfaces whether akm is winning quality or losing cost — important when comparing "akm + a frontier model" against "no akm + a frontier model" against "akm + a small local model," which is the configuration matrix opencode makes trivially explorable.
-
-### 12.4 Public corpus contribution
-
-Once the internal corpus is stable and the fixture-stash format has settled, factor a sanitized subset out as a kit on the akm registry. Other akm users could run their own stashes through it and contribute back domains. Docker isolation becomes worth the cost at this point — internal operators trust their own machines, public contributors don't.
-
-### 12.5 Continuous loop closure
-
-v1 keeps the proposal-accept gate auto-accept-only and human review out of scope. A natural Phase 3 introduces a third arm to Track B: `human_curated`, where the operator manually reviews each proposal before it lands. The gap between `auto_accept` slope and `human_curated` slope quantifies how much value the human gate adds — currently an open empirical question.
-
-### 12.6 Cross-model evaluation matrix
-
-The bench currently refuses to compare runs across models. A future `bench matrix` subcommand would deliberately run the same corpus under multiple models and produce the model × akm interaction grid: does akm help frontier models and small models equally, or are gains concentrated at one end? SkillsBench's finding (a smaller model with curated skills can match a larger model without them) is suggestive, but specific to skills they wrote — running the akm fixtures through the same matrix would tell the operator whether "akm + Haiku" is a viable substitute for "Opus alone" in their domains.
-
-## 13. Appendix — concrete schemas and a sample task
-
-### 13.1 `task.yaml` schema
+### 14.1 `task.yaml` schema
 
 ```yaml
 id: <domain>/<task-name>           # required, unique, kebab-case
@@ -599,7 +546,7 @@ metadata:                          # optional, free-form
   notes: ...
 ```
 
-### 13.2 Sample task
+### 14.2 Sample task
 
 `tests/fixtures/bench/tasks/docker-homelab/redis-healthcheck/task.yaml`:
 
@@ -644,7 +591,7 @@ Per-task expected behavior:
 - `akm` arm: agent runs `akm search "redis healthcheck docker-compose"`, loads `skill:docker-homelab`, follows the documented pattern. Expected pass rate: high.
 - Track B: if the `noakm` arm fails enough times that the skill receives `--negative` feedback, distill produces a lesson clarifying the healthcheck pattern. Phase 3 re-evaluation should show pass rate climbing on this task and similar ones.
 
-### 13.3 Sample run output (Track A)
+### 14.3 Sample run output (Track A)
 
 ```jsonc
 {
