@@ -14,3 +14,4 @@ tests/fixtures/openviking/workspace/viking/_system/accounts.json
 tests/fixtures/bench/opencode-providers.local.json
 tests/bench/*.json
 **/__pycache__/
+tests/bench/baselines/
