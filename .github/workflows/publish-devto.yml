@@ -26,14 +26,12 @@ jobs:
         with:
           node-version: 22
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
-        run: npm ci
-
-      - name: Normalize dev.to posts
-        run: npm run lint:devto-posts:fix
-
-      - name: Validate dev.to posts
-        run: npm run lint:devto-posts
+        run: bun install
 
       - name: Collect changed post files
         id: changed-posts
@@ -77,23 +75,8 @@ jobs:
         if: steps.changed-posts.outputs.count != '0'
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
-          EXPECTED_COUNT: ${{ steps.changed-posts.outputs.count }}
         run: |
-          mapfile -t files <<EOF
-          ${{ steps.changed-posts.outputs.files }}
-          EOF
-
-          actual_count="${#files[@]}"
-          if [ "$actual_count" -ne "$EXPECTED_COUNT" ]; then
-            echo "Changed file list did not deserialize as expected (expected $EXPECTED_COUNT, got $actual_count)"
-            exit 1
-          fi
-
-          npx -y @sinedied/devto-cli push "${files[@]}" \
-            --token "$DEVTO_TOKEN" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --branch "${GITHUB_REF_NAME}" \
-            --reconcile
+          npm run publish:devto
 
       - name: Commit synced article metadata
         if: steps.changed-posts.outputs.count != '0'

@@ -48,6 +48,7 @@
     "test": "bun test ./tests",
     "lint:devto-posts": "bun scripts/lint-devto-posts.ts",
     "lint:devto-posts:fix": "bun scripts/lint-devto-posts.ts --fix",
+    "publish:devto": "bun scripts/lint-devto-posts.ts --fix && bun scripts/lint-devto-posts.ts && npx -y @sinedied/devto-cli push \"docs/posts/**/*.md\" --token \"$DEVTO_TOKEN\" --repo \"$GITHUB_REPOSITORY\" --branch \"${GITHUB_REF_NAME:-main}\" --reconcile",
     "release:check": "./tests/release-check.sh",
     "lint": "bunx biome check src/ tests/",
     "lint:fix": "bunx biome check --write src/ tests/",
