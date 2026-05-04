@@ -42,7 +42,7 @@
     "akm": "dist/cli.js"
   },
   "scripts": {
-    "build": "rm -rf dist && bun run tsc --project ./tsconfig.json --outDir dist",
+    "build": "rm -rf dist && bun run tsc --project ./tsconfig.build.json",
     "check": "bun run lint && bunx tsc --noEmit && bun test ./tests",
     "check:changed": "bun test tests/output-baseline.test.ts tests/e2e.test.ts tests/stash-search.test.ts && bun run lint && bunx tsc --noEmit",
     "test": "bun test ./tests",
@@ -57,9 +57,9 @@
     "access": "public"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.6",
-    "@types/node": "^22.0.0",
-    "bun-types": "^1.3.10",
+    "@biomejs/biome": "^2.4.14",
+    "@types/node": "^22.19.17",
+    "bun-types": "^1.3.13",
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
@@ -70,9 +70,9 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
-    "@clack/prompts": "^1.1.0",
-    "citty": "^0.2.1",
+    "@clack/prompts": "^1.3.0",
+    "citty": "^0.2.2",
     "dotenv": "^17.4.2",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.4"
   }
 }
