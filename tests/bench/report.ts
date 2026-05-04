@@ -290,6 +290,14 @@ export interface UtilityRunReport {
    * renders an empty `workflow` object — never crashes.
    */
   workflowChecks?: WorkflowCheckResult[];
+  /**
+   * Optional `{ taskId: passRate (0..1) }` map from a baseline JSON file.
+   * When present, `buildUtilityJson` includes a `baseline_by_task_id` block
+   * in the envelope and `taskRow` adds a per-task `vs base` column showing
+   * the akm-arm pass-rate delta against the baseline. Absent on legacy
+   * reports → output stays byte-identical to the pre-baseline shape.
+   */
+  baselineByTaskId?: Record<string, number>;
 }
 
 /**
@@ -406,6 +414,13 @@ function buildUtilityJson(input: UtilityRunReport): object {
   // actually populated `allRuns`.
   if (input.allRuns) {
     envelope.runs = input.allRuns.map(serializeRunForReport);
+  }
+
+  // Baseline pass-rate map — additive top-level key. Emitted only when the
+  // caller supplied a baseline through `loadBenchRunConfig`; legacy reports
+  // stay byte-identical without it.
+  if (input.baselineByTaskId) {
+    envelope.baseline_by_task_id = { ...input.baselineByTaskId };
   }
 
   // Per-asset attribution is an additive top-level key (§6.5). Emit it only
@@ -901,17 +916,24 @@ function buildUtilityMarkdown(input: UtilityRunReport): string {
   lines.push("");
   // #261: synthetic column is rendered only when the synthetic arm ran.
   // The default header/row stays identical to the pre-#261 output.
-  if (input.aggregateSynth) {
-    lines.push("| task | noakm | synthetic | akm | delta |");
-    lines.push("|------|-------|-----------|-----|-------|");
+  // Baseline column is rendered only when `baselineByTaskId` was supplied
+  // by the caller; legacy reports without it produce byte-identical output.
+  const includeSynthCol = input.aggregateSynth !== undefined;
+  const baselineMap = input.baselineByTaskId;
+  const includeBaselineCol = baselineMap !== undefined;
+  const baseColHeader = includeBaselineCol ? " baseline | vs base |" : "";
+  const baseColSep = includeBaselineCol ? "----------|---------|" : "";
+  if (includeSynthCol) {
+    lines.push(`| task | noakm | synthetic | akm | delta |${baseColHeader}`);
+    lines.push(`|------|-------|-----------|-----|-------|${baseColSep}`);
   } else {
-    lines.push("| task | noakm | akm | delta |");
-    lines.push("|------|-------|-----|-------|");
+    lines.push(`| task | noakm | akm | delta |${baseColHeader}`);
+    lines.push(`|------|-------|-----|-------|${baseColSep}`);
   }
   // Sort tasks alphabetically for byte-stable markdown output.
   const sorted = [...input.tasks].sort((a, b) => a.id.localeCompare(b.id));
   for (const t of sorted) {
-    lines.push(taskRow(t, input.aggregateSynth !== undefined));
+    lines.push(taskRow(t, includeSynthCol, baselineMap));
   }
   // Corpus-coverage section (#262). Renders only when at least one task was
   // tagged with a `memory_ability`; without tags the section adds no signal
@@ -1049,15 +1071,32 @@ function deltaRow(d: CorpusDelta): string {
   return `| **delta** | ${signed(d.passRate.toFixed(2))} | ${tpp} | ${signed(d.wallclockMs.toFixed(0))} |`;
 }
 
-function taskRow(t: UtilityReportTaskEntry, includeSynthetic = false): string {
+function taskRow(
+  t: UtilityReportTaskEntry,
+  includeSynthetic = false,
+  baselineByTaskId?: Record<string, number>,
+): string {
+  // Baseline-delta cell is rendered only when a baseline map is provided
+  // AND this task has an entry. Tasks without a baseline entry get an empty
+  // pair of cells so columns stay aligned.
+  let baselineCells = "";
+  if (baselineByTaskId) {
+    const base = baselineByTaskId[t.id];
+    if (base === undefined) {
+      baselineCells = " n/a | n/a |";
+    } else {
+      const delta = t.akm.passRate - base;
+      baselineCells = ` ${base.toFixed(2)} | ${signed(delta.toFixed(2))} |`;
+    }
+  }
   if (includeSynthetic) {
     // #261: render the synthetic-arm pass-rate when present; "n/a" when the
     // arm did not run for this task. A missing arm is NOT a zero-pass arm —
     // a 0.00 cell would be misleading because the model never tried.
     const synth = t.synthetic ? t.synthetic.passRate.toFixed(2) : "n/a";
-    return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${synth} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
+    return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${synth} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |${baselineCells}`;
   }
-  return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |`;
+  return `| ${t.id} | ${t.noakm.passRate.toFixed(2)} | ${t.akm.passRate.toFixed(2)} | ${signed(t.delta.passRate.toFixed(2))} |${baselineCells}`;
 }
 
 function signed(text: string): string {

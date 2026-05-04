@@ -1,0 +1,7 @@
+{
+  "drillbit/backup-policy": 1.0,
+  "drillbit/canary-enable": 1.0,
+  "inkwell/add-healthcheck": 0.8,
+  "inkwell/configure-scaling": 0.8,
+  "opencode/select-correct-skill": 1.0
+}

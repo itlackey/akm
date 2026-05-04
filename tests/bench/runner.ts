@@ -248,6 +248,15 @@ export interface RunUtilityOptions {
    * opencode falls back to its cloud-provider defaults.
    */
   opencodeProviders?: LoadedOpencodeProviders;
+  /**
+   * Optional `{ taskId: passRate (0..1) }` map. When supplied, the report
+   * carries it through to `renderUtilityReport` so the markdown gains a
+   * `vs base` column and the JSON envelope gains a `baseline_by_task_id`
+   * field. Loaded by `loadBenchRunConfig` from a `baseline:` path in the
+   * run config. Optional and additive — omitted reports are byte-identical
+   * to the pre-baseline shape.
+   */
+  baselineByTaskId?: Record<string, number>;
 }
 
 /** Internal: raw run records grouped by (taskId, arm). */
@@ -890,5 +899,12 @@ function buildReport(args: BuildReportArgs): UtilityRunReport {
   // we just collected. This is the §6.5 "free" diagnostic — it runs on every
   // utility invocation, no extra spawns.
   baseReport.perAsset = computePerAssetAttribution(baseReport);
+  // Stamp the optional baseline pass-rate map onto the report so the
+  // renderer surfaces a `vs base` column in markdown and a
+  // `baseline_by_task_id` field in JSON. Additive — when the caller did
+  // not pass a baseline the report shape is byte-identical to before.
+  if (args.options.baselineByTaskId) {
+    baseReport.baselineByTaskId = { ...args.options.baselineByTaskId };
+  }
   return baseReport;
 }

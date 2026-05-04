@@ -1,4 +1,7 @@
 /**
+ * OBSOLETE: superseded by `bun run tests/bench/cli.ts tests/bench/configs/nano-quick.json`.
+ * Kept for backward compatibility; will be removed in the standalone-bench-repo extraction.
+ *
  * Quick 5-task × 2-seed run for Nemotron Nano evaluation.
  * Usage: bun run tests/bench/run-nano-quick.ts
  */
@@ -7,6 +10,10 @@ import path from "node:path";
 import { loadTask } from "./corpus";
 import { loadOpencodeProviders } from "./opencode-config";
 import { runUtility } from "./runner";
+
+process.stderr.write(
+  "[obsolete] run-nano-quick.ts → see tests/bench/configs/nano-quick.json (`bun run tests/bench/cli.ts tests/bench/configs/nano-quick.json`)\n",
+);
 
 const TASK_IDS = [
   "drillbit/backup-policy",

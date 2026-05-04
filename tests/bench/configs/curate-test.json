@@ -1,0 +1,12 @@
+{
+  "$schema": "./bench-run-config.schema.json",
+  "schemaVersion": 1,
+  "name": "curate-test",
+  "description": "Single-task probe of inkwell/configure-scaling at 5 seeds. Mirror of tests/bench/run-curate-test.ts.",
+  "tasks": ["inkwell/configure-scaling"],
+  "arms": ["akm"],
+  "seeds": 5,
+  "budgetTokens": 25000,
+  "budgetWallMs": 360000,
+  "parallel": 3
+}

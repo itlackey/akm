@@ -42,15 +42,23 @@ import {
   renderUtilityReport,
   type UtilityRunReport,
 } from "./report";
+import { type BenchRunConfigOverrides, loadBenchRunConfig } from "./run-config";
 import { runUtility } from "./runner";
 import { isPidRunning, readBenchPid, writeBenchPid } from "./tmp";
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
 
 Usage:
+  bun run tests/bench/cli.ts <config.json> [--json] [--seeds N] [--parallel N] [--tasks <list>]
   bun run tests/bench/cli.ts <subcommand> [...flags]
 
-Subcommands:
+Config-file mode (recommended):
+  Pass a path to a tests/bench/configs/*.json file as the first argument.
+  See tests/bench/BENCH.md for the run-config schema and provider
+  discovery chain (BENCH_OPENCODE_CONFIG → providers/providersRef →
+  ~/.config/akm/bench-providers.json).
+
+Subcommands (legacy; still supported):
   utility       Track A: paired noakm vs akm utility benchmark.
   evolve        Track B: longitudinal feedback → distill → propose loop.
   compare       Diff two report JSON files (refuses cross-model diffs).
@@ -777,6 +785,126 @@ function parseFloatArg(text: string | undefined, fallback: number): number {
   return n;
 }
 
+/**
+ * Set of obsolete-flag names that have already emitted their stderr
+ * warning during this process. Used by `warnObsolete` to dedupe.
+ *
+ * Exported as a test seam so unit tests can clear the cache between
+ * cases without restarting the process.
+ */
+export const obsoleteFlagWarned = new Set<string>();
+
+/**
+ * Emit a one-line `[obsolete] ...` warning on stderr the FIRST time the
+ * named flag is used in this process. Subsequent calls with the same
+ * `name` are silent so a single invocation never emits the same warning
+ * twice. Internal: wired into the existing utility/evolve dispatch
+ * branches; the new config-file path never triggers these.
+ */
+function warnObsolete(name: string, replacement: string): void {
+  if (obsoleteFlagWarned.has(name)) return;
+  obsoleteFlagWarned.add(name);
+  process.stderr.write(`[obsolete] ${name} → ${replacement}\n`);
+}
+
+/**
+ * Detect whether the user supplied any of the flags marked obsolete in
+ * BENCH.md §G and emit one warning per used flag. The flags continue to
+ * function — the warning is the only behavior change.
+ */
+function warnIfObsoleteFlagsUsed(parsed: ParsedArgs): void {
+  if (parsed.bool.has("no-noakm")) {
+    warnObsolete("--no-noakm", 'use `arms: ["akm"]` in a run config');
+  }
+  if (parsed.bool.has("include-synthetic")) {
+    warnObsolete("--include-synthetic", 'use `arms: [..., "synthetic"]` in a run config');
+  }
+  if (parsed.flags.has("opencode-config")) {
+    warnObsolete(
+      "--opencode-config",
+      "use `providersRef` in a run config, BENCH_OPENCODE_CONFIG, or ~/.config/akm/bench-providers.json",
+    );
+  }
+  if (parsed.flags.has("budget-tokens")) {
+    warnObsolete("--budget-tokens", "use `budgetTokens` in a run config");
+  }
+  if (parsed.flags.has("budget-wall-ms")) {
+    warnObsolete("--budget-wall-ms", "use `budgetWallMs` in a run config");
+  }
+}
+
+/**
+ * Caller-facing options for `runConfigCli` — the new config-file dispatch
+ * path. The helper takes a config path + the small set of override flags
+ * that survived the move into the config file (`--seeds`, `--parallel`,
+ * `--tasks`, `--json`).
+ */
+export interface ConfigCliOptions {
+  configPath: string;
+  json: boolean;
+  /** When set, restrict the config's tasks to these ids only. */
+  tasksList?: string[];
+  /** Override the config's `seeds` field. */
+  seedsPerArm?: number;
+  /** Override the config's `parallel` field. */
+  parallel?: number;
+  /** Override timestamp / branch / commit (tests). */
+  timestamp?: string;
+  branch?: string;
+  commit?: string;
+}
+
+/**
+ * `<config.json>` dispatch — load a bench run config, resolve providers
+ * and tasks, invoke `runUtility`, and emit the §13.3 envelope on stdout.
+ *
+ * Behaves identically to `runUtilityCli` from a stdout/stderr/exit-code
+ * standpoint: JSON on stdout, optional markdown summary on stderr,
+ * returns 0/2/78 mirroring the existing semantics.
+ */
+export async function runConfigCli(options: ConfigCliOptions): Promise<UtilityCliResult> {
+  let resolved: ReturnType<typeof loadBenchRunConfig>;
+  try {
+    const overrides: BenchRunConfigOverrides = {};
+    if (options.tasksList) overrides.tasksList = options.tasksList;
+    if (options.seedsPerArm !== undefined) overrides.seedsPerArm = options.seedsPerArm;
+    if (options.parallel !== undefined) overrides.parallel = options.parallel;
+    resolved = loadBenchRunConfig(options.configPath, overrides);
+  } catch (err) {
+    const exitCode = err instanceof BenchConfigError && err.isUsageError ? 2 : 78;
+    return {
+      exitCode,
+      stdout: "",
+      stderr: `bench: ${err instanceof Error ? err.message : String(err)}\n`,
+    };
+  }
+
+  const report = await runUtility({
+    tasks: resolved.tasks,
+    arms: resolved.arms,
+    model: resolved.model,
+    slice: resolved.slice,
+    ...(resolved.seedsPerArm !== undefined ? { seedsPerArm: resolved.seedsPerArm } : {}),
+    ...(resolved.budgetTokens !== undefined ? { budgetTokens: resolved.budgetTokens } : {}),
+    ...(resolved.budgetWallMs !== undefined ? { budgetWallMs: resolved.budgetWallMs } : {}),
+    ...(resolved.parallel !== undefined ? { parallel: resolved.parallel } : {}),
+    ...(resolved.forceParallel ? { forceParallel: true } : {}),
+    ...(resolved.baselineByTaskId ? { baselineByTaskId: resolved.baselineByTaskId } : {}),
+    ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
+    ...(options.branch !== undefined ? { branch: options.branch } : {}),
+    ...(options.commit !== undefined ? { commit: options.commit } : {}),
+    opencodeProviders: resolved.providers,
+    // Synthetic arm follows from `arms` containing "synthetic".
+    ...(resolved.arms.includes("synthetic") ? { includeSynthetic: true } : {}),
+  });
+
+  const { json, markdown } = renderUtilityReport(report);
+  const stdout = `${JSON.stringify(json, null, 2)}\n`;
+  let stderr = options.json ? "" : `${markdown}\n`;
+  stderr += `bench: config=${resolved.name} tasks=${resolved.tasks.length} arms=${resolved.arms.join(",")} model=${resolved.model}\n`;
+  return { exitCode: 0, stdout, stderr };
+}
+
 export interface EvolveCliOptions {
   /** Domain id (e.g., `docker-homelab`) or the literal `all`. */
   domain: string;
@@ -840,6 +968,43 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(HELP);
     return parsed.subcommand === "" ? 2 : 0;
   }
+
+  // Config-file dispatch: when argv[0] looks like a JSON path that exists,
+  // route to `runConfigCli`. This is the new common-case entry point —
+  // existing subcommand-style invocations are untouched.
+  if (parsed.subcommand.endsWith(".json") && fs.existsSync(parsed.subcommand)) {
+    const tasksRaw = parsed.flags.get("tasks");
+    const tasksList = tasksRaw
+      ? tasksRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : undefined;
+    const seedsRaw = parsed.flags.get("seeds");
+    const parallelRaw = parsed.flags.get("parallel");
+
+    const removePid = writeBenchPid();
+    let result: UtilityCliResult;
+    try {
+      result = await runConfigCli({
+        configPath: parsed.subcommand,
+        json: parsed.bool.has("json"),
+        ...(tasksList ? { tasksList } : {}),
+        ...(seedsRaw !== undefined ? { seedsPerArm: parseInt32(seedsRaw, 5) } : {}),
+        ...(parallelRaw !== undefined ? { parallel: parseInt32(parallelRaw, 1) } : {}),
+      });
+    } finally {
+      removePid();
+    }
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return result.exitCode;
+  }
+
+  // Emit obsolete-flag warnings for the legacy subcommand path. The new
+  // config-file path above never reaches this code so config-mode runs
+  // never spuriously warn.
+  warnIfObsoleteFlagsUsed(parsed);
 
   switch (parsed.subcommand) {
     case "utility": {
