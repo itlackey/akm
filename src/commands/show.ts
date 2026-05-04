@@ -25,7 +25,7 @@ import path from "node:path";
 import { type AssetRef, parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
-import { appendEvent } from "../core/events";
+import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
@@ -162,7 +162,13 @@ export async function akmShowUnified(input: {
   if (input.scope && hasAnyScopeKey(input.scope) && result.path) {
     enforceScopeOrThrow(result.path, ref, input.scope);
   }
+  // Count prior shows of this ref before logging the current one.
+  const priorShowCount = recentShowCount(ref);
   logShowEvent(ref);
+  if (priorShowCount >= 2) {
+    // Agent has shown this same asset 3+ times — inject a loop-break hint.
+    (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;
+  }
   return result;
 }
 
@@ -200,6 +206,19 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
     if (actual !== expectedValue) {
       throw new NotFoundError(`Asset "${ref}" exists but is out of scope (expected scope_${key}="${expectedValue}").`);
     }
+  }
+}
+
+/**
+ * Count how many times `ref` has been shown in the current session by reading
+ * recent events. Returns the count BEFORE the current invocation.
+ */
+function recentShowCount(ref: string): number {
+  try {
+    const { events } = readEvents({ type: "show", ref });
+    return events.length;
+  } catch {
+    return 0;
   }
 }
 
