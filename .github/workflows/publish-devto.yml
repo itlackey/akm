@@ -34,7 +34,7 @@ jobs:
         run: |
           zero_sha="0000000000000000000000000000000000000000"
 
-          if [ "$BEFORE_SHA" = "$zero_sha" ]; then
+          if [ "$BEFORE_SHA" = "$zero_sha" ] || ! git rev-parse --verify "$BEFORE_SHA^{commit}" >/dev/null 2>&1; then
             mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
           else
             # Use Git pathspec magic so ** matches nested markdown files under docs/posts.
@@ -42,8 +42,11 @@ jobs:
           fi
 
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "count=0" >> "$GITHUB_OUTPUT"
-            echo "No changed posts to publish"
+            {
+              echo "count=0"
+              echo "files="
+            } >> "$GITHUB_OUTPUT"
+            echo "No changed posts to publish in this push range"
             exit 0
           fi
 
