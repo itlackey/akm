@@ -238,6 +238,7 @@ const skillMdRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action: "Read and follow the instructions below",
+      description: toStringOrUndefined(parsed.data.description),
       content: parsed.content,
     };
   },
