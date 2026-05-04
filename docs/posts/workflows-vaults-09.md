@@ -2,7 +2,7 @@
 title: Agents That Remember Where They Were
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.5.0 adds workflow assets for resumable multi-step procedures, vault assets for secret-safe env config, and a writable git stash that syncs across machines.'
+description: 'akm 0.5.0 adds workflow assets for resumable multi-step procedures, vault assets for secret-safe env config, and a writable git stash that syncs across machi...'
 tags:
   - ai
   - agents

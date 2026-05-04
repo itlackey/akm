@@ -26,6 +26,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Normalize dev.to posts
+        run: npm run lint:devto-posts:fix
+
+      - name: Validate dev.to posts
+        run: npm run lint:devto-posts
+
       - name: Collect changed post files
         id: changed-posts
         env:

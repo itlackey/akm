@@ -2,7 +2,7 @@
 title: 'akm 0.7.0: Proposal Queue, Reflection Commands, Lessons, and akm-bench'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.7.0 is the last pre-1.0 ship: a proposal queue, agent reflection commands, the lesson asset type, opt-in LLM feature gates, and a paired-run benchmarking framework.'
+description: 'akm 0.7.0 is the last pre-1.0 ship: a proposal queue, agent reflection commands, the lesson asset type, opt-in LLM feature gates, and a paired-run benchmarki...'
 tags:
   - ai
   - agents
