@@ -6,11 +6,16 @@ on:
     paths:
       - "docs/posts/**/*.md"
 
+concurrency:
+  group: publish-devto-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
 jobs:
   publish:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,17 +26,68 @@ jobs:
         with:
           node-version: 22
 
+      - name: Collect changed post files
+        id: changed-posts
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          zero_sha="0000000000000000000000000000000000000000"
+
+          if [ "$BEFORE_SHA" = "$zero_sha" ]; then
+            echo "Falling back to tracked post files because BEFORE_SHA represents a first-push/new-branch event: $BEFORE_SHA"
+            mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
+          elif ! git rev-parse --verify "$BEFORE_SHA^{commit}" >/dev/null 2>&1; then
+            echo "Falling back to tracked post files because BEFORE_SHA is unreachable: $BEFORE_SHA"
+            mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
+          else
+            # Use Git pathspec magic so ** matches nested markdown files under docs/posts.
+            mapfile -t files < <(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" -- ':(glob)docs/posts/**/*.md')
+          fi
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            {
+              echo "count=0"
+              echo "files="
+            } >> "$GITHUB_OUTPUT"
+            echo "No changed posts to publish in this push range"
+            exit 0
+          fi
+
+          {
+            echo "count=${#files[@]}"
+            echo "files<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          printf 'Changed posts:\n'
+          printf '%s\n' "${files[@]}"
+
       - name: Publish articles to dev.to
+        if: steps.changed-posts.outputs.count != '0'
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
+          EXPECTED_COUNT: ${{ steps.changed-posts.outputs.count }}
         run: |
-          npx -y @sinedied/devto-cli push "docs/posts/**/*.md" \
+          mapfile -t files <<EOF
+          ${{ steps.changed-posts.outputs.files }}
+          EOF
+
+          actual_count="${#files[@]}"
+          if [ "$actual_count" -ne "$EXPECTED_COUNT" ]; then
+            echo "Changed file list did not deserialize as expected (expected $EXPECTED_COUNT, got $actual_count)"
+            exit 1
+          fi
+
+          npx -y @sinedied/devto-cli push "${files[@]}" \
             --token "$DEVTO_TOKEN" \
             --repo "${GITHUB_REPOSITORY}" \
             --branch "${GITHUB_REF_NAME}" \
             --reconcile
 
       - name: Commit synced article metadata
+        if: steps.changed-posts.outputs.count != '0'
         run: |
           if git diff --quiet -- docs/posts; then
             echo "No synced post metadata changes to commit"
