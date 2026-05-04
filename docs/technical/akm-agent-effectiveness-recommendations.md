@@ -373,3 +373,237 @@ The three changes to do first, in order:
 **3. REC-01 (Add "APPLY:" directive to akm show plain output)** — closes the loop between the agent loading a skill and actually applying its content. Pairs with REC-02 to make the full chain explicit: search → "Next: akm show <ref>" → show → "APPLY: use only these field names" → write → feedback. This addresses the loaded_ignored pattern that accounts for 24 of the 27 failures.
 
 After these three, the expected pass rate on inkwell tasks should rise from the current 60% average to 80%+. The second run will confirm whether the remaining failures are field-level errors (suggesting the skill content needs richer examples) or model capacity issues (suggesting task recalibration per REC-12).
+
+---
+
+## 2026-05-03 Full-Corpus Analysis (40 tasks × 5 seeds)
+
+**Run**: 200 akm-arm runs, 40 tasks, 5 seeds, model `shredder/qwen/qwen3.5-9b`.
+**Status at time of analysis**: 135/200 runs complete (67.5%). Remaining: inkwell/workflow-configure-scaling (in progress), opencode/* (6 tasks × 5), workflow-compliance/* (6 tasks × 5). All results below are partial; tasks still running are noted.
+**Source data**: `/home/founder3/.cache/akm/bench/bench-partial-2026-05-03T23-32-50-041Z.json` (135 runs), `/tmp/bench-full-20260503-183249.log`.
+
+---
+
+### Pass/Fail Tally (135 runs completed)
+
+| Task | Pass | Total | Rate | Notes |
+|------|------|-------|------|-------|
+| az-cli/aks-get-credentials | 4 | 5 | 80% | |
+| az-cli/assign-managed-identity | 5 | 5 | 100% | |
+| az-cli/create-resource-group | 5 | 5 | 100% | |
+| az-cli/keyvault-secret-set | 4 | 5 | 80% | |
+| az-cli/query-by-tag | 5 | 5 | 100% | |
+| az-cli/storage-account-create | 2 | 5 | 40% | NEW FAILURE — see REC-A below |
+| docker-homelab/bridge-network | 1 | 5 | 20% | NEW FAILURE — stash gap |
+| docker-homelab/compose-version-upgrade | 2 | 5 | 40% | NEW FAILURE — stash gap |
+| docker-homelab/env-from-file | 0 | 5 | 0% | NEW FAILURE — 2 budget_exceeded, stash misleads |
+| docker-homelab/named-volume | 4 | 5 | 80% | |
+| docker-homelab/redis-healthcheck | 3 | 5 | 60% | Marginal — stash coverage asymmetry |
+| docker-homelab/restart-policy | 4 | 5 | 80% | |
+| drillbit/backup-policy | 5 | 5 | 100% | |
+| drillbit/backup-policy-train | 5 | 5 | 100% | |
+| drillbit/canary-enable | 5 | 5 | 100% | |
+| drillbit/provision-edge | 5 | 5 | 100% | |
+| drillbit/rotate-secret | 5 | 5 | 100% | |
+| drillbit/scale-replicas | 5 | 5 | 100% | |
+| drillbit/scale-replicas-train | 5 | 5 | 100% | |
+| inkwell/add-healthcheck | 4 | 5 | 80% | Has AGENTS.md |
+| inkwell/add-healthcheck-train | 2 | 5 | 40% | NEW FAILURE — missing AGENTS.md |
+| inkwell/configure-scaling | 3 | 5 | 60% | |
+| inkwell/cpu-scaling | 4 | 5 | 80% | |
+| inkwell/full-config | 0 | 5 | 0% | Known hard task (3-block simultaneous) |
+| inkwell/new-service | 4 | 5 | 80% | Has AGENTS.md |
+| inkwell/new-service-train | 3 | 5 | 60% | Missing AGENTS.md (confirmed no file) |
+| inkwell/set-rate-limit | 4 | 5 | 80% | |
+| inkwell/workflow-configure-scaling | — | — | — | In progress at time of analysis |
+| opencode/* (6 tasks) | — | — | — | Not yet started |
+| workflow-compliance/* (6 tasks) | — | — | — | Not yet started |
+
+**Overall (135 completed)**: 98/135 = 72.6%.
+
+---
+
+### Root Cause Analysis: New Failures
+
+#### inkwell/add-healthcheck-train and inkwell/new-service-train — 40% and 60%
+
+**Pattern confirmed**: Both train-slice variants lack AGENTS.md in their workspace. Their eval-slice counterparts (add-healthcheck, new-service) have AGENTS.md and score 80%. The score gap is 40pp for add-healthcheck and 20pp for new-service.
+
+**Root cause**: The bench system prompt (`tests/bench/driver.ts:421`) is hardcoded to instruct the agent to write output to `${workspace}/commands.txt`. For inkwell tasks, the correct output file is `service.yaml`. The AGENTS.md file for eval-slice tasks overrides this with "Edit the workspace file using the schema from step 2" — which, combined with the pre-existing `service.yaml` in the workspace and the README.md task description, causes agents to write `service.yaml` instead of `commands.txt`. Train-slice tasks have no AGENTS.md correction layer. Some agents (2–3/5) still figure it out from the README.md alone, but 2–3/5 write to the wrong file.
+
+**Evidence**: `add-healthcheck-train/workspace/` has README.md and service.yaml but no AGENTS.md. `add-healthcheck/workspace/` has README.md, service.yaml, and AGENTS.md. The AGENTS.md content explicitly says "Edit the workspace file." The bench prompt says "write the answer to commands.txt." Without AGENTS.md to override, ~60% of agents comply with the prompt literally.
+
+**Fix**: Add AGENTS.md to `tests/fixtures/bench/tasks/inkwell/add-healthcheck-train/workspace/` and `tests/fixtures/bench/tasks/inkwell/new-service-train/workspace/` with the same content as their eval counterparts (or equivalent). The AGENTS.md content already exists as a template in the eval-slice workspaces.
+
+**Expected impact**: +40pp on add-healthcheck-train (2/5 → 4/5), +20pp on new-service-train (3/5 → 4/5). Effort: trivial — two new AGENTS.md files.
+
+---
+
+#### docker-homelab/bridge-network — 20% (1/5)
+
+**Root cause — stash content gap**: The stash `knowledge/networking.md` shows `external: true` network patterns (for reverse proxy attachment) but does NOT show how to create a named internal bridge network. The task requires:
+
+```yaml
+networks:
+  internal:
+    driver: bridge
+services:
+  api:
+    networks: [internal]
+  worker:
+    networks: [internal]
+```
+
+The skill.md says "Create one project network per stack" but provides no YAML example for explicitly declaring a named bridge. The knowledge/networking.md shows only the proxy-network external pattern, which is the inverse of what the task needs (external: true vs a new named internal network). Agents searching `akm search docker compose homelab` and loading `skill:docker-homelab` find prose guidance but no bridge-network YAML template.
+
+**Secondary factor — no README in workspace**: The bench prompt instructs agents to `cat ${workspace}/README.md` in Step 3. Docker-homelab workspaces have no README.md. The task description comes only from the task title in the prompt ("Attach two services to a custom internal bridge network") and the AGENTS.md workflow hint. Without README.md and with vague YAML requirements in the stash, agents get the YAML wrong 4/5 times.
+
+**Fix**: Add an explicit named-bridge-network YAML example to `tests/fixtures/stashes/docker-homelab/knowledge/networking.md` under a new section "Creating a named internal bridge":
+
+```yaml
+networks:
+  internal:
+    driver: bridge
+services:
+  api:
+    networks: [internal]
+  worker:
+    networks: [internal]
+```
+
+Also add `README.md` to all docker-homelab task workspaces specifying the exact YAML change required, mirroring the inkwell task README pattern. The absence of README.md means Step 3 of the bench prompt fails silently (the agent gets "no such file" and skips to Step 4 with only the task title for guidance).
+
+**Expected impact**: +60pp (1/5 → 4/5). The stash fix resolves the content gap; the README.md addition resolves the step-3 file-not-found issue.
+
+---
+
+#### docker-homelab/compose-version-upgrade — 40% (2/5)
+
+**Root cause — stash content gap**: The task requires:
+1. Setting `version: "3.8"` at the top level.
+2. Removing v2-only service keys (`mem_limit`, `cpu_shares`, `volume_driver`, `cpuset`, `cpu_quota`).
+
+The stash `skill:docker-homelab` mentions "Use docker-compose.yml (compose v3+)" but specifies no version number. There is no knowledge article covering the v2→v3 migration path or the list of keys removed in v3. An agent reading the stash knows to use "v3+" but not specifically "3.8" and does not know which v2-only keys to remove.
+
+**Fix**: Add a knowledge article `tests/fixtures/stashes/docker-homelab/knowledge/compose-v3-migration.md` covering:
+- `version: "3.8"` as the target version for v2→v3 upgrades.
+- The v2-only keys to remove: `mem_limit`, `cpu_shares`, `volume_driver`, `cpu_quota`, `cpuset`.
+- A minimal before/after example showing the upgrade.
+
+Also add README.md to the compose-version-upgrade workspace with the task requirements.
+
+**Expected impact**: +40pp (2/5 → 4/5). Effort: one new knowledge file + one README.md.
+
+---
+
+#### docker-homelab/env-from-file — 0% (0/5), including 2 budget_exceeded
+
+**Root cause — stash misleads**: The task requires adding `env_file: [app.env]` (or equivalent) to the `app` service in docker-compose.yml. The stash `compose-conventions.md` mentions `env_file:` only in the context of secrets: "Secrets go in a sibling `.env.secrets` that's gitignored, loaded via `env_file:`." This framing associates `env_file:` with `.env.secrets` (a secrets file), not with the general-purpose `app.env` file the task uses. An agent reading the stash may add the wrong filename (`app.env.secrets` or `.env.secrets`) or skip `env_file:` entirely in favor of the `environment:` block.
+
+The 2 budget_exceeded runs (360s each vs the 90s task budget — the bench was run with a higher budget override) suggest agents attempting multiple failed write-verify cycles before the wall-clock limit was hit.
+
+**Fix (two parts)**:
+1. Add a direct `env_file:` usage example to `compose-conventions.md` or a new knowledge article, showing `env_file: app.env` as the canonical pattern for loading a named env file. Keep the `.env.secrets` mention separate with a clear label ("for secrets") to prevent conflation.
+2. Add README.md to the env-from-file workspace specifying exactly: "Add `env_file: [app.env]` (or `env_file: app.env`) to the `app` service."
+
+**Expected impact**: +80–100pp (0/5 → 4-5/5). The stash currently actively misleads. A corrected stash + README will move this from 0% to near 100%. The budget_exceeded runs will also resolve since agents won't loop. Effort: one stash edit + one README.md.
+
+---
+
+#### docker-homelab/redis-healthcheck — 60% (3/5)
+
+**Root cause — stash coverage asymmetry**: The stash `knowledge/healthcheck-patterns.md` has an exact Redis healthcheck YAML template:
+```yaml
+healthcheck:
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+```
+This is correct. However, the bench AGENTS.md directs agents to `akm show skill:docker-homelab` (not `knowledge:healthcheck-patterns`). The skill.md says only "Prefer in-container probes (curl localhost, pg_isready, redis-cli ping)" — a prose mention of redis-cli with no YAML. Agents that show the skill get a hint but no template. Agents that also search for or show the knowledge article get the exact YAML.
+
+**Fix**: Move the redis-cli healthcheck example into the skill.md `Healthchecks` section, or ensure the AGENTS.md search step returns both the skill and the knowledge article (the AGENTS.md query is `akm search docker compose homelab`, which may not rank `healthcheck-patterns` highly enough). A simpler fix: add the redis-cli YAML inline to `skill:docker-homelab` under `## Healthchecks`.
+
+**Expected impact**: +20pp (3/5 → 4-5/5). Effort: one skill.md edit.
+
+---
+
+#### az-cli/storage-account-create — 40% (2/5)
+
+**Root cause — multi-line skill format vs. single-line verifier grep**: The skill `skill:az-cli` presents all commands in a multi-line backslash-continuation format:
+```sh
+az storage account \
+  create -n <name> -g <resource-group> --sku <sku>
+```
+The verifier (`verify.sh`) uses single-line grep: `grep -qE 'az storage account create'`. A multi-line continuation format does NOT match this pattern because grep operates line-by-line and `az storage account` ends line 1 while `create ...` starts line 2.
+
+The same multi-line format appears in the AKS section (`az aks \ get-credentials`), yet `aks-get-credentials` passes 80% — because `az aks get-credentials` is a well-known command agents reproduce from training memory in single-line form. `az storage account create` with `--sku Standard_LRS` is less common, making agents more likely to copy the skill's exact multi-line presentation.
+
+A secondary failure mode: the skill's example uses `-n mystorageacct` while the task requires `-n mystorage`. Agents that copy the example verbatim fail the name check.
+
+**Fix (two parts)**:
+1. Replace the multi-line format in `skill:az-cli` with single-line forms for all commands, since all verifiers use single-line grep. This is a stash edit with no code changes required.
+2. Change the skill's storage account example from `-n mystorageacct` to a clearly-labeled placeholder `-n <storage-account-name>` to prevent literal copying of the example name.
+
+**Expected impact**: +40pp (2/5 → 4/5). Effort: one skill.md edit.
+
+---
+
+### Cross-Cutting Finding: Missing README.md in Docker-Homelab Workspaces
+
+All six docker-homelab task workspaces are missing `README.md`. The bench system prompt (`driver.ts:417`) explicitly instructs: "Step 3 — read README.md in the workspace to understand the specific task requirements." When this file is absent, the agent gets a shell error ("No such file or directory"), silently skips Step 3, and must rely on the task title in the prompt plus the stash content alone.
+
+For inkwell tasks, the README.md is present and specifies exact requirements (field names, values). For docker-homelab tasks, the task title is the only explicit description of requirements (e.g., "Attach two services to a custom internal bridge network"), which is much less precise than a README that says "Add `networks: [internal]` to both the api and worker services."
+
+This structural gap affects all six docker-homelab tasks. Combined with the stash content gaps above, it explains why docker-homelab tasks have the highest variance in the corpus (0%–80%) despite having AGENTS.md files.
+
+**Fix**: Add `README.md` to every docker-homelab task workspace. Content should follow the inkwell README pattern: list the exact change required with exact field names and values, not just a prose description of the task.
+
+---
+
+### Cross-Cutting Finding: Hardcoded `commands.txt` in Bench System Prompt
+
+The bench prompt (`tests/bench/driver.ts:421`) hardcodes the output file as `${workspace}/commands.txt`. Only the az-cli domain uses `commands.txt` as its output file. Inkwell tasks use `service.yaml` and docker-homelab tasks use `docker-compose.yml`.
+
+For domains where the prompt file name is wrong, the AGENTS.md fixture serves as the correction layer ("Edit the workspace file"). When AGENTS.md is absent (train-slice inkwell tasks) or absent of the specific file to edit (docker-homelab without README.md), a fraction of agents write to `commands.txt` instead of the correct file, failing verification.
+
+This is not a product bug (the bench prompt is a test fixture, not a product surface), but it is a fixture correctness issue that depresses observed pass rates artificially. The fix is either to generalize the prompt to say "write your answer to the appropriate file in the workspace" (removing the hardcoded filename), or to ensure every task workspace has an AGENTS.md and README.md that override the file name explicitly.
+
+---
+
+### Prioritized Top-5 Stash Fixes by Expected Pass-Rate Impact
+
+The following are ordered by estimated runs gained across the 200-run corpus (40 tasks × 5 seeds), counting only the tasks seen so far:
+
+**1. docker-homelab/env-from-file — add README.md + fix stash env_file guidance**
+- Current: 0/5 (0%). Expected: 4-5/5 (80-100%). Gain: +4-5 runs.
+- Two-part fix: correct `compose-conventions.md` to show `env_file: app.env` (not only secrets pattern), add README.md to workspace.
+- High-urgency: the stash actively misleads, 2 runs hit budget_exceeded consuming 12 minutes of wall time.
+
+**2. docker-homelab/bridge-network — add YAML example to networking.md + add README.md**
+- Current: 1/5 (20%). Expected: 4/5 (80%). Gain: +3 runs.
+- Add explicit named-bridge YAML to `knowledge/networking.md`. Add workspace README.md specifying the exact change.
+
+**3. inkwell/add-healthcheck-train — add AGENTS.md**
+- Current: 2/5 (40%). Expected: 4/5 (80%). Gain: +2 runs.
+- Copy AGENTS.md from `add-healthcheck/workspace/AGENTS.md` into `add-healthcheck-train/workspace/AGENTS.md`. Trivial.
+
+**4. docker-homelab/compose-version-upgrade — add migration knowledge + README.md**
+- Current: 2/5 (40%). Expected: 4/5 (80%). Gain: +2 runs.
+- Add `compose-v3-migration.md` knowledge article. Add workspace README.md with exact requirements.
+
+**5. az-cli/storage-account-create — convert multi-line to single-line format in skill**
+- Current: 2/5 (40%). Expected: 4/5 (80%). Gain: +2 runs.
+- Edit `tests/fixtures/stashes/az-cli/skills/az-cli/SKILL.md` to use single-line command format matching verifier grep patterns.
+
+Combined, these five fixes address 13 of the 37 current failures (135 runs completed), lifting the partial pass rate from 72.6% to an estimated 82.2% on the completed portion of the corpus.
+
+Additional gains available from: redis-healthcheck stash fix (+1 run), inkwell/new-service-train AGENTS.md (+1 run), plus carry-forward of the REC-01/REC-04 recommendations from the prior analysis which remain unimplemented.
+
+---
+
+### Note on Tasks Still Running
+
+At time of analysis, inkwell/workflow-configure-scaling, all opencode tasks, and all workflow-compliance tasks were not yet complete. Based on live events.jsonl from active runs, the workflow-configure-scaling agent is successfully calling `akm workflow next` and starting workflow runs (workflow_started events observed), confirming the AGENTS.md override in that workspace is working. Whether it completes the workflow correctly before writing service.yaml will determine its pass rate.
+
+The opencode and workflow-compliance tasks were part of the prior 17-task baseline and their expected rates are documented there. No new analysis is possible until the log completes.
