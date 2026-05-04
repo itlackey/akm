@@ -14,12 +14,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Publish articles to dev.to
-        uses: sinedied/publish-devto@v2
-        with:
-          devto_key: ${{ secrets.DEVTO_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          files: "docs/posts/**/*.md"
-          branch: main
-          conventional_commits: true
+        env:
+          DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
+        run: |
+          npx -y @sinedied/devto-cli push "docs/posts/**/*.md" \
+            --token "$DEVTO_TOKEN" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --branch "${GITHUB_REF_NAME}" \
+            --reconcile
+
+      - name: Commit synced article metadata
+        run: |
+          if git diff --quiet -- docs/posts; then
+            echo "No synced post metadata changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/posts
+          git commit -m "docs: reconcile dev.to article metadata"
+          git push
