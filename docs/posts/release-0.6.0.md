@@ -10,7 +10,6 @@ tags:
   - release
 published: true
 date: '2026-04-24T00:00:00Z'
-id: 3552357
 ---
 
 akm 0.6.0 is out. This one is deliberately boring: a stabilization release that takes a clean break from pre-v1 terminology so the surface area we carry into v1 is honest. The domain model now has one noun for "a source of content" (stash) and one noun for "a service that helps discover them" (registry). The parallel vocabulary that accreted during earlier experiments — "kit", "source", hand-special-cased provider types — is gone. A handful of additive quality-of-life improvements ship alongside, but the headline story is fewer concepts, not more.
