@@ -141,30 +141,29 @@ The Docker smoke test in `tests/docker/smoke-test.sh` verifies:
 Run benchmarks after any change to `src/output/`, `src/commands/show.ts`, fixture
 stashes, APPLY directives, or other content that affects what agents see.
 
+Benches are run via config files under `tests/bench/configs/`. Set `BENCH_OPENCODE_MODEL` to the model identifier before running.
+
 **Smoke test** (quick, always before pushing after the above changes):
 
 ```sh
-bun run tests/bench/run-nano-quick.ts > /tmp/bench-nano-$(date +%Y%m%d-%H%M%S).log 2>&1 &
-tail -f /tmp/bench-nano-*.log   # monitor progress
+bun run tests/bench/cli.ts tests/bench/configs/nano-quick.json 2>&1 | tee /tmp/bench-nano-$(date +%Y%m%d-%H%M%S).log
 ```
 
-5 tasks × 2 seeds, ~10 min, model: `shredder/qwen/qwen3.5-9b`.
+5 tasks × 2 seeds, ~10 min.
 
 **Full corpus** (deeper changes or before a release):
 
 ```sh
-bun run tests/bench/run-full-bench.ts > /tmp/bench-full-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+bun run tests/bench/cli.ts tests/bench/configs/full.json --json > /tmp/bench-full-$(date +%Y%m%d-%H%M%S).json
 ```
 
 40 tasks × 5 seeds, ~2–3 hours.
 
 **Targeted batch** (fixing specific tasks):
 
-Copy an existing `run-*-targeted.ts`, edit `TARGET_TASKS`, then run:
-
-```sh
-bun run tests/bench/run-items36-targeted.ts > /tmp/bench-targeted-$(date +%Y%m%d-%H%M%S).log 2>&1 &
-```
+Add a new JSON config to `tests/bench/configs/` following the schema in
+`tests/bench/configs/bench-run-config.schema.json`, then run it the same way.
+See `tests/bench/BENCH.md` for full config-file documentation.
 
 **Reading results**: stderr shows `[N/total] task-id arm pass|fail Xs` per run;
 final lines show per-task pass rate and overall. Look for regressions vs baseline.
