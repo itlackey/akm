@@ -710,20 +710,36 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
         `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` if the step succeeds, or \`--negative\` if this schema did not help.`,
       );
     } else {
-      // No active workflow: show the normal APPLY directive
+      // No active workflow: show the APPLY directive. Branch on whether this
+      // skill primarily teaches CLI commands (shell output) vs YAML schema.
+      const preApplyLines = [...lines];
       lines.push("");
       lines.push("---");
-      lines.push("APPLY (only if no workflow step is required for this task):");
-      lines.push(
-        "  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.",
-      );
-      lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
-      lines.push(
-        "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Fill in the task-specific VALUES from your workspace README.md.",
-      );
-      lines.push(
-        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
-      );
+      if (isCommandOutputSkill(preApplyLines)) {
+        lines.push("APPLY (only if no workflow step is required for this task):");
+        lines.push("  1. Identify the output file from README.md (typically commands.txt).");
+        lines.push(
+          "  2. Write the exact command syntax from the code blocks above — use the specific values from your task description, not the placeholder values in the examples.",
+        );
+        lines.push(
+          "  3. Each command should be on a single line (no backslash line continuation unless the verifier expects it).",
+        );
+        lines.push(
+          `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if this reference did not contain the needed command syntax.`,
+        );
+      } else {
+        lines.push("APPLY (only if no workflow step is required for this task):");
+        lines.push(
+          "  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.",
+        );
+        lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
+        lines.push(
+          "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Fill in the task-specific VALUES from your workspace README.md.",
+        );
+        lines.push(
+          `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
+        );
+      }
     }
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
@@ -747,6 +763,24 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   }
 
   return lines.length > 0 ? lines.join("\n") : null;
+}
+
+/**
+ * Detect whether a skill's rendered content primarily teaches CLI commands
+ * rather than YAML schema. Used to select the right APPLY directive variant.
+ *
+ * Heuristic: count code-block lines that start with known shell command
+ * prefixes vs lines that look like YAML key-value pairs. If CLI lines
+ * outnumber YAML lines (and there is at least one CLI line), treat the
+ * skill as command-output.
+ */
+function isCommandOutputSkill(lines: string[]): boolean {
+  const codeLines = lines.filter((l) => l.startsWith("  ") || l.startsWith("\t") || /^`/.test(l));
+  const cliPattern = /^(az |kubectl |docker |git |helm |terraform |aws |gcloud )/;
+  const yamlPattern = /^\s+\w+:/;
+  const cliCount = codeLines.filter((l) => cliPattern.test(l.trim())).length;
+  const yamlCount = codeLines.filter((l) => yamlPattern.test(l)).length;
+  return cliCount > yamlCount && cliCount > 0;
 }
 
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
