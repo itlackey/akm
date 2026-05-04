@@ -1,88 +1,18 @@
 {
   "$schema": "../../../schemas/bench-opencode-providers.schema.json",
   "schemaVersion": 1,
-  "defaultModel": "shredder/qwen/qwen3.5-9b",
+  "defaultModel": "local/qwen/qwen3.5-9b",
   "providers": {
-    "shredder": {
+    "local": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Shredder LM Studio (bench)",
+      "name": "LM Studio (localhost)",
       "options": {
-        "baseURL": "http://192.168.0.99:1234/v1",
+        "baseURL": "http://127.0.0.1:1234/v1",
         "timeout": 600000
       },
       "models": {
-        "mistralai/devstral-small-2-2512": {
-          "name": "Devstral Small 2.5 (Shredder LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        },
         "qwen/qwen3.5-9b": {
-          "name": "Qwen3.5 9B (Shredder LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        },
-        "qwen/qwen3.6-27b": {
-          "name": "Qwen3.6 27B (Shredder LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        },
-        "gemma-3-270m-it": {
-          "name": "Gemma 3 270M IT (Shredder LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        },
-        "mistralai/ministral-3-3b": {
-          "name": "Ministral 3B (Shredder LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        }
-      }
-    },
-    "don": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Don LM Studio (bench)",
-      "options": {
-        "baseURL": "http://192.168.0.205:1234/v1",
-        "timeout": 600000
-      },
-      "models": {
-        "qwen3.5-9b": {
           "name": "Qwen3.5 9B (LM Studio)",
-          "limit": {
-            "context": 32768,
-            "output": 8192
-          },
-          "capabilities": {
-            "tool": true
-          }
-        },
-        "mlx-community/qwen3.6-35b-a3b": {
-          "name": "Qwen3 35B A3B (LM Studio)",
           "limit": {
             "context": 32768,
             "output": 8192
