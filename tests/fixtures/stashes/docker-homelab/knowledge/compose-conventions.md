@@ -3,6 +3,22 @@ description: Project conventions for docker-compose files in a homelab repo
 ---
 # Compose Conventions
 
+## Loading environment from a file
+
+Use the `env_file:` field at the service level to load environment variables from a file. Both string and list forms are valid:
+
+```yaml
+services:
+  app:
+    image: myapp:1.0
+    env_file: app.env
+    # or as a list:
+    # env_file:
+    #   - app.env
+```
+
+The file is loaded relative to the compose file location. Use `env_file:` for general app configuration; secrets go in a separate `.env.secrets` (gitignored) also loaded via `env_file:` on services that need them.
+
 ## File layout
 
 ```
@@ -28,22 +44,6 @@ Always pin to a specific tag (`postgres:16.2`), never `:latest`. Use a renovate 
 ## Environment
 
 Use a per-stack `.env` for non-secret configuration. Secrets go in a sibling `.env.secrets` that's gitignored, loaded via `env_file:`. Never commit credentials.
-
-## Loading environment from a file
-
-Use the `env_file:` field at the service level to load environment variables from a file. Both string and list forms are valid:
-
-```yaml
-services:
-  app:
-    image: myapp:1.0
-    env_file: app.env
-    # or as a list:
-    # env_file:
-    #   - app.env
-```
-
-The file is loaded relative to the compose file location. Use `env_file:` for general app configuration; secrets go in a separate `.env.secrets` (gitignored) also loaded via `env_file:` on services that need them.
 
 ## Restart policies
 

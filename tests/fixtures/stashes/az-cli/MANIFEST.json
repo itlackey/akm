@@ -2,7 +2,7 @@
   "name": "az-cli",
   "description": "Curated skill and knowledge docs for everyday Azure CLI (az) operations.",
   "purpose": "Used by bench tasks under domain=az-cli and by ranking tests for az/azure queries.",
-  "assets": { "skill": 1, "knowledge": 4, "command": 0, "agent": 0, "script": 0 },
+  "assets": { "skill": 1, "knowledge": 4, "command": 0, "agent": 0, "script": 0, "memory": 2 },
   "consumers": [
     "tests/fixtures/bench/tasks/az-cli/* (when authored, future)",
     "tests/ranking-regression.test.ts (azure queries)"

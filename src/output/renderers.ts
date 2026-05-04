@@ -232,12 +232,13 @@ const skillMdRenderer: AssetRenderer = {
 
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
+    const parsed = parseFrontmatter(ctx.content());
     return {
       type: "skill",
       name,
       path: ctx.absPath,
       action: "Read and follow the instructions below",
-      content: ctx.content(),
+      content: parsed.content,
     };
   },
 };

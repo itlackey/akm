@@ -691,6 +691,20 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
   // content rather than substituting training-data approximations.
   const assetType = typeof r.type === "string" ? r.type : null;
   const assetRef = typeof r.name === "string" && assetType ? `${assetType}:${r.name}` : null;
+
+  // Show-loop detection: if the agent has shown this asset 3+ times without
+  // writing anything, surface a warning so it stops cycling and acts.
+  const showLoopCount = typeof r.showLoopWarning === "number" ? r.showLoopWarning : 0;
+  if (showLoopCount >= 3) {
+    lines.push("");
+    lines.push(`WARNING: You have shown this asset ${showLoopCount} times without completing the task.`);
+    lines.push("Stop re-reading — you have the information you need. Act on it now:");
+    lines.push("  - Write your output file using the content above.");
+    lines.push(
+      `  - If this asset does not contain what you need, run \`akm feedback '${assetRef ?? "<ref>"}' --negative\` and search for a different asset.`,
+    );
+  }
+
   if (assetType === "skill" || assetType === "knowledge") {
     const activeRun = r.activeRun as { runId: string; stepId: string | null; workflowRef: string } | null | undefined;
     if (activeRun) {
@@ -719,7 +733,7 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
         lines.push("APPLY (only if no workflow step is required for this task):");
         lines.push("  1. Identify the output file from README.md (typically commands.txt).");
         lines.push(
-          "  2. Write the exact command syntax from the code blocks above — use the specific values from your task description, not the placeholder values in the examples.",
+          "  2. Write the exact command syntax from the code blocks above — replace every placeholder (`<name>`, `<value>`) with a real, concrete value from your task context. Do not write placeholder text.",
         );
         lines.push(
           "  3. Each command should be on a single line (no backslash line continuation unless the verifier expects it).",
@@ -734,7 +748,7 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
         );
         lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
         lines.push(
-          "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Fill in the task-specific VALUES from your workspace README.md.",
+          "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Replace every placeholder value with a real, concrete value from your task context. Do not leave any field as null, empty, or a placeholder.",
         );
         lines.push(
           `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
