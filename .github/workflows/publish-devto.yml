@@ -35,7 +35,7 @@ jobs:
           zero_sha="0000000000000000000000000000000000000000"
 
           if [ "$BEFORE_SHA" = "$zero_sha" ] || ! git rev-parse --verify "$BEFORE_SHA^{commit}" >/dev/null 2>&1; then
-            echo "Falling back to tracked post files because BEFORE_SHA is unavailable or unreachable: $BEFORE_SHA"
+            echo "Falling back to tracked post files because BEFORE_SHA represents a first-push/new-branch event or is unreachable: $BEFORE_SHA"
             mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
           else
             # Use Git pathspec magic so ** matches nested markdown files under docs/posts.
@@ -71,8 +71,9 @@ jobs:
           ${{ steps.changed-posts.outputs.files }}
           EOF
 
-          if [ "${#files[@]}" -eq 0 ] || [ "${#files[@]}" -ne "$EXPECTED_COUNT" ]; then
-            echo "Changed file list did not deserialize as expected"
+          actual_count="${#files[@]}"
+          if [ "$actual_count" -eq 0 ] || [ "$actual_count" -ne "$EXPECTED_COUNT" ]; then
+            echo "Changed file list did not deserialize as expected (expected $EXPECTED_COUNT, got $actual_count)"
             exit 1
           fi
 
