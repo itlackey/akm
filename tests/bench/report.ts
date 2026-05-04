@@ -465,6 +465,8 @@ function serialiseAkmOverheadPerRun(row: AkmOverheadPerRun): {
   search_count: number;
   show_count: number;
   feedback_count: number;
+  positive_feedback_count: number;
+  negative_feedback_count: number;
   total_tool_calls: number;
   assets_loaded_count: number;
   irrelevant_assets_loaded_count: number | null;
@@ -481,6 +483,8 @@ function serialiseAkmOverheadPerRun(row: AkmOverheadPerRun): {
     search_count: row.searchCount,
     show_count: row.showCount,
     feedback_count: row.feedbackCount,
+    positive_feedback_count: row.positiveFeedbackCount,
+    negative_feedback_count: row.negativeFeedbackCount,
     total_tool_calls: row.totalToolCalls,
     assets_loaded_count: row.assetsLoadedCount,
     irrelevant_assets_loaded_count: row.irrelevantAssetsLoadedCount,
@@ -507,6 +511,12 @@ function serialiseAkmOverheadAggregate(agg: AkmOverheadAggregate): {
   total_tool_calls: number;
   tool_calls_per_success: number | null;
   cost_per_success: number | null;
+  search_engagement_rate: number;
+  show_engagement_rate: number;
+  feedback_engagement_rate: number;
+  search_to_show_ratio: number | null;
+  mean_positive_feedback_count: number;
+  mean_negative_feedback_count: number;
 } {
   return {
     total_runs: agg.totalRuns,
@@ -524,6 +534,12 @@ function serialiseAkmOverheadAggregate(agg: AkmOverheadAggregate): {
     total_tool_calls: agg.totalToolCalls,
     tool_calls_per_success: agg.toolCallsPerSuccess,
     cost_per_success: agg.costPerSuccess,
+    search_engagement_rate: agg.searchEngagementRate,
+    show_engagement_rate: agg.showEngagementRate,
+    feedback_engagement_rate: agg.feedbackEngagementRate,
+    search_to_show_ratio: agg.searchToShowRatio,
+    mean_positive_feedback_count: agg.meanPositiveFeedbackCount,
+    mean_negative_feedback_count: agg.meanNegativeFeedbackCount,
   };
 }
 
@@ -608,19 +624,27 @@ function percentileForJson(value: number | null): number | string | null {
 function serialiseCorpus(c: CorpusMetrics): {
   pass_rate: number;
   tokens_per_pass: number | null;
+  tokens_per_run: number | null;
   wallclock_ms: number;
 } {
   return {
     pass_rate: c.passRate,
     tokens_per_pass: c.tokensPerPass,
+    tokens_per_run: c.tokensPerRun,
     wallclock_ms: c.wallclockMs,
   };
 }
 
-function serialiseDelta(d: CorpusDelta): { pass_rate: number; tokens_per_pass: number | null; wallclock_ms: number } {
+function serialiseDelta(d: CorpusDelta): {
+  pass_rate: number;
+  tokens_per_pass: number | null;
+  tokens_per_run: number | null;
+  wallclock_ms: number;
+} {
   return {
     pass_rate: d.passRate,
     tokens_per_pass: d.tokensPerPass,
+    tokens_per_run: d.tokensPerRun,
     wallclock_ms: d.wallclockMs,
   };
 }
@@ -739,6 +763,7 @@ function serialisePerTaskMetrics(m: PerTaskMetrics): {
   pass_rate: number;
   pass_at_1: 0 | 1;
   tokens_per_pass: number | null;
+  tokens_per_run: number | null;
   wallclock_ms: number;
   pass_rate_stdev: number;
   budget_exceeded_count: number;
@@ -750,6 +775,7 @@ function serialisePerTaskMetrics(m: PerTaskMetrics): {
     pass_rate: m.passRate,
     pass_at_1: m.passAt1,
     tokens_per_pass: m.tokensPerPass,
+    tokens_per_run: m.tokensPerRun,
     wallclock_ms: m.wallclockMs,
     pass_rate_stdev: m.passRateStdev,
     budget_exceeded_count: m.budgetExceededCount,

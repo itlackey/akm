@@ -1,6 +1,6 @@
 /**
- * Targeted retest of failing/partial tasks after stash improvements.
- * Usage: bun run tests/bench/run-failing-tasks.ts
+ * Quick 5-task × 2-seed run for Nemotron Nano evaluation.
+ * Usage: bun run tests/bench/run-nano-quick.ts
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -21,38 +21,24 @@ const LOCAL = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-provi
 const DEFAULT = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-providers.json");
 const providers = loadOpencodeProviders(fs.existsSync(LOCAL) ? LOCAL : DEFAULT);
 
-process.stderr.write(`Running ${tasks.length} tasks × 5 seeds (akm only)\nModel: ${providers.defaultModel}\n\n`);
+process.stderr.write(`Running ${tasks.length} tasks × 2 seeds\nModel: ${providers.defaultModel}\n\n`);
 
 const report = await runUtility({
   tasks,
   arms: ["akm"],
   model: providers.defaultModel!,
-  seedsPerArm: 5,
+  seedsPerArm: 2,
   budgetTokens: 25000,
   budgetWallMs: 360000,
-  parallel: 3,
+  parallel: 2,
   opencodeProviders: providers,
 });
 
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
-const agg = report.aggregateAkm;
-process.stderr.write(`\n=== RESULTS vs BASELINE ===\n`);
-// Qwen 9B baseline for comparison
-const BASELINE: Record<string, number> = {
-  "drillbit/backup-policy": 1.0,
-  "drillbit/canary-enable": 1.0,
-  "inkwell/add-healthcheck": 0.8,
-  "inkwell/configure-scaling": 0.8,
-  "opencode/select-correct-skill": 1.0,
-};
 for (const t of report.tasks ?? []) {
   const rate = t.akm?.passRate ?? 0;
-  const base = BASELINE[t.id] ?? 0;
-  const delta = rate - base;
-  const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "=";
   const bar = "█".repeat(Math.round(rate * 5)) + "░".repeat(5 - Math.round(rate * 5));
-  const deltaStr = delta !== 0 ? ` (${arrow}${Math.abs(delta * 100).toFixed(0)}pp)` : "";
-  process.stderr.write(`${t.id.padEnd(48)} ${(rate * 100).toFixed(0).padStart(3)}%  ${bar}${deltaStr}\n`);
+  process.stderr.write(`${t.id.padEnd(48)} ${(rate * 100).toFixed(0).padStart(3)}%  ${bar}\n`);
 }
-process.stderr.write(`\nOverall: ${((agg?.passRate ?? 0) * 100).toFixed(1)}%\n`);
+process.stderr.write(`\nOverall: ${((report.aggregateAkm?.passRate ?? 0) * 100).toFixed(1)}%\n`);

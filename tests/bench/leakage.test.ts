@@ -156,7 +156,7 @@ describe("cross-task eval/train verifier leakage check", () => {
     // field-access patterns by design, just with different expected values.
     const isVariantPair = (trainId: string, evalId: string) => {
       const trainBase = trainId.replace(/-train$/, "");
-      return trainBase === evalId || evalId.startsWith(trainBase + "-");
+      return trainBase === evalId || evalId.startsWith(`${trainBase}-`);
     };
     for (const trainTask of trainTasks) {
       const trainFragments = crossTaskFragments(trainTask);

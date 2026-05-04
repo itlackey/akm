@@ -141,6 +141,13 @@ export interface PerTaskMetrics {
    * operators can tell when token economics are unreliable.
    */
   runsWithMeasuredTokens: number;
+  /**
+   * Mean total (input + output) tokens across ALL runs (any outcome) that carry
+   * a parsed token measurement. `null` when no run in the bag has a parsed
+   * measurement. Unlike `tokensPerPass`, this includes failing runs so it
+   * reflects the true average token cost regardless of outcome.
+   */
+  tokensPerRun: number | null;
 }
 
 /**
@@ -159,6 +166,7 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
       harnessErrorCount: 0,
       count: 0,
       runsWithMeasuredTokens: 0,
+      tokensPerRun: null,
     };
   }
 
@@ -169,12 +177,16 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
   let budgetExceeded = 0;
   let harnessError = 0;
   let runsWithMeasuredTokens = 0;
+  let totalTokensInMeasuredRuns = 0;
+  let measuredRuns = 0;
   // For the standard deviation we need a fixed-iteration buffer of pass/fail.
   const passSamples: number[] = [];
   for (const r of results) {
     totalWallclock += r.wallclockMs;
     if (isMeasured(r)) {
       runsWithMeasuredTokens += 1;
+      measuredRuns += 1;
+      totalTokensInMeasuredRuns += r.tokens.input + r.tokens.output;
     }
     const isPass = r.outcome === "pass" ? 1 : 0;
     passSamples.push(isPass);
@@ -207,6 +219,7 @@ export function aggregatePerTask(results: RunResult[]): PerTaskMetrics {
     harnessErrorCount: harnessError,
     count: results.length,
     runsWithMeasuredTokens,
+    tokensPerRun: measuredRuns === 0 ? null : totalTokensInMeasuredRuns / measuredRuns,
   };
 }
 
@@ -227,6 +240,8 @@ export interface CorpusMetrics {
   /** Mean over per-task tokensPerPass, treating `null` as missing. `null` if all missing. */
   tokensPerPass: number | null;
   wallclockMs: number;
+  /** Mean over per-task tokensPerRun, treating `null` as missing. `null` if all missing. */
+  tokensPerRun: number | null;
 }
 
 /**
@@ -239,13 +254,15 @@ export interface CorpusMetrics {
 export function aggregateCorpus(perTask: Record<string, PerTaskMetrics>): CorpusMetrics {
   const tasks = Object.values(perTask);
   if (tasks.length === 0) {
-    return { passRate: 0, tokensPerPass: null, wallclockMs: 0 };
+    return { passRate: 0, tokensPerPass: null, wallclockMs: 0, tokensPerRun: null };
   }
   const passRate = tasks.reduce((a, t) => a + t.passRate, 0) / tasks.length;
   const wallclockMs = tasks.reduce((a, t) => a + t.wallclockMs, 0) / tasks.length;
   const tppValues = tasks.map((t) => t.tokensPerPass).filter((v): v is number => v !== null);
   const tokensPerPass = tppValues.length === 0 ? null : tppValues.reduce((a, b) => a + b, 0) / tppValues.length;
-  return { passRate, tokensPerPass, wallclockMs };
+  const tprValues = tasks.map((t) => t.tokensPerRun).filter((v): v is number => v !== null);
+  const tokensPerRun = tprValues.length === 0 ? null : tprValues.reduce((a, b) => a + b, 0) / tprValues.length;
+  return { passRate, tokensPerPass, wallclockMs, tokensPerRun };
 }
 
 // ── Delta (§6.1 corpus row, akm vs noakm) ──────────────────────────────────
@@ -255,6 +272,8 @@ export interface CorpusDelta {
   /** akm − noakm. `null` if either side is `null`. */
   tokensPerPass: number | null;
   wallclockMs: number;
+  /** akm − noakm for tokensPerRun. `null` if either side is `null`. */
+  tokensPerRun: number | null;
 }
 
 /**
@@ -268,6 +287,8 @@ export function computeCorpusDelta(noakm: CorpusMetrics, akm: CorpusMetrics): Co
     tokensPerPass:
       akm.tokensPerPass === null || noakm.tokensPerPass === null ? null : akm.tokensPerPass - noakm.tokensPerPass,
     wallclockMs: akm.wallclockMs - noakm.wallclockMs,
+    tokensPerRun:
+      akm.tokensPerRun === null || noakm.tokensPerRun === null ? null : akm.tokensPerRun - noakm.tokensPerRun,
   };
 }
 
@@ -278,6 +299,8 @@ export function computePerTaskDelta(noakm: PerTaskMetrics, akm: PerTaskMetrics):
     tokensPerPass:
       akm.tokensPerPass === null || noakm.tokensPerPass === null ? null : akm.tokensPerPass - noakm.tokensPerPass,
     wallclockMs: akm.wallclockMs - noakm.wallclockMs,
+    tokensPerRun:
+      akm.tokensPerRun === null || noakm.tokensPerRun === null ? null : akm.tokensPerRun - noakm.tokensPerRun,
   };
 }
 
@@ -2939,6 +2962,10 @@ export interface AkmOverheadPerRun {
   searchCount: number;
   showCount: number;
   feedbackCount: number;
+  /** Count of `akm feedback --positive` invocations in this run. */
+  positiveFeedbackCount: number;
+  /** Count of `akm feedback --negative` invocations in this run. */
+  negativeFeedbackCount: number;
   totalToolCalls: number;
   assetsLoadedCount: number;
   /** `null` when relevance cannot be judged (no task metadata supplied). */
@@ -2996,6 +3023,20 @@ export interface AkmOverheadAggregate {
    * - none of the passing runs has `tokenMeasurement === "parsed"`.
    */
   costPerSuccess: number | null;
+  /** Fraction of runs (0–1) that invoked `akm search` at least once. */
+  searchEngagementRate: number;
+  /** Fraction of runs (0–1) that invoked `akm show` at least once. */
+  showEngagementRate: number;
+  /** Fraction of runs (0–1) that invoked `akm feedback` at least once. */
+  feedbackEngagementRate: number;
+  /**
+   * `showSum / searchSum` across all runs. `null` when no run invoked search
+   * (avoids division by zero). Values < 1 indicate agents that search but never
+   * load; values > 1 indicate multi-load-per-search behaviour.
+   */
+  searchToShowRatio: number | null;
+  meanPositiveFeedbackCount: number;
+  meanNegativeFeedbackCount: number;
 }
 
 /**
@@ -3052,6 +3093,8 @@ function perRun(run: RunResult, taskMetadata: AkmOverheadOptions["taskMetadata"]
   let searchCount = 0;
   let showCount = 0;
   let feedbackCount = 0;
+  let positiveFeedbackCount = 0;
+  let negativeFeedbackCount = 0;
   const uniqueShowRefs = new Set<string>();
 
   for (const ev of events) {
@@ -3061,7 +3104,15 @@ function perRun(run: RunResult, taskMetadata: AkmOverheadOptions["taskMetadata"]
       if (typeof ev.assetRef === "string" && ev.assetRef.length > 0) {
         uniqueShowRefs.add(ev.assetRef);
       }
-    } else if (ev.type === "akm_feedback") feedbackCount += 1;
+    } else if (ev.type === "akm_feedback") {
+      feedbackCount += 1;
+      // Polarity is carried in args as "--positive" or "--negative".
+      // Events sourced from events.jsonl also have args populated by
+      // normalizeRunToTrace. Absence of both flags is treated as unknown
+      // (contributes to feedbackCount but not to either polarity counter).
+      if (ev.args?.includes("--positive")) positiveFeedbackCount += 1;
+      else if (ev.args?.includes("--negative")) negativeFeedbackCount += 1;
+    }
   }
   const totalToolCalls = searchCount + showCount + feedbackCount;
 
@@ -3113,6 +3164,8 @@ function perRun(run: RunResult, taskMetadata: AkmOverheadOptions["taskMetadata"]
     searchCount,
     showCount,
     feedbackCount,
+    positiveFeedbackCount,
+    negativeFeedbackCount,
     totalToolCalls,
     assetsLoadedCount: uniqueShowRefs.size,
     irrelevantAssetsLoadedCount,
@@ -3155,6 +3208,12 @@ export function aggregateAkmOverhead(
       totalToolCalls: 0,
       toolCallsPerSuccess: null,
       costPerSuccess: null,
+      searchEngagementRate: 0,
+      showEngagementRate: 0,
+      feedbackEngagementRate: 0,
+      searchToShowRatio: null,
+      meanPositiveFeedbackCount: 0,
+      meanNegativeFeedbackCount: 0,
     };
   }
 
@@ -3190,12 +3249,24 @@ export function aggregateAkmOverhead(
   let parsedPassCount = 0;
   let anyPassMissingMeasurement = false;
 
+  let searchEngagedRuns = 0;
+  let showEngagedRuns = 0;
+  let feedbackEngagedRuns = 0;
+  let positiveFeedbackSum = 0;
+  let negativeFeedbackSum = 0;
+
   for (const row of perRun) {
     searchSum += row.searchCount;
     showSum += row.showCount;
     feedbackSum += row.feedbackCount;
     toolCallsSum += row.totalToolCalls;
     assetsSum += row.assetsLoadedCount;
+
+    if (row.searchCount > 0) searchEngagedRuns += 1;
+    if (row.showCount > 0) showEngagedRuns += 1;
+    if (row.feedbackCount > 0) feedbackEngagedRuns += 1;
+    positiveFeedbackSum += row.positiveFeedbackCount;
+    negativeFeedbackSum += row.negativeFeedbackCount;
 
     if (row.irrelevantAssetsLoadedCount !== null) {
       irrelevantSum += row.irrelevantAssetsLoadedCount;
@@ -3244,6 +3315,8 @@ export function aggregateAkmOverhead(
       ? null
       : parsedPassTokenSum / parsedPassCount;
 
+  const searchToShowRatio = searchSum === 0 ? null : showSum / searchSum;
+
   return {
     totalRuns: n,
     passingRuns,
@@ -3260,6 +3333,12 @@ export function aggregateAkmOverhead(
     totalToolCalls: toolCallsSum,
     toolCallsPerSuccess,
     costPerSuccess,
+    searchEngagementRate: searchEngagedRuns / n,
+    showEngagementRate: showEngagedRuns / n,
+    feedbackEngagementRate: feedbackEngagedRuns / n,
+    searchToShowRatio,
+    meanPositiveFeedbackCount: positiveFeedbackSum / n,
+    meanNegativeFeedbackCount: negativeFeedbackSum / n,
   };
 }
 

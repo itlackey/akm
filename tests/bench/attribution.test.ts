@@ -55,13 +55,14 @@ function makeReport(akmRuns: RunResult[]): UtilityRunReport {
     commit: "abc",
     model: "m",
     corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: akmRuns.length },
-    aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+    aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
     aggregateAkm: {
       passRate: akmRuns.filter((r) => r.outcome === "pass").length / Math.max(1, akmRuns.length),
       tokensPerPass: null,
+      tokensPerRun: null,
       wallclockMs: 0,
     },
-    aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+    aggregateDelta: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
     trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
     failureModes: { byLabel: {}, byTask: {} },
     tasks: [],
@@ -291,7 +292,7 @@ describe("runMaskedCorpus", () => {
       const passRate = alphaMissing ? 0.25 : 0.6;
       return {
         ...baseReport,
-        aggregateAkm: { passRate, tokensPerPass: null, wallclockMs: 0 },
+        aggregateAkm: { passRate, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
         akmRuns: [],
       };
     };
@@ -385,7 +386,7 @@ describe("runMaskedCorpus", () => {
         observedTaskStashUnchanged = task?.stash === "fixtureA";
         return {
           ...baseReport,
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           akmRuns: [],
         };
       },
@@ -433,7 +434,7 @@ describe("runMaskedCorpus", () => {
       topN: 2,
       runUtility: async () => ({
         ...baseReport,
-        aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+        aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
         akmRuns: [],
       }),
       baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
@@ -473,7 +474,7 @@ describe("runMaskedCorpus", () => {
         if (dir) successDirs.push(dir);
         return {
           ...baseReport,
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           akmRuns: [],
         };
       },
@@ -499,7 +500,7 @@ describe("runMaskedCorpus", () => {
           if (calls === 2) throw new Error("simulated runner failure");
           return {
             ...baseReport,
-            aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+            aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
             akmRuns: [],
           };
         },
@@ -544,7 +545,7 @@ describe("runMaskedCorpus", () => {
         callCount += 1;
         return {
           ...baseReport,
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
         };
       },
       baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
@@ -590,7 +591,7 @@ describe("runMaskedCorpus", () => {
         callCount += 1;
         return {
           ...baseReport,
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
         };
       },
       baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
@@ -624,7 +625,7 @@ describe("runMaskedCorpus", () => {
         callCount += 1;
         return {
           ...baseReport,
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
         };
       },
       baseOptions: { arms: ["akm"] as Arm[], model: "m", seedsPerArm: 1 },
@@ -708,9 +709,9 @@ describe("bench attribute --top clamping", () => {
           commit: "abc",
           model: "test-model",
           corpus: { domains: 1, tasks: 0, slice: "all", seedsPerArm: 1 },
-          aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-          aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateDelta: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
           failureModes: { byLabel: {}, byTask: {} },
           tasks: [],
@@ -778,11 +779,11 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
       commit: "abc",
       model: "m",
       corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: baseRuns.length },
-      aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+      aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
       // Engineered base pass rate distinct from the masked rates so the
       // arithmetic is observable.
-      aggregateAkm: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
-      aggregateDelta: { passRate: 0.8, tokensPerPass: null, wallclockMs: 0 },
+      aggregateAkm: { passRate: 0.8, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+      aggregateDelta: { passRate: 0.8, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
       trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
       failureModes: { byLabel: {}, byTask: {} },
       tasks: [],
@@ -824,7 +825,7 @@ describe("runMaskedCorpus marginal_contribution arithmetic", () => {
         const passRate = maskedPassRates[masked] ?? 0;
         return {
           ...baseReport,
-          aggregateAkm: { passRate, tokensPerPass: null, wallclockMs: 0 },
+          aggregateAkm: { passRate, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           akmRuns: [],
         };
       },
@@ -983,9 +984,9 @@ describe("bench attribute prefers persisted runs[] (#249)", () => {
           commit: "abc",
           model: "test-model",
           corpus: { domains: 1, tasks: 1, slice: "all", seedsPerArm: 2 },
-          aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-          aggregateAkm: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
-          aggregateDelta: { passRate: 0.25, tokensPerPass: null, wallclockMs: 0 },
+          aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0.25, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateDelta: { passRate: 0.25, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
           failureModes: { byLabel: {}, byTask: {} },
           tasks: [],
@@ -1067,9 +1068,9 @@ describe("bench attribute prefers persisted runs[] (#249)", () => {
           commit: "abc",
           model: "test-model",
           corpus: { domains: 1, tasks: 0, slice: "all", seedsPerArm: 1 },
-          aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-          aggregateAkm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-          aggregateDelta: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
+          aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateAkm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+          aggregateDelta: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
           trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
           failureModes: { byLabel: {}, byTask: {} },
           tasks: [],

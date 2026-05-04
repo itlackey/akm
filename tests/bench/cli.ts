@@ -646,13 +646,15 @@ async function defaultMaskedRunner(
 function extractCorpusMetrics(
   envelope: Record<string, unknown>,
   key: "noakm" | "akm" | "delta",
-): { passRate: number; tokensPerPass: number | null; wallclockMs: number } {
+): { passRate: number; tokensPerPass: number | null; tokensPerRun: number | null; wallclockMs: number } {
   const aggregate = (envelope.aggregate ?? {}) as Record<string, unknown>;
   const node = (aggregate[key] ?? {}) as Record<string, unknown>;
   return {
     passRate: typeof node.pass_rate === "number" ? node.pass_rate : 0,
     tokensPerPass:
       node.tokens_per_pass === null ? null : typeof node.tokens_per_pass === "number" ? node.tokens_per_pass : null,
+    tokensPerRun:
+      node.tokens_per_run === null ? null : typeof node.tokens_per_run === "number" ? node.tokens_per_run : null,
     wallclockMs: typeof node.wallclock_ms === "number" ? node.wallclock_ms : 0,
   };
 }

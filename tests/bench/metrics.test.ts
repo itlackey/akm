@@ -43,6 +43,7 @@ function ptm(overrides: Partial<PerTaskMetrics> = {}): PerTaskMetrics {
     passRate: 0,
     passAt1: 0,
     tokensPerPass: null,
+    tokensPerRun: null,
     wallclockMs: 0,
     passRateStdev: 0,
     budgetExceededCount: 0,
@@ -257,6 +258,7 @@ describe("aggregateCorpus", () => {
         passRate: 1,
         passAt1: 1,
         tokensPerPass: 1000,
+        tokensPerRun: 1000,
         wallclockMs: 1000,
         passRateStdev: 0,
         budgetExceededCount: 0,
@@ -268,6 +270,7 @@ describe("aggregateCorpus", () => {
         passRate: 0,
         passAt1: 0,
         tokensPerPass: null,
+        tokensPerRun: null,
         wallclockMs: 2000,
         passRateStdev: 0,
         budgetExceededCount: 0,
@@ -288,6 +291,7 @@ describe("aggregateCorpus", () => {
         passRate: 0,
         passAt1: 0,
         tokensPerPass: null,
+        tokensPerRun: null,
         wallclockMs: 1000,
         passRateStdev: 0,
         budgetExceededCount: 0,
@@ -309,8 +313,8 @@ describe("aggregateCorpus", () => {
 
 describe("delta helpers", () => {
   test("computeCorpusDelta — akm − noakm", () => {
-    const noakm = { passRate: 0.3, tokensPerPass: 18000, wallclockMs: 4000 };
-    const akm = { passRate: 0.7, tokensPerPass: 14000, wallclockMs: 3000 };
+    const noakm = { passRate: 0.3, tokensPerPass: 18000, tokensPerRun: null, wallclockMs: 4000 };
+    const akm = { passRate: 0.7, tokensPerPass: 14000, tokensPerRun: null, wallclockMs: 3000 };
     const d = computeCorpusDelta(noakm, akm);
     expect(d.passRate).toBeCloseTo(0.4);
     expect(d.tokensPerPass).toBeCloseTo(-4000);
@@ -318,8 +322,8 @@ describe("delta helpers", () => {
   });
 
   test("computeCorpusDelta — null tokensPerPass propagates", () => {
-    const noakm = { passRate: 0, tokensPerPass: null, wallclockMs: 1 };
-    const akm = { passRate: 1, tokensPerPass: 5, wallclockMs: 2 };
+    const noakm = { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 1 };
+    const akm = { passRate: 1, tokensPerPass: 5, tokensPerRun: null, wallclockMs: 2 };
     expect(computeCorpusDelta(noakm, akm).tokensPerPass).toBeNull();
   });
 
@@ -328,6 +332,7 @@ describe("delta helpers", () => {
       passRate: 0,
       passAt1: 0,
       tokensPerPass: null,
+      tokensPerRun: null,
       wallclockMs: 0,
       passRateStdev: 0,
       budgetExceededCount: 0,
@@ -339,6 +344,7 @@ describe("delta helpers", () => {
       passRate: 1,
       passAt1: 1,
       tokensPerPass: 1000,
+      tokensPerRun: null,
       wallclockMs: 100,
       passRateStdev: 0,
       budgetExceededCount: 0,

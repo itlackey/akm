@@ -564,6 +564,7 @@ describe("computeLongitudinalMetrics", () => {
       passRate: akmPassRate,
       passAt1: 0 as 0 | 1,
       tokensPerPass: null,
+      tokensPerRun: null,
       wallclockMs: 0,
       passRateStdev: 0,
       budgetExceededCount: 0,
@@ -578,9 +579,9 @@ describe("computeLongitudinalMetrics", () => {
       commit: "c",
       model: "m",
       corpus: { domains: 1, tasks: 1, slice: "eval", seedsPerArm },
-      aggregateNoakm: { passRate: 0, tokensPerPass: null, wallclockMs: 0 },
-      aggregateAkm: { passRate: akmPassRate, tokensPerPass: null, wallclockMs: 0 },
-      aggregateDelta: { passRate: akmPassRate, tokensPerPass: null, wallclockMs: 0 },
+      aggregateNoakm: { passRate: 0, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+      aggregateAkm: { passRate: akmPassRate, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+      aggregateDelta: { passRate: akmPassRate, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
       trajectoryAkm: { correctAssetLoaded: null, feedbackRecorded: 0 },
       failureModes: opts.failureMode
         ? {
@@ -588,7 +589,14 @@ describe("computeLongitudinalMetrics", () => {
             byTask: { [taskId]: { [opts.failureMode]: 1 } as Record<string, number> },
           }
         : { byLabel: {}, byTask: {} },
-      tasks: [{ id: taskId, noakm, akm, delta: { passRate: akmPassRate, tokensPerPass: null, wallclockMs: 0 } }],
+      tasks: [
+        {
+          id: taskId,
+          noakm,
+          akm,
+          delta: { passRate: akmPassRate, tokensPerPass: null, tokensPerRun: null, wallclockMs: 0 },
+        },
+      ],
       warnings: [],
     };
   }

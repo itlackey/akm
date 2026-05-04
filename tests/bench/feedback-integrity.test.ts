@@ -312,11 +312,12 @@ function emptyUtilityReport(): import("./report").UtilityRunReport {
     commit: "deadbee",
     model: "m",
     corpus: { domains: 0, tasks: 0, slice: "all", seedsPerArm: 1 },
-    aggregateNoakm: { passRate: 0, tokensPerPass: 0, wallclockMs: 0 },
-    aggregateAkm: { passRate: 0, tokensPerPass: 0, wallclockMs: 0 },
+    aggregateNoakm: { passRate: 0, tokensPerPass: 0, tokensPerRun: null, wallclockMs: 0 },
+    aggregateAkm: { passRate: 0, tokensPerPass: 0, tokensPerRun: null, wallclockMs: 0 },
     aggregateDelta: {
       passRate: 0,
       tokensPerPass: 0,
+      tokensPerRun: null,
       wallclockMs: 0,
     },
     trajectoryAkm: {
