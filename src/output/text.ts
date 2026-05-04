@@ -698,14 +698,16 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
       lines.unshift(
         `  akm workflow complete '${activeRun.runId}'${activeRun.stepId ? ` --step '${activeRun.stepId}'` : ""}`,
       );
-      lines.unshift("Do NOT apply this asset directly. Complete your workflow step first:");
-      lines.unshift(`WARNING: WORKFLOW ACTIVE (run: ${activeRun.runId})`);
+      lines.unshift(
+        "Read this schema, then follow your workflow step's instructions to edit the workspace file. When done, mark the step complete:",
+      );
+      lines.unshift(`WORKFLOW ACTIVE — schema shown as reference (run: ${activeRun.runId})`);
       lines.unshift("---");
       lines.unshift("");
       // Still show feedback line at the end but skip the APPLY directive
       lines.push("");
       lines.push(
-        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the workflow completes.`,
+        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` if the step succeeds, or \`--negative\` if this schema did not help.`,
       );
     } else {
       // No active workflow: show the normal APPLY directive
@@ -713,14 +715,15 @@ function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel): strin
       lines.push("---");
       lines.push("APPLY (only if no workflow step is required for this task):");
       lines.push(
-        "  1. Find the workspace file to edit (check README.md in the current directory for the target file name).",
+        "  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.",
       );
       lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
       lines.push(
-        "  3. Use the VALUES from your task description — do not copy example values from this schema verbatim.",
+        "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Fill in the task-specific VALUES from your workspace README.md.",
       );
-      lines.push("If a workflow applies, run `akm workflow next` instead of editing directly.");
-      lines.push(`Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds.`);
+      lines.push(
+        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
+      );
     }
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;
@@ -909,7 +912,10 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
   // REC-02: When stash hits exist, tell the agent the next required step so it
   // doesn't skip `akm show` and write from training memory instead.
   if (hits.length >= 1) {
-    const topRef = typeof hits[0].ref === "string" ? hits[0].ref : null;
+    // Prefer skill/command/agent type hits for the "Next:" ref — knowledge docs are
+    // supplementary context, not the authoritative schema agents should load first.
+    const preferredHit = hits.find((h) => h.type === "skill" || h.type === "command" || h.type === "agent") ?? hits[0];
+    const topRef = typeof preferredHit.ref === "string" ? preferredHit.ref : null;
     const hasWorkflowHit = hits.some((h) => h.type === "workflow");
     if (topRef) {
       if (hasWorkflowHit) {
