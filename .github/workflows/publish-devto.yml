@@ -35,6 +35,7 @@ jobs:
           zero_sha="0000000000000000000000000000000000000000"
 
           if [ "$BEFORE_SHA" = "$zero_sha" ] || ! git rev-parse --verify "$BEFORE_SHA^{commit}" >/dev/null 2>&1; then
+            echo "Falling back to tracked post files because BEFORE_SHA is unavailable or unreachable: $BEFORE_SHA"
             mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
           else
             # Use Git pathspec magic so ** matches nested markdown files under docs/posts.
@@ -64,10 +65,16 @@ jobs:
         if: steps.changed-posts.outputs.count != '0'
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
+          EXPECTED_COUNT: ${{ steps.changed-posts.outputs.count }}
         run: |
           mapfile -t files <<EOF
           ${{ steps.changed-posts.outputs.files }}
           EOF
+
+          if [ "${#files[@]}" -eq 0 ] || [ "${#files[@]}" -ne "$EXPECTED_COUNT" ]; then
+            echo "Changed file list did not deserialize as expected"
+            exit 1
+          fi
 
           npx -y @sinedied/devto-cli push "${files[@]}" \
             --token "$DEVTO_TOKEN" \
