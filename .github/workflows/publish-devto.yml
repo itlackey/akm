@@ -32,9 +32,12 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
         run: |
-          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+          zero_sha="0000000000000000000000000000000000000000"
+
+          if [ "$BEFORE_SHA" = "$zero_sha" ]; then
             mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
           else
+            # Use Git pathspec magic so ** matches nested markdown files under docs/posts.
             mapfile -t files < <(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" -- ':(glob)docs/posts/**/*.md')
           fi
 
