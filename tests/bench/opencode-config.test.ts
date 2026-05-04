@@ -55,8 +55,8 @@ describe("loadOpencodeProviders", () => {
     expect(loaded.source).toBe(FIXTURE_PATH);
     expect(loaded.providers).toBeDefined();
     expect(typeof loaded.providers).toBe("object");
-    expect(loaded.defaultModel).toBe("shredder/qwen/qwen3.5-9b");
-    expect("shredder" in loaded.providers).toBe(true);
+    expect(loaded.defaultModel).toBe("local/qwen/qwen3.5-9b");
+    expect("local" in loaded.providers).toBe(true);
   });
 
   // ── File not found ────────────────────────────────────────────────────────
