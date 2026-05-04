@@ -57,7 +57,18 @@ import {
   type WorkflowReliabilityCorpus,
   type WorkflowReliabilityRow,
 } from "./metrics";
+import type { BenchReportEnvelope } from "./tmp";
 import type { WorkflowCheckResult, WorkflowCheckStatus, WorkflowViolationCode } from "./workflow-evaluator";
+
+type UtilityReportJson = BenchReportEnvelope & {
+  corpus: Record<string, unknown>;
+  warnings: string[];
+};
+
+type EvolveReportJson = BenchReportEnvelope & {
+  warnings: string[];
+  feedback_integrity?: object;
+};
 
 // ── Legacy envelope (#236) ─────────────────────────────────────────────────
 
@@ -308,13 +319,13 @@ export interface UtilityRunReport {
  * does not embed `timestamp` in the body table (only in the header), so
  * snapshot tests are stable across reruns.
  */
-export function renderUtilityReport(input: UtilityRunReport): { json: object; markdown: string } {
+export function renderUtilityReport(input: UtilityRunReport): { json: UtilityReportJson; markdown: string } {
   const json = buildUtilityJson(input);
   const markdown = buildUtilityMarkdown(input);
   return { json, markdown };
 }
 
-function buildUtilityJson(input: UtilityRunReport): object {
+function buildUtilityJson(input: UtilityRunReport): UtilityReportJson {
   const includeSynth = input.aggregateSynth !== undefined;
   const tasks = input.tasks.map((t) => ({
     id: t.id,
@@ -347,7 +358,7 @@ function buildUtilityJson(input: UtilityRunReport): object {
   const warnings = [...input.warnings];
   if (tokenMeasurement.warning) warnings.push(tokenMeasurement.warning);
 
-  const envelope: Record<string, unknown> = {
+  const envelope: UtilityReportJson = {
     schemaVersion: 1,
     track: "utility",
     branch: input.branch,
@@ -2103,16 +2114,16 @@ export const FEEDBACK_AGREEMENT_WARNING_THRESHOLD = 0.8;
  * Render an evolve run as the §6.3+§6.4 JSON envelope plus a markdown
  * summary. Mirrors `renderUtilityReport` — caller wires stdout/stderr.
  */
-export function renderEvolveReport(input: EvolveReportInput): { json: object; markdown: string } {
+export function renderEvolveReport(input: EvolveReportInput): { json: EvolveReportJson; markdown: string } {
   const json = buildEvolveJson(input);
   const markdown = buildEvolveMarkdown(input);
   return { json, markdown };
 }
 
-function buildEvolveJson(input: EvolveReportInput): object {
+function buildEvolveJson(input: EvolveReportInput): EvolveReportJson {
   // For each arm we re-render the §13.3 utility envelope so downstream
   // consumers can treat each arm exactly like a `bench utility` artefact.
-  const armEnvelope = (r: UtilityRunReport): object => buildUtilityJson(r);
+  const armEnvelope = (r: UtilityRunReport): UtilityReportJson => buildUtilityJson(r);
 
   // §6.8 — derive an additive `warnings[]` entry when the headline
   // feedback_agreement falls below the trust threshold.

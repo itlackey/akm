@@ -21,11 +21,26 @@ interface SpawnResult {
   stderr: string;
 }
 
+function envWithoutOpencode(): NodeJS.ProcessEnv {
+  const currentPath = process.env.PATH ?? "";
+  const opencodePath = Bun.which("opencode");
+  if (!opencodePath) return { ...process.env };
+
+  const opencodeDir = path.dirname(opencodePath);
+  const filteredPath = currentPath
+    .split(path.delimiter)
+    .filter((entry) => entry !== opencodeDir)
+    .join(path.delimiter);
+
+  return { ...process.env, PATH: filteredPath };
+}
+
 function run(args: string[], env: Record<string, string> = {}): SpawnResult {
   const result = Bun.spawnSync({
     cmd: ["bun", "run", CLI, ...args],
     cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
+    env: { ...envWithoutOpencode(), ...env },
+    stdin: null,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -440,6 +455,12 @@ describe("bench CLI — config-file dispatch", () => {
   }, 60_000);
 
   test("config-file dispatch writes a persistent report artifact", () => {
+    const cacheRoot = path.join(getCacheDir(), "bench-reports");
+    const before = new Set(
+      fs.existsSync(cacheRoot)
+        ? fs.readdirSync(cacheRoot).filter((name) => name.startsWith("bench-report-") && name.endsWith(".json"))
+        : [],
+    );
     const r = run(
       [
         "tests/bench/configs/nano-quick.json",
@@ -456,12 +477,12 @@ describe("bench CLI — config-file dispatch", () => {
       },
     );
     expect(r.exitCode).toBe(0);
-    const cacheRoot = path.join(getCacheDir(), "bench-reports");
     const files = fs
       .readdirSync(cacheRoot)
       .filter((name) => name.startsWith("bench-report-") && name.endsWith(".json"));
-    expect(files.length).toBeGreaterThan(0);
-    const latest = path.join(cacheRoot, files.sort().at(-1) ?? "");
+    const created = files.filter((name) => !before.has(name));
+    expect(created.length).toBeGreaterThan(0);
+    const latest = path.join(cacheRoot, created.sort().at(-1) ?? "");
     const artifact = JSON.parse(fs.readFileSync(latest, "utf8"));
     const stdoutJson = JSON.parse(r.stdout);
     expect(artifact.track).toBe(stdoutJson.track);

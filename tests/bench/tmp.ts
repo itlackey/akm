@@ -64,7 +64,7 @@ export interface BenchReportJson {
   timestamp: string;
   branch: string;
   commit: string;
-  agent: { model: string };
+  agent: { model: string } & Record<string, unknown>;
 }
 
 export type BenchReportEnvelope = BenchReportJson & Record<string, unknown>;
@@ -83,7 +83,7 @@ export function benchReportPath(report: BenchReportJson): string {
 }
 
 /** Write a full bench report JSON envelope to disk and return its path. */
-export function writeBenchReportJson(report: BenchReportEnvelope): string {
+export function writeBenchReportJson<T extends BenchReportJson>(report: T): string {
   const outPath = benchReportPath(report);
   fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return outPath;

@@ -53,7 +53,7 @@ function writeRunBanner(model: string): void {
 
 function writeReportArtifact(report: UtilityRunReport): string {
   const { json } = renderUtilityReport(report);
-  return writeBenchReportJson(json as Record<string, unknown>);
+  return writeBenchReportJson(json);
 }
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
@@ -977,7 +977,7 @@ export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCl
   const { json, markdown } = renderEvolveReport(report);
   const stdout = `${JSON.stringify(json, null, 2)}\n`;
   let stderr = options.json ? "" : `${markdown}\n`;
-  stderr += `bench: wrote report ${writeBenchReportJson(json as Record<string, unknown>)}\n`;
+  stderr += `bench: wrote report ${writeBenchReportJson(json)}\n`;
   stderr += `tasks discovered: ${tasks.length} (domain=${options.domain})\n`;
   return { exitCode: 0, stdout, stderr };
 }
