@@ -32,15 +32,10 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
         run: |
-          before_sha="$BEFORE_SHA"
-          if [ "$before_sha" = "0000000000000000000000000000000000000000" ]; then
-            before_sha="$(git rev-list --max-count=1 HEAD^ 2>/dev/null || true)"
-          fi
-
-          if [ -z "$before_sha" ]; then
+          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
             mapfile -t files < <(git ls-files 'docs/posts/**/*.md')
           else
-            mapfile -t files < <(git diff --name-only "$before_sha" "$AFTER_SHA" -- ':(glob)docs/posts/**/*.md')
+            mapfile -t files < <(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" -- ':(glob)docs/posts/**/*.md')
           fi
 
           if [ "${#files[@]}" -eq 0 ]; then
@@ -64,7 +59,7 @@ jobs:
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
         run: |
-          mapfile -t files <<'EOF'
+          mapfile -t files <<EOF
           ${{ steps.changed-posts.outputs.files }}
           EOF
 
