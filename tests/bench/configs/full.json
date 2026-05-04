@@ -1,0 +1,13 @@
+{
+  "$schema": "./bench-run-config.schema.json",
+  "schemaVersion": 1,
+  "name": "full",
+  "description": "Full corpus, akm-arm only, 5 seeds. Mirror of tests/bench/run-full-bench.ts.",
+  "tasks": "all",
+  "arms": ["akm"],
+  "seeds": 5,
+  "budgetTokens": 25000,
+  "budgetWallMs": 360000,
+  "parallel": 3,
+  "baseline": "../baselines/qwen9b-2026-05-03.json"
+}

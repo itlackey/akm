@@ -1,0 +1,64 @@
+# Dockerfile.bench — run akm-bench inside a container against either the
+# current source tree (default) or a published @itlackey/akm npm version.
+#
+# Build args:
+#   AKM_INSTALL=source         (default) bun-install + `bun link` from /opt/akm.
+#   AKM_INSTALL=npm            install -g @itlackey/akm@${AKM_VERSION}.
+#   AKM_VERSION=<x.y.z|latest> npm version (only used when AKM_INSTALL=npm).
+#
+# The bench harness code (tests/bench/) is always copied from the build
+# context — only the `akm` binary on PATH varies between source and npm
+# install modes. opencode invokes `akm` from PATH inside each task run, so
+# the install mode determines which akm version is under test.
+#
+# Entrypoint mirrors the local CLI:
+#   docker run --rm akm-bench:source <config.json> [overrides...]
+FROM ubuntu:22.04
+
+ARG AKM_INSTALL=source
+ARG AKM_VERSION=latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl unzip ca-certificates git python3 python3-pip nodejs npm \
+    && pip3 install --no-cache-dir pytest \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install bun — used to run the bench harness regardless of install mode.
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# Install opencode CLI — the bench shells out via the built-in opencode
+# profile, which expects `opencode` on PATH.
+RUN curl -fsSL https://opencode.ai/install | bash || true
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+WORKDIR /opt/akm
+
+# Always copy the bench harness from the build context. Source-install mode
+# uses this same tree to bun-link akm; npm-install mode discards the akm
+# installation here and pulls from the registry below.
+COPY package.json bun.lock* tsconfig.json biome.json ./
+COPY src/ src/
+COPY tests/ tests/
+
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
+
+# Conditional akm install. Source: bun link from /opt/akm. Npm: pull the
+# published version into the global node_modules and shadow the source bin.
+RUN if [ "$AKM_INSTALL" = "npm" ]; then \
+      npm install -g "@itlackey/akm@${AKM_VERSION}"; \
+    else \
+      bun link; \
+    fi
+
+# Output volume for JSON reports written from inside the container.
+RUN mkdir -p /out
+VOLUME /out
+
+# `BENCH_OPENCODE_CONFIG` is set by run-bench.sh after bind-mounting the
+# host's resolved providers file at this path.
+ENV BENCH_OPENCODE_CONFIG=/opt/akm/.docker/providers.json
+
+ENTRYPOINT ["bun", "run", "tests/bench/cli.ts"]
+CMD ["--help"]

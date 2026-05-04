@@ -19,15 +19,35 @@ See `docs/technical/benchmark.md` for the full design.
 
 ## Running a track
 
-The CLI is a thin Bun script:
+There are two equivalent ways to run a track:
 
-```sh
-BENCH_OPENCODE_MODEL=anthropic/claude-opus-4-7 \
-  bun run tests/bench/cli.ts utility --tasks eval
+1. **Config-file mode (recommended).** A single JSON file under
+   `tests/bench/configs/*.json` fully describes a run — providers, default
+   model, tasks, arms, seeds, budgets, parallel, baseline. Pass the path
+   as the first arg:
 
-BENCH_OPENCODE_MODEL=anthropic/claude-haiku-4-5 \
-  bun run tests/bench/cli.ts utility --tasks all --json > report.json
-```
+   ```sh
+   bun run tests/bench/cli.ts tests/bench/configs/nano-quick.json
+   bun run tests/bench/cli.ts tests/bench/configs/full.json --json > report.json
+   ```
+
+   The four committed configs (`full`, `nano-quick`, `failing-tasks`,
+   `curate-test`) mirror the obsolete `tests/bench/run-*.ts` scripts. New
+   batches add a config rather than a script.
+
+   See `tests/bench/configs/bench-run-config.schema.json` for the schema
+   and the "Run-config schema" + "Provider discovery chain" sections
+   below.
+
+2. **Subcommand mode (legacy; still supported).**
+
+   ```sh
+   BENCH_OPENCODE_MODEL=anthropic/claude-opus-4-7 \
+     bun run tests/bench/cli.ts utility --tasks eval
+
+   BENCH_OPENCODE_MODEL=anthropic/claude-haiku-4-5 \
+     bun run tests/bench/cli.ts utility --tasks all --json > report.json
+   ```
 
 Subcommands:
 
@@ -35,6 +55,141 @@ Subcommands:
 - `evolve` — Track B: longitudinal evolution loop.
 - `compare` — diff two report JSON files (refuses cross-model / cross-corpus / cross-fixture diffs).
 - `attribute` — per-asset marginal contribution via leave-one-out masking.
+
+### Run-config schema (config-file mode)
+
+```json
+{
+  "$schema": "./bench-run-config.schema.json",
+  "schemaVersion": 1,
+  "name": "nano-quick",
+  "description": "5 tasks x 2 seeds.",
+  "tasks": ["drillbit/backup-policy", "..."],
+  "arms": ["akm"],
+  "seeds": 2,
+  "budgetTokens": 25000,
+  "budgetWallMs": 360000,
+  "parallel": 2,
+  "baseline": "../baselines/qwen9b-2026-05-03.json"
+}
+```
+
+Provider details are intentionally omitted from committed configs — they
+come from a per-operator file outside the repo (see "Provider discovery
+chain" below). Nothing provider-specific lands in git.
+
+`tasks` accepts:
+- `"all" | "train" | "eval"` (slice literal),
+- a domain id (`"drillbit"` matches every task whose `domain` is `drillbit`),
+- a single task id (`"drillbit/backup-policy"`),
+- an array of task ids.
+
+`arms` is `["akm"] | ["noakm","akm"] | ["noakm","akm","synthetic"]`. The
+synthetic arm is implied when `"synthetic"` is in the array — no separate
+flag needed.
+
+`baseline` is an optional path to a JSON `{ taskId: passRate }` map. When
+present, the markdown summary gains a `vs base` column and the JSON
+envelope gains a top-level `baseline_by_task_id` field.
+
+### Provider discovery chain (config-file mode)
+
+The config file generally does NOT carry provider details. The loader
+resolves providers in this order (first match wins):
+
+1. `BENCH_OPENCODE_CONFIG` env var (absolute path).
+2. Inline `providers` block in the config (the credential heuristic
+   still applies — only `{env:VAR}` env-refs are accepted, no literal
+   keys).
+3. `providersRef` in the config — relative to the config file, with `~`
+   and `${VAR}` expansion. Use this when several configs share a
+   per-host providers file.
+4. `${XDG_CONFIG_HOME:-~/.config}/akm/bench-providers.json` — well-known
+   per-operator location. Drop a file there once and committed configs
+   that omit `providersRef` Just Work.
+5. The legacy auto-discovery: repo-local
+   `tests/fixtures/bench/opencode-providers.local.json` (gitignored)
+   then `tests/fixtures/bench/opencode-providers.json` (committed
+   fixture).
+
+Model precedence: `BENCH_OPENCODE_MODEL` env > config `defaultModel` >
+providers file `defaultModel`.
+
+### Override flags (config-file mode)
+
+The minimal set that survived the move into the config file:
+
+- `--json` — suppress the markdown summary on stderr.
+- `--seeds <N>` — override `seeds` from the config (rapid iteration).
+- `--parallel <N>` — override `parallel` from the config.
+- `--tasks <a,b,c>` — restrict the config's tasks to the comma-separated
+  subset. Useful for re-running a single failing task.
+
+### Obsolete surface (still works, warns once)
+
+The following are still functional but emit a one-line `[obsolete]`
+warning on stderr the first time they're used per process. They will be
+removed when the bench framework is extracted to its own repo, not
+before — extraction is the breaking-change boundary.
+
+- Helper scripts: `run-full-bench.ts`, `run-nano-quick.ts`,
+  `run-failing-tasks.ts`, `run-curate-test.ts` → use the corresponding
+  `tests/bench/configs/*.json`.
+- CLI flags: `--no-noakm` (use `arms: ["akm"]`),
+  `--include-synthetic` (use `arms: [..., "synthetic"]`),
+  `--opencode-config` (use `providersRef` or the discovery chain),
+  `--budget-tokens` / `--budget-wall-ms` (use `budgetTokens` /
+  `budgetWallMs` in the config).
+
+## Docker
+
+`tests/docker/run-bench.sh` runs the bench inside a container with the
+same arg shape as the local CLI:
+
+```sh
+# Bench against the current source tree (default).
+./tests/docker/run-bench.sh tests/bench/configs/nano-quick.json
+
+# Bench against the published npm version.
+AKM_INSTALL=npm AKM_VERSION=latest \
+  ./tests/docker/run-bench.sh tests/bench/configs/nano-quick.json
+
+# Pin to a specific release + restrict to one task.
+AKM_INSTALL=npm AKM_VERSION=0.7.2 \
+  ./tests/docker/run-bench.sh tests/bench/configs/full.json \
+  --tasks drillbit/backup-policy --seeds 1 --json
+```
+
+The wrapper resolves the providers file on the HOST using the same
+discovery chain documented above, bind-mounts it into the container at
+`/opt/akm/.docker/providers.json`, and forwards common
+`*_API_KEY` / `BENCH_OPENCODE_MODEL` env vars so `{env:VAR}` env-refs in
+the providers file resolve. JSON reports land on the host at
+`./bench-results/<config-name>-<timestamp>.json` (override via
+`BENCH_OUT_DIR`).
+
+The Dockerfile (`tests/docker/Dockerfile.bench`) is a sibling of the
+existing `Dockerfile.*-{bun,binary}` install-smoke images — it does not
+replace them. Build args:
+
+- `AKM_INSTALL=source` (default) — `bun link` from the in-context source.
+- `AKM_INSTALL=npm` + `AKM_VERSION=<x.y.z|latest>` — `npm install -g
+  @itlackey/akm@${AKM_VERSION}`.
+
+## Parent-repo dependencies (extraction seam)
+
+The bench framework is expected to move to its own repo. The seam to cut
+is small — `tests/bench/` imports from these `src/` modules today:
+
+- `src/integrations/agent/spawn.ts` — `runAgent`, `SpawnFn`.
+- `src/core/paths.ts` — `getCacheDir`.
+- `src/core/warn.ts` — `warn`.
+
+When extracting, vendor or shim those three. The bench's own modules
+(`tests/bench/run-config.ts`, `cli.ts`, `runner.ts`, `driver.ts`,
+`corpus.ts`, `report.ts`, `metrics.ts`, `opencode-config.ts`,
+`evolve.ts`, `verifier.ts`, etc.) and the `configs/` + `baselines/`
+directories under `tests/bench/` move as a unit.
 
 ### Implementation status
 

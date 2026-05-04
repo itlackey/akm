@@ -404,3 +404,134 @@ describe("bench CLI", () => {
     expect(r.exitCode).toBe(0);
   }, 60_000);
 });
+
+describe("bench CLI — config-file dispatch", () => {
+  test("config-file dispatch loads tests/bench/configs/nano-quick.json and runs end-to-end", () => {
+    // Same structure as the legacy auto-discovery test above — the in-tree
+    // committed fixture supplies providers so this works without
+    // BENCH_OPENCODE_CONFIG set. We constrain to one task with the --tasks
+    // override and shrink the budget so failures terminate quickly.
+    const r = run(
+      [
+        "tests/bench/configs/nano-quick.json",
+        "--tasks",
+        "drillbit/backup-policy",
+        "--seeds",
+        "1",
+        "--parallel",
+        "1",
+        "--json",
+      ],
+      {
+        BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+      },
+    );
+    expect(r.exitCode).toBe(0);
+    // JSON envelope carries the corpus block and the per-task array.
+    const envelope = JSON.parse(r.stdout);
+    expect(envelope.corpus).toBeDefined();
+    expect(Array.isArray(envelope.tasks)).toBe(true);
+    // Stderr trace line confirms the config-mode dispatch ran.
+    expect(r.stderr).toContain("config=nano-quick");
+    // No obsolete warnings — the new path doesn't trip them.
+    expect(r.stderr).not.toContain("[obsolete]");
+  }, 60_000);
+
+  test("config-file dispatch surfaces baseline_by_task_id when the config carries `baseline`", () => {
+    const r = run(
+      [
+        "tests/bench/configs/failing-tasks.json",
+        "--tasks",
+        "drillbit/backup-policy",
+        "--seeds",
+        "1",
+        "--parallel",
+        "1",
+        "--json",
+      ],
+      {
+        BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+      },
+    );
+    expect(r.exitCode).toBe(0);
+    const envelope = JSON.parse(r.stdout);
+    expect(envelope.baseline_by_task_id).toBeDefined();
+    expect(typeof envelope.baseline_by_task_id["drillbit/backup-policy"]).toBe("number");
+  }, 60_000);
+
+  test("config-file dispatch with bogus --tasks override exits 2", () => {
+    const r = run(
+      ["tests/bench/configs/nano-quick.json", "--tasks", "drillbit/no-such-task", "--seeds", "1", "--json"],
+      {
+        BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+      },
+    );
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--tasks");
+  });
+
+  test("nonexistent config file falls through to subcommand parser", () => {
+    // A path that doesn't exist isn't routed to config mode — the subcommand
+    // parser sees an unknown name and exits 2.
+    const r = run(["does-not-exist.json"], {
+      BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("unknown subcommand");
+  });
+});
+
+describe("bench CLI — obsolete flag warnings", () => {
+  test("--no-noakm in subcommand mode emits exactly one [obsolete] line for that flag", () => {
+    const r = run(
+      [
+        "utility",
+        "--tasks",
+        "train",
+        "--seeds",
+        "1",
+        "--budget-tokens",
+        "100",
+        "--budget-wall-ms",
+        "100",
+        "--no-noakm",
+        "--json",
+      ],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    // The invocation also uses --budget-tokens / --budget-wall-ms which fire
+    // their own obsolete warnings; this test only asserts that --no-noakm
+    // emits exactly one line and is deduped.
+    const noNoakmLines = r.stderr.split("\n").filter((l) => l.includes("[obsolete] --no-noakm"));
+    expect(noNoakmLines.length).toBe(1);
+  }, 60_000);
+
+  test("--budget-tokens emits an [obsolete] warning that points at budgetTokens", () => {
+    const r = run(
+      ["utility", "--tasks", "train", "--seeds", "1", "--budget-tokens", "100", "--budget-wall-ms", "100", "--json"],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain("[obsolete] --budget-tokens");
+    expect(r.stderr).toContain("budgetTokens");
+  }, 60_000);
+
+  test("config-file dispatch never emits obsolete warnings", () => {
+    const r = run(
+      [
+        "tests/bench/configs/nano-quick.json",
+        "--tasks",
+        "drillbit/backup-policy",
+        "--seeds",
+        "1",
+        "--parallel",
+        "1",
+        "--json",
+      ],
+      { BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7" },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain("[obsolete]");
+  }, 60_000);
+});

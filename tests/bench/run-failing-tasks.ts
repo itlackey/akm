@@ -1,4 +1,7 @@
 /**
+ * OBSOLETE: superseded by `bun run tests/bench/cli.ts tests/bench/configs/failing-tasks.json`.
+ * Kept for backward compatibility; will be removed in the standalone-bench-repo extraction.
+ *
  * Targeted retest of failing/partial tasks after stash improvements.
  * Usage: bun run tests/bench/run-failing-tasks.ts
  */
@@ -7,6 +10,10 @@ import path from "node:path";
 import { loadTask } from "./corpus";
 import { loadOpencodeProviders } from "./opencode-config";
 import { runUtility } from "./runner";
+
+process.stderr.write(
+  "[obsolete] run-failing-tasks.ts → see tests/bench/configs/failing-tasks.json (`bun run tests/bench/cli.ts tests/bench/configs/failing-tasks.json`)\n",
+);
 
 const TASK_IDS = [
   "drillbit/backup-policy",

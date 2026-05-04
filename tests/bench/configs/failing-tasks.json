@@ -1,0 +1,19 @@
+{
+  "$schema": "./bench-run-config.schema.json",
+  "schemaVersion": 1,
+  "name": "failing-tasks",
+  "description": "Targeted retest of failing/partial tasks after stash improvements, with baseline delta. Mirror of tests/bench/run-failing-tasks.ts.",
+  "tasks": [
+    "drillbit/backup-policy",
+    "drillbit/canary-enable",
+    "inkwell/add-healthcheck",
+    "inkwell/configure-scaling",
+    "opencode/select-correct-skill"
+  ],
+  "arms": ["akm"],
+  "seeds": 5,
+  "budgetTokens": 25000,
+  "budgetWallMs": 360000,
+  "parallel": 3,
+  "baseline": "../baselines/qwen9b-2026-05-03.json"
+}

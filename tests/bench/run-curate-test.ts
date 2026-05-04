@@ -1,4 +1,7 @@
 /**
+ * OBSOLETE: superseded by `bun run tests/bench/cli.ts tests/bench/configs/curate-test.json`.
+ * Kept for backward compatibility; will be removed in the standalone-bench-repo extraction.
+ *
  * Test akm curate as first command on configure-scaling.
  * Usage: bun run tests/bench/run-curate-test.ts
  */
@@ -7,6 +10,10 @@ import path from "node:path";
 import { loadTask } from "./corpus";
 import { loadOpencodeProviders } from "./opencode-config";
 import { runUtility } from "./runner";
+
+process.stderr.write(
+  "[obsolete] run-curate-test.ts → see tests/bench/configs/curate-test.json (`bun run tests/bench/cli.ts tests/bench/configs/curate-test.json`)\n",
+);
 
 const tasks = [loadTask("inkwell/configure-scaling")];
 const LOCAL = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-providers.local.json");

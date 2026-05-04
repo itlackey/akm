@@ -1,6 +1,14 @@
 /**
  * Leakage smoke test for the seeded bench corpus (spec §7.4).
  *
+ * Gated behind `AKM_BENCH_FIXTURE_TESTS=1`. This is a corpus-content
+ * validator (it inspects the seeded fixture stashes and verifier files,
+ * not the bench framework code itself), so it ships skipped by default —
+ * matching the `AKM_SEMANTIC_TESTS` / `AKM_DOCKER_TESTS` pattern. Run it
+ * locally when you change a fixture stash or a verifier:
+ *
+ *   AKM_BENCH_FIXTURE_TESTS=1 bun test tests/bench/leakage.test.ts
+ *
  * For every task that declares a `gold_ref` of the form `skill:<name>`,
  * locate the SKILL.md inside the named fixture stash and assert that the
  * verifier's *structural assertions* do not appear verbatim in the gold-ref
@@ -30,6 +38,7 @@ import path from "node:path";
 
 import { effectiveSlice, getTasksRoot, listTasks, type TaskMetadata } from "./corpus";
 
+const FIXTURE_TESTS = !!process.env.AKM_BENCH_FIXTURE_TESTS;
 const STASHES_ROOT = path.resolve(getTasksRoot(), "..", "..", "stashes");
 
 /** Resolve `skill:<name>` against the named stash; returns SKILL.md path or `undefined`. */
@@ -124,7 +133,7 @@ function crossTaskFragments(task: TaskMetadata): string[] {
   return raw.filter(isMeaningful);
 }
 
-describe("cross-task eval/train verifier leakage check", () => {
+describe.skipIf(!FIXTURE_TESTS)("cross-task eval/train verifier leakage check", () => {
   const allTasks = listTasks();
 
   // Group tasks by stash name.
@@ -193,7 +202,7 @@ describe("cross-task eval/train verifier leakage check", () => {
   }
 });
 
-describe("gold-ref leakage check", () => {
+describe.skipIf(!FIXTURE_TESTS)("gold-ref leakage check", () => {
   const tasks = listTasks().filter((t) => t.goldRef);
   test("at least one task ships with a gold_ref", () => {
     expect(tasks.length).toBeGreaterThan(0);

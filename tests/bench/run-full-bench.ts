@@ -1,4 +1,7 @@
 /**
+ * OBSOLETE: superseded by `bun run tests/bench/cli.ts tests/bench/configs/full.json`.
+ * Kept for backward compatibility; will be removed in the standalone-bench-repo extraction.
+ *
  * Full benchmark run — all tasks, 5 seeds, akm arm only.
  * Usage: bun run tests/bench/run-full-bench.ts
  */
@@ -7,6 +10,10 @@ import path from "node:path";
 import { listTasks } from "./corpus";
 import { loadOpencodeProviders } from "./opencode-config";
 import { runUtility } from "./runner";
+
+process.stderr.write(
+  "[obsolete] run-full-bench.ts → see tests/bench/configs/full.json (`bun run tests/bench/cli.ts tests/bench/configs/full.json`)\n",
+);
 
 const tasks = listTasks();
 const LOCAL = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-providers.local.json");
