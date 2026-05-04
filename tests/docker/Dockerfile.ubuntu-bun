@@ -15,7 +15,7 @@ COPY package.json bun.lock* ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 
 # Copy source and build (only this layer invalidates on code changes)
-COPY tsconfig.json biome.json ./
+COPY tsconfig.json tsconfig.build.json biome.json ./
 COPY src/ src/
 RUN bun run build
 
