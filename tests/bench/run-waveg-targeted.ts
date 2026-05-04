@@ -20,7 +20,7 @@ const TARGET_TASKS = [
   "workflow-compliance/repeated-fail-storage-lifecycle-a",
 ];
 
-const tasks = TARGET_TASKS.map(loadTask);
+const tasks = TARGET_TASKS.map((id) => loadTask(id));
 const LOCAL = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-providers.local.json");
 const DEFAULT = path.resolve(__dirname, "..", "fixtures", "bench", "opencode-providers.json");
 const providers = loadOpencodeProviders(fs.existsSync(LOCAL) ? LOCAL : DEFAULT);
