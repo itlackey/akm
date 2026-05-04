@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir } from "../../src/core/paths";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const CLI = path.join(REPO_ROOT, "tests", "bench", "cli.ts");
@@ -431,10 +432,40 @@ describe("bench CLI — config-file dispatch", () => {
     const envelope = JSON.parse(r.stdout);
     expect(envelope.corpus).toBeDefined();
     expect(Array.isArray(envelope.tasks)).toBe(true);
+    expect(r.stderr).toContain("bench: provider=anthropic model=anthropic/claude-opus-4-7");
     // Stderr trace line confirms the config-mode dispatch ran.
     expect(r.stderr).toContain("config=nano-quick");
     // No obsolete warnings — the new path doesn't trip them.
     expect(r.stderr).not.toContain("[obsolete]");
+  }, 60_000);
+
+  test("config-file dispatch writes a persistent report artifact", () => {
+    const r = run(
+      [
+        "tests/bench/configs/nano-quick.json",
+        "--tasks",
+        "drillbit/backup-policy",
+        "--seeds",
+        "1",
+        "--parallel",
+        "1",
+        "--json",
+      ],
+      {
+        BENCH_OPENCODE_MODEL: "anthropic/claude-opus-4-7",
+      },
+    );
+    expect(r.exitCode).toBe(0);
+    const cacheRoot = path.join(getCacheDir(), "bench-reports");
+    const files = fs
+      .readdirSync(cacheRoot)
+      .filter((name) => name.startsWith("bench-report-") && name.endsWith(".json"));
+    expect(files.length).toBeGreaterThan(0);
+    const latest = path.join(cacheRoot, files.sort().at(-1) ?? "");
+    const artifact = JSON.parse(fs.readFileSync(latest, "utf8"));
+    const stdoutJson = JSON.parse(r.stdout);
+    expect(artifact.track).toBe(stdoutJson.track);
+    expect(artifact.agent.model).toBe(stdoutJson.agent.model);
   }, 60_000);
 
   test("config-file dispatch surfaces baseline_by_task_id when the config carries `baseline`", () => {

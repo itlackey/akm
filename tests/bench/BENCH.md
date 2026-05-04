@@ -332,9 +332,11 @@ carries:
 - `warnings[]` — additive trust signals (e.g. low token-measurement
   coverage, oversized event log, leakage filtering on evolve).
 
-The bench does not persist reports to a predictable path on its own; the
-operator (or CI) is responsible for capturing stdout JSON to disk. The
-`tests/benchmark-suite.ts` runner does this for the regression harness.
+The bench writes a persistent copy of each run to
+`${AKM_CACHE_DIR}/bench-reports/bench-report-<track>-<branch>-<commit>-<timestamp>-<model>.json`.
+Stdout still carries the JSON envelope, so CI can keep redirecting it when
+needed, but the sidecar file is the easiest artifact to feed into
+`bench compare` over time.
 
 ## Validity checklist
 

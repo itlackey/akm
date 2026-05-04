@@ -44,7 +44,17 @@ import {
 } from "./report";
 import { type BenchRunConfigOverrides, loadBenchRunConfig } from "./run-config";
 import { runUtility } from "./runner";
-import { isPidRunning, readBenchPid, writeBenchPid } from "./tmp";
+import { isPidRunning, readBenchPid, writeBenchPid, writeBenchReportJson } from "./tmp";
+
+function writeRunBanner(model: string): void {
+  const providerKey = model.includes("/") ? model.slice(0, model.indexOf("/")) : model;
+  process.stderr.write(`bench: provider=${providerKey} model=${model}\n`);
+}
+
+function writeReportArtifact(report: UtilityRunReport): string {
+  const { json } = renderUtilityReport(report);
+  return writeBenchReportJson(json as Record<string, unknown>);
+}
 
 const HELP = `akm-bench — agent-plus-akm evaluation framework
 
@@ -296,6 +306,8 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   // Pass --no-noakm (options.includeNoakm === false) to exclude it.
   const arms: ("noakm" | "akm")[] = options.includeNoakm === false ? ["akm"] : ["noakm", "akm"];
 
+  writeRunBanner(options.model);
+
   const report = await runUtility({
     tasks,
     arms,
@@ -318,6 +330,7 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   const { json, markdown } = renderUtilityReport(report);
   const jsonText = `${JSON.stringify(json, null, 2)}\n`;
   const markdownText = `${markdown}\n`;
+  const reportPath = writeReportArtifact(report);
 
   // JSON ALWAYS goes to stdout. This is the bench's machine-readable
   // contract (matches `tests/benchmark-suite.ts` and the future `bench
@@ -327,6 +340,7 @@ export async function runUtilityCli(options: UtilityCliOptions): Promise<Utility
   // emitted so an operator running it interactively gets both views.
   const stdout = jsonText;
   let stderr = options.json ? "" : markdownText;
+  stderr += `bench: wrote report ${reportPath}\n`;
   stderr += `tasks discovered: ${tasks.length} (slice=${options.slice})\n`;
   if (tasks.length === 0) {
     stderr += "no tasks found — corpus is empty or the slice filter excluded all tasks\n";
@@ -879,6 +893,8 @@ export async function runConfigCli(options: ConfigCliOptions): Promise<UtilityCl
     };
   }
 
+  writeRunBanner(resolved.model);
+
   const report = await runUtility({
     tasks: resolved.tasks,
     arms: resolved.arms,
@@ -901,6 +917,8 @@ export async function runConfigCli(options: ConfigCliOptions): Promise<UtilityCl
   const { json, markdown } = renderUtilityReport(report);
   const stdout = `${JSON.stringify(json, null, 2)}\n`;
   let stderr = options.json ? "" : `${markdown}\n`;
+  const reportPath = writeReportArtifact(report);
+  stderr += `bench: wrote report ${reportPath}\n`;
   stderr += `bench: config=${resolved.name} tasks=${resolved.tasks.length} arms=${resolved.arms.join(",")} model=${resolved.model}\n`;
   return { exitCode: 0, stdout, stderr };
 }
@@ -942,6 +960,8 @@ export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCl
     };
   }
 
+  writeRunBanner(options.model);
+
   const report = await runEvolve({
     tasks,
     model: options.model,
@@ -957,6 +977,7 @@ export async function runEvolveCli(options: EvolveCliOptions): Promise<UtilityCl
   const { json, markdown } = renderEvolveReport(report);
   const stdout = `${JSON.stringify(json, null, 2)}\n`;
   let stderr = options.json ? "" : `${markdown}\n`;
+  stderr += `bench: wrote report ${writeBenchReportJson(json as Record<string, unknown>)}\n`;
   stderr += `tasks discovered: ${tasks.length} (domain=${options.domain})\n`;
   return { exitCode: 0, stdout, stderr };
 }

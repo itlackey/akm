@@ -44,6 +44,51 @@ export function benchMkdtemp(prefix: string): string {
   return fs.mkdtempSync(path.join(benchTmpRoot(), prefix));
 }
 
+/** Stable bench-report root under `${AKM_CACHE_DIR}/bench-reports/`. */
+export function benchReportRoot(): string {
+  const root = path.join(getCacheDir(), "bench-reports");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug.length > 80 ? slug.slice(0, 80) : slug || "unknown";
+}
+
+export interface BenchReportJson {
+  track: string;
+  timestamp: string;
+  branch: string;
+  commit: string;
+  agent: { model: string };
+}
+
+export type BenchReportEnvelope = BenchReportJson & Record<string, unknown>;
+
+/** Stable per-run report artifact path under `${AKM_CACHE_DIR}/bench/`. */
+export function benchReportPath(report: BenchReportJson): string {
+  const filename = [
+    "bench-report",
+    slugify(report.track),
+    slugify(report.branch),
+    slugify(report.commit),
+    slugify(report.timestamp),
+    slugify(report.agent.model),
+  ].join("-");
+  return path.join(benchReportRoot(), `${filename}.json`);
+}
+
+/** Write a full bench report JSON envelope to disk and return its path. */
+export function writeBenchReportJson(report: BenchReportEnvelope): string {
+  const outPath = benchReportPath(report);
+  fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  return outPath;
+}
+
 // ── PID file ────────────────────────────────────────────────────────────────
 
 /** Absolute path to the bench PID file: `${AKM_CACHE_DIR}/bench/bench.pid`. */
