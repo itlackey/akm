@@ -182,6 +182,16 @@ akm index
 akm show skill:akm-quickstart
 ```
 
+## Official Ecosystem Repositories
+
+The core CLI lives in this repo, with a few companion repos for the broader akm
+ecosystem:
+
+- [itlackey/akm-stash](https://github.com/itlackey/akm-stash) -- the official onboarding stash with ready-made skills, workflows, commands, and knowledge assets
+- [itlackey/akm-registry](https://github.com/itlackey/akm-registry) -- the official searchable registry index that `akm` uses for discovery
+- [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional editor and agent integrations, including the OpenCode plugin referenced above
+- [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the dedicated benchmark and evaluation repo for measuring agent performance with akm
+
 ## Documentation
 
 | Doc | Description |
