@@ -162,20 +162,53 @@ jobs:
 
       - name: Create GitHub release
         run: |
+          TAG="${{ needs.version.outputs.tag }}"
+          REPO="${{ github.repository }}"
           PRERELEASE_FLAG=""
           if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
-          gh release create "${{ needs.version.outputs.tag }}" \
-            --repo "${{ github.repository }}" \
-            --title "${{ needs.version.outputs.tag }}" \
-            --generate-notes \
-            $PRERELEASE_FLAG \
-            artifacts/checksums.txt \
-            artifacts/akm-linux-x64/akm-linux-x64 \
-            artifacts/akm-linux-arm64/akm-linux-arm64 \
-            artifacts/akm-darwin-x64/akm-darwin-x64 \
-            artifacts/akm-darwin-arm64/akm-darwin-arm64 \
-            artifacts/akm-windows-x64.exe/akm-windows-x64.exe
+
+          upload_assets() {
+            gh release upload "$TAG" \
+              --repo "$REPO" \
+              --clobber \
+              artifacts/checksums.txt \
+              artifacts/akm-linux-x64/akm-linux-x64 \
+              artifacts/akm-linux-arm64/akm-linux-arm64 \
+              artifacts/akm-darwin-x64/akm-darwin-x64 \
+              artifacts/akm-darwin-arm64/akm-darwin-arm64 \
+              artifacts/akm-windows-x64.exe/akm-windows-x64.exe
+          }
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            upload_assets
+            exit 0
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            if gh release create "$TAG" \
+              --repo "$REPO" \
+              --title "$TAG" \
+              --generate-notes \
+              $PRERELEASE_FLAG \
+              artifacts/checksums.txt \
+              artifacts/akm-linux-x64/akm-linux-x64 \
+              artifacts/akm-linux-arm64/akm-linux-arm64 \
+              artifacts/akm-darwin-x64/akm-darwin-x64 \
+              artifacts/akm-darwin-arm64/akm-darwin-arm64 \
+              artifacts/akm-windows-x64.exe/akm-windows-x64.exe; then
+              exit 0
+            fi
+
+            if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+              upload_assets
+              exit 0
+            fi
+
+            sleep $((attempt * 10))
+          done
+
+          exit 1
         env:
           GH_TOKEN: ${{ github.token }}
