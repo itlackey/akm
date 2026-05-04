@@ -2,16 +2,15 @@
 title: Building Agent Knowledge Bases That Actually Scale
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.5.0 ships multi-wiki support modeled on Karpathy''s LLM Wiki pattern — a searchable, maintainable knowledge base an agent and human build together.'
+description: 'akm ships multi-wiki support modeled on Karpathy''s LLM Wiki pattern — a searchable, maintainable knowledge base an agent and human build together.'
 tags:
   - ai
   - agents
   - cli
   - knowledge
-published: false
+published: true
 date: '2026-04-22T00:00:00Z'
 id: 3538936
----
 
 This is part eight in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck) introduced progressive disclosure. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) unified your local assets across platforms. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added persistent memory. Previous parts addressed teams, distributed stashes, and community knowledge.
 
@@ -19,7 +18,7 @@ This one is about a different problem: knowledge accumulation.
 
 You start a new research area — say, LLM inference optimization. You read papers. You take notes. You save PDFs. Your agent writes summaries, discovers connections, asks follow-up questions that lead to more notes. Six weeks later you have a pile of markdown files, half-digested papers in a downloads folder, and a memory that says "we covered KV cache quantization somewhere." You search for it. You get three files with different partial takes on the same topic. None of them have the answer you need.
 
-This isn't a storage problem. You have all the information. It's a structural problem — and that's what akm 0.5.0's multi-wiki support is built to fix.
+This isn't a storage problem. You have all the information. It's a structural problem — and that's what akm's multi-wiki support is built to fix.
 
 ## Karpathy's LLM Wiki Pattern
 
@@ -127,7 +126,7 @@ The agent handles everything that requires judgment:
 
 The reason this split matters: agents are good at synthesis and bad at reliability. If you ask an agent to "update the index," it will sometimes do it correctly, sometimes produce a subtly wrong format, and sometimes forget. If you ask it to write a page on attention mechanisms from three source documents, it will do that well every time. The tool enforces the boring, brittle parts so the agent can focus on what it's actually good at.
 
-There are no LLM calls inside akm. The tool is pure file operations, SQLite, and structural analysis. That's intentional — it keeps akm fast, deterministic, and usable offline.
+There are no unconditional LLM calls inside akm for wiki operations. The wiki commands are pure file operations, SQLite, and structural analysis — fast, deterministic, and usable offline. (akm does ship bounded opt-in LLM calls for other workflows, like `akm distill` and `akm curate`, gated behind `llm.features.*` flags that are all off by default. But the wiki tooling itself never touches an LLM.)
 
 ## akm wiki search vs akm search --type wiki
 
@@ -208,7 +207,7 @@ It's also not autonomous. akm prints the ingest recipe; your agent runs it. If y
 
 ## Getting Started
 
-Multi-wiki is available in akm 0.5.0. If you're already using akm, upgrade and try:
+Multi-wiki has been available since akm 0.5.0. If you're already using akm, upgrade and try:
 
 ```sh
 akm wiki create research

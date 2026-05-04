@@ -8,7 +8,7 @@ tags:
   - agents
   - cli
   - release
-published: false
+published: true
 date: '2026-04-24T00:00:00Z'
 id: 3552357
 ---

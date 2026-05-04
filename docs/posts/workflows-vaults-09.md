@@ -8,7 +8,7 @@ tags:
   - agents
   - cli
   - workflows
-published: false
+published: true
 date: '2026-04-22T00:00:00Z'
 id: 3538935
 ---
@@ -19,7 +19,7 @@ Ask an agent to ship a release and it will start confidently. It runs the build,
 
 This is the central problem with agents and multi-step work. They're good at individual tasks. They're not naturally good at procedures — sequences of steps that span time, accumulate state, and need to be resumable when interrupted.
 
-`akm` 0.5.0 ships three features that address this directly: workflow assets for stored, resumable procedures; vault assets for secret-aware environment config; and a writable git stash that keeps your skill collection in sync across machines. This post explains what each one does and how they fit together.
+`akm` ships three features that address this directly: workflow assets for stored, resumable procedures; vault assets for secret-aware environment config; and a writable git stash that keeps your skill collection in sync across machines. This post explains what each one does and how they fit together.
 
 ## The Problem: Tasks Versus Procedures
 
@@ -246,10 +246,12 @@ The team gets the improvement on next `akm update`.
 
 ## Getting Started
 
-If you're on `akm` already, upgrade to 0.5.0:
+If you're on `akm` already, upgrade to the latest version:
 
 ```sh
 npm install -g akm-cli@latest
+# or
+akm upgrade
 ```
 
 To try workflows:
