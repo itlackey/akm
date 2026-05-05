@@ -39,10 +39,17 @@ import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
+type RecommendedGitHubRepo = {
+  url: string;
+  name: string;
+  hint: string;
+  defaultSelected?: boolean;
+};
+
 /**
  * Recommended GitHub repositories shown during setup.
  */
-const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string; defaultSelected?: boolean }> = [
+const RECOMMENDED_GITHUB_REPOS: RecommendedGitHubRepo[] = [
   {
     url: "https://github.com/itlackey/akm-stash",
     name: "itlackey/akm-stash",
@@ -52,7 +59,7 @@ const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string;
   {
     url: "https://github.com/andrewyng/context-hub",
     name: "andrewyng/context-hub",
-    hint: "optional community stash",
+    hint: "optional community prompt and context stash",
   },
 ];
 

@@ -16,7 +16,7 @@ const q = {
   selects: [] as unknown[],
   texts: [] as unknown[],
   multiselects: [] as unknown[],
-  multiselectCalls: [] as Array<{
+  multiselectConfigs: [] as Array<{
     message: string;
     initialValues?: string[];
     options: Array<{ value: string; label: string }>;
@@ -29,7 +29,7 @@ function reset() {
   q.selects.length = 0;
   q.texts.length = 0;
   q.multiselects.length = 0;
-  q.multiselectCalls.length = 0;
+  q.multiselectConfigs.length = 0;
   q.logged.length = 0;
 }
 
@@ -47,7 +47,7 @@ mock.module("@clack/prompts", () => ({
     initialValues?: string[];
     options: Array<{ value: string; label: string }>;
   }) => {
-    q.multiselectCalls.push({
+    q.multiselectConfigs.push({
       message: config.message,
       initialValues: config.initialValues,
       options: config.options,
@@ -133,12 +133,12 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.selects.push("done");
 
     const result = await stepAddSources({ sources: [] } as never);
-    expect(q.multiselectCalls).toHaveLength(1);
-    expect(q.multiselectCalls[0]?.options.map((option) => option.label)).toEqual([
+    expect(q.multiselectConfigs).toHaveLength(1);
+    expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual([
       "itlackey/akm-stash",
       "andrewyng/context-hub",
     ]);
-    expect(q.multiselectCalls[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
     expect(result).toEqual([
       {
         type: "git",
@@ -158,7 +158,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(q.multiselectCalls[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
     expect(result).toEqual([]);
   });
 
@@ -173,7 +173,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(q.multiselectCalls[0]?.initialValues).toEqual([ctxHubUrl]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([ctxHubUrl]);
     const hub = result.find((s) => s.url === ctxHubUrl);
     expect(hub).toBeDefined();
     expect(hub?.type).toBe("git");
@@ -219,10 +219,10 @@ describe("stepRegistries", () => {
     q.multiselects.push(["https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json"]);
 
     const result = await stepRegistries({ registries: undefined } as never);
-    expect(q.multiselectCalls[0]?.initialValues).toEqual([
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([
       "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
     ]);
-    expect(q.multiselectCalls[0]?.options.map((option) => option.label)).toEqual(["akm-registry", "skills.sh"]);
+    expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual(["akm-registry", "skills.sh"]);
     expect(result).toEqual([
       {
         url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
@@ -245,7 +245,7 @@ describe("stepRegistries", () => {
     q.multiselects.push(["https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json"]);
 
     const result = await stepRegistries(current as never);
-    expect(q.multiselectCalls[0]?.initialValues).toEqual([
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([
       "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
       "https://skills.sh",
     ]);
