@@ -8,7 +8,7 @@ tags:
   - agents
   - cli
   - skills
-published: true
+published: false
 id: 3426246
 date: '2026-03-31T06:22:03Z'
 ---
