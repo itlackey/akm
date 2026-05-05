@@ -59,14 +59,20 @@ export class LocalEmbedder implements Embedder {
     this.pipelineModelName = undefined;
   }
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  async embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector> {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
+    }
     return this.embedWithModel(text, this.defaultModel);
   }
 
-  async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+  async embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingVector[]> {
     if (texts.length === 0) return [];
     const results: EmbeddingVector[] = [];
     for (const text of texts) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
+      }
       results.push(await this.embedWithModel(text, this.defaultModel));
     }
     return results;

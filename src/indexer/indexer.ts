@@ -88,6 +88,12 @@ interface IndexOptions {
   signal?: AbortSignal;
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("index interrupted");
+  }
+}
+
 // ── Indexer ──────────────────────────────────────────────────────────────────
 
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
@@ -163,6 +169,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       }
     }
 
+    throwIfAborted(signal);
+
     // Memory inference pass (#201). Runs before the walk so any derived-memory
     // children that get written are picked up by the walker in this same run
     // and don't have to wait for the next `akm index`. Gated entirely by
@@ -206,6 +214,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    throwIfAborted(signal);
+
     const tWalkStart = Date.now();
 
     // Walk stash dirs and index entries.
@@ -243,8 +253,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
     const tWalkEnd = Date.now();
 
+    throwIfAborted(signal);
+
     // Enhance entries with LLM if configured
-    await enhanceDirsWithLlm(db, config, dirsNeedingLlm);
+    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal);
     onProgress({
       phase: "llm",
       message: resolveIndexPassLLM("enrichment", config)
@@ -253,6 +265,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     });
 
     const tLlmEnd = Date.now();
+
+    throwIfAborted(signal);
 
     // Rebuild FTS after all inserts. Use incremental mode when this whole
     // index run is incremental — only entries touched by `upsertEntry`
@@ -296,6 +310,8 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     } catch {
       /* best-effort */
     }
+
+    throwIfAborted(signal);
 
     // Generate embeddings if semantic search is enabled
     const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress);
@@ -592,6 +608,7 @@ async function enhanceDirsWithLlm(
     currentStashDir: string;
     stash: StashFile;
   }>,
+  signal?: AbortSignal,
 ): Promise<void> {
   // Resolve per-pass LLM config via the unified shim. Returns undefined when
   // either no `akm.llm` is configured or the user opted this pass out via
@@ -605,11 +622,12 @@ async function enhanceDirsWithLlm(
   const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
 
   for (const { dirPath, files, currentStashDir, stash: originalStash } of dirsNeedingLlm) {
+    throwIfAborted(signal);
     // Only enhance generated entries; user-provided overrides should not be overwritten
     const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
     if (generatedEntries.length === 0) continue;
     const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(llmConfig, generatedStash, files, summary);
+    const enhanced = await enhanceStashWithLlm(llmConfig, generatedStash, files, summary, signal);
 
     // Re-upsert the enhanced entries in a single transaction so a crash
     // cannot leave half the entries updated and the rest stale.
@@ -640,7 +658,10 @@ async function generateEmbeddingsForDb(
   db: Database,
   config: AkmConfig,
   onProgress: (event: IndexProgressEvent) => void,
+  signal?: AbortSignal,
 ): Promise<EmbeddingGenerationResult> {
+  throwIfAborted(signal);
+
   if (config.semanticSearchMode === "off") {
     onProgress({ phase: "embeddings", message: "Semantic search disabled; skipping embeddings." });
     return { success: false, reason: "index-missing", message: "Semantic search is disabled." };
@@ -669,6 +690,7 @@ async function generateEmbeddingsForDb(
   try {
     const { embedBatch } = await import("../llm/embedder.js");
     const { estimateTokenCount } = await import("../llm/embedders/remote.js");
+    throwIfAborted(signal);
     const allEntries = getAllEntriesForEmbedding(db);
     if (allEntries.length === 0) {
       onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
@@ -695,7 +717,8 @@ async function generateEmbeddingsForDb(
       }
     }
 
-    const embeddings = await embedBatch(texts, config.embedding);
+    const embeddings = await embedBatch(texts, config.embedding, signal);
+    throwIfAborted(signal);
     // Wrap all embedding upserts in a single transaction so partial
     // state is rolled back on failure rather than leaving the table half-filled.
     db.transaction(() => {
@@ -929,11 +952,13 @@ async function enhanceStashWithLlm(
   stash: StashFile,
   files: string[],
   summary: LlmEnhancementSummary,
+  signal?: AbortSignal,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
 
   const enhanced: StashEntry[] = [];
   for (const entry of stash.entries) {
+    throwIfAborted(signal);
     summary.attempted++;
     try {
       const entryFile = entry.filename
@@ -948,7 +973,7 @@ async function enhanceStashWithLlm(
         }
       }
 
-      const improvements = await enhanceMetadata(llmConfig, entry, fileContent);
+      const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
       const updated = { ...entry };
       if (improvements.description) updated.description = improvements.description;
       if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;

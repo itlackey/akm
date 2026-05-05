@@ -20,6 +20,7 @@ export async function enhanceMetadata(
   config: LlmConnectionConfig,
   entry: StashEntry,
   fileContent?: string,
+  signal?: AbortSignal,
 ): Promise<{ description?: string; searchHints?: string[]; tags?: string[] }> {
   const contextParts = [`Name: ${entry.name}`, `Type: ${entry.type}`];
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
@@ -39,10 +40,14 @@ Generate improved metadata for this ${entry.type}. Return JSON with these fields
 
 Return ONLY the JSON object, no explanation.`;
 
-  const raw = await chatCompletion(config, [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: userPrompt },
-  ]);
+  const raw = await chatCompletion(
+    config,
+    [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    { signal },
+  );
 
   const parsed = parseJsonResponse<Record<string, unknown>>(raw);
   if (!parsed) return {};

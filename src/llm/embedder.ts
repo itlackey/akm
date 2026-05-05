@@ -58,7 +58,11 @@ export function resetLocalEmbedder(): void {
  * Results are cached in an LRU cache (max ~100 entries) keyed by query text
  * and embedding config. Repeated identical queries return the cached vector.
  */
-export async function embed(text: string, embeddingConfig?: EmbeddingConnectionConfig): Promise<EmbeddingVector> {
+export async function embed(
+  text: string,
+  embeddingConfig?: EmbeddingConnectionConfig,
+  signal?: AbortSignal,
+): Promise<EmbeddingVector> {
   const key = embedCacheKey(text, embeddingConfig);
 
   const cached = getCachedEmbedding(key);
@@ -66,8 +70,8 @@ export async function embed(text: string, embeddingConfig?: EmbeddingConnectionC
 
   const result =
     embeddingConfig && hasRemoteEndpoint(embeddingConfig)
-      ? await new RemoteEmbedder(embeddingConfig).embed(text)
-      : await localEmbedder.embedWithModel(text, embeddingConfig?.localModel);
+      ? await new RemoteEmbedder(embeddingConfig).embed(text, signal)
+      : await localEmbedder.embed(text, signal);
 
   setCachedEmbedding(key, result);
   return result;
@@ -81,17 +85,21 @@ export async function embed(text: string, embeddingConfig?: EmbeddingConnectionC
 export async function embedBatch(
   texts: string[],
   embeddingConfig?: EmbeddingConnectionConfig,
+  signal?: AbortSignal,
 ): Promise<EmbeddingVector[]> {
   if (texts.length === 0) return [];
 
   if (embeddingConfig && hasRemoteEndpoint(embeddingConfig)) {
-    return new RemoteEmbedder(embeddingConfig).embedBatch(texts);
+    return new RemoteEmbedder(embeddingConfig).embedBatch(texts, signal);
   }
 
   // Local transformer: process sequentially (pipeline handles one at a time)
   const localModel = embeddingConfig?.localModel;
   const results: EmbeddingVector[] = [];
   for (const text of texts) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error("embedding interrupted");
+    }
     results.push(await localEmbedder.embedWithModel(text, localModel));
   }
   return results;

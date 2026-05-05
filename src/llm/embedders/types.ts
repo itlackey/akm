@@ -16,8 +16,8 @@ export type EmbeddingVector = number[];
  * `embedBatch()` for throughput.
  */
 export interface Embedder {
-  embed(text: string): Promise<EmbeddingVector>;
-  embedBatch(texts: string[]): Promise<EmbeddingVector[]>;
+  embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector>;
+  embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingVector[]>;
 }
 
 export type EmbeddingCheckResult =

@@ -152,6 +152,23 @@ describe("parseEmbeddedJsonResponse", () => {
     });
   });
 
+  test("parses JSON after a qwen think block", () => {
+    const raw =
+      '<think>I should return JSON with {"entities":[],"relations":[]}</think>\n{"entities":["ServiceA"],"relations":[]}';
+    expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
+      entities: ["ServiceA"],
+      relations: [],
+    });
+  });
+
+  test("skips malformed leading candidate and parses later valid JSON", () => {
+    const raw = 'Draft: {"entities":["A",],"relations":[]}\nFinal: {"entities":["ServiceA"],"relations":[]}';
+    expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
+      entities: ["ServiceA"],
+      relations: [],
+    });
+  });
+
   test("returns undefined when no JSON object or array exists", () => {
     expect(parseEmbeddedJsonResponse("not json at all")).toBeUndefined();
   });

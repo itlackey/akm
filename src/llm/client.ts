@@ -103,6 +103,7 @@ export async function chatCompletion(
 export function stripJsonFences(raw: string): string {
   return raw
     .trim()
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/^```(?:json)?\s*\n?/i, "")
     .replace(/\n?```\s*$/i, "")
     .trim();
@@ -126,44 +127,51 @@ export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefin
   if (direct !== undefined) return direct;
 
   const text = stripJsonFences(raw);
-  const starts = [text.indexOf("{"), text.indexOf("[")].filter((n) => n >= 0);
-  if (starts.length === 0) return undefined;
-  const start = Math.min(...starts);
-  const opener = text[start];
-  const closer = opener === "{" ? "}" : "]";
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  let arrayFallback: T | undefined;
+  for (let start = 0; start < text.length; start++) {
+    const opener = text[start];
+    if (opener !== "{" && opener !== "[") continue;
 
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
+    const closer = opener === "{" ? "}" : "]";
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
       }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === opener) depth += 1;
-    if (ch === closer) {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, i + 1)) as T;
-        } catch {
-          return undefined;
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === opener) depth += 1;
+      if (ch === closer) {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(text.slice(start, i + 1)) as T;
+            if (!Array.isArray(parsed)) {
+              return parsed;
+            }
+            arrayFallback ??= parsed;
+            break;
+          } catch {
+            break;
+          }
         }
       }
     }
   }
-  return undefined;
+  return arrayFallback;
 }
 
 // ── Availability check ──────────────────────────────────────────────────────

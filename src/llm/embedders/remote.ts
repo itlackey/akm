@@ -19,7 +19,7 @@ export function estimateTokenCount(text: string): number {
 export class RemoteEmbedder implements Embedder {
   constructor(private readonly config: EmbeddingConnectionConfig) {}
 
-  async embed(text: string): Promise<EmbeddingVector> {
+  async embed(text: string, signal?: AbortSignal): Promise<EmbeddingVector> {
     const headers = this.buildHeaders();
     const body: { input: string; model: string; dimensions?: number; options?: { num_ctx?: number } } = {
       input: text,
@@ -37,6 +37,7 @@ export class RemoteEmbedder implements Embedder {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -55,7 +56,7 @@ export class RemoteEmbedder implements Embedder {
     return l2Normalize(json.data[0].embedding);
   }
 
-  async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+  async embedBatch(texts: string[], signal?: AbortSignal): Promise<EmbeddingVector[]> {
     if (texts.length === 0) return [];
     const results: EmbeddingVector[] = [];
     const headers = this.buildHeaders();
@@ -79,6 +80,7 @@ export class RemoteEmbedder implements Embedder {
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        signal,
       });
 
       if (!response.ok) {
