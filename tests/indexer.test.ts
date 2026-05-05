@@ -890,6 +890,41 @@ test("akmIndex deduplicates when two stash dirs share a common subdirectory", as
   fs.rmSync(sharedDir, { recursive: true, force: true });
 });
 
+test("akmIndex does not collapse unrelated same-basename assets across sources", async () => {
+  const primaryStash = tmpStash();
+  const extraSource = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-extra-source-"));
+  for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+    fs.mkdirSync(path.join(extraSource, sub), { recursive: true });
+  }
+  writeFile(path.join(primaryStash, "skills", "alpha-skill", "README.md"), "# Alpha\n");
+  writeFile(path.join(extraSource, "tools", "beta-skill", "README.md"), "# Beta\n");
+
+  const origStash = process.env.AKM_STASH_DIR;
+  try {
+    process.env.AKM_STASH_DIR = primaryStash;
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", path: extraSource, name: "extra-source" }],
+    });
+
+    await akmIndex({ stashDir: primaryStash, full: true });
+
+    const db = openDatabase();
+    try {
+      const entries = getAllEntries(db, "knowledge");
+      const names = entries.map((entry) => entry.entry.name);
+      expect(names).toContain("skills/alpha-skill/README");
+      expect(names).toContain("tools/beta-skill/README");
+    } finally {
+      closeDatabase(db);
+    }
+  } finally {
+    if (origStash === undefined) delete process.env.AKM_STASH_DIR;
+    else process.env.AKM_STASH_DIR = origStash;
+    fs.rmSync(extraSource, { recursive: true, force: true });
+  }
+});
+
 // ── Issue #13: matchEntryToFile returns null for empty files ─────────────
 
 test("matchEntryToFile returns null when files array is empty", () => {

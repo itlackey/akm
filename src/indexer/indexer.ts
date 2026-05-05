@@ -599,8 +599,7 @@ async function indexEntries(
           if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
           // Skip if a higher-priority stash root already indexed this asset
-          const basename = path.basename(entryPath);
-          const identityKey = `${entry.type}\0${basename}\0${entry.description ?? ""}`;
+          const identityKey = `${entry.type}\0${entry.name}`;
           if (indexedAssetIdentities.has(identityKey)) continue;
           indexedAssetIdentities.add(identityKey);
 
