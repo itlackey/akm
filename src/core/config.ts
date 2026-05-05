@@ -328,8 +328,8 @@ export type IndexConfig = Record<string, IndexPassConfig>;
 export const DEFAULT_CONFIG: AkmConfig = {
   semanticSearchMode: "auto",
   registries: [
-    { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "official" },
-    { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh" },
+    { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "akm-registry" },
+    { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh", enabled: false },
   ],
   output: {
     format: "json",

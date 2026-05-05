@@ -41,12 +41,20 @@ import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
 
 /**
  * Recommended GitHub repositories shown during setup.
- *
- * Currently empty — populating from the akm-registry at runtime is a
- * separate feature. The wizard prompt infrastructure is retained for that
- * future use.
  */
-const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string }> = [];
+const RECOMMENDED_GITHUB_REPOS: Array<{ url: string; name: string; hint: string; defaultSelected?: boolean }> = [
+  {
+    url: "https://github.com/itlackey/akm-stash",
+    name: "itlackey/akm-stash",
+    hint: "official onboarding stash",
+    defaultSelected: true,
+  },
+  {
+    url: "https://github.com/andrewyng/context-hub",
+    name: "andrewyng/context-hub",
+    hint: "optional community stash",
+  },
+];
 
 // Approximate first-download sizes used in the setup note.
 // LOCAL_MODEL_APPROX_SIZE_MB tracks the default local model (DEFAULT_LOCAL_MODEL).
@@ -600,7 +608,7 @@ export async function stepLlm(
   return llm;
 }
 
-async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[] | undefined> {
+export async function stepRegistries(current: AkmConfig): Promise<RegistryConfigEntry[] | undefined> {
   const defaults = DEFAULT_CONFIG.registries ?? [];
   const currentRegistries = current.registries ?? defaults;
   const defaultUrls = new Set(defaults.map((r) => r.url));
@@ -673,11 +681,16 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
       hint: existingUrls.has(r.url) ? `${r.hint} (already added)` : r.hint,
     }));
 
+    const initialValues =
+      stashes.length > 0
+        ? repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value)
+        : RECOMMENDED_GITHUB_REPOS.filter((r) => r.defaultSelected).map((r) => r.url);
+
     const selectedRepos = await prompt(() =>
       p.multiselect({
         message: "Recommended GitHub repositories — toggle to add or remove:",
         options: repoOptions,
-        initialValues: repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value),
+        initialValues,
         required: false,
       }),
     );

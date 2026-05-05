@@ -79,10 +79,11 @@ describe("registry add/remove/list via config", () => {
     const config = loadConfig();
     const registries = config.registries ?? [];
     expect(registries.length).toBe(2);
-    expect(registries[0].name).toBe("official");
+    expect(registries[0].name).toBe("akm-registry");
     expect(registries[0].url).toContain("akm-registry");
     expect(registries[1].name).toBe("skills.sh");
     expect(registries[1].provider).toBe("skills-sh");
+    expect(registries[1].enabled).toBe(false);
   });
 
   test("add appends a registry entry", () => {
@@ -189,7 +190,7 @@ describe("resolveRegistries", () => {
     const resolved = resolveRegistries(undefined);
     // Will read from loadConfig which returns DEFAULT_CONFIG registries
     expect(resolved.length).toBeGreaterThan(0);
-    expect(resolved[0].name).toBe("official");
+    expect(resolved[0].name).toBe("akm-registry");
   });
 });
 
