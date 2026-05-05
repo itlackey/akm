@@ -12,7 +12,7 @@
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { closeDatabase, openDatabase } from "../indexer/db";
+import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -216,7 +216,7 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
   });
 
   try {
-    const db = existingDb ?? openDatabase();
+    const db = existingDb ?? openExistingDatabase();
     try {
       const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
       for (const { entryId, ref } of resolved) {

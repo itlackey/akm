@@ -18,8 +18,8 @@ import type { Database } from "bun:sqlite";
 import { parseAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
-import { closeDatabase, openDatabase } from "../indexer/db";
-import { ensureUsageEventsSchema, type UsageEventRow } from "../indexer/usage-events";
+import { closeDatabase, openExistingDatabase } from "../indexer/db";
+import type { UsageEventRow } from "../indexer/usage-events";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -164,14 +164,9 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
 
   const sinceNormalized = options.since !== undefined ? normalizeSince(options.since) : undefined;
 
-  const db = options.db ?? openDatabase();
+  const db = options.db ?? openExistingDatabase();
   const ownsDb = options.db === undefined;
   try {
-    // The schema is normally created during `akm index`; ensure it exists so
-    // `akm history` works on a freshly-initialised stash that has never been
-    // indexed (and just returns an empty list rather than an error).
-    ensureUsageEventsSchema(db);
-
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (normalizedRef !== undefined) {

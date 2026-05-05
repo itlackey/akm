@@ -19,6 +19,7 @@ import path from "node:path";
 import { akmShowUnified } from "../../src/commands/show";
 import { parseAssetRef } from "../../src/core/asset-ref";
 import { resetConfigCache, saveConfig } from "../../src/core/config";
+import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex, lookup } from "../../src/indexer/indexer";
 import "../../src/sources/providers/index";
 
@@ -33,6 +34,19 @@ function createTmpDir(prefix = "akm-parity-"): string {
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
+}
+
+function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): { url: string; server: ReturnType<typeof Bun.serve> } {
+  const server = Bun.serve({
+    port: 0,
+    async fetch() {
+      return new Response(JSON.stringify({ data: [{ embedding }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  return { url: `http://localhost:${server.port}/v1/embeddings`, server };
 }
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -119,6 +133,40 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     const shownLocal = await akmShowUnified({ ref: "local//skill:origin-skill" });
     expect(shownBare.path).toBe(shownLocal.path);
     expect(shownBare.path).toBe(bare?.filePath as string);
+  });
+
+  test("lookup and show do not downgrade embedding dimension metadata", async () => {
+    const { url, server } = createMockEmbeddingServer();
+    const body = ["---", "name: embed-skill", "description: Test", "---", "# embed"].join("\n");
+    writeFile(path.join(stashDir, "skills", "embed-skill", "SKILL.md"), body);
+
+    saveConfig({
+      semanticSearchMode: "auto",
+      embedding: {
+        provider: "openai-compatible",
+        endpoint: url,
+        model: "test-embed",
+        dimension: 4,
+      },
+    });
+    resetConfigCache();
+
+    try {
+      await akmIndex({ stashDir, full: true });
+      await lookup(parseAssetRef("skill:embed-skill"));
+      await akmShowUnified({ ref: "skill:embed-skill" });
+
+      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("4");
+        expect(getMeta(db, "hasEmbeddings")).toBe("1");
+        expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      server.stop();
+    }
   });
 
   test("missing asset: lookup returns null", async () => {

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../src/commands/info";
 import { loadConfig, saveConfig } from "../src/core/config";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import { closeDatabase, openDatabase, rebuildFts, searchVec, setMeta, upsertEmbedding, upsertEntry } from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -143,6 +143,31 @@ describe("assembleInfo", () => {
     expect(info.indexStats.entryCount).toBe(1);
     expect(info.indexStats.lastBuiltAt).toBe("2026-03-17T00:00:00Z");
     expect(typeof info.indexStats.vecAvailable).toBe("boolean");
+  });
+
+  test("does not downgrade embedding metadata when reading info", () => {
+    const stashDir = makeStashDir();
+    process.env.AKM_STASH_DIR = stashDir;
+
+    const dbPath = path.join(tmpDir("db"), "test.db");
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const entry = makeEntry("skill", "embed-skill");
+    const id = upsertEntry(db, "skill:embed-skill", "/fake/skill", "/fake/skill/embed-skill", stashDir, entry, "embed skill");
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    setMeta(db, "hasEmbeddings", "1");
+    rebuildFts(db);
+    closeDatabase(db);
+
+    const info = assembleInfo({ dbPath });
+
+    expect(info.indexStats.entryCount).toBe(1);
+
+    db = openDatabase(dbPath, { embeddingDim: 4 });
+    try {
+      expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+    } finally {
+      closeDatabase(db);
+    }
   });
 
   test("returns sourceProviders from config", () => {

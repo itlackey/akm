@@ -29,7 +29,7 @@ import {
   getEntryCount,
   getMeta,
   getUtilityScoresByIds,
-  openDatabase,
+  openExistingDatabase,
   sanitizeFtsQuery,
   searchFts,
   searchVec,
@@ -147,8 +147,7 @@ export async function searchLocal(input: {
   const dbPath = getDbPath();
   try {
     if (fs.existsSync(dbPath)) {
-      const embeddingDim = config.embedding?.dimension;
-      const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+      const db = openExistingDatabase(dbPath);
       try {
         const entryCount = getEntryCount(db);
         const storedStashDir = getMeta(db, "stashDir");

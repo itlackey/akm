@@ -18,6 +18,7 @@ import {
   getMeta,
   isVecAvailable,
   openDatabase,
+  openExistingDatabase,
   rebuildFts,
   setMeta,
   upsertEmbedding,
@@ -1108,7 +1109,7 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
   if (sources.length === 0) return null;
 
   const dbPath = getDbPath();
-  const db = openDatabase(dbPath);
+  const db = openExistingDatabase(dbPath);
   try {
     // entry_key shape: `${stashDir}:${type}:${name}`. Suffix-match on
     // `:type:name` so we can scope by source dir as a prefix when origin is

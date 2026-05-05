@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { getAssetTypes } from "../core/asset-spec";
 import { loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
-import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openDatabase } from "../indexer/db";
+import { closeDatabase, getEntryCount, getMeta, isVecAvailable, openExistingDatabase } from "../indexer/db";
 import { getEffectiveSemanticStatus, readSemanticStatus } from "../indexer/semantic-status";
 import type { InfoResponse } from "../sources/types";
 import { pkgVersion } from "../version";
@@ -88,7 +88,7 @@ function readIndexStats(dbPath?: string): InfoResponse["indexStats"] {
 
   let db: Database | undefined;
   try {
-    db = openDatabase(resolvedPath);
+    db = openExistingDatabase(resolvedPath);
     const entryCount = getEntryCount(db);
     const lastBuiltAt = getMeta(db, "builtAt") ?? null;
     const vecAvailable = isVecAvailable(db);

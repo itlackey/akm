@@ -14,6 +14,7 @@ import {
   getMeta,
   isVecAvailable,
   openDatabase,
+  openExistingDatabase,
   rebuildFts,
   searchFts,
   searchVec,
@@ -652,6 +653,27 @@ describe("Vector / Embedding integration", () => {
       // Old embedding was dim=4 and table was recreated for dim=8, so no results
       results = searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10);
       expect(results.length).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  test("openExistingDatabase preserves existing embedding dimension and embeddings", () => {
+    const dbPath = tmpDbPath();
+
+    let db = openDatabase(dbPath, { embeddingDim: 4 });
+    const id = insertTestEntry(db, "dim-stable", { searchText: "dimension stable" });
+    upsertEmbedding(db, id, [1, 0, 0, 0]);
+    setMeta(db, "hasEmbeddings", "1");
+    closeDatabase(db);
+
+    db = openExistingDatabase(dbPath);
+    try {
+      expect(getMeta(db, "embeddingDim")).toBe("4");
+      expect(getMeta(db, "hasEmbeddings")).toBe("1");
+      const results = searchVec(db, [1, 0, 0, 0], 10);
+      expect(results.length).toBe(1);
+      expect(results[0].id).toBe(id);
     } finally {
       closeDatabase(db);
     }

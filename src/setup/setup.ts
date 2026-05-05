@@ -6,6 +6,8 @@
  * Collects all choices and writes config once at the end.
  */
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { akmInit } from "../commands/init";
@@ -393,8 +395,13 @@ async function prepareSemanticSearchAssets(
   spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
 
   let db: ReturnType<typeof openDatabase> | undefined;
+  let probeDir: string | undefined;
   try {
-    db = openDatabase();
+    probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-vec-probe-"));
+    db = openDatabase(
+      path.join(probeDir, "probe.db"),
+      config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
+    );
     if (isVecAvailable(db)) {
       p.log.info("sqlite-vec is available for fast vector search.");
     } else {
@@ -410,6 +417,13 @@ async function prepareSemanticSearchAssets(
     );
   } finally {
     if (db) closeDatabase(db);
+    if (probeDir) {
+      try {
+        fs.rmSync(probeDir, { recursive: true, force: true });
+      } catch {
+        /* ignore cleanup failure */
+      }
+    }
   }
 
   return { ok: true };

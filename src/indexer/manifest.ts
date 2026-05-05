@@ -16,7 +16,7 @@ import { type AkmConfig, loadConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import type { ManifestEntry, ManifestResponse } from "../sources/types";
-import { closeDatabase, getAllEntries, getEntryCount, getMeta, openDatabase } from "./db";
+import { closeDatabase, getAllEntries, getEntryCount, getMeta, openExistingDatabase } from "./db";
 import { generateMetadataFlat, loadStashFile, type StashEntry } from "./metadata";
 import { resolveSourceEntries, type SearchSource as SourceSpec } from "./search-source";
 import { walkStashFlat } from "./walker";
@@ -81,8 +81,7 @@ function getManifestFromDb(
   try {
     if (!fs.existsSync(dbPath)) return null;
 
-    const embeddingDim = config.embedding?.dimension;
-    const db = openDatabase(dbPath, embeddingDim ? { embeddingDim } : undefined);
+    const db = openExistingDatabase(dbPath);
     try {
       const entryCount = getEntryCount(db);
       const storedStashDir = getMeta(db, "stashDir");

@@ -5,7 +5,7 @@ import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { getDbPath } from "../core/paths";
-import { closeDatabase, openDatabase } from "../indexer/db";
+import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import { resolveSourceEntries } from "../indexer/search-source";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { resolveAssetPath } from "../sources/resolve";
@@ -398,7 +398,7 @@ function readWorkflowDocumentFromIndex(sourcePath: string, ref: string): Workflo
   const dbPath = getDbPath();
   if (!fs.existsSync(dbPath)) return null;
 
-  const db = openDatabase(dbPath);
+  const db = openExistingDatabase(dbPath);
   try {
     const parsed = parseAssetRef(ref);
     const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;
@@ -450,7 +450,7 @@ function resolveWorkflowEntryId(sourcePath: string, ref: string): number | null 
   const dbPath = getDbPath();
   if (!fs.existsSync(dbPath)) return null;
 
-  const db = openDatabase(dbPath);
+  const db = openExistingDatabase(dbPath);
   try {
     const parsed = parseAssetRef(ref);
     const entryKey = `${sourcePath}:${parsed.type}:${parsed.name}`;

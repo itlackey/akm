@@ -46,7 +46,7 @@ import { appendEvent } from "./core/events";
 import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, setVerbose, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
-import { closeDatabase, findEntryIdByRef, openDatabase } from "./indexer/db";
+import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { akmIndex } from "./indexer/indexer";
 import { resolveSourceEntries } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
@@ -1078,7 +1078,7 @@ const feedbackCommand = defineCommand({
       const signal = args.positive ? "positive" : "negative";
       const metadata = args.note ? JSON.stringify({ note: args.note }) : undefined;
 
-      const db = openDatabase();
+      const db = openExistingDatabase();
       try {
         const entryId = findEntryIdByRef(db, ref);
         if (entryId === undefined) {

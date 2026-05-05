@@ -27,7 +27,7 @@ import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
-import { closeDatabase, findEntryIdByRef, openDatabase } from "../indexer/db";
+import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
 import { loadStashFile, type StashEntryScope } from "../indexer/metadata";
@@ -229,7 +229,7 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   appendEvent({ eventType: "show", ref, metadata: { type: parsed.type, name: parsed.name } });
 
   try {
-    const db = existingDb ?? openDatabase();
+    const db = existingDb ?? openExistingDatabase();
     try {
       insertUsageEvent(db, {
         event_type: "show",

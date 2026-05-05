@@ -5,6 +5,7 @@ import path from "node:path";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { akmIndex } from "../../src/indexer/indexer";
+import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
 
@@ -37,6 +38,19 @@ afterAll(() => {
 function writeFile(filePath: string, content = "") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
+}
+
+function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): { url: string; server: ReturnType<typeof Bun.serve> } {
+  const server = Bun.serve({
+    port: 0,
+    async fetch() {
+      return new Response(JSON.stringify({ data: [{ embedding }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  return { url: `http://localhost:${server.port}/v1/embeddings`, server };
 }
 
 /**
@@ -190,6 +204,55 @@ describe("Database search path (FTS scoring)", () => {
     expect(resolvedDeployHit.size).toBeDefined();
     expect(resolvedDeployHit.score).toBeDefined();
     expect(resolvedDeployHit.score).toBeGreaterThan(0);
+  });
+
+  test("search telemetry does not downgrade embedding dimension metadata", async () => {
+    const stashDir = tmpStash();
+    const { url, server } = createMockEmbeddingServer();
+
+    try {
+      writeFile(path.join(stashDir, "scripts", "deploy", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+      writeFile(
+        path.join(stashDir, "scripts", "deploy", ".stash.json"),
+        JSON.stringify({
+          entries: [
+            {
+              name: "deploy",
+              type: "script",
+              description: "Deploy application to production servers",
+              filename: "deploy.sh",
+            },
+          ],
+        }),
+      );
+
+      process.env.AKM_STASH_DIR = stashDir;
+      saveConfig({
+        semanticSearchMode: "auto",
+        embedding: {
+          provider: "openai-compatible",
+          endpoint: url,
+          model: "test-embed",
+          dimension: 4,
+        },
+      });
+      await akmIndex({ stashDir, full: true });
+
+      const result = await akmSearch({ query: "deploy", source: "local" });
+      const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+      expect(localHits.length).toBeGreaterThanOrEqual(1);
+
+      const db = openDatabase(path.join(testCacheDir, "akm", "index.db"), { embeddingDim: 4 });
+      try {
+        expect(getMeta(db, "embeddingDim")).toBe("4");
+        expect(getMeta(db, "hasEmbeddings")).toBe("1");
+        expect(searchVec(db, [1, 0, 0, 0], 10).length).toBeGreaterThanOrEqual(1);
+      } finally {
+        closeDatabase(db);
+      }
+    } finally {
+      server.stop();
+    }
   });
 
   test("FTS search filters by asset type", async () => {
