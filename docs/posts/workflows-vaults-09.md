@@ -2,14 +2,15 @@
 title: Agents That Remember Where They Were
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.5.0 adds workflow assets for resumable multi-step procedures, vault assets for secret-safe env config, and a writable git stash that syncs across machi...'
+description: 'akm 0.5.0 adds workflow assets, vault assets, and a writable synced stash.'
 tags:
   - ai
   - agents
   - cli
   - workflows
 published: true
-date: '2026-04-22T00:00:00Z'
+id: 3538935
+date: '2026-05-05T02:19:50Z'
 ---
 
 This is part nine in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck) introduced progressive disclosure. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) unified your local assets across platforms. [Part seven](https://dev.to/itlackey) covered shared team skills via Git repos.

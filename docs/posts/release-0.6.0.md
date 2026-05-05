@@ -2,14 +2,15 @@
 title: 'akm 0.6.0: Clean Break to Stash, Quieter CLI, Easier Migration'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.6.0 is a stabilization release: one domain noun, one lockfile name, one wire format, plus a handful of quality-of-life improvements on the way to v1.'
+description: 'akm 0.6.0 simplifies stash terminology, lockfile naming, and wire format before v1.'
 tags:
   - ai
   - agents
   - cli
   - release
 published: true
-date: '2026-04-24T00:00:00Z'
+id: 3611982
+date: '2026-05-05T02:19:46Z'
 ---
 
 akm 0.6.0 is out. This one is deliberately boring: a stabilization release that takes a clean break from pre-v1 terminology so the surface area we carry into v1 is honest. The domain model now has one noun for "a source of content" (stash) and one noun for "a service that helps discover them" (registry). The parallel vocabulary that accreted during earlier experiments — "kit", "source", hand-special-cased provider types — is gone. A handful of additive quality-of-life improvements ship alongside, but the headline story is fewer concepts, not more.

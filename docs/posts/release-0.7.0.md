@@ -2,14 +2,13 @@
 title: 'akm 0.7.0: Proposal Queue, Reflection Commands, Lessons, and akm-bench'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm
-description: 'akm 0.7.0 is the last pre-1.0 ship: a proposal queue, agent reflection commands, the lesson asset type, opt-in LLM feature gates, and a paired-run benchmarki...'
+description: 'akm 0.7.0 adds the proposal queue, reflection commands, lessons, and akm-bench.'
 tags:
   - ai
   - agents
   - cli
   - release
 published: true
-date: '2026-05-04T00:00:00Z'
 ---
 
 akm 0.7.0 is out. This is the last pre-1.0 ship in the v1 cycle. The headline features are a durable proposal queue that routes all agent-suggested changes through a single reviewable path, three new CLI surfaces (`reflect`, `propose`, `distill`) that write into that queue, a `lesson` asset type for synthesized knowledge, per-call-site LLM feature gates that are all off by default, and a paired-run benchmarking framework (`akm-bench`) for measuring whether your stash actually improves agent outcomes. A batch of security, UX, and hygiene hardening rounds out the release.
