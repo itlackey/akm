@@ -8,9 +8,8 @@ tags:
   - agents
   - cli
   - skills
-published: false
+published: true
 id: 3426246
-date: '2026-03-31T06:22:03Z'
 ---
 
 This is part seven in a series about managing the growing pile of skills, scripts, and context that AI coding agents depend on. [Part one](https://dev.to/itlackey/your-ai-agents-skill-list-is-getting-out-of-hand-32ck) introduced progressive disclosure. [Part two](https://dev.to/itlackey/you-already-have-dozens-of-agent-skills-you-just-cant-find-them-bpo) unified your local assets across platforms. [Part three](https://dev.to/itlackey/your-agents-memory-shouldnt-disappear-when-the-session-ends) added remote context via OpenViking. [Part four](https://dev.to/itlackey/your-agent-doesnt-know-what-the-community-already-figured-out) connected community knowledge through Context Hub.
