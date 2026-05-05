@@ -165,7 +165,7 @@ async function ensureGitMirror(
  * shared registry-index cache (12h TTL) and exposes the working tree as the
  * stash content directory.
  */
-async function syncMirroredRepo(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
+export async function syncMirroredRepo(config: SourceConfigEntry, options?: SyncOptions): Promise<SourceLockData> {
   if (!config.url) {
     throw new ConfigError("git stash entry requires a URL when no install ref is supplied");
   }

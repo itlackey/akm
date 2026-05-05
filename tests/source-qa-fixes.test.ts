@@ -9,7 +9,7 @@
  * - #19:        akm update re-mirrors website sources via sync().
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,7 @@ import { akmAdd } from "../src/commands/source-add";
 import { addStash } from "../src/commands/source-manage";
 import { loadConfig, saveConfig } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
+import * as gitProvider from "../src/sources/providers/git";
 
 const createdTmpDirs: string[] = [];
 
@@ -344,5 +345,33 @@ describe("issue #19: akm update website sources", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("git source update refreshes configured git mirrors instead of treating them as local paths", async () => {
+    const syncSpy = spyOn(gitProvider, "syncMirroredRepo").mockResolvedValue({
+      id: "https://github.com/example/repo",
+      source: "git",
+      ref: "https://github.com/example/repo",
+      artifactUrl: "https://github.com/example/repo",
+      contentDir: stashDir,
+      cacheDir: testCacheDir,
+      extractedDir: stashDir,
+      syncedAt: new Date().toISOString(),
+      writable: false,
+    });
+
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "git", url: "https://github.com/example/repo", name: "test-git" }],
+    });
+
+    const result = await akmUpdate({ target: "test-git", stashDir });
+    expect(result.processed).toEqual([]);
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+    expect(syncSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "test-git" }), {
+      force: true,
+      writable: false,
+    });
+    syncSpy.mockRestore();
   });
 });

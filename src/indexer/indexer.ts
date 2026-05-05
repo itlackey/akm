@@ -123,7 +123,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   // Ensure git stash caches are extracted before resolving stash dirs,
   // so their content directories exist on disk for the walker to discover.
   const { ensureSourceCaches, resolveSourceEntries } = await import("./search-source.js");
-  await ensureSourceCaches(config);
+  await ensureSourceCaches(config, { force: options?.full === true });
   const allSourceEntries = resolveSourceEntries(stashDir, config);
   const allSourceDirs = allSourceEntries.map((s) => s.path);
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,8 @@ import {
   resolveAllStashDirs,
   resolveSourceEntries,
 } from "../src/indexer/search-source";
+import * as gitProvider from "../src/sources/providers/git";
+import * as websiteIngest from "../src/sources/website-ingest";
 
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
@@ -317,5 +319,35 @@ describe("ensureSourceCaches", () => {
       ],
     };
     await expect(ensureSourceCaches(config)).resolves.toBeUndefined();
+  });
+
+  test("force option propagates to cache-backed sources", async () => {
+    const gitSpy = spyOn(gitProvider, "ensureGitMirror").mockResolvedValue(undefined);
+    const websiteSpy = spyOn(websiteIngest, "ensureWebsiteMirror").mockResolvedValue({
+      rootDir: "/tmp/root",
+      stashDir: "/tmp/stash",
+      manifestPath: "/tmp/manifest.json",
+    });
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      sources: [
+        { type: "git", url: "https://github.com/example/repo", name: "git-source" },
+        { type: "website", url: "https://example.com/docs", name: "website-source" },
+      ],
+    };
+
+    await ensureSourceCaches(config, { force: true });
+
+    expect(gitSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      requireRepoDir: true,
+      writable: false,
+      force: true,
+    });
+    expect(websiteSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "website-source" }), {
+      requireStashDir: true,
+      force: true,
+    });
+    gitSpy.mockRestore();
+    websiteSpy.mockRestore();
   });
 });

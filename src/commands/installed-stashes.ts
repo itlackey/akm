@@ -15,6 +15,7 @@ import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/resolve";
 import type { InstalledStashEntry } from "../registry/types";
 import { syncFromRef } from "../sources/providers/sync-from-ref";
+import { parseGitRepoUrl, syncMirroredRepo } from "../sources/providers/git";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../sources/types";
 import { ensureWebsiteMirror } from "../sources/website-ingest";
 import { listWikis, resolveWikisRoot } from "../wiki/wiki";
@@ -204,6 +205,43 @@ export async function akmUpdate(input?: {
     const stashes = config.sources ?? config.stashes ?? [];
     const isUrl = target.startsWith("http://") || target.startsWith("https://");
     const resolvedPath = !isUrl ? path.resolve(target) : undefined;
+    const gitMatch = stashes.find((s) => {
+      if (s.type !== "git") return false;
+      if (isUrl && s.url === target) return true;
+      if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
+      if (s.name === target) return true;
+      if (s.url) {
+        try {
+          const repo = parseGitRepoUrl(s.url);
+          if (repo.canonicalUrl === target) return true;
+        } catch {
+          // Ignore malformed config here; later provider sync will surface it.
+        }
+      }
+      return false;
+    });
+    if (gitMatch) {
+      await syncMirroredRepo(gitMatch, { force: true, writable: gitMatch.writable === true });
+      const index = await akmIndex({ stashDir, full: true });
+      const updatedConfig = loadConfig();
+      return {
+        schemaVersion: 1,
+        stashDir,
+        target,
+        all,
+        processed: [],
+        config: {
+          sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+          installedKitCount: updatedConfig.installed?.length ?? 0,
+        },
+        index: {
+          mode: index.mode,
+          totalEntries: index.totalEntries,
+          directoriesScanned: index.directoriesScanned,
+          directoriesSkipped: index.directoriesSkipped,
+        },
+      };
+    }
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
       if (isUrl && s.url === target) return true;

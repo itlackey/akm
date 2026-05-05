@@ -254,8 +254,9 @@ function isValidDirectory(dir: string): boolean {
  * `resolveSourceEntries()` so the content directories pass the
  * `isValidDirectory()` check.
  */
-export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
+export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
   const cfg = config ?? loadConfig();
+  const force = options?.force === true;
   // Use sources[] (current key) with fallback to stashes[] (deprecated, one-release compat).
   const entries = cfg.sources ?? cfg.stashes ?? [];
   for (const entry of entries) {
@@ -263,7 +264,11 @@ export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
     try {
       const repo = parseGitRepoUrl(entry.url);
       const cachePaths = getCachePaths(repo.canonicalUrl);
-      await ensureGitMirror(repo, cachePaths, { requireRepoDir: true, writable: entry.writable === true });
+      await ensureGitMirror(repo, cachePaths, {
+        requireRepoDir: true,
+        writable: entry.writable === true,
+        force,
+      });
     } catch (err) {
       warn(
         `Warning: failed to refresh git mirror for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
@@ -273,7 +278,7 @@ export async function ensureSourceCaches(config?: AkmConfig): Promise<void> {
   for (const entry of entries) {
     if (entry.type !== "website" || !entry.url || entry.enabled === false) continue;
     try {
-      await ensureWebsiteMirror(entry, { requireStashDir: true });
+      await ensureWebsiteMirror(entry, { requireStashDir: true, force });
     } catch (err) {
       warn(
         `Warning: failed to refresh website stash for "${entry.url}": ${err instanceof Error ? err.message : String(err)}`,
