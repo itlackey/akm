@@ -2,6 +2,11 @@ name: Publish to dev.to
 
 on:
   workflow_dispatch:
+    inputs:
+      files:
+        description: "Newline-separated post paths to publish"
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -77,7 +82,17 @@ jobs:
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
         run: |
-          npm run publish:devto
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.files }}" ]; then
+            mapfile -t files <<EOF
+          ${{ github.event.inputs.files }}
+          EOF
+          else
+            mapfile -t files <<EOF
+          ${{ steps.changed-posts.outputs.files }}
+          EOF
+          fi
+
+          npm run publish:devto -- "${files[@]}"
 
       - name: Commit synced article metadata
         if: steps.changed-posts.outputs.count != '0'
