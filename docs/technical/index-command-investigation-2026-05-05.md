@@ -33,12 +33,18 @@ The work completed in this session fixed several major classes of failure:
 6. cross-source dedupe collapsing unrelated assets because the identity key was
    too weak
 
-These fixes materially improved behavior and strengthened regression coverage,
- but `akm index` is still not fully stable in the live environment.
+These fixes materially improved behavior and strengthened regression coverage.
+At the time of the initial investigation, `akm index` was still not fully stable
+in the live environment.
 
 Since the investigation work captured here, follow-up commit `3709fe1` removed
 the remaining `show` disk-fallback `.stash.json` dependency. That follow-up also
 passed local `bun run check` and GitHub Actions CI run `25401342247` on `main`.
+
+Follow-up commit `314c6db` continued the migration by removing `.stash.json`
+from incremental stale detection and moving routine ranking/scoring fixtures and
+tests to file-local metadata. That slice also passed local `bun run check` and
+GitHub Actions CI run `25403995406` on `main`.
 
 ## Issues Found
 
@@ -242,6 +248,9 @@ Changes:
 - follow-up commit `3709fe1` removed `show` fallback metadata reads from
   `.stash.json`, so command and skill summary metadata now comes from file-local
   parsing in the renderer path
+- follow-up commit `314c6db` removed `.stash.json` from incremental
+  fingerprinting and stale-reason detection, so editing the sidecar no longer
+  forces incremental rescans by itself
 - runtime behavior now prefers:
   - frontmatter
   - structured comment metadata
@@ -347,6 +356,8 @@ Coverage added / updated:
 - filename-less `.stash.json` entries stabilize across reruns
 - filename-less `.stash.json` entries do not trigger re-embedding on unchanged
   incremental runs
+- `.stash.json` edits alone no longer mark a directory stale during incremental
+  indexing
 - wiki-root sources skip unchanged directories incrementally
 - wiki-root sources do not re-embed unchanged entries
 - non-indexed companion files do not force repeated stale rescans
@@ -370,6 +381,12 @@ Files:
 - `tests/commands/search.test.ts`
 - `tests/progressive-disclosure.test.ts`
 - `tests/registry-build-index.test.ts`
+- `tests/proposed-quality.test.ts`
+- `tests/search-include-proposed-cli.test.ts`
+- `tests/source.test.ts`
+- `tests/utility-scoring.test.ts`
+- `tests/ranking-regression.test.ts`
+- `tests/BENCHMARKS.md`
 
 Coverage added / updated:
 
@@ -377,6 +394,10 @@ Coverage added / updated:
 - filename-less legacy `.stash.json` metadata ignored in runtime fallback paths
 - `show` summary/progressive-disclosure metadata no longer depends on
   `.stash.json`; command and skill tags are sourced from frontmatter
+- routine quality/search/scoring/source fixtures now use frontmatter or inline
+  script metadata instead of `.stash.json`
+- ranking regression fixtures now index through the production indexer and use
+  file-local metadata by default
 - registry build prefers generated/file-local metadata over filename-less legacy
   stash metadata
 
@@ -390,18 +411,23 @@ Representative successful runs:
 - `bun test tests/indexer.test.ts tests/e2e.test.ts`
 - `bun test tests/indexer.test.ts tests/source-source.test.ts tests/migration-help.test.ts`
 - `bun test tests/indexer.test.ts tests/metadata.test.ts tests/commands/search.test.ts tests/commands/show-indexer-parity.test.ts tests/registry-build-index.test.ts tests/info-command.test.ts tests/db.test.ts tests/source-source.test.ts tests/migration-help.test.ts`
+- `bun test tests/indexer.test.ts tests/proposed-quality.test.ts tests/search-include-proposed-cli.test.ts tests/utility-scoring.test.ts tests/source.test.ts tests/ranking-regression.test.ts tests/scoring-pipeline.test.ts`
 - `bun run check`
 - GitHub Actions CI run `25401342247` passed on `main` for commit `3709fe1`
+  (`check`, `semantic-search`, and `docker-install` all succeeded)
+- GitHub Actions CI run `25403995406` passed on `main` for commit `314c6db`
   (`check`, `semantic-search`, and `docker-install` all succeeded)
 
 Latest combined suite status during this investigation:
 
-- `180 pass`
+- `2418 pass`
+- `9 skip`
 - `0 fail`
 
 ## Remaining Known Issues
 
-`akm index` is improved but not fully stable in the live environment.
+`akm index` is materially more stable than it was at the start of this
+investigation, but a few live-environment causes still remain open.
 
 Latest live consecutive runs still showed drift:
 
@@ -426,6 +452,8 @@ Run B:
    revalidated and warning every run
 3. there may still be one or more source-specific generated-name or
    classification instabilities in the newly indexed git stash
+4. `.stash.json` compatibility reads still exist in some runtime and ingest
+   paths even though routine metadata is now largely file-local
 
 ### Most visible current noisy file
 
@@ -507,7 +535,16 @@ Suggested test:
 The current runtime still retains some explicit-file compatibility behavior for
 0.7.x. Before `v0.8.0`, the remaining compatibility write/read paths should be
 audited and removed in a controlled migration pass, but `show` is no longer part
-of that surface after `3709fe1`.
+of that surface after `3709fe1`, and incremental stale detection is no longer
+part of it after `314c6db`.
+
+Remaining live compatibility paths now primarily include:
+
+- substring-search filesystem fallback in `src/indexer/db-search.ts`
+- manifest filesystem fallback in `src/indexer/manifest.ts`
+- registry-build metadata merge in `src/registry/build-index.ts`
+- explicit-file metadata merge during indexing in `src/indexer/indexer.ts`
+- legacy read/write helpers in `src/indexer/metadata.ts`
 
 ## Recommended Follow-Up Work Items
 
@@ -515,4 +552,6 @@ of that surface after `3709fe1`.
 2. Tighten workflow detection to stop revalidating non-workflow knowledge docs.
 3. Add verbose churn diagnostics to `akm index`.
 4. Add a regression for zero-row directory stability.
-5. Complete `.stash.json` compatibility removal ahead of `v0.8.0`.
+5. Remove the remaining `.stash.json` compatibility reads from fallback search,
+   manifest generation, registry build, and index-time explicit-file merge ahead
+   of `v0.8.0`.
