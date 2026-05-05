@@ -16,6 +16,11 @@ const q = {
   selects: [] as unknown[],
   texts: [] as unknown[],
   multiselects: [] as unknown[],
+  multiselectConfigs: [] as Array<{
+    message: string;
+    initialValues?: string[];
+    options: Array<{ value: string; label: string }>;
+  }>,
   logged: [] as string[],
 };
 
@@ -24,6 +29,7 @@ function reset() {
   q.selects.length = 0;
   q.texts.length = 0;
   q.multiselects.length = 0;
+  q.multiselectConfigs.length = 0;
   q.logged.length = 0;
 }
 
@@ -36,7 +42,18 @@ mock.module("@clack/prompts", () => ({
   confirm: async () => q.confirms.shift() ?? false,
   select: async () => q.selects.shift() ?? "done",
   text: async () => q.texts.shift() ?? "",
-  multiselect: async () => q.multiselects.shift() ?? [],
+  multiselect: async (config: {
+    message: string;
+    initialValues?: string[];
+    options: Array<{ value: string; label: string }>;
+  }) => {
+    q.multiselectConfigs.push({
+      message: config.message,
+      initialValues: config.initialValues,
+      options: config.options,
+    });
+    return q.multiselects.shift() ?? [];
+  },
   spinner: () => ({ start: () => {}, stop: () => {} }),
   log: {
     info: (msg: string) => {
@@ -109,17 +126,40 @@ describe("onCancel – escape handling", () => {
 describe("stepAddSources – recommended GitHub repos", () => {
   beforeEach(reset);
 
-  test("with no recommended repos configured, the multiselect prompt is skipped", async () => {
+  test("shows recommended repos and preselects the official stash for new configs", async () => {
     const { stepAddSources } = await import("../src/setup/setup");
 
-    // No multiselect should be consumed because the recommended-repos array
-    // is empty. Only the "Add another source?" select should be needed.
+    q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
 
     const result = await stepAddSources({ sources: [] } as never);
+    expect(q.multiselectConfigs).toHaveLength(1);
+    expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual([
+      "itlackey/akm-stash",
+      "andrewyng/context-hub",
+    ]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
+    expect(result).toEqual([
+      {
+        type: "git",
+        url: "https://github.com/itlackey/akm-stash",
+        name: "itlackey/akm-stash",
+      },
+    ]);
+  });
+
+  test("allows an existing recommended source to be unchecked and removed", async () => {
+    const { stepAddSources } = await import("../src/setup/setup");
+    const cfg = {
+      sources: [{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }],
+    };
+
+    q.multiselects.push([]);
+    q.selects.push("done");
+
+    const result = await stepAddSources(cfg as never);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
     expect(result).toEqual([]);
-    // multiselect queue should still be empty (nothing pushed, nothing consumed)
-    expect(q.multiselects.length).toBe(0);
   });
 
   test("preserves an existing git stash that points at the legacy context-hub URL", async () => {
@@ -129,9 +169,11 @@ describe("stepAddSources – recommended GitHub repos", () => {
       sources: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
     };
 
+    q.multiselects.push([ctxHubUrl]);
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([ctxHubUrl]);
     const hub = result.find((s) => s.url === ctxHubUrl);
     expect(hub).toBeDefined();
     expect(hub?.type).toBe("git");
@@ -165,6 +207,56 @@ describe("semantic search setup", () => {
     const result = await stepSemanticSearch({ semanticSearchMode: "auto" } as never);
     expect(result).toEqual({ mode: "auto", prepareAssets: true });
     expect(q.logged.some((entry) => entry.includes("Semantic Search Assets"))).toBe(true);
+  });
+});
+
+describe("stepRegistries", () => {
+  beforeEach(reset);
+
+  test("preselects akm-registry but not skills.sh by default", async () => {
+    const { stepRegistries } = await import("../src/setup/setup");
+
+    q.multiselects.push(["https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json"]);
+
+    const result = await stepRegistries({ registries: undefined } as never);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([
+      "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+    ]);
+    expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual(["akm-registry", "skills.sh"]);
+    expect(result).toEqual([
+      {
+        url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+        name: "akm-registry",
+        enabled: true,
+      },
+      { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh", enabled: false },
+    ]);
+  });
+
+  test("lets existing built-in registries be unchecked", async () => {
+    const { stepRegistries } = await import("../src/setup/setup");
+    const current = {
+      registries: [
+        { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "akm-registry" },
+        { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh", enabled: true },
+      ],
+    };
+
+    q.multiselects.push(["https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json"]);
+
+    const result = await stepRegistries(current as never);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([
+      "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+      "https://skills.sh",
+    ]);
+    expect(result).toEqual([
+      {
+        url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json",
+        name: "akm-registry",
+        enabled: true,
+      },
+      { url: "https://skills.sh", name: "skills.sh", provider: "skills-sh", enabled: false },
+    ]);
   });
 });
 
