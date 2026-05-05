@@ -2,6 +2,10 @@
 
 `akm index` builds and refreshes the local SQLite search index.
 
+By default it skips all index-time LLM passes, even when `akm.llm` is
+configured. Pass `--enrich` to enable memory inference, graph extraction, and
+metadata enrichment for that run.
+
 ## High-Level Flow
 
 ```text
@@ -46,9 +50,16 @@ The `content` column is intentionally sparse. Longer freeform guidance such as
 
 - incremental (default): reprocesses changed directories/files
 - full rebuild (`akm index --full`): rebuilds the search index from scratch
+- enriched (`akm index --enrich`): enables index-time LLM passes for the run
 
 Full rebuilds preserve usage history and then re-link it to rebuilt entries by
 ref.
+
+## Progress Reporting
+
+- text mode: shows a spinner with processed-versus-total source counts
+- `--verbose`: prints phase progress to stderr
+- structured output (`json`, `yaml`, `jsonl`): emits clean machine-readable output without spinner noise
 
 ## Database Tables
 

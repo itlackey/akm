@@ -1057,7 +1057,16 @@ export function regenerateWikiIndex(stashDir: string, name: string): boolean {
       lines.push("");
     }
 
-    fs.writeFileSync(path.join(wikiDir, INDEX_MD), lines.join("\n"), "utf8");
+    const next = `${lines.join("\n")}\n`;
+    const indexPath = path.join(wikiDir, INDEX_MD);
+    try {
+      const current = fs.readFileSync(indexPath, "utf8");
+      if (current === next) return false;
+    } catch {
+      /* missing file -> write below */
+    }
+
+    fs.writeFileSync(indexPath, next, "utf8");
     return true;
   } catch {
     return false;

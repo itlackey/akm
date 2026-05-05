@@ -187,15 +187,17 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
+    enrich: { type: "boolean", description: "Enable LLM inference and enrichment passes", default: false },
     verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const outputMode = getOutputMode();
       const controller = new AbortController();
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
-      const spin = !args.verbose ? p.spinner() : null;
+      const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -203,13 +205,16 @@ const indexCommand = defineCommand({
       try {
         const result = await akmIndex({
           full: args.full,
-          onProgress: ({ message }) => {
+          enrich: args.enrich,
+          onProgress: ({ message, processed, total }) => {
             latestMessage = message;
+            const progressPrefix =
+              processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
             if (args.verbose) {
-              console.error(`[index] ${message}`);
+              console.error(`[index] ${progressPrefix}${message}`);
             } else if (spin) {
-              spin.stop(message);
-              spin.start(message);
+              spin.stop(`${progressPrefix}${message}`);
+              spin.start(`${progressPrefix}${message}`);
             }
           },
           signal: controller.signal,

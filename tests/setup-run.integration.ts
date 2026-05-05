@@ -26,7 +26,7 @@ const setupState = {
   } as Record<string, unknown>,
   savedConfigs: [] as Array<Record<string, unknown>>,
   initCalls: [] as Array<{ dir: string }>,
-  indexCalls: [] as Array<{ stashDir: string }>,
+  indexCalls: [] as Array<{ stashDir: string; enrich?: boolean }>,
   detectOllamaResult: { available: false, endpoint: "http://localhost:11434", models: [] as string[] },
   detectAgentPlatformsResult: [] as Array<{ name: string; path: string }>,
   checkEmbeddingResult: { available: true } as
@@ -163,8 +163,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         if (setupState.indexError) {
           throw setupState.indexError;
         }
@@ -192,7 +192,7 @@ describe("runSetupWizard", () => {
     expect(setupState.savedConfigs[0]?.stashDir).toBe(DEFAULT_STASH_DIR);
     expect(setupState.savedConfigs[0]?.semanticSearchMode).toBe("off");
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
-    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR }]);
+    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
     expect(promptState.outros[0]).toContain(DEFAULT_CONFIG_PATH);
   });
 
@@ -277,8 +277,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         if (setupState.indexError) {
           throw setupState.indexError;
         }
@@ -312,7 +312,7 @@ describe("runSetupWizard", () => {
     expect(promptState.logs.some((entry) => entry.includes("remains set to auto, but is currently blocked"))).toBe(
       true,
     );
-    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR }]);
+    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
   });
 
   test("warns and completes when indexing fails after saving config", async () => {
@@ -396,8 +396,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         if (setupState.indexError) {
           throw setupState.indexError;
         }
@@ -424,7 +424,7 @@ describe("runSetupWizard", () => {
 
     expect(setupState.savedConfigs).toHaveLength(1);
     expect(setupState.initCalls).toEqual([{ dir: DEFAULT_STASH_DIR }]);
-    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR }]);
+    expect(setupState.indexCalls).toEqual([{ stashDir: DEFAULT_STASH_DIR, enrich: undefined }]);
     expect(promptState.logs.some((entry) => entry.includes("index exploded"))).toBe(true);
     expect(promptState.outros).toHaveLength(1);
   });
@@ -505,8 +505,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         return setupState.indexResult;
       },
     }));
@@ -598,8 +598,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         return setupState.indexResult;
       },
     }));
@@ -688,8 +688,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         return setupState.indexResult;
       },
     }));
@@ -777,8 +777,8 @@ describe("runSetupWizard", () => {
       },
     }));
     mock.module("../src/indexer/indexer", () => ({
-      akmIndex: async ({ stashDir }: { stashDir: string }) => {
-        setupState.indexCalls.push({ stashDir });
+      akmIndex: async ({ stashDir, enrich }: { stashDir: string; enrich?: boolean }) => {
+        setupState.indexCalls.push({ stashDir, enrich });
         return setupState.indexResult;
       },
     }));

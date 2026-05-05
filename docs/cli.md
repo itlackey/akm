@@ -111,9 +111,10 @@ directory, and builds the search index.
 Build or refresh the search index.
 
 ```sh
-akm index          # Incremental (only changed directories)
-akm index --full   # Full rebuild
-akm index --verbose
+akm index            # Incremental (only changed directories; no LLM enrichment)
+akm index --full     # Full rebuild; no LLM enrichment
+akm index --enrich   # Enable index-time LLM passes (memory/graph/enrichment)
+akm index --verbose  # Print phase progress to stderr
 ```
 
 Returns stats: `totalEntries`, `generatedMetadata`, `directoriesScanned`,
@@ -122,6 +123,12 @@ breakdown in milliseconds. Use `--verbose` to print the indexing mode,
 semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
+
+By default, `akm index` does not run any index-time LLM passes even when
+`akm.llm` is configured. Pass `--enrich` to enable memory inference, graph
+extraction, and metadata enrichment for that run. In text mode, the default
+CLI UI shows a spinner with processed-versus-total source counts; structured
+output modes (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
 ### info
 

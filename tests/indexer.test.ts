@@ -383,6 +383,7 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(messages[0]).toContain("Starting full index");
     expect(messages[0]).toContain("1 stash source");
     expect(messages[0]).toContain("semantic search: remote embeddings");
+    expect(messages.some((message) => message.includes("LLM passes disabled; rerun with --enrich"))).toBe(true);
     expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
@@ -398,6 +399,47 @@ test("akmIndex reports progress events and semantic-search verification details"
     warnSpy.mockRestore();
     globalThis.fetch = originalFetch;
   }
+});
+
+test("akmIndex scan progress events include processed and total counts", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+
+  const scanEvents: Array<{ processed?: number; total?: number; message: string }> = [];
+  await akmIndex({
+    stashDir,
+    onProgress: (event) => {
+      if (event.phase === "scan") {
+        scanEvents.push({ processed: event.processed, total: event.total, message: event.message });
+      }
+    },
+  });
+
+  expect(scanEvents.some((event) => event.processed !== undefined && event.total !== undefined)).toBe(true);
+  expect(scanEvents.some((event) => event.message.includes("Processed 1/1 source"))).toBe(true);
+});
+
+test("akmIndex incremental reruns stabilize for stash-owned wiki indexes", async () => {
+  const stashDir = tmpStash();
+  const wikiDir = path.join(stashDir, "wikis", "research");
+  writeFile(
+    path.join(wikiDir, "alpha.md"),
+    "---\ndescription: Alpha page\npageKind: note\n---\n# Alpha\n",
+  );
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+
+  const first = await akmIndex({ stashDir });
+  const second = await akmIndex({ stashDir });
+  const third = await akmIndex({ stashDir });
+
+  expect(first.totalEntries).toBe(second.totalEntries);
+  expect(second.totalEntries).toBe(third.totalEntries);
+  expect(third.generatedMetadata).toBe(0);
 });
 
 test("akmIndex verifies semantic search when remote embeddings succeed", async () => {

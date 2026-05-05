@@ -33,7 +33,7 @@ you care about.
 - [ ] Use a disposable shell session.
 - [ ] Isolate `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, and
       `AKM_STASH_DIR` under one temp directory.
-- [ ] Invoke the CLI from this repo (`bun run ./src/cli.ts` or the freshly built
+- [ ] Invoke the CLI from this repo (`bun ./src/cli.ts` or the freshly built
       binary from this branch), not a previously installed global `akm`.
 - [ ] Only add disposable local paths, test registries, and remotes you control.
 - [ ] Do **not** run `akm upgrade` as an install action during manual QA.
@@ -65,7 +65,7 @@ export AKM_STASH_DIR="$AKM_SANDBOX/stash"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$AKM_STASH_DIR"
 
 # 2.3 Convenience alias for this shell only
-alias akm='bun run ./src/cli.ts'
+alias akm='bun ./src/cli.ts'
 
 # 2.4 Verify isolation
 akm init | jq '.stashDir'

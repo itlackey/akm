@@ -202,8 +202,8 @@ When using a remote provider, `dimension` must match the index vector size
 
 ## LLM Configuration
 
-When configured, the indexer uses an LLM to generate richer descriptions,
-intent phrases, and tags during `akm index`.
+When configured, the indexer can use an LLM to generate richer descriptions,
+intent phrases, and tags during `akm index --enrich`.
 
 ```sh
 akm config set llm '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3,"maxTokens":512}'
@@ -221,7 +221,7 @@ and `AKM_LLM_API_KEY` rather than stored in the config file.
 
 ### Per-pass LLM opt-out (`index.<pass>.llm`)
 
-Every LLM-using pass inside `akm index` shares the same top-level `llm`
+Every LLM-using pass inside `akm index --enrich` shares the same top-level `llm`
 block — there is exactly one provider/model configuration. To skip the LLM
 for a single pass while keeping it on for others, set
 `index.<passName>.llm = false`:
@@ -249,7 +249,7 @@ configure the LLM. To use a different model entirely, change the top-level
 
 ### Memory inference pass (`index.memory`)
 
-When `akm.llm` is configured, `akm index` runs an opt-in memory inference
+When `akm.llm` is configured, `akm index --enrich` runs the memory inference
 pass that derives higher-signal memory artifacts from each pending memory in
 `<stashDir>/memories/`. The design direction is to prefer compact,
 information-dense derived memories with rich metadata and explicit provenance
@@ -259,6 +259,7 @@ marked `inferenceProcessed: true` so subsequent index runs are idempotent.
 
 The pass is disabled when:
 
+- `--enrich` is not passed to `akm index`, or
 - No `akm.llm` block is configured (the default), or
 - `index.memory.llm = false` is set explicitly.
 
@@ -267,7 +268,7 @@ artifacts — they remain on disk and continue to be searchable.
 
 ### Graph extraction pass (`index.graph`)
 
-When `akm.llm` is configured, `akm index` runs an opt-in graph-extraction
+When `akm.llm` is configured, `akm index --enrich` runs the graph-extraction
 pass that walks the primary stash for `memory:` and `knowledge:` markdown
 files, asks the configured LLM to surface entities and relations from each
 body, and persists the result to `<stashRoot>/.akm/graph.json`. The
@@ -276,6 +277,7 @@ boost component inside the existing FTS5+boosts loop.
 
 Three preconditions must ALL hold for the pass to run:
 
+- `--enrich` must be passed to `akm index`;
 - `akm.llm` must be configured (no provider configured → no extraction);
 - `llm.features.graph_extraction` must not be `false` (locked v1 spec §14
   feature flag — defaults to `true`);

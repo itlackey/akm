@@ -79,11 +79,14 @@ export interface IndexVerification {
 export interface IndexProgressEvent {
   phase: "summary" | "scan" | "llm" | "fts" | "embeddings" | "verify";
   message: string;
+  processed?: number;
+  total?: number;
 }
 
 interface IndexOptions {
   stashDir?: string;
   full?: boolean;
+  enrich?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
 }
@@ -100,6 +103,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
   const onProgress = options?.onProgress ?? (() => {});
   const signal = options?.signal;
+  const enrich = options?.enrich === true;
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("../core/config.js");
@@ -132,10 +136,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         sourcesCount: allSourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
-        // Surface "llm enabled" only when at least one pass would actually
-        // run. Today that means the enrichment pass; future passes plug in
-        // via `resolveIndexPassLLM`.
-        llmEnabled: !!resolveIndexPassLLM("enrichment", config),
+        llmEnabled: enrich && !!resolveIndexPassLLM("enrichment", config),
         vecAvailable: isVecAvailable(db),
       }),
     });
@@ -177,19 +178,20 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // `resolveIndexPassLLM("memory", config)` — when the user has no
     // `akm.llm` block or has set `index.memory.llm = false`, this is a no-op
     // and existing inferred children are left in place.
-    try {
-      const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
-      if (inferenceResult.writtenFacts > 0) {
-        onProgress({
-          phase: "llm",
-          message: `Memory inference wrote ${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
-        });
+    if (enrich) {
+      try {
+        const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
+        if (inferenceResult.writtenFacts > 0) {
+          onProgress({
+            phase: "llm",
+            message: `Memory inference wrote ${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
+          });
+        }
+      } catch (err) {
+        warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      // Defensive — runMemoryInferencePass swallows per-memory failures.
-      // A thrown error here would only come from an unexpected programming
-      // bug; surface it as a warning rather than aborting the index run.
-      warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
+    } else {
+      onProgress({ phase: "llm", message: "LLM passes disabled; rerun with --enrich to enable inference and enrichment." });
     }
 
     // Graph extraction pass (#207). Runs after memory inference so any
@@ -202,16 +204,18 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // `llm.features.graph_extraction` feature flag or the per-pass
     // `index.graph.llm` toggle) is off; the existing graph file is
     // preserved on disk in that case.
-    try {
-      const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal);
-      if (graphResult.written) {
-        onProgress({
-          phase: "llm",
-          message: `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}.`,
-        });
+    if (enrich) {
+      try {
+        const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal);
+        if (graphResult.written) {
+          onProgress({
+            phase: "llm",
+            message: `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}.`,
+          });
+        }
+      } catch (err) {
+        warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     throwIfAborted(signal);
@@ -228,6 +232,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       isIncremental,
       builtAtMs,
       doFullDelete,
+      onProgress,
     );
     onProgress({
       phase: "scan",
@@ -256,10 +261,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     throwIfAborted(signal);
 
     // Enhance entries with LLM if configured
-    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal);
+    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich);
     onProgress({
       phase: "llm",
-      message: resolveIndexPassLLM("enrichment", config)
+      message: enrich && resolveIndexPassLLM("enrichment", config)
         ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
         : "LLM enhancement disabled.",
     });
@@ -377,6 +382,7 @@ async function indexEntries(
   isIncremental: boolean,
   builtAtMs: number,
   doFullDelete = false,
+  onProgress?: (event: IndexProgressEvent) => void,
 ): Promise<{
   scannedDirs: number;
   skippedDirs: number;
@@ -413,10 +419,22 @@ async function indexEntries(
   }> = [];
 
   const dirRecords: DirRecord[] = [];
+  let processedDirs = 0;
+
+  const reportScanProgress = (message: string) => {
+    onProgress?.({
+      phase: "scan",
+      message,
+      processed: processedDirs,
+      total: allSourceEntries.length,
+    });
+  };
 
   for (const sourceAdded of allSourceEntries) {
     const currentStashDir = sourceAdded.path;
     const fileContexts = walkStashFlat(currentStashDir);
+    processedDirs++;
+    reportScanProgress(`Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`);
 
     // Wiki-root stashes: all .md files are indexed as wiki pages under wikiName
     if (sourceAdded.wikiName) {
@@ -463,18 +481,26 @@ async function indexEntries(
     }
 
     for (const [dirPath, files] of dirGroups) {
+      const indexableFiles = files.filter((file) => shouldIndexStashFile(currentStashDir, file));
+
       if (seenPaths.has(path.resolve(dirPath))) {
-        dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
         continue;
       }
       seenPaths.add(path.resolve(dirPath));
 
+      if (indexableFiles.length === 0) {
+        skippedDirs++;
+        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
+        continue;
+      }
+
       // Incremental: skip directories that haven't changed
       if (isIncremental) {
         const prevEntries = getEntriesByDir(db, dirPath);
-        if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+        if (prevEntries.length > 0 && !isDirStale(dirPath, indexableFiles, prevEntries, builtAtMs)) {
           skippedDirs++;
-          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+          dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
           continue;
         }
       }
@@ -488,7 +514,7 @@ async function indexEntries(
         const coveredFiles = new Set(
           stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
         );
-        const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
+        const uncoveredFiles = indexableFiles.filter((f) => !coveredFiles.has(path.basename(f)));
         if (uncoveredFiles.length > 0) {
           const generated = await generateMetadataFlat(currentStashDir, uncoveredFiles);
           if (generated.warnings?.length) warnings.push(...generated.warnings);
@@ -500,7 +526,7 @@ async function indexEntries(
       }
 
       if (!stash) {
-        const generated = await generateMetadataFlat(currentStashDir, files);
+        const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
         if (generated.warnings?.length) warnings.push(...generated.warnings);
         if (generated.entries.length > 0) {
           stash = { entries: generated.entries };
@@ -508,7 +534,7 @@ async function indexEntries(
         }
       }
 
-      dirRecords.push({ dirPath, currentStashDir, files, stash, skip: false });
+      dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash, skip: false });
     }
   }
 
@@ -609,7 +635,10 @@ async function enhanceDirsWithLlm(
     stash: StashFile;
   }>,
   signal?: AbortSignal,
+  enrich = false,
 ): Promise<void> {
+  if (!enrich) return;
+
   // Resolve per-pass LLM config via the unified shim. Returns undefined when
   // either no `akm.llm` is configured or the user opted this pass out via
   // `index.enrichment.llm = false`. (#208)

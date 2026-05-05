@@ -810,6 +810,40 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.mode).toBe("full");
   });
 
+  test("cli: akm index accepts --enrich", async () => {
+    const result = runCli("index", "--enrich");
+    expect(result.exitCode).toBe(0);
+
+    const json = parseJson(result.stdout);
+    expect(json.totalEntries).toBeGreaterThan(0);
+  });
+
+  test("cli: repeated index runs on a stash-owned wiki keep a stable entry count", async () => {
+    const stashDir = createEmptyStashDir("akm-e2e-wiki-stable-");
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+    fs.mkdirSync(path.join(stashDir, "wikis", "research"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "wikis", "research", "alpha.md"),
+      "---\ndescription: Alpha page\npageKind: note\n---\n# Alpha\n",
+      "utf8",
+    );
+
+    try {
+      const first = runCli("index");
+      expect(first.exitCode).toBe(0);
+      const firstJson = parseJson(first.stdout);
+
+      const second = runCli("index");
+      expect(second.exitCode).toBe(0);
+      const secondJson = parseJson(second.stdout);
+
+      expect(secondJson.totalEntries).toBe(firstJson.totalEntries);
+    } finally {
+      fs.rmSync(stashDir, { recursive: true, force: true });
+    }
+  });
+
   test("cli: akm config set/get manages llm settings via JSON", async () => {
     const setResult = runCli(
       "config",

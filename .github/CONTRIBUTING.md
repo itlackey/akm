@@ -22,25 +22,21 @@ Run the CLI from source during development:
 bun run src/cli.ts <command>
 ```
 
-### Local `akm` wrapper
+### Local `akm` alias
 
-If you have `~/.local/bin/akm` set up to point at this repo, it must be a **real file**, not a symlink:
+For local development, prefer a shell alias over a wrapper symlink/script:
 
 ```bash
-cat > ~/.local/bin/akm << 'EOF'
-#!/usr/bin/env bash
-exec bun /path/to/agentikit/src/cli.ts "$@"
-EOF
-chmod +x ~/.local/bin/akm
+alias akm='bun /home/founder3/code/github/itlackey/akm/src/cli.ts'
 ```
 
-**Do not** make it a symlink to `~/.bun/bin/akm`. Bun's global install chain is:
+If you choose a wrapper file instead, **do not** make it a symlink to `~/.bun/bin/akm`. Bun's global install chain is:
 
 ```
 ~/.local/bin/akm  →  ~/.bun/bin/akm  →  ~/.bun/install/global/node_modules/akm-cli/dist/cli.js
 ```
 
-A symlink into that chain means any `bun install -g akm-cli` (or `akm upgrade`) silently replaces what `akm` runs with the published compiled bundle rather than your local source.
+A symlink into that chain means any `bun install -g akm-cli` (or `akm upgrade`) silently replaces what `akm` runs with the published compiled bundle rather than your local source. The alias form avoids that entire class of problem.
 
 ### Running Tests
 
