@@ -670,17 +670,17 @@ export async function stepRegistries(current: AkmConfig): Promise<RegistryConfig
  * @internal Exported for testing only.
  */
 export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEntry[]> {
-  const stashes: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
+  const sources: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
 
-  if (stashes.length > 0) {
-    p.log.info(`You have ${stashes.length} existing stash source(s).`);
+  if (sources.length > 0) {
+    p.log.info(`You have ${sources.length} existing stash source(s).`);
   }
 
   // ── Recommended GitHub repos ───────────────────────────────────────────
   // Skip the prompt entirely when there are no recommendations to show.
   // The infrastructure is retained for a future registry-driven version.
   if (RECOMMENDED_GITHUB_REPOS.length > 0) {
-    const existingUrls = new Set(stashes.map((s) => s.url));
+    const existingUrls = new Set(sources.map((s) => s.url));
 
     const repoOptions = RECOMMENDED_GITHUB_REPOS.map((r) => ({
       value: r.url,
@@ -689,7 +689,7 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
     }));
 
     const initialValues =
-      stashes.length > 0
+      sources.length > 0
         ? repoOptions.filter((o) => existingUrls.has(o.value)).map((o) => o.value)
         : RECOMMENDED_GITHUB_REPOS.filter((r) => r.defaultSelected).map((r) => r.url);
 
@@ -706,7 +706,7 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
     for (const url of selectedRepos) {
       if (!existingUrls.has(url)) {
         const rec = RECOMMENDED_GITHUB_REPOS.find((r) => r.url === url);
-        stashes.push({ type: "git", url, name: rec?.name });
+        sources.push({ type: "git", url, name: rec?.name });
         existingUrls.add(url);
       }
     }
@@ -714,9 +714,9 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
     // Remove deselected repos that were previously configured
     for (const rec of RECOMMENDED_GITHUB_REPOS) {
       if (existingUrls.has(rec.url) && !selectedRepos.includes(rec.url)) {
-        const idx = stashes.findIndex((s) => s.url === rec.url);
+        const idx = sources.findIndex((s) => s.url === rec.url);
         if (idx !== -1) {
-          stashes.splice(idx, 1);
+          sources.splice(idx, 1);
           existingUrls.delete(rec.url);
           p.log.info(`Removed ${rec.name}.`);
         }
@@ -765,8 +765,8 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
 
       const entry: SourceConfigEntry = { type: "git", url: url.trim() };
       if (name.trim()) entry.name = name.trim();
-      if (!stashes.some((s) => s.url === entry.url)) {
-        stashes.push(entry);
+      if (!sources.some((s) => s.url === entry.url)) {
+        sources.push(entry);
       } else {
         p.log.warn("This URL is already configured.");
       }
@@ -795,15 +795,15 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
 
       const entry: SourceConfigEntry = { type: "filesystem", path: resolved };
       if (name.trim()) entry.name = name.trim();
-      if (!stashes.some((s) => s.path === entry.path)) {
-        stashes.push(entry);
+      if (!sources.some((s) => s.path === entry.path)) {
+        sources.push(entry);
       } else {
         p.log.warn("This path is already configured.");
       }
     }
   }
 
-  return stashes;
+  return sources;
 }
 
 async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry[]> {
