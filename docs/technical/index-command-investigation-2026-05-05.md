@@ -36,6 +36,10 @@ The work completed in this session fixed several major classes of failure:
 These fixes materially improved behavior and strengthened regression coverage,
  but `akm index` is still not fully stable in the live environment.
 
+Since the investigation work captured here, follow-up commit `3709fe1` removed
+the remaining `show` disk-fallback `.stash.json` dependency. That follow-up also
+passed local `bun run check` and GitHub Actions CI run `25401342247` on `main`.
+
 ## Issues Found
 
 ### 1. Embedding-dimension DB drift (`1024` vs `384`)
@@ -101,9 +105,9 @@ Root cause:
 
 Problem:
 
-- `.stash.json` remained a first-class metadata source in multiple runtime
-  paths even though the product direction had shifted toward frontmatter and
-  derived DB metadata
+- `.stash.json` was still a first-class metadata source in multiple runtime
+  paths before the later cleanup moved more behavior to frontmatter and derived
+  DB metadata
 
 This increased complexity in:
 
@@ -111,7 +115,6 @@ This increased complexity in:
 - substring search fallback
 - manifest generation
 - registry build
-- show summary enrichment
 
 ### 5. Git sources incorrectly required `<repo>/content`
 
@@ -236,6 +239,9 @@ Changes:
   metadata source
 - filename-less legacy entries are ignored in the new runtime merge path
 - explicit-file legacy overrides are still supported in 0.7.x
+- follow-up commit `3709fe1` removed `show` fallback metadata reads from
+  `.stash.json`, so command and skill summary metadata now comes from file-local
+  parsing in the renderer path
 - runtime behavior now prefers:
   - frontmatter
   - structured comment metadata
@@ -362,12 +368,15 @@ Files:
 
 - `tests/metadata.test.ts`
 - `tests/commands/search.test.ts`
+- `tests/progressive-disclosure.test.ts`
 - `tests/registry-build-index.test.ts`
 
 Coverage added / updated:
 
 - file-local metadata parsing parity
 - filename-less legacy `.stash.json` metadata ignored in runtime fallback paths
+- `show` summary/progressive-disclosure metadata no longer depends on
+  `.stash.json`; command and skill tags are sourced from frontmatter
 - registry build prefers generated/file-local metadata over filename-less legacy
   stash metadata
 
@@ -381,6 +390,9 @@ Representative successful runs:
 - `bun test tests/indexer.test.ts tests/e2e.test.ts`
 - `bun test tests/indexer.test.ts tests/source-source.test.ts tests/migration-help.test.ts`
 - `bun test tests/indexer.test.ts tests/metadata.test.ts tests/commands/search.test.ts tests/commands/show-indexer-parity.test.ts tests/registry-build-index.test.ts tests/info-command.test.ts tests/db.test.ts tests/source-source.test.ts tests/migration-help.test.ts`
+- `bun run check`
+- GitHub Actions CI run `25401342247` passed on `main` for commit `3709fe1`
+  (`check`, `semantic-search`, and `docker-install` all succeeded)
 
 Latest combined suite status during this investigation:
 
@@ -492,9 +504,10 @@ Suggested test:
 
 ### 5. Continue reducing `.stash.json` compatibility surface
 
-The current runtime still retains explicit-file compatibility behavior for
-0.7.x. Before `v0.8.0`, remaining compatibility write/read paths should be
-audited and removed in a controlled migration pass.
+The current runtime still retains some explicit-file compatibility behavior for
+0.7.x. Before `v0.8.0`, the remaining compatibility write/read paths should be
+audited and removed in a controlled migration pass, but `show` is no longer part
+of that surface after `3709fe1`.
 
 ## Recommended Follow-Up Work Items
 

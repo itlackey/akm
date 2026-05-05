@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.ref_name }}
 
@@ -45,11 +45,11 @@ jobs:
             echo "Got branch=$BRANCH version=$VERSION"
             exit 1
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.ref_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
       - name: Bump version
@@ -81,12 +81,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.tag }}
 
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -121,7 +121,7 @@ jobs:
           - target: bun-windows-x64
             artifact: akm-windows-x64.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -132,7 +132,7 @@ jobs:
       - name: Compile binary
         run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }} --define "AKM_VERSION='${{ inputs.version }}'"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -143,7 +143,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           path: artifacts
 
