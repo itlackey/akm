@@ -60,6 +60,23 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("git sources fall back to repo root when content/ does not exist", () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-git-root-"));
+    try {
+      for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+        fs.mkdirSync(path.join(repoRoot, sub), { recursive: true });
+      }
+      saveConfig({
+        semanticSearchMode: "off",
+        sources: [{ type: "git", path: repoRoot, name: "git-root" }],
+      });
+      const sources = resolveSourceEntries();
+      expect(sources[1]?.path).toBe(repoRoot);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   test("skips non-existent stash paths", () => {
     saveConfig({
       semanticSearchMode: "off",

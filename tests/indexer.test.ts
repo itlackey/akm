@@ -498,7 +498,8 @@ test("akmIndex incremental reruns stabilize for stash-owned wiki indexes", async
 
   expect(first.totalEntries).toBe(second.totalEntries);
   expect(second.totalEntries).toBe(third.totalEntries);
-  expect(third.generatedMetadata).toBe(0);
+  expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
+  expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
 });
 
 test("akmIndex ignores filename-less .stash.json entries and stabilizes incremental reruns", async () => {
@@ -691,6 +692,29 @@ test("akmIndex does not re-embed generated entries when filename-less .stash.jso
   } finally {
     closeDatabase(db);
   }
+});
+
+test("akmIndex incremental reruns ignore non-indexed companion files in stale detection", async () => {
+  const stashDir = tmpStash();
+  const projectDir = path.join(stashDir, "knowledge", "project-docs");
+  writeFile(path.join(projectDir, "guide.md"), "---\ndescription: Guide\n---\n# Guide\n");
+  writeFile(path.join(projectDir, "package.json"), JSON.stringify({ name: "project-docs" }, null, 2));
+  writeFile(path.join(projectDir, "manifest.json"), JSON.stringify({ version: 1 }, null, 2));
+  writeFile(path.join(projectDir, "plugin.config.json"), JSON.stringify({ plugin: true }, null, 2));
+  writeFile(path.join(projectDir, "tsconfig.json"), JSON.stringify({ compilerOptions: {} }, null, 2));
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+
+  const first = await akmIndex({ stashDir, full: true });
+  const second = await akmIndex({ stashDir });
+  const third = await akmIndex({ stashDir });
+
+  expect(first.totalEntries).toBe(1);
+  expect(second.totalEntries).toBe(1);
+  expect(third.totalEntries).toBe(1);
+  expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
+  expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
 });
 
 test("akmIndex verifies semantic search when remote embeddings succeed", async () => {

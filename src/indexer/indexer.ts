@@ -94,6 +94,11 @@ interface IndexOptions {
   signal?: AbortSignal;
 }
 
+interface IndexedDirCandidate {
+  stash: StashFile | null;
+  staleFiles: string[];
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("index interrupted");
@@ -518,33 +523,28 @@ async function indexEntries(
         continue;
       }
 
-      // Incremental: skip directories that haven't changed
-      if (isIncremental) {
-        const prevEntries = getEntriesByDir(db, dirPath);
-        if (prevEntries.length > 0 && !isDirStale(dirPath, indexableFiles, prevEntries, builtAtMs)) {
-          skippedDirs++;
-          dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
-          continue;
-        }
-      }
-
       scannedDirs++;
 
       const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
       if (generated.warnings?.length) warnings.push(...generated.warnings);
 
       const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
-      const mergedEntries = legacyOverrides
-        ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
-        : generated.entries;
+      const { stash, staleFiles } = buildIndexedDirCandidate(dirPath, indexableFiles, generated, legacyOverrides);
 
       if (generated.entries.length > 0) {
         generatedCount += generated.entries.length;
       }
 
-      const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+      if (isIncremental) {
+        const prevEntries = getEntriesByDir(db, dirPath);
+        if (prevEntries.length > 0 && !isDirStale(dirPath, staleFiles, prevEntries, builtAtMs)) {
+          skippedDirs++;
+          dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash: null, skip: true });
+          continue;
+        }
+      }
 
-      dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash, skip: false });
+      dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash, skip: false });
     }
   }
 
@@ -980,6 +980,30 @@ function isDirStale(
   }
 
   return false;
+}
+
+function buildIndexedDirCandidate(
+  dirPath: string,
+  indexableFiles: string[],
+  generated: StashFile,
+  legacyOverrides: StashFile | null,
+): IndexedDirCandidate {
+  const mergedEntries = legacyOverrides
+    ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
+    : generated.entries;
+  const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+  const staleFiles = stash ? resolveIndexedFiles(dirPath, indexableFiles, stash) : indexableFiles;
+  return { stash, staleFiles };
+}
+
+function resolveIndexedFiles(dirPath: string, files: string[], stash: StashFile): string[] {
+  const fileBasenameMap = buildFileBasenameMap(files);
+  const resolved = new Set<string>();
+  for (const entry of stash.entries) {
+    const entryPath = entry.filename ? path.join(dirPath, entry.filename) : matchEntryToFile(entry.name, fileBasenameMap, files);
+    if (entryPath) resolved.add(entryPath);
+  }
+  return resolved.size > 0 ? [...resolved] : files;
 }
 
 interface LlmEnhancementSummary {

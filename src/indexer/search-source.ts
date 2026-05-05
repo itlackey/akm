@@ -145,7 +145,8 @@ function resolveEntryContentDir(entry: SourceConfigEntry): string | undefined {
   // that subdirectory. This is a content-layout convention, not a provider
   // capability — keep it here.
   if (GIT_STASH_TYPES.has(entry.type)) {
-    return path.join(dir, "content");
+    const contentDir = path.join(dir, "content");
+    return isValidDirectory(contentDir) ? contentDir : dir;
   }
   return dir;
 }
