@@ -480,9 +480,7 @@ describe("saveConfig", () => {
     expect(fs.existsSync(latestPath)).toBe(true);
     expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({ semanticSearchMode: "off" });
 
-    const backups = fs
-      .readdirSync(backupDir)
-      .filter((name) => name.startsWith("config-") && name.endsWith(".json"));
+    const backups = fs.readdirSync(backupDir).filter((name) => name.startsWith("config-") && name.endsWith(".json"));
     expect(backups.length).toBeGreaterThan(0);
   });
 });

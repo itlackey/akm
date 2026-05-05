@@ -36,7 +36,10 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): { url: string; server: ReturnType<typeof Bun.serve> } {
+function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+} {
   const server = Bun.serve({
     port: 0,
     async fetch() {

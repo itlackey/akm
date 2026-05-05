@@ -9,14 +9,14 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
   closeDatabase,
-  deleteIndexDirStatesByStashDir,
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
+  deleteIndexDirStatesByStashDir,
   getEmbeddingCount,
-  getIndexDirState,
   getEntriesByDir,
   getEntryCount,
+  getIndexDirState,
   getMeta,
   isVecAvailable,
   openDatabase,
@@ -24,8 +24,8 @@ import {
   rebuildFts,
   setMeta,
   upsertEmbedding,
-  upsertIndexDirState,
   upsertEntry,
+  upsertIndexDirState,
   upsertUtilityScore,
   warnIfVecMissing,
 } from "./db";
@@ -585,8 +585,21 @@ async function indexEntries(
         isIncremental && getCachedZeroRowDirState(db, dirPath, indexableFiles, builtAtMs, priorDirsChanged);
       if (cachedZeroRowState) {
         skippedDirs++;
-        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason: cachedZeroRowState.reason });
-        reportDirDecision("skip", dirPath, currentStashDir, cachedZeroRowState.reason, cachedZeroRowState.persistedRowCount);
+        dirRecords.push({
+          dirPath,
+          currentStashDir,
+          files: indexableFiles,
+          stash: null,
+          skip: true,
+          reason: cachedZeroRowState.reason,
+        });
+        reportDirDecision(
+          "skip",
+          dirPath,
+          currentStashDir,
+          cachedZeroRowState.reason,
+          cachedZeroRowState.persistedRowCount,
+        );
         continue;
       }
 
@@ -603,7 +616,14 @@ async function indexEntries(
       const previousState = getDirIndexState(db, dirPath, staleFiles, builtAtMs);
       if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
         skippedDirs++;
-        dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash: null, skip: true, reason: previousState.reason });
+        dirRecords.push({
+          dirPath,
+          currentStashDir,
+          files: staleFiles,
+          stash: null,
+          skip: true,
+          reason: previousState.reason,
+        });
         reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
         continue;
       }
@@ -724,7 +744,7 @@ async function indexEntries(
           ? inferZeroRowReason(stash, reason, warnings, dirPath, dedupedRows)
           : reason?.kind === "full-rebuild"
             ? "full-rebuild"
-            : reason?.kind ?? "updated";
+            : (reason?.kind ?? "updated");
       upsertIndexDirState(db, {
         dirPath,
         fileSetHash: fingerprint.fileSetHash,
@@ -805,10 +825,7 @@ function getCachedZeroRowDirState(
   return state;
 }
 
-function canUseIncrementalSkip(
-  state: ReturnType<typeof getDirIndexState>,
-  priorDirsChanged: boolean,
-): boolean {
+function canUseIncrementalSkip(state: ReturnType<typeof getDirIndexState>, priorDirsChanged: boolean): boolean {
   return !(
     priorDirsChanged &&
     state.reason.kind === "cached-zero-row-state" &&
@@ -892,7 +909,9 @@ function inferZeroRowReason(
   dedupedRows: number,
 ): string {
   if (dedupedRows > 0) return "deduped-zero-row";
-  const workflowNoise = warnings.some((warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath));
+  const workflowNoise = warnings.some(
+    (warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath),
+  );
   if (workflowNoise) return "workflow-noise";
   if (!stash || stash.entries.length === 0) return "empty-generated-set";
   return `zero-row:${priorReason?.kind ?? "unknown"}`;
@@ -1226,7 +1245,9 @@ function resolveIndexedFiles(dirPath: string, files: string[], stash: StashFile)
   const fileBasenameMap = buildFileBasenameMap(files);
   const resolved = new Set<string>();
   for (const entry of stash.entries) {
-    const entryPath = entry.filename ? path.join(dirPath, entry.filename) : matchEntryToFile(entry.name, fileBasenameMap, files);
+    const entryPath = entry.filename
+      ? path.join(dirPath, entry.filename)
+      : matchEntryToFile(entry.name, fileBasenameMap, files);
     if (entryPath) resolved.add(entryPath);
   }
   return resolved.size > 0 ? [...resolved] : files;

@@ -31,6 +31,7 @@ import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexe
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
 import type { StashEntryScope } from "../indexer/metadata";
+import { loadStashFile } from "../indexer/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -364,9 +365,12 @@ export async function showLocal(input: {
 
   const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, source?.registryId);
   const response = renderer.buildShowResponse(renderCtx);
+  const legacyEntry = findLegacyEntryMetadata(assetPath, parsed.type, parsed.name);
   const editable = isEditable(assetPath, config);
   const fullResponse: ShowResponse = {
     ...response,
+    ...(!response.description && legacyEntry?.description ? { description: legacyEntry.description } : {}),
+    ...(!response.tags?.length && legacyEntry?.tags?.length ? { tags: legacyEntry.tags } : {}),
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
@@ -386,6 +390,17 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+function findLegacyEntryMetadata(assetPath: string, type: string, name: string) {
+  const legacyOverrides = loadStashFile(path.dirname(assetPath), { requireFilename: true });
+  if (!legacyOverrides) return undefined;
+
+  const filename = path.basename(assetPath);
+  return legacyOverrides.entries.find(
+    (entry) =>
+      entry.filename === filename && entry.type === type && (entry.name === name || entry.name.endsWith(`/${name}`)),
+  );
 }
 
 /**

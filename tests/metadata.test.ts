@@ -494,15 +494,10 @@ test("generateMetadata applies curated frontmatter fields for markdown assets", 
 test("generateMetadata preserves curated aliases from comment metadata", async () => {
   const dir = tmpDir();
   const file = path.join(dir, "deploy-service.sh");
-  writeFile(
-    file,
-    [
-      "#!/usr/bin/env bash",
-      "# @aliases release workflow, ship service",
-      "echo deploy",
-    ].join("\n"),
-  );
+  writeFile(file, ["#!/usr/bin/env bash", "# @aliases release workflow, ship service", "echo deploy"].join("\n"));
 
   const stash = await generateMetadata(dir, "script", [file]);
-  expect(stash.entries[0].aliases).toEqual(expect.arrayContaining(["release workflow", "ship service", "deploy service"]));
+  expect(stash.entries[0].aliases).toEqual(
+    expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
+  );
 });

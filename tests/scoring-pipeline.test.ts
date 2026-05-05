@@ -757,7 +757,7 @@ describe("Cross-stash deduplication at index time", () => {
     expect(githubHits[0].path).toContain(primaryStash);
   });
 
-  test("different stash directory structures deduped by type+basename+description", async () => {
+  test("different stash directory structures are not deduped when entry names differ", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
@@ -806,11 +806,11 @@ describe("Cross-stash deduplication at index time", () => {
     // Filter to just the adapter hits (same description from different roots)
     const adapterHits = localHits.filter((h) => h.description?.includes("GitHub Platform Adapter"));
 
-    // Indexer dedup: only one entry despite different paths
-    expect(adapterHits.length).toBe(1);
+    // Identity uses type + entry.name, so different canonical names remain distinct.
+    expect(adapterHits.length).toBe(2);
   });
 
-  test("different assets with same filename but different descriptions are NOT deduped", async () => {
+  test("same asset name across stashes is deduped even when descriptions differ", async () => {
     const primaryStash = tmpStash();
     const secondStash = tmpStash();
 
@@ -841,7 +841,8 @@ describe("Cross-stash deduplication at index time", () => {
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const helperHits = localHits.filter((h) => h.name.includes("helper"));
 
-    // Different descriptions = different assets — both should be indexed
-    expect(helperHits.length).toBe(2);
+    // Identity uses type + entry.name, so the higher-priority stash wins.
+    expect(helperHits.length).toBe(1);
+    expect(helperHits[0].description).toBe("Build helper for CI");
   });
 });

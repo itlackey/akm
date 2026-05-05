@@ -208,8 +208,7 @@ const indexCommand = defineCommand({
           enrich: args.enrich,
           onProgress: ({ message, processed, total }) => {
             latestMessage = message;
-            const progressPrefix =
-              processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
+            const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
             if (args.verbose) {
               console.error(`[index] ${progressPrefix}${message}`);
             } else if (spin) {

@@ -219,12 +219,10 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
     q.selects.push("done");
 
-    await stepAddSources(
-      {
-        sources: [],
-        installed: [{ id: "github:demo/skills", source: "github", stashRoot: "/tmp/demo" }] as never,
-      } as never,
-    );
+    await stepAddSources({
+      sources: [],
+      installed: [{ id: "github:demo/skills", source: "github", stashRoot: "/tmp/demo" }] as never,
+    } as never);
 
     expect(q.logged.some((entry) => entry.includes("Installed managed stashes"))).toBe(true);
     expect(q.logged.some((entry) => entry.includes("github:demo/skills (github)"))).toBe(true);
@@ -243,9 +241,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(result).toEqual([
-      { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
-    ]);
+    expect(result).toEqual([{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }]);
   });
 });
 
@@ -256,13 +252,10 @@ describe("agent and output setup steps", () => {
     const { stepAgentSelection } = await import("../src/setup/setup");
     q.selects.push("codex");
 
-    const result = await stepAgentSelection(
-      { semanticSearchMode: "auto", agent: { default: "claude" } } as never,
-      [
-        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-        { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
-      ],
-    );
+    const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
+      { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+      { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
+    ]);
 
     expect(result).toEqual({ default: "codex" });
   });
@@ -271,13 +264,10 @@ describe("agent and output setup steps", () => {
     const { stepAgentSelection } = await import("../src/setup/setup");
     q.selects.push("disabled");
 
-    const result = await stepAgentSelection(
-      { semanticSearchMode: "auto", agent: { default: "claude" } } as never,
-      [
-        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
-        { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
-      ],
-    );
+    const result = await stepAgentSelection({ semanticSearchMode: "auto", agent: { default: "claude" } } as never, [
+      { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+      { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
+    ]);
 
     expect(result).toBeUndefined();
   });
@@ -306,7 +296,10 @@ describe("agent and output setup steps", () => {
     const { stepOutputConfig } = await import("../src/setup/setup");
     q.selects.push("text", "full");
 
-    const result = await stepOutputConfig({ semanticSearchMode: "auto", output: { format: "json", detail: "brief" } } as never);
+    const result = await stepOutputConfig({
+      semanticSearchMode: "auto",
+      output: { format: "json", detail: "brief" },
+    } as never);
 
     expect(result).toEqual({ format: "text", detail: "full" });
   });

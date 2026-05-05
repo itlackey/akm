@@ -827,7 +827,11 @@ test("akmIndex caches zero-row directory state so incremental reruns can skip it
   });
 
   expect(second.mode).toBe("incremental");
-  expect(scanMessages.some((message) => message.includes("Skipping scripts/shared") && message.includes("cached-zero-row-state"))).toBe(true);
+  expect(
+    scanMessages.some(
+      (message) => message.includes("Skipping scripts/shared") && message.includes("cached-zero-row-state"),
+    ),
+  ).toBe(true);
 });
 
 test("akmIndex incrementally skips unchanged zero-row workflow directories", async () => {
@@ -901,7 +905,9 @@ test("akmIndex rescans deduped zero-row directories when an earlier winning sour
   try {
     const zeroRowState = getIndexDirState(db, path.join(secondStash, "scripts", "shared"));
     expect(zeroRowState?.reason).toBe("deduped-zero-row");
-    const scriptEntries = getAllEntries(db, "script").map((row) => row.entry.name).sort();
+    const scriptEntries = getAllEntries(db, "script")
+      .map((row) => row.entry.name)
+      .sort();
     expect(scriptEntries).toContain("shared/util.sh");
     expect(scriptEntries.filter((name) => name === "shared/util.sh")).toHaveLength(1);
   } finally {

@@ -4,7 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { assembleInfo } from "../src/commands/info";
 import { loadConfig, saveConfig } from "../src/core/config";
-import { closeDatabase, openDatabase, rebuildFts, searchVec, setMeta, upsertEmbedding, upsertEntry } from "../src/indexer/db";
+import {
+  closeDatabase,
+  openDatabase,
+  rebuildFts,
+  searchVec,
+  setMeta,
+  upsertEmbedding,
+  upsertEntry,
+} from "../src/indexer/db";
 import type { StashEntry } from "../src/indexer/metadata";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -152,7 +160,15 @@ describe("assembleInfo", () => {
     const dbPath = path.join(tmpDir("db"), "test.db");
     let db = openDatabase(dbPath, { embeddingDim: 4 });
     const entry = makeEntry("skill", "embed-skill");
-    const id = upsertEntry(db, "skill:embed-skill", "/fake/skill", "/fake/skill/embed-skill", stashDir, entry, "embed skill");
+    const id = upsertEntry(
+      db,
+      "skill:embed-skill",
+      "/fake/skill",
+      "/fake/skill/embed-skill",
+      stashDir,
+      entry,
+      "embed skill",
+    );
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
     rebuildFts(db);

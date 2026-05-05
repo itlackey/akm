@@ -5,7 +5,7 @@ import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { filterNonEmptyStrings } from "./common";
 import { ConfigError } from "./errors";
-import { getCacheDir, getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
+import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
 import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";

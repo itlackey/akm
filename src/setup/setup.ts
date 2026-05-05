@@ -957,7 +957,10 @@ export interface AgentSetupResult {
   detections: AgentDetectionResult[];
 }
 
-export async function stepAgentSelection(current: AkmConfig, detections: AgentDetectionResult[]): Promise<AgentConfig | undefined> {
+export async function stepAgentSelection(
+  current: AkmConfig,
+  detections: AgentDetectionResult[],
+): Promise<AgentConfig | undefined> {
   const available = detections.filter((d) => d.available);
   if (available.length === 0) {
     return current.agent;
