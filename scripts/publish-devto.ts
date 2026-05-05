@@ -16,6 +16,11 @@ if (files.length === 0) {
 
 const normalizedFiles = files.map((file) => path.resolve(file));
 
+process.stdout.write(`Publishing ${normalizedFiles.length} post(s):\n`);
+for (const file of normalizedFiles) {
+  process.stdout.write(`- ${path.relative(process.cwd(), file)}\n`);
+}
+
 for (const file of normalizedFiles) {
   const original = fs.readFileSync(file, "utf8");
   const normalized = normalizePostText(original);
@@ -36,6 +41,7 @@ for (const file of normalizedFiles) {
 
   if (updated !== original) {
     fs.writeFileSync(file, updated, "utf8");
+    process.stdout.write(`Normalized ${path.relative(process.cwd(), file)}\n`);
   }
 }
 
@@ -59,6 +65,12 @@ const publish = spawnSync(
 
 if (publish.stdout) process.stdout.write(publish.stdout);
 if (publish.stderr) process.stderr.write(publish.stderr);
+
+if ((publish.status ?? 1) === 0) {
+  process.stdout.write("dev.to publish completed successfully.\n");
+} else {
+  process.stdout.write(`dev.to publish failed with exit code ${publish.status ?? 1}.\n`);
+}
 
 process.exit(publish.status ?? 1);
 
