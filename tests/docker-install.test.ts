@@ -17,7 +17,8 @@ import path from "node:path";
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKER_DIR = path.join(PROJECT_ROOT, "tests", "docker");
 const BUILD_DIR = path.join(DOCKER_DIR, ".build");
-const TIMEOUT = 300_000; // 5 minutes per container build+run
+const DEFAULT_TIMEOUT = 300_000; // 5 minutes per container build+run
+const UBUNTU_TIMEOUT = 600_000; // Ubuntu mirrors can be much slower on shared CI runners
 
 function dockerAvailable(): boolean {
   const r = spawnSync("docker", ["info"], {
@@ -49,6 +50,10 @@ function buildBinary(): boolean {
   return r.status === 0;
 }
 
+function timeoutForVariant(variant: string): number {
+  return variant.startsWith("ubuntu-") ? UBUNTU_TIMEOUT : DEFAULT_TIMEOUT;
+}
+
 function dockerBuild(variant: string): { ok: boolean; output: string } {
   const dockerfile = path.join(DOCKER_DIR, `Dockerfile.${variant}`);
   const tag = `akm-test-${variant}`;
@@ -57,7 +62,7 @@ function dockerBuild(variant: string): { ok: boolean; output: string } {
     ["build", "-f", dockerfile, "-t", tag, "--build-arg", "BUILDKIT_INLINE_CACHE=1", PROJECT_ROOT],
     {
       encoding: "utf8",
-      timeout: TIMEOUT,
+      timeout: timeoutForVariant(variant),
       env: { ...process.env, DOCKER_BUILDKIT: "1" },
     },
   );
@@ -71,7 +76,7 @@ function dockerRun(variant: string): { ok: boolean; output: string } {
   const tag = `akm-test-${variant}`;
   const r = spawnSync("docker", ["run", "--rm", tag], {
     encoding: "utf8",
-    timeout: TIMEOUT,
+    timeout: timeoutForVariant(variant),
   });
   return {
     ok: r.status === 0,
@@ -114,7 +119,7 @@ describe.skipIf(!HAS_DOCKER || !HAS_BUN || !DOCKER_TESTS_ENABLED)("Docker instal
           }
           expect(run.output).toContain("All tests passed");
         },
-        TIMEOUT,
+        timeoutForVariant(variant),
       );
     }
   });
@@ -147,7 +152,7 @@ describe.skipIf(!HAS_DOCKER || !HAS_BUN || !DOCKER_TESTS_ENABLED)("Docker instal
           }
           expect(run.output).toContain("All tests passed");
         },
-        TIMEOUT,
+        timeoutForVariant(variant),
       );
     }
   });

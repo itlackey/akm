@@ -148,7 +148,9 @@ describe("WebsiteSourceProvider", () => {
 
   test("fetchWebsiteMarkdownSnapshot fetches one page and derives a URL-path name", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    let headers: Headers | undefined;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      headers = new Headers(init?.headers);
       const url = String(input);
       if (url === "https://docs.example.test/guide/getting-started") {
         return new Response(
@@ -169,6 +171,7 @@ describe("WebsiteSourceProvider", () => {
       expect(snapshot.title).toBe("Getting Started");
       expect(snapshot.content).toContain('sourceUrl: "https://docs.example.test/guide/getting-started"');
       expect(snapshot.content).toContain("# Getting Started");
+      expect(headers?.get("connection")).toBe("close");
     } finally {
       globalThis.fetch = originalFetch;
     }

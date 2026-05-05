@@ -218,6 +218,7 @@ async function fetchWebsitePage(pageUrl: string): Promise<{ page: WebsitePage; l
     {
       headers: {
         Accept: "text/html, text/markdown, text/plain;q=0.9, application/xhtml+xml;q=0.8",
+        Connection: "close",
         "User-Agent": "akm-cli website provider",
       },
     },
