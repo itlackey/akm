@@ -5,7 +5,7 @@ import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { filterNonEmptyStrings } from "./common";
 import { ConfigError } from "./errors";
-import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
+import { getCacheDir, getConfigDir as _getConfigDir, getConfigPath as _getConfigPath } from "./paths";
 import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";
@@ -442,8 +442,23 @@ export function saveConfig(config: AkmConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
+  backupExistingConfig(configPath);
   const sanitized = sanitizeConfigForWrite(config);
   writeConfigObject(configPath, sanitized);
+}
+
+function backupExistingConfig(configPath: string): void {
+  if (!fs.existsSync(configPath)) return;
+
+  const backupDir = path.join(getCacheDir(), "config-backups");
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  const backupPath = path.join(backupDir, `config-${timestamp}.json`);
+  fs.copyFileSync(configPath, backupPath);
+
+  const latestPath = path.join(backupDir, "config.latest.json");
+  fs.copyFileSync(configPath, latestPath);
 }
 
 /**

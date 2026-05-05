@@ -124,7 +124,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -139,30 +139,30 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         if (setupState.indexError) {
@@ -171,13 +171,17 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
@@ -234,7 +238,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -249,30 +253,30 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         if (setupState.indexError) {
@@ -281,13 +285,17 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
     setupState.checkEmbeddingResult = {
@@ -349,7 +357,7 @@ describe("runSetupWizard", () => {
         promptState.notes.push(`${title ?? ""}\n${message}`.trim());
       },
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -364,30 +372,30 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => setupState.detectOllamaResult,
       detectAgentPlatforms: () => setupState.detectAgentPlatformsResult,
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => setupState.transformersAvailable,
       checkEmbeddingAvailability: async () => setupState.checkEmbeddingResult,
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         if (setupState.indexError) {
@@ -396,13 +404,17 @@ describe("runSetupWizard", () => {
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => setupState.vecAvailable,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
     setupState.indexError = new Error("index exploded");
@@ -446,7 +458,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -461,14 +473,14 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({
         available: true,
         endpoint: "http://localhost:11434",
@@ -476,7 +488,7 @@ describe("runSetupWizard", () => {
       }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({
@@ -485,26 +497,30 @@ describe("runSetupWizard", () => {
         message: "connection refused",
       }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "nomic-embed-text", "llama3.2", "done");
+    promptState.selects.push("default", "nomic-embed-text", "llama3.2", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
     promptState.texts.push("384");
@@ -539,7 +555,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -554,18 +570,18 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => false,
       checkEmbeddingAvailability: async () => ({
@@ -574,26 +590,30 @@ describe("runSetupWizard", () => {
         message: "@huggingface/transformers is not installed.",
       }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
@@ -629,7 +649,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -644,44 +664,48 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => {
         throw new Error("db locked");
       },
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, true, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
@@ -714,7 +738,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -729,42 +753,46 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async (options?: { dir?: string }) => {
         const dir = options?.dir ?? DEFAULT_STASH_DIR;
         setupState.initCalls.push({ dir });
         return { stashDir: dir, created: true, configPath: DEFAULT_CONFIG_PATH };
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async ({ stashDir }: { stashDir: string }) => {
         setupState.indexCalls.push({ stashDir });
         return setupState.indexResult;
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(true, false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
@@ -791,7 +819,7 @@ describe("runSetupWizard", () => {
       note: () => {},
     }));
     let saveCalls = 0;
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -807,39 +835,43 @@ describe("runSetupWizard", () => {
         throw new Error("EACCES config.json");
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async () => {
         throw new Error("init should not run");
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async () => {
         throw new Error("index should not run");
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 
@@ -864,7 +896,7 @@ describe("runSetupWizard", () => {
       outro: () => {},
       note: () => {},
     }));
-    mock.module("../src/config", () => ({
+    mock.module("../src/core/config", () => ({
       DEFAULT_CONFIG: {
         semanticSearchMode: "auto",
         registries: [
@@ -879,39 +911,43 @@ describe("runSetupWizard", () => {
         setupState.savedConfigs.push(config);
       },
     }));
-    mock.module("../src/paths", () => ({
+    mock.module("../src/core/paths", () => ({
       getDefaultStashDir: () => DEFAULT_STASH_DIR,
       getConfigPath: () => DEFAULT_CONFIG_PATH,
       getConfigDir: () => path.dirname(DEFAULT_CONFIG_PATH),
       getCacheDir: () => DEFAULT_CACHE_DIR,
       getSemanticStatusPath: () => path.join(DEFAULT_CACHE_DIR, "semantic-status.json"),
     }));
-    mock.module("../src/detect", () => ({
+    mock.module("../src/setup/detect", () => ({
       detectOllama: async () => ({ available: false, endpoint: "http://localhost:11434", models: [] }),
       detectAgentPlatforms: () => [],
     }));
-    mock.module("../src/embedder", () => ({
+    mock.module("../src/llm/embedder", () => ({
       DEFAULT_LOCAL_MODEL: "Xenova/bge-small-en-v1.5",
       isTransformersAvailable: () => true,
       checkEmbeddingAvailability: async () => ({ available: true }),
     }));
-    mock.module("../src/init", () => ({
+    mock.module("../src/commands/init", () => ({
       akmInit: async () => {
         throw new Error("EACCES stash init");
       },
     }));
-    mock.module("../src/indexer", () => ({
+    mock.module("../src/indexer/indexer", () => ({
       akmIndex: async () => {
         throw new Error("index should not run");
       },
     }));
-    mock.module("../src/db", () => ({
+    mock.module("../src/indexer/db", () => ({
       openDatabase: () => ({}),
       closeDatabase: () => {},
       isVecAvailable: () => false,
     }));
+    mock.module("../src/integrations/agent", () => ({
+      detectAgentCliProfiles: () => [],
+      pickDefaultAgentProfile: () => undefined,
+    }));
 
-    promptState.selects.push("default", "done");
+    promptState.selects.push("default", "done", "json", "brief");
     promptState.confirms.push(false, true);
     promptState.multiselects.push([...DEFAULT_REGISTRY_URLS], []);
 

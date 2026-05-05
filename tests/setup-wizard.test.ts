@@ -134,6 +134,7 @@ describe("stepAddSources – recommended GitHub repos", () => {
 
     const result = await stepAddSources({ sources: [] } as never);
     expect(q.multiselectConfigs).toHaveLength(1);
+    expect(q.logged.some((entry) => entry.includes("Configured stash sources"))).toBe(false);
     expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual([
       "itlackey/akm-stash",
       "andrewyng/context-hub",
@@ -154,11 +155,11 @@ describe("stepAddSources – recommended GitHub repos", () => {
       sources: [{ type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" }],
     };
 
-    q.multiselects.push([]);
+    q.multiselects.push([], []);
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["https://github.com/itlackey/akm-stash"]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual(["git:https://github.com/itlackey/akm-stash"]);
     expect(result).toEqual([]);
   });
 
@@ -169,14 +170,145 @@ describe("stepAddSources – recommended GitHub repos", () => {
       sources: [{ type: "git", url: ctxHubUrl, name: "context-hub" }],
     };
 
-    q.multiselects.push([ctxHubUrl]);
+    q.multiselects.push([`git:${ctxHubUrl}`], [ctxHubUrl]);
     q.selects.push("done");
 
     const result = await stepAddSources(cfg as never);
-    expect(q.multiselectConfigs[0]?.initialValues).toEqual([ctxHubUrl]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([`git:${ctxHubUrl}`]);
     const hub = result.find((s) => s.url === ctxHubUrl);
     expect(hub).toBeDefined();
     expect(hub?.type).toBe("git");
+  });
+
+  test("shows existing configured sources as a toggle list before recommendations", async () => {
+    const { stepAddSources } = await import("../src/setup/setup");
+    const cfg = {
+      sources: [
+        { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
+        { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
+      ],
+    };
+
+    q.multiselects.push(
+      ["git:https://github.com/itlackey/akm-stash", "filesystem:/tmp/custom-stash"],
+      ["https://github.com/itlackey/akm-stash"],
+    );
+    q.selects.push("done");
+
+    const result = await stepAddSources(cfg as never);
+    expect(q.multiselectConfigs).toHaveLength(2);
+    expect(q.logged.some((entry) => entry.includes("Configured stash sources"))).toBe(true);
+    expect(q.multiselectConfigs[0]?.message).toContain("Configured stash sources");
+    expect(q.multiselectConfigs[0]?.options.map((option) => option.label)).toEqual([
+      "itlackey/akm-stash",
+      "custom-stash",
+    ]);
+    expect(q.multiselectConfigs[0]?.initialValues).toEqual([
+      "git:https://github.com/itlackey/akm-stash",
+      "filesystem:/tmp/custom-stash",
+    ]);
+    expect(result).toEqual([
+      { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
+      { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
+    ]);
+  });
+
+  test("shows installed managed stashes as preserved informational list", async () => {
+    const { stepAddSources } = await import("../src/setup/setup");
+
+    q.multiselects.push(["https://github.com/itlackey/akm-stash"]);
+    q.selects.push("done");
+
+    await stepAddSources(
+      {
+        sources: [],
+        installed: [{ id: "github:demo/skills", source: "github", stashRoot: "/tmp/demo" }] as never,
+      } as never,
+    );
+
+    expect(q.logged.some((entry) => entry.includes("Installed managed stashes"))).toBe(true);
+    expect(q.logged.some((entry) => entry.includes("github:demo/skills (github)"))).toBe(true);
+  });
+
+  test("allows existing configured sources to be unchecked and removed", async () => {
+    const { stepAddSources } = await import("../src/setup/setup");
+    const cfg = {
+      sources: [
+        { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
+        { type: "filesystem", path: "/tmp/custom-stash", name: "custom-stash" },
+      ],
+    };
+
+    q.multiselects.push(["git:https://github.com/itlackey/akm-stash"], ["https://github.com/itlackey/akm-stash"]);
+    q.selects.push("done");
+
+    const result = await stepAddSources(cfg as never);
+    expect(result).toEqual([
+      { type: "git", url: "https://github.com/itlackey/akm-stash", name: "itlackey/akm-stash" },
+    ]);
+  });
+});
+
+describe("agent and output setup steps", () => {
+  beforeEach(reset);
+
+  test("stepAgentSelection lets the user choose a detected default agent", async () => {
+    const { stepAgentSelection } = await import("../src/setup/setup");
+    q.selects.push("codex");
+
+    const result = await stepAgentSelection(
+      { semanticSearchMode: "auto", agent: { default: "claude" } } as never,
+      [
+        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+        { name: "codex", bin: "codex", available: true, resolvedPath: "/usr/bin/codex" },
+      ],
+    );
+
+    expect(result).toEqual({ default: "codex" });
+  });
+
+  test("stepAgentSelection allows disabling the default agent", async () => {
+    const { stepAgentSelection } = await import("../src/setup/setup");
+    q.selects.push("disabled");
+
+    const result = await stepAgentSelection(
+      { semanticSearchMode: "auto", agent: { default: "claude" } } as never,
+      [
+        { name: "claude", bin: "claude", available: true, resolvedPath: "/usr/bin/claude" },
+        { name: "opencode", bin: "opencode", available: true, resolvedPath: "/usr/bin/opencode" },
+      ],
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  test("stepLlm keep current preserves the existing endpoint", async () => {
+    const { stepLlm } = await import("../src/setup/setup");
+    q.selects.push("keep");
+
+    const current = {
+      semanticSearchMode: "auto",
+      llm: {
+        provider: "lmstudio",
+        endpoint: "http://localhost:7200/v1/chat/completions",
+        model: "qwen/qwen3.5-9b",
+        capabilities: { structuredOutput: true },
+      },
+    };
+
+    const result = await stepLlm(current as never, "http://localhost:11434", ["llama3.2"]);
+
+    expect(result).toEqual(current.llm);
+    expect(result).not.toBe(current.llm);
+  });
+
+  test("stepOutputConfig prompts for format and detail", async () => {
+    const { stepOutputConfig } = await import("../src/setup/setup");
+    q.selects.push("text", "full");
+
+    const result = await stepOutputConfig({ semanticSearchMode: "auto", output: { format: "json", detail: "brief" } } as never);
+
+    expect(result).toEqual({ format: "text", detail: "full" });
   });
 });
 
@@ -329,5 +461,20 @@ describe("stepAddSources – cancel within sub-actions", () => {
     const result = await stepAddSources({ sources: [] } as never);
     // Repo was NOT added because user cancelled at the name step
     expect(result).toEqual([]);
+  });
+});
+
+describe("stepAddSources – deferred additional prompt", () => {
+  beforeEach(reset);
+
+  test("can skip the additional-source menu when requested", async () => {
+    const { stepAddSources } = await import("../src/setup/setup");
+
+    q.multiselects.push([]);
+
+    const result = await stepAddSources({ sources: [] } as never, { promptForAdditional: false });
+
+    expect(result).toEqual([]);
+    expect(q.selects).toHaveLength(0);
   });
 });

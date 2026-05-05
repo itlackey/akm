@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import fs from "node:fs";
 import path from "node:path";
+import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
@@ -186,7 +187,7 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
-    verbose: { type: "boolean", description: "Print indexing summary and phase progress to stderr", default: false },
+    verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -194,14 +195,38 @@ const indexCommand = defineCommand({
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
-      const result = await akmIndex({
-        full: args.full,
-        onProgress: args.verbose ? ({ message }) => console.error(`[index] ${message}`) : undefined,
-        signal: controller.signal,
-      });
-      process.off("SIGINT", abort);
-      process.off("SIGTERM", abort);
-      output("index", result);
+      const spin = !args.verbose ? p.spinner() : null;
+      if (spin) {
+        spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
+      }
+      let latestMessage = "";
+      try {
+        const result = await akmIndex({
+          full: args.full,
+          onProgress: ({ message }) => {
+            latestMessage = message;
+            if (args.verbose) {
+              console.error(`[index] ${message}`);
+            } else if (spin) {
+              spin.stop(message);
+              spin.start(message);
+            }
+          },
+          signal: controller.signal,
+        });
+        if (spin) {
+          spin.stop(`Indexed ${result.totalEntries} assets.`);
+        }
+        output("index", result);
+      } catch (error) {
+        if (spin) {
+          spin.stop(latestMessage ? `Indexing failed after: ${latestMessage}` : "Indexing failed.");
+        }
+        throw error;
+      } finally {
+        process.off("SIGINT", abort);
+        process.off("SIGTERM", abort);
+      }
     });
   },
 });

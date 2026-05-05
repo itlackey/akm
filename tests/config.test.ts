@@ -13,6 +13,7 @@ import {
   updateConfig,
 } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
+import { getCacheDir } from "../src/core/paths";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
@@ -28,14 +29,18 @@ function writeRawConfig(configPath: string, content: string): void {
 }
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalHome = process.env.HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalCwd = process.cwd();
 let testConfigHome = "";
+let testCacheHome = "";
 
 beforeEach(() => {
   testConfigHome = makeTmpDir();
+  testCacheHome = makeTmpDir();
   process.env.XDG_CONFIG_HOME = testConfigHome;
+  process.env.XDG_CACHE_HOME = testCacheHome;
   process.chdir(originalCwd);
   resetConfigCache();
 });
@@ -45,6 +50,12 @@ afterEach(() => {
     delete process.env.XDG_CONFIG_HOME;
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  }
+
+  if (originalXdgCacheHome === undefined) {
+    delete process.env.XDG_CACHE_HOME;
+  } else {
+    process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
 
   if (originalHome === undefined) {
@@ -62,6 +73,11 @@ afterEach(() => {
   if (testConfigHome) {
     cleanup(testConfigHome);
     testConfigHome = "";
+  }
+
+  if (testCacheHome) {
+    cleanup(testCacheHome);
+    testCacheHome = "";
   }
 
   process.chdir(originalCwd);
@@ -452,6 +468,22 @@ describe("saveConfig", () => {
     };
     saveConfig(config);
     expect(loadConfig().output).toEqual(config.output);
+  });
+
+  test("backs up the previous config in cache before overwrite", () => {
+    saveConfig({ semanticSearchMode: "off" });
+    saveConfig({ semanticSearchMode: "auto", output: { format: "yaml", detail: "full" } });
+
+    const backupDir = path.join(getCacheDir(), "config-backups");
+    const latestPath = path.join(backupDir, "config.latest.json");
+
+    expect(fs.existsSync(latestPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({ semanticSearchMode: "off" });
+
+    const backups = fs
+      .readdirSync(backupDir)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json"));
+    expect(backups.length).toBeGreaterThan(0);
   });
 });
 

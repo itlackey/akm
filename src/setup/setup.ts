@@ -14,6 +14,7 @@ import type {
   AkmConfig,
   EmbeddingConnectionConfig,
   LlmConnectionConfig,
+  OutputConfig,
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
@@ -44,6 +45,12 @@ type RecommendedGitHubRepo = {
   name: string;
   hint: string;
   defaultSelected?: boolean;
+};
+
+type ConfiguredSourceOption = {
+  value: string;
+  label: string;
+  hint: string;
 };
 
 /**
@@ -122,6 +129,128 @@ async function promptOrBack<T>(fn: () => Promise<T | symbol>): Promise<T | null>
   const result = await fn();
   if (p.isCancel(result)) return null;
   return result as T;
+}
+
+function configuredSourceKey(source: SourceConfigEntry): string {
+  return `${source.type}:${source.path ?? source.url ?? source.name ?? "unknown"}`;
+}
+
+function describeConfiguredSource(source: SourceConfigEntry): ConfiguredSourceOption {
+  const target = source.path ?? source.url ?? "(unknown target)";
+  const typeLabel = source.type === "git" ? "Git" : source.type === "filesystem" ? "Filesystem" : source.type;
+  return {
+    value: configuredSourceKey(source),
+    label: source.name ?? target,
+    hint: `${typeLabel}: ${target}`,
+  };
+}
+
+function renderConfiguredSourceList(sources: SourceConfigEntry[]): string {
+  return sources
+    .map((source) => {
+      const described = describeConfiguredSource(source);
+      return `- ${described.label} (${described.hint})`;
+    })
+    .join("\n");
+}
+
+function renderInstalledSourceList(installed: NonNullable<AkmConfig["installed"]>): string {
+  return installed.map((entry) => `- ${entry.id} (${entry.source})`).join("\n");
+}
+
+function cloneLlmConfig(llm?: LlmConnectionConfig): LlmConnectionConfig | undefined {
+  if (!llm) return undefined;
+  return {
+    ...llm,
+    ...(llm.capabilities ? { capabilities: { ...llm.capabilities } } : {}),
+    ...(llm.features ? { features: { ...llm.features } } : {}),
+    ...(llm.extraParams ? { extraParams: { ...llm.extraParams } } : {}),
+  };
+}
+
+async function stepAdditionalSources(currentSources: SourceConfigEntry[]): Promise<SourceConfigEntry[]> {
+  const sources = [...currentSources];
+
+  let addMore = true;
+  while (addMore) {
+    const action = await prompt(() =>
+      p.select({
+        message: "Add another stash source?",
+        options: [
+          { value: "done", label: "Done — no more sources" },
+          { value: "github-repo", label: "GitHub repository", hint: "custom URL" },
+          { value: "filesystem", label: "Filesystem path", hint: "local directory" },
+        ],
+        initialValue: "done",
+      }),
+    );
+
+    if (action === "done") {
+      addMore = false;
+      break;
+    }
+
+    if (action === "github-repo") {
+      const url = await promptOrBack(() =>
+        p.text({
+          message: "Enter the GitHub repository URL:",
+          placeholder: "https://github.com/owner/repo",
+          validate: (v) => {
+            if (!v?.trim()) return "URL cannot be empty";
+          },
+        }),
+      );
+      if (url === null) continue;
+
+      const name = await promptOrBack(() =>
+        p.text({
+          message: "Give this stash a name (optional):",
+          placeholder: "my-repo",
+        }),
+      );
+      if (name === null) continue;
+
+      const entry: SourceConfigEntry = { type: "git", url: url.trim() };
+      if (name.trim()) entry.name = name.trim();
+      if (!sources.some((s) => s.url === entry.url)) {
+        sources.push(entry);
+      } else {
+        p.log.warn("This URL is already configured.");
+      }
+    }
+
+    if (action === "filesystem") {
+      const fsPath = await promptOrBack(() =>
+        p.text({
+          message: "Enter the directory path:",
+          placeholder: "/path/to/stash",
+          validate: (v) => {
+            if (!v?.trim()) return "Path cannot be empty";
+          },
+        }),
+      );
+      if (fsPath === null) continue;
+
+      const resolved = fsPath.trim();
+      const name = await promptOrBack(() =>
+        p.text({
+          message: "Give this stash a name (optional):",
+          placeholder: "my-stash",
+        }),
+      );
+      if (name === null) continue;
+
+      const entry: SourceConfigEntry = { type: "filesystem", path: resolved };
+      if (name.trim()) entry.name = name.trim();
+      if (!sources.some((s) => s.path === entry.path)) {
+        sources.push(entry);
+      } else {
+        p.log.warn("This path is already configured.");
+      }
+    }
+  }
+
+  return sources;
 }
 
 /**
@@ -515,7 +644,7 @@ export async function stepLlm(
     }),
   );
 
-  if (choice === "keep") return current.llm;
+  if (choice === "keep") return cloneLlmConfig(current.llm);
   if (choice === "none") return undefined;
 
   let llm: LlmConnectionConfig;
@@ -669,11 +798,34 @@ export async function stepRegistries(current: AkmConfig): Promise<RegistryConfig
 /**
  * @internal Exported for testing only.
  */
-export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEntry[]> {
-  const sources: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
+export async function stepAddSources(
+  current: AkmConfig,
+  options?: { promptForAdditional?: boolean },
+): Promise<SourceConfigEntry[]> {
+  const existingSources: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
+  const sources: SourceConfigEntry[] = [];
 
-  if (sources.length > 0) {
-    p.log.info(`You have ${sources.length} existing stash source(s).`);
+  if (existingSources.length > 0) {
+    p.note(renderConfiguredSourceList(existingSources), "Configured stash sources");
+    const options = existingSources.map(describeConfiguredSource);
+    const selected = await prompt(() =>
+      p.multiselect({
+        message: "Configured stash sources — uncheck any you want to disable:",
+        options,
+        initialValues: options.map((option) => option.value),
+        required: false,
+      }),
+    );
+
+    for (const source of existingSources) {
+      if (selected.includes(configuredSourceKey(source))) {
+        sources.push(source);
+      }
+    }
+  }
+
+  if ((current.installed?.length ?? 0) > 0) {
+    p.note(renderInstalledSourceList(current.installed ?? []), "Installed managed stashes (preserved)");
   }
 
   // ── Recommended GitHub repos ───────────────────────────────────────────
@@ -724,86 +876,11 @@ export async function stepAddSources(current: AkmConfig): Promise<SourceConfigEn
     }
   }
 
-  // ── Additional stash sources loop ──────────────────────────────────────
-  let addMore = true;
-  while (addMore) {
-    const action = await prompt(() =>
-      p.select({
-        message: "Add another stash source?",
-        options: [
-          { value: "github-repo", label: "GitHub repository", hint: "custom URL" },
-          { value: "filesystem", label: "Filesystem path", hint: "local directory" },
-          { value: "done", label: "Done — no more sources" },
-        ],
-      }),
-    );
-
-    if (action === "done") {
-      addMore = false;
-      break;
-    }
-
-    if (action === "github-repo") {
-      const url = await promptOrBack(() =>
-        p.text({
-          message: "Enter the GitHub repository URL:",
-          placeholder: "https://github.com/owner/repo",
-          validate: (v) => {
-            if (!v?.trim()) return "URL cannot be empty";
-          },
-        }),
-      );
-      if (url === null) continue;
-
-      const name = await promptOrBack(() =>
-        p.text({
-          message: "Give this stash a name (optional):",
-          placeholder: "my-repo",
-        }),
-      );
-      if (name === null) continue;
-
-      const entry: SourceConfigEntry = { type: "git", url: url.trim() };
-      if (name.trim()) entry.name = name.trim();
-      if (!sources.some((s) => s.url === entry.url)) {
-        sources.push(entry);
-      } else {
-        p.log.warn("This URL is already configured.");
-      }
-    }
-
-    if (action === "filesystem") {
-      const fsPath = await promptOrBack(() =>
-        p.text({
-          message: "Enter the directory path:",
-          placeholder: "/path/to/stash",
-          validate: (v) => {
-            if (!v?.trim()) return "Path cannot be empty";
-          },
-        }),
-      );
-      if (fsPath === null) continue;
-
-      const resolved = fsPath.trim();
-      const name = await promptOrBack(() =>
-        p.text({
-          message: "Give this stash a name (optional):",
-          placeholder: "my-stash",
-        }),
-      );
-      if (name === null) continue;
-
-      const entry: SourceConfigEntry = { type: "filesystem", path: resolved };
-      if (name.trim()) entry.name = name.trim();
-      if (!sources.some((s) => s.path === entry.path)) {
-        sources.push(entry);
-      } else {
-        p.log.warn("This path is already configured.");
-      }
-    }
+  if (options?.promptForAdditional === false) {
+    return sources;
   }
 
-  return sources;
+  return stepAdditionalSources(sources);
 }
 
 async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry[]> {
@@ -814,7 +891,7 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
     return [];
   }
 
-  const existingPaths = new Set((current.stashes ?? []).map((s) => s.path));
+  const existingPaths = new Set((current.sources ?? current.stashes ?? []).map((s) => s.path));
 
   // Filter out platforms already configured
   const newPlatforms = platforms.filter((pl) => !existingPaths.has(pl.path));
@@ -864,6 +941,72 @@ export interface AgentSetupResult {
   agent?: AgentConfig;
   /** Per-profile detection results, available to the UI for display. */
   detections: AgentDetectionResult[];
+}
+
+export async function stepAgentSelection(current: AkmConfig, detections: AgentDetectionResult[]): Promise<AgentConfig | undefined> {
+  const available = detections.filter((d) => d.available);
+  if (available.length === 0) {
+    return current.agent;
+  }
+
+  const initialValue = pickDefaultAgentProfile(detections, current.agent?.default) ?? available[0]?.name;
+  const selectedDefault = await prompt(() =>
+    p.select({
+      message: "Which detected agent CLI should be the default?",
+      options: [
+        ...available.map((d) => ({
+          value: d.name,
+          label: d.name,
+          hint: d.resolvedPath ?? d.bin,
+        })),
+        { value: "disabled", label: "Disabled", hint: "do not configure a default agent CLI" },
+      ],
+      initialValue,
+    }),
+  );
+
+  if (selectedDefault === "disabled") {
+    if (!current.agent?.profiles && !current.agent?.timeoutMs) {
+      return undefined;
+    }
+    return {
+      ...(current.agent ?? {}),
+      default: undefined,
+    };
+  }
+
+  return {
+    ...(current.agent ?? {}),
+    default: selectedDefault,
+  };
+}
+
+export async function stepOutputConfig(current: AkmConfig): Promise<OutputConfig> {
+  const defaultOutput = current.output ?? DEFAULT_CONFIG.output ?? { format: "json", detail: "brief" };
+  const format = await prompt(() =>
+    p.select({
+      message: "Default output format?",
+      options: [
+        { value: "json", label: "json", hint: "structured default" },
+        { value: "text", label: "text", hint: "human-readable CLI output" },
+        { value: "yaml", label: "yaml", hint: "structured text" },
+      ],
+      initialValue: defaultOutput.format ?? "json",
+    }),
+  );
+  const detail = await prompt(() =>
+    p.select({
+      message: "Default output detail level?",
+      options: [
+        { value: "brief", label: "brief", hint: "compact summaries" },
+        { value: "normal", label: "normal", hint: "balanced detail" },
+        { value: "full", label: "full", hint: "max available detail" },
+      ],
+      initialValue: defaultOutput.detail ?? "brief",
+    }),
+  );
+
+  return { format: format as OutputConfig["format"], detail: detail as OutputConfig["detail"] };
 }
 
 /**
@@ -976,19 +1119,19 @@ export function buildSetupSteps(options: {
       id: "stash-sources",
       label: "Stash Sources",
       async run(ctx) {
-        const stashes = await stepAddSources(ctx.config);
-        const platforms = await stepAgentPlatforms(ctx.config);
+        const stashes = await stepAddSources(ctx.config, { promptForAdditional: false });
+        const platforms = await stepAgentPlatforms({ ...ctx.config, sources: stashes });
         const merged = [...stashes];
         for (const ps of platforms) {
           if (!merged.some((s) => s.path === ps.path)) merged.push(ps);
         }
-        ctx.apply({ sources: merged.length > 0 ? merged : undefined });
+        const withAdditional = await stepAdditionalSources(merged);
+        ctx.apply({ sources: withAdditional.length > 0 ? withAdditional : undefined });
       },
     },
     {
       id: "agent-cli",
       label: "Agent CLI",
-      nonInteractive: true,
       async run(ctx) {
         const result = stepAgentCliDetection(ctx.config);
         const detected = result.detections.filter((d) => d.available);
@@ -1002,7 +1145,16 @@ export function buildSetupSteps(options: {
             "No agent CLIs detected on PATH. Agent commands will be disabled until one is installed and `akm setup` is re-run.",
           );
         }
-        ctx.apply({ agent: result.agent });
+        const agent = await stepAgentSelection({ ...ctx.config, agent: result.agent }, result.detections);
+        ctx.apply({ agent });
+      },
+    },
+    {
+      id: "output",
+      label: "Output Defaults",
+      async run(ctx) {
+        const output = await stepOutputConfig(ctx.config);
+        ctx.apply({ output });
       },
     },
   ];
@@ -1047,7 +1199,6 @@ export async function runSetupWizard(): Promise<void> {
     ...ctx.config,
     // Preserve fields the steps don't manage explicitly.
     installed: current.installed,
-    output: current.output,
   };
   const semanticSearchMode = outcome.semantic;
   const stashDir = newConfig.stashDir ?? current.stashDir ?? getDefaultStashDir();
@@ -1066,6 +1217,8 @@ export async function runSetupWizard(): Promise<void> {
       `Semantic search:  ${semanticSearchMode.mode}`,
       `Registries:       ${effectiveRegistries.filter((r) => r.enabled !== false).length} enabled`,
       `Stash sources:    ${allStashes.length}`,
+      `Agent default:    ${newConfig.agent?.default ?? "disabled"}`,
+      `Output:           ${newConfig.output?.format ?? "json"} / ${newConfig.output?.detail ?? "brief"}`,
     ].join("\n"),
     "Configuration Summary",
   );
