@@ -8,13 +8,12 @@ import { parseFrontmatterBlock } from "../src/core/frontmatter";
 
 const MAX_DESCRIPTION_LENGTH = 160;
 
-const files = process.argv.slice(2);
+const files = resolveFiles();
 if (files.length === 0) {
-  process.stderr.write("Usage: bun scripts/publish-devto.ts <file...>\n");
-  process.exit(2);
+  process.stdout.write("No post files to publish from this event.\n");
+  process.exit(0);
 }
 
-let changed = false;
 const normalizedFiles = files.map((file) => path.resolve(file));
 
 for (const file of normalizedFiles) {
@@ -37,7 +36,6 @@ for (const file of normalizedFiles) {
 
   if (updated !== original) {
     fs.writeFileSync(file, updated, "utf8");
-    changed = true;
   }
 }
 
@@ -63,6 +61,42 @@ if (publish.stdout) process.stdout.write(publish.stdout);
 if (publish.stderr) process.stderr.write(publish.stderr);
 
 process.exit(publish.status ?? 1);
+
+function resolveFiles(): string[] {
+  const args = process.argv.slice(2);
+  if (args.length > 0) return args;
+
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !fs.existsSync(eventPath)) return [];
+
+  const event = JSON.parse(fs.readFileSync(eventPath, "utf8")) as {
+    commits?: Array<{ added?: string[]; modified?: string[] }>;
+    inputs?: { files?: string };
+  };
+
+  const files = new Set<string>();
+
+  const dispatchFiles = event.inputs?.files ?? "";
+  if (dispatchFiles.trim()) {
+    for (const line of dispatchFiles.split(/\r?\n/)) {
+      const file = line.trim();
+      if (file) files.add(file);
+    }
+    return [...files];
+  }
+
+  if (Array.isArray(event.commits)) {
+    for (const commit of event.commits) {
+      for (const file of [...(commit.added || []), ...(commit.modified || [])]) {
+        if (file.startsWith("docs/posts/") && file.endsWith(".md")) {
+          files.add(file);
+        }
+      }
+    }
+  }
+
+  return [...files];
+}
 
 function normalizePostText(text: string): string {
   return text

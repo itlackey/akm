@@ -2,18 +2,10 @@ name: Publish to dev.to
 
 on:
   workflow_dispatch:
-    inputs:
-      files:
-        description: "Newline-separated post paths to publish"
-        required: false
   push:
     branches: [main]
     paths:
       - "docs/posts/**/*.md"
-
-concurrency:
-  group: publish-devto-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -24,12 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -38,81 +24,7 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Resolve post files
-        id: post-files
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_FILES: ${{ github.event.inputs.files }}
-        run: |
-          mapfile -t files < <(
-            node <<'NODE'
-const fs = require('node:fs');
-const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-const files = new Set();
-
-if (process.env.EVENT_NAME === 'workflow_dispatch' && process.env.DISPATCH_FILES) {
-  for (const line of process.env.DISPATCH_FILES.split(/\r?\n/)) {
-    const file = line.trim();
-    if (file) files.add(file);
-  }
-} else if (Array.isArray(event.commits)) {
-  for (const commit of event.commits) {
-    for (const file of [...(commit.added || []), ...(commit.modified || [])]) {
-      if (file.startsWith('docs/posts/') && file.endsWith('.md')) files.add(file);
-    }
-  }
-}
-
-for (const file of files) console.log(file);
-NODE
-          )
-
-          if [ "${#files[@]}" -eq 0 ]; then
-            {
-              echo "count=0"
-              echo "files="
-            } >> "$GITHUB_OUTPUT"
-            echo "No post files to publish from this event"
-            exit 0
-          fi
-
-          {
-            echo "count=${#files[@]}"
-            echo "files<<EOF"
-            printf '%s\n' "${files[@]}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-          printf 'Changed posts:\n'
-          printf '%s\n' "${files[@]}"
-
       - name: Publish articles to dev.to
-        if: steps.post-files.outputs.count != '0'
         env:
           DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.files }}" ]; then
-            mapfile -t files <<EOF
-          ${{ github.event.inputs.files }}
-          EOF
-          else
-            mapfile -t files <<EOF
-          ${{ steps.post-files.outputs.files }}
-          EOF
-          fi
-
-          npm run publish:devto -- "${files[@]}"
-
-      - name: Commit synced article metadata
-        if: steps.post-files.outputs.count != '0'
-        run: |
-          if [ -z "$(git status --porcelain -- docs/posts)" ]; then
-            echo "No synced post metadata changes to commit"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/posts
-          git commit -m "docs: reconcile dev.to article metadata"
-          git push
+        run: bun run publish:devto
