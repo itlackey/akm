@@ -44,6 +44,12 @@ quality metadata are introduced more broadly.
 5. Feature gates precede feature-gated commands.
 `llm.features.feedback_distillation` must exist before `akm distill` depends on it.
 
+6. Derived memory compression beats atomic fact sprawl.
+The current memory-inference shape creates too many low-value child files by splitting dense parent
+memories into sentence-level facts. The future direction should prefer a small number of
+information-dense derived memory artifacts with rich metadata, clear provenance, and search
+projections that naturally rank above the verbose parent without creating a large sibling-file fanout.
+
 ## Execution waves
 
 ### Wave 1 — Contract Sync + Agent Foundations (`0.7.0`, shipped)
@@ -61,15 +67,22 @@ committed to but not contractually frozen until 1.0 GA.
 
 - Add `quality: "proposed"` and search filtering.
 - Build the durable proposal queue and `akm proposal *` review flow.
+- Redesign memory inference around compressed derived memories instead of atomic fact splitting.
+- Add search/ranking semantics so compact derived memories with richer metadata score above the
+  original parent naturally, without relying on ad hoc special cases.
 
 Deliverable: one stable proposal and review pipeline that later commands can reuse without special
-cases. Committed but not frozen until 1.0 GA.
+cases, plus a clear search-semantic direction for high-signal derived memory artifacts that reduce
+file sprawl. Committed but not frozen until 1.0 GA.
 
 ### Wave 3 — Reflection, Generation, Distillation, and 1.0 GA Lock (`0.9.x -> 1.0` GA)
 
 - Implement `akm reflect` and `akm propose` on top of the shared queue.
 - Add `lesson` and `llm.features.*` together.
 - Implement `akm distill`.
+- Finalize the compressed-memory write shape: one or a few properly formatted derived artifacts with
+  rich metadata, explicit provenance back to the parent, and contract-tested indexing/ranking
+  behavior.
 - Finalize docs, migration notes, release notes, and contract locks.
 
 Deliverable: the full reflection/proposal loop is present, feature-gated where needed, and backed

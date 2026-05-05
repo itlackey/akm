@@ -1,1 +1,0 @@
-az keyvault secret set --vault-name myvault -n dbpass --value "example-secret"

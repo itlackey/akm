@@ -165,17 +165,35 @@ function normalizeFsPathForComparison(value: string): string {
  * Fetch with an AbortController timeout.
  * Defaults to 30 seconds if no timeout is specified.
  */
-export async function fetchWithTimeout(url: string, opts?: RequestInit, timeoutMs = 30_000): Promise<Response> {
+export async function fetchWithTimeout(
+  url: string,
+  opts?: RequestInit,
+  timeoutMs = 30_000,
+  signal?: AbortSignal,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abortExternal = (): void => controller.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timer);
+      controller.abort(signal.reason);
+    } else {
+      signal.addEventListener("abort", abortExternal, { once: true });
+    }
+  }
   try {
     return await fetch(url, { ...opts, signal: controller.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      if (signal?.aborted) {
+        throw new Error(`Request aborted: ${url}`);
+      }
       throw new Error(`Request timed out after ${timeoutMs}ms: ${url}`);
     }
     throw err;
   } finally {
+    if (signal) signal.removeEventListener("abort", abortExternal);
     clearTimeout(timer);
   }
 }

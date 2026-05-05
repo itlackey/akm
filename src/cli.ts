@@ -189,10 +189,17 @@ const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const controller = new AbortController();
+      const abort = (): void => controller.abort(new Error("index interrupted"));
+      process.once("SIGINT", abort);
+      process.once("SIGTERM", abort);
       const result = await akmIndex({
         full: args.full,
         onProgress: args.verbose ? ({ message }) => console.error(`[index] ${message}`) : undefined,
+        signal: controller.signal,
       });
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
       output("index", result);
     });
   },

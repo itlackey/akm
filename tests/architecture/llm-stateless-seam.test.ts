@@ -15,7 +15,7 @@
  *      as a stateless model handle and exposes `resetLocalEmbedder()`
  *      so tests can construct a fresh pipeline.
  *   3. The transport-level helpers (`chatCompletion`, `enhanceMetadata`,
- *      `splitMemoryIntoAtomicFacts`, `resolveIndexPassLLM`) take the
+ *      `compressMemoryToDerivedMemory`, `resolveIndexPassLLM`) take the
  *      connection config as a parameter — they do not read it from
  *      module state.
  *
@@ -68,8 +68,8 @@ describe("src/llm/* is bounded and stateless (v1 spec §9.7, §14.4)", () => {
   });
 
   test("`memory-infer` exports a single pure helper", () => {
-    expect(typeof memoryInfer.splitMemoryIntoAtomicFacts).toBe("function");
-    expect(memoryInfer.splitMemoryIntoAtomicFacts.length).toBeGreaterThanOrEqual(2);
+    expect(typeof memoryInfer.compressMemoryToDerivedMemory).toBe("function");
+    expect(memoryInfer.compressMemoryToDerivedMemory.length).toBeGreaterThanOrEqual(2);
     const runtimeExports = Object.entries(memoryInfer).filter(([, v]) => v !== undefined);
     expect(runtimeExports.length).toBe(1);
   });

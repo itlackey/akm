@@ -471,6 +471,47 @@ describe("Score boosts", () => {
     expect(resolvedCuratedHit.whyMatched).toBeDefined();
     expect(resolvedCuratedHit.whyMatched).toContain("curated metadata boost");
   });
+
+  test("derived memories score above their raw parent notes", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(
+      path.join(stashDir, "memories", "deploy-debugging.md"),
+      "---\ndescription: Diagnose deploy issues\n---\n\nInvestigate deploy failures in production.\n",
+    );
+    writeFile(
+      path.join(stashDir, "memories", "deploy-debugging.derived.md"),
+      [
+        "---",
+        "inferred: true",
+        "source: memory:deploy-debugging",
+        "title: Deploy Debugging Summary",
+        "description: Compressed deploy debugging guidance.",
+        'tags: ["deploy", "debugging", "summary"]',
+        'searchHints: ["debug deploy failures", "deploy debugging summary", "production deploy issues"]',
+        "derivedFrom: deploy-debugging",
+        "---",
+        "",
+        "# Deploy Debugging Summary",
+        "",
+        "## Summary",
+        "",
+        "Investigate deploy failures in production.",
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const result = await akmSearch({ query: "deploy-debugging", source: "local", type: "memory" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    const parentHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging"));
+    const derivedHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging.derived"));
+    expect(derivedHit.score).toBeDefined();
+    expect(parentHit.score).toBeDefined();
+    expect(derivedHit.score).toBeGreaterThanOrEqual(parentHit.score as number);
+  });
 });
 
 // ── 2.3 Substring fallback ──────────────────────────────────────────────────

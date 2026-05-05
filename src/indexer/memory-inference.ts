@@ -1,9 +1,10 @@
 /**
  * Memory inference pass for `akm index` (#201).
  *
- * Detects memories pending inference, asks the configured LLM to split each
- * into atomic facts, and writes the results back as new memory files with
- * frontmatter `inferred: true` + a `source:` backref to the parent memory.
+ * Detects memories pending inference, asks the configured LLM to compress each
+ * into one higher-signal derived memory, and writes the result back as a new
+ * memory file with frontmatter `inferred: true` + a `source:` backref to the
+ * parent memory.
  *
  * Pending predicate (see {@link isPendingMemory}):
  *   - File lives under `<stashRoot>/memories/` and ends in `.md`.
@@ -38,7 +39,7 @@ import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { splitMemoryIntoAtomicFacts } from "../llm/memory-infer";
+import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
 import type { SearchSource } from "./search-source";
 
 /**
@@ -53,11 +54,11 @@ const FM_SOURCE = "source";
 export interface MemoryInferenceResult {
   /** Number of pending parent memories considered. */
   considered: number;
-  /** Parents whose split returned at least one fact. */
+  /** Parents whose inference returned a derived memory. */
   splitParents: number;
-  /** Atomic child memories actually written to disk. */
+  /** Derived memory files actually written to disk. */
   writtenFacts: number;
-  /** Parents skipped because the LLM returned no facts (left unmarked → retried next run). */
+  /** Parents skipped because the LLM returned no usable derived memory (left unmarked → retried next run). */
   skippedNoFacts: number;
 }
 
@@ -72,6 +73,7 @@ interface MemoryRecord {
   data: Record<string, unknown>;
   /** Body text (everything after the frontmatter). */
   body: string;
+  name: string;
 }
 
 /**
@@ -92,8 +94,9 @@ interface MemoryRecord {
 export async function runMemoryInferencePass(
   config: AkmConfig,
   sources: SearchSource[],
+  signal?: AbortSignal,
 ): Promise<MemoryInferenceResult> {
-  const empty: MemoryInferenceResult = {
+  const result: MemoryInferenceResult = {
     considered: 0,
     splitParents: 0,
     writtenFacts: 0,
@@ -102,40 +105,41 @@ export async function runMemoryInferencePass(
 
   // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
   // explicit `false` disables the pass entirely.
-  if (config.llm?.features?.memory_inference === false) return empty;
+  if (config.llm?.features?.memory_inference === false) return result;
 
   // Gate 2 — per-pass opt-out (#208). Returns the resolved llm config or
   // `undefined` when the pass should not run.
   const llmConfig = resolveIndexPassLLM("memory", config);
-  if (!llmConfig) return empty;
+  if (!llmConfig) return result;
 
   // The pass only writes to the primary (working) stash. Read-only caches
   // (git, npm, website) are deliberately untouched — writing inferred
   // children there would be clobbered by the next sync().
   const primary = sources[0];
-  if (!primary) return empty;
+  if (!primary) return result;
 
   const pending = collectPendingMemories(primary.path);
-  empty.considered = pending.length;
-  if (pending.length === 0) return empty;
+  result.considered = pending.length;
+  if (pending.length === 0) return result;
 
   for (const record of pending) {
-    const facts = await splitMemoryIntoAtomicFacts(llmConfig, record.body);
-    if (facts.length === 0) {
-      empty.skippedNoFacts += 1;
+    if (signal?.aborted) return result;
+    const derived = await compressMemoryToDerivedMemory(llmConfig, record.body, signal);
+    if (!derived) {
+      result.skippedNoFacts += 1;
       // Intentionally NOT marked processed — a transient LLM failure should
       // be retried on the next index run.
       continue;
     }
-    const written = await writeAtomicChildren(record, facts);
+    const written = await writeDerivedMemory(record, derived);
     if (written > 0) {
       markParentProcessed(record);
-      empty.splitParents += 1;
-      empty.writtenFacts += written;
+      result.splitParents += 1;
+      result.writtenFacts += written;
     }
   }
 
-  return empty;
+  return result;
 }
 
 // ── Pending detection ───────────────────────────────────────────────────────
@@ -169,6 +173,7 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       ref: `memory:${relName}`,
       data: parsed.data,
       body: parsed.content,
+      name: relName,
     });
   }
   return out;
@@ -212,21 +217,9 @@ function toMemoryName(memoriesDir: string, filePath: string): string | undefined
   return rel.replace(/\\/g, "/").replace(/\.md$/i, "");
 }
 
-// ── Writing children + marking parent ───────────────────────────────────────
+// ── Writing derived memories + marking parent ───────────────────────────────
 
-async function writeAtomicChildren(parent: MemoryRecord, facts: string[]): Promise<number> {
-  const memoriesDir = path.join(parent.stashRoot, "memories");
-  // Sibling directory layout: <parentDir>/<parentBase>.facts/fact-N.md
-  // Keeps facts grouped near the parent without polluting the top level.
-  const parentRel = path.relative(memoriesDir, parent.filePath).replace(/\\/g, "/");
-  const parentBase = parentRel.replace(/\.md$/i, "");
-  const factsDirRel = `${parentBase}.facts`;
-
-  // Children are routed through writeAssetToSource — the single dispatch
-  // point for kind-branching writes (CLAUDE.md / spec §10 step 5). Memory
-  // assets resolve to `<source.path>/memories/<name>.md`, so a child name
-  // of `<parentBase>.facts/fact-N` lands at exactly the documented child
-  // path scheme.
+async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): Promise<number> {
   const writeTarget: WriteTargetSource = {
     kind: "filesystem",
     name: "stash",
@@ -239,43 +232,38 @@ async function writeAtomicChildren(parent: MemoryRecord, facts: string[]): Promi
     writable: true,
   };
 
-  let written = 0;
-  for (let i = 0; i < facts.length; i++) {
-    const fact = facts[i];
-    const childName = `${factsDirRel}/fact-${i + 1}`;
-    const childRefStr = `memory:${childName}`;
-    const childPath = path.join(memoriesDir, `${childName}.md`);
-
-    // Idempotent re-writes: if a child already exists at this slot we skip
-    // it. The parent's `inferenceProcessed` marker is the primary idempotency
-    // guard (we never re-enter the splitter for a processed parent), but a
-    // partial previous run that crashed before the marker landed should not
-    // duplicate facts.
-    if (fs.existsSync(childPath)) {
-      continue;
-    }
-
-    try {
-      const content = renderChildMemory(fact, parent.ref);
-      const childRef = parseAssetRef(childRefStr);
-      await writeAssetToSource(writeTarget, writeConfig, childRef, content);
-      written += 1;
-    } catch (err) {
-      warn(
-        `memory inference: failed to write atomic child ${childName}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  const childName = `${parent.name}.derived`;
+  const childRefStr = `memory:${childName}`;
+  const childPath = path.join(parent.stashRoot, "memories", `${childName}.md`);
+  if (fs.existsSync(childPath)) {
+    return 0;
   }
-  return written;
+
+  try {
+    const content = renderDerivedMemory(parent, derived);
+    const childRef = parseAssetRef(childRefStr);
+    await writeAssetToSource(writeTarget, writeConfig, childRef, content);
+    return 1;
+  } catch (err) {
+    warn(
+      `memory inference: failed to write derived memory ${childName}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
+  }
 }
 
-function renderChildMemory(fact: string, parentRef: string): string {
+function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): string {
   const fm: Record<string, unknown> = {
     [FM_INFERRED]: true,
-    [FM_SOURCE]: parentRef,
+    [FM_SOURCE]: parent.ref,
+    description: derived.description,
+    tags: derived.tags,
+    searchHints: derived.searchHints,
+    title: derived.title,
+    derivedFrom: parent.name,
   };
   const yaml = yamlStringify(fm).trimEnd();
-  return `---\n${yaml}\n---\n\n${fact.trim()}\n`;
+  return `---\n${yaml}\n---\n\n# ${derived.title.trim()}\n\n${derived.content.trim()}\n`;
 }
 
 function markParentProcessed(parent: MemoryRecord): void {

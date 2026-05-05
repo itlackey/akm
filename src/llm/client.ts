@@ -58,6 +58,8 @@ export interface ChatCompletionOptions {
   maxTokens?: number;
   /** Override the config's temperature for this call. */
   temperature?: number;
+  /** Optional external abort signal for caller-driven cancellation. */
+  signal?: AbortSignal;
 }
 
 export async function chatCompletion(
@@ -70,16 +72,22 @@ export async function chatCompletion(
     headers.Authorization = `Bearer ${config.apiKey}`;
   }
 
-  const response = await fetchWithTimeout(config.endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      temperature: options?.temperature ?? config.temperature ?? 0.3,
-      max_tokens: options?.maxTokens ?? config.maxTokens ?? 512,
-    }),
-  });
+  const response = await fetchWithTimeout(
+    config.endpoint,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature: options?.temperature ?? config.temperature ?? 0.3,
+        max_tokens: options?.maxTokens ?? config.maxTokens ?? 512,
+        ...config.extraParams,
+      }),
+    },
+    30_000,
+    options?.signal,
+  );
 
   if (!response.ok) {
     const rawBody = await response.text().catch(() => "");
@@ -107,6 +115,55 @@ export function parseJsonResponse<T = unknown>(raw: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Best-effort recovery for providers that wrap JSON in extra prose or fenced
+ * blocks. Extracts the first balanced top-level object/array and parses it.
+ */
+export function parseEmbeddedJsonResponse<T = unknown>(raw: string): T | undefined {
+  const direct = parseJsonResponse<T>(raw);
+  if (direct !== undefined) return direct;
+
+  const text = stripJsonFences(raw);
+  const starts = [text.indexOf("{"), text.indexOf("[")].filter((n) => n >= 0);
+  if (starts.length === 0) return undefined;
+  const start = Math.min(...starts);
+  const opener = text[start];
+  const closer = opener === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === opener) depth += 1;
+    if (ch === closer) {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as T;
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 // ── Availability check ──────────────────────────────────────────────────────

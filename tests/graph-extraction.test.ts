@@ -113,12 +113,12 @@ describe("collectEligibleFiles", () => {
 
   test("skips inferred memory children", () => {
     writeFile("memories/parent.md", {}, "Parent body.");
-    writeFile("memories/parent.facts/fact-1.md", { inferred: true, source: "memory:parent" }, "Atomic.");
+    writeFile("memories/parent.derived.md", { inferred: true, source: "memory:parent" }, "# Derived\n\nCompressed.");
 
     const eligible = collectEligibleFiles(tmpStash);
     const names = eligible.map((e) => path.relative(tmpStash, e.absPath));
     expect(names).toContain(path.join("memories", "parent.md"));
-    expect(names).not.toContain(path.join("memories", "parent.facts", "fact-1.md"));
+    expect(names).not.toContain(path.join("memories", "parent.derived.md"));
   });
 
   test("skips empty bodies", () => {

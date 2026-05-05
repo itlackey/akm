@@ -404,7 +404,11 @@ async function searchDatabase(
     // If the query IS the asset name (or very close), this is almost certainly
     // what the user wants. This is the single most important ranking signal.
     const nameLower = entry.name.toLowerCase();
-    const nameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
+    const rawNameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
+    const nameBase =
+      entry.type === "memory" && rawNameBase.endsWith(".derived")
+        ? rawNameBase.slice(0, -".derived".length)
+        : rawNameBase;
     if (nameBase === queryLower || nameLower === queryLower) {
       // Exact match: massive boost
       boostSum += 2.0;
@@ -435,6 +439,18 @@ async function searchDatabase(
       knowledge: 0,
     };
     boostSum += TYPE_BOOST[entry.type] ?? 0;
+
+    // ── 2.5. Derived-vs-raw memory preference ──
+    // Raw memories are user notes and may be incomplete or unvetted. Compressed
+    // `.derived` memories are the higher-signal retrieval target, but the
+    // preference should stay modest so stronger relevance signals still dominate.
+    if (entry.type === "memory") {
+      if (entry.name.toLowerCase().endsWith(".derived")) {
+        boostSum += 0.18;
+      } else {
+        boostSum -= 0.08;
+      }
+    }
 
     // ── 3. Tag exact match ──
     // Exact tag equality is a strong signal — the author explicitly tagged

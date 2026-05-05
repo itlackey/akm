@@ -250,9 +250,11 @@ configure the LLM. To use a different model entirely, change the top-level
 ### Memory inference pass (`index.memory`)
 
 When `akm.llm` is configured, `akm index` runs an opt-in memory inference
-pass that splits each pending memory in `<stashDir>/memories/` into atomic
-facts. Each atomic fact is written as a new sibling memory with frontmatter
-`inferred: true` and `source: memory:<parent-name>`, and the parent is
+pass that derives higher-signal memory artifacts from each pending memory in
+`<stashDir>/memories/`. The design direction is to prefer compact,
+information-dense derived memories with rich metadata and explicit provenance
+back to the source memory, rather than exploding one parent into many
+sentence-level child files. After a successful derivation, the parent is
 marked `inferenceProcessed: true` so subsequent index runs are idempotent.
 
 The pass is disabled when:
@@ -260,8 +262,8 @@ The pass is disabled when:
 - No `akm.llm` block is configured (the default), or
 - `index.memory.llm = false` is set explicitly.
 
-Disabling the pass after a previous run never deletes existing inferred
-children — they remain on disk and continue to be searchable.
+Disabling the pass after a previous run never deletes previously derived
+artifacts — they remain on disk and continue to be searchable.
 
 ### Graph extraction pass (`index.graph`)
 

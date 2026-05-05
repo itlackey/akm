@@ -85,6 +85,7 @@ interface IndexOptions {
   stashDir?: string;
   full?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
+  signal?: AbortSignal;
 }
 
 // ── Indexer ──────────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ interface IndexOptions {
 export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
   const onProgress = options?.onProgress ?? (() => {});
+  const signal = options?.signal;
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("../core/config.js");
@@ -161,18 +163,18 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       }
     }
 
-    // Memory inference pass (#201). Runs before the walk so any atomic-fact
+    // Memory inference pass (#201). Runs before the walk so any derived-memory
     // children that get written are picked up by the walker in this same run
     // and don't have to wait for the next `akm index`. Gated entirely by
     // `resolveIndexPassLLM("memory", config)` — when the user has no
     // `akm.llm` block or has set `index.memory.llm = false`, this is a no-op
     // and existing inferred children are left in place.
     try {
-      const inferenceResult = await runMemoryInferencePass(config, allSourceEntries);
+      const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
       if (inferenceResult.writtenFacts > 0) {
         onProgress({
           phase: "llm",
-          message: `Memory inference wrote ${inferenceResult.writtenFacts} atomic fact${inferenceResult.writtenFacts === 1 ? "" : "s"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
+          message: `Memory inference wrote ${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
         });
       }
     } catch (err) {
@@ -193,7 +195,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // `index.graph.llm` toggle) is off; the existing graph file is
     // preserved on disk in that case.
     try {
-      const graphResult = await runGraphExtractionPass(config, allSourceEntries);
+      const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal);
       if (graphResult.written) {
         onProgress({
           phase: "llm",

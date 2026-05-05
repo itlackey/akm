@@ -21,7 +21,7 @@
 import { toErrorMessage } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
 import { warn } from "../core/warn";
-import { chatCompletion, parseJsonResponse } from "./client";
+import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
 
 /** Hard cap on body chars sent to the model. */
 const MAX_BODY_CHARS = 4000;
@@ -72,7 +72,11 @@ export interface GraphExtraction {
  * JSON, empty response). Errors are logged via `warn()` but never thrown — a
  * failed extraction for one asset must not abort the rest of the index pass.
  */
-export async function extractGraphFromBody(llmConfig: LlmConnectionConfig, body: string): Promise<GraphExtraction> {
+export async function extractGraphFromBody(
+  llmConfig: LlmConnectionConfig,
+  body: string,
+  signal?: AbortSignal,
+): Promise<GraphExtraction> {
   const empty: GraphExtraction = { entities: [], relations: [] };
   const trimmedBody = body.trim();
   if (!trimmedBody) return empty;
@@ -88,14 +92,14 @@ export async function extractGraphFromBody(llmConfig: LlmConnectionConfig, body:
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
         ],
-        { maxTokens: 1024, temperature: 0.1 },
+        { maxTokens: 1024, temperature: 0.1, signal },
       ),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(new Error("graph extraction timed out")), LLM_TIMEOUT_MS);
       }),
     ]);
     if (!raw) return empty;
-    const parsed = parseJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
+    const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
     if (!parsed) {
       warn("graph extraction: invalid JSON response from LLM; skipping asset.");
       return empty;

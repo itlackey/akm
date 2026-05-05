@@ -118,6 +118,7 @@ const EMPTY_RESULT: GraphExtractionResult = {
 export async function runGraphExtractionPass(
   config: AkmConfig,
   sources: SearchSource[],
+  signal?: AbortSignal,
 ): Promise<GraphExtractionResult> {
   // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
   // explicit `false` disables the pass entirely.
@@ -143,7 +144,8 @@ export async function runGraphExtractionPass(
   let totalRelations = 0;
 
   for (const candidate of eligible) {
-    const extraction = await extractGraphFromBody(llmConfig, candidate.body);
+    if (signal?.aborted) break;
+    const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal);
     if (extraction.entities.length === 0) continue;
     nodes.push({
       path: candidate.absPath,
@@ -194,7 +196,7 @@ interface EligibleFile {
  * same one the rest of the indexer uses: `<stashRoot>/<type>/...`.
  *
  * Inferred-child memories (frontmatter `inferred: true`) are skipped — they
- * are atomic facts already, with no internal graph structure worth
+ * are already derived summaries, with no additional internal graph structure worth
  * extracting.
  *
  * Exported for direct unit testing.

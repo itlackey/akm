@@ -1,13 +1,13 @@
 /**
  * Tests for the memory-inference pass (#201).
  *
- * The LLM client is never called for real — `splitMemoryIntoAtomicFacts` is
- * mocked via `mock.module` to return deterministic atomic-fact splits. These
+ * The LLM client is never called for real — `compressMemoryToDerivedMemory` is
+ * mocked via `mock.module` to return deterministic derived-memory drafts. These
  * tests cover:
  *   - pending detection (parent vs already-inferred vs already-processed)
  *   - the disabled-by-default path (no `akm.llm` configured)
  *   - the `index.memory.llm = false` opt-out
- *   - children written with `inferred: true` + `source:` backref
+ *   - derived memories written with `inferred: true` + `source:` backref
  *   - re-running the pass is idempotent (no duplicate children, parent stays
  *     processed, inferred children are not deleted when toggled off)
  */
@@ -25,13 +25,21 @@ import type { SearchSource } from "../src/indexer/search-source";
 //
 // `mock.module` must run before the module under test is imported, so we set
 // up the stub here at the top of the file. The behaviour is controlled by
-// the mutable `splitter` variable — each test sets it to whatever
-// deterministic split it wants.
+// the mutable `compressor` variable — each test sets it to whatever
+// deterministic draft it wants.
 
-let splitter: (body: string) => string[] = () => [];
+type Draft = {
+  title: string;
+  description: string;
+  tags: string[];
+  searchHints: string[];
+  content: string;
+};
+
+let compressor: (body: string) => Draft | undefined = () => undefined;
 
 mock.module("../src/llm/memory-infer", () => ({
-  splitMemoryIntoAtomicFacts: async (_config: unknown, body: string) => splitter(body),
+  compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
 }));
 
 // Import AFTER mock.module so the pass picks up the stub.
@@ -46,7 +54,7 @@ let tmpStash = "";
 beforeEach(() => {
   tmpStash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-memory-infer-"));
   fs.mkdirSync(path.join(tmpStash, "memories"), { recursive: true });
-  splitter = () => [];
+  compressor = () => undefined;
 });
 
 afterEach(() => {
@@ -91,6 +99,16 @@ function configOptedOut(): AkmConfig {
 
 function sources(): SearchSource[] {
   return [{ path: tmpStash }];
+}
+
+function sampleDraft(title = "Derived Insight"): Draft {
+  return {
+    title,
+    description: "Why this derived memory matters.",
+    tags: ["memory", "derived", "test"],
+    searchHints: ["find derived memory", "memory inference output", "compressed memory summary"],
+    content: "## Summary\n\nUseful compressed content.",
+  };
 }
 
 // ── isPendingMemory predicate ───────────────────────────────────────────────
@@ -145,14 +163,14 @@ describe("collectPendingMemories", () => {
 describe("runMemoryInferencePass — disabled by default", () => {
   test("returns no-op when no akm.llm is configured", async () => {
     writeMemory("plain", {}, "Plain body, needs splitting.");
-    splitter = () => ["should not be called"];
+    compressor = () => sampleDraft();
     const result = await runMemoryInferencePass({ semanticSearchMode: "auto" }, sources());
     expect(result).toEqual({ considered: 0, splitParents: 0, writtenFacts: 0, skippedNoFacts: 0 });
   });
 
   test("returns no-op when index.memory.llm = false", async () => {
     const filePath = writeMemory("plain", {}, "Plain body, needs splitting.");
-    splitter = () => ["should not be called"];
+    compressor = () => sampleDraft();
     const result = await runMemoryInferencePass(configOptedOut(), sources());
     expect(result.writtenFacts).toBe(0);
     // Existing inferred children are NOT deleted — but here we just confirm
@@ -162,22 +180,20 @@ describe("runMemoryInferencePass — disabled by default", () => {
   });
 
   test("toggling off after a previous run leaves existing inferred children intact", async () => {
-    // First run: enabled. Splits one parent into two facts.
+    // First run: enabled. Writes one derived memory.
     writeMemory("parent", {}, "Body.");
-    splitter = () => ["fact 1", "fact 2"];
+    compressor = () => sampleDraft();
     await runMemoryInferencePass(configWithLlm(), sources());
 
-    const factsDir = path.join(tmpStash, "memories", "parent.facts");
-    expect(fs.existsSync(path.join(factsDir, "fact-1.md"))).toBe(true);
-    expect(fs.existsSync(path.join(factsDir, "fact-2.md"))).toBe(true);
+    const derivedPath = path.join(tmpStash, "memories", "parent.derived.md");
+    expect(fs.existsSync(derivedPath)).toBe(true);
 
     // Second run: disabled. Children must remain on disk.
-    splitter = () => {
+    compressor = () => {
       throw new Error("must not be called when disabled");
     };
     await runMemoryInferencePass(configOptedOut(), sources());
-    expect(fs.existsSync(path.join(factsDir, "fact-1.md"))).toBe(true);
-    expect(fs.existsSync(path.join(factsDir, "fact-2.md"))).toBe(true);
+    expect(fs.existsSync(derivedPath)).toBe(true);
   });
 });
 
@@ -186,7 +202,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
 describe("runMemoryInferencePass — feature flag and per-pass key are orthogonal", () => {
   test("runs when both gates allow (feature on, per-pass on)", async () => {
     writeMemory("parent", {}, "Body.");
-    splitter = () => ["fact 1"];
+    compressor = () => sampleDraft();
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
       llm: { ...SAMPLE_LLM, features: { memory_inference: true } },
@@ -200,9 +216,9 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
   test("skipped when llm.features.memory_inference = false even with index.memory.llm enabled", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
     let invocations = 0;
-    splitter = () => {
+    compressor = () => {
       invocations += 1;
-      return ["should never be called"];
+      return sampleDraft();
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
@@ -220,9 +236,9 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
   test("skipped when index.memory.llm = false even with llm.features.memory_inference = true", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
     let invocations = 0;
-    splitter = () => {
+    compressor = () => {
       invocations += 1;
-      return ["should never be called"];
+      return sampleDraft();
     };
     const cfg: AkmConfig = {
       semanticSearchMode: "auto",
@@ -240,34 +256,40 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
 // ── runMemoryInferencePass — enabled path ───────────────────────────────────
 
 describe("runMemoryInferencePass — enabled", () => {
-  test("writes atomic children with `inferred: true` and `source:` backref", async () => {
+  test("writes one derived memory with rich metadata, `inferred: true`, and `source:` backref", async () => {
     writeMemory("parent", { description: "before" }, "Two facts in one body.");
-    splitter = () => ["First atomic fact.", "Second atomic fact."];
+    compressor = () => ({
+      title: "Compressed Parent Insight",
+      description: "A higher-signal summary of the parent.",
+      tags: ["one", "two", "three"],
+      searchHints: ["compressed parent", "derived memory", "higher signal summary"],
+      content: "## Root Cause\n\nThe parent had too much noise.\n\n## Reusable Insight\n\nKeep the compressed version.",
+    });
 
     const result = await runMemoryInferencePass(configWithLlm(), sources());
 
     expect(result).toEqual({
       considered: 1,
       splitParents: 1,
-      writtenFacts: 2,
+      writtenFacts: 1,
       skippedNoFacts: 0,
     });
 
-    const factsDir = path.join(tmpStash, "memories", "parent.facts");
-    const child1 = parseFrontmatter(fs.readFileSync(path.join(factsDir, "fact-1.md"), "utf8"));
-    expect(child1.data.inferred).toBe(true);
-    expect(child1.data.source).toBe("memory:parent");
-    expect(child1.content.trim()).toBe("First atomic fact.");
-
-    const child2 = parseFrontmatter(fs.readFileSync(path.join(factsDir, "fact-2.md"), "utf8"));
-    expect(child2.data.inferred).toBe(true);
-    expect(child2.data.source).toBe("memory:parent");
-    expect(child2.content.trim()).toBe("Second atomic fact.");
+    const derived = parseFrontmatter(fs.readFileSync(path.join(tmpStash, "memories", "parent.derived.md"), "utf8"));
+    expect(derived.data.inferred).toBe(true);
+    expect(derived.data.source).toBe("memory:parent");
+    expect(derived.data.description).toBe("A higher-signal summary of the parent.");
+    expect(derived.data.tags).toEqual(["one", "two", "three"]);
+    expect(derived.data.searchHints).toEqual(["compressed parent", "derived memory", "higher signal summary"]);
+    expect(derived.data.title).toBe("Compressed Parent Insight");
+    expect(derived.data.derivedFrom).toBe("parent");
+    expect(derived.content).toContain("# Compressed Parent Insight");
+    expect(derived.content).toContain("## Root Cause");
   });
 
   test("marks parent with inferenceProcessed: true and preserves prior frontmatter", async () => {
     const filePath = writeMemory("parent", { description: "preserve me", tags: "[a, b]" }, "Body.");
-    splitter = () => ["only fact"];
+    compressor = () => sampleDraft();
 
     await runMemoryInferencePass(configWithLlm(), sources());
 
@@ -279,9 +301,9 @@ describe("runMemoryInferencePass — enabled", () => {
   test("re-running the pass is idempotent — no duplicate splits", async () => {
     writeMemory("parent", {}, "Body.");
     let calls = 0;
-    splitter = () => {
+    compressor = () => {
       calls += 1;
-      return ["fact A", "fact B"];
+      return sampleDraft();
     };
 
     await runMemoryInferencePass(configWithLlm(), sources());
@@ -291,24 +313,19 @@ describe("runMemoryInferencePass — enabled", () => {
     // marked `inferenceProcessed: true`.
     expect(calls).toBe(1);
 
-    const factsDir = path.join(tmpStash, "memories", "parent.facts");
-    const childFiles = fs
-      .readdirSync(factsDir)
-      .filter((f) => f.endsWith(".md"))
-      .sort();
-    expect(childFiles).toEqual(["fact-1.md", "fact-2.md"]);
+    expect(fs.existsSync(path.join(tmpStash, "memories", "parent.derived.md"))).toBe(true);
   });
 
-  test("inferred children are themselves filtered out — they don't get re-split", async () => {
+  test("derived children are themselves filtered out — they don't get re-processed", async () => {
     writeMemory("parent", {}, "Body.");
-    splitter = () => ["c1", "c2"];
+    compressor = () => sampleDraft();
     await runMemoryInferencePass(configWithLlm(), sources());
 
-    // Now reset the splitter to verify a second run finds no pending memories.
+    // Now reset the compressor to verify a second run finds no pending memories.
     let secondRunInvocations = 0;
-    splitter = () => {
+    compressor = () => {
       secondRunInvocations += 1;
-      return ["should not happen"];
+      return sampleDraft();
     };
     const second = await runMemoryInferencePass(configWithLlm(), sources());
     expect(secondRunInvocations).toBe(0);
@@ -316,9 +333,9 @@ describe("runMemoryInferencePass — enabled", () => {
     expect(second.writtenFacts).toBe(0);
   });
 
-  test("LLM returning zero facts leaves the parent unprocessed (retried next run)", async () => {
+  test("LLM returning no derived memory leaves the parent unprocessed (retried next run)", async () => {
     const filePath = writeMemory("parent", {}, "Body.");
-    splitter = () => [];
+    compressor = () => undefined;
 
     const result = await runMemoryInferencePass(configWithLlm(), sources());
     expect(result.skippedNoFacts).toBe(1);
@@ -341,15 +358,15 @@ describe("runMemoryInferencePass — enabled", () => {
 
     try {
       writeMemory("primary", {}, "Primary body.");
-      splitter = () => ["primary fact"];
+      compressor = () => sampleDraft();
 
       const result = await runMemoryInferencePass(configWithLlm(), [{ path: tmpStash }, { path: cacheDir }]);
 
       // Only the primary parent was considered.
       expect(result.considered).toBe(1);
       expect(result.writtenFacts).toBe(1);
-      // No `cache-parent.facts` directory should have been created.
-      expect(fs.existsSync(path.join(cacheDir, "memories", "cache-parent.facts"))).toBe(false);
+      // No derived memory should have been created under the cache-only source.
+      expect(fs.existsSync(path.join(cacheDir, "memories", "cache-parent.derived.md"))).toBe(false);
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }

@@ -74,6 +74,13 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
    * issues wire them in.
    */
   features?: LlmFeatureFlags;
+  /**
+   * Arbitrary key-value pairs forwarded verbatim into every chat completions
+   * request body. Use this for provider-specific parameters not covered by
+   * first-class fields, e.g. `{ "reasoning_effort": "none" }` to disable
+   * thinking on Ollama qwen3/qwen3.5 models.
+   */
+  extraParams?: Record<string, unknown>;
 }
 
 export interface LlmFeatureFlags {
@@ -863,6 +870,9 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
     const features = parseLlmFeatures(obj.features as Record<string, unknown>);
     if (Object.keys(features).length > 0) result.features = features;
+  }
+  if (typeof obj.extraParams === "object" && obj.extraParams !== null && !Array.isArray(obj.extraParams)) {
+    result.extraParams = obj.extraParams as Record<string, unknown>;
   }
   return result;
 }
