@@ -188,6 +188,12 @@ function extractParameters(template: string): string[] | undefined {
   return parameters.length > 0 ? parameters : undefined;
 }
 
+function readFrontmatterTags(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tags = value.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0);
+  return tags.length > 0 ? tags : undefined;
+}
+
 // ── 1. skill-md ──────────────────────────────────────────────────────────────
 
 const skillMdRenderer: AssetRenderer = {
@@ -196,12 +202,14 @@ const skillMdRenderer: AssetRenderer = {
   buildShowResponse(ctx: RenderContext): ShowResponse {
     const name = deriveName(ctx);
     const parsed = parseFrontmatter(ctx.content());
+    const tags = readFrontmatterTags(parsed.data.tags);
     return {
       type: "skill",
       name,
       path: ctx.absPath,
       action: "Read and follow the instructions below",
       description: toStringOrUndefined(parsed.data.description),
+      ...(tags ? { tags } : {}),
       content: parsed.content,
     };
   },
@@ -216,12 +224,14 @@ const commandMdRenderer: AssetRenderer = {
     const name = deriveName(ctx);
     const parsedMd = parseFrontmatter(ctx.content());
     const template = parsedMd.content;
+    const tags = readFrontmatterTags(parsedMd.data.tags);
     return {
       type: "command",
       name,
       path: ctx.absPath,
       action: "Fill $ARGUMENTS placeholders in the template, then dispatch",
       description: toStringOrUndefined(parsedMd.data.description),
+      ...(tags ? { tags } : {}),
       template,
       modelHint: typeof parsedMd.data.model === "string" ? parsedMd.data.model : undefined,
       agent: toStringOrUndefined(parsedMd.data.agent),

@@ -23,11 +23,6 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-function writeStashJson(dirPath: string, entries: StashEntry[]) {
-  fs.mkdirSync(dirPath, { recursive: true });
-  fs.writeFileSync(path.join(dirPath, ".stash.json"), JSON.stringify({ entries }));
-}
-
 afterAll(() => {
   for (const dir of createdTmpDirs) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -87,18 +82,8 @@ describe("summary show", () => {
     // Skills use the directory/SKILL.md convention
     writeFile(
       path.join(stashDir, "skills", "code-review", "SKILL.md"),
-      `---\ndescription: Reviews code for quality issues\n---\n${longContent}`,
+      `---\ndescription: Reviews code for quality issues\ntags:\n  - code\n  - review\n  - quality\n---\n${longContent}`,
     );
-    // Provide .stash.json with tags for the skill
-    writeStashJson(path.join(stashDir, "skills", "code-review"), [
-      {
-        name: "code-review",
-        type: "skill",
-        description: "Reviews code for quality issues",
-        tags: ["code", "review", "quality"],
-        filename: "SKILL.md",
-      },
-    ]);
 
     saveConfig({ semanticSearchMode: "off" });
 
@@ -117,17 +102,8 @@ describe("summary show", () => {
   test("returns parameters for command assets in summary mode", async () => {
     writeFile(
       path.join(stashDir, "commands", "release.md"),
-      "---\ndescription: Release a new version\n---\nRelease $ARGUMENTS to production with {{env}}.",
+      "---\ndescription: Release a new version\ntags:\n  - release\n  - deploy\n---\nRelease $ARGUMENTS to production with {{env}}.",
     );
-    writeStashJson(path.join(stashDir, "commands"), [
-      {
-        name: "release",
-        type: "command",
-        description: "Release a new version",
-        tags: ["release", "deploy"],
-        filename: "release.md",
-      },
-    ]);
 
     saveConfig({ semanticSearchMode: "off" });
 
