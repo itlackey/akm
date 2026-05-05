@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -62,10 +62,9 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
   fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
 }
 
-function runCli(args: string[], options: { stashDir: string; configDir: string }) {
-  return spawnSync("bun", [CLI, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
+async function runCliAsync(args: string[], options: { stashDir: string; configDir: string }) {
+  const child = spawn("bun", [CLI, ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       AKM_STASH_DIR: options.stashDir,
@@ -73,6 +72,29 @@ function runCli(args: string[], options: { stashDir: string; configDir: string }
       XDG_CACHE_HOME: makeStash("akm-wiki-cache-"),
     },
   });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const status = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("CLI timed out after 30000ms"));
+    }, 30_000);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
+  });
+  return { status, stdout, stderr };
 }
 
 afterEach(() => {
@@ -433,7 +455,7 @@ describe("stashRaw", () => {
 
     try {
       const url = `http://127.0.0.1:${address.port}/papers/attention`;
-      const result = runCli(["wiki", "stash", "research", url], { stashDir: stash, configDir });
+      const result = await runCliAsync(["wiki", "stash", "research", url], { stashDir: stash, configDir });
       expect(result.status).toBe(0);
 
       const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
