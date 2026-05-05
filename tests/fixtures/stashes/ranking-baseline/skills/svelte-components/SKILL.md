@@ -1,3 +1,15 @@
+---
+description: Build reusable Svelte components with best practices for composition and state management
+tags:
+  - svelte
+  - components
+  - ui
+searchHints:
+  - create svelte component
+  - svelte best practices
+  - component architecture
+quality: curated
+---
 # Svelte Components
 
 Build reusable Svelte components with best practices. This skill covers component architecture, props, events, slots, and lifecycle hooks.

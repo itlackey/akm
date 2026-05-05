@@ -77,42 +77,12 @@ describe("akm search --include-proposed (CLI)", () => {
     // Curated entry
     writeFile(
       path.join(stash, "skills", "stable-deploy", "SKILL.md"),
-      "---\ndescription: deploy widgets uniformly\n---\n# Stable deploy\n",
-    );
-    writeFile(
-      path.join(stash, "skills", "stable-deploy", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "stable-deploy",
-            type: "skill",
-            description: "deploy widgets uniformly",
-            tags: ["deploy"],
-            filename: "SKILL.md",
-            quality: "curated",
-          },
-        ],
-      }),
+      "---\ndescription: deploy widgets uniformly\ntags:\n  - deploy\nquality: curated\n---\n# Stable deploy\n",
     );
     // Proposed entry
     writeFile(
       path.join(stash, "skills", "proposed-deploy", "SKILL.md"),
-      "---\ndescription: deploy widgets experimentally\n---\n# Proposed deploy\n",
-    );
-    writeFile(
-      path.join(stash, "skills", "proposed-deploy", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "proposed-deploy",
-            type: "skill",
-            description: "deploy widgets experimentally",
-            tags: ["deploy"],
-            filename: "SKILL.md",
-            quality: "proposed",
-          },
-        ],
-      }),
+      "---\ndescription: deploy widgets experimentally\ntags:\n  - deploy\nquality: proposed\n---\n# Proposed deploy\n",
     );
 
     process.env.AKM_STASH_DIR = stash;

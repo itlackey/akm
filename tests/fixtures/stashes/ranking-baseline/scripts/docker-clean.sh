@@ -1,5 +1,7 @@
 #!/bin/bash
-# Clean up unused Docker images, containers, and volumes
+# @description Clean up unused Docker images, containers, and volumes
+# @tags docker, cleanup
+# @searchHints clean docker resources; remove unused images
 # Removes dangling images, stopped containers, and unused volumes
 
 echo "Cleaning up Docker resources..."

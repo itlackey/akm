@@ -239,34 +239,14 @@ describe("Utility boost in search scoring", () => {
     const stashDir = tmpStash();
 
     // Create two entries with identical FTS content
-    writeFile(path.join(stashDir, "scripts", "boosted-tool", "boosted-tool.sh"), "#!/bin/bash\necho boosted\n");
     writeFile(
-      path.join(stashDir, "scripts", "boosted-tool", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "boosted-tool",
-            type: "script",
-            description: "A deployment automation utility for servers",
-            filename: "boosted-tool.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "boosted-tool", "boosted-tool.sh"),
+      "#!/bin/bash\n# A deployment automation utility for servers\necho boosted\n",
     );
 
-    writeFile(path.join(stashDir, "scripts", "plain-tool", "plain-tool.sh"), "#!/bin/bash\necho plain\n");
     writeFile(
-      path.join(stashDir, "scripts", "plain-tool", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "plain-tool",
-            type: "script",
-            description: "A deployment automation utility for servers",
-            filename: "plain-tool.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "plain-tool", "plain-tool.sh"),
+      "#!/bin/bash\n# A deployment automation utility for servers\necho plain\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -293,8 +273,8 @@ describe("Utility boost in search scoring", () => {
 
     const result = await akmSearch({ query: "deployment automation", source: "local" });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const boostedHit = localHits.find((h) => h.name === "boosted-tool");
-    const plainHit = localHits.find((h) => h.name === "plain-tool");
+    const boostedHit = localHits.find((h) => h.name === "boosted-tool/boosted-tool.sh");
+    const plainHit = localHits.find((h) => h.name === "plain-tool/plain-tool.sh");
 
     const resolvedBoosted = expectDefined(boostedHit);
     const resolvedPlain = expectDefined(plainHit);
@@ -317,26 +297,16 @@ describe("No utility boost for entries without usage data", () => {
   test("entries without usage data get no utility boost (score unchanged)", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "no-usage", "no-usage.sh"), "#!/bin/bash\necho no usage\n");
     writeFile(
-      path.join(stashDir, "scripts", "no-usage", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "no-usage",
-            type: "script",
-            description: "A simple test tool with no usage history",
-            filename: "no-usage.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "no-usage", "no-usage.sh"),
+      "#!/bin/bash\n# A simple test tool with no usage history\necho no usage\n",
     );
 
     await buildTestIndex(stashDir, {});
 
     const result = await akmSearch({ query: "simple test tool", source: "local" });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const hit = localHits.find((h) => h.name === "no-usage");
+    const hit = localHits.find((h) => h.name === "no-usage/no-usage.sh");
 
     const resolved = expectDefined(hit);
     // No utility data means no utilityBoost in whyMatched
@@ -351,34 +321,14 @@ describe("Utility boost cap", () => {
   test("utility boost is capped at 1.5x", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "capped-a", "capped-a.sh"), "#!/bin/bash\necho capped\n");
     writeFile(
-      path.join(stashDir, "scripts", "capped-a", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "capped-a",
-            type: "script",
-            description: "A network monitoring tool for production",
-            filename: "capped-a.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "capped-a", "capped-a.sh"),
+      "#!/bin/bash\n# A network monitoring tool for production\necho capped\n",
     );
 
-    writeFile(path.join(stashDir, "scripts", "capped-b", "capped-b.sh"), "#!/bin/bash\necho baseline\n");
     writeFile(
-      path.join(stashDir, "scripts", "capped-b", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "capped-b",
-            type: "script",
-            description: "A network monitoring tool for production",
-            filename: "capped-b.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "capped-b", "capped-b.sh"),
+      "#!/bin/bash\n# A network monitoring tool for production\necho baseline\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -405,8 +355,8 @@ describe("Utility boost cap", () => {
 
     const result = await akmSearch({ query: "network monitoring", source: "local" });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const cappedHit = localHits.find((h) => h.name === "capped-a");
-    const baselineHit = localHits.find((h) => h.name === "capped-b");
+    const cappedHit = localHits.find((h) => h.name === "capped-a/capped-a.sh");
+    const baselineHit = localHits.find((h) => h.name === "capped-b/capped-b.sh");
 
     const resolvedCapped = expectDefined(cappedHit);
     const resolvedBaseline = expectDefined(baselineHit);
@@ -424,34 +374,14 @@ describe("Recency decay on utility boost", () => {
   test("recent usage produces higher boost than old usage", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "recent-use", "recent-use.sh"), "#!/bin/bash\necho recent\n");
     writeFile(
-      path.join(stashDir, "scripts", "recent-use", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "recent-use",
-            type: "script",
-            description: "A data processing pipeline tool for analytics",
-            filename: "recent-use.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "recent-use", "recent-use.sh"),
+      "#!/bin/bash\n# A data processing pipeline tool for analytics\necho recent\n",
     );
 
-    writeFile(path.join(stashDir, "scripts", "old-use", "old-use.sh"), "#!/bin/bash\necho old\n");
     writeFile(
-      path.join(stashDir, "scripts", "old-use", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "old-use",
-            type: "script",
-            description: "A data processing pipeline tool for analytics",
-            filename: "old-use.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "old-use", "old-use.sh"),
+      "#!/bin/bash\n# A data processing pipeline tool for analytics\necho old\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -493,8 +423,8 @@ describe("Recency decay on utility boost", () => {
 
     const result = await akmSearch({ query: "data processing pipeline", source: "local" });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const recentHit = localHits.find((h) => h.name === "recent-use");
-    const oldHit = localHits.find((h) => h.name === "old-use");
+    const recentHit = localHits.find((h) => h.name === "recent-use/recent-use.sh");
+    const oldHit = localHits.find((h) => h.name === "old-use/old-use.sh");
 
     const resolvedRecent = expectDefined(recentHit);
     const resolvedOld = expectDefined(oldHit);
@@ -604,19 +534,9 @@ describe("whyMatched includes usage history boost", () => {
   test("whyMatched includes usage history boost when utility > 0", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "why-util", "why-util.sh"), "#!/bin/bash\necho why utility\n");
     writeFile(
-      path.join(stashDir, "scripts", "why-util", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "why-util",
-            type: "script",
-            description: "A logging infrastructure tool for debugging",
-            filename: "why-util.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "why-util", "why-util.sh"),
+      "#!/bin/bash\n# A logging infrastructure tool for debugging\necho why utility\n",
     );
 
     await buildTestIndex(stashDir, {});
@@ -643,7 +563,7 @@ describe("whyMatched includes usage history boost", () => {
 
     const result = await akmSearch({ query: "logging infrastructure", source: "local" });
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
-    const hit = localHits.find((h) => h.name === "why-util");
+    const hit = localHits.find((h) => h.name === "why-util/why-util.sh");
 
     const resolved = expectDefined(hit);
     expect(resolved.whyMatched).toBeDefined();
@@ -657,19 +577,9 @@ describe("Production path end-to-end", () => {
   test("index → search → usage_events have entry_id → recompute populates utility_scores", async () => {
     const stashDir = tmpStash();
 
-    writeFile(path.join(stashDir, "scripts", "e2e-tool", "e2e-tool.sh"), "#!/bin/bash\necho e2e\n");
     writeFile(
-      path.join(stashDir, "scripts", "e2e-tool", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "e2e-tool",
-            type: "script",
-            description: "An end-to-end test tool for production validation",
-            filename: "e2e-tool.sh",
-          },
-        ],
-      }),
+      path.join(stashDir, "scripts", "e2e-tool", "e2e-tool.sh"),
+      "#!/bin/bash\n# An end-to-end test tool for production validation\necho e2e\n",
     );
 
     await buildTestIndex(stashDir, {});

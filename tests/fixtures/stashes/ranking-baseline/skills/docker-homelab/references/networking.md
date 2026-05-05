@@ -1,3 +1,12 @@
+---
+description: Docker networking configuration reference
+tags:
+  - docker
+  - networking
+  - bridge
+  - overlay
+quality: curated
+---
 # Docker Networking Reference
 
 ## Network Types

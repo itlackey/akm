@@ -178,19 +178,6 @@ test("akmSearch includes ref, action, and size for local hits", async () => {
   const stashDir = createTmpDir("akm-stash-");
   const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
   writeFile(scriptPath, "#!/usr/bin/env bash\necho deploy\n");
-  writeFile(
-    path.join(stashDir, "scripts", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy",
-          type: "script",
-          description: "Deploy app",
-          filename: "deploy.sh",
-        },
-      ],
-    }),
-  );
 
   saveConfig({ semanticSearchMode: "off" });
   process.env.AKM_STASH_DIR = stashDir;

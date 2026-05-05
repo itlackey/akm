@@ -1,3 +1,12 @@
+---
+description: Docker image management reference
+tags:
+  - docker
+  - images
+  - registry
+  - reference
+quality: curated
+---
 # Docker Image Management
 
 ## Building Images

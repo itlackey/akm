@@ -143,6 +143,69 @@ test("akmIndex preserves manually-written .stash.json", async () => {
   expect(stash.entries[0].quality).toBeUndefined();
 });
 
+test("akmIndex does not treat .stash.json changes as incremental stale signals", async () => {
+  const stashDir = tmpStash();
+  const scriptDir = path.join(stashDir, "scripts", "git");
+  const stashPath = path.join(scriptDir, ".stash.json");
+  writeFile(path.join(scriptDir, "summarize.ts"), "console.log('x')\n");
+  writeFile(
+    stashPath,
+    JSON.stringify({
+      entries: [
+        {
+          name: "git-summarize",
+          type: "script",
+          description: "Summarize git changes",
+          tags: ["git", "summary"],
+          filename: "summarize.ts",
+        },
+      ],
+    }),
+  );
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+
+  const first = await akmIndex({ stashDir, full: true });
+  const second = await akmIndex({ stashDir });
+
+  expect(first.totalEntries).toBe(1);
+  expect(second.mode).toBe("incremental");
+  expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
+
+  const rewritten = JSON.stringify({
+    entries: [
+      {
+        name: "git-summarize",
+        type: "script",
+        description: "Summarize git changes with manual metadata",
+        tags: ["git", "summary", "manual"],
+        filename: "summarize.ts",
+      },
+    ],
+  });
+  fs.writeFileSync(stashPath, rewritten);
+  const futureTime = new Date(Date.now() + 2000);
+  fs.utimesSync(stashPath, futureTime, futureTime);
+
+  const third = await akmIndex({ stashDir });
+
+  expect(third.mode).toBe("incremental");
+  expect(third.directoriesScanned).toBe(0);
+  expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
+
+  const db = openDatabase();
+  try {
+    const entries = getAllEntries(db, "script");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.entry.name).toBe("git-summarize");
+    expect(entries[0]?.entry.description).toBe("Summarize git changes");
+    expect(entries[0]?.entry.tags).toEqual(["git", "summary"]);
+  } finally {
+    closeDatabase(db);
+  }
+});
+
 test("akmIndex writes index to SQLite database", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "hello", "hello.sh"), "#!/bin/bash\necho hi\n");

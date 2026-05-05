@@ -3,39 +3,17 @@
     {
       "name": "mem0-search",
       "type": "script",
-      "description": "Search memories stored in mem0 for relevant context and knowledge retrieval",
-      "tags": ["mem0", "search", "memory"],
-      "searchHints": ["search memory store", "find relevant memories", "mem0 query"],
-      "filename": "mem0-search.ts",
-      "quality": "curated",
-      "confidence": 0.9,
-      "parameters": [
-        { "name": "query", "type": "string", "description": "Search query to find relevant memories" },
-        { "name": "limit", "type": "number", "description": "Maximum number of results to return" }
-      ]
+      "filename": "mem0-search.ts"
     },
     {
       "name": "deploy-check",
       "type": "script",
-      "description": "Verify deployment health and readiness across environments",
-      "tags": ["deploy", "check", "health"],
-      "searchHints": ["check deployment status", "verify service health"],
-      "filename": "deploy-check.sh",
-      "quality": "curated",
-      "confidence": 0.85,
-      "parameters": [
-        { "name": "environment", "type": "string", "description": "Target environment (staging, production)" }
-      ]
+      "filename": "deploy-check.sh"
     },
     {
       "name": "docker-clean",
       "type": "script",
-      "description": "Clean up unused Docker images, containers, and volumes",
-      "tags": ["docker", "cleanup"],
-      "searchHints": ["clean docker resources", "remove unused images"],
-      "filename": "docker-clean.sh",
-      "quality": "curated",
-      "confidence": 0.85
+      "filename": "docker-clean.sh"
     }
   ]
 }

@@ -1,6 +1,8 @@
 #!/bin/bash
+# @description Verify deployment health and readiness across environments
+# @tags deploy, check, health
+# @searchHints check deployment status; verify service health
 # @param {string} environment - Target environment (staging, production)
-# Verify deployment health and readiness across environments
 
 ENVIRONMENT="${1:-staging}"
 

@@ -1,5 +1,11 @@
 ---
 description: How agentic skill libraries evolve from simple prompt collections to structured asset systems
+tags:
+  - agentic
+  - patterns
+  - architecture
+  - evolution
+quality: curated
 ---
 # Skill Library Evolution
 

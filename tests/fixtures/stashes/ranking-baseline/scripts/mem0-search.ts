@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Search memories stored in mem0 for relevant context.
+ * @description Search memories stored in mem0 for relevant context and knowledge retrieval
+ * @tags mem0, search, memory
+ * @searchHints search memory store; find relevant memories; mem0 query
  *
  * @param {string} query - Search query to find relevant memories
  * @param {number} limit - Maximum number of results to return

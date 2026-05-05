@@ -438,7 +438,6 @@ async function indexEntries(
       | "cached-zero-row-state"
       | "mtime-changed"
       | "file-set-changed"
-      | "stash-changed"
       | "missing-file";
     detail?: string;
   };
@@ -776,7 +775,6 @@ function getDirIndexState(
       | "cached-zero-row-state"
       | "mtime-changed"
       | "file-set-changed"
-      | "stash-changed"
       | "missing-file";
     detail?: string;
   };
@@ -833,9 +831,8 @@ function canUseIncrementalSkip(state: ReturnType<typeof getDirIndexState>, prior
   );
 }
 
-function computeDirFingerprint(dirPath: string, files: string[]): { fileSetHash: string; fileMtimeMaxMs: number } {
+function computeDirFingerprint(_dirPath: string, files: string[]): { fileSetHash: string; fileMtimeMaxMs: number } {
   const normalizedFiles = [...new Set(files.map((file) => path.basename(file)))].sort();
-  const stashPath = path.join(dirPath, ".stash.json");
   let fileMtimeMaxMs = 0;
   for (const file of files) {
     try {
@@ -845,11 +842,6 @@ function computeDirFingerprint(dirPath: string, files: string[]): { fileSetHash:
       break;
     }
   }
-  try {
-    fileMtimeMaxMs = Math.max(fileMtimeMaxMs, fs.statSync(stashPath).mtimeMs);
-  } catch {
-    /* no legacy stash file */
-  }
   return {
     fileSetHash: normalizedFiles.join("\0"),
     fileMtimeMaxMs,
@@ -857,13 +849,13 @@ function computeDirFingerprint(dirPath: string, files: string[]): { fileSetHash:
 }
 
 function getDirStaleReason(
-  dirPath: string,
+  _dirPath: string,
   currentFiles: string[],
   previousEntries: DbIndexedEntry[],
   builtAtMs: number,
 ):
   | {
-      kind: "mtime-changed" | "file-set-changed" | "stash-changed" | "missing-file";
+      kind: "mtime-changed" | "file-set-changed" | "missing-file";
       detail?: string;
     }
   | undefined {
@@ -889,13 +881,6 @@ function getDirStaleReason(
     } catch {
       return { kind: "missing-file", detail: path.basename(file) };
     }
-  }
-
-  const stashPath = path.join(dirPath, ".stash.json");
-  try {
-    if (fs.statSync(stashPath).mtimeMs > builtAtMs) return { kind: "stash-changed", detail: ".stash.json" };
-  } catch {
-    /* file doesn't exist */
   }
 
   return undefined;

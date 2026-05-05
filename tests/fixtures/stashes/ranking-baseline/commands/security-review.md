@@ -1,5 +1,13 @@
 ---
 description: Review code for security vulnerabilities and compliance issues
+tags:
+  - security
+  - review
+  - code
+searchHints:
+  - find security vulnerabilities
+  - audit code security
+quality: curated
 ---
 # Security Review
 

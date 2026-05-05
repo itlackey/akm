@@ -1,3 +1,11 @@
+---
+description: Web components integration guide for Svelte
+tags:
+  - svelte
+  - web components
+  - custom elements
+quality: curated
+---
 # Web Components with Svelte
 
 ## Custom Elements

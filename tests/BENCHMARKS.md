@@ -259,9 +259,9 @@ Empty query, non-matching query, single character query.
 
 ---
 
-## Fixture Stash (`ranking-fixtures/stash/`)
+## Fixture Stash (`fixtures/stashes/ranking-baseline/`)
 
-A synthetic stash with 17 carefully designed assets that mirror the structure of a real akm stash. Each asset has curated `.stash.json` metadata.
+A synthetic stash with 17 carefully designed assets that mirror the structure of a real akm stash. The fixture primarily uses file-local frontmatter or inline metadata, with `.stash.json` kept only for narrow legacy identity cases that the generated metadata path cannot yet express.
 
 ### Design principles
 
@@ -280,9 +280,10 @@ A synthetic stash with 17 carefully designed assets that mirror the structure of
 To add a new test asset:
 
 1. Create the file in the appropriate type directory
-2. Add a `.stash.json` in the parent directory with curated metadata
-3. Add test cases in `ranking-regression.test.ts` that validate the expected ranking behavior
-4. Run `bun test tests/ranking-regression.test.ts` to verify
+2. Prefer frontmatter or inline metadata on the asset itself
+3. Use `.stash.json` only for intentional legacy coverage or identity/name overrides that cannot yet be expressed inline
+4. Add test cases in `ranking-regression.test.ts` that validate the expected ranking behavior
+5. Run `bun test tests/ranking-regression.test.ts` to verify
 
 ---
 

@@ -7,8 +7,8 @@
  * fuzzy/prefix matching, score preservation, and provider merge behavior.
  *
  * The fixture stash is materialised once in beforeAll via the shared
- * `loadFixtureStash` helper, then re-indexed in place through the internal
- * indexer DB API so all tests share the same index.
+ * `loadFixtureStash` helper, then indexed in-process via the production
+ * indexer so all tests share the same index.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -17,10 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
-import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
-import type { StashEntry, StashFile } from "../src/indexer/metadata";
-import { buildSearchText } from "../src/indexer/search-fields";
+import { akmIndex } from "../src/indexer/indexer";
 import type { SourceSearchHit } from "../src/sources/types";
 import { loadFixtureStash } from "./fixtures/stashes/load";
 
@@ -68,10 +65,10 @@ beforeAll(async () => {
   testCacheDir = createTmpDir("akm-ranking-cache-");
   testConfigDir = createTmpDir("akm-ranking-config-");
 
-  // Materialise the shared ranking-baseline fixture into a tmp dir. This
-  // test rebuilds the index from scratch via `buildFixtureIndex()` below
-  // against its own XDG_CACHE_HOME, so we skip the helper's `akm index`
-  // spawn (~200-300ms saved per run).
+  // Materialise the shared ranking-baseline fixture into a tmp dir.
+  // The suite indexes it in-process against isolated XDG dirs so the
+  // fixture exercises the same generated-metadata + legacy-override path
+  // as production indexing.
   const loaded = loadFixtureStash("ranking-baseline", { skipIndex: true });
   FIXTURE_STASH = loaded.stashDir;
   fixtureCleanup = loaded.cleanup;
@@ -86,7 +83,7 @@ beforeAll(async () => {
     registries: [],
   });
 
-  buildFixtureIndex();
+  await akmIndex({ stashDir: FIXTURE_STASH, full: true });
 });
 
 afterAll(() => {
@@ -103,67 +100,6 @@ afterAll(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-// ── Index builder ───────────────────────────────────────────────────────────
-
-/**
- * Walk the fixture stash, read .stash.json files, and index all entries
- * directly into the SQLite database.
- */
-function buildFixtureIndex(): void {
-  const dbPath = getDbPath();
-  const db = openDatabase(dbPath);
-  try {
-    const stashJsonPaths = findStashJsonFiles(FIXTURE_STASH);
-
-    for (const stashJsonPath of stashJsonPaths) {
-      const dirPath = path.dirname(stashJsonPath);
-      const raw = JSON.parse(fs.readFileSync(stashJsonPath, "utf8"));
-      if (!raw || !Array.isArray(raw.entries)) continue;
-
-      const stash: StashFile = { entries: raw.entries as StashEntry[] };
-
-      for (const entry of stash.entries) {
-        const entryPath = entry.filename ? path.join(dirPath, entry.filename) : dirPath;
-        const entryKey = `${FIXTURE_STASH}:${entry.type}:${entry.name}`;
-        const searchText = buildSearchText(entry);
-
-        let entryWithSize = entry;
-        try {
-          const size = fs.statSync(entryPath).size;
-          entryWithSize = { ...entry, fileSize: size };
-        } catch {
-          // File might not exist for some entries
-        }
-
-        upsertEntry(db, entryKey, dirPath, entryPath, FIXTURE_STASH, entryWithSize, searchText);
-      }
-    }
-
-    rebuildFts(db);
-
-    setMeta(db, "stashDir", FIXTURE_STASH);
-    setMeta(db, "builtAt", new Date().toISOString());
-    setMeta(db, "stashDirs", JSON.stringify([FIXTURE_STASH]));
-    setMeta(db, "hasEmbeddings", "0");
-  } finally {
-    closeDatabase(db);
-  }
-}
-
-function findStashJsonFiles(dir: string): string[] {
-  const results: string[] = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...findStashJsonFiles(fullPath));
-    } else if (entry.name === ".stash.json") {
-      results.push(fullPath);
-    }
-  }
-  return results;
-}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

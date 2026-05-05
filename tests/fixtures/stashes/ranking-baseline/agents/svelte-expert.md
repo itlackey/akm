@@ -1,5 +1,15 @@
 ---
 description: Svelte framework expert agent for component development and SvelteKit applications
+tags:
+  - svelte
+  - sveltekit
+  - frontend
+  - components
+searchHints:
+  - svelte development
+  - sveltekit routing
+  - svelte component patterns
+quality: curated
 ---
 You are a Svelte framework expert. You specialize in:
 

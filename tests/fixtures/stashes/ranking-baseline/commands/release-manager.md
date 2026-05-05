@@ -1,5 +1,13 @@
 ---
 description: Manage release process including versioning, changelog, and deployment
+tags:
+  - release
+  - deploy
+searchHints:
+  - create a release
+  - bump version
+  - deploy release
+quality: curated
 ---
 # Release Manager
 

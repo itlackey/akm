@@ -1,3 +1,11 @@
+---
+description: Docker Compose configuration reference
+tags:
+  - docker
+  - compose
+  - reference
+quality: curated
+---
 # Docker Compose Reference
 
 ## Basics

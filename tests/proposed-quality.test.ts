@@ -109,64 +109,19 @@ function seedQualitySpread(stashDir: string): void {
   // Curated entry
   writeFile(
     path.join(stashDir, "skills", "deploy-curated", "SKILL.md"),
-    "---\ndescription: Curated deploy skill\n---\n# Deploy curated\n",
-  );
-  writeFile(
-    path.join(stashDir, "skills", "deploy-curated", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy-curated",
-          type: "skill",
-          description: "Curated deploy skill",
-          tags: ["deploy"],
-          filename: "SKILL.md",
-          quality: "curated",
-        },
-      ],
-    }),
+    "---\ndescription: Curated deploy skill\ntags:\n  - deploy\nquality: curated\n---\n# Deploy curated\n",
   );
 
   // Generated entry
   writeFile(
     path.join(stashDir, "skills", "deploy-generated", "SKILL.md"),
-    "---\ndescription: Generated deploy skill\n---\n# Deploy generated\n",
-  );
-  writeFile(
-    path.join(stashDir, "skills", "deploy-generated", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy-generated",
-          type: "skill",
-          description: "Generated deploy skill",
-          tags: ["deploy"],
-          filename: "SKILL.md",
-          quality: "generated",
-        },
-      ],
-    }),
+    "---\ndescription: Generated deploy skill\ntags:\n  - deploy\nquality: generated\n---\n# Deploy generated\n",
   );
 
   // Proposed entry — should be filtered by default
   writeFile(
     path.join(stashDir, "skills", "deploy-proposed", "SKILL.md"),
-    "---\ndescription: Proposed deploy skill\n---\n# Deploy proposed\n",
-  );
-  writeFile(
-    path.join(stashDir, "skills", "deploy-proposed", ".stash.json"),
-    JSON.stringify({
-      entries: [
-        {
-          name: "deploy-proposed",
-          type: "skill",
-          description: "Proposed deploy skill",
-          tags: ["deploy"],
-          filename: "SKILL.md",
-          quality: "proposed",
-        },
-      ],
-    }),
+    "---\ndescription: Proposed deploy skill\ntags:\n  - deploy\nquality: proposed\n---\n# Deploy proposed\n",
   );
 }
 
@@ -282,22 +237,7 @@ describe("Issue #224: unknown quality values warn once and remain searchable", (
     const stashDir = tmpStash();
     writeFile(
       path.join(stashDir, "skills", "deploy-experimental", "SKILL.md"),
-      "---\ndescription: Experimental quality marker test\n---\n# deploy\n",
-    );
-    writeFile(
-      path.join(stashDir, "skills", "deploy-experimental", ".stash.json"),
-      JSON.stringify({
-        entries: [
-          {
-            name: "deploy-experimental",
-            type: "skill",
-            description: "Experimental quality marker test",
-            tags: ["deploy"],
-            filename: "SKILL.md",
-            quality: "experimental",
-          },
-        ],
-      }),
+      "---\ndescription: Experimental quality marker test\ntags:\n  - deploy\nquality: experimental\n---\n# deploy\n",
     );
 
     // Suppress warns from the indexer load path so they don't pollute test output.

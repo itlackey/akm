@@ -1,3 +1,19 @@
+---
+description: Manage Docker containers, images, and networks in a homelab environment
+tags:
+  - docker
+  - compose
+  - containers
+  - homelab
+aliases:
+  - docker-compose
+searchHints:
+  - manage containers
+  - troubleshoot docker
+  - homelab setup
+  - docker compose orchestration
+quality: curated
+---
 # Docker Homelab
 
 Manage Docker containers in your homelab environment. This skill covers container lifecycle, Docker Compose orchestration, image management, networking, and troubleshooting.

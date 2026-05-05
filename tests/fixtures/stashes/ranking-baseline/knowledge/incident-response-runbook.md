@@ -1,5 +1,15 @@
 ---
 description: Operational incident response procedures including severity levels, escalation paths, and post-mortems
+tags:
+  - incident
+  - response
+  - runbook
+  - operations
+searchHints:
+  - handle production incident
+  - escalation procedure
+  - post-mortem template
+quality: curated
 ---
 # Incident Response Runbook
 
