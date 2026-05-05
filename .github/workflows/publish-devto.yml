@@ -6,7 +6,6 @@ on:
       files:
         description: "Newline-separated post paths to publish"
         required: false
-        type: string
   push:
     branches: [main]
     paths:
