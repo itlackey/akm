@@ -9,10 +9,12 @@ import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
   closeDatabase,
+  deleteIndexDirStatesByStashDir,
   type DbIndexedEntry,
   deleteEntriesByDir,
   deleteEntriesByStashDir,
   getEmbeddingCount,
+  getIndexDirState,
   getEntriesByDir,
   getEntryCount,
   getMeta,
@@ -22,6 +24,7 @@ import {
   rebuildFts,
   setMeta,
   upsertEmbedding,
+  upsertIndexDirState,
   upsertEntry,
   upsertUtilityScore,
   warnIfVecMissing,
@@ -149,6 +152,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       }),
     });
 
+    let hadRemovedSources = false;
     if (options?.full || !isIncremental) {
       // The delete is now merged into the insert transaction inside
       // indexEntries() so that a reader never sees an empty database between
@@ -172,7 +176,9 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         const currentSet = new Set(allSourceDirs);
         for (const dir of prevStashDirs) {
           if (!currentSet.has(dir)) {
+            hadRemovedSources = true;
             deleteEntriesByStashDir(db, dir);
+            deleteIndexDirStatesByStashDir(db, dir);
           }
         }
       }
@@ -242,6 +248,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       allSourceEntries,
       isIncremental,
       builtAtMs,
+      hadRemovedSources,
       doFullDelete,
       onProgress,
     );
@@ -393,6 +400,7 @@ async function indexEntries(
   allSourceEntries: SearchSource[],
   isIncremental: boolean,
   builtAtMs: number,
+  hadRemovedSources: boolean,
   doFullDelete = false,
   onProgress?: (event: IndexProgressEvent) => void,
 ): Promise<{
@@ -416,6 +424,23 @@ async function indexEntries(
     files: string[];
     stash: StashFile | null;
     skip: boolean;
+    reason?: DirScanReason;
+    persistedRowCount?: number;
+  };
+
+  type DirScanReason = {
+    kind:
+      | "duplicate-dir"
+      | "no-indexable-files"
+      | "unchanged"
+      | "full-rebuild"
+      | "no-previous-rows"
+      | "cached-zero-row-state"
+      | "mtime-changed"
+      | "file-set-changed"
+      | "stash-changed"
+      | "missing-file";
+    detail?: string;
   };
 
   let scannedDirs = 0;
@@ -432,6 +457,7 @@ async function indexEntries(
 
   const dirRecords: DirRecord[] = [];
   let processedDirs = 0;
+  let priorDirsChanged = hadRemovedSources;
 
   const reportScanProgress = (message: string) => {
     onProgress?.({
@@ -440,6 +466,22 @@ async function indexEntries(
       processed: processedDirs,
       total: allSourceEntries.length,
     });
+  };
+
+  const reportDirDecision = (
+    kind: "scan" | "skip",
+    dirPath: string,
+    currentStashDir: string,
+    reason: DirScanReason,
+    persistedRowCount?: number,
+  ) => {
+    if (!isVerbose()) return;
+    const detail = reason.detail ? ` (${reason.detail})` : "";
+    const rowInfo = persistedRowCount !== undefined ? `; previous rows=${persistedRowCount}` : "";
+    reportScanProgress(
+      `${kind === "scan" ? "Rescanning" : "Skipping"} ${path.relative(currentStashDir, dirPath) || "."} ` +
+        `from ${currentStashDir}: ${reason.kind}${detail}${rowInfo}`,
+    );
   };
 
   for (const sourceAdded of allSourceEntries) {
@@ -480,22 +522,34 @@ async function indexEntries(
       }
       for (const [dirPath, { files, entries }] of wikiDirGroups) {
         if (seenPaths.has(path.resolve(dirPath))) {
-          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+          const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
+          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason });
+          reportDirDecision("skip", dirPath, currentStashDir, reason);
           continue;
         }
         seenPaths.add(path.resolve(dirPath));
 
-        if (isIncremental) {
-          const prevEntries = getEntriesByDir(db, dirPath);
-          if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
-            skippedDirs++;
-            dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
-            continue;
-          }
+        const previousState = getDirIndexState(db, dirPath, files, builtAtMs);
+        if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
+          skippedDirs++;
+          dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true, reason: previousState.reason });
+          reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
+          continue;
         }
 
         scannedDirs++;
-        dirRecords.push({ dirPath, currentStashDir, files, stash: { entries }, skip: false });
+        priorDirsChanged = true;
+        const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
+        dirRecords.push({
+          dirPath,
+          currentStashDir,
+          files,
+          stash: { entries },
+          skip: false,
+          reason,
+          persistedRowCount: previousState.persistedRowCount,
+        });
+        reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
       }
       continue;
     }
@@ -512,18 +566,29 @@ async function indexEntries(
       const indexableFiles = files.filter((file) => shouldIndexStashFile(currentStashDir, file));
 
       if (seenPaths.has(path.resolve(dirPath))) {
-        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
+        const reason = { kind: "duplicate-dir" } satisfies DirScanReason;
+        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason });
+        reportDirDecision("skip", dirPath, currentStashDir, reason);
         continue;
       }
       seenPaths.add(path.resolve(dirPath));
 
       if (indexableFiles.length === 0) {
         skippedDirs++;
-        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true });
+        const reason = { kind: "no-indexable-files" } satisfies DirScanReason;
+        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason });
+        reportDirDecision("skip", dirPath, currentStashDir, reason);
         continue;
       }
 
-      scannedDirs++;
+      const cachedZeroRowState =
+        isIncremental && getCachedZeroRowDirState(db, dirPath, indexableFiles, builtAtMs, priorDirsChanged);
+      if (cachedZeroRowState) {
+        skippedDirs++;
+        dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash: null, skip: true, reason: cachedZeroRowState.reason });
+        reportDirDecision("skip", dirPath, currentStashDir, cachedZeroRowState.reason, cachedZeroRowState.persistedRowCount);
+        continue;
+      }
 
       const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
       if (generated.warnings?.length) warnings.push(...generated.warnings);
@@ -535,16 +600,27 @@ async function indexEntries(
         generatedCount += generated.entries.length;
       }
 
-      if (isIncremental) {
-        const prevEntries = getEntriesByDir(db, dirPath);
-        if (prevEntries.length > 0 && !isDirStale(dirPath, staleFiles, prevEntries, builtAtMs)) {
-          skippedDirs++;
-          dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash: null, skip: true });
-          continue;
-        }
+      const previousState = getDirIndexState(db, dirPath, staleFiles, builtAtMs);
+      if (isIncremental && !previousState.stale && canUseIncrementalSkip(previousState, priorDirsChanged)) {
+        skippedDirs++;
+        dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash: null, skip: true, reason: previousState.reason });
+        reportDirDecision("skip", dirPath, currentStashDir, previousState.reason, previousState.persistedRowCount);
+        continue;
       }
 
-      dirRecords.push({ dirPath, currentStashDir, files: staleFiles, stash, skip: false });
+      scannedDirs++;
+      priorDirsChanged = true;
+      const reason = isIncremental ? previousState.reason : ({ kind: "full-rebuild" } satisfies DirScanReason);
+      dirRecords.push({
+        dirPath,
+        currentStashDir,
+        files: staleFiles,
+        stash,
+        skip: false,
+        reason,
+        persistedRowCount: previousState.persistedRowCount,
+      });
+      reportDirDecision("scan", dirPath, currentStashDir, reason, previousState.persistedRowCount);
     }
   }
 
@@ -576,6 +652,7 @@ async function indexEntries(
       }
       db.exec("DELETE FROM entries_fts");
       db.exec("DELETE FROM utility_scores");
+      db.exec("DELETE FROM index_dir_state");
       // Detach usage_events from entries about to be deleted — null out entry_id
       // but keep entry_ref so events can be re-linked after entries are rebuilt.
       try {
@@ -586,11 +663,25 @@ async function indexEntries(
       db.exec("DELETE FROM entries");
     }
 
-    for (const { dirPath, currentStashDir, files, stash, skip } of dirRecords) {
-      if (skip) continue;
+    for (const { dirPath, currentStashDir, files, stash, skip, reason } of dirRecords) {
+      if (skip) {
+        if (reason?.kind === "unchanged") {
+          const fingerprint = computeDirFingerprint(dirPath, files);
+          upsertIndexDirState(db, {
+            dirPath,
+            fileSetHash: fingerprint.fileSetHash,
+            fileMtimeMaxMs: fingerprint.fileMtimeMaxMs,
+            reason: reason.kind,
+          });
+        }
+        continue;
+      }
 
       // Delete old entries for this dir (will be re-inserted)
       deleteEntriesByDir(db, dirPath);
+
+      let persistedRows = 0;
+      let dedupedRows = 0;
 
       if (stash) {
         for (const entry of stash.entries) {
@@ -600,7 +691,10 @@ async function indexEntries(
 
           // Skip if a higher-priority stash root already indexed this asset
           const identityKey = `${entry.type}\0${entry.name}`;
-          if (indexedAssetIdentities.has(identityKey)) continue;
+          if (indexedAssetIdentities.has(identityKey)) {
+            dedupedRows++;
+            continue;
+          }
           indexedAssetIdentities.add(identityKey);
 
           const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
@@ -608,6 +702,7 @@ async function indexEntries(
           const entryWithSize = attachFileSize(entry, entryPath);
 
           const entryId = upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, entryWithSize, searchText);
+          persistedRows++;
 
           if (entry.type === "workflow") {
             const doc = takeWorkflowDocument(entry);
@@ -622,12 +717,185 @@ async function indexEntries(
           dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
         }
       }
+
+      const fingerprint = computeDirFingerprint(dirPath, files);
+      const persistedReason =
+        persistedRows === 0
+          ? inferZeroRowReason(stash, reason, warnings, dirPath, dedupedRows)
+          : reason?.kind === "full-rebuild"
+            ? "full-rebuild"
+            : reason?.kind ?? "updated";
+      upsertIndexDirState(db, {
+        dirPath,
+        fileSetHash: fingerprint.fileSetHash,
+        fileMtimeMaxMs: fingerprint.fileMtimeMaxMs,
+        reason: persistedReason,
+      });
+      if (persistedRows === 0) {
+        warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+      }
     }
   });
 
   insertTransaction();
 
   return { scannedDirs, skippedDirs, generatedCount, warnings, dirsNeedingLlm };
+}
+
+function getDirIndexState(
+  db: Database,
+  dirPath: string,
+  files: string[],
+  builtAtMs: number,
+): {
+  stale: boolean;
+  reason: {
+    kind:
+      | "unchanged"
+      | "no-previous-rows"
+      | "cached-zero-row-state"
+      | "mtime-changed"
+      | "file-set-changed"
+      | "stash-changed"
+      | "missing-file";
+    detail?: string;
+  };
+  persistedRowCount: number;
+} {
+  const prevEntries = getEntriesByDir(db, dirPath);
+  const fingerprint = computeDirFingerprint(dirPath, files);
+  if (prevEntries.length > 0) {
+    const staleReason = getDirStaleReason(dirPath, files, prevEntries, builtAtMs);
+    if (!staleReason) {
+      return { stale: false, reason: { kind: "unchanged" }, persistedRowCount: prevEntries.length };
+    }
+    return { stale: true, reason: staleReason, persistedRowCount: prevEntries.length };
+  }
+
+  const cachedState = getIndexDirState(db, dirPath);
+  if (
+    cachedState &&
+    cachedState.fileSetHash === fingerprint.fileSetHash &&
+    cachedState.fileMtimeMaxMs === fingerprint.fileMtimeMaxMs
+  ) {
+    return {
+      stale: false,
+      reason: { kind: "cached-zero-row-state", detail: cachedState.reason },
+      persistedRowCount: 0,
+    };
+  }
+
+  return {
+    stale: true,
+    reason: { kind: "no-previous-rows", detail: cachedState ? `cached=${cachedState.reason}` : undefined },
+    persistedRowCount: 0,
+  };
+}
+
+function getCachedZeroRowDirState(
+  db: Database,
+  dirPath: string,
+  files: string[],
+  builtAtMs: number,
+  priorDirsChanged: boolean,
+): ReturnType<typeof getDirIndexState> | undefined {
+  const state = getDirIndexState(db, dirPath, files, builtAtMs);
+  if (state.stale || state.reason.kind !== "cached-zero-row-state") return undefined;
+  if (!canUseIncrementalSkip(state, priorDirsChanged)) return undefined;
+  return state;
+}
+
+function canUseIncrementalSkip(
+  state: ReturnType<typeof getDirIndexState>,
+  priorDirsChanged: boolean,
+): boolean {
+  return !(
+    priorDirsChanged &&
+    state.reason.kind === "cached-zero-row-state" &&
+    state.reason.detail === "deduped-zero-row"
+  );
+}
+
+function computeDirFingerprint(dirPath: string, files: string[]): { fileSetHash: string; fileMtimeMaxMs: number } {
+  const normalizedFiles = [...new Set(files.map((file) => path.basename(file)))].sort();
+  const stashPath = path.join(dirPath, ".stash.json");
+  let fileMtimeMaxMs = 0;
+  for (const file of files) {
+    try {
+      fileMtimeMaxMs = Math.max(fileMtimeMaxMs, fs.statSync(file).mtimeMs);
+    } catch {
+      fileMtimeMaxMs = Number.POSITIVE_INFINITY;
+      break;
+    }
+  }
+  try {
+    fileMtimeMaxMs = Math.max(fileMtimeMaxMs, fs.statSync(stashPath).mtimeMs);
+  } catch {
+    /* no legacy stash file */
+  }
+  return {
+    fileSetHash: normalizedFiles.join("\0"),
+    fileMtimeMaxMs,
+  };
+}
+
+function getDirStaleReason(
+  dirPath: string,
+  currentFiles: string[],
+  previousEntries: DbIndexedEntry[],
+  builtAtMs: number,
+):
+  | {
+      kind: "mtime-changed" | "file-set-changed" | "stash-changed" | "missing-file";
+      detail?: string;
+    }
+  | undefined {
+  const prevFileNames = new Set(
+    previousEntries
+      .map((ie) => {
+        const fromPath = path.basename(ie.filePath);
+        return fromPath || ie.entry.filename;
+      })
+      .filter((e): e is string => !!e),
+  );
+  const currFileNames = new Set(currentFiles.map((f) => path.basename(f)));
+  if (prevFileNames.size !== currFileNames.size) {
+    return { kind: "file-set-changed", detail: `${prevFileNames.size} -> ${currFileNames.size} files` };
+  }
+  for (const name of currFileNames) {
+    if (!prevFileNames.has(name)) return { kind: "file-set-changed", detail: name };
+  }
+
+  for (const file of currentFiles) {
+    try {
+      if (fs.statSync(file).mtimeMs > builtAtMs) return { kind: "mtime-changed", detail: path.basename(file) };
+    } catch {
+      return { kind: "missing-file", detail: path.basename(file) };
+    }
+  }
+
+  const stashPath = path.join(dirPath, ".stash.json");
+  try {
+    if (fs.statSync(stashPath).mtimeMs > builtAtMs) return { kind: "stash-changed", detail: ".stash.json" };
+  } catch {
+    /* file doesn't exist */
+  }
+
+  return undefined;
+}
+
+function inferZeroRowReason(
+  stash: StashFile | null,
+  priorReason: { kind: string; detail?: string } | undefined,
+  warnings: string[],
+  dirPath: string,
+  dedupedRows: number,
+): string {
+  if (dedupedRows > 0) return "deduped-zero-row";
+  const workflowNoise = warnings.some((warning) => warning.startsWith("Skipped workflow ") && warning.includes(dirPath));
+  if (workflowNoise) return "workflow-noise";
+  if (!stash || stash.entries.length === 0) return "empty-generated-set";
+  return `zero-row:${priorReason?.kind ?? "unknown"}`;
 }
 
 async function enhanceDirsWithLlm(
@@ -938,47 +1206,6 @@ function verifyIndexState(
     embeddingCount,
     vecAvailable,
   };
-}
-
-function isDirStale(
-  dirPath: string,
-  currentFiles: string[],
-  previousEntries: DbIndexedEntry[],
-  builtAtMs: number,
-): boolean {
-  // Check if file set changed (additions or deletions)
-  const prevFileNames = new Set(
-    previousEntries
-      .map((ie) => {
-        const fromPath = path.basename(ie.filePath);
-        return fromPath || ie.entry.filename;
-      })
-      .filter((e): e is string => !!e),
-  );
-  const currFileNames = new Set(currentFiles.map((f) => path.basename(f)));
-  if (prevFileNames.size !== currFileNames.size) return true;
-  for (const name of currFileNames) {
-    if (!prevFileNames.has(name)) return true;
-  }
-
-  // Check modification times of current files
-  for (const file of currentFiles) {
-    try {
-      if (fs.statSync(file).mtimeMs > builtAtMs) return true;
-    } catch {
-      return true;
-    }
-  }
-
-  // Check legacy .stash.json modification time so explicit-file overrides still reindex.
-  const stashPath = path.join(dirPath, ".stash.json");
-  try {
-    if (fs.statSync(stashPath).mtimeMs > builtAtMs) return true;
-  } catch {
-    // file doesn't exist, not stale
-  }
-
-  return false;
 }
 
 function buildIndexedDirCandidate(

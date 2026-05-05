@@ -6,6 +6,7 @@ import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config";
 import { loadConfig } from "../../core/config";
 import { ConfigError, UsageError } from "../../core/errors";
+import { TYPE_DIRS } from "../../core/asset-spec";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths";
 import { sanitizeCommitMessage } from "../../core/write-source";
 import { parseRegistryRef, resolveRegistryArtifact, validateGitRef, validateGitUrl } from "../../registry/resolve";
@@ -355,7 +356,15 @@ function pullRepo(repoDir: string): void {
 
 function hasExtractedRepo(repoDir: string): boolean {
   try {
-    return fs.statSync(repoDir).isDirectory() && fs.statSync(path.join(repoDir, "content")).isDirectory();
+    if (!fs.statSync(repoDir).isDirectory()) return false;
+    if (fs.statSync(path.join(repoDir, "content")).isDirectory()) return true;
+  } catch {
+    /* fall through to root-layout detection */
+  }
+
+  try {
+    if (!fs.statSync(repoDir).isDirectory()) return false;
+    return Object.values(TYPE_DIRS).some((dirName) => fs.existsSync(path.join(repoDir, dirName)));
   } catch {
     return false;
   }

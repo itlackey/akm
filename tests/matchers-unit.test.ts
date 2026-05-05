@@ -144,6 +144,25 @@ Do the thing.
     expect(result).toEqual({ type: "workflow", specificity: 19, renderer: "workflow-md" });
   });
 
+  test("workflow examples inside fenced code blocks stay classified as knowledge", () => {
+    const body = `# akm Stash Structure
+
+Workflow examples can be documented without turning the page into a workflow.
+
+\`\`\`markdown
+# Workflow: Publish a release
+
+## Step: Validate inputs
+Step ID: validate-inputs
+
+### Instructions
+Check the version, changelog, and release target.
+\`\`\`
+`;
+    const result = smartMdMatcher(ctx({ relPath: "knowledge/akm-stash-structure.md", content: body }));
+    expect(result).toEqual({ type: "knowledge", specificity: 5, renderer: "knowledge-md" });
+  });
+
   test("toolPolicy frontmatter classifies as agent at 20 (highest)", () => {
     const result = smartMdMatcher(
       ctx({

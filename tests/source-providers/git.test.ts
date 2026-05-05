@@ -78,6 +78,44 @@ Chain multiple prompts together.
   return repoDir;
 }
 
+function createRootLayoutGitRepo(): string {
+  const repoDir = createTmpDir("akm-git-root-repo-");
+
+  writeFile(
+    path.join(repoDir, "README.md"),
+    `---
+description: Root readme
+---
+# Root Repo
+`,
+  );
+  writeFile(
+    path.join(repoDir, "skills", "demo", "SKILL.md"),
+    `---
+description: Demo skill
+---
+# Demo
+`,
+  );
+
+  for (const args of [
+    ["init"],
+    ["checkout", "-b", "main"],
+    ["config", "user.email", "test@test.com"],
+    ["config", "user.name", "Test"],
+    ["config", "commit.gpgsign", "false"],
+    ["add", "."],
+    ["commit", "-m", "init"],
+  ] as string[][]) {
+    const result = spawnSync("git", args, { cwd: repoDir, encoding: "utf8", timeout: 30_000 });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+    }
+  }
+
+  return repoDir;
+}
+
 function createWorkingStash(): string {
   const dir = createTmpDir("akm-git-stash-");
   for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
@@ -191,6 +229,21 @@ describe("GitSourceProvider", () => {
 
     // File should still be absent — clone was skipped due to fresh cache
     expect(fs.existsSync(docPath)).toBe(false);
+  });
+
+  test("cache mirror treats repo-root stash layouts as fresh extracted repos", async () => {
+    const localRepoPath = createRootLayoutGitRepo();
+    const repo = { cloneUrl: localRepoPath, ref: null as string | null, canonicalUrl: localRepoPath };
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+
+    const skillPath = path.join(cachePaths.repoDir, "skills", "demo", "SKILL.md");
+    fs.rmSync(skillPath);
+
+    await ensureGitMirror(repo, cachePaths, { requireRepoDir: true });
+
+    expect(fs.existsSync(skillPath)).toBe(false);
   });
 
   test("integrates with stash sources via ensureSourceCaches", async () => {

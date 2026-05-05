@@ -5,7 +5,15 @@ import path from "node:path";
 import type { EmbeddingConnectionConfig } from "../src/core/config";
 import { saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, DB_VERSION, getAllEntries, getEmbeddingCount, getMeta, openDatabase } from "../src/indexer/db";
+import {
+  closeDatabase,
+  DB_VERSION,
+  getAllEntries,
+  getEmbeddingCount,
+  getIndexDirState,
+  getMeta,
+  openDatabase,
+} from "../src/indexer/db";
 import { akmIndex, buildFileBasenameMap, matchEntryToFile } from "../src/indexer/indexer";
 import { buildSearchText } from "../src/indexer/search-fields";
 import * as embedderModule from "../src/llm/embedder";
@@ -354,6 +362,44 @@ test("akmIndex skips malformed workflow assets and reports warnings", async () =
   closeDatabase(db);
 });
 
+test("akmIndex keeps knowledge docs with fenced workflow examples out of workflow validation", async () => {
+  const stashDir = tmpStash();
+  writeFile(
+    path.join(stashDir, "knowledge", "akm-stash-structure.md"),
+    [
+      "# akm Stash Structure",
+      "",
+      "This is reference documentation, not an executable workflow.",
+      "",
+      "```markdown",
+      "# Workflow: Publish a release",
+      "",
+      "## Step: Validate inputs",
+      "Step ID: validate-inputs",
+      "",
+      "### Instructions",
+      "Check the version, changelog, and release target.",
+      "```",
+      "",
+      "The fenced example above documents the workflow format.",
+      "",
+    ].join("\n"),
+  );
+
+  const result = await akmIndex({ stashDir, full: true });
+
+  expect(result.totalEntries).toBe(1);
+  expect((result.warnings ?? []).some((warning) => warning.startsWith("Skipped workflow "))).toBe(false);
+
+  const db = openDatabase();
+  const knowledgeEntries = getAllEntries(db, "knowledge")
+    .map((row) => row.entry.name)
+    .sort();
+  expect(knowledgeEntries).toEqual(["akm-stash-structure"]);
+  expect(getAllEntries(db, "workflow")).toHaveLength(0);
+  closeDatabase(db);
+});
+
 test("akmIndex generates TOC in database for knowledge entries", async () => {
   const stashDir = tmpStash();
   writeFile(
@@ -482,6 +528,35 @@ test("akmIndex scan progress events include processed and total counts", async (
 
   expect(scanEvents.some((event) => event.processed !== undefined && event.total !== undefined)).toBe(true);
   expect(scanEvents.some((event) => event.message.includes("Processed 1/1 source"))).toBe(true);
+});
+
+test("akmIndex verbose progress reports why a directory was rescanned", async () => {
+  const stashDir = tmpStash();
+  const deployFile = path.join(stashDir, "scripts", "deploy", "deploy.sh");
+  writeFile(deployFile, "#!/usr/bin/env bash\necho deploy\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  process.env.AKM_VERBOSE = "1";
+  saveConfig({ semanticSearchMode: "off" });
+
+  await akmIndex({ stashDir, full: true });
+
+  const futureTime = new Date(Date.now() + 2000);
+  fs.utimesSync(deployFile, futureTime, futureTime);
+
+  const scanMessages: string[] = [];
+  await akmIndex({
+    stashDir,
+    onProgress: (event) => {
+      if (event.phase === "scan") scanMessages.push(event.message);
+    },
+  });
+
+  const reasonLine = scanMessages.find((message) => message.includes("Rescanning scripts/deploy"));
+  expect(reasonLine).toBeDefined();
+  expect(reasonLine).toContain("mtime-changed");
+  expect(reasonLine).toContain("deploy.sh");
+  expect(reasonLine).toContain("previous rows=1");
 });
 
 test("akmIndex incremental reruns stabilize for stash-owned wiki indexes", async () => {
@@ -715,6 +790,123 @@ test("akmIndex incremental reruns ignore non-indexed companion files in stale de
   expect(third.totalEntries).toBe(1);
   expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
   expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
+});
+
+test("akmIndex caches zero-row directory state so incremental reruns can skip it", async () => {
+  const primaryStash = tmpStash();
+  const secondStash = tmpStash();
+
+  writeFile(path.join(primaryStash, "scripts", "shared", "util.sh"), "#!/bin/bash\necho primary\n");
+  writeFile(path.join(secondStash, "scripts", "shared", "util.sh"), "#!/bin/bash\necho second\n");
+
+  process.env.AKM_STASH_DIR = primaryStash;
+  process.env.AKM_VERBOSE = "1";
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+  });
+
+  await akmIndex({ stashDir: primaryStash, full: true });
+
+  const zeroRowDir = path.join(secondStash, "scripts", "shared");
+  const db = openDatabase();
+  try {
+    const state = getIndexDirState(db, zeroRowDir);
+    expect(state).toBeDefined();
+    expect(state?.reason).toBe("deduped-zero-row");
+  } finally {
+    closeDatabase(db);
+  }
+
+  const scanMessages: string[] = [];
+  const second = await akmIndex({
+    stashDir: primaryStash,
+    onProgress: (event) => {
+      if (event.phase === "scan") scanMessages.push(event.message);
+    },
+  });
+
+  expect(second.mode).toBe("incremental");
+  expect(scanMessages.some((message) => message.includes("Skipping scripts/shared") && message.includes("cached-zero-row-state"))).toBe(true);
+});
+
+test("akmIndex incrementally skips unchanged zero-row workflow directories", async () => {
+  const stashDir = tmpStash();
+  writeFile(
+    path.join(stashDir, "workflows", "bad-only.md"),
+    [
+      "---",
+      "description: Bad workflow",
+      "---",
+      "",
+      "## Step: First",
+      "Step ID: first",
+      "### Instructions",
+      "Do it.",
+      "",
+    ].join("\n"),
+  );
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({ semanticSearchMode: "off" });
+
+  const first = await akmIndex({ stashDir, full: true });
+  const db = openDatabase();
+  try {
+    const state = getIndexDirState(db, path.join(stashDir, "workflows"));
+    expect(state).toBeDefined();
+    expect(state?.reason).toBe("workflow-noise");
+  } finally {
+    closeDatabase(db);
+  }
+
+  const second = await akmIndex({ stashDir });
+  const third = await akmIndex({ stashDir });
+
+  expect(first.totalEntries).toBe(0);
+  expect(second.mode).toBe("incremental");
+  expect(third.mode).toBe("incremental");
+  expect(second.directoriesSkipped).toBeGreaterThanOrEqual(1);
+  expect(third.directoriesSkipped).toBeGreaterThanOrEqual(1);
+  expect(second.directoriesScanned).toBe(0);
+  expect(third.directoriesScanned).toBe(0);
+});
+
+test("akmIndex rescans deduped zero-row directories when an earlier winning source changes", async () => {
+  const primaryStash = tmpStash();
+  const secondStash = tmpStash();
+
+  writeFile(path.join(primaryStash, "scripts", "shared", "util.sh"), "#!/bin/bash\necho primary\n");
+  writeFile(path.join(secondStash, "scripts", "shared", "util.sh"), "#!/bin/bash\necho second\n");
+
+  process.env.AKM_STASH_DIR = primaryStash;
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: secondStash, name: "second", enabled: true }],
+  });
+
+  await akmIndex({ stashDir: primaryStash, full: true });
+
+  const changedFile = path.join(primaryStash, "scripts", "shared", "util.sh");
+  const futureTime = new Date(Date.now() + 2000);
+  fs.utimesSync(changedFile, futureTime, futureTime);
+
+  const result = await akmIndex({ stashDir: primaryStash });
+
+  expect(result.mode).toBe("incremental");
+  expect(result.directoriesScanned).toBeGreaterThanOrEqual(2);
+  expect(result.directoriesSkipped).toBe(0);
+
+  const db = openDatabase();
+  try {
+    const zeroRowState = getIndexDirState(db, path.join(secondStash, "scripts", "shared"));
+    expect(zeroRowState?.reason).toBe("deduped-zero-row");
+    const scriptEntries = getAllEntries(db, "script").map((row) => row.entry.name).sort();
+    expect(scriptEntries).toContain("shared/util.sh");
+    expect(scriptEntries.filter((name) => name === "shared/util.sh")).toHaveLength(1);
+  } finally {
+    closeDatabase(db);
+  }
 });
 
 test("akmIndex verifies semantic search when remote embeddings succeed", async () => {

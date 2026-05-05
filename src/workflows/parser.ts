@@ -37,12 +37,30 @@ const SUBSECTION_COMPLETION_CRITERIA = "Completion Criteria";
  * the matcher and parser cannot drift.
  */
 export function looksLikeWorkflow(body: string): boolean {
+  const structuralBody = stripFencedCodeBlocks(body);
   return (
-    /^#\s+Workflow:\s+/m.test(body) &&
-    /^##\s+Step:\s+/m.test(body) &&
-    /^Step ID:\s+/m.test(body) &&
-    /^###\s+Instructions\s*$/m.test(body)
+    /^#\s+Workflow:\s+/m.test(structuralBody) &&
+    /^##\s+Step:\s+/m.test(structuralBody) &&
+    /^Step ID:\s+/m.test(structuralBody) &&
+    /^###\s+Instructions\s*$/m.test(structuralBody)
   );
+}
+
+function stripFencedCodeBlocks(body: string): string {
+  let inFence = false;
+  const lines = body.split(/\r?\n/);
+  const stripped: string[] = [];
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line) || /^\s*~~~/.test(line)) {
+      inFence = !inFence;
+      stripped.push("");
+      continue;
+    }
+    stripped.push(inFence ? "" : line);
+  }
+
+  return stripped.join("\n");
 }
 
 export function parseWorkflow(markdown: string, source: { path: string }): WorkflowParseResult {

@@ -35,9 +35,17 @@ export interface DbVecResult {
   distance: number;
 }
 
+export interface IndexDirState {
+  dirPath: string;
+  fileSetHash: string;
+  fileMtimeMaxMs: number;
+  reason: string;
+  updatedAt: string;
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 9;
+export const DB_VERSION = 10;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -235,6 +243,16 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS index_dir_state (
+      dir_path          TEXT PRIMARY KEY,
+      file_set_hash     TEXT NOT NULL,
+      file_mtime_max_ms REAL NOT NULL,
+      reason            TEXT NOT NULL,
+      updated_at        TEXT NOT NULL
+    );
+  `);
+
   // FTS-dirty queue. Created here (not lazily on first upsert) so the
   // per-entry write path doesn't issue a CREATE TABLE IF NOT EXISTS on
   // every call — that DDL would fire thousands of times during a full
@@ -333,6 +351,7 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   db.exec("DROP TABLE IF EXISTS embeddings");
   db.exec("DROP TABLE IF EXISTS entries_vec");
   db.exec("DROP TABLE IF EXISTS entries_fts");
+  db.exec("DROP TABLE IF EXISTS index_dir_state");
   db.exec("DROP INDEX IF EXISTS idx_entries_dir");
   db.exec("DROP INDEX IF EXISTS idx_entries_type");
   db.exec("DROP TABLE IF EXISTS entries");
@@ -419,6 +438,53 @@ export function getMeta(db: Database, key: string): string | undefined {
 
 export function setMeta(db: Database, key: string, value: string): void {
   db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES (?, ?)").run(key, value);
+}
+
+export function getIndexDirState(db: Database, dirPath: string): IndexDirState | undefined {
+  const row = db
+    .prepare(
+      "SELECT dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at FROM index_dir_state WHERE dir_path = ?",
+    )
+    .get(dirPath) as
+    | {
+        dir_path: string;
+        file_set_hash: string;
+        file_mtime_max_ms: number;
+        reason: string;
+        updated_at: string;
+      }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    dirPath: row.dir_path,
+    fileSetHash: row.file_set_hash,
+    fileMtimeMaxMs: row.file_mtime_max_ms,
+    reason: row.reason,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function upsertIndexDirState(
+  db: Database,
+  state: Pick<IndexDirState, "dirPath" | "fileSetHash" | "fileMtimeMaxMs" | "reason">,
+): void {
+  db.prepare(
+    `INSERT INTO index_dir_state (dir_path, file_set_hash, file_mtime_max_ms, reason, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(dir_path) DO UPDATE SET
+       file_set_hash = excluded.file_set_hash,
+       file_mtime_max_ms = excluded.file_mtime_max_ms,
+       reason = excluded.reason,
+       updated_at = excluded.updated_at`,
+  ).run(state.dirPath, state.fileSetHash, state.fileMtimeMaxMs, state.reason, new Date().toISOString());
+}
+
+export function deleteIndexDirState(db: Database, dirPath: string): void {
+  db.prepare("DELETE FROM index_dir_state WHERE dir_path = ?").run(dirPath);
+}
+
+export function deleteIndexDirStatesByStashDir(db: Database, stashDir: string): void {
+  db.prepare("DELETE FROM index_dir_state WHERE dir_path = ? OR dir_path LIKE ?").run(stashDir, `${stashDir}${path.sep}%`);
 }
 
 // ── Entry operations ────────────────────────────────────────────────────────
