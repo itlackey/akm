@@ -12,7 +12,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -48,6 +48,45 @@ function runCli(args: string[], options: { stashDir?: string; configDir: string;
     },
   });
   return { stashDir, result };
+}
+
+async function runCliAsync(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
+  const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
+  const xdgCache = makeTempDir("akm-import-cache-");
+  const child = spawn("bun", [CLI, ...args], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      AKM_STASH_DIR: stashDir,
+      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
+      XDG_CACHE_HOME: xdgCache,
+    },
+  });
+  let stdout = "";
+  let stderr = "";
+  if (options.input !== undefined) child.stdin.end(options.input);
+  else child.stdin.end();
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const status = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("CLI timed out after 30000ms"));
+    }, 30_000);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
+  });
+  return { stashDir, result: { status, stdout, stderr } };
 }
 
 function makeKnowledgeFile(name: string, body: string): string {
@@ -135,7 +174,7 @@ describe("import --target", () => {
 
     try {
       const url = `http://127.0.0.1:${address.port}/docs/guide`;
-      const { stashDir, result } = runCli(["import", url], { configDir });
+      const { stashDir, result } = await runCliAsync(["import", url], { configDir });
       expect(result.status).toBe(0);
 
       const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
