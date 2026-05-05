@@ -21,6 +21,13 @@
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
 - [Filesystem](technical/filesystem.md) -- Directory layout and `.stash.json` schema
 
+## Official Ecosystem Repositories
+
+- [itlackey/akm-stash](https://github.com/itlackey/akm-stash) -- the official onboarding stash with ready-made assets you can install with `akm add`
+- [itlackey/akm-registry](https://github.com/itlackey/akm-registry) -- the official registry index that powers built-in discovery
+- [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional integrations for tools like OpenCode
+- [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the standalone benchmark and evaluation repo for akm
+
 ## Internals
 
 - [Search](technical/search.md) -- Hybrid search architecture and scoring

@@ -168,3 +168,12 @@ pattern is safe to script into CI or agent test harnesses.
 - [CLI Reference](cli.md) -- All commands and flags
 - [Ref Format](technical/ref.md) -- How asset references work
 - [Stash Maker's Guide](stash-makers.md) -- Build and share your own stashes
+
+## Official akm Repos
+
+If you want the rest of the official akm ecosystem after first-time setup:
+
+- [itlackey/akm-stash](https://github.com/itlackey/akm-stash) -- install the official onboarding stash with `akm add github:itlackey/akm-stash`
+- [itlackey/akm-registry](https://github.com/itlackey/akm-registry) -- browse the official registry source that ships with akm
+- [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional integrations for editors and agent tools
+- [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- benchmark and evaluation tooling for measuring akm-assisted agent runs

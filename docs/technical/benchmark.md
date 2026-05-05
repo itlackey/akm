@@ -3,6 +3,7 @@
 **Status:** Implemented (v0.7.0+).
 **Location:** `tests/bench/` (harness), `tests/fixtures/bench/` (corpus), `tests/fixtures/stashes/` (shared fixture stashes).
 **Companion docs:** `docs/technical/v1-architecture-spec.md`, `tests/BENCHMARKS.md`.
+**Companion repo:** [itlackey/akm-bench](https://github.com/itlackey/akm-bench) for the standalone benchmark and evaluation work that complements the in-repo harness described here.
 
 ## 1. Quick Start
 
