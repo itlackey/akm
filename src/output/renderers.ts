@@ -22,7 +22,7 @@ import {
 import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import { registerRenderer } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
-import { extractDescriptionFromComments, loadStashFile } from "../indexer/metadata";
+import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/metadata";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 
@@ -73,38 +73,12 @@ const SETUP_SIGNALS: Record<string, string> = {
  * `@run <value>`, `@setup <value>`, or `@cwd <value>`.
  */
 export function extractCommentTags(filePath: string): ExecHints {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return {};
-  }
-
-  const lines = content.split(/\r?\n/, 50);
-  const hints: ExecHints = {};
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Match lines starting with comment markers: //, #, /*, *, ;, --
-    if (!/^(?:\/\/|#|\/?\*|;|--)/.test(trimmed) && !trimmed.startsWith("'")) continue;
-
-    // Strip comment prefix
-    const cleaned = trimmed
-      .replace(/^(?:\/\/|##?|\/?\*\*?\/?|;|--)\s*/, "")
-      .replace(/\*\/\s*$/, "")
-      .trim();
-
-    const runMatch = cleaned.match(/^@run\s+(.+)/);
-    if (runMatch) hints.run = runMatch[1].trim();
-
-    const setupMatch = cleaned.match(/^@setup\s+(.+)/);
-    if (setupMatch) hints.setup = setupMatch[1].trim();
-
-    const cwdMatch = cleaned.match(/^@cwd\s+(.+)/);
-    if (cwdMatch) hints.cwd = cwdMatch[1].trim();
-  }
-
-  return hints;
+  const metadata = extractCommentMetadata(filePath);
+  return {
+    run: metadata?.run,
+    setup: metadata?.setup,
+    cwd: metadata?.cwd,
+  };
 }
 
 // ── Auto-detection ───────────────────────────────────────────────────────────
@@ -150,9 +124,9 @@ export function detectExecHints(filePath: string): ExecHints {
  * Resolve execution hints for a script asset.
  *
  * Resolution order (first non-empty value wins for each field):
- * 1. `.stash.json` fields (`run`/`setup`/`cwd`) take priority
- * 2. Script file header comments (`@run`/`@setup`/`@cwd`) second
- * 3. Auto-detection from extension + dependency files last
+ * 1. Indexed entry metadata (`run`/`setup`/`cwd`) when supplied by the caller
+ * 2. Script file header comments (`@run`/`@setup`/`@cwd`)
+ * 3. Auto-detection from extension + dependency files
  */
 export function resolveExecHints(stashEntry: StashEntry | undefined, filePath: string): ExecHints {
   const stashHints: ExecHints = {
@@ -189,17 +163,6 @@ function deriveName(ctx: RenderContext): string {
 }
 
 export { buildWorkflowAction };
-
-/**
- * Load the matching StashEntry for a file path from the directory's .stash.json.
- */
-function findStashEntryForFile(filePath: string): StashEntry | undefined {
-  const dir = path.dirname(filePath);
-  const stashFile = loadStashFile(dir);
-  if (!stashFile) return undefined;
-  const fileName = path.basename(filePath);
-  return stashFile.entries.find((e) => e.filename === fileName);
-}
 
 function extractParameters(template: string): string[] | undefined {
   const parameters: string[] = [];
@@ -598,8 +561,7 @@ const scriptSourceRenderer: AssetRenderer = {
 
     // For extensions with a known interpreter, show exec hints
     if (INTERPRETER_MAP[ext]) {
-      const stashEntry = findStashEntryForFile(ctx.absPath);
-      const hints = resolveExecHints(stashEntry, ctx.absPath);
+      const hints = resolveExecHints(undefined, ctx.absPath);
 
       if (hints.run) {
         return {
@@ -629,8 +591,7 @@ const scriptSourceRenderer: AssetRenderer = {
     if (!INTERPRETER_MAP[ext]) return;
 
     try {
-      const stashEntry = findStashEntryForFile(hit.path);
-      const hints = resolveExecHints(stashEntry, hit.path);
+      const hints = resolveExecHints(undefined, hit.path);
       hit.run = hints.run;
     } catch (error: unknown) {
       if (!hasErrnoCode(error, "ENOENT")) throw error;

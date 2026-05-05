@@ -10,8 +10,8 @@
 
 ## Upgrading
 
-- [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0
-- [Release notes (latest: 0.7.0)](migration/release-notes/0.7.0.md) -- Per-release notes drop into `migration/release-notes/`
+- [v1 migration guide](migration/v1.md) -- The path from 0.x to v1.0, including the `.stash.json` removal scheduled for v0.8.0
+- [Release notes (latest: 0.7.0)](migration/release-notes/0.7.0.md) -- Per-release notes drop into `migration/release-notes/`, including current pre-release removals
 - [v0.5 → v0.6 migration guide](migration/v0.5-to-v0.6.md) -- Every breaking change with before/after code, publisher checklist, and troubleshooting
 
 ## Reference
@@ -19,7 +19,7 @@
 - [CLI](cli.md) -- All `akm` commands and flags
 - [Registry](registry.md) -- Registries, search, hosting, and managing sources
 - [Configuration](configuration.md) -- Providers, settings, and Ollama setup
-- [Filesystem](technical/filesystem.md) -- Directory layout and `.stash.json` schema
+- [Filesystem](technical/filesystem.md) -- Directory layout plus `.stash.json` deprecation and migration notes
 
 ## Official Ecosystem Repositories
 

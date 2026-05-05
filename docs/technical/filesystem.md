@@ -57,12 +57,19 @@ akm keeps operational state under the cache directory:
 
 Override with `AKM_CONFIG_DIR`.
 
-## `.stash.json`
+## Legacy `.stash.json`
 
-Place `.stash.json` inside a type directory to provide curated metadata for the
-assets in that directory.
+`.stash.json` remains supported for backward compatibility with older curated
+stashes in 0.7.x, but in this pre-release line it is a deprecated legacy
+authoring path and will be removed in v0.8.0. Prefer frontmatter for markdown
+assets and structured script header comments for descriptions, parameters, and
+execution hints.
 
-### Supported entry fields
+Use `.stash.json` only when you are maintaining an older stash that already
+depends on directory-level metadata sidecars and you are migrating off it
+before v0.8.0.
+
+### Supported legacy entry fields
 
 | Field | Notes |
 | --- | --- |
@@ -91,7 +98,7 @@ Built-in `type` values are:
 - `vault`
 - `wiki`
 
-### Example
+### Legacy example
 
 ```json
 {
@@ -113,6 +120,16 @@ Built-in `type` values are:
 If `filename` is omitted, akm does not blindly choose the first file. It uses
 asset-type-specific canonical path rules and matching heuristics to resolve the
 entry to the right on-disk file.
+
+### Migration guidance
+
+When moving away from `.stash.json` before the v0.8.0 removal:
+
+- move markdown `description`, `tags`, and `params` into frontmatter
+- move script descriptions into the file's leading comment block
+- move script parameter docs into `@param` comments
+- move script exec hints into `@run`, `@setup`, and `@cwd` header tags
+- keep `package.json` descriptions/keywords for package-level fallback metadata
 
 ## Cache-Backed Sources
 

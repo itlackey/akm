@@ -3,6 +3,11 @@
 This directory is a documentation-backed example stash that shows how different
 AKM asset types fit together.
 
+The example intentionally uses frontmatter on markdown assets as the preferred
+metadata path. Do not read it as an endorsement of `.stash.json` for new stash
+authoring; `.stash.json` is a deprecated legacy compatibility format in this
+pre-release and will be removed in v0.8.0.
+
 Current layout:
 
 ```text

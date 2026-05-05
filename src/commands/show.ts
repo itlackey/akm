@@ -30,7 +30,7 @@ import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
-import { loadStashFile, type StashEntryScope } from "../indexer/metadata";
+import type { StashEntryScope } from "../indexer/metadata";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -427,34 +427,19 @@ function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowRespons
  *
  * Strips content/template/prompt and returns only metadata fields:
  * type, name, path, description, tags, parameters, action.
- * Enriches description and tags from frontmatter or .stash.json when available.
+ * Enriches description and tags from rendered content when available.
  *
  * The resulting JSON should be under 200 tokens.
  */
 function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowResponse {
   let description = full.description;
-  let tags = full.tags;
+  const tags = full.tags;
 
   if (assetPath) {
     const textContent = full.content ?? full.template ?? full.prompt;
     if (textContent && !description) {
       const parsed = parseFrontmatter(textContent);
       description = toStringOrUndefined(parsed.data.description);
-    }
-
-    const dir = path.dirname(assetPath);
-    const stashFile = loadStashFile(dir);
-    if (stashFile) {
-      const fileName = path.basename(assetPath);
-      const entry = stashFile.entries.find((e) => e.filename === fileName);
-      if (entry) {
-        if (!description && entry.description) {
-          description = entry.description;
-        }
-        if (!tags && entry.tags) {
-          tags = entry.tags;
-        }
-      }
     }
   }
 

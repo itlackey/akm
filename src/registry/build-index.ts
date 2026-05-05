@@ -349,27 +349,23 @@ async function enumerateAssets(stashRoot: string): Promise<StashEntry[]> {
 
   const entries: StashEntry[] = [];
   for (const [dirPath, files] of dirGroups) {
-    let stash = loadStashFile(dirPath);
+    const generated = await generateMetadataFlat(stashRoot, files);
+    const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+    const mergedEntries = legacyOverrides
+      ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
+      : generated.entries;
+    const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+    if (!stash || stash.entries.length === 0) continue;
 
-    if (stash) {
-      const covered = new Set(stash.entries.map((entry) => entry.filename).filter((value): value is string => !!value));
-      const uncoveredFiles = files.filter((file) => !covered.has(path.basename(file)));
-      if (uncoveredFiles.length > 0) {
-        const generated = await generateMetadataFlat(stashRoot, uncoveredFiles);
-        if (generated.entries.length > 0) {
-          stash = { entries: [...stash.entries, ...generated.entries] };
-        }
-      }
-    } else {
-      const generated = await generateMetadataFlat(stashRoot, files);
-      if (generated.entries.length === 0) continue;
-      stash = generated;
-    }
-
-    entries.push(...stash.entries.map((entry) => attachFileSize(dirPath, entry)));
+    entries.push(...stash.entries.filter((entry) => !!entry.filename).map((entry) => attachFileSize(dirPath, entry)));
   }
 
   return entries.sort((a, b) => `${a.type}:${a.name}`.localeCompare(`${b.type}:${b.name}`));
+}
+
+function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
+  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }
 
 function attachFileSize(dirPath: string, entry: StashEntry): StashEntry {

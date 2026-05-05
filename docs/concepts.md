@@ -179,9 +179,12 @@ override the upstream copy in subsequent searches.
 
 ## Metadata
 
-Each asset type directory can contain a `.stash.json` sidecar file with
-structured metadata. When no `.stash.json` exists, the indexer derives metadata
-in memory for the search index from filenames, code comments, frontmatter, and
+In this pre-release line, `.stash.json` is a deprecated legacy compatibility
+sidecar for older curated stashes, not the preferred authoring format for new
+content. It will be removed in v0.8.0. Prefer metadata that lives with the
+asset itself: frontmatter for markdown assets, and structured comments for
+scripts. When no `.stash.json` exists, the indexer derives metadata in memory
+for the search index from filenames, code comments, frontmatter, and
 package.json.
 
 See [technical/filesystem.md](technical/filesystem.md) for the full field reference.
@@ -190,7 +193,7 @@ See [technical/filesystem.md](technical/filesystem.md) for the full field refere
 
 For script assets, akm resolves execution hints in this order:
 
-1. `.stash.json` fields (`run`, `setup`, `cwd`)
+1. Legacy `.stash.json` fields (`run`, `setup`, `cwd`) while 0.7.x compatibility lasts
 2. Header comment tags (`@run`, `@setup`, `@cwd`)
 3. Auto-detection from extension and nearby dependency files
 

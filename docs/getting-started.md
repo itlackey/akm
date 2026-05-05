@@ -60,6 +60,12 @@ working stash is automatically recognized. The `scripts/` directory is not
 required -- it just increases classification confidence. See
 [concepts.md](concepts.md) for how classification works.
 
+For new assets in this pre-release line, prefer inline metadata over
+`.stash.json` sidecars: `.stash.json` is deprecated and will be removed in
+v0.8.0. Markdown assets should use frontmatter, and scripts should use
+structured header comments such as a short leading description, `@param`, and
+execution hints like `@run` / `@setup` / `@cwd` when needed.
+
 ## Index
 
 Build the search index so your assets are discoverable:

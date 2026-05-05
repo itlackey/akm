@@ -111,5 +111,10 @@ Two shapes exist:
 3. Fallback to on-disk type-dir traversal when the index has no row (covers
    the "indexed yet?" gap before `akm index` runs).
 
+Summary/detail metadata is derived from rendered content and indexed entry
+metadata. `akm show` no longer consults `.stash.json` directly as a first-class
+runtime metadata layer; the remaining `.stash.json` compatibility path is
+deprecated in 0.7.x and scheduled for removal in v0.8.0.
+
 There is no remote provider fallback. If the asset is not on disk under a
 configured source, show returns `NotFoundError`.

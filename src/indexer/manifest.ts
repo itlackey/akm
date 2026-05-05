@@ -73,7 +73,7 @@ function toManifestEntry(
  */
 function getManifestFromDb(
   stashDir: string,
-  config: AkmConfig,
+  _config: AkmConfig,
   sources: SourceSpec[],
   type?: string,
 ): ManifestEntry[] | null {
@@ -136,29 +136,20 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
     }
 
     for (const [dirPath, files] of dirGroups) {
-      // Try loading existing .stash.json first
-      let stash = loadStashFile(dirPath);
-
-      if (stash) {
-        const coveredFiles = new Set(stash.entries.map((e) => e.filename).filter((e): e is string => !!e));
-        const uncoveredFiles = files.filter((f) => !coveredFiles.has(path.basename(f)));
-        if (uncoveredFiles.length > 0) {
-          const generated = await generateMetadataFlat(currentStashDir, uncoveredFiles);
-          if (generated.entries.length > 0) {
-            stash = { entries: [...stash.entries, ...generated.entries] };
-          }
-        }
-      } else {
-        const generated = await generateMetadataFlat(currentStashDir, files);
-        if (generated.entries.length === 0) continue;
-        stash = generated;
-      }
+      const generated = await generateMetadataFlat(currentStashDir, files);
+      const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+      const mergedEntries = legacyOverrides
+        ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
+        : generated.entries;
+      const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+      if (!stash || stash.entries.length === 0) continue;
 
       const source = sources.find((s) => dirPath.startsWith(path.resolve(s.path) + path.sep));
 
       for (const stashEntry of stash.entries) {
         if (type && type !== "any" && stashEntry.type !== type) continue;
-        const entryPath = stashEntry.filename ? path.join(dirPath, stashEntry.filename) : files[0] || dirPath;
+        if (!stashEntry.filename) continue;
+        const entryPath = path.join(dirPath, stashEntry.filename);
         const manifestEntry = toManifestEntry(stashEntry, entryPath, currentStashDir, source?.registryId);
         if (manifestEntry) entries.push(manifestEntry);
       }
@@ -166,6 +157,11 @@ async function getManifestFromWalker(sources: SourceSpec[], type?: string): Prom
   }
 
   return entries;
+}
+
+function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
+  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }
 
 /**

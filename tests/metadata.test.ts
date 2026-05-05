@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  extractCommentMetadata,
   extractDescriptionFromComments,
   extractPackageMetadata,
   extractTagsFromPath,
@@ -388,4 +389,120 @@ test("generateMetadata does not generate heuristic searchHints (LLM-only)", asyn
   const stash = await generateMetadata(dir, "script", [tool]);
   // Search hints are only generated when LLM is configured, not heuristically
   expect(stash.entries[0].searchHints).toBeUndefined();
+});
+
+test("extractCommentMetadata parses curated header tags from scripts", () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "deploy.sh");
+  writeFile(
+    file,
+    [
+      "#!/usr/bin/env bash",
+      "# @description Deploy service to production",
+      "# @tags deploy, production, ops",
+      "# @aliases release-service, push-live",
+      "# @searchHints deploy service, release rollout",
+      "# @usage Run after validating the release branch",
+      "# @usage Use with a service slug",
+      "# @intent.when user needs to roll out a service",
+      "# @intent.input service slug",
+      "# @intent.output deployment status",
+      "# @run bash deploy.sh $1",
+      "# @setup bun install",
+      "# @cwd scripts/deploy",
+      "# @scope agent=opencode, run=release",
+      "echo deploy",
+    ].join("\n"),
+  );
+
+  const metadata = extractCommentMetadata(file);
+  expect(metadata).toEqual({
+    description: "Deploy service to production",
+    tags: ["deploy", "production", "ops"],
+    aliases: ["release-service", "push-live"],
+    searchHints: ["deploy service", "release rollout"],
+    usage: ["Run after validating the release branch", "Use with a service slug"],
+    intent: {
+      when: "user needs to roll out a service",
+      input: "service slug",
+      output: "deployment status",
+    },
+    run: "bash deploy.sh $1",
+    setup: "bun install",
+    cwd: "scripts/deploy",
+    scope: { agent: "opencode", run: "release" },
+  });
+});
+
+test("generateMetadata applies curated frontmatter fields for markdown assets", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "deploy.md");
+  writeFile(
+    file,
+    [
+      "---",
+      "description: Deploy a service safely",
+      "tags:",
+      "  - deploy",
+      "  - production",
+      "aliases:",
+      "  - release service",
+      "searchHints:",
+      "  - deploy rollout",
+      "  - ship service",
+      "usage:",
+      "  - Use after approvals complete",
+      "examples:",
+      "  - Deploy api to prod",
+      "run: akm run deploy",
+      "setup: bun install",
+      "cwd: tools/release",
+      "intent:",
+      "  when: user needs to deploy",
+      "  input: service name",
+      "  output: deployment status",
+      "scope:",
+      "  user: founder3",
+      "  agent: opencode",
+      "---",
+      "Deploy $1",
+    ].join("\n"),
+  );
+
+  const stash = await generateMetadata(dir, "command", [file]);
+  expect(stash.entries).toHaveLength(1);
+  expect(stash.entries[0]).toMatchObject({
+    description: "Deploy a service safely",
+    tags: ["deploy", "production"],
+    searchHints: ["deploy rollout", "ship service"],
+    usage: ["Use after approvals complete"],
+    examples: ["Deploy api to prod"],
+    run: "akm run deploy",
+    setup: "bun install",
+    cwd: "tools/release",
+    intent: {
+      when: "user needs to deploy",
+      input: "service name",
+      output: "deployment status",
+    },
+    scope: { user: "founder3", agent: "opencode" },
+    source: "frontmatter",
+  });
+  expect(stash.entries[0].aliases).toEqual(expect.arrayContaining(["release service", "deploy production"]));
+});
+
+test("generateMetadata preserves curated aliases from comment metadata", async () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "deploy-service.sh");
+  writeFile(
+    file,
+    [
+      "#!/usr/bin/env bash",
+      "# @aliases release workflow, ship service",
+      "echo deploy",
+    ].join("\n"),
+  );
+
+  const stash = await generateMetadata(dir, "script", [file]);
+  expect(stash.entries[0].aliases).toEqual(expect.arrayContaining(["release workflow", "ship service", "deploy service"]));
 });

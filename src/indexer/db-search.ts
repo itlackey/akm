@@ -936,49 +936,29 @@ async function indexAssets(stashDir: string, type: AkmSearchType, sources?: Sear
   }
 
   for (const [dirPath, files] of dirGroups) {
-    let stash = loadStashFile(dirPath);
+    const generated = await generateMetadataFlat(stashDir, files);
+    const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+    const mergedEntries = legacyOverrides
+      ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
+      : generated.entries;
+    const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
+    if (!stash || stash.entries.length === 0) continue;
 
-    if (stash) {
-      const coveredFiles = new Set(
-        stash.entries.map((entry) => entry.filename).filter((entry): entry is string => !!entry),
-      );
-      const uncoveredFiles = files.filter((file) => !coveredFiles.has(path.basename(file)));
-      if (uncoveredFiles.length > 0) {
-        const generated = await generateMetadataFlat(stashDir, uncoveredFiles);
-        if (generated.entries.length > 0) {
-          stash = { entries: [...stash.entries, ...generated.entries] };
-        }
-      }
-    } else {
-      const generated = await generateMetadataFlat(stashDir, files);
-      if (generated.entries.length === 0) continue;
-      stash = generated;
-    }
-
-    // Build a lookup for matching filename-less entries to actual files
-    const fileBasenameMap = new Map<string, string>();
-    for (const file of files) {
-      const base = path.basename(file, path.extname(file));
-      if (!fileBasenameMap.has(base)) fileBasenameMap.set(base, file);
-    }
     for (const entry of stash.entries) {
       if (filterType && entry.type !== filterType) continue;
-      let entryPath: string;
-      if (entry.filename) {
-        entryPath = path.join(dirPath, entry.filename);
-      } else {
-        // Try matching entry name to a file by basename
-        entryPath =
-          fileBasenameMap.get(entry.name) ??
-          fileBasenameMap.get(entry.name.split("/").pop() ?? "") ??
-          (files[0] || dirPath);
-      }
+      if (!entry.filename) continue;
+      const entryPath = path.join(dirPath, entry.filename);
       if (!shouldIndexStashFile(stashDir, entryPath)) continue;
       assets.push({ entry, path: entryPath });
     }
   }
 
   return assets;
+}
+
+function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
+  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
 }
 
 async function indexWikiRootAssets(wikiRoot: string, wikiName: string, type: AkmSearchType): Promise<IndexedAsset[]> {

@@ -29,6 +29,8 @@ import {
 import { runGraphExtractionPass } from "./graph-extraction";
 import { runMemoryInferencePass } from "./memory-inference";
 import {
+  applyCuratedFrontmatter,
+  applyWikiFrontmatter,
   generateMetadataFlat,
   isWorkflowSkipWarning,
   loadStashFile,
@@ -192,7 +194,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
-      onProgress({ phase: "llm", message: "LLM passes disabled; rerun with --enrich to enable inference and enrichment." });
+      onProgress({
+        phase: "llm",
+        message: "LLM passes disabled; rerun with --enrich to enable inference and enrichment.",
+      });
     }
 
     // Graph extraction pass (#207). Runs after memory inference so any
@@ -265,9 +270,10 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich);
     onProgress({
       phase: "llm",
-      message: enrich && resolveIndexPassLLM("enrichment", config)
-        ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
-        : "LLM enhancement disabled.",
+      message:
+        enrich && resolveIndexPassLLM("enrichment", config)
+          ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
+          : "LLM enhancement disabled.",
     });
 
     const tLlmEnd = Date.now();
@@ -435,7 +441,9 @@ async function indexEntries(
     const currentStashDir = sourceAdded.path;
     const fileContexts = walkStashFlat(currentStashDir);
     processedDirs++;
-    reportScanProgress(`Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`);
+    reportScanProgress(
+      `Processed ${processedDirs}/${allSourceEntries.length} source${allSourceEntries.length === 1 ? "" : "s"}.`,
+    );
 
     // Wiki-root stashes: all .md files are indexed as wiki pages under wikiName
     if (sourceAdded.wikiName) {
@@ -445,13 +453,17 @@ async function indexEntries(
         if (ctx.ext !== ".md") continue;
         if (!shouldIndexStashFile(currentStashDir, ctx.absPath, { treatStashRootAsWikiRoot: true })) continue;
         const relNoExt = ctx.relPath.replace(/\.md$/, "");
+        const frontmatter = ctx.frontmatter() ?? {};
         const entry: StashEntry = {
           name: `${wikiName}/${relNoExt}`,
           type: "wiki",
           filename: ctx.fileName,
-          description: ctx.frontmatter()?.description as string | undefined,
-          source: "frontmatter",
+          quality: "generated",
+          confidence: 0.55,
+          source: "filename",
         };
+        applyCuratedFrontmatter(entry, frontmatter);
+        applyWikiFrontmatter(entry, frontmatter);
         const dir = ctx.parentDirAbs;
         const group = wikiDirGroups.get(dir);
         if (group) {
@@ -467,6 +479,16 @@ async function indexEntries(
           continue;
         }
         seenPaths.add(path.resolve(dirPath));
+
+        if (isIncremental) {
+          const prevEntries = getEntriesByDir(db, dirPath);
+          if (prevEntries.length > 0 && !isDirStale(dirPath, files, prevEntries, builtAtMs)) {
+            skippedDirs++;
+            dirRecords.push({ dirPath, currentStashDir, files, stash: null, skip: true });
+            continue;
+          }
+        }
+
         scannedDirs++;
         dirRecords.push({ dirPath, currentStashDir, files, stash: { entries }, skip: false });
       }
@@ -508,32 +530,19 @@ async function indexEntries(
 
       scannedDirs++;
 
-      // Try loading existing .stash.json (user metadata overrides)
-      let stash = loadStashFile(dirPath);
+      const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
+      if (generated.warnings?.length) warnings.push(...generated.warnings);
 
-      if (stash) {
-        const coveredFiles = new Set(
-          stash.entries.map((e) => (e.filename ? path.basename(e.filename) : "")).filter((e) => !!e),
-        );
-        const uncoveredFiles = indexableFiles.filter((f) => !coveredFiles.has(path.basename(f)));
-        if (uncoveredFiles.length > 0) {
-          const generated = await generateMetadataFlat(currentStashDir, uncoveredFiles);
-          if (generated.warnings?.length) warnings.push(...generated.warnings);
-          if (generated.entries.length > 0) {
-            stash = { entries: [...stash.entries, ...generated.entries] };
-            generatedCount += generated.entries.length;
-          }
-        }
+      const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
+      const mergedEntries = legacyOverrides
+        ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
+        : generated.entries;
+
+      if (generated.entries.length > 0) {
+        generatedCount += generated.entries.length;
       }
 
-      if (!stash) {
-        const generated = await generateMetadataFlat(currentStashDir, indexableFiles);
-        if (generated.warnings?.length) warnings.push(...generated.warnings);
-        if (generated.entries.length > 0) {
-          stash = { entries: generated.entries };
-          generatedCount += generated.entries.length;
-        }
-      }
+      const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
 
       dirRecords.push({ dirPath, currentStashDir, files: indexableFiles, stash, skip: false });
     }
@@ -584,12 +593,8 @@ async function indexEntries(
       deleteEntriesByDir(db, dirPath);
 
       if (stash) {
-        // Build a lookup for matching filename-less entries to actual files
-        const fileBasenameMap = buildFileBasenameMap(files);
         for (const entry of stash.entries) {
-          const entryPath = entry.filename
-            ? path.join(dirPath, entry.filename)
-            : matchEntryToFile(entry.name, fileBasenameMap, files);
+          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
           if (!entryPath) continue; // skip unresolvable entries
           if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
@@ -943,7 +948,14 @@ function isDirStale(
   builtAtMs: number,
 ): boolean {
   // Check if file set changed (additions or deletions)
-  const prevFileNames = new Set(previousEntries.map((ie) => ie.entry.filename).filter((e): e is string => !!e));
+  const prevFileNames = new Set(
+    previousEntries
+      .map((ie) => {
+        const fromPath = path.basename(ie.filePath);
+        return fromPath || ie.entry.filename;
+      })
+      .filter((e): e is string => !!e),
+  );
   const currFileNames = new Set(currentFiles.map((f) => path.basename(f)));
   if (prevFileNames.size !== currFileNames.size) return true;
   for (const name of currFileNames) {
@@ -959,7 +971,7 @@ function isDirStale(
     }
   }
 
-  // Check .stash.json modification time
+  // Check legacy .stash.json modification time so explicit-file overrides still reindex.
   const stashPath = path.join(dirPath, ".stash.json");
   try {
     if (fs.statSync(stashPath).mtimeMs > builtAtMs) return true;
@@ -1043,9 +1055,9 @@ export function buildFileBasenameMap(files: string[]): Map<string, string> {
  *   1. Exact basename match: entry.name === filename without extension
  *   2. Last path segment match: for entries with names like "dir/sub-entry",
  *      try matching the last segment
- *   3. Fallback: first file in the directory, or null if no files are available
+ *   3. No implicit file fallback: ambiguous legacy entries are skipped
  */
-export function matchEntryToFile(entryName: string, fileMap: Map<string, string>, files: string[]): string | null {
+export function matchEntryToFile(entryName: string, fileMap: Map<string, string>, _files: string[]): string | null {
   // Exact match on entry name
   const exact = fileMap.get(entryName);
   if (exact) return exact;
@@ -1057,8 +1069,21 @@ export function matchEntryToFile(entryName: string, fileMap: Map<string, string>
     if (segmentMatch) return segmentMatch;
   }
 
-  // Fallback to first file, or null if no files are available
-  return files[0] || null;
+  return null;
+}
+
+function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
+  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
+  if (!legacy) return entry;
+
+  return {
+    ...entry,
+    ...legacy,
+    filename: entry.filename,
+    source: legacy.source ?? entry.source,
+    quality: legacy.quality ?? entry.quality,
+    confidence: legacy.confidence ?? entry.confidence,
+  };
 }
 
 // `buildSearchFields` and `buildSearchText` were previously re-exported from

@@ -113,6 +113,10 @@ export interface StashFile {
   warnings?: string[];
 }
 
+export interface LegacyStashLoadOptions {
+  requireFilename?: boolean;
+}
+
 // ── Load / Write ────────────────────────────────────────────────────────────
 
 const STASH_FILENAME = ".stash.json";
@@ -166,7 +170,7 @@ export function stashFilePath(dirPath: string): string {
   return path.join(dirPath, STASH_FILENAME);
 }
 
-export function loadStashFile(dirPath: string): StashFile | null {
+export function loadStashFile(dirPath: string, options?: LegacyStashLoadOptions): StashFile | null {
   const filePath = stashFilePath(dirPath);
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -176,6 +180,7 @@ export function loadStashFile(dirPath: string): StashFile | null {
     for (const e of raw.entries) {
       const validated = validateStashEntry(e);
       if (validated) {
+        if (options?.requireFilename && !validated.filename) continue;
         entries.push(validated);
       } else {
         const name =
@@ -357,6 +362,67 @@ export function applyScopeFrontmatter(entry: StashEntry, fmData: Record<string, 
   if (Object.keys(collected).length === 0) return;
   const scope = normalizeScopeObject(collected);
   if (scope) entry.scope = scope;
+}
+
+function normalizeIntent(value: unknown): StashIntent | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const intent: StashIntent = {};
+  const when = toStringOrUndefined(raw.when);
+  const input = toStringOrUndefined(raw.input);
+  const output = toStringOrUndefined(raw.output);
+  if (when) intent.when = when;
+  if (input) intent.input = input;
+  if (output) intent.output = output;
+  return Object.keys(intent).length > 0 ? intent : undefined;
+}
+
+function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
+  return normalizeNonEmptyStringList(value);
+}
+
+export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
+  const description = toStringOrUndefined(fmData.description);
+  if (description) {
+    entry.description = description;
+    entry.source = "frontmatter";
+    entry.confidence = 0.9;
+  }
+
+  const tags = normalizeStringListOrUndefined(fmData.tags);
+  if (tags) entry.tags = normalizeTerms(tags);
+
+  const aliases = normalizeStringListOrUndefined(fmData.aliases);
+  if (aliases) entry.aliases = normalizeTerms(aliases);
+
+  const searchHints = normalizeStringListOrUndefined(fmData.searchHints);
+  if (searchHints) entry.searchHints = searchHints;
+
+  const usage = normalizeStringListOrUndefined(fmData.usage);
+  if (usage) entry.usage = usage;
+
+  const examples = normalizeStringListOrUndefined(fmData.examples);
+  if (examples) entry.examples = examples;
+
+  const run = toStringOrUndefined(fmData.run);
+  if (run) entry.run = run;
+  const setup = toStringOrUndefined(fmData.setup);
+  if (setup) entry.setup = setup;
+  const cwd = toStringOrUndefined(fmData.cwd);
+  if (cwd) entry.cwd = cwd;
+
+  const quality = toStringOrUndefined(fmData.quality);
+  if (quality) entry.quality = normalizeQuality(quality);
+
+  const intent = normalizeIntent(fmData.intent);
+  if (intent) entry.intent = intent;
+
+  if (typeof fmData.scope === "object" && fmData.scope !== null && !Array.isArray(fmData.scope)) {
+    const normalizedScope = normalizeScopeObject(fmData.scope as Record<string, unknown>);
+    if (normalizedScope) entry.scope = normalizedScope;
+  }
+
+  applyScopeFrontmatter(entry, fmData);
 }
 
 function normalizeNonEmptyStringList(value: unknown): string[] | undefined {
@@ -549,6 +615,207 @@ function mergeParameters(
   return merged;
 }
 
+export interface CommentMetadata {
+  description?: string;
+  tags?: string[];
+  aliases?: string[];
+  searchHints?: string[];
+  usage?: string[];
+  examples?: string[];
+  intent?: StashIntent;
+  run?: string;
+  setup?: string;
+  cwd?: string;
+  scope?: StashEntryScope;
+}
+
+function splitCommentList(raw: string): string[] {
+  return raw
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function parseCommentScope(raw: string): StashEntryScope | undefined {
+  const pairs = raw
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (pairs.length === 0) return undefined;
+  const scopeRaw: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const [keyPart, ...valueParts] = pair.split("=");
+    const key = keyPart?.trim();
+    const value = valueParts.join("=").trim();
+    if (!key || !value) continue;
+    if ((SCOPE_KEYS as readonly string[]).includes(key)) {
+      scopeRaw[key] = value;
+    }
+  }
+  return normalizeScopeObject(scopeRaw);
+}
+
+function parseIntentCommentLine(cleaned: string, metadata: CommentMetadata): boolean {
+  const intentMatch = cleaned.match(/^@intent(?:\.(when|input|output))?\s+(.+)$/);
+  if (!intentMatch) return false;
+  metadata.intent ??= {};
+  const value = intentMatch[2].trim();
+  const key = intentMatch[1];
+  if (key === "when") metadata.intent.when = value;
+  else if (key === "input") metadata.intent.input = value;
+  else if (key === "output") metadata.intent.output = value;
+  else metadata.intent.when ??= value;
+  return true;
+}
+
+export function extractCommentMetadata(filePath: string, content?: string): CommentMetadata | undefined {
+  if (content === undefined) {
+    try {
+      content = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return undefined;
+    }
+  }
+
+  const lines = content.split(/\r?\n/).slice(0, 50);
+  const metadata: CommentMetadata = {};
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!/^(?:\/\/|#|\/?\*|;|--)/.test(trimmed) && !trimmed.startsWith("'")) continue;
+
+    const cleaned = trimmed
+      .replace(/^(?:\/\/|##?|\/?\*\*?\/?|;|--|'?)\s*/, "")
+      .replace(/\*\/\s*$/, "")
+      .trim();
+    if (!cleaned) continue;
+
+    if (parseIntentCommentLine(cleaned, metadata)) continue;
+
+    const descMatch = cleaned.match(/^@description\s+(.+)$/);
+    if (descMatch) {
+      metadata.description = descMatch[1].trim();
+      continue;
+    }
+
+    const tagsMatch = cleaned.match(/^@tags?\s+(.+)$/);
+    if (tagsMatch) {
+      metadata.tags = splitCommentList(tagsMatch[1]);
+      continue;
+    }
+
+    const aliasesMatch = cleaned.match(/^@aliases?\s+(.+)$/);
+    if (aliasesMatch) {
+      metadata.aliases = splitCommentList(aliasesMatch[1]);
+      continue;
+    }
+
+    const hintsMatch = cleaned.match(/^@searchHints?\s+(.+)$/);
+    if (hintsMatch) {
+      metadata.searchHints = splitCommentList(hintsMatch[1]);
+      continue;
+    }
+
+    const usageMatch = cleaned.match(/^@usage\s+(.+)$/);
+    if (usageMatch) {
+      metadata.usage = [...(metadata.usage ?? []), usageMatch[1].trim()];
+      continue;
+    }
+
+    const examplesMatch = cleaned.match(/^@examples?\s+(.+)$/);
+    if (examplesMatch) {
+      metadata.examples = [...(metadata.examples ?? []), examplesMatch[1].trim()];
+      continue;
+    }
+
+    const runMatch = cleaned.match(/^@run\s+(.+)$/);
+    if (runMatch) {
+      metadata.run = runMatch[1].trim();
+      continue;
+    }
+
+    const setupMatch = cleaned.match(/^@setup\s+(.+)$/);
+    if (setupMatch) {
+      metadata.setup = setupMatch[1].trim();
+      continue;
+    }
+
+    const cwdMatch = cleaned.match(/^@cwd\s+(.+)$/);
+    if (cwdMatch) {
+      metadata.cwd = cwdMatch[1].trim();
+      continue;
+    }
+
+    const scopeMatch = cleaned.match(/^@scope\s+(.+)$/);
+    if (scopeMatch) {
+      const scope = parseCommentScope(scopeMatch[1]);
+      if (scope) metadata.scope = scope;
+    }
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+export function applyCommentMetadata(entry: StashEntry, metadata: CommentMetadata | undefined): void {
+  if (!metadata) return;
+  let usedCommentMetadata = false;
+
+  if (metadata.description && !entry.description) {
+    entry.description = metadata.description;
+    usedCommentMetadata = true;
+  }
+  if (metadata.tags?.length && (!entry.tags || entry.tags.length === 0)) {
+    entry.tags = normalizeTerms(metadata.tags);
+    usedCommentMetadata = true;
+  }
+  if (metadata.aliases?.length) {
+    entry.aliases = normalizeTerms(metadata.aliases);
+    usedCommentMetadata = true;
+  }
+  if (metadata.searchHints?.length) {
+    entry.searchHints = metadata.searchHints;
+    usedCommentMetadata = true;
+  }
+  if (metadata.usage?.length) {
+    entry.usage = metadata.usage;
+    usedCommentMetadata = true;
+  }
+  if (metadata.examples?.length) {
+    entry.examples = metadata.examples;
+    usedCommentMetadata = true;
+  }
+  if (metadata.intent && Object.keys(metadata.intent).length > 0) {
+    entry.intent = metadata.intent;
+    usedCommentMetadata = true;
+  }
+  if (metadata.run) {
+    entry.run = metadata.run;
+    usedCommentMetadata = true;
+  }
+  if (metadata.setup) {
+    entry.setup = metadata.setup;
+    usedCommentMetadata = true;
+  }
+  if (metadata.cwd) {
+    entry.cwd = metadata.cwd;
+    usedCommentMetadata = true;
+  }
+  if (metadata.scope) {
+    entry.scope = metadata.scope;
+    usedCommentMetadata = true;
+  }
+
+  if (usedCommentMetadata && entry.source !== "frontmatter" && entry.source !== "manual") {
+    entry.source = "comments";
+    entry.confidence = Math.max(entry.confidence ?? 0, 0.7);
+  }
+}
+
+function mergeAliases(existing: string[] | undefined, generated: string[]): string[] | undefined {
+  const merged = normalizeTerms([...(existing ?? []), ...generated]);
+  return merged.length > 0 ? merged : undefined;
+}
+
 // ── Metadata Generation ─────────────────────────────────────────────────────
 
 export async function generateMetadata(
@@ -593,19 +860,12 @@ export async function generateMetadata(
     if (ext === ".md") {
       const content = fs.readFileSync(file, "utf8");
       const parsed = parseFrontmatter(content);
-      const fm = toStringOrUndefined(parsed.data.description);
-      if (fm) {
-        entry.description = fm;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
+      applyCuratedFrontmatter(entry, parsed.data);
       // Extract parameters from frontmatter params: key
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
       // Pass wiki-pattern frontmatter through onto the entry
       applyWikiFrontmatter(entry, parsed.data);
-      // Pass canonical scope_* frontmatter through onto the entry
-      applyScopeFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);
@@ -620,8 +880,10 @@ export async function generateMetadata(
     // and must never be parsed for @param or any other metadata that could
     // embed a value into the entry.
     if (ext !== ".md" && assetType !== "vault") {
-      const scriptParams = extractScriptParameters(file);
+      const content = fs.readFileSync(file, "utf8");
+      const scriptParams = extractScriptParameters(file, content);
       if (scriptParams) entry.parameters = scriptParams;
+      applyCommentMetadata(entry, extractCommentMetadata(file, content));
     }
 
     // Priority 3: Type-specific metadata extraction (e.g. TOC for knowledge, comments for scripts)
@@ -651,7 +913,7 @@ export async function generateMetadata(
     }
 
     entry.tags = normalizeTerms(entry.tags ?? []);
-    entry.aliases = buildAliases(canonicalName, entry.tags);
+    entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
 
     // Search hints are only generated when LLM is configured (via enhanceStashWithLlm)
     // Heuristic search hints are too noisy to be useful for search quality
@@ -718,19 +980,12 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     if (ext === ".md") {
       const content = ctx.content();
       const parsed = parseFrontmatter(content);
-      const fm = toStringOrUndefined(parsed.data.description);
-      if (fm) {
-        entry.description = fm;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
+      applyCuratedFrontmatter(entry, parsed.data);
       // Extract parameters from frontmatter params: key
       const fmParams = extractFrontmatterParameters(parsed.data);
       if (fmParams) entry.parameters = fmParams;
       // Pass wiki-pattern frontmatter through onto the entry
       applyWikiFrontmatter(entry, parsed.data);
-      // Pass canonical scope_* frontmatter through onto the entry
-      applyScopeFrontmatter(entry, parsed.data);
       // Extract parameters from template placeholders ($1, $ARGUMENTS, {{named}})
       if (entry.type === "command") {
         const cmdParams = extractCommandParameters(parsed.content);
@@ -745,8 +1000,10 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     // and must never be parsed for @param or any other metadata that could
     // embed a value into the entry.
     if (ext !== ".md" && assetType !== "vault") {
-      const scriptParams = extractScriptParameters(file, ctx.content());
+      const content = ctx.content();
+      const scriptParams = extractScriptParameters(file, content);
       if (scriptParams) entry.parameters = scriptParams;
+      applyCommentMetadata(entry, extractCommentMetadata(file, content));
     }
 
     // Renderer metadata extraction
@@ -772,7 +1029,7 @@ export async function generateMetadataFlat(stashRoot: string, files: string[]): 
     }
 
     entry.tags = normalizeTerms(entry.tags ?? []);
-    entry.aliases = buildAliases(canonicalName, entry.tags);
+    entry.aliases = mergeAliases(entry.aliases, buildAliases(canonicalName, entry.tags));
     entry.filename = path.basename(file);
     entries.push(entry);
   }

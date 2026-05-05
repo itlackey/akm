@@ -44,6 +44,9 @@ and more.
 ```sh
 # scripts/deploy.sh
 #!/usr/bin/env bash
+# Deploy the application to production.
+# @param release_tag - Release tag to deploy.
+# @run bash "$0" "$@"
 set -euo pipefail
 echo "Deploying $1..."
 ```
@@ -171,17 +174,55 @@ requiring explicit prompts.
 
 ## Step 3: Add Metadata
 
-Metadata makes your stash searchable. There are two approaches.
+Metadata makes your stash searchable. In this pre-release project, prefer
+metadata that travels with the asset itself.
 
-### Automatic (do nothing)
+### Preferred: inline metadata
+
+For markdown assets, add frontmatter near the content it describes:
+
+```markdown
+---
+description: "Release workflow for tagged builds"
+tags: [release, ci, automation]
+params:
+  version: "Version to release"
+---
+```
+
+For scripts, keep metadata in the file header so it stays in sync with the code:
+
+```sh
+#!/usr/bin/env bash
+# Release the current build to production.
+# @param version - Version to release.
+# @setup bun install
+# @cwd .
+```
 
 When someone installs your stash and runs `akm index`, metadata is generated
-automatically from filenames, code comments, frontmatter, and `package.json`.
-This works well for most stashes.
+from frontmatter, code comments, filenames, and `package.json`. This works well
+for most stashes and keeps descriptions close to the asset body.
 
-### Curated (`.stash.json`)
+### Legacy: `.stash.json`
 
-For better search quality, add a `.stash.json` in any asset type directory:
+`.stash.json` is still supported so older curated stashes keep working in the
+0.7.x line, but it should be treated as a deprecated legacy format during the
+pre-release cycle. It will be removed in v0.8.0. Do not start new stashes with
+it unless you are maintaining an older repo that already depends on
+directory-level sidecars and are actively migrating away.
+
+If you still have `.stash.json`, migrate the fields into the asset whenever
+possible:
+
+- Move `description`, `tags`, and `params` into markdown frontmatter.
+- Move script execution hints into header comments such as `@run`, `@setup`,
+  and `@cwd`.
+- Move script parameter docs into `@param` comments.
+- Let filenames and nearby `package.json` provide the remaining fallback
+  metadata.
+
+Legacy example:
 
 ```json
 {
@@ -206,9 +247,9 @@ For better search quality, add a `.stash.json` in any asset type directory:
 }
 ```
 
-Good `description`, `tags`, and `searchHints` values make the biggest difference
-in search ranking. See [technical/filesystem.md](technical/filesystem.md) for the full field
-reference.
+Use `.stash.json` only as a short-lived compatibility bridge while migrating an
+existing curated stash before v0.8.0. See
+[technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
 
 ## Step 4: Test Locally
 
@@ -367,13 +408,19 @@ after the working stash.
 - **Keep it focused.** A stash with 5 great scripts is more useful than one with
   50 mediocre ones.
 
-- **Write good descriptions.** The `description` field (in frontmatter,
-  `.stash.json`, or `package.json`) is the primary signal for search ranking.
+- **Write good descriptions.** The `description` field (preferably in
+  frontmatter, otherwise in script comments or `package.json`) is the primary
+  signal for search ranking.
 
 - **Use frontmatter in markdown assets.** A `description` in frontmatter is
   extracted automatically with high confidence (0.9), making your commands,
-  agents, and knowledge documents more discoverable without needing a
-  `.stash.json`.
+  agents, and knowledge documents more discoverable without needing a legacy
+  `.stash.json` sidecar.
+
+- **Use structured header comments for scripts.** `.sh`, `.ts`, `.py`, etc. get
+  strong results from good filenames plus leading comments and tags like
+  `@param`, `@run`, `@setup`, and `@cwd`. Treat `.stash.json` as a last-resort
+  legacy fallback.
 
 - **Test the search experience.** After installing your stash, search for it
   using the terms you expect users to try. If results are poor, improve the

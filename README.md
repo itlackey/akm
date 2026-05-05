@@ -39,6 +39,11 @@ npx skills add itlackey/akm
 Upgrade in place with `akm upgrade` for binary, npm, bun, and pnpm installs.
 Preview release notes and migration guidance with `akm help migrate <version>`.
 
+This project is still pre-release. Treat `.stash.json` as a deprecated legacy
+compatibility format for older stashes, not the recommended authoring path. It
+will be removed in v0.8.0. Prefer frontmatter for markdown assets and
+structured header comments for scripts.
+
 ## Quick Start
 
 ```sh
@@ -168,6 +173,8 @@ akm add https://docs.example.com --name docs --max-pages 100 --max-depth 5
 4. Publish to npm or push to GitHub
 
 See the [Stash Maker's Guide](docs/stash-makers.md) for a full walkthrough.
+If you are updating an older stash, see the legacy metadata migration guidance in
+that guide and the [v1 migration guide](docs/migration/v1.md).
 
 ### Official Onboarding Stash
 

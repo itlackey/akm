@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
-import { akmIndex } from "../../src/indexer/indexer";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
+import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { createWiki, stashRaw } from "../../src/wiki/wiki";
 
@@ -40,7 +40,10 @@ function writeFile(filePath: string, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): { url: string; server: ReturnType<typeof Bun.serve> } {
+function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+} {
   const server = Bun.serve({
     port: 0,
     async fetch() {
@@ -689,6 +692,37 @@ describe("Substring fallback", () => {
     expect(doctorHit).toBeDefined();
     expect(doctorHit?.description).toBe("Diagnose workspace health issues");
     expect(doctorHit?.tags).toContain("diagnostics");
+  });
+
+  test("substring fallback ignores filename-less .stash.json metadata", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(path.join(stashDir, "scripts", "doctor", "doctor.sh"), "#!/bin/bash\necho doctor\n");
+    writeFile(
+      path.join(stashDir, "scripts", "doctor", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "doctor",
+            type: "script",
+            description: "Legacy metadata that should not be used without filename",
+            tags: ["health", "diagnostics"],
+          },
+        ],
+      }),
+    );
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+
+    const result = await akmSearch({ query: "legacy metadata", source: "local" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(localHits.some((hit) => hit.name === "doctor")).toBe(false);
+
+    const generatedResult = await akmSearch({ query: "doctor", source: "local" });
+    const generatedHits = generatedResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const doctorHit = generatedHits.find((h) => h.name.includes("doctor"));
+    expect(doctorHit).toBeDefined();
+    expect(doctorHit?.description).not.toBe("Legacy metadata that should not be used without filename");
   });
 });
 

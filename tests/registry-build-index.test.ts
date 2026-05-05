@@ -362,6 +362,47 @@ describe("buildRegistryIndex", () => {
     expect(reviewAsset?.estimatedTokens).toBeGreaterThan(0);
     expect(npmStash?.assets?.some((asset) => asset.name === "ignored.sh")).toBe(false);
   });
+
+  test("prefers generated file metadata over filename-less legacy stash metadata", async () => {
+    const fixtureRoot = makeTempDir("akm-registry-build-filename-less-");
+    const npmPackageDir = path.join(fixtureRoot, "package");
+    writeFile(
+      path.join(npmPackageDir, "package.json"),
+      JSON.stringify({
+        name: "agent-stash",
+        version: "1.2.3",
+      }),
+    );
+    writeFile(path.join(npmPackageDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\n# Deploy generated metadata\n");
+    writeFile(
+      path.join(npmPackageDir, "scripts", ".stash.json"),
+      JSON.stringify({
+        entries: [
+          {
+            name: "deploy",
+            type: "script",
+            description: "legacy filename-less entry",
+          },
+        ],
+      }),
+    );
+    const npmArchivePath = path.join(fixtureRoot, "npm-agent-stash.tgz");
+    createTarball(npmPackageDir, npmArchivePath);
+
+    const githubRepoDir = path.join(fixtureRoot, "release-stash-main");
+    writeFile(path.join(githubRepoDir, "commands", "release.md"), "Use $ARGUMENTS\n");
+    const githubArchivePath = path.join(fixtureRoot, "github-release-stash.tgz");
+    createTarball(githubRepoDir, githubArchivePath);
+
+    const serverBase = createRegistryServer(npmArchivePath, githubArchivePath);
+    const result = await buildRegistryIndex({ npmRegistryBase: serverBase, githubApiBase: serverBase });
+
+    const npmStash = result.index.stashes.find((stash) => stash.id === "npm:agent-stash");
+    expect(npmStash).toBeDefined();
+    const deployAsset = npmStash?.assets?.find((asset) => asset.type === "script" && asset.name === "deploy.sh");
+    expect(deployAsset).toBeDefined();
+    expect(deployAsset?.description).not.toBe("legacy filename-less entry");
+  });
 });
 
 function waitForChild(

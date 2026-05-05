@@ -13,7 +13,7 @@ Resolve all sources (filesystem, git, website, npm) and materialise caches
         ↓
 Walk files and classify assets
         ↓
-Load .stash.json or generate metadata
+Generate metadata from the asset, then merge explicit-file legacy overrides
         ↓
 Build weighted search fields
         ↓
@@ -102,13 +102,20 @@ CREATE TABLE workflow_documents (
 
 ## Metadata Sources
 
-When `.stash.json` is absent, akm derives metadata from signals such as:
+AKM now treats file-derived metadata as the primary runtime source. It derives
+metadata from signals such as:
 
 - frontmatter
 - comments / headers
 - filenames
 - `package.json`
 - renderer-specific extraction (workflow params, TOC, vault key hints, wiki metadata)
+
+Legacy `.stash.json` support remains only as a compatibility layer for entries
+that name an explicit `filename`, and that compatibility layer is deprecated and
+scheduled for removal in v0.8.0. Filename-less `.stash.json` entries are no
+longer treated as first-class metadata during indexing, search fallback,
+manifest generation, or registry build.
 
 ## Parameters
 
