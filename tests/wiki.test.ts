@@ -8,7 +8,9 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig, saveConfig } from "../src/core/config";
@@ -39,6 +41,7 @@ import {
 } from "../src/wiki/wiki";
 
 const tempDirs: string[] = [];
+const CLI = path.join(__dirname, "..", "src", "cli.ts");
 
 function makeStash(prefix = "akm-wiki-test-"): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -51,6 +54,25 @@ function writePage(wikiDir: string, relPath: string, body: string): string {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, body, "utf8");
   return abs;
+}
+
+function writeConfig(configDir: string, body: Record<string, unknown>): void {
+  const akmDir = path.join(configDir, "akm");
+  fs.mkdirSync(akmDir, { recursive: true });
+  fs.writeFileSync(path.join(akmDir, "config.json"), JSON.stringify(body, null, 2), "utf8");
+}
+
+function runCli(args: string[], options: { stashDir: string; configDir: string }) {
+  return spawnSync("bun", [CLI, ...args], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      AKM_STASH_DIR: options.stashDir,
+      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
+      XDG_CACHE_HOME: makeStash("akm-wiki-cache-"),
+    },
+  });
 }
 
 afterEach(() => {
@@ -391,6 +413,39 @@ describe("stashRaw", () => {
     expect(() => stashRaw({ stashDir: stash, wikiName: "missing", content: "hi", preferredName: "x" })).toThrow(
       /not found/i,
     );
+  });
+
+  test("wiki stash accepts a URL and writes converted markdown to raw/", async () => {
+    const stash = makeStash();
+    createWiki(stash, "research");
+    const configDir = makeStash("akm-wiki-config-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        "<html><head><title>Attention</title></head><body><h1>Attention</h1><p>Paper abstract.</p></body></html>",
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Failed to start test server");
+
+    try {
+      const url = `http://127.0.0.1:${address.port}/papers/attention`;
+      const result = runCli(["wiki", "stash", "research", url], { stashDir: stash, configDir });
+      expect(result.status).toBe(0);
+
+      const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
+      expect(json.ok).toBe(true);
+      expect(json.ref).toBe("wiki:research/raw/papers-attention");
+      const body = fs.readFileSync(json.path, "utf8");
+      expect(body).toContain('name: "attention"');
+      expect(body).toContain('sourceUrl: "http://127.0.0.1:');
+      expect(body).toContain("# Attention");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });
 

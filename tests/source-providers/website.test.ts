@@ -7,10 +7,11 @@ import { ConfigError, UsageError } from "../../src/core/errors";
 import { resolveSourceProviderFactory } from "../../src/sources/provider-factory";
 import {
   ensureWebsiteMirror,
-  getCachePaths,
+  fetchWebsiteMarkdownSnapshot,
+  getWebsiteCachePaths,
   validateWebsiteInputUrl,
   validateWebsiteUrl,
-} from "../../src/sources/providers/website";
+} from "../../src/sources/website-ingest";
 
 // Trigger self-registration
 import "../../src/sources/providers/website";
@@ -139,9 +140,37 @@ describe("WebsiteSourceProvider", () => {
     expect(() => validateWebsiteUrl("not a url")).toThrow(ConfigError);
   });
 
-  test("getCachePaths is stable for normalized URLs", () => {
-    const a = getCachePaths("https://example.com/docs/");
-    const b = getCachePaths("https://example.com/docs");
+  test("getWebsiteCachePaths is stable for normalized URLs", () => {
+    const a = getWebsiteCachePaths("https://example.com/docs/");
+    const b = getWebsiteCachePaths("https://example.com/docs");
     expect(a.rootDir).toBe(b.rootDir);
+  });
+
+  test("fetchWebsiteMarkdownSnapshot fetches one page and derives a URL-path name", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://docs.example.test/guide/getting-started") {
+        return new Response(
+          "<html><head><title>Getting Started</title></head><body><h1>Getting Started</h1><p>Run setup first.</p></body></html>",
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await fetchWebsiteMarkdownSnapshot("https://docs.example.test/guide/getting-started");
+      expect(snapshot.url).toBe("https://docs.example.test/guide/getting-started");
+      expect(snapshot.preferredName).toBe("guide/getting-started");
+      expect(snapshot.title).toBe("Getting Started");
+      expect(snapshot.content).toContain('sourceUrl: "https://docs.example.test/guide/getting-started"');
+      expect(snapshot.content).toContain("# Getting Started");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -37,7 +37,7 @@ import { akmClone } from "./commands/source-clone";
 import { addStash } from "./commands/source-manage";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
+import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
@@ -65,6 +65,7 @@ import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { saveGitStash } from "./sources/providers/git";
 import { resolveAssetPath } from "./sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
+import { fetchWebsiteMarkdownSnapshot } from "./sources/website-ingest";
 import { pkgVersion } from "./version";
 import {
   createWorkflowAsset,
@@ -1172,6 +1173,12 @@ function readKnowledgeContent(source: string): { content: string; preferredName?
   };
 }
 
+async function readKnowledgeInput(source: string): Promise<{ content: string; preferredName?: string }> {
+  if (!isHttpUrl(source)) return readKnowledgeContent(source);
+  const snapshot = await fetchWebsiteMarkdownSnapshot(source);
+  return { content: snapshot.content, preferredName: snapshot.preferredName };
+}
+
 async function writeMarkdownAsset(options: {
   type: "knowledge" | "memory";
   content: string;
@@ -1777,12 +1784,12 @@ function wasRememberFlagValueConsumedAsContent(
 const importKnowledgeCommand = defineCommand({
   meta: {
     name: "import",
-    description: "Import a knowledge document into the default stash",
+    description: "Import a knowledge document or URL into the default stash",
   },
   args: {
     source: {
       type: "positional",
-      description: 'Source file path, or "-" to read from stdin',
+      description: 'Source file path, URL, or "-" to read from stdin',
       required: true,
     },
     name: {
@@ -1802,11 +1809,11 @@ const importKnowledgeCommand = defineCommand({
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
-      const { content, preferredName } = readKnowledgeContent(args.source);
+      const { content, preferredName } = await readKnowledgeInput(args.source);
       const result = await writeMarkdownAsset({
         type: "knowledge",
         content,
-        name: args.name,
+        name: args.name ?? (isHttpUrl(args.source) ? preferredName : undefined),
         fallbackPrefix: "knowledge",
         preferredName,
         force: args.force,
@@ -2455,17 +2462,17 @@ const wikiStashCommand = defineCommand({
   meta: {
     name: "stash",
     description:
-      "Copy a source into wikis/<name>/raw/<slug>.md with frontmatter. Source may be a file path or '-' for stdin.",
+      "Copy a source into wikis/<name>/raw/<slug>.md with frontmatter. Source may be a file path, URL, or '-' for stdin.",
   },
   args: {
     name: { type: "positional", description: "Wiki name", required: true },
-    source: { type: "positional", description: "Source file path, or '-' to read from stdin", required: true },
+    source: { type: "positional", description: "Source file path, URL, or '-' to read from stdin", required: true },
     as: { type: "string", description: "Preferred slug base (defaults to source filename or first-line slug)" },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { stashRaw } = await import("./wiki/wiki.js");
-      const { content, preferredName } = readKnowledgeContent(args.source);
+      const { content, preferredName } = await readKnowledgeInput(args.source);
       const stashDir = resolveStashDir();
       const result = stashRaw({
         stashDir,

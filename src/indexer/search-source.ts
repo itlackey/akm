@@ -9,7 +9,7 @@ import { resolveSourceProviderFactory } from "../sources/provider-factory";
 import "../sources/providers/index";
 import { warn } from "../core/warn";
 import { ensureGitMirror, getCachePaths, parseGitRepoUrl } from "../sources/providers/git";
-import { ensureWebsiteMirror } from "../sources/providers/website";
+import { ensureWebsiteMirror } from "../sources/website-ingest";
 
 // Legacy "context-hub" / "github" type aliases are normalized to "git" at
 // config-load time (see src/config.ts), so this set only contains the canonical

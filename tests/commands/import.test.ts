@@ -14,6 +14,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
@@ -116,5 +117,40 @@ describe("import --target", () => {
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain("source read-only is not writable");
+  });
+
+  test("imports a URL into knowledge using a URL-path-derived name", async () => {
+    const configDir = makeTempDir("akm-import-config-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(
+        "<html><head><title>Guide Title</title></head><body><h1>Guide Title</h1><p>Hello <strong>world</strong>.</p></body></html>",
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Failed to start test server");
+
+    try {
+      const url = `http://127.0.0.1:${address.port}/docs/guide`;
+      const { stashDir, result } = runCli(["import", url], { configDir });
+      expect(result.status).toBe(0);
+
+      const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+      expect(json.ok).toBe(true);
+      expect(json.ref).toBe("knowledge:docs/guide");
+
+      const expectedPath = path.join(stashDir, "knowledge", "docs", "guide.md");
+      expect(json.path).toBe(expectedPath);
+      const body = fs.readFileSync(expectedPath, "utf8");
+      expect(body).toContain('sourceUrl: "http://127.0.0.1:');
+      expect(body).toContain("# Guide Title");
+      expect(body).toContain("Hello");
+      expect(body).toContain("world");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });

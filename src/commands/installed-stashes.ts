@@ -15,8 +15,8 @@ import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
 import { parseRegistryRef } from "../registry/resolve";
 import type { InstalledStashEntry } from "../registry/types";
 import { syncFromRef } from "../sources/providers/sync-from-ref";
-import { ensureWebsiteMirror } from "../sources/providers/website";
 import type { RemoveResponse, SourceEntry, SourceKind, SourceListResponse, UpdateResponse } from "../sources/types";
+import { ensureWebsiteMirror } from "../sources/website-ingest";
 import { listWikis, resolveWikisRoot } from "../wiki/wiki";
 import {
   auditInstallCandidate,

@@ -744,7 +744,8 @@ frontmatter schema and round-trip rules.
 ### import
 
 Import a knowledge document. This writes a markdown file into `knowledge/` in
-the configured write target and returns the resulting ref.
+the configured write target and returns the resulting ref. The source may be a
+file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
 **Write target resolution:** the destination is the working stash (`stashDir`)
 unless `defaultWriteTarget` is set in config, which overrides it to a named
@@ -756,16 +757,21 @@ source. An explicit `--target <name>` flag overrides both. The full order is
 akm import ./docs/auth-flow.md
 akm import ./notes/release.txt --name release-checklist
 akm import - --name scratch-notes < notes.md
+akm import https://example.com/docs/auth
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--name` | Optional knowledge name. Defaults to the source filename or a slug from stdin content |
+| `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
 
-The source must be a readable file path, or `-` to read the document from
-stdin.
+URL imports fetch only the exact page you pass, convert it to markdown, and do
+not register a persistent website source. The default knowledge name comes from
+the URL path (for example, `/docs/auth` -> `knowledge/docs/auth.md`).
+
+The source must be a readable file path, a reachable HTTP/HTTPS URL, or `-` to
+read the document from stdin.
 
 ### feedback
 
@@ -1205,15 +1211,20 @@ Finding kinds:
 akm wiki stash research ./paper.md
 akm wiki stash research ./paper.md --as my-paper
 echo "..." | akm wiki stash research -
+akm wiki stash research https://example.com/papers/attention
 ```
 
-Copies a file (or stdin) into `wikis/<name>/raw/<slug>.md`. Never overwrites
-an existing raw file.
+Copies a file, URL snapshot, or stdin payload into `wikis/<name>/raw/<slug>.md`.
+Never overwrites an existing raw file.
 
 When `--as <slug>` is passed and the slug already exists, the command errors
 with a `UsageError` — it does not silently rename the slug. Without `--as`,
 auto-increment applies: if `paper` exists, the next attempt uses `paper-1`,
 then `paper-2`, and so on.
+
+URL sources fetch only the exact page you pass and convert it to markdown
+before writing under `raw/`. They do not register a persistent website source
+or crawl linked pages.
 
 ### completions
 

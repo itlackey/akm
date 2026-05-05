@@ -284,6 +284,8 @@ These cover the shared write-target path and git-backed save behavior.
       knowledge file into the default write target.
 - [ ] `akm import - --name stdin-doc < "$AKM_SANDBOX/incoming.md"` works from
       stdin.
+- [ ] `akm import http://127.0.0.1:<port>/docs/guide` fetches one URL and writes
+      converted markdown into `knowledge/` using a URL-path-derived name.
 - [ ] `akm import "$AKM_SANDBOX/incoming.md" --name to-alt --target <source-name>`
       lands in the alternate target.
 - [ ] `akm import does-not-exist.md --name broken` fails cleanly with a
@@ -386,6 +388,8 @@ Workflows now include authoring, validation, execution, and recovery flows.
       that wiki.
 - [ ] `echo "# Raw source" | akm wiki stash my-wiki - --as raw-source` creates a
       raw source file.
+- [ ] `akm wiki stash my-wiki http://127.0.0.1:<port>/paper` fetches one URL and
+      writes converted markdown into `wikis/my-wiki/raw/` without crawling.
 - [ ] Re-running the same explicit slug with `--as raw-source` fails rather than
       overwriting.
 - [ ] `akm wiki ingest my-wiki` prints the ingest workflow and does not mutate

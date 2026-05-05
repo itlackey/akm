@@ -135,6 +135,7 @@ akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
+akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflows/foo.md         # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Start or resume the next workflow step
@@ -162,6 +163,7 @@ akm wiki show research                         # Path, description, counts, last
 akm wiki pages research                        # Page refs + descriptions (excludes schema/index/log; includes raw/)
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
+akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug>.md
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
 akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)

@@ -14,7 +14,9 @@ akm show knowledge:my-doc                    # Show a knowledge asset
 akm workflow next workflow:ship-release       # Resume the active run or start a new one
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
+akm import https://example.com/docs/auth      # Fetch one URL into knowledge/
 akm wiki list                                 # List wikis (multi-wiki knowledge bases)
+akm wiki stash research https://example.com/paper # Fetch one URL into wiki raw/
 akm wiki ingest <name>                        # Print the ingest workflow for a wiki
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)

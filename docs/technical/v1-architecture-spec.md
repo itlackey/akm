@@ -498,6 +498,10 @@ The index knows which file corresponds to each ref. Read it.
 ### 6.5 Remember / Import (`akm remember`, `akm import`)
 
 1. Input → ingest transformer → asset content.
+   For website URLs, the single-page fetch/convert path lives in the shared
+   `src/sources/website-ingest.ts` module rather than the website provider
+   itself, so one-shot URL ingest and persistent website mirrors reuse the same
+   normalization and markdown conversion logic.
 2. Pick target: `--target <name>`, else `config.defaultWriteTarget`, else the user's working stash (`config.stashDir` — the source created by `akm init`). `ConfigError` if none configured (hint: run `akm init`).
 3. Call `writeAssetToSource(source, config, ref, content)`.
 4. Indexer refreshes against that source's path.
@@ -541,6 +545,9 @@ src/
     git.ts
     website.ts
     npm.ts
+
+  sources/
+    website-ingest.ts     # shared website URL validation, fetch/convert, mirror generation
 
   providers/
     types.ts              # RegistryProvider interface

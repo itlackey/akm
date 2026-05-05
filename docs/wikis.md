@@ -100,7 +100,12 @@ index and search results. Both commands return canonical refs such as
 akm wiki stash <name> <source>        # copy to raw/<slug>.md with frontmatter
 cat source.md | akm wiki stash <n> -  # stdin form
 akm wiki stash <name> <source> --as <slug>  # override derived slug
+akm wiki stash <name> https://example.com/paper  # fetch one URL into raw/
 ```
+
+`<source>` may be a file path, a single HTTP/HTTPS URL, or `-` for stdin. URL
+ingest fetches only the exact page you pass, converts it to markdown, and does
+not register a persistent website source or crawl linked pages.
 
 Invariants `stash` guarantees:
 
