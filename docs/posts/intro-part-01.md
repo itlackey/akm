@@ -2,7 +2,7 @@
 title: Your AI Agent's Skill List Is Getting Out of Hand
 id: 3327252
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-skills
 description: A quick introduction to the Agent-i-Stash CLI for managing AI agent extensions
 tags:
   - ai

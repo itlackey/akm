@@ -1,7 +1,7 @@
 ---
 title: Agents That Remember Where They Were
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-workflows
 description: 'akm 0.5.0 adds workflow assets, vault assets, and a writable synced stash.'
 tags:
   - ai

@@ -2,7 +2,7 @@
 title: Your Agent's Memory Shouldn't Disappear When the Session Ends
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 id: 3359720
-series: akm
+series: akm-memory
 description: A quick introduction to using OpenViking with akm
 tags:
   - ai

@@ -1,7 +1,7 @@
 ---
 title: 'Stop Copying Skills Between Claude Code, Cursor, and Codex'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-skills
 description: Your agent skills are scattered across three tools. Here's why indexing in place beats copying or syncing.
 tags:
   - ai

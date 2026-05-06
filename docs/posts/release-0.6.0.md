@@ -1,7 +1,7 @@
 ---
 title: 'akm 0.6.0: Clean Break to Stash, Quieter CLI, Easier Migration'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-releases
 description: 'akm 0.6.0 simplifies stash terminology, lockfile naming, and wire format before v1.'
 tags:
   - ai
