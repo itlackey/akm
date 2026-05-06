@@ -1,7 +1,7 @@
 ---
 title: 'akm 0.5.0: Wikis, Workflows, Vaults, and a Writable Stash'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-releases
 description: 'akm 0.5.0 ships multi-wiki support, workflow and vault asset types, writable git stash sync, and a one-off --trust install bypass.'
 tags:
   - ai

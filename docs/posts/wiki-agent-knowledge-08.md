@@ -1,7 +1,7 @@
 ---
 title: Building Agent Knowledge Bases That Actually Scale
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-knowledge
 description: 'akm multi-wiki support gives agents a searchable, maintainable knowledge base.'
 tags:
   - ai

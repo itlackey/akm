@@ -1,7 +1,7 @@
 ---
 title: 'akm 0.7.0: Proposal Queue, Reflection Commands, Lessons, and akm-bench'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-releases
 description: 'akm 0.7.0 adds the proposal queue, reflection commands, lessons, and akm-bench.'
 tags:
   - ai

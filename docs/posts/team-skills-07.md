@@ -1,7 +1,7 @@
 ---
 title: Your Team's Agent Skills Are a Mess. Here's How to Fix It.
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-skills
 description: Every agent skills article is about individual developers. But teams are where skills become valuable and messy simultaneously.
 tags:
   - ai

@@ -1,7 +1,7 @@
 ---
 title: Your Agent Loads 47 Skills at Startup. It Needs Three.
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
-series: akm
+series: akm-skills
 description: 'The napkin math behind progressive disclosure, and how akm makes it work across every platform you use.'
 tags:
   - ai
