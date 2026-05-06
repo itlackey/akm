@@ -65,8 +65,16 @@ jobs:
             git commit -m "chore: bump version to ${{ inputs.version }}"
             git push
           fi
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          if git rev-parse -q --verify "refs/tags/v${{ inputs.version }}" >/dev/null; then
+            echo "Tag v${{ inputs.version }} already exists locally."
+          else
+            git tag "v${{ inputs.version }}"
+          fi
+          if git ls-remote --tags origin | grep -q "refs/tags/v${{ inputs.version }}$"; then
+            echo "Tag v${{ inputs.version }} already exists on origin."
+          else
+            git push origin "v${{ inputs.version }}"
+          fi
           echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           if echo "${{ inputs.version }}" | grep -qE '[-]'; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -95,6 +103,10 @@ jobs:
       - name: Publish to npm
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if npm view "akm-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "akm-cli@$VERSION is already published; skipping npm publish."
+            exit 0
+          fi
           if echo "$VERSION" | grep -qE '[-]'; then
             echo "Prerelease detected ($VERSION) — publishing with --tag next"
             npm publish --provenance --access public --tag next
@@ -127,7 +139,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - run: bun install
+      - run: bun install --omit optional
 
       - name: Compile binary
         run: bun build ./src/cli.ts --compile --target=${{ matrix.target }} --outfile ${{ matrix.artifact }} --define "AKM_VERSION='${{ inputs.version }}'"
