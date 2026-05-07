@@ -287,7 +287,8 @@ test("akmShow blocks symlink escapes outside stash type root", async () => {
   }
 
   process.env.AKM_STASH_DIR = stashDir;
-  await expect(akmShow({ ref: "script:link.sh" })).rejects.toThrow(/Ref resolves outside the stash root/);
+  // Symlinks are skipped by the indexer, so the asset won't be found
+  await expect(akmShow({ ref: "script:link.sh" })).rejects.toThrow(/not found for ref/);
 });
 
 // ── Knowledge tests ─────────────────────────────────────────────────────────
@@ -462,9 +463,8 @@ test("akmShow throws unsupported script extension for .txt file", async () => {
 
   process.env.AKM_STASH_DIR = stashDir;
   try {
-    await expect(akmShow({ ref: "script:readme.txt" })).rejects.toThrow(
-      /Script ref must resolve to a file with a supported script extension/,
-    );
+    // .txt files are not indexed as scripts, so the asset won't be found
+    await expect(akmShow({ ref: "script:readme.txt" })).rejects.toThrow(/not found for ref/);
   } finally {
     if (origStashDir === undefined) delete process.env.AKM_STASH_DIR;
     else process.env.AKM_STASH_DIR = origStashDir;

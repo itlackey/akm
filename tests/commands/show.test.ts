@@ -267,7 +267,8 @@ describe("akmShow content-based classification", () => {
 
   test("tools frontmatter in commands/ overrides to agent (strong signal)", async () => {
     // tools/toolPolicy are agent-exclusive signals at specificity 20,
-    // which beats the commands/ directory matcher at 10.
+    // which beats the commands/ directory matcher at 10. The indexer
+    // classifies this as an agent, so the ref uses agent: type.
     writeFile(
       path.join(stashDir, "commands", "hybrid.md"),
       ["---", "tools:", "  read: allow", "model: gpt-4", "---", "You are a hybrid agent."].join("\n"),
@@ -275,7 +276,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "command:hybrid.md" });
+    const result = await akmShow({ ref: "agent:commands/hybrid" });
 
     expect(result.type).toBe("agent");
     expect(result.action).toContain("verbatim");
@@ -348,6 +349,8 @@ describe("akmShow content-based classification", () => {
   });
 
   test("$ARGUMENTS in body classifies .md as command even outside commands/", async () => {
+    // $ARGUMENTS placeholder (specificity 18) beats knowledge/ directory hint (10).
+    // The indexer classifies this as a command based on content.
     writeFile(
       path.join(stashDir, "knowledge", "deploy-cmd.md"),
       ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
@@ -355,8 +358,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    // $ARGUMENTS placeholder (specificity 18) beats knowledge/ directory hint (10)
-    const result = await akmShow({ ref: "knowledge:deploy-cmd.md" });
+    const result = await akmShow({ ref: "command:knowledge/deploy-cmd" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
@@ -364,6 +366,8 @@ describe("akmShow content-based classification", () => {
   });
 
   test("agent frontmatter classifies .md as command even outside commands/", async () => {
+    // agent frontmatter (specificity 18) beats agents/ directory hint (15).
+    // The indexer classifies this as a command based on content.
     writeFile(
       path.join(stashDir, "agents", "build-cmd.md"),
       ["---", "agent: build", "description: Build dispatch", "---", "Build the project."].join("\n"),
@@ -371,8 +375,7 @@ describe("akmShow content-based classification", () => {
 
     saveConfig({ semanticSearchMode: "off" });
 
-    // agent frontmatter (specificity 18) beats agents/ directory hint (15)
-    const result = await akmShow({ ref: "agent:build-cmd.md" });
+    const result = await akmShow({ ref: "command:agents/build-cmd" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Build the project.");

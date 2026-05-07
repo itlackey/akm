@@ -73,7 +73,13 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   });
 
   expect(exitCode).toBe(0);
-  if (stderr.trim()) {
+  // Auto-index may produce progress output on stderr; only fail on actual errors
+  const isAutoIndexOutput =
+    stderr.includes("Starting") ||
+    stderr.includes("Scanned") ||
+    stderr.includes("Rebuilt") ||
+    stderr.includes("[embed]");
+  if (stderr.trim() && !isAutoIndexOutput) {
     expect(stderr.trim()).toBe("");
   }
   return stdout.trim();

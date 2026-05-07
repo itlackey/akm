@@ -580,10 +580,10 @@ describe("Score boosts", () => {
   });
 });
 
-// ── 2.3 Substring fallback ──────────────────────────────────────────────────
+// ── 2.3 Auto-index on stale ──────────────────────────────────────────────────
 
-describe("Substring fallback", () => {
-  test("falls back to substring search when no index exists", async () => {
+describe("Auto-index on stale", () => {
+  test("auto-indexes when no index exists and returns results", async () => {
     const stashDir = tmpStash();
 
     // Do NOT call akmIndex — just create files on disk
@@ -597,10 +597,10 @@ describe("Substring fallback", () => {
     expect(localHits.length).toBeGreaterThanOrEqual(1);
     const deployHit = localHits.find((h) => h.name.includes("deploy"));
     expect(deployHit).toBeDefined();
-    // Substring fallback computes a relevance score but has no whyMatched
+    // Auto-index builds the full index, so whyMatched is present
     expect(deployHit?.score).toBeGreaterThan(0);
     expect(deployHit?.score).toBeLessThanOrEqual(1);
-    expect(deployHit?.whyMatched).toBeUndefined();
+    expect(deployHit?.whyMatched).toBeDefined();
   });
 
   test("substring search is case-insensitive", async () => {

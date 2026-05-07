@@ -1392,14 +1392,15 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
   const dbPath = getDbPath();
   const db = openExistingDatabase(dbPath);
   try {
-    // entry_key shape: `${stashDir}:${type}:${name}`. Suffix-match on
-    // `:type:name` so we can scope by source dir as a prefix when origin is
-    // supplied. Use parameterised queries throughout — names may include
-    // user-supplied glob characters.
     const escapeLike = (value: string): string =>
       value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-    const suffix = `:${ref.type}:${ref.name}`;
-    const escapedSuffix = escapeLike(suffix);
+
+    // Canonical names strip .md for markdown assets, but users often pass
+    // refs with .md (e.g. command:release.md). Normalize by trying both.
+    const nameVariants = [ref.name];
+    if (ref.name.endsWith(".md")) {
+      nameVariants.push(ref.name.slice(0, -3));
+    }
 
     const candidateDirs: string[] = (() => {
       if (!ref.origin) return sources.map((s) => s.path);
@@ -1410,24 +1411,28 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 
     if (candidateDirs.length === 0) return null;
 
-    for (const dir of candidateDirs) {
-      const escapedDir = escapeLike(dir);
-      const row = db
-        .prepare(
-          "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type FROM entries " +
-            "WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1",
-        )
-        .get(`${escapedDir}${escapedSuffix}`, ref.type) as
-        | { entryKey: string; filePath: string; stashDir: string; type: string }
-        | undefined;
-      if (row) {
-        return {
-          entryKey: row.entryKey,
-          filePath: row.filePath,
-          stashDir: row.stashDir,
-          type: row.type,
-          name: ref.name,
-        };
+    for (const name of nameVariants) {
+      const suffix = `:${ref.type}:${name}`;
+      const escapedSuffix = escapeLike(suffix);
+      for (const dir of candidateDirs) {
+        const escapedDir = escapeLike(dir);
+        const row = db
+          .prepare(
+            "SELECT entry_key AS entryKey, file_path AS filePath, stash_dir AS stashDir, entry_type AS type FROM entries " +
+              "WHERE entry_key LIKE ? ESCAPE '\\' AND entry_type = ? LIMIT 1",
+          )
+          .get(`${escapedDir}${escapedSuffix}`, ref.type) as
+          | { entryKey: string; filePath: string; stashDir: string; type: string }
+          | undefined;
+        if (row) {
+          return {
+            entryKey: row.entryKey,
+            filePath: row.filePath,
+            stashDir: row.stashDir,
+            type: row.type,
+            name: ref.name,
+          };
+        }
       }
     }
     return null;

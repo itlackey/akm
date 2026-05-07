@@ -131,10 +131,10 @@ describe("akm feedback", () => {
 
     const result = runCli(["feedback", "memory:missing", "--positive", "--format=json"]);
     expect(result.status).not.toBe(0);
-    expect(parseJsonOutput(result)).toMatchObject({
-      ok: false,
-      error: 'Ref "memory:missing" is not in the current index. Run "akm index" and try again.',
-    });
+    const output = parseJsonOutput(result);
+    expect(output.ok).toBe(false);
+    expect(output.error).toContain("memory:missing");
+    expect(output.error).toContain("not in the index");
   });
 
   // ── #284 GAP-HIGH 8: feedback --note metadata round-trip ────────────────

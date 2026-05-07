@@ -13,7 +13,6 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import { makeAssetRef } from "../core/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
 import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
@@ -37,14 +36,10 @@ import {
 import { getRenderer } from "./file-context";
 import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import {
-  generateMetadataFlat,
   isProposedQuality,
-  loadStashFile,
   type StashEntry,
   type StashEntryScope,
-  shouldIndexStashFile,
 } from "./metadata";
-import { buildSearchText } from "./search-fields";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -52,12 +47,7 @@ import {
   isSemanticRuntimeReady,
   readSemanticStatus,
 } from "./semantic-status";
-import { walkStashFlat } from "./walker";
-
-type IndexedAsset = {
-  entry: StashEntry;
-  path: string;
-};
+import { ensureIndex } from "./ensure-index";
 
 export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
   const name = registry.rendererNameFor(type);
@@ -125,7 +115,6 @@ export async function searchLocal(input: {
   const semanticStatus = getEffectiveSemanticStatus(config, rawStatus);
   const warnings: string[] = [];
   if (config.semanticSearchMode === "auto" && semanticStatus === "pending") {
-    // Distinguish between fingerprint mismatch (config changed) and never-set-up.
     const currentFingerprint = deriveSemanticProviderFingerprint(config.embedding);
     if (rawStatus && rawStatus.providerFingerprint !== currentFingerprint) {
       warnings.push(
@@ -143,73 +132,55 @@ export async function searchLocal(input: {
     );
   }
 
-  // Try to open the database
+  // Auto-index when stale so the DB is always current before querying.
+  await ensureIndex(stashDir);
+
   const dbPath = getDbPath();
-  try {
-    if (fs.existsSync(dbPath)) {
-      const db = openExistingDatabase(dbPath);
-      try {
-        const entryCount = getEntryCount(db);
-        const storedStashDir = getMeta(db, "stashDir");
-        // Accept the index if the incoming stashDir matches the primary OR
-        // appears anywhere in the stored stashDirs array. This prevents
-        // unnecessary substring fallback when only the primary dir changes.
-        let stashDirMatch = storedStashDir === stashDir;
-        if (!stashDirMatch) {
-          try {
-            const storedDirs = JSON.parse(getMeta(db, "stashDirs") ?? "[]") as string[];
-            stashDirMatch = storedDirs.includes(stashDir);
-          } catch {
-            /* ignore malformed stashDirs */
-          }
-        }
-        if (entryCount > 0 && stashDirMatch) {
-          const { hits, embedMs, rankMs } = await searchDatabase(
-            db,
-            query,
-            searchType,
-            limit,
-            stashDir,
-            allSourceDirs,
-            config,
-            sources,
-            rendererRegistry,
-            filters,
-            includeProposed,
-          );
-          return {
-            hits,
-            tip:
-              hits.length === 0
-                ? "No matching stash assets were found. Try running 'akm index' to rebuild."
-                : undefined,
-            warnings: warnings.length > 0 ? warnings : undefined,
-            embedMs,
-            rankMs,
-          };
-        }
-      } finally {
-        closeDatabase(db);
-      }
-    }
-  } catch (error) {
-    warn(
-      "Search index unavailable, falling back to substring search:",
-      error instanceof Error ? error.message : String(error),
-    );
+  if (!fs.existsSync(dbPath)) {
+    return {
+      hits: [],
+      tip: "No search index available. Run 'akm index' to build one.",
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
   }
 
-  const hitArrays = await Promise.all(
-    allSourceDirs.map((dir) =>
-      substringSearch(query, searchType, limit, dir, sources, config, rendererRegistry, filters, includeProposed),
-    ),
-  );
-  const hits = hitArrays.flat().slice(0, limit);
-  return {
-    hits,
-    tip: hits.length === 0 ? "No matching stash assets were found. Try running 'akm index' to rebuild." : undefined,
-    warnings: warnings.length > 0 ? warnings : undefined,
-  };
+  const db = openExistingDatabase(dbPath);
+  try {
+    const entryCount = getEntryCount(db);
+    if (entryCount === 0) {
+      return {
+        hits: [],
+        tip: "Index is empty. Run 'akm index' to populate it.",
+        warnings: warnings.length > 0 ? warnings : undefined,
+      };
+    }
+
+    const { hits, embedMs, rankMs } = await searchDatabase(
+      db,
+      query,
+      searchType,
+      limit,
+      stashDir,
+      allSourceDirs,
+      config,
+      sources,
+      rendererRegistry,
+      filters,
+      includeProposed,
+    );
+    return {
+      hits,
+      tip:
+        hits.length === 0
+          ? "No matching stash assets were found. Try a different query or run 'akm index' to rebuild."
+          : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      embedMs,
+      rankMs,
+    };
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 // ── Database search ─────────────────────────────────────────────────────────
@@ -659,80 +630,6 @@ async function tryVecScores(
   }
 }
 
-// ── Substring fallback (no index) ───────────────────────────────────────────
-
-async function substringSearch(
-  query: string,
-  searchType: AkmSearchType,
-  limit: number,
-  stashDir: string,
-  sources: SearchSource[],
-  config?: AkmConfig,
-  rendererRegistry: RendererRegistry = defaultRendererRegistry,
-  filters?: StashEntryScope,
-  includeProposed = false,
-): Promise<SourceSearchHit[]> {
-  const assets = await indexAssets(stashDir, searchType, sources);
-  const scopeMatched = filters ? assets.filter((asset) => entryMatchesScope(asset.entry.scope, filters)) : assets;
-  const qualityMatched = includeProposed
-    ? scopeMatched
-    : scopeMatched.filter((asset) => !isProposedQuality(asset.entry.quality));
-  const matched = qualityMatched.filter((asset) => !query || buildSearchText(asset.entry).includes(query));
-
-  if (!query) {
-    const sorted = matched.sort(compareAssets);
-    const unique = deduplicateAssetsByPath(sorted);
-    return Promise.all(
-      unique
-        .slice(0, limit)
-        .map((asset) => assetToSearchHit(asset, stashDir, sources, config, undefined, rendererRegistry)),
-    );
-  }
-
-  // Score and sort by relevance
-  const scored = matched.map((asset) => ({ asset, score: scoreSubstringMatch(asset.entry, query) }));
-  scored.sort((a, b) => b.score - a.score || compareAssets(a.asset, b.asset));
-
-  // Deduplicate by path — keep highest-scored entry per file
-  const dedupedScored = deduplicateByPath(scored.map((s) => ({ ...s, filePath: s.asset.path })));
-
-  return Promise.all(
-    dedupedScored
-      .slice(0, limit)
-      .map(({ asset, score }) => assetToSearchHit(asset, stashDir, sources, config, score, rendererRegistry)),
-  );
-}
-
-function scoreSubstringMatch(entry: StashEntry, query: string): number {
-  const tokens = query.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return 0.5;
-
-  let score = 0.3;
-
-  const nameLower = entry.name.toLowerCase().replace(/[-_]/g, " ");
-  const descLower = (entry.description ?? "").toLowerCase();
-  const tagsLower = (entry.tags ?? []).join(" ").toLowerCase();
-
-  if (nameLower === query) {
-    score += 0.5;
-  } else if (nameLower.includes(query)) {
-    score += 0.35;
-  } else if (tokens.some((t) => nameLower.includes(t))) {
-    score += 0.2;
-  }
-
-  if (tokens.some((t) => tagsLower.includes(t))) {
-    score += 0.1;
-  }
-
-  if (tokens.some((t) => descLower.includes(t))) {
-    score += 0.05;
-  }
-
-  // Issue #8: round to 4 decimal places instead of 2
-  return Math.round(Math.min(1, score) * 10000) / 10000;
-}
-
 // ── Hit building ────────────────────────────────────────────────────────────
 
 export async function buildDbHit(input: {
@@ -861,45 +758,6 @@ export function buildWhyMatched(
   return reasons;
 }
 
-async function assetToSearchHit(
-  asset: IndexedAsset,
-  stashDir: string,
-  sources: SearchSource[],
-  config?: AkmConfig,
-  score?: number,
-  rendererRegistry: RendererRegistry = defaultRendererRegistry,
-): Promise<SourceSearchHit> {
-  const source = findSourceForPath(asset.path, sources);
-  const editable = isEditable(asset.path, config);
-  const ref = resolveSearchHitRef(asset.entry, asset.entry.name, source);
-  const fileSize = readFileSize(asset.path);
-  const size = deriveSize(fileSize);
-  const estimatedTokens = typeof fileSize === "number" ? Math.round(fileSize / 4) : undefined;
-  const hit: SourceSearchHit = {
-    type: asset.entry.type,
-    name: asset.entry.name,
-    path: asset.path,
-    ref,
-    origin: resolveSearchHitOrigin(source),
-    editable,
-    ...(!editable
-      ? { editHint: buildEditHint(asset.path, asset.entry.type, asset.entry.name, source?.registryId) }
-      : {}),
-    description: asset.entry.description,
-    tags: asset.entry.tags,
-    ...(size ? { size } : {}),
-    action: buildLocalAction(asset.entry.type, ref, rendererRegistry),
-    ...(score !== undefined ? { score } : {}),
-    ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-    ...(asset.entry.quality ? { quality: asset.entry.quality } : {}),
-  };
-  const renderer = await rendererForType(asset.entry.type, rendererRegistry);
-  if (renderer?.enrichSearchHit) {
-    renderer.enrichSearchHit(hit, stashDir);
-  }
-  return hit;
-}
-
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 export function deriveSize(bytes?: number): SearchHitSize | undefined {
@@ -909,109 +767,17 @@ export function deriveSize(bytes?: number): SearchHitSize | undefined {
   return "large";
 }
 
-function readFileSize(filePath: string): number | undefined {
-  try {
-    return fs.statSync(filePath).size;
-  } catch {
-    return undefined;
-  }
-}
-
-async function indexAssets(stashDir: string, type: AkmSearchType, sources?: SearchSource[]): Promise<IndexedAsset[]> {
-  const resolvedStashDir = realpathOrResolve(stashDir);
-  const source = sources?.find((entry) => realpathOrResolve(entry.path) === resolvedStashDir);
-  if (source?.wikiName) {
-    return indexWikiRootAssets(stashDir, source.wikiName, type);
-  }
-
-  const assets: IndexedAsset[] = [];
-  const filterType = type === "any" ? undefined : type;
-  const fileContexts = walkStashFlat(stashDir);
-  const dirGroups = new Map<string, string[]>();
-
-  for (const ctx of fileContexts) {
-    const group = dirGroups.get(ctx.parentDirAbs);
-    if (group) group.push(ctx.absPath);
-    else dirGroups.set(ctx.parentDirAbs, [ctx.absPath]);
-  }
-
-  for (const [dirPath, files] of dirGroups) {
-    const generated = await generateMetadataFlat(stashDir, files);
-    const legacyOverrides = loadStashFile(dirPath, { requireFilename: true });
-    const mergedEntries = legacyOverrides
-      ? generated.entries.map((entry) => mergeLegacyEntry(entry, legacyOverrides.entries))
-      : generated.entries;
-    const stash = mergedEntries.length > 0 ? { entries: mergedEntries } : legacyOverrides;
-    if (!stash || stash.entries.length === 0) continue;
-
-    for (const entry of stash.entries) {
-      if (filterType && entry.type !== filterType) continue;
-      if (!entry.filename) continue;
-      const entryPath = path.join(dirPath, entry.filename);
-      if (!shouldIndexStashFile(stashDir, entryPath)) continue;
-      assets.push({ entry, path: entryPath });
-    }
-  }
-
-  return assets;
-}
-
-function mergeLegacyEntry(entry: StashEntry, legacyEntries: StashEntry[]): StashEntry {
-  const legacy = legacyEntries.find((candidate) => candidate.filename === entry.filename);
-  return legacy ? { ...entry, ...legacy, filename: entry.filename } : entry;
-}
-
-async function indexWikiRootAssets(wikiRoot: string, wikiName: string, type: AkmSearchType): Promise<IndexedAsset[]> {
-  if (type !== "any" && type !== "wiki") return [];
-
-  const assets: IndexedAsset[] = [];
-  for (const ctx of walkStashFlat(wikiRoot)) {
-    if (ctx.ext !== ".md") continue;
-    if (!shouldIndexStashFile(wikiRoot, ctx.absPath, { treatStashRootAsWikiRoot: true })) continue;
-    const relNoExt = ctx.relPath.replace(/\.md$/, "");
-    assets.push({
-      entry: {
-        name: `${wikiName}/${relNoExt}`,
-        type: "wiki",
-        filename: ctx.fileName,
-        description: ctx.frontmatter()?.description as string | undefined,
-        source: "frontmatter",
-      },
-      path: ctx.absPath,
-    });
-  }
-  return assets;
-}
-
-function compareAssets(a: IndexedAsset, b: IndexedAsset): number {
-  if (a.entry.type !== b.entry.type) return a.entry.type.localeCompare(b.entry.type);
-  return a.entry.name.localeCompare(b.entry.name);
-}
-
 /**
  * Deduplicate scored results by file path, keeping only the highest-scored
  * entry per unique path. Sorts by score descending internally to ensure the
  * precondition is always met regardless of caller.
  */
 function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
-  // Sort inside to enforce the descending-score precondition
   const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const seen = new Set<string>();
   return sorted.filter((item) => {
     if (seen.has(item.filePath)) return false;
     seen.add(item.filePath);
-    return true;
-  });
-}
-
-/**
- * Deduplicate IndexedAsset[] by path, keeping the first (highest-priority) entry.
- */
-function deduplicateAssetsByPath(assets: IndexedAsset[]): IndexedAsset[] {
-  const seen = new Set<string>();
-  return assets.filter((asset) => {
-    if (seen.has(asset.path)) return false;
-    seen.add(asset.path);
     return true;
   });
 }
@@ -1028,12 +794,4 @@ function entryMatchesScope(scope: StashEntryScope | undefined, filters: StashEnt
     if (!scope || scope[key] !== expected) return false;
   }
   return true;
-}
-
-function realpathOrResolve(targetPath: string): string {
-  try {
-    return fs.realpathSync(targetPath);
-  } catch {
-    return path.resolve(targetPath);
-  }
 }

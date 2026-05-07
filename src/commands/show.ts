@@ -9,15 +9,9 @@
  * edit-hints, summary-detail truncation) lives below in this file. The flow:
  *
  *   1. Special-case wiki-root refs (`wiki:<name>` with no page path).
- *   2. Ask `indexer.lookup(ref)` for the row in the FTS index.
- *   3. Fall back to the on-disk type-dir resolver only when the index has
- *      no matching row — covers the "indexed yet?" gap when the user has
- *      just added a file and not run `akm index`.
+ *   2. Auto-index when stale so the index is current.
+ *   3. Ask `indexer.lookup(ref)` for the row in the FTS index.
  *   4. Render the file via the matcher/renderer pipeline.
- *
- * Step (2) is the v1 spec change: reading is the indexer's job. Step (3) is a
- * pragmatic safety net (NOT remote provider fallback, which the spec
- * forbids — "Show: Local FTS5 index only. No remote provider fallback.").
  */
 
 import fs from "node:fs";
@@ -28,6 +22,7 @@ import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
+import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
 import type { StashEntryScope } from "../indexer/metadata";
@@ -36,7 +31,6 @@ import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 // Eagerly import source providers to trigger self-registration.
 import "../sources/providers/index";
-import { resolveAssetPath } from "../sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, ShowResponse } from "../sources/types";
 import { getActiveWorkflowRun } from "../workflows/runs";
 
@@ -153,7 +147,13 @@ export async function akmShowUnified(input: {
     }
   }
 
-  // Try local filesystem (FTS5 index lookup, then on-disk fallback)
+  // Auto-index when stale so the index is current before lookup.
+  const allSources = resolveSourceEntries();
+  if (allSources.length > 0) {
+    await ensureIndex(allSources[0].path);
+  }
+
+  // Try local filesystem (FTS5 index lookup)
   const result = await showLocal(input);
   // Scope filter narrows resolution: if --scope was supplied, the asset's
   // frontmatter scope must satisfy every supplied key. We re-read the file
@@ -245,40 +245,16 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
 }
 
 /**
- * Resolve an asset path to a file via:
- *   1. `indexer.lookup(ref)` — the spec's primary path (§6.2).
- *   2. On-disk type-dir traversal — fallback for files not yet indexed.
+ * Resolve an asset path via the FTS5 index only. Spec §6.2's primary path.
  *
- * Returns `undefined` if neither path finds a match.
+ * Returns `undefined` if the index has no matching row.
  */
-async function resolvePathViaIndexThenDisk(
-  parsed: AssetRef,
-  searchSourceDirs: string[],
-): Promise<{ assetPath: string; lastError?: Error } | undefined> {
-  // Step 1: indexer
-  try {
-    const entry = await lookup(parsed);
-    if (entry) {
-      return { assetPath: entry.filePath };
-    }
-  } catch (err) {
-    // Index unavailable (e.g. DB doesn't exist yet) — fall back to disk walk.
-    if (!(err instanceof NotFoundError)) {
-      // continue to disk fallback
-    }
+async function resolvePathViaIndex(parsed: AssetRef): Promise<{ assetPath: string } | undefined> {
+  const entry = await lookup(parsed);
+  if (entry) {
+    return { assetPath: entry.filePath };
   }
-
-  // Step 2: on-disk type-dir traversal
-  let lastError: Error | undefined;
-  for (const dir of searchSourceDirs) {
-    try {
-      const assetPath = await resolveAssetPath(dir, parsed.type, parsed.name);
-      return { assetPath, lastError };
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-    }
-  }
-  return lastError ? { assetPath: "", lastError } : undefined;
+  return undefined;
 }
 
 /** @internal Use akmShowUnified() for all external callers. */
@@ -308,11 +284,9 @@ export async function showLocal(input: {
     }
   }
   if (!assetPath) {
-    const resolved = await resolvePathViaIndexThenDisk(parsed, allSourceDirs);
+    const resolved = await resolvePathViaIndex(parsed);
     if (resolved?.assetPath) {
       assetPath = resolved.assetPath;
-    } else if (resolved?.lastError) {
-      lastError = resolved.lastError;
     }
   }
 

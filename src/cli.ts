@@ -47,6 +47,7 @@ import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, setVerbose, warn } from "./core/warn";
 import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
+import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
 import { resolveSourceEntries } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
@@ -1058,7 +1059,7 @@ const feedbackCommand = defineCommand({
     note: { type: "string", description: "Optional note to attach to the feedback" },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       const ref = (args.ref ?? "").trim();
       if (!ref) {
         throw new UsageError(
@@ -1077,11 +1078,20 @@ const feedbackCommand = defineCommand({
       const signal = args.positive ? "positive" : "negative";
       const metadata = args.note ? JSON.stringify({ note: args.note }) : undefined;
 
+      // Auto-index when stale so the index is current before recording feedback.
+      const sources = resolveSourceEntries();
+      if (sources.length > 0) {
+        await ensureIndex(sources[0].path);
+      }
+
       const db = openExistingDatabase();
       try {
         const entryId = findEntryIdByRef(db, ref);
         if (entryId === undefined) {
-          throw new UsageError(`Ref "${ref}" is not in the current index. Run "akm index" and try again.`);
+          throw new UsageError(
+            `Ref "${ref}" is not in the index. ` +
+              "Run 'akm search' to verify the asset exists, then 'akm index' if it was recently added.",
+          );
         }
         // Persist the feedback signal into usage_events. For positive signals,
         // the EMA utility score is updated immediately on the next read path.

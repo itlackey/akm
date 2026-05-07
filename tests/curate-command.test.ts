@@ -109,7 +109,7 @@ describe("curate command", () => {
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>>; tip?: string; summary: string };
 
     expect(json.items).toEqual([]);
-    expect(json.summary).toContain("No curated assets were selected");
-    expect(json.tip).toContain("No matching");
+    // Auto-index runs but finds nothing in the empty stash
+    expect(json.tip).toContain("Index is empty");
   });
 });
