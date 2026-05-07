@@ -411,7 +411,10 @@ async function defaultLookup(ref: string): Promise<string | null> {
 function stripMarkdownFences(raw: string): string {
   // Strip <think>…</think> reasoning blocks first — local LLMs (e.g. Qwen3)
   // emit these before the content, which breaks YAML frontmatter detection.
-  const stripped = raw.trim().replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const stripped = raw
+    .trim()
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
   // Only strip outer triple-fence pairs — leave inner code blocks alone.
   const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
   if (fence) return fence[1].trim();

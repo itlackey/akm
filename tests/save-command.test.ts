@@ -59,7 +59,10 @@ function parseSaveOutput(stdout: string): Record<string, unknown> {
 /** Initialise a bare git repo in `dir` so akm save can commit. */
 function initGitRepo(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
-  for (const args of [["init", dir], ["-C", dir, "config", "commit.gpgsign", "false"]]) {
+  for (const args of [
+    ["init", dir],
+    ["-C", dir, "config", "commit.gpgsign", "false"],
+  ]) {
     const result = spawnSync("git", args, { encoding: "utf8" });
     expect(result.status).toBe(0);
   }

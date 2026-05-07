@@ -21,9 +21,10 @@ you use, so you can build a personal library once and take it everywhere.
 At a high level, `akm` helps agents work the way good human operators work:
 
 1. **connect the sources of truth**
-2. **search for the right asset at the moment it's needed**
+2. **start with a curated shortlist for the task at hand**
 3. **load only the relevant instructions or knowledge**
-4. **capture what worked so the system improves over time**
+4. **go deeper only when broader discovery is needed**
+5. **capture what worked so the system improves over time**
 
 That means `akm` is not just a search tool. It is the layer that helps agents:
 
@@ -35,11 +36,13 @@ That means `akm` is not just a search tool. It is the layer that helps agents:
 
 ## What you get
 
+> This command model reflects the v0.7.0 workflow framing.
+
 Think about `akm` in seven layers:
 
 1. **Set up the workspace** — `setup`, `init`, `config`, `info`, `index`
 2. **Connect sources and discover new ones** — `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
-3. **Find and inspect assets** — `search`, `curate`, `show`
+3. **Find and inspect assets** — `curate`, `search`, `show`
 4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
 5. **Run repeatable procedures** — `workflow`
 6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
@@ -49,7 +52,8 @@ If you only remember one mental model, make it this:
 
 - `akm add` tells akm where content lives
 - `akm index` makes that content searchable
-- `akm search` finds the right thing
+- `akm curate` gives the best first shortlist for a prompt or request
+- `akm search` broadens discovery when you need more assets beyond the curated set
 - `akm show` loads the full thing
 
 Everything else supports one of those steps.
@@ -86,8 +90,8 @@ structured header comments for scripts.
 akm setup                         # Guided setup: configure, initialize, and index
 akm add ~/.claude/skills          # Add your existing local skills
 akm add github:owner/repo         # Add a stash from GitHub
-akm search "deploy"               # Find assets
-akm show script:deploy.sh         # View details and run command
+akm curate "deploy"               # Start with a curated shortlist
+akm show workflow:deploy          # Load the best matching asset
 akm remember "Deployment needs VPN access"
 akm import ./notes/release.md
 akm wiki create architecture
@@ -103,7 +107,9 @@ This quick start is doing more than showing random commands:
 
 - `setup` / `init` create the local workspace
 - `add` connects existing sources of agent knowledge
-- `search` and `show` let the agent load only what is relevant
+- `curate` gives the agent the strongest first list for the task
+- `search` is there when the agent needs deeper discovery beyond the curated shortlist
+- `show` loads only what is relevant
 - `remember`, `import`, and `wiki` turn local discoveries into reusable team context
 - `feedback` starts the continuous-improvement loop that helps good assets rise over time
 

@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import { openExistingDatabase, getEntryCount, getMeta, closeDatabase } from "./db";
+import { closeDatabase, getEntryCount, getMeta, openExistingDatabase } from "./db";
 
 /**
  * Check whether the local index is stale relative to the given stash directory.
@@ -63,10 +63,7 @@ export async function ensureIndex(stashDir: string): Promise<boolean> {
     await akmIndex({ stashDir });
     return true;
   } catch (error) {
-    warn(
-      "Auto-index failed, proceeding with existing index:",
-      error instanceof Error ? error.message : String(error),
-    );
+    warn("Auto-index failed, proceeding with existing index:", error instanceof Error ? error.message : String(error));
     return true;
   }
 }

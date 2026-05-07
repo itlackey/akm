@@ -20,13 +20,15 @@ That's the big idea. The practical question is how the command surface fits toge
 
 This post walks through the CLI by job-to-be-done, with real examples of when you'd use each command.
 
+> This command-family framing reflects `akm` v0.7.0.
+
 ## The Short Version
 
 You can think about `akm` in seven layers:
 
 1. **Set up the workspace** — `setup`, `init`, `config`, `info`, `index`
 2. **Connect sources and discover new ones** — `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
-3. **Find and inspect assets** — `search`, `curate`, `show`
+3. **Find and inspect assets** — `curate`, `search`, `show`
 4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
 5. **Run repeatable procedures** — `workflow`
 6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
@@ -36,7 +38,8 @@ If you only remember one mental model, make it this:
 
 - `akm add` tells akm where content lives
 - `akm index` makes that content searchable
-- `akm search` finds the right thing
+- `akm curate` gives the best first shortlist for a request
+- `akm search` is for deeper discovery when you need more than the curated list
 - `akm show` loads the full thing
 
 Everything else supports one of those steps.
@@ -61,7 +64,7 @@ For example, imagine a team that ships a web app every week. They might use `akm
 - a production vault that exposes secret *keys* without leaking values
 - memories like "staging deploys require VPN"
 
-Now an agent can search for "ship release", load the release workflow, check the deployment vault, read the runbook section it needs, and proceed without every asset being loaded into context upfront.
+Now an agent can start with a curated shortlist for "ship release", load the release workflow, check the deployment vault, read the runbook section it needs, and only fall back to broader search if it needs more options.
 
 ## 1. First-Run and Environment Commands
 
@@ -209,26 +212,27 @@ Real-world use: platform engineering publishes an internal stash registry, and t
 
 This is the heart of the product.
 
+### `akm curate`
+
+Start here for a request or prompt. `curate` is the preferred first stop because it returns a tighter, more task-ready shortlist.
+
+```sh
+akm curate "review a large pull request"
+akm curate "ship a bun release"
+```
+
+Real-world use: the agent needs a deploy workflow, a release checklist, or a review skill and wants the best few candidates first instead of a broad result set.
+
 ### `akm search`
 
-Search the indexed library.
+Use this when you want deeper discovery beyond the curated shortlist.
 
 ```sh
 akm search "review a large pull request"
 akm search "kubernetes deploy" --type workflow
 ```
 
-Real-world use: the agent needs a deploy workflow, a release checklist, or a review skill, but doesn't know the exact filename. It searches by intent instead of path.
-
-### `akm curate`
-
-Return a smaller, follow-up-friendly shortlist.
-
-```sh
-akm curate "ship a bun release"
-```
-
-Real-world use: instead of getting twenty mixed hits, you want a few strong candidates and the next command to run for each one.
+Real-world use: `curate` gave you a solid starting point, but now you want to dig wider, inspect additional assets, or explore the long tail of relevant results.
 
 ### `akm show`
 
@@ -240,7 +244,7 @@ akm show workflow:ship-release
 akm show knowledge:incident-runbook section "Rollback"
 ```
 
-Real-world use: search finds the right asset; show gives the agent the actual instructions, prompt template, workflow steps, or document section it needs to act.
+Real-world use: `curate` or `search` identifies the right asset; `show` gives the agent the actual instructions, prompt template, workflow steps, or document section it needs to act.
 
 ## 4. Local Knowledge and Operational Context
 
@@ -452,7 +456,7 @@ In practice, most teams live in a much smaller subset of the CLI:
 akm setup
 akm add ...
 akm index
-akm search "..."
+akm curate "..."
 akm show <ref>
 akm remember "..."
 akm feedback <ref> --positive
@@ -473,7 +477,7 @@ Let's say your team is onboarding a new service.
 1. Run `akm add github:your-org/platform-stash`
 2. Run `akm add ./docs/runbooks`
 3. Run `akm index`
-4. Search with `akm search "onboard a new service"`
+4. Start with `akm curate "onboard a new service"`
 5. Open the best match with `akm show workflow:service-onboarding`
 6. Check required environment keys with `akm vault show vault:staging`
 7. Add the final onboarding notes to the team wiki with `akm wiki stash onboarding ./notes/service-onboarding.md`
@@ -498,7 +502,7 @@ akm setup
 akm add ~/.claude/skills
 akm add github:your-org/team-agent-toolkit
 akm index
-akm search "code review"
+akm curate "code review"
 akm show skill:code-review
 ```
 

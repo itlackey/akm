@@ -33,13 +33,10 @@ import {
   searchFts,
   searchVec,
 } from "./db";
+import { ensureIndex } from "./ensure-index";
 import { getRenderer } from "./file-context";
 import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
-import {
-  isProposedQuality,
-  type StashEntry,
-  type StashEntryScope,
-} from "./metadata";
+import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -47,7 +44,6 @@ import {
   isSemanticRuntimeReady,
   readSemanticStatus,
 } from "./semantic-status";
-import { ensureIndex } from "./ensure-index";
 
 export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
   const name = registry.rendererNameFor(type);
