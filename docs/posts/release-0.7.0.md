@@ -13,7 +13,7 @@ published: true
 
 akm 0.7.0 is out. This is the last pre-1.0 ship in the v1 cycle. The headline features are a durable proposal queue that routes all agent-suggested changes through a single reviewable path, three new CLI surfaces (`reflect`, `propose`, `distill`) that write into that queue, a `lesson` asset type for synthesized knowledge, per-call-site LLM feature gates that are all off by default, and a paired-run benchmarking framework (`akm-bench`) for measuring whether your stash actually improves agent outcomes. A batch of security, UX, and hygiene hardening rounds out the release.
 
-If you are on 0.6.x, the [v1 migration guide](../migration/v1.md) covers the per-surface delta. The upgrade is opt-in — everything new requires explicit configuration or a new command invocation.
+If you are on 0.6.x, the v1 migration guide covers the per-surface delta. The upgrade is opt-in — everything new requires explicit configuration or a new command invocation.
 
 ## TL;DR
 
