@@ -124,6 +124,19 @@ function createWorkingStash(): string {
   return dir;
 }
 
+function initRepo(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const args of [
+    ["init", "--initial-branch=main"],
+    ["config", "user.email", "test@akm.local"],
+    ["config", "user.name", "akm-test"],
+    ["config", "commit.gpgsign", "false"],
+  ] as string[][]) {
+    const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+}
+
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
@@ -278,19 +291,6 @@ describe("GitSourceProvider", () => {
 // ── saveGitStash commit message sanitization (issue #270) ───────────────────
 
 describe("saveGitStash — commit message sanitization (issue #270)", () => {
-  /** Initialise an empty git repo at the given dir. */
-  function initRepo(dir: string): void {
-    for (const args of [
-      ["init", "--initial-branch=main"],
-      ["config", "user.email", "test@akm.local"],
-      ["config", "user.name", "akm-test"],
-      ["config", "commit.gpgsign", "false"],
-    ] as string[][]) {
-      const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
-      if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
-    }
-  }
-
   test("--message with embedded newlines is collapsed to a single line", () => {
     const stashDir = process.env.AKM_STASH_DIR as string;
     initRepo(stashDir);
@@ -348,5 +348,70 @@ describe("saveGitStash — commit message sanitization (issue #270)", () => {
     const log = spawnSync("git", ["-C", stashDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
     expect(log.stdout.trim().length).toBeLessThanOrEqual(4096);
     expect(log.stdout.trim().startsWith("prefix-xxxx")).toBe(true);
+  });
+});
+
+describe("saveGitStash named stash resolution", () => {
+  test("matches slash-containing configured stash names", () => {
+    const stashUrl = "https://github.com/itlackey/akm-stash";
+    const repo = parseGitRepoUrl(stashUrl);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    initRepo(cachePaths.repoDir);
+
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "git", url: stashUrl, name: "itlackey/akm-stash" }],
+    });
+    resetConfigCache();
+
+    writeFile(path.join(cachePaths.repoDir, "content", "skills", "named", "SKILL.md"), "# named\n");
+
+    const result = saveGitStash("itlackey/akm-stash", "slash name");
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", cachePaths.repoDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("slash name");
+  });
+
+  test("matches GitHub owner/repo shorthand against canonical git source URL", () => {
+    const stashUrl = "https://github.com/itlackey/akm-stash";
+    const repo = parseGitRepoUrl(stashUrl);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    initRepo(cachePaths.repoDir);
+
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "git", url: stashUrl }],
+    });
+    resetConfigCache();
+
+    writeFile(path.join(cachePaths.repoDir, "content", "skills", "owner-repo", "SKILL.md"), "# owner-repo\n");
+
+    const result = saveGitStash("itlackey/akm-stash", "owner repo");
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", cachePaths.repoDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("owner repo");
+  });
+
+  test("matches GitHub canonical identifiers with branch refs", () => {
+    const stashUrl = "https://github.com/itlackey/akm-stash/tree/feature/save-fix";
+    const repo = parseGitRepoUrl(stashUrl);
+    const cachePaths = getCachePaths(repo.canonicalUrl);
+    initRepo(cachePaths.repoDir);
+
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [{ type: "git", url: stashUrl }],
+    });
+    resetConfigCache();
+
+    writeFile(path.join(cachePaths.repoDir, "content", "skills", "branch-ref", "SKILL.md"), "# branch-ref\n");
+
+    const result = saveGitStash("github:itlackey/akm-stash#feature/save-fix", "branch ref");
+    expect(result.committed).toBe(true);
+
+    const log = spawnSync("git", ["-C", cachePaths.repoDir, "log", "--format=%s", "-1"], { encoding: "utf8" });
+    expect(log.stdout.trim()).toBe("branch ref");
   });
 });

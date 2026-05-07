@@ -474,7 +474,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
 
   if (name) {
     const config = loadConfig();
-    const stash = (config.sources ?? config.stashes ?? []).find((s) => s.name === name || s.url === name);
+    const stash = findGitStashByTarget(config.sources ?? config.stashes ?? [], name);
     if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
     if (!GIT_STASH_TYPES.has(stash.type)) {
       throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);
@@ -544,6 +544,48 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
     skipped: false,
     output: (commitResult.stdout + pushResult.stdout).trim() || "changes committed and pushed",
   };
+}
+
+function findGitStashByTarget(stashes: SourceConfigEntry[], target: string): SourceConfigEntry | undefined {
+  return stashes.find((stash) => matchesGitStashTarget(stash, target));
+}
+
+function matchesGitStashTarget(stash: SourceConfigEntry, target: string): boolean {
+  if (!GIT_STASH_TYPES.has(stash.type)) return false;
+  if (stash.name === target || stash.url === target) return true;
+  if (!stash.url) return false;
+
+  try {
+    const repo = parseGitRepoUrl(stash.url);
+    if (repo.canonicalUrl === target) return true;
+    return buildGithubTargetAliases(repo.canonicalUrl).has(target);
+  } catch {
+    return false;
+  }
+}
+
+function buildGithubTargetAliases(canonicalUrl: string): Set<string> {
+  try {
+    const parsed = new URL(canonicalUrl);
+    if (parsed.hostname !== "github.com") return new Set();
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return new Set();
+
+    const owner = segments[0];
+    const repo = segments[1];
+    const aliases = new Set<string>([`${owner}/${repo}`, `github:${owner}/${repo}`]);
+
+    if (segments[2] === "tree" && segments.length >= 4) {
+      const ref = segments.slice(3).join("/");
+      aliases.add(`${owner}/${repo}#${ref}`);
+      aliases.add(`github:${owner}/${repo}#${ref}`);
+    }
+
+    return aliases;
+  } catch {
+    return new Set();
+  }
 }
 
 // ── Exports ─────────────────────────────────────────────────────────────────

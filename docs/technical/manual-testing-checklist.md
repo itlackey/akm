@@ -299,6 +299,13 @@ These cover the shared write-target path and git-backed save behavior.
 - [ ] If `akm init` created a git repo, modify one file in the sandbox stash
       and run `akm save -m "Manual QA save test"`; verify it commits only inside
       the sandbox repo.
+- [ ] Add a second git-backed sandbox source with an explicit slash-containing
+      name (for example `team/save-qa`), confirm that exact name via
+      `akm list --format json`, then run `akm save team/save-qa -m "Manual QA named save"`
+      and verify the commit lands in that repo, not the primary stash.
+- [ ] If the named source is literally `json`, `akm save json --format json`
+      still saves that named stash; `akm save --format json` with no positional
+      still saves the primary stash.
 - [ ] Do not point `akm save` at any real repo or writable remote outside the
       sandbox.
 

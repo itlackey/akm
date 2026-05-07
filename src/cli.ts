@@ -808,7 +808,7 @@ const saveCommand = defineCommand({
           : args.name;
 
       let writable: boolean | undefined;
-      if (!effectiveName) {
+      if (effectiveName === undefined) {
         // Primary stash — honour the root-level writable flag from config.
         const cfg = loadConfig();
         writable = cfg.writable === true ? true : undefined;

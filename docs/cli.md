@@ -636,14 +636,19 @@ akm save                            # Save primary stash (auto timestamp message
 akm save -m "Add deploy skill"     # Save with custom message
 akm save --format json             # Explicit format (both --format json and --format=json work)
 akm save my-skills                  # Save a named writable git stash
+akm save team/core -m "Update"    # Slash-containing source names are valid selectors
 akm save my-skills -m "Update"     # Save named stash with message
 ```
 
 | Argument / Flag | Description |
 | --- | --- |
-| `[name]` | Optional stash name. Defaults to the primary stash |
+| `[name]` | Optional git-backed stash selector. Matches the configured source name exactly and also accepts canonical GitHub aliases such as `owner/repo`, `github:owner/repo`, and branch-ref forms like `github:owner/repo#branch`. Forward slashes are allowed. Defaults to the primary stash |
 | `-m`, `--message` | Commit message. Defaults to `akm save <timestamp>` |
 | `--format` | Output format (`json`, `text`, `yaml`). Both `--format json` and `--format=json` are accepted |
+
+If no positional selector is provided, `akm save --format json` still targets
+the primary stash. If a positional selector is provided, it wins even when the
+value also looks like a format token.
 
 **Behaviour by repo state:**
 
