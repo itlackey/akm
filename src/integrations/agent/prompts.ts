@@ -171,6 +171,12 @@ export interface ProposePromptInput {
   task: string;
   /** Optional extra schema hints. */
   schemaHints?: string[];
+  /**
+   * When provided, the agent is instructed to write the new asset content
+   * directly to this path using its file tools. No stdout JSON is expected.
+   * When absent, the agent returns a JSON payload via stdout (legacy path).
+   */
+  draftFilePath?: string;
 }
 
 /**
@@ -188,7 +194,7 @@ export function buildProposePrompt(input: ProposePromptInput): string {
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
   sections.push("Produce a single proposal that, if accepted, would land as the asset described above.");
-  sections.push(RESPONSE_CONTRACT_JSON);
+  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
 

@@ -137,15 +137,29 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   }
 
   // 3. Build prompt.
+  // Synthesize a temp draft path so opencode can write the asset content
+  // directly using its file tools rather than returning JSON via stdout.
+  const draftFilePath = import("node:os").then((os) =>
+    import("node:path").then((path) =>
+      path.join(
+        os.tmpdir(),
+        `akm-propose-${options.type}-${options.name.replace(/[^a-z0-9_-]/gi, "_")}-${Date.now()}.md`,
+      ),
+    ),
+  );
+  const resolvedDraftPath = await draftFilePath;
+
   const prompt = buildProposePrompt({
     type: options.type,
     name: options.name,
     task: options.task,
+    draftFilePath: resolvedDraftPath,
   });
 
   // 4. Spawn the agent.
+  // Interactive mode lets opencode use its native file tools to write the draft.
   const runOptions: RunAgentOptions = {
-    stdio: "captured",
+    stdio: "interactive",
     parseOutput: "text",
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.runAgentOptions ?? {}),
@@ -156,22 +170,35 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     return failureEnvelope(result, options.type, options.name);
   }
 
-  // 5. Parse the structured response.
+  // 5. Resolve the proposal content.
+  // Path A: opencode wrote the draft file — read it directly (no stdout parse).
+  // Path B: fallback to stdout JSON parse for non-file-writing agents.
+  const fs = await import("node:fs");
   let payload: ReturnType<typeof parseAgentProposalPayload>;
-  try {
-    payload = parseAgentProposalPayload(result.stdout);
-  } catch (err) {
-    return {
-      schemaVersion: 1,
-      ok: false,
-      reason: "parse_error",
-      error: err instanceof Error ? err.message : String(err),
-      type: options.type,
-      name: options.name,
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
+
+  if (fs.existsSync(resolvedDraftPath)) {
+    const draftContent = fs.readFileSync(resolvedDraftPath, "utf8");
+    fs.unlinkSync(resolvedDraftPath);
+    payload = {
+      ref: `${options.type}:${options.name}`,
+      content: draftContent,
     };
+  } else {
+    try {
+      payload = parseAgentProposalPayload(result.stdout ?? "");
+    } catch (err) {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error: err instanceof Error ? err.message : String(err),
+        type: options.type,
+        name: options.name,
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
   }
 
   // 6. Insert the proposal. Note: we allow the agent's `ref` to normalise the
