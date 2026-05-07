@@ -1,5 +1,5 @@
 ---
-title: What akm Actually Does: A Command-by-Command Tour
+title: 'What akm Actually Does: A Command-by-Command Tour'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm-basics
 description: A high-level guide to what akm is for, what each command does, and how teams use the CLI in real workflows.
