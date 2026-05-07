@@ -2,14 +2,15 @@
 title: 'What akm Actually Does: A Command-by-Command Tour'
 cover_image: 'https://raw.githubusercontent.com/itlackey/akm/main/docs/posts/akm-logo-sized.webp'
 series: akm-basics
-description: A high-level guide to what akm is for, what each command does, and how teams use the CLI in real workflows.
+description: 'A high-level guide to what akm is for, what each command does, and how teams use the CLI in real workflows.'
 tags:
   - ai
   - agents
   - cli
   - productivity
-published: false
-date: '2026-05-07T19:11:20Z'
+published: true
+id: 3629633
+date: '2026-05-07T23:51:17Z'
 ---
 
 If you've looked at `akm` for the first time and thought "this seems useful, but what do all these commands actually *do*?" this post is for you.
