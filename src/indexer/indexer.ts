@@ -195,11 +195,26 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     if (enrich) {
       try {
         const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
-        if (inferenceResult.writtenFacts > 0) {
+        if (inferenceResult.writtenFacts > 0 || inferenceResult.skippedNoFacts > 0) {
           onProgress({
             phase: "llm",
-            message: `Memory inference wrote ${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}.`,
+            message:
+              `Memory inference reviewed ${inferenceResult.considered} ` +
+              `${inferenceResult.considered === 1 ? "memory" : "memories"}; wrote ` +
+              `${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} ` +
+              `from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}` +
+              (inferenceResult.skippedNoFacts > 0
+                ? `; skipped ${inferenceResult.skippedNoFacts} ${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} with unusable LLM responses`
+                : "") +
+              ".",
           });
+        }
+        if (inferenceResult.skippedNoFacts > 0) {
+          warn(
+            `Memory inference skipped ${inferenceResult.skippedNoFacts} ` +
+              `${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} because the LLM returned empty, invalid, or incomplete derived payloads. ` +
+              "Check your model and token budget.",
+          );
         }
       } catch (err) {
         warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);

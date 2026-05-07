@@ -93,7 +93,7 @@ export async function compressMemoryToDerivedMemory(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
         ],
-        { maxTokens: 768, temperature: 0.1, signal },
+        { temperature: 0.1, signal },
       ),
       new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(new Error("memory inference timed out")), LLM_TIMEOUT_MS);
