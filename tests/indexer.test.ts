@@ -572,6 +572,131 @@ test("akmIndex reports progress events and semantic-search verification details"
   }
 });
 
+test("akmIndex memory inference uses the configured llm maxTokens budget", async () => {
+  const requestBodies: Record<string, unknown>[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      requestBodies.push((await request.json()) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  title: "Derived memory",
+                  description: "Why the compressed memory matters.",
+                  tags: ["memory", "inference", "llm"],
+                  searchHints: ["derived memory", "memory inference", "llm summary"],
+                  content: "## Summary\n\nUse the configured token budget.",
+                }),
+              },
+            },
+          ],
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    },
+  });
+
+  try {
+    const stashDir = tmpStash();
+    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
+
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({
+      semanticSearchMode: "off",
+      llm: {
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+        maxTokens: 1024,
+        features: { graph_extraction: false },
+      },
+    });
+
+    await akmIndex({ stashDir, enrich: true });
+
+    const memoryInferenceRequest = requestBodies.find(
+      (body) =>
+        Array.isArray(body.messages) &&
+        body.messages.some(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "content" in message &&
+            typeof message.content === "string" &&
+            message.content.includes("Compress the memory below into one concise, information-dense derived memory."),
+        ),
+    );
+
+    expect(memoryInferenceRequest).toBeDefined();
+    expect(memoryInferenceRequest).toMatchObject({
+      model: "test-model",
+      max_tokens: 1024,
+      temperature: 0.1,
+    });
+  } finally {
+    server.stop();
+  }
+});
+
+test("akmIndex warns and reports skipped memory inference when LLM returns unusable output", async () => {
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "" } }],
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    },
+  });
+
+  try {
+    const stashDir = tmpStash();
+    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
+
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({
+      semanticSearchMode: "off",
+      llm: {
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+        maxTokens: 1024,
+      },
+    });
+
+    const messages: string[] = [];
+    await akmIndex({
+      stashDir,
+      enrich: true,
+      onProgress: ({ phase, message }) => {
+        if (phase === "llm") messages.push(message);
+      },
+    });
+
+    expect(
+      messages.some((message) =>
+        message.includes(
+          "Memory inference reviewed 1 memory; wrote 0 derived memories from 0 parent memories; skipped 1 memory with unusable LLM responses.",
+        ),
+      ),
+    ).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Memory inference skipped 1 memory because the LLM returned empty, invalid, or incomplete derived payloads. Check your model and token budget.",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    server.stop();
+  }
+});
+
 test("akmIndex scan progress events include processed and total counts", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
