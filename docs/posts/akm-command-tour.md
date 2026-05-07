@@ -22,14 +22,15 @@ This post walks through the CLI by job-to-be-done, with real examples of when yo
 
 ## The Short Version
 
-You can think about `akm` in six layers:
+You can think about `akm` in seven layers:
 
 1. **Set up the workspace** — `setup`, `init`, `config`, `info`, `index`
-2. **Bring content in** — `add`, `list`, `update`, `remove`, `clone`
+2. **Connect sources and discover new ones** — `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
 3. **Find and inspect assets** — `search`, `curate`, `show`
-4. **Write new local knowledge** — `remember`, `import`, `save`
-5. **Run structured workflows and secure context** — `workflow`, `vault`, `wiki`
-6. **Operate the system** — `feedback`, `history`, `events`, `registry`, `help`, `hints`, `completions`, `upgrade`, plus the proposal commands
+4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
+5. **Run repeatable procedures** — `workflow`
+6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
+7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
 
 If you only remember one mental model, make it this:
 
@@ -117,9 +118,12 @@ akm index --full
 
 Real-world use: you added a GitHub stash, imported some docs, and created two memories. `akm index` refreshes the local search database so the agent can discover them.
 
-## 2. Source Management Commands
+## 2. Source and Registry Commands
 
-These commands answer a simple question: where should akm look for assets?
+These commands answer two related questions:
+
+- where should akm look for assets right now?
+- where can I discover more stashes later?
 
 ### `akm add`
 
@@ -190,6 +194,17 @@ akm save -m "Tighten release workflow"
 
 Real-world use: your team keeps its shared stash in Git. After improving a workflow and a vault comment, `akm save` records the change like normal code.
 
+### `akm registry`
+
+Use registries to discover new stashes you have not installed yet.
+
+```sh
+akm registry search "code review"
+akm registry add https://example.com/registry/index.json --name team
+```
+
+Real-world use: platform engineering publishes an internal stash registry, and teams browse it the same way they'd browse a package registry.
+
 ## 3. Discovery Commands
 
 This is the heart of the product.
@@ -227,9 +242,11 @@ akm show knowledge:incident-runbook section "Rollback"
 
 Real-world use: search finds the right asset; show gives the agent the actual instructions, prompt template, workflow steps, or document section it needs to act.
 
-## 4. Knowledge Capture Commands
+## 4. Local Knowledge and Operational Context
 
-These commands let the stash get smarter over time.
+This is the part of `akm` that turns a stash into living local context instead of a static pile of files.
+
+Some commands capture what your team knows. Others make that knowledge safer or more structured. They belong together because they all define the working context your agent can rely on later.
 
 ### `akm remember`
 
@@ -251,6 +268,64 @@ akm import https://example.com/internal-guide/auth
 ```
 
 Real-world use: you have a good architecture note or ops runbook outside the stash and want it indexed alongside everything else.
+
+### `akm wiki`
+
+Use wikis for long-lived, agent-maintained knowledge bases.
+
+```sh
+akm wiki create architecture
+akm wiki stash architecture ./notes/auth-redesign.md
+akm wiki lint architecture
+```
+
+Real-world use: your team wants a research or architecture wiki with raw sources, curated pages, and deterministic linting instead of ad hoc markdown sprawl.
+
+`wiki` belongs with local knowledge, not off to the side. It's the command family you reach for when a single imported doc or memory is not enough and you need a maintained body of team knowledge.
+
+### `akm vault`
+
+Use vaults when the agent needs operational context about secrets without seeing the secret values.
+
+```sh
+akm vault show vault:production
+eval "$(akm vault load vault:production)"
+```
+
+Real-world use: a deploy workflow needs `DATABASE_URL` and `DEPLOY_TOKEN`. The agent can verify the keys are present, then load the environment only at execution time.
+
+Vaults fit here because they are part of the local operating context. They tell the agent what environment shape exists and let commands run safely without exposing secret values in the chat transcript.
+
+## 5. Procedure Commands
+
+Once you have the right knowledge and context, the next problem is execution across time.
+
+### `akm workflow`
+
+Use workflows for repeatable, resumable procedures.
+
+```sh
+akm workflow start workflow:ship-release --params '{"version":"2.4.0"}'
+akm workflow next workflow:ship-release
+akm workflow complete run-123 --step validate --notes "Version and branch confirmed"
+```
+
+Real-world use: shipping a release, rotating secrets, onboarding a new service, or any other multi-step process that should survive across sessions instead of living only in chat history.
+
+## 6. Continuous Improvement Commands
+
+This is the loop that makes `akm` better over time.
+
+The flow is simple:
+
+1. an agent uses an asset
+2. you record whether it helped with `feedback`
+3. you inspect what happened with `history` or `events`
+4. you ask for improvements with `reflect` or `propose`
+5. you review the result with `proposal`
+6. you distill recurring feedback into reusable lessons with `distill`
+
+These commands should be thought about as one system, not as isolated features.
 
 ### `akm feedback`
 
@@ -283,57 +358,51 @@ akm events tail --format jsonl
 
 Real-world use: another process is watching `akm` activity and reacting when new feedback, imports, or proposals land.
 
-## 5. Commands for Structured Agent Work
+### `akm reflect`
 
-This is where `akm` becomes more than a search tool.
-
-### `akm workflow`
-
-Use workflows for repeatable, resumable procedures.
+Ask an external agent to propose improvements to an existing asset.
 
 ```sh
-akm workflow start workflow:ship-release --params '{"version":"2.4.0"}'
-akm workflow next workflow:ship-release
-akm workflow complete run-123 --step validate --notes "Version and branch confirmed"
+akm reflect skill:code-review --task "make this stricter about test coverage"
 ```
 
-Real-world use: shipping a release, rotating secrets, onboarding a new service, or any other multi-step process that should survive across sessions instead of living only in chat history.
+Real-world use: you have a decent review skill, but you want an agent to improve it based on how it's actually being used.
 
-### `akm vault`
+### `akm propose`
 
-Use vaults when the agent needs to know which secrets exist without seeing the secret values.
+Generate a brand-new asset proposal.
 
 ```sh
-akm vault show vault:production
-eval "$(akm vault load vault:production)"
+akm propose workflow incident-rollback --task "Rollback procedure for failed production deploys"
 ```
 
-Real-world use: a deploy workflow needs `DATABASE_URL` and `DEPLOY_TOKEN`. The agent can verify the keys are present, then load the environment only at execution time.
+Real-world use: repeated gaps in your stash show up in `history` and `events`, so you create a first draft for the missing workflow or skill.
 
-### `akm wiki`
+### `akm proposal`
 
-Use wikis for long-lived, agent-maintained knowledge bases.
+Review, diff, accept, or reject queued proposals.
 
 ```sh
-akm wiki create architecture
-akm wiki stash architecture ./notes/auth-redesign.md
-akm wiki lint architecture
+akm proposal list
+akm proposal diff 42
+akm proposal accept 42
 ```
 
-Real-world use: your team wants a research or architecture wiki with raw sources, curated pages, and deterministic linting instead of ad hoc markdown sprawl.
+Real-world use: keep human review in the loop before generated assets become part of the live stash.
 
-## 6. Registry and Ecosystem Commands
+### `akm distill`
 
-### `akm registry`
-
-Use registries to discover new stashes you have not installed yet.
+Summarize feedback into a reusable lesson proposal.
 
 ```sh
-akm registry search "code review"
-akm registry add https://example.com/registry/index.json --name team
+akm distill skill:code-review
 ```
 
-Real-world use: platform engineering publishes an internal stash registry, and teams browse it the same way they'd browse a package registry.
+Real-world use: repeated feedback on a skill gets turned into a lesson asset that captures what people learned from using it.
+
+## 7. Operator Ergonomics
+
+These are the commands that make the CLI easier to live with day to day.
 
 ### `akm help`
 
@@ -375,52 +444,6 @@ akm upgrade --check
 
 Real-world use: you installed the standalone binary and want to see whether a newer release is available.
 
-## 7. Reflection and Proposal Commands
-
-These are the commands for improving the stash without mutating it directly.
-
-### `akm reflect`
-
-Ask an external agent to propose improvements to an existing asset.
-
-```sh
-akm reflect skill:code-review --task "make this stricter about test coverage"
-```
-
-Real-world use: you have a decent review skill, but want an agent to suggest a better version without overwriting the live one.
-
-### `akm propose`
-
-Generate a brand-new asset proposal.
-
-```sh
-akm propose workflow incident-rollback --task "Rollback procedure for failed production deploys"
-```
-
-Real-world use: seed a new asset from a plain-language description instead of hand-authoring the first draft.
-
-### `akm proposal`
-
-Review, diff, accept, or reject queued proposals.
-
-```sh
-akm proposal list
-akm proposal diff 42
-akm proposal accept 42
-```
-
-Real-world use: keep human review in the loop before generated assets become part of the live stash.
-
-### `akm distill`
-
-Summarize feedback into a reusable lesson proposal.
-
-```sh
-akm distill skill:code-review
-```
-
-Real-world use: repeated feedback on a skill gets turned into a lesson asset that captures what people learned from using it.
-
 ## 8. The Commands People Use Most
 
 In practice, most teams live in a much smaller subset of the CLI:
@@ -438,10 +461,10 @@ akm feedback <ref> --positive
 If your use case grows, the rest of the command surface is there:
 
 - `workflow` when procedures need state
-- `vault` when secrets enter the picture
-- `wiki` when knowledge needs structure
+- `wiki` when local knowledge needs structure
+- `vault` when local operational context includes secrets
 - `registry` when discovery goes beyond your local stash
-- `reflect` / `propose` / `proposal` / `distill` when you want an improvement loop
+- `feedback` / `history` / `events` / `reflect` / `propose` / `proposal` / `distill` when you want a real improvement loop
 
 ## A Simple End-to-End Example
 
@@ -453,8 +476,10 @@ Let's say your team is onboarding a new service.
 4. Search with `akm search "onboard a new service"`
 5. Open the best match with `akm show workflow:service-onboarding`
 6. Check required environment keys with `akm vault show vault:staging`
-7. Capture a new lesson with `akm remember "Service onboarding requires DNS approval from ops" --tag ops`
-8. Record whether the workflow helped with `akm feedback workflow:service-onboarding --positive`
+7. Add the final onboarding notes to the team wiki with `akm wiki stash onboarding ./notes/service-onboarding.md`
+8. Capture a new lesson with `akm remember "Service onboarding requires DNS approval from ops" --tag ops`
+9. Record whether the workflow helped with `akm feedback workflow:service-onboarding --positive`
+10. If the workflow was weak, run `akm reflect workflow:service-onboarding --task "improve this after the latest run"` or `akm distill workflow:service-onboarding`
 
 That's `akm` in a nutshell: connect sources, index them, find what matters, load only what you need, and keep the library getting better.
 
