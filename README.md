@@ -7,8 +7,8 @@
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
 A package manager for AI agent capabilities -- scripts, skills, commands,
-agents, knowledge, workflows, vaults, wikis, and memories -- that works with
-any AI coding assistant that can run shell commands.
+agents, knowledge, workflows, vaults, wikis, lessons, and memories -- that
+works with any AI coding assistant that can run shell commands.
 
 ## Why akm?
 
@@ -17,6 +17,46 @@ Claude Code, OpenCode, Cursor, Windsurf -- with no unified way to manage, share,
 or discover them. Each tool has its own format and its own silo. akm gives you a
 single CLI to manage all your agent assets regardless of which coding assistant
 you use, so you can build a personal library once and take it everywhere.
+
+At a high level, `akm` helps agents work the way good human operators work:
+
+1. **connect the sources of truth**
+2. **start with a curated shortlist for the task at hand**
+3. **load only the relevant instructions or knowledge**
+4. **go deeper only when broader discovery is needed**
+5. **capture what worked so the system improves over time**
+
+That means `akm` is not just a search tool. It is the layer that helps agents:
+
+- **discover the right capability on demand** instead of front-loading a giant prompt
+- **reuse knowledge across tools and projects** instead of rebuilding the same library in every assistant
+- **keep local knowledge structured** with memories, imported docs, wikis, workflows, and vaults
+- **improve continuously** with feedback, history, events, reflection, proposals, and distilled lessons
+- **share and version agent assets like code** through git, npm, registries, and writable stashes
+
+## What you get
+
+> This command model reflects the v0.7.0 workflow framing.
+
+Think about `akm` in seven layers:
+
+1. **Set up the workspace** — `setup`, `init`, `config`, `info`, `index`
+2. **Connect sources and discover new ones** — `add`, `list`, `update`, `remove`, `clone`, `save`, `registry`
+3. **Find and inspect assets** — `curate`, `search`, `show`
+4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
+5. **Run repeatable procedures** — `workflow`
+6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
+7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
+
+If you only remember one mental model, make it this:
+
+- `akm add` tells akm where content lives
+- `akm index` makes that content searchable
+- `akm curate` gives the best first shortlist for a prompt or request
+- `akm search` broadens discovery when you need more assets beyond the curated set
+- `akm show` loads the full thing
+
+Everything else supports one of those steps.
 
 ## Install
 
@@ -50,15 +90,28 @@ structured header comments for scripts.
 akm setup                         # Guided setup: configure, initialize, and index
 akm add ~/.claude/skills          # Add your existing local skills
 akm add github:owner/repo         # Add a stash from GitHub
-akm search "deploy"               # Find assets
-akm show script:deploy.sh         # View details and run command
+akm curate "deploy"               # Start with a curated shortlist
+akm show workflow:deploy          # Load the best matching asset
 akm remember "Deployment needs VPN access"
 akm import ./notes/release.md
+akm wiki create architecture
 akm feedback skill:deploy --positive
 ```
 
 If you want to skip the wizard, `akm init --dir ~/custom-stash` initializes the
 working stash at a custom path.
+
+### Why this workflow matters
+
+This quick start is doing more than showing random commands:
+
+- `setup` / `init` create the local workspace
+- `add` connects existing sources of agent knowledge
+- `curate` gives the agent the strongest first list for the task
+- `search` is there when the agent needs deeper discovery beyond the curated shortlist
+- `show` loads only what is relevant
+- `remember`, `import`, and `wiki` turn local discoveries into reusable team context
+- `feedback` starts the continuous-improvement loop that helps good assets rise over time
 
 ## Features
 

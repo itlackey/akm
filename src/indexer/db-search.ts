@@ -15,7 +15,6 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import { makeAssetRef } from "../core/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
-import { deriveCanonicalAssetNameFromStashRoot } from "../core/asset-spec";
 import type { AkmConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
@@ -33,13 +32,10 @@ import {
   searchFts,
   searchVec,
 } from "./db";
+import { ensureIndex } from "./ensure-index";
 import { getRenderer } from "./file-context";
 import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
-import {
-  isProposedQuality,
-  type StashEntry,
-  type StashEntryScope,
-} from "./metadata";
+import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -47,7 +43,6 @@ import {
   isSemanticRuntimeReady,
   readSemanticStatus,
 } from "./semantic-status";
-import { ensureIndex } from "./ensure-index";
 
 export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
   const name = registry.rendererNameFor(type);
@@ -648,9 +643,6 @@ export async function buildDbHit(input: {
 }): Promise<SourceSearchHit> {
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const entryStashDir = findSourceForPath(input.path, input.sources)?.path ?? input.defaultStashDir;
-  const canonical = deriveCanonicalAssetNameFromStashRoot(input.entry.type, entryStashDir, input.path);
-  const refName =
-    canonical && !canonical.startsWith("../") && !canonical.startsWith("..\\") ? canonical : input.entry.name;
 
   // Quality and confidence boosts are now applied in the main scoring
   // phase (searchDatabase). buildDbHit receives the already-final score and
@@ -674,7 +666,7 @@ export async function buildDbHit(input: {
   );
 
   const source = findSourceForPath(input.path, input.sources);
-  const ref = resolveSearchHitRef(input.entry, refName, source);
+  const ref = resolveSearchHitRef(input.entry, input.entry.name, source);
 
   const editable = isEditable(input.path, input.config);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
@@ -686,7 +678,9 @@ export async function buildDbHit(input: {
     ref,
     origin: resolveSearchHitOrigin(source),
     editable,
-    ...(!editable ? { editHint: buildEditHint(input.path, input.entry.type, refName, source?.registryId) } : {}),
+    ...(!editable
+      ? { editHint: buildEditHint(input.path, input.entry.type, input.entry.name, source?.registryId) }
+      : {}),
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),

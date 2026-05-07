@@ -360,18 +360,48 @@ export async function runAgent(
       let found: unknown;
       for (let s = 0; s < cleaned.length; s++) {
         if (cleaned[s] !== "{") continue;
-        let depth = 0, inStr = false, esc = false;
+        let depth = 0,
+          inStr = false,
+          esc = false;
         for (let i = s; i < cleaned.length; i++) {
           const c = cleaned[i];
-          if (inStr) { if (esc) { esc = false; } else if (c === "\\") { esc = true; } else if (c === '"') { inStr = false; } continue; }
-          if (c === '"') { inStr = true; continue; }
+          if (inStr) {
+            if (esc) {
+              esc = false;
+            } else if (c === "\\") {
+              esc = true;
+            } else if (c === '"') {
+              inStr = false;
+            }
+            continue;
+          }
+          if (c === '"') {
+            inStr = true;
+            continue;
+          }
           if (c === "{") depth++;
-          if (c === "}") { depth--; if (depth === 0) { try { found = JSON.parse(cleaned.slice(s, i + 1)); } catch {} break; } }
+          if (c === "}") {
+            depth--;
+            if (depth === 0) {
+              try {
+                found = JSON.parse(cleaned.slice(s, i + 1));
+              } catch {}
+              break;
+            }
+          }
         }
         if (found !== undefined) break;
       }
       if (found === undefined) {
-        return { ok: false, exitCode, stdout, stderr, durationMs, reason: "parse_error", error: "no JSON object found in agent output" };
+        return {
+          ok: false,
+          exitCode,
+          stdout,
+          stderr,
+          durationMs,
+          reason: "parse_error",
+          error: "no JSON object found in agent output",
+        };
       }
       parsed = found;
     }

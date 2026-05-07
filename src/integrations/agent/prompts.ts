@@ -254,18 +254,28 @@ function extractEmbeddedJson(text: string): Record<string, unknown> | undefined 
     for (let i = start; i < text.length; i++) {
       const ch = text[i];
       if (inString) {
-        if (escaped) { escaped = false; }
-        else if (ch === "\\") { escaped = true; }
-        else if (ch === '"') { inString = false; }
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
         continue;
       }
-      if (ch === '"') { inString = true; continue; }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
       if (ch === "{") depth++;
       if (ch === "}") {
         depth--;
         if (depth === 0) {
-          try { return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>; }
-          catch { break; }
+          try {
+            return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
+          } catch {
+            break;
+          }
         }
       }
     }

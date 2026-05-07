@@ -157,9 +157,10 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   });
 
   // 4. Spawn the agent.
-  // Interactive mode lets opencode use its native file tools to write the draft.
+  // Real agent runs use interactive mode so file tools can write the draft.
+  // Injected/custom spawns still need captured stdout for JSON payload tests.
   const runOptions: RunAgentOptions = {
-    stdio: "interactive",
+    stdio: options.runAgentOptions?.spawn ? "captured" : "interactive",
     parseOutput: "text",
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.runAgentOptions ?? {}),
