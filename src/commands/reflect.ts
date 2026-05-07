@@ -20,6 +20,8 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
@@ -193,10 +195,17 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 4. Build the prompt.
-  // When the asset file is known, give opencode a draft path to write into
-  // directly — this bypasses stdout JSON parsing entirely and lets opencode
-  // use its native file-editing tools.
-  const draftFilePath = assetFilePath ? `${assetFilePath}.proposal-draft` : undefined;
+  // When the asset file is known, give opencode a temp draft path outside
+  // the stash. Using os.tmpdir() keeps the draft away from git tracking,
+  // AKM indexing, and stash pollution — a crash leaves the file in /tmp,
+  // not inside the repo. AKM pre-specifies the path so there's no need to
+  // parse opencode's stdout for a filename.
+  const draftFilePath = assetFilePath
+    ? path.join(
+        os.tmpdir(),
+        `akm-reflect-${path.basename(assetFilePath, path.extname(assetFilePath))}-${Date.now()}.md`,
+      )
+    : undefined;
 
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
