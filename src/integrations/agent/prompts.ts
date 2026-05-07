@@ -66,16 +66,31 @@ function knownTypeList(): string {
 }
 
 /**
- * Common envelope every prompt asks the agent to honour. The wrapper code
- * uses `JSON.parse(stdout)` to extract the payload — anything outside the
- * JSON object will be treated as a parse error.
+ * Common envelope every prompt asks the agent to honour when NO draft file
+ * path is available. The wrapper code uses `JSON.parse(stdout)` to extract
+ * the payload — anything outside the JSON object will be treated as a parse
+ * error.
  */
-const RESPONSE_CONTRACT = [
+const RESPONSE_CONTRACT_JSON = [
   "Respond ONLY with a single JSON object. No prose before or after.",
   'Shape: {"ref": "<type>:<name>", "content": "<full file contents>", "frontmatter": {...}}',
   "`content` is the full file body that will be written if accepted.",
   "`frontmatter` is optional — include it if `content` starts with `---` so reviewers can sanity-check the keys.",
 ].join("\n");
+
+/**
+ * Response contract used when a draft file path is available. Instructs the
+ * agent to write the improved asset content directly to the file using its
+ * native file-editing tools — no stdout JSON parsing required.
+ */
+function fileWriteContract(draftFilePath: string): string {
+  return [
+    `Write the complete improved asset content to: ${draftFilePath}`,
+    "Use your file-editing tools to create or overwrite that file.",
+    "Do NOT output JSON to stdout. Do NOT print the file contents. Just write the file.",
+    "When you are done writing the file, output a single line: DRAFT_WRITTEN",
+  ].join("\n");
+}
 
 export interface ReflectPromptInput {
   ref?: string;
@@ -89,6 +104,12 @@ export interface ReflectPromptInput {
   schemaHints?: string[];
   /** Optional operator task/focus hint. */
   task?: string;
+  /**
+   * When provided, the agent is instructed to write the improved content
+   * directly to this path using its file tools. No stdout JSON is expected.
+   * When absent, the agent returns a JSON payload via stdout (legacy path).
+   */
+  draftFilePath?: string;
 }
 
 /**
@@ -140,7 +161,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   }
 
   sections.push("Produce a single proposal that addresses the feedback and respects the asset-type contract.");
-  sections.push(RESPONSE_CONTRACT);
+  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
 
@@ -167,7 +188,7 @@ export function buildProposePrompt(input: ProposePromptInput): string {
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
   sections.push("Produce a single proposal that, if accepted, would land as the asset described above.");
-  sections.push(RESPONSE_CONTRACT);
+  sections.push(RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
 
@@ -175,11 +196,27 @@ export function buildProposePrompt(input: ProposePromptInput): string {
  * Parse agent stdout into a proposal payload. The agent contract requires a
  * single JSON object; anything else is reported as a parse error so callers
  * can map to {@link AgentFailureReason} `parse_error`.
+ *
+ * Resilient to two common local-LLM failure modes:
+ *  1. `<think>…</think>` blocks emitted before the JSON (stripped by `stripJsonFences`).
+ *  2. Prose preamble / postamble around the JSON object (handled by `extractEmbeddedJson`).
  */
 export function parseAgentProposalPayload(stdout: string): AgentProposalPayload {
   const trimmed = stripJsonFences(stdout).trim();
   if (!trimmed) throw new Error("agent produced empty output");
-  const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch (directErr) {
+    // Agent output contains prose before/after the JSON object (e.g. a local
+    // LLM that narrates before responding). Try extracting the first balanced
+    // top-level `{…}` from the text rather than failing immediately.
+    const embedded = extractEmbeddedJson(trimmed);
+    if (!embedded) throw directErr;
+    parsed = embedded;
+  }
+
   if (typeof parsed.ref !== "string" || !parsed.ref.trim()) {
     throw new Error('agent response missing required string field "ref"');
   }
@@ -197,14 +234,50 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
 }
 
 /**
- * Strip `\`\`\`json … \`\`\`` fences if the agent wrapped its JSON output.
- * Mirrors the same helper in `src/llm/client.ts` but kept local here so
- * `agent/` does not import from `llm/` (the boundary is one-way per
- * v1 spec §9.7 — agents are shell-out only).
+ * Extract the first balanced top-level `{…}` object from `text`. Used as a
+ * fallback when direct `JSON.parse` fails due to surrounding prose. Kept
+ * local to `agent/` (mirrors `parseEmbeddedJsonResponse` in `src/llm/client.ts`
+ * without importing across the one-way boundary — v1 spec §9.7).
+ */
+function extractEmbeddedJson(text: string): Record<string, unknown> | undefined {
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) { escaped = false; }
+        else if (ch === "\\") { escaped = true; }
+        else if (ch === '"') { inString = false; }
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === "{") depth++;
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>; }
+          catch { break; }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strip `\`\`\`json … \`\`\`` fences and `<think>…</think>` reasoning blocks
+ * from agent output. Mirrors `client.ts` but kept local to `agent/` per v1
+ * spec §9.7 (one-way boundary — `agent/` does not import from `llm/`).
  */
 export function stripJsonFences(text: string): string {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/);
-  if (fenced) return fenced[1] ?? trimmed;
-  return trimmed;
+  const stripped = text
+    .trim()
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
+  const fenced = stripped.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/);
+  if (fenced) return fenced[1] ?? stripped;
+  return stripped;
 }

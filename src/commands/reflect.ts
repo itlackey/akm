@@ -167,12 +167,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 2. Resolve target asset content (if a ref is supplied).
   let assetContent: string | undefined;
+  let assetFilePath: string | undefined;
   let parsedRef: { type: string; name: string } | undefined;
   if (options.ref) {
     parsedRef = parseAssetRef(options.ref);
     try {
       const entry = await lookup(parsedRef);
       if (entry?.filePath && fs.existsSync(entry.filePath)) {
+        assetFilePath = entry.filePath;
         assetContent = fs.readFileSync(entry.filePath, "utf8");
       }
     } catch {
@@ -191,6 +193,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 4. Build the prompt.
+  // When the asset file is known, give opencode a draft path to write into
+  // directly — this bypasses stdout JSON parsing entirely and lets opencode
+  // use its native file-editing tools.
+  const draftFilePath = assetFilePath ? `${assetFilePath}.proposal-draft` : undefined;
+
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const prompt = buildReflectPrompt({
@@ -201,12 +208,14 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
     ...(options.task ? { task: options.task } : {}),
+    ...(draftFilePath ? { draftFilePath } : {}),
   });
 
-  // 5. Spawn the agent. Force captured stdio + JSON parse so we can extract
-  // the structured payload without confusing terminal control codes.
+  // 5. Spawn the agent.
+  // When opencode writes a draft file, run it interactively so its file tools
+  // work normally. When we need stdout JSON (no file path), capture output.
   const runOptions: RunAgentOptions = {
-    stdio: "captured",
+    stdio: draftFilePath ? "interactive" : "captured",
     parseOutput: "text",
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.runAgentOptions ?? {}),
@@ -217,21 +226,33 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     return failureEnvelope(result, options.ref);
   }
 
-  // 6. Parse stdout into a proposal payload.
+  // 6. Resolve the proposal content.
+  // Path A (preferred): opencode wrote a draft file — read it directly.
+  // Path B (fallback): no draft file — parse stdout JSON (legacy / new assets).
   let payload: ReturnType<typeof parseAgentProposalPayload>;
-  try {
-    payload = parseAgentProposalPayload(result.stdout);
-  } catch (err) {
-    return {
-      schemaVersion: 1,
-      ok: false,
-      reason: "parse_error",
-      error: err instanceof Error ? err.message : String(err),
-      ...(options.ref ? { ref: options.ref } : {}),
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
+
+  if (draftFilePath && fs.existsSync(draftFilePath)) {
+    const draftContent = fs.readFileSync(draftFilePath, "utf8");
+    fs.unlinkSync(draftFilePath);
+    payload = {
+      ref: options.ref!,
+      content: draftContent,
     };
+  } else {
+    try {
+      payload = parseAgentProposalPayload(result.stdout ?? "");
+    } catch (err) {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error: err instanceof Error ? err.message : String(err),
+        ...(options.ref ? { ref: options.ref } : {}),
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
   }
 
   // 7. Create the proposal. The proposal queue is the ONLY thing reflect
