@@ -36,6 +36,9 @@ describe("migration help", () => {
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);
     }
+    expect(fs.readFileSync(path.join(PROJECT_ROOT, "LICENSE"), "utf8")).toBe(
+      fs.readFileSync(path.join(PROJECT_ROOT, ".github", "LICENSE"), "utf8"),
+    );
   });
 
   test("every bundled release-notes file is surfaced by the loader", () => {
