@@ -558,9 +558,9 @@ describe("Renderer", () => {
     expect(response.content).not.toContain("Setup");
   });
 
-  test("getAllRenderers() returns all 10 built-in renderers", async () => {
+  test("getAllRenderers() returns all 11 built-in renderers", async () => {
     const all = await getAllRenderers();
-    expect(all).toHaveLength(10);
+    expect(all).toHaveLength(11);
 
     const names = all.map((r) => r.name).sort();
     expect(names).toEqual([
@@ -571,6 +571,7 @@ describe("Renderer", () => {
       "memory-md",
       "script-source",
       "skill-md",
+      "task-md",
       "vault-env",
       "wiki-md",
       "workflow-md",

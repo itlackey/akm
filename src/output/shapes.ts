@@ -101,6 +101,16 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "workflow-start":
     case "workflow-status":
     case "workflow-validate":
+    case "tasks-add":
+    case "tasks-list":
+    case "tasks-show":
+    case "tasks-remove":
+    case "tasks-enable":
+    case "tasks-disable":
+    case "tasks-run":
+    case "tasks-history":
+    case "tasks-sync":
+    case "tasks-doctor":
       return result;
     default:
       // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify

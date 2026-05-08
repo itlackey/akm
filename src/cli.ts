@@ -37,6 +37,18 @@ import { akmShowUnified } from "./commands/show";
 import { akmAdd } from "./commands/source-add";
 import { akmClone } from "./commands/source-clone";
 import { addStash } from "./commands/source-manage";
+import {
+  akmTasksAdd,
+  akmTasksDoctor,
+  akmTasksHistory,
+  akmTasksList,
+  akmTasksRemove,
+  akmTasksRun,
+  akmTasksSetEnabled,
+  akmTasksShow,
+  akmTasksSync,
+  parseTaskRef,
+} from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
@@ -3030,6 +3042,209 @@ const proposeCommand = defineCommand({
   },
 });
 
+const TASKS_SUBCOMMAND_SET = new Set([
+  "add",
+  "list",
+  "show",
+  "remove",
+  "enable",
+  "disable",
+  "run",
+  "history",
+  "sync",
+  "doctor",
+]);
+
+function hasTasksSubcommand(args: Record<string, unknown>): boolean {
+  const command = Array.isArray(args._) ? args._[0] : undefined;
+  return typeof command === "string" && TASKS_SUBCOMMAND_SET.has(command);
+}
+
+const tasksAddCommand = defineCommand({
+  meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
+  args: {
+    id: { type: "positional", description: "Task id (used as filename and scheduler entry)", required: true },
+    schedule: { type: "string", description: 'Cron-style schedule, e.g. "0 9 * * *" or "@daily"', required: true },
+    workflow: { type: "string", description: "Workflow ref to invoke (e.g. workflow:my-flow)" },
+    prompt: {
+      type: "string",
+      description: "Prompt for the configured agent harness — inline text, an asset ref like agent:foo, or ./path.md",
+    },
+    profile: { type: "string", description: "Agent profile to use for prompt targets (default: config.agent.default)" },
+    params: { type: "string", description: "Workflow params as a JSON object" },
+    description: { type: "string", description: "Human-readable description" },
+    tags: { type: "string", description: "Comma-separated tags" },
+    disabled: { type: "boolean", description: "Register but leave disabled in the OS scheduler", default: false },
+    force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksAdd({
+        id: args.id,
+        schedule: args.schedule,
+        workflow: args.workflow,
+        prompt: args.prompt,
+        profile: args.profile,
+        params: args.params,
+        description: args.description,
+        tags: args.tags
+          ? args.tags
+              .split(/[\s,]+/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : undefined,
+        disabled: args.disabled === true,
+        force: args.force === true,
+      });
+      output("tasks-add", result);
+    });
+  },
+});
+
+const tasksListCommand = defineCommand({
+  meta: { name: "list", description: "List scheduled tasks in the stash" },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksList();
+      output("tasks-list", result);
+    });
+  },
+});
+
+const tasksShowCommand = defineCommand({
+  meta: { name: "show", description: "Show a parsed task definition" },
+  args: { id: { type: "positional", description: "Task id or task:<id>", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksShow(id);
+      output("tasks-show", result);
+    });
+  },
+});
+
+const tasksRemoveCommand = defineCommand({
+  meta: { name: "remove", description: "Delete a task file and uninstall it from the OS scheduler" },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksRemove(id);
+      output("tasks-remove", result);
+    });
+  },
+});
+
+const tasksEnableCommand = defineCommand({
+  meta: { name: "enable", description: "Enable a previously-disabled task" },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksSetEnabled(id, true);
+      output("tasks-enable", result);
+    });
+  },
+});
+
+const tasksDisableCommand = defineCommand({
+  meta: { name: "disable", description: "Disable a task in the OS scheduler without removing the file" },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const result = await akmTasksSetEnabled(id, false);
+      output("tasks-disable", result);
+    });
+  },
+});
+
+const tasksRunCommand = defineCommand({
+  meta: {
+    name: "run",
+    description: "Execute a task now (this is what cron / launchd / schtasks invoke at the scheduled time)",
+  },
+  args: { id: { type: "positional", description: "Task id", required: true } },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const { id } = parseTaskRef(args.id);
+      const envelope = await akmTasksRun(id);
+      output("tasks-run", envelope);
+      if (envelope.exitCode !== 0) process.exit(envelope.exitCode);
+    });
+  },
+});
+
+const tasksHistoryCommand = defineCommand({
+  meta: { name: "history", description: "Show recent task run history" },
+  args: {
+    id: { type: "string", description: "Filter to one task id" },
+    limit: { type: "string", description: "Maximum rows to return (default 50)" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const limit = args.limit ? Number(args.limit) : undefined;
+      if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+        throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
+      }
+      const result = await akmTasksHistory({ id: args.id, limit });
+      output("tasks-history", result);
+    });
+  },
+});
+
+const tasksSyncCommand = defineCommand({
+  meta: {
+    name: "sync",
+    description: "Reconcile the on-disk task files with the OS scheduler",
+  },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksSync();
+      output("tasks-sync", result);
+    });
+  },
+});
+
+const tasksDoctorCommand = defineCommand({
+  meta: {
+    name: "doctor",
+    description: "Report the active scheduler backend, akm bin path, log dir, and supported schedule subset",
+  },
+  async run() {
+    await runWithJsonErrors(async () => {
+      const result = await akmTasksDoctor();
+      output("tasks-doctor", result);
+    });
+  },
+});
+
+const tasksCommand = defineCommand({
+  meta: {
+    name: "tasks",
+    description: "Schedule workflows or prompts via the OS-native scheduler (cron / launchd / schtasks)",
+  },
+  subCommands: {
+    add: tasksAddCommand,
+    list: tasksListCommand,
+    show: tasksShowCommand,
+    remove: tasksRemoveCommand,
+    enable: tasksEnableCommand,
+    disable: tasksDisableCommand,
+    run: tasksRunCommand,
+    history: tasksHistoryCommand,
+    sync: tasksSyncCommand,
+    doctor: tasksDoctorCommand,
+  },
+  run({ args }) {
+    return runWithJsonErrors(async () => {
+      if (hasTasksSubcommand(args)) return;
+      const result = await akmTasksList();
+      output("tasks-list", result);
+    });
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "akm",
@@ -3080,6 +3295,7 @@ const main = defineCommand({
     completions: completionsCommand,
     vault: vaultCommand,
     wiki: wikiCommand,
+    tasks: tasksCommand,
   },
 });
 
