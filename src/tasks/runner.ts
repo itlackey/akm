@@ -25,7 +25,7 @@ import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { NotFoundError } from "../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../core/paths";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveAssetPath } from "../sources/resolve";
@@ -110,7 +110,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   if (task.target.kind === "workflow") {
     return await runWorkflowTask({
       task,
-      stashDir,
       logPath,
       historyDir,
       startedAt,
@@ -134,7 +133,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
 
 async function runWorkflowTask(input: {
   task: TaskDocument;
-  stashDir: string;
   logPath: string;
   historyDir: string;
   startedAt: Date;
@@ -368,6 +366,3 @@ export function exitCodeForStatus(status: TaskRunStatus): number {
       return 0;
   }
 }
-
-// ── Re-export so the CLI can avoid double-imports ───────────────────────────
-export { UsageError };

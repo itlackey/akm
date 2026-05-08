@@ -8,8 +8,19 @@
 //     # akm:task <id> END
 //
 // The backend reads/writes the user's crontab via `crontab -l` and
-// `crontab -`. Tests inject a fake exec so unit tests don't touch the real
-// crontab.
+// `crontab -`. Disabling a task comments the entry with `# akm:disabled `
+// rather than removing it, so re-enabling preserves the original schedule.
+//
+// Platform notes:
+//   • Operates on the *per-user* crontab — system-wide /etc/cron.d entries
+//     are out of scope.
+//   • Cron runs jobs with a stripped environment (`SHELL`, `PATH`, `HOME`,
+//     `LOGNAME`/`USER` only). The cron line uses an absolute akm path
+//     resolved at install time so it doesn't rely on the inherited PATH.
+//   • BSD `crontab -l` returns exit 1 with "no crontab for <user>" on a
+//     fresh user; we treat that as an empty crontab rather than an error.
+//
+// Tests inject a fake exec so unit tests don't touch the real crontab.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";

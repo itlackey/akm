@@ -6,6 +6,15 @@
  * `launchctl bootstrap gui/<uid> <plist>`. Disabling uses
  * `launchctl disable gui/<uid>/<label>` and re-enabling uses `enable`.
  *
+ * Platform notes:
+ *   • The `bootstrap` / `bootout` / `enable` / `disable` subcommands require
+ *     macOS 10.10 (Yosemite) or newer. On older systems the equivalents
+ *     are `launchctl load -w` / `unload -w`. We only target modern macOS.
+ *   • `gui/<uid>` is the per-user GUI launchd domain — agents in this
+ *     domain only run while the user is logged in (no background runs at
+ *     the loginwindow). Tasks that need to run when the user is logged
+ *     out should be installed as system Daemons, which is out of scope.
+ *
  * Tests inject a fake exec + filesystem so the backend can be unit-tested
  * without touching the host launchctl.
  */
@@ -51,7 +60,7 @@ const PLIST_PREFIX = "com.akm.task.";
 export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBackend {
   const exec = options.exec ?? defaultLaunchdExec();
   const fsLike = options.fs ?? defaultLaunchdFs();
-  const agentsDir = options.agentsDir ?? path.join(os.homedir() ?? "", "Library", "LaunchAgents");
+  const agentsDir = options.agentsDir ?? defaultAgentsDir();
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
 
@@ -173,6 +182,21 @@ function escapeXml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+function defaultAgentsDir(): string {
+  // launchd's per-user LaunchAgents live under the user's home directory.
+  // If we can't determine HOME, refuse rather than silently producing a
+  // relative path that would write somewhere unexpected.
+  const home = os.homedir();
+  if (!home) {
+    throw new ConfigError(
+      "Cannot determine user home directory; launchd backend requires HOME to locate ~/Library/LaunchAgents.",
+      "INVALID_CONFIG_FILE",
+      "Set $HOME (POSIX) or the equivalent before running `akm tasks` on macOS.",
+    );
+  }
+  return path.join(home, "Library", "LaunchAgents");
 }
 
 function defaultLaunchdExec(): LaunchdExec {

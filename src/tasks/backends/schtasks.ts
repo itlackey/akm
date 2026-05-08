@@ -6,6 +6,24 @@
  * sent through `schtasks /Create /TN \akm\<id> /XML <path>` so we can
  * express triggers/principals/actions without quoting hell.
  *
+ * Platform notes:
+ *   • `LogonType=InteractiveToken` means the task runs in the context of
+ *     the registering user only when they are logged in — there is no
+ *     stored password and the task will not fire at the lock screen.
+ *   • `<Principal>` deliberately omits `<UserId>`; per the Task Scheduler
+ *     2.0 schema (`principalType.UserId` minOccurs=0) this is valid and
+ *     defaults to the registering user.
+ *   • `<DisallowStartIfOnBatteries>false</…>` and `<StopIfGoingOnBatteries>
+ *     false</…>` allow the task to run on battery — utility tasks would
+ *     otherwise be silently skipped on laptops.
+ *   • `MultipleInstancesPolicy=IgnoreNew` makes overlapping triggers safe:
+ *     while a task is still running, a new fire is dropped rather than
+ *     queued or run in parallel.
+ *   • `/Query /FO CSV /NH` (without `/V`) outputs three columns:
+ *     `TaskName,Next Run Time,Status` — so the regex anchors on the task
+ *     name as the leading quoted field. Adding `/V` would shift HostName
+ *     into column 0; we deliberately don't.
+ *
  * Tests inject a fake exec + filesystem.
  */
 
