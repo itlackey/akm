@@ -693,6 +693,21 @@ describe("llm config", () => {
     });
   });
 
+  test("warns when llm endpoint does not end in /chat/completions", () => {
+    const originalWarn = console.warn;
+    const messages: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map(String).join(" "));
+    };
+    try {
+      writeRawConfig(getConfigPath(), JSON.stringify({ llm: { endpoint: "http://localhost/v1", model: "gpt-4" } }));
+      loadConfig();
+      expect(messages.some((msg) => msg.includes("/chat/completions"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test("accepts llm config with endpoint and empty model (subkey-set partial)", () => {
     // After QA #36, `akm config set llm.endpoint <url>` persists a partial
     // llm config with `model: ""`. The loader must accept this so the value

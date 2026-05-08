@@ -164,6 +164,17 @@ export async function runGraphExtractionPass(
     totalRelations += extraction.relations.length;
   }
 
+  if (nodes.length === 0) {
+    warn("graph extraction: all extractions failed or returned no entities; leaving existing graph.json untouched.");
+    return {
+      considered,
+      extracted: 0,
+      totalEntities: 0,
+      totalRelations: 0,
+      written: false,
+    };
+  }
+
   const graph: GraphFile = {
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),

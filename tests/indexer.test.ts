@@ -612,7 +612,7 @@ test("akmIndex memory inference uses the configured llm maxTokens budget", async
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
         maxTokens: 1024,
-        features: { graph_extraction: false },
+        features: { graph_extraction: false, memory_inference: true },
       },
     });
 
@@ -669,6 +669,7 @@ test("akmIndex warns and reports skipped memory inference when LLM returns unusa
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
         maxTokens: 1024,
+        features: { memory_inference: true },
       },
     });
 

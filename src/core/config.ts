@@ -64,6 +64,8 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   temperature?: number;
   /** Optional response token limit */
   maxTokens?: number;
+  /** Optional request timeout in milliseconds. */
+  timeoutMs?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
@@ -851,6 +853,12 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
     return undefined;
   }
+  if (!obj.endpoint.endsWith("/chat/completions")) {
+    warn(
+      `[akm] llm.endpoint "${obj.endpoint}" does not end in /chat/completions. ` +
+        `Did you mean "${obj.endpoint.replace(/\/+$/, "")}/chat/completions"?`,
+    );
+  }
   const model = typeof obj.model === "string" ? obj.model : "";
   const result: LlmConnectionConfig = {
     endpoint: obj.endpoint,
@@ -861,6 +869,17 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   }
   if (typeof obj.temperature === "number" && Number.isFinite(obj.temperature)) {
     result.temperature = obj.temperature;
+  }
+  if ("timeoutMs" in obj) {
+    if (
+      typeof obj.timeoutMs !== "number" ||
+      !Number.isFinite(obj.timeoutMs) ||
+      !Number.isInteger(obj.timeoutMs) ||
+      obj.timeoutMs <= 0
+    ) {
+      return undefined;
+    }
+    result.timeoutMs = obj.timeoutMs;
   }
   if ("maxTokens" in obj) {
     if (

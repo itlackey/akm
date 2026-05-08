@@ -58,6 +58,8 @@ export interface ChatCompletionOptions {
   maxTokens?: number;
   /** Override the config's temperature for this call. */
   temperature?: number;
+  /** Override the config timeout for this call. */
+  timeoutMs?: number;
   /** Optional external abort signal for caller-driven cancellation. */
   signal?: AbortSignal;
 }
@@ -67,6 +69,7 @@ export async function chatCompletion(
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ): Promise<string> {
+  const timeoutMs = options?.timeoutMs ?? config.timeoutMs ?? 120_000;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (config.apiKey) {
     headers.Authorization = `Bearer ${config.apiKey}`;
@@ -85,7 +88,7 @@ export async function chatCompletion(
         ...config.extraParams,
       }),
     },
-    30_000,
+    timeoutMs,
     options?.signal,
   );
 
@@ -101,12 +104,50 @@ export async function chatCompletion(
 
 /** Strip leading/trailing markdown code fences from an LLM response. */
 export function stripJsonFences(raw: string): string {
-  return raw
+  const repaired = raw
     .trim()
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/^```(?:json)?\s*\n?/i, "")
     .replace(/\n?```\s*$/i, "")
     .trim();
+
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < repaired.length; i++) {
+    const ch = repaired[i];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\n") {
+        out += "\\n";
+        continue;
+      }
+      if (ch === "\r") {
+        out += "\\r";
+        continue;
+      }
+      if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /** Parse a possibly-fenced JSON response. Returns undefined if invalid. */

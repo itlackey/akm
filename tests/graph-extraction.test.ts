@@ -323,6 +323,21 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(parsed.files).toHaveLength(1);
   });
 
+  test("leaves an existing graph.json untouched when every extraction returns no entities", async () => {
+    writeFile("memories/m1.md", {}, "Empty graph body.");
+    const graphPath = getGraphFilePath(tmpStash);
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(graphPath, "sentinel", "utf8");
+    extractor = () => ({ entities: [], relations: [] });
+
+    const result = await runGraphExtractionPass(configWithLlm(), sources());
+
+    expect(result.considered).toBe(1);
+    expect(result.extracted).toBe(0);
+    expect(result.written).toBe(false);
+    expect(fs.readFileSync(graphPath, "utf8")).toBe("sentinel");
+  });
+
   test("does not extract from cache-only sources (only the primary stash)", async () => {
     const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-cache-"));
     try {

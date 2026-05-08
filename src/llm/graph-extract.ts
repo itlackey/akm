@@ -32,9 +32,6 @@ const MAX_ENTITIES_PER_ASSET = 32;
 /** Hard cap on relations returned per asset. */
 const MAX_RELATIONS_PER_ASSET = 32;
 
-/** Hard timeout for the LLM call; an `akm index` run must not hang on a misbehaving endpoint. */
-const LLM_TIMEOUT_MS = 30_000;
-
 const SYSTEM_PROMPT =
   "You extract a knowledge graph from developer notes. Return only valid JSON. " + "No prose, no markdown fences.";
 
@@ -92,10 +89,13 @@ export async function extractGraphFromBody(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
         ],
-        { maxTokens: 1024, temperature: 0.1, signal },
+        { maxTokens: 1024, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
       ),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error("graph extraction timed out")), LLM_TIMEOUT_MS);
+        timeoutHandle = setTimeout(
+          () => reject(new Error("graph extraction timed out")),
+          llmConfig.timeoutMs ?? 120_000,
+        );
       }),
     ]);
     if (!raw) return empty;

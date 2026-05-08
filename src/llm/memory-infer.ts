@@ -24,9 +24,6 @@ import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
 /** Hard cap on body chars sent to the model — pragmatic and matches `runLlmEnrich`. */
 const MAX_BODY_CHARS = 4000;
 
-/** Hard timeout for the LLM call. The index run must not hang on a misbehaving endpoint. */
-const LLM_TIMEOUT_MS = 30_000;
-
 const SYSTEM_PROMPT =
   "You compress a developer memory into one high-signal derived memory for later retrieval. " +
   "Return only valid JSON. No prose outside the JSON object. No markdown fences.";
@@ -93,10 +90,18 @@ export async function compressMemoryToDerivedMemory(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
         ],
-        { temperature: 0.1, signal },
+        {
+          maxTokens: llmConfig.maxTokens ?? 4096,
+          temperature: 0.1,
+          timeoutMs: llmConfig.timeoutMs ?? 120_000,
+          signal,
+        },
       ),
       new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error("memory inference timed out")), LLM_TIMEOUT_MS);
+        timeoutHandle = setTimeout(
+          () => reject(new Error("memory inference timed out")),
+          llmConfig.timeoutMs ?? 120_000,
+        );
       }),
     ]);
     if (!raw) return undefined;

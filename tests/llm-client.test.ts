@@ -120,6 +120,31 @@ describe("chatCompletion error redaction", () => {
       server.stop();
     }
   });
+
+  test("uses configured timeoutMs when provided", async () => {
+    const started = Date.now();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(_req) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    try {
+      const config: LlmConnectionConfig = {
+        endpoint: `http://localhost:${server.port}`,
+        model: "test-model",
+        timeoutMs: 250,
+      };
+      const out = await chatCompletion(config, [{ role: "user", content: "hi" }]);
+      expect(out).toBe("ok");
+      expect(Date.now() - started).toBeGreaterThanOrEqual(80);
+    } finally {
+      server.stop();
+    }
+  });
 });
 
 describe("parseEmbeddedJsonResponse", () => {
@@ -166,6 +191,13 @@ describe("parseEmbeddedJsonResponse", () => {
     expect(parseEmbeddedJsonResponse<{ entities: string[]; relations: unknown[] }>(raw)).toEqual({
       entities: ["ServiceA"],
       relations: [],
+    });
+  });
+
+  test("preserves escaped quotes while repairing literal newlines inside strings", () => {
+    const raw = '{"content":"Line one\nLine two with \\"quoted\\" text"}';
+    expect(parseEmbeddedJsonResponse<{ content: string }>(raw)).toEqual({
+      content: 'Line one\nLine two with "quoted" text',
     });
   });
 

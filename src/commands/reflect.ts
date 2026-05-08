@@ -246,16 +246,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     if (fallback) {
       payload = fallback;
     } else {
-    return {
-      schemaVersion: 1,
-      ok: false,
-      reason: "parse_error",
-      error: err instanceof Error ? err.message : String(err),
-      ...(options.ref ? { ref: options.ref } : {}),
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      ...(result.stderr ? { stderr: result.stderr } : {}),
-    };
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error: err instanceof Error ? err.message : String(err),
+        ...(options.ref ? { ref: options.ref } : {}),
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
     }
   }
 

@@ -1000,13 +1000,24 @@ export function getAllEntries(db: Database, entryType?: string): DbIndexedEntry[
 
 export function findEntryIdByRef(db: Database, ref: string): number | undefined {
   const parsed = parseAssetRef(ref);
-  const suffix = `${parsed.type}:${parsed.name}`;
-  const row = db
-    .prepare(
-      "SELECT id FROM entries WHERE entry_type = ? AND substr(entry_key, length(entry_key) - length(?) + 1) = ? LIMIT 1",
-    )
-    .get(parsed.type, suffix, suffix) as { id: number } | undefined;
-  return row?.id;
+  const nameVariants = [parsed.name];
+  if (parsed.name.endsWith(".md")) {
+    nameVariants.push(parsed.name.slice(0, -3));
+  } else {
+    nameVariants.push(`${parsed.name}.md`);
+  }
+
+  const stmt = db.prepare(
+    "SELECT id FROM entries WHERE entry_type = ? AND substr(entry_key, length(entry_key) - length(?) + 1) = ? LIMIT 1",
+  );
+
+  for (const name of nameVariants) {
+    const suffix = `${parsed.type}:${name}`;
+    const row = stmt.get(parsed.type, suffix, suffix) as { id: number } | undefined;
+    if (row) return row.id;
+  }
+
+  return undefined;
 }
 
 export function getEntryCount(db: Database): number {

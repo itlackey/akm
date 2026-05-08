@@ -121,6 +121,27 @@ describe("akm feedback", () => {
     }
   });
 
+  test("accepts markdown command refs without requiring the .md suffix", async () => {
+    const stashDir = makeTempDir("akm-feedback-stash-");
+    process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
+    process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+
+    writeFile(
+      path.join(stashDir, "commands", "complete-github-issue.md"),
+      "---\ndescription: command asset\n---\nDispatch the workflow.\n",
+    );
+
+    await buildIndex(stashDir);
+
+    const result = runCli(["feedback", "command:complete-github-issue", "--positive", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(parseJsonOutput(result)).toMatchObject({
+      ok: true,
+      ref: "command:complete-github-issue",
+      signal: "positive",
+    });
+  });
+
   test("rejects refs that are validly formatted but not in the current index", async () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
