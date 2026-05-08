@@ -1313,7 +1313,7 @@ async function writeMarkdownAsset(options: {
 const workflowStartCommand = defineCommand({
   meta: {
     name: "start",
-    description: "Start a new workflow run",
+    description: "Start a new workflow run in the current working scope",
   },
   args: {
     ref: { type: "positional", description: "Workflow ref (workflow:<name>)", required: true },
@@ -1330,7 +1330,8 @@ const workflowStartCommand = defineCommand({
 const workflowNextCommand = defineCommand({
   meta: {
     name: "next",
-    description: "Show the next actionable workflow step, auto-starting a run when passed a workflow ref",
+    description:
+      "Show the next actionable workflow step in the current scope, auto-starting a run when passed a workflow ref",
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
@@ -1343,9 +1344,8 @@ const workflowNextCommand = defineCommand({
       // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
       // error before parseAssetRef gets to throw an unhelpful ref-parse error.
       if (looksLikeWorkflowRunId(args.target)) {
-        const { listWorkflowRuns: listRuns } = await import("./workflows/runs.js");
-        const { runs: existingRuns } = listRuns({});
-        if (!existingRuns.some((r) => r.id === args.target)) {
+        const { hasWorkflowRun } = await import("./workflows/runs.js");
+        if (!hasWorkflowRun(args.target)) {
           throw new NotFoundError(
             `Workflow run "${args.target}" not found.`,
             "WORKFLOW_NOT_FOUND",
@@ -1407,7 +1407,7 @@ const workflowCompleteCommand = defineCommand({
 const workflowStatusCommand = defineCommand({
   meta: {
     name: "status",
-    description: "Show full workflow run state for review or resume",
+    description: "Show full workflow run state for review or resume; workflow refs resolve within the current scope",
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
@@ -1444,7 +1444,7 @@ const workflowStatusCommand = defineCommand({
 const workflowListCommand = defineCommand({
   meta: {
     name: "list",
-    description: "List workflow runs",
+    description: "List workflow runs in the current working scope",
   },
   args: {
     ref: { type: "string", description: "Filter to one workflow ref" },

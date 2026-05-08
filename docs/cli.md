@@ -348,6 +348,16 @@ Subcommands:
 | `list` | List workflow runs (optionally filtered by `--ref` and `--active`) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 
+Workflow runs are scoped to the current working context, not globally across all
+repos or directories. akm resolves that context from the nearest `.akm/config.json`
+ancestor when present, otherwise the nearest git root, otherwise the stash root
+when the cwd is inside it, otherwise the cwd itself. In practice this means:
+
+- `workflow next workflow:<name>` resumes the active run for the current project/worktree/directory only.
+- `workflow status workflow:<name>` resolves the most-recently-updated run in the current scope only.
+- `workflow list` shows runs for the current scope only.
+- Direct run-id commands like `workflow status <run-id>` still work even if the run was started from another directory.
+
 #### workflow create
 
 ```sh
@@ -374,8 +384,8 @@ akm workflow next <run-id>
 akm workflow next workflow:ship-release --params '{"version":"1.2.3"}'
 ```
 
-When multiple active runs exist for the same workflow ref, `next` selects the
-**most-recently-updated** run.
+When multiple active runs exist for the same workflow ref in the current scope,
+`next` selects the **most-recently-updated** run.
 
 When no active run exists, `next` auto-starts a new run for the workflow ref.
 Pass `--params` to supply parameters for the auto-started run. If an active run
@@ -417,7 +427,7 @@ akm workflow status workflow:ship-release
 ```
 
 Accepts either a run-id or a workflow ref. When given a workflow ref, resolves
-to the most-recently-updated run for that ref.
+to the most-recently-updated run for that ref in the current working scope.
 
 #### workflow resume
 

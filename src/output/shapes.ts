@@ -508,6 +508,7 @@ export function shapeShowOutput(
       "run",
       "setup",
       "cwd",
+      "activeRun",
       "toolPolicy",
       "modelHint",
       "agent",
@@ -555,6 +556,7 @@ export function shapeShowOutput(
     "run",
     "setup",
     "cwd",
+    "activeRun",
     "keys",
     "comments",
     // path and editable are always projected so JSON consumers can locate and

@@ -21,6 +21,7 @@ import { formatWorkflowErrors } from "./authoring";
 import { closeWorkflowDatabase, openWorkflowDatabase } from "./db";
 import { parseWorkflow } from "./parser";
 import type { WorkflowDocument } from "./schema";
+import { getCurrentWorkflowScopeKey } from "./scope-key";
 
 type WorkflowAsset = {
   ref: string;
@@ -34,6 +35,7 @@ type WorkflowAsset = {
 type WorkflowRunRow = {
   id: string;
   workflow_ref: string;
+  scope_key: string | null;
   workflow_entry_id: number | null;
   workflow_title: string;
   status: WorkflowRunStatus;
@@ -93,6 +95,7 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
   try {
     const now = new Date().toISOString();
     const runId = randomUUID();
+    const scopeKey = getCurrentWorkflowScopeKey();
     const currentStepId = asset.steps[0]?.id ?? null;
     const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref);
 
@@ -100,10 +103,10 @@ export async function startWorkflowRun(ref: string, params: Record<string, unkno
       workflowDb
         .prepare(
           `INSERT INTO workflow_runs (
-          id, workflow_ref, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
         )
-        .run(runId, asset.ref, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
+        .run(runId, asset.ref, scopeKey, workflowEntryId, asset.title, JSON.stringify(params), currentStepId, now, now);
 
       const insertStep = workflowDb.prepare(
         `INSERT INTO workflow_run_steps (
@@ -145,6 +148,18 @@ export function getWorkflowStatus(runId: string): WorkflowRunDetail {
   }
 }
 
+export function hasWorkflowRun(runId: string): boolean {
+  const workflowDb = openWorkflowDatabase();
+  try {
+    const row = workflowDb.prepare("SELECT 1 FROM workflow_runs WHERE id = ? LIMIT 1").get(runId) as
+      | { 1: number }
+      | undefined;
+    return !!row;
+  } finally {
+    closeWorkflowDatabase(workflowDb);
+  }
+}
+
 export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: boolean }): {
   runs: WorkflowRunSummary[];
 } {
@@ -152,6 +167,9 @@ export function listWorkflowRuns(input?: { workflowRef?: string; activeOnly?: bo
   try {
     const filters: string[] = [];
     const params: string[] = [];
+    const scopeKey = getCurrentWorkflowScopeKey();
+    filters.push("scope_key = ?");
+    params.push(scopeKey);
     if (input?.workflowRef) {
       const parsed = parseAssetRef(input.workflowRef);
       if (parsed.type !== "workflow") {
@@ -335,11 +353,12 @@ async function resolveRunSpecifier(
     throw new UsageError(`Expected a workflow ref or workflow run id, got "${specifier}".`);
   }
   const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
+  const scopeKey = getCurrentWorkflowScopeKey();
   const active = db
     .prepare(
-      "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
+      "SELECT * FROM workflow_runs WHERE workflow_ref = ? AND scope_key = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
     )
-    .get(ref) as WorkflowRunRow | undefined;
+    .get(ref, scopeKey) as WorkflowRunRow | undefined;
   if (active) {
     if (params && Object.keys(params).length > 0) {
       throw new UsageError(`--params can only be set on a new run; ${ref} already has an active run`);
@@ -499,6 +518,7 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
   return {
     id: run.id,
     workflowRef: run.workflow_ref,
+    scopeKey: run.scope_key,
     workflowEntryId: run.workflow_entry_id,
     workflowTitle: run.workflow_title,
     status: run.status,
@@ -584,14 +604,16 @@ function parseJsonArray(value: string | null): string[] | undefined {
   return undefined;
 }
 
-export function getActiveWorkflowRun(): { runId: string; stepId: string | null; workflowRef: string } | null {
+export function getActiveWorkflowRun(
+  scopeKey = getCurrentWorkflowScopeKey(),
+): { runId: string; stepId: string | null; workflowRef: string } | null {
   try {
     const workflowDb = openWorkflowDatabase();
     const row = workflowDb
-      .query<{ id: string; current_step_id: string | null; workflow_ref: string }, []>(
-        "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
+      .query<{ id: string; current_step_id: string | null; workflow_ref: string }, [string]>(
+        "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC LIMIT 1",
       )
-      .get();
+      .get(scopeKey);
     closeWorkflowDatabase(workflowDb);
     if (!row) return null;
     return { runId: row.id, stepId: row.current_step_id, workflowRef: row.workflow_ref };

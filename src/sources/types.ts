@@ -100,6 +100,7 @@ export interface WorkflowRunStepState extends WorkflowStepDefinition {
 export interface WorkflowRunSummary {
   id: string;
   workflowRef: string;
+  scopeKey?: string | null;
   workflowEntryId?: number | null;
   workflowTitle: string;
   status: WorkflowRunStatus;
@@ -260,6 +261,11 @@ export interface ShowResponse {
   type: string;
   name: string;
   path: string;
+  activeRun?: {
+    runId: string;
+    stepId: string | null;
+    workflowRef: string;
+  };
   content?: string;
   template?: string;
   prompt?: string;

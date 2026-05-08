@@ -25,11 +25,12 @@ function createWorkflowEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function runCli(args: string[], env: NodeJS.ProcessEnv) {
+function runCli(args: string[], env: NodeJS.ProcessEnv, cwd?: string) {
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env,
+    ...(cwd ? { cwd } : {}),
   });
 }
 
@@ -352,6 +353,29 @@ describe("workflow status with workflow ref", () => {
     expect(status.status).toBe(1);
     const err = JSON.parse(status.stderr) as { error: string };
     expect(err.error).toContain("No workflow runs found");
+  });
+
+  test("status workflow:<name> resolves within the current working-directory scope", () => {
+    const env = createWorkflowEnv();
+    const workA = makeTempDir("akm-wfqa-scope-a-");
+    const workB = makeTempDir("akm-wfqa-scope-b-");
+    setupWorkflow(env);
+
+    const startedA = runCli(["workflow", "start", "workflow:test-flow"], env, workA);
+    expect(startedA.status).toBe(0);
+    const { run: runA } = JSON.parse(startedA.stdout) as { run: { id: string } };
+
+    const startedB = runCli(["workflow", "start", "workflow:test-flow"], env, workB);
+    expect(startedB.status).toBe(0);
+    const { run: runB } = JSON.parse(startedB.stdout) as { run: { id: string } };
+
+    const statusA = runCli(["workflow", "status", "workflow:test-flow"], env, workA);
+    expect(statusA.status).toBe(0);
+    expect((JSON.parse(statusA.stdout) as { run: { id: string } }).run.id).toBe(runA.id);
+
+    const statusB = runCli(["workflow", "status", "workflow:test-flow"], env, workB);
+    expect(statusB.status).toBe(0);
+    expect((JSON.parse(statusB.stdout) as { run: { id: string } }).run.id).toBe(runB.id);
   });
 
   test("next with an unknown run id returns WORKFLOW_NOT_FOUND", () => {

@@ -25,6 +25,10 @@ For workflow tasks:
 2. Do the step work in your workspace
 3. \`akm workflow complete <run-id> --step <step-id>\` — mark done, get next step
 
+Workflow runs are scoped to your current project/worktree/directory. Ref-based
+commands like \`workflow next workflow:<name>\`, \`workflow status workflow:<name>\`,
+and \`workflow list\` operate within the current scope only.
+
 ## Quick Reference
 
 \`\`\`sh
@@ -198,15 +202,19 @@ akm vault run vault:prod/DB_URL -- printenv DB_URL # Inject one key for one comm
 
 Step-based workflows stored as \`<stashDir>/workflows/<name>.md\`.
 
+Ref-based workflow commands are scoped to the current project/worktree/directory,
+so one active run does not block unrelated directories from starting the same
+workflow. Direct run-id commands still target the exact run.
+
 \`\`\`sh
 akm workflow template                         # Print a starter workflow template
 akm workflow create ship-release             # Scaffold a new workflow asset
-akm workflow start workflow:ship-release     # Start a new run
-akm workflow next workflow:ship-release      # Advance to the next step (or auto-start)
+akm workflow start workflow:ship-release     # Start a new run in the current scope
+akm workflow next workflow:ship-release      # Advance to the next step (or auto-start) in the current scope
 akm workflow complete <run-id>               # Mark a step complete and advance
-akm workflow status <run-id>                 # Show current run status
+akm workflow status <run-id>                 # Show the exact run by id
 akm workflow resume <run-id>                 # Resume a blocked or failed run
-akm workflow list                            # List all workflow runs
+akm workflow list                            # List workflow runs in the current scope
 \`\`\`
 
 ## Clone

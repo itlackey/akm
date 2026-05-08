@@ -110,6 +110,11 @@ akm workflow status run-abc123
 akm workflow status workflow:ship-release
 ```
 
+Ref-based workflow commands are scoped to the current working context, not all
+workflow runs on the machine. In practice akm groups runs by the current
+project/worktree/directory, so an active run in one repo or sandbox does not
+block a different directory from starting its own run of the same workflow.
+
 That shows each step with its status and any notes the agent recorded. You can list all active runs:
 
 ```sh

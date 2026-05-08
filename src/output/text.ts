@@ -793,7 +793,7 @@ function isCommandOutputSkill(lines: string[]): boolean {
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
   const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
   if (runs.length === 0) {
-    return "No workflow runs. Start one with `akm workflow next workflow:<name>` or author one with `akm workflow create <name>`.";
+    return "No workflow runs in the current working scope. Start one with `akm workflow next workflow:<name>` or author one with `akm workflow create <name>`.";
   }
 
   return runs

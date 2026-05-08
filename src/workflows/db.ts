@@ -25,6 +25,7 @@ function ensureWorkflowSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS workflow_runs (
       id                TEXT PRIMARY KEY,
       workflow_ref      TEXT NOT NULL,
+      scope_key         TEXT,
       workflow_entry_id INTEGER,
       workflow_title    TEXT NOT NULL,
       status            TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),
@@ -56,4 +57,15 @@ function ensureWorkflowSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_sequence
       ON workflow_run_steps(run_id, sequence_index);
   `);
+
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(workflow_runs)")
+    .all()
+    .map((column) => column.name);
+  if (!columns.includes("scope_key")) {
+    db.exec("ALTER TABLE workflow_runs ADD COLUMN scope_key TEXT");
+  }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status ON workflow_runs(scope_key, workflow_ref, status)",
+  );
 }

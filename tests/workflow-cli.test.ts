@@ -53,11 +53,12 @@ function parseLastJsonLine(stderr: string): unknown {
   return JSON.parse(tail);
 }
 
-function runCli(args: string[], env: NodeJS.ProcessEnv) {
+function runCli(args: string[], env: NodeJS.ProcessEnv, cwd?: string) {
   return spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env,
+    ...(cwd ? { cwd } : {}),
   });
 }
 
@@ -339,5 +340,81 @@ describe("workflow CLI", () => {
     const startJson = JSON.parse(started.stdout) as { run: { workflowEntryId?: number | null; workflowRef: string } };
     expect(startJson.run.workflowRef).toBe("extra//workflow:shared-release");
     expect(typeof startJson.run.workflowEntryId).toBe("number");
+  });
+
+  test("workflow runs are isolated across non-repo working directories", () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "release.md");
+    const workA = makeTempDir("akm-workflow-scope-a-");
+    const workB = makeTempDir("akm-workflow-scope-b-");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
+
+    expect(runCli(["workflow", "create", "release", "--from", sourcePath], env).status).toBe(0);
+
+    const startedA = runCli(["workflow", "start", "workflow:release"], env, workA);
+    expect(startedA.status).toBe(0);
+    const startJsonA = JSON.parse(startedA.stdout) as { run: { id: string; scopeKey?: string | null } };
+
+    const nextB = runCli(["workflow", "next", "workflow:release", "--params", '{"version":"2.0.0"}'], env, workB);
+    expect(nextB.status).toBe(0);
+    const nextJsonB = JSON.parse(nextB.stdout) as {
+      autoStarted?: boolean;
+      run: { id: string; params?: Record<string, unknown>; scopeKey?: string | null };
+    };
+    expect(nextJsonB.autoStarted).toBe(true);
+    expect(nextJsonB.run.id).not.toBe(startJsonA.run.id);
+    expect(nextJsonB.run.params?.version).toBe("2.0.0");
+    expect(nextJsonB.run.scopeKey).toBeDefined();
+    expect(nextJsonB.run.scopeKey).not.toBe(startJsonA.run.scopeKey);
+
+    const listA = runCli(["workflow", "list", "--ref", "workflow:release", "--active"], env, workA);
+    expect(listA.status).toBe(0);
+    const listJsonA = JSON.parse(listA.stdout) as { runs: Array<{ id: string }> };
+    expect(listJsonA.runs.map((run) => run.id)).toEqual([startJsonA.run.id]);
+
+    const listB = runCli(["workflow", "list", "--ref", "workflow:release", "--active"], env, workB);
+    expect(listB.status).toBe(0);
+    const listJsonB = JSON.parse(listB.stdout) as { runs: Array<{ id: string }> };
+    expect(listJsonB.runs.map((run) => run.id)).toEqual([nextJsonB.run.id]);
+
+    const statusA = runCli(["workflow", "status", "workflow:release"], env, workA);
+    expect(statusA.status).toBe(0);
+    const statusJsonA = JSON.parse(statusA.stdout) as { run: { id: string } };
+    expect(statusJsonA.run.id).toBe(startJsonA.run.id);
+
+    const statusB = runCli(["workflow", "status", "workflow:release"], env, workB);
+    expect(statusB.status).toBe(0);
+    const statusJsonB = JSON.parse(statusB.stdout) as { run: { id: string } };
+    expect(statusJsonB.run.id).toBe(nextJsonB.run.id);
+
+    const directStatus = runCli(["workflow", "status", startJsonA.run.id], env, workB);
+    expect(directStatus.status).toBe(0);
+    const directStatusJson = JSON.parse(directStatus.stdout) as { run: { id: string } };
+    expect(directStatusJson.run.id).toBe(startJsonA.run.id);
+  });
+
+  test("show only exposes the active workflow run for the current working directory", () => {
+    const env = createWorkflowEnv();
+    const sourceDir = makeTempDir("akm-workflow-source-");
+    const sourcePath = path.join(sourceDir, "release.md");
+    const workA = makeTempDir("akm-workflow-show-a-");
+    const workB = makeTempDir("akm-workflow-show-b-");
+    fs.writeFileSync(sourcePath, RELEASE_WORKFLOW, "utf8");
+
+    expect(runCli(["workflow", "create", "release", "--from", sourcePath], env).status).toBe(0);
+    const started = runCli(["workflow", "start", "workflow:release"], env, workA);
+    expect(started.status).toBe(0);
+    const startedJson = JSON.parse(started.stdout) as { run: { id: string } };
+
+    const shownA = runCli(["show", "workflow:release"], env, workA);
+    expect(shownA.status).toBe(0);
+    const shownJsonA = JSON.parse(shownA.stdout) as { activeRun?: { runId: string } };
+    expect(shownJsonA.activeRun?.runId).toBe(startedJson.run.id);
+
+    const shownB = runCli(["show", "workflow:release"], env, workB);
+    expect(shownB.status).toBe(0);
+    const shownJsonB = JSON.parse(shownB.stdout) as { activeRun?: { runId: string } };
+    expect(shownJsonB.activeRun).toBeUndefined();
   });
 });
