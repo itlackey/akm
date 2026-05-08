@@ -16,6 +16,8 @@ export interface EventsListOptions {
   since?: string;
   type?: string;
   ref?: string;
+  excludeTags?: string[];
+  includeTags?: string[];
   /** Test seam — overrides events.jsonl path / clock. */
   ctx?: EventsContext;
 }
@@ -99,7 +101,14 @@ export function akmEventsList(options: EventsListOptions = {}): EventsListResult
   const ref = validateRef(options.ref);
   const parsed = parseSinceFlag(options.since);
   const result = readEvents(
-    { since: parsed.since, sinceOffset: parsed.sinceOffset, type: options.type, ref },
+    {
+      since: parsed.since,
+      sinceOffset: parsed.sinceOffset,
+      type: options.type,
+      ref,
+      excludeTags: options.excludeTags,
+      includeTags: options.includeTags,
+    },
     options.ctx,
   );
   return {
@@ -148,6 +157,8 @@ export async function akmEventsTail(options: EventsTailOptions = {}): Promise<Ev
     maxEvents: options.maxEvents,
     signal: options.signal,
     onEvent: options.onEvent,
+    excludeTags: options.excludeTags,
+    includeTags: options.includeTags,
   };
   const result = await tailEvents(tailOptions, options.ctx);
   return {

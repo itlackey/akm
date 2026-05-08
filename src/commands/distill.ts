@@ -117,6 +117,14 @@ export interface AkmDistillOptions {
    * before plumbing here.
    */
   excludeFeedbackFromRefs?: readonly string[];
+  /**
+   * Exclude feedback events whose metadata.tags contain any of these tags.
+   */
+  excludeTags?: string[];
+  /**
+   * Only include feedback events whose metadata.tags contain ALL of these tags.
+   */
+  includeTags?: string[];
 }
 
 export interface AkmDistillResult {
@@ -259,7 +267,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     assetContent = null;
   }
 
-  const { events } = readEventsImpl({ ref: inputRef, type: "feedback" });
+  const { events } = readEventsImpl({ ref: inputRef, type: "feedback", excludeTags: options.excludeTags, includeTags: options.includeTags });
 
   // #267 — feedback exclusion. Filter events whose `ref` matches the
   // exclusion list BEFORE the prompt is built. The original event stream

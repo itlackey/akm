@@ -156,6 +156,10 @@ export interface ReadEventsOptions {
   type?: string;
   /** Filter to a single asset ref. */
   ref?: string;
+  /** Exclude events whose metadata.tags contain any of these tags. */
+  excludeTags?: string[];
+  /** Only include events whose metadata.tags contain ALL of these tags. */
+  includeTags?: string[];
 }
 
 export interface ReadEventsResult {
@@ -235,6 +239,9 @@ function matchesFilter(envelope: EventEnvelope, options: ReadEventsOptions): boo
   if (options.type && envelope.eventType !== options.type) return false;
   if (options.ref && envelope.ref !== options.ref) return false;
   if (options.since && envelope.ts && envelope.ts < options.since) return false;
+  const tags = (envelope.metadata?.tags as string[] | undefined) ?? [];
+  if (options.excludeTags && options.excludeTags.some((t) => tags.includes(t))) return false;
+  if (options.includeTags && !options.includeTags.every((t) => tags.includes(t))) return false;
   return true;
 }
 
@@ -281,7 +288,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
   // we start polling. This matches the documented behaviour of `tail
   // --since`: emit existing events that match, then follow.
   if (options.sinceOffset === undefined) {
-    const initial = readEvents({ since: options.since, type: options.type, ref: options.ref }, ctx);
+    const initial = readEvents({ since: options.since, type: options.type, ref: options.ref, excludeTags: options.excludeTags, includeTags: options.includeTags }, ctx);
     for (const event of initial.events) {
       collected.push(event);
       options.onEvent?.(event);
@@ -306,7 +313,7 @@ export async function tailEvents(options: TailOptions = {}, ctx?: EventsContext)
 
     function tick(): void {
       try {
-        const result = readEvents({ sinceOffset: cursor, type: options.type, ref: options.ref }, ctx);
+        const result = readEvents({ sinceOffset: cursor, type: options.type, ref: options.ref, excludeTags: options.excludeTags, includeTags: options.includeTags }, ctx);
         cursor = result.nextOffset;
         for (const event of result.events) {
           // Apply --since filter inside the polling loop too — the cursor is

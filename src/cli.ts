@@ -1031,6 +1031,40 @@ const registryCommand = defineCommand({
   },
 });
 
+const TAG_KEY_RE = /^[a-z_][a-z0-9_]*$/;
+const MAX_FEEDBACK_TAGS = 10;
+
+function validateFeedbackTags(raw: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tag of raw) {
+    const parts = tag.split(":");
+    if (parts.length < 2 || parts[0] === "" || parts.slice(1).join("") === "") {
+      throw new UsageError(
+        `Invalid tag "${tag}". Tags must be in key:value format where key matches [a-z_][a-z0-9_]* and value is non-empty.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    const key = parts[0]!;
+    if (!TAG_KEY_RE.test(key)) {
+      throw new UsageError(
+        `Invalid tag key "${key}" in "${tag}". Key must match [a-z_][a-z0-9_]*.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  if (out.length > MAX_FEEDBACK_TAGS) {
+    throw new UsageError(
+      `Too many tags: ${out.length}. Maximum is ${MAX_FEEDBACK_TAGS}.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return out;
+}
+
 const feedbackCommand = defineCommand({
   meta: {
     name: "feedback",
@@ -1057,6 +1091,10 @@ const feedbackCommand = defineCommand({
       default: false,
     },
     note: { type: "string", description: "Optional note to attach to the feedback" },
+    tag: {
+      type: "string",
+      description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1076,7 +1114,10 @@ const feedbackCommand = defineCommand({
         throw new UsageError("Specify --positive or --negative.");
       }
       const signal = args.positive ? "positive" : "negative";
-      const metadata = args.note ? JSON.stringify({ note: args.note }) : undefined;
+      const rawTags = parseAllFlagValues("--tag");
+      const validatedTags = validateFeedbackTags(rawTags);
+      const metadataObj = { signal, ...(args.note ? { note: args.note } : {}), ...(validatedTags.length > 0 ? { tags: validatedTags } : {}) };
+      const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
       // Auto-index when stale so the index is current before recording feedback.
       const sources = resolveSourceEntries();
@@ -1103,7 +1144,7 @@ const feedbackCommand = defineCommand({
           entry_ref: ref,
           entry_id: entryId,
           signal,
-          metadata,
+          metadata: metadataStr,
         });
       } finally {
         closeDatabase(db);
@@ -1112,9 +1153,9 @@ const feedbackCommand = defineCommand({
       appendEvent({
         eventType: "feedback",
         ref,
-        metadata: { signal, ...(args.note ? { note: args.note } : {}) },
+        metadata: metadataObj,
       });
-      output("feedback", { ok: true, ref, signal, note: args.note ?? null });
+      output("feedback", { ok: true, ref, signal, note: args.note ?? null, tags: validatedTags });
     });
   },
 });
@@ -2606,10 +2647,26 @@ const eventsListCommand = defineCommand({
     },
     type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
+    "exclude-tags": {
+      type: "string",
+      description: "Exclude events matching these tags (repeatable)",
+    },
+    "include-tags": {
+      type: "string",
+      description: "Only include events with ALL these tags (repeatable)",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      const result = akmEventsList({ since: args.since, type: args.type, ref: args.ref });
+      const excludeTags = parseAllFlagValues("--exclude-tags");
+      const includeTags = parseAllFlagValues("--include-tags");
+      const result = akmEventsList({
+        since: args.since,
+        type: args.type,
+        ref: args.ref,
+        ...(excludeTags.length > 0 ? { excludeTags } : {}),
+        ...(includeTags.length > 0 ? { includeTags } : {}),
+      });
       output("events-list", result);
     });
   },
@@ -2627,6 +2684,14 @@ const eventsTailCommand = defineCommand({
     "interval-ms": { type: "string", description: "Polling interval in ms (default: 75)" },
     "max-duration-ms": { type: "string", description: "Stop after this many ms (default: never)" },
     "max-events": { type: "string", description: "Stop after observing this many events" },
+    "exclude-tags": {
+      type: "string",
+      description: "Exclude events matching these tags (repeatable)",
+    },
+    "include-tags": {
+      type: "string",
+      description: "Only include events with ALL these tags (repeatable)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -2639,6 +2704,8 @@ const eventsTailCommand = defineCommand({
       // also rendered through the standard output() pipeline so JSON
       // consumers always get the canonical envelope.
       const stream = mode.format === "text" || mode.format === "jsonl";
+      const excludeTags = parseAllFlagValues("--exclude-tags");
+      const includeTags = parseAllFlagValues("--include-tags");
       const result = await akmEventsTail({
         since: args.since,
         type: args.type,
@@ -2646,6 +2713,8 @@ const eventsTailCommand = defineCommand({
         intervalMs,
         maxDurationMs,
         maxEvents,
+        ...(excludeTags.length > 0 ? { excludeTags } : {}),
+        ...(includeTags.length > 0 ? { includeTags } : {}),
         onEvent: stream
           ? (event) => {
               if (mode.format === "jsonl") {
@@ -2818,6 +2887,14 @@ const distillCommand = defineCommand({
       description:
         "Comma-separated asset refs whose feedback events MUST be filtered out before the LLM input is built. Falls back to AKM_DISTILL_EXCLUDE_FEEDBACK_FROM when omitted.",
     },
+    "exclude-tags": {
+      type: "string",
+      description: "Exclude feedback events matching these tags (repeatable, e.g. --exclude-tags slice:eval)",
+    },
+    "include-tags": {
+      type: "string",
+      description: "Only include feedback events with ALL these tags (repeatable)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -2826,10 +2903,28 @@ const distillCommand = defineCommand({
       // CLI flag takes precedence over the env var when both are present.
       const excludeRaw = excludeFlag ?? excludeEnv;
       const excludeFeedbackFromRefs = parseExcludeFeedbackFromRefs(excludeRaw);
+      const excludeTagsRaw = parseAllFlagValues("--exclude-tags");
+      const excludeTagsEnv = process.env.AKM_DISTILL_EXCLUDE_TAGS;
+      const excludeTags = [
+        ...new Set([
+          ...excludeTagsRaw,
+          ...(excludeTagsEnv ? excludeTagsEnv.split(",").map((s) => s.trim()).filter(Boolean) : []),
+        ]),
+      ];
+      const includeTagsRaw = parseAllFlagValues("--include-tags");
+      const includeTagsEnv = process.env.AKM_DISTILL_INCLUDE_TAGS;
+      const includeTags = [
+        ...new Set([
+          ...includeTagsRaw,
+          ...(includeTagsEnv ? includeTagsEnv.split(",").map((s) => s.trim()).filter(Boolean) : []),
+        ]),
+      ];
       const result = await akmDistill({
         ref: args.ref,
         sourceRun: getHyphenatedArg(args, "source-run"),
         ...(excludeFeedbackFromRefs.length > 0 ? { excludeFeedbackFromRefs } : {}),
+        ...(excludeTags.length > 0 ? { excludeTags } : {}),
+        ...(includeTags.length > 0 ? { includeTags } : {}),
       });
       output("distill", result);
     });
