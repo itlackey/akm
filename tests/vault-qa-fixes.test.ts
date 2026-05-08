@@ -111,33 +111,8 @@ describe("setKey: comment parameter", () => {
   });
 });
 
-// ── vault show alias (CLI tests) ─────────────────────────────────────────────
-
-describe("vault show: alias for vault list <ref>", () => {
-  test("5. vault show vault:prod matches vault list vault:prod output", () => {
-    const stashDir = makeTempDir("akm-vqa-stash-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stashDir, "vaults", "prod.env"),
-      "# production keys\nAPI_KEY=secret\nDB_PASS=hidden\n",
-      "utf8",
-    );
-
-    const listResult = runCli(["vault", "list", "vault:prod"], { AKM_STASH_DIR: stashDir });
-    const showResult = runCli(["vault", "show", "vault:prod"], { AKM_STASH_DIR: stashDir });
-
-    expect(listResult.status).toBe(0);
-    expect(showResult.status).toBe(0);
-
-    const listParsed = JSON.parse(listResult.stdout.trim());
-    const showParsed = JSON.parse(showResult.stdout.trim());
-
-    expect(showParsed).toEqual(listParsed);
-  });
-});
-
-describe("vault list: output flags with optional ref", () => {
-  test("6. vault list --format json returns the vault list, not a vault:json error", () => {
+describe("vault list", () => {
+  test("5. vault list --format json returns all vaults with key names", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
@@ -152,26 +127,51 @@ describe("vault list: output flags with optional ref", () => {
       expect.objectContaining({
         ref: "vault:prod",
         path: path.join(stashDir, "vaults", "prod.env"),
-        keyCount: 1,
+        keys: ["API_KEY"],
       }),
     ]);
   });
 
-  test("7. vault list json --format json still treats json as the ref", () => {
-    const stashDir = makeTempDir("akm-vqa-stash-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "json.env"), "# json vault\nAPI_KEY=secret\n", "utf8");
+  test("6. vault list aggregates vaults across configured stashes", () => {
+    const primaryStash = makeTempDir("akm-vqa-stash-primary-");
+    const teamStash = makeTempDir("akm-vqa-stash-team-");
+    fs.mkdirSync(path.join(primaryStash, "vaults"), { recursive: true });
+    fs.mkdirSync(path.join(teamStash, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(primaryStash, "vaults", "prod.env"), "API_KEY=secret\n", "utf8");
+    fs.writeFileSync(path.join(teamStash, "vaults", "shared.env"), "TOKEN=hidden\n", "utf8");
+    fs.mkdirSync(path.join(xdgConfig, "akm"), { recursive: true });
+    fs.writeFileSync(
+      path.join(xdgConfig, "akm", "config.json"),
+      JSON.stringify({
+        stashDir: primaryStash,
+        sources: [{ type: "filesystem", path: teamStash, name: "team" }],
+      }),
+      "utf8",
+    );
 
-    const result = runCli(["vault", "list", "json", "--format", "json"], { AKM_STASH_DIR: stashDir });
+    const result = runCli(["vault", "list", "--format", "json"], { AKM_STASH_DIR: primaryStash });
 
     expect(result.status).toBe(0);
-
     const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed).toMatchObject({
-      ref: "vault:json",
-      path: path.join(stashDir, "vaults", "json.env"),
-      entries: [expect.objectContaining({ key: "API_KEY" })],
-    });
+    expect(parsed.vaults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ref: "vault:prod", keys: ["API_KEY"] }),
+        expect.objectContaining({ ref: "team//vault:shared", keys: ["TOKEN"] }),
+      ]),
+    );
+  });
+
+  test("7. vault list text output uses markdown headings and bullets", () => {
+    const stashDir = makeTempDir("akm-vqa-stash-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "vaults", "json.env"), "# json vault\nAPI_KEY=secret\nSECOND=value\n", "utf8");
+
+    const result = runCli(["vault", "list", "--format", "text"], { AKM_STASH_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("## vault:json");
+    expect(result.stdout).toContain("- API_KEY");
+    expect(result.stdout).toContain("- SECOND");
   });
 });
 

@@ -36,7 +36,7 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   memory: (ref) => `akm show ${ref} -> recall context`,
   workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>
-    `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
+    `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
   wiki: (ref) => `akm show ${ref} -> read the wiki page`,
 };
 

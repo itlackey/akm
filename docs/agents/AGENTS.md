@@ -37,7 +37,7 @@ akm registry search "<query>"                 # Search all registries
 | knowledge | A reference doc (use `toc` or `section "..."` to navigate) |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
-| vault | Keys and comments only; values stay on disk and load via `akm vault load` |
+| vault | Keys only in normal output; use `akm vault path` or `akm vault run` when a command needs values |
 | wiki | A page in a multi-wiki knowledge base. For any wiki task, run `akm wiki list` then `akm wiki ingest <name>` for the workflow. `akm wiki -h` for the full surface. |
 | lesson | A distilled feedback lesson (`when_to_use` plus body). Read before applying related skills. Generated via `akm distill` and the proposal queue. |
 

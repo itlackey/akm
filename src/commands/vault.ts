@@ -5,13 +5,9 @@
  * the indexer, the `akm show` renderer, or any structured output channel.
  * The supported load paths are:
  *
- *   - `eval "$(akm vault load vault:<name>)"` — `vault load` parses the vault
- *     with dotenv (no shell expansion, no code execution), writes a safely
- *     single-quote-escaped `export KEY='value'` script to a mode-0600 temp
- *     file, and emits `. <tmp>; rm -f <tmp>` on stdout. Values reach bash
- *     only via the temp file, never via akm's stdout.
- *   - `injectIntoEnv(vaultPath, target)` — programmatic API for modules that
- *     need values in a process environment.
+ *   - `source "$(akm vault path vault:<name>)"` — direct shell loading path.
+ *   - `injectIntoEnv(vaultPath, target)` / `loadEnv(vaultPath)` — programmatic
+ *     APIs for modules that need values in process memory.
  *
  * Value parsing is delegated to the `dotenv` package — we deliberately do not
  * implement our own quoting/escaping rules for security-sensitive content.
@@ -150,8 +146,7 @@ export function injectIntoEnv(
  * non-assignment content, so sourcing the output is safe regardless of what
  * the vault file contains.
  *
- * Intended for use by `akm vault load`, which writes this to a mode-0600
- * temp file and emits only the path (never values) on stdout.
+ * Retained for programmatic callers/tests that need a literal export script.
  */
 export function buildShellExportScript(vaultPath: string): string {
   const env = loadEnv(vaultPath);
@@ -269,7 +264,7 @@ export function createVault(vaultPath: string): void {
  * Characters that are safe in an UNquoted dotenv value AND are not
  * metacharacters in POSIX shells. Anything outside this set forces quoting,
  * which is defense-in-depth for any caller that might ever `source` the
- * vault file directly instead of going through `akm vault load`.
+ * vault file directly instead of going through `akm vault path`.
  */
 const UNQUOTED_SAFE_RE = /^[A-Za-z0-9_.:/@%+,-]+$/;
 

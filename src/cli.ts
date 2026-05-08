@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
@@ -49,7 +50,7 @@ import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
-import { resolveSourceEntries } from "./indexer/search-source";
+import { resolveSourceEntries, type SearchSource as IndexSearchSource } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
@@ -2075,22 +2076,39 @@ const disableCommand = defineCommand({
 
 // ── vault ───────────────────────────────────────────────────────────────────
 //
-// `akm vault` manages secrets stored in `.env` files under the vaults/
-// asset directory. Values are NEVER written to stdout. `vault load` is
-// the only value-emitting path: it parses the vault with dotenv, writes
-// a safely-escaped shell script to a mode-0600 temp file, and emits only
-// `. <temp>; rm -f <temp>` on stdout for `eval`. The shell reads values
-// from the temp file — they never transit through akm's stdout.
+// `akm vault` manages secrets stored in `.env` files under each stash's
+// vaults/ directory. Values are NEVER written to stdout or structured output.
 
-function resolveVaultPath(ref: string): { name: string; absPath: string } {
-  const stashDir = resolveStashDir({ readOnly: true });
-  const parsed = parseAssetRef(ref.includes(":") ? ref : `vault:${ref}`);
+function parseVaultRef(ref: string): ReturnType<typeof parseAssetRef> {
+  return parseAssetRef(ref.includes(":") ? ref : `vault:${ref}`);
+}
+
+function findVaultSource(origin: string | undefined): IndexSearchSource {
+  const sources = resolveSourceEntries(undefined, loadConfig());
+  if (sources.length === 0) {
+    throw new UsageError("No stashes configured. Run `akm init` to create your working stash.");
+  }
+  if (!origin || origin === "local") return sources[0];
+  const named = sources.find((source) => source.registryId === origin);
+  if (!named) {
+    throw new NotFoundError(`Source not found for origin: ${origin}`);
+  }
+  return named;
+}
+
+function makeVaultRef(name: string, source?: IndexSearchSource): string {
+  return source?.registryId ? `${source.registryId}//vault:${name}` : `vault:${name}`;
+}
+
+function resolveVaultPath(ref: string): { name: string; absPath: string; source: IndexSearchSource; parsedRef: ReturnType<typeof parseAssetRef> } {
+  const parsed = parseVaultRef(ref);
   if (parsed.type !== "vault") {
     throw new UsageError(`Expected a vault ref (vault:<name>); got "${ref}".`);
   }
-  const typeRoot = path.join(stashDir, "vaults");
+  const source = findVaultSource(parsed.origin);
+  const typeRoot = path.join(source.path, "vaults");
   const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
-  return { name: parsed.name, absPath };
+  return { name: parsed.name, absPath, source, parsedRef: parsed };
 }
 
 /**
@@ -2101,17 +2119,17 @@ function resolveVaultPath(ref: string): { name: string; absPath: string } {
  */
 function listVaultsRecursive(
   listKeysFn: (vaultPath: string) => { keys: string[] },
-): Array<{ ref: string; path: string; keyCount: number }> {
-  const stashDir = resolveStashDir({ readOnly: true });
-  const vaultsDir = path.join(stashDir, "vaults");
-  const result: Array<{ ref: string; path: string; keyCount: number }> = [];
-  if (!fs.existsSync(vaultsDir)) return result;
+): Array<{ ref: string; path: string; keys: string[] }> {
+  const result: Array<{ ref: string; path: string; keys: string[] }> = [];
+  for (const source of resolveSourceEntries(undefined, loadConfig())) {
+    const vaultsDir = path.join(source.path, "vaults");
+    if (!fs.existsSync(vaultsDir)) continue;
 
-  const walk = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -2119,84 +2137,42 @@ function listVaultsRecursive(
       const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
       if (!canonical) continue;
       const { keys } = listKeysFn(full);
-      result.push({ ref: `vault:${canonical}`, path: full, keyCount: keys.length });
+      result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
     }
-  };
-  walk(vaultsDir);
+    };
+    walk(vaultsDir);
+  }
   return result;
 }
 
-function wasRefMisparsedAsFlagValue(ref: string, flag: "--format" | "--detail", flagValue: string): boolean {
-  const argv = process.argv.slice(2);
-  const vaultIndex = argv.indexOf("vault");
-  const listIndex = vaultIndex >= 0 ? argv.indexOf("list", vaultIndex + 1) : -1;
-  const tokens = listIndex >= 0 ? argv.slice(listIndex + 1) : argv;
-
-  let flagIndex = -1;
-  let flagConsumesNextToken = false;
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token === flag) {
-      flagIndex = i;
-      flagConsumesNextToken = true;
-      break;
-    }
-    if (token === `${flag}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
+function splitVaultRunTarget(target: string): { ref: string; key?: string } {
+  const full = resolveVaultPath(target);
+  if (fs.existsSync(full.absPath)) {
+    return { ref: makeVaultRef(full.name, full.source) };
   }
 
-  if (flagIndex === -1) return false;
-  // If the same token appeared before the flag, the user explicitly passed it
-  // as the positional ref and it was not consumed by the output flag.
-  if (tokens.slice(0, flagIndex).includes(ref)) return false;
-
-  // Skip past either `--flag value` (2 tokens) or `--flag=value` (1 token)
-  // before checking whether the ref appears elsewhere as a real positional.
-  const TOKENS_AFTER_SPACE_FLAG = 2;
-  const TOKENS_AFTER_EQUALS_FLAG = 1;
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? TOKENS_AFTER_SPACE_FLAG : TOKENS_AFTER_EQUALS_FLAG);
-  if (tokens.slice(firstTokenAfterFlag).includes(ref)) return false;
-
-  return true;
-}
-
-function resolveVaultListRef(ref: string | undefined): string | undefined {
-  if (ref === undefined) return undefined;
-
-  const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (parsedFormat !== undefined && ref === parsedFormat && wasRefMisparsedAsFlagValue(ref, "--format", parsedFormat)) {
-    return undefined;
+  const slashIndex = target.lastIndexOf("/");
+  if (slashIndex <= 0) {
+    throw new NotFoundError(`Vault not found: ${target.includes(":") ? target : `vault:${target}`}`);
   }
 
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (parsedDetail !== undefined && ref === parsedDetail && wasRefMisparsedAsFlagValue(ref, "--detail", parsedDetail)) {
-    return undefined;
+  const refPart = target.slice(0, slashIndex);
+  const key = target.slice(slashIndex + 1).trim();
+  if (!key) {
+    throw new UsageError("Expected vault run target in the form <ref> or <ref/KEY>.");
   }
-
-  return ref;
+  const resolved = resolveVaultPath(refPart);
+  if (!fs.existsSync(resolved.absPath)) {
+    throw new NotFoundError(`Vault not found: ${makeVaultRef(resolved.name, resolved.source)}`);
+  }
+  return { ref: makeVaultRef(resolved.name, resolved.source), key };
 }
 
 const vaultListCommand = defineCommand({
-  meta: { name: "list", description: "List vaults, or list keys (no values) inside one vault" },
-  args: {
-    ref: { type: "positional", description: "Optional vault ref (e.g. vault:prod or just prod)", required: false },
-  },
-  run({ args }) {
+  meta: { name: "list", description: "List all vaults across all stashes with their available key names (no values)" },
+  run() {
     return runWithJsonErrors(async () => {
-      const { listKeys, listEntries } = await import("./commands/vault.js");
-      const effectiveRef = resolveVaultListRef(args.ref);
-
-      if (effectiveRef) {
-        const { name, absPath } = resolveVaultPath(effectiveRef);
-        if (!fs.existsSync(absPath)) {
-          throw new NotFoundError(`Vault not found: vault:${name}`);
-        }
-        const entries = listEntries(absPath);
-        output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
-        return;
-      }
+      const { listKeys } = await import("./commands/vault.js");
       const vaults = listVaultsRecursive(listKeys);
       output("vault-list", { vaults });
     });
@@ -2211,9 +2187,9 @@ const vaultCreateCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { createVault } = await import("./commands/vault.js");
-      const { name, absPath } = resolveVaultPath(args.name);
+      const { name, absPath, source } = resolveVaultPath(args.name);
       createVault(absPath);
-      output("vault-create", { ref: `vault:${name}`, path: absPath });
+      output("vault-create", { ref: makeVaultRef(name, source), path: absPath });
     });
   },
 });
@@ -2237,7 +2213,7 @@ const vaultSetCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setKey } = await import("./commands/vault.js");
-      const { name, absPath } = resolveVaultPath(args.ref);
+      const { name, absPath, source } = resolveVaultPath(args.ref);
 
       let realKey: string;
       let realValue: string;
@@ -2252,7 +2228,7 @@ const vaultSetCommand = defineCommand({
       }
 
       setKey(absPath, realKey, realValue, args.comment);
-      output("vault-set", { ref: `vault:${name}`, key: realKey, path: absPath });
+      output("vault-set", { ref: makeVaultRef(name, source), key: realKey, path: absPath });
     });
   },
 });
@@ -2266,91 +2242,77 @@ const vaultUnsetCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { unsetKey } = await import("./commands/vault.js");
-      const { name, absPath } = resolveVaultPath(args.ref);
+      const { name, absPath, source } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: vault:${name}`);
+        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
       }
       const removed = unsetKey(absPath, args.key);
-      output("vault-unset", { ref: `vault:${name}`, key: args.key, removed, path: absPath });
+      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed, path: absPath });
     });
   },
 });
 
-const vaultLoadCommand = defineCommand({
+const vaultPathCommand = defineCommand({
   meta: {
-    name: "load",
-    description:
-      'Emit a shell snippet that loads vault values into the current shell. Use: eval "$(akm vault load vault:<name>)". Values are parsed by dotenv, written to a mode-0600 temp file with safe single-quote escaping, then sourced and removed. No values appear on akm\'s stdout, and no shell expansion happens on raw vault content.',
+    name: "path",
+    description: 'Print the absolute vault file path so you can load it directly, e.g. `source "$(akm vault path vault:prod)"`.',
   },
   args: {
     ref: { type: "positional", description: "Vault ref", required: true },
   },
-  async run({ args }) {
+  run({ args }) {
     return runWithJsonErrors(async () => {
-      // This command deliberately bypasses output()/JSON shaping. Its stdout
-      // is a shell snippet intended for `eval`, not structured output.
-      const { name, absPath } = resolveVaultPath(args.ref);
+      const { name, absPath, source } = resolveVaultPath(args.ref);
       if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: vault:${name}`);
+        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
       }
-
-      const { buildShellExportScript } = await import("./commands/vault.js");
-      const crypto = await import("node:crypto");
-      const os = await import("node:os");
-
-      // Parse via dotenv (no expansion, no code execution) and build a
-      // script of literal `export KEY='value'` lines with `'\''` escaping.
-      // Sourcing this is safe even if the raw vault file contained shell
-      // metacharacters like $, backticks, or $(...).
-      const script = buildShellExportScript(absPath);
-
-      // Write to a mode-0600 temp file the shell can source.
-      //
-      // INTENTIONAL: this site uses `os.tmpdir()` (i.e. `/tmp` on Unix)
-      // rather than `${getCacheDir()}/vault/`. The temp file is written
-      // mode-0600, sourced by the parent shell via `eval`, and immediately
-      // `rm -f`'d on the same line of the emitted snippet. `/tmp` is the
-      // conventional location for short-lived shell-eval scratch files and
-      // benefits from tmp-cleanup-on-reboot semantics, which operators
-      // expect for ephemeral secret material. Moving to `~/.cache/akm/`
-      // would surprise those operators and also persist the file across
-      // reboots if the eval is interrupted before the inline `rm -f` runs.
-      // The bench/registry-build rationale (#276/#284) — orphan dirs
-      // accumulating under `/tmp` from long-running builds — does not
-      // apply here: the file is single-shot, a few hundred bytes, and
-      // removed by the same shell command that sources it.
-      // Regression test: tests/vault-load-error.test.ts verifies the
-      // emitted snippet contains both `. <path>` and `rm -f <path>`.
-      const tmpPath = path.join(os.tmpdir(), `akm-vault-${crypto.randomBytes(12).toString("hex")}.sh`);
-      fs.writeFileSync(tmpPath, script, { mode: 0o600, encoding: "utf8" });
-      try {
-        fs.chmodSync(tmpPath, 0o600);
-      } catch {
-        /* best-effort on platforms without chmod */
-      }
-
-      const quotedTmp = `'${tmpPath.replace(/'/g, "'\\''")}'`;
-      // Emit: source the temp file, then remove it — values reach bash only
-      // via the temp file (mode 0600), never via akm's stdout.
-      process.stdout.write(`. ${quotedTmp}; rm -f ${quotedTmp}\n`);
+      process.stdout.write(`${absPath}\n`);
     });
   },
 });
 
-const vaultShowCommand = defineCommand({
-  meta: { name: "show", description: "Show keys (no values) inside a vault — alias for `vault list <ref>`" },
+const vaultRunCommand = defineCommand({
+  meta: {
+    name: "run",
+    description: "Run a command with env injected from a vault or a single vault key: `akm vault run <ref[/KEY]> -- <command>`",
+  },
   args: {
-    ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
+    target: { type: "positional", description: "Vault ref or ref/key target", required: true },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      const { listEntries } = await import("./commands/vault.js");
-      const { name, absPath } = resolveVaultPath(args.ref);
-      if (!fs.existsSync(absPath)) {
-        throw new NotFoundError(`Vault not found: vault:${name}`);
+      const dashIndex = process.argv.indexOf("--");
+      if (dashIndex < 0 || dashIndex === process.argv.length - 1) {
+        throw new UsageError("Missing command. Usage: akm vault run <ref[/KEY]> -- <command>");
       }
-      const entries = listEntries(absPath);
-      output("vault-list", { ref: `vault:${name}`, path: absPath, entries });
+
+      const command = process.argv.slice(dashIndex + 1);
+      const { loadEnv } = await import("./commands/vault.js");
+      const { ref, key } = splitVaultRunTarget(args.target);
+      const { name, absPath, source } = resolveVaultPath(ref);
+      if (!fs.existsSync(absPath)) {
+        throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
+      }
+
+      const envValues = loadEnv(absPath);
+      const mergedEnv = { ...process.env };
+      if (key) {
+        if (!(key in envValues)) {
+          throw new NotFoundError(`Key not found in ${makeVaultRef(name, source)}: ${key}`);
+        }
+        mergedEnv[key] = envValues[key];
+      } else {
+        for (const [envKey, envValue] of Object.entries(envValues)) {
+          mergedEnv[envKey] = envValue;
+        }
+      }
+
+      const result = spawnSync(command[0] as string, command.slice(1), {
+        stdio: "inherit",
+        env: mergedEnv,
+      });
+      if (result.error) throw result.error;
+      process.exit(result.status ?? 0);
     });
   },
 });
@@ -2359,15 +2321,15 @@ const vaultCommand = defineCommand({
   meta: {
     name: "vault",
     description:
-      "Manage secret vaults (.env files). Lists keys + comments only — values never returned in structured output.",
+      "Manage secret vaults (.env files). Keys are visible, values stay on disk and never appear in structured output.",
   },
   subCommands: {
     list: vaultListCommand,
-    show: vaultShowCommand,
+    path: vaultPathCommand,
+    run: vaultRunCommand,
     create: vaultCreateCommand,
     set: vaultSetCommand,
     unset: vaultUnsetCommand,
-    load: vaultLoadCommand,
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
@@ -3104,7 +3066,7 @@ const main = defineCommand({
 });
 
 const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
-const VAULT_SUBCOMMAND_SET = new Set(["list", "show", "create", "set", "unset", "load"]);
+const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const WIKI_SUBCOMMAND_SET = new Set([
   "create",
   "register",

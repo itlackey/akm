@@ -638,11 +638,16 @@ const vaultEnvRenderer: AssetRenderer = {
       name,
       path: ctx.absPath,
       action:
-        'Vault — keys + comments only. Use `eval "$(akm vault load <ref>)"` to load values into the current shell. Values stay on disk and are never written to akm\'s stdout.',
+        'Vault — keys + comments only. Use `source "$(akm vault path <ref>)"` to load values into the current shell, or `akm vault run <ref[/KEY]> -- <command>` to run with injected env. Values stay on disk and are never written to akm\'s stdout.',
       description: comments.length > 0 ? comments.join("\n") : undefined,
       keys,
       comments,
     };
+  },
+
+  enrichSearchHit(hit: SourceSearchHit, _stashDir: string): void {
+    const { keys } = listVaultKeys(hit.path);
+    if (keys.length > 0) hit.keys = keys;
   },
 
   extractMetadata(entry: StashEntry, ctx: RenderContext): void {

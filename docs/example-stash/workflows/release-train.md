@@ -215,8 +215,7 @@ themselves multi-step procedures and do not need a nested workflow.
 3. Load deploy credentials only into the deploy shell:
 
    ```sh
-   source <(akm vault load {{ deploy_vault }})
-   ./scripts/deploy.sh {{ release_version }} | tee {{ workspace_dir }}/deploy.log
+   akm vault run {{ deploy_vault }} -- ./scripts/deploy.sh {{ release_version }} | tee {{ workspace_dir }}/deploy.log
    ```
 
    Verify the deploy health check passes before continuing. If it

@@ -11,6 +11,8 @@ export interface SourceSearchHit {
   path: string;
   ref: string;
   origin?: string | null;
+  /** Vault-only: key names surfaced in search results (no values). */
+  keys?: string[];
   /** Whether this asset is safe to edit in place (false only for cache-managed files) */
   editable?: boolean;
   /** Actionable guidance when editable is false (omitted when editable) */

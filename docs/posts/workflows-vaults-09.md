@@ -137,22 +137,21 @@ Procedures that touch production environments need secrets — database URLs, AP
 Vault assets solve this. A vault is a `.env` file stored in `vaults/` in your stash. The design has one rule: values are never surfaced in structured output. The agent can inspect a vault and learn what keys exist. It never sees what those keys are set to.
 
 ```sh
-akm vault show vault:production
-# Returns: { keys: ["DATABASE_URL", "API_KEY", "DEPLOY_TARGET"], comments: {...} }
+akm show vault:production
+# Returns keys/comments only, never values
 ```
 
 This is enough for the agent to confirm "yes, the right secrets are configured for this environment" without the secrets appearing anywhere in the conversation or the context window.
 
-When a script actually needs the values — at runtime, not at planning time — the agent emits a shell source snippet:
+When a script actually needs the values — at runtime, not at planning time — the agent runs the command through `vault run`:
 
 ```sh
-source <(akm vault load vault:production)
-./deploy.sh
+akm vault run vault:production -- ./deploy.sh
 ```
 
-The values are loaded into the shell environment for the subprocess. They never pass through the agent's text output. The agent's conversation log is clean.
+The values are loaded into the child process environment. They never pass through the agent's structured output. The agent's conversation log is clean.
 
-Combined with a workflow, this fits naturally into an environment verification step. The agent calls `akm vault show vault:production` to confirm all required keys are present, marks the step complete, then later calls `akm vault load vault:production` in the shell command that actually needs the secrets. The workflow knows what's required. The agent confirms it. The shell gets what it needs.
+Combined with a workflow, this fits naturally into an environment verification step. The agent calls `akm show vault:production` to confirm all required keys are present, marks the step complete, then later calls `akm vault run vault:production -- <command>` when a command actually needs the secrets. The workflow knows what's required. The agent confirms it. The command gets what it needs.
 
 ## Writable Git Stash: Your Skills Sync Like Code
 
@@ -216,8 +215,8 @@ akm workflow next workflow:ship-release
 # → "Validate inputs: confirm version and vault keys"
 
 # Checks the vault without reading secrets
-akm vault show vault:production
-# → { keys: ["DATABASE_URL", "API_KEY", "DEPLOY_TARGET"] }
+akm show vault:production
+# → keys/comments only, never values
 
 # Marks the step complete
 akm workflow complete run-xyz --step validate --notes "All keys present"

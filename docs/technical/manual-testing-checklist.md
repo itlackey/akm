@@ -420,14 +420,15 @@ that guarantee carefully.
 - [ ] `akm vault create test-vault` creates `vaults/test-vault.env`.
 - [ ] `akm vault set vault:test-vault MY_KEY=secret-value --comment "test secret"`
       succeeds.
-- [ ] `akm vault show vault:test-vault` lists keys/comments only.
-- [ ] `akm vault list vault:test-vault --format json` contains no `value` field.
-- [ ] `akm vault load vault:test-vault` prints only a shell snippet
-      (`. <temp>; rm -f <temp>`), not the secret value.
-- [ ] `eval "$(akm vault load vault:test-vault)" && test "$MY_KEY" = "secret-value"`
-      loads the value into the current shell in the sandbox session.
-- [ ] The temp file path emitted by `vault load` points at a temp location and
-      is removed by the emitted shell snippet.
+- [ ] `akm show vault:test-vault` lists keys/comments only.
+- [ ] `akm vault list --format json` contains the vault under `vaults[]` with
+      `keys` and no secret values.
+- [ ] `akm vault path vault:test-vault` prints the absolute vault file path and
+      not the secret value.
+- [ ] `akm vault run vault:test-vault -- bash -lc 'test "$MY_KEY" = "secret-value"'`
+      injects the value only into the subprocess environment.
+- [ ] `akm vault run vault:test-vault/MY_KEY -- bash -lc 'test "$MY_KEY" = "secret-value" && test -z "${OTHER_KEY-}"'`
+      injects only the named key.
 - [ ] `akm vault unset vault:test-vault MY_KEY` removes the key.
 
 ---
@@ -539,7 +540,7 @@ Spot-check that failures always arrive as structured JSON on stderr with
 - [ ] `akm help migrate` with no version fails with `MISSING_REQUIRED_ARGUMENT`.
 - [ ] `akm workflow next definitely-not-a-run-id` fails structurally and does
       not dump a stack trace.
-- [ ] `akm vault list missing-vault` fails with `ASSET_NOT_FOUND` or the
+- [ ] `akm vault path missing-vault` fails with `ASSET_NOT_FOUND` or the
       current typed not-found envelope.
 
 If any failure prints a bare stack trace, that is a regression.

@@ -293,8 +293,8 @@ Real-world use: your team wants a research or architecture wiki with raw sources
 Use vaults when the agent needs operational context about secrets without seeing the secret values.
 
 ```sh
-akm vault show vault:production
-eval "$(akm vault load vault:production)"
+akm show vault:production
+akm vault run vault:production -- env
 ```
 
 Real-world use: a deploy workflow needs `DATABASE_URL` and `DEPLOY_TOKEN`. The agent can verify the keys are present, then load the environment only at execution time.
@@ -480,7 +480,7 @@ Let's say your team is onboarding a new service.
 3. Run `akm index`
 4. Start with `akm curate "onboard a new service"`
 5. Open the best match with `akm show workflow:service-onboarding`
-6. Check required environment keys with `akm vault show vault:staging`
+6. Check required environment keys with `akm show vault:staging`
 7. Add the final onboarding notes to the team wiki with `akm wiki stash onboarding ./notes/service-onboarding.md`
 8. Capture a new lesson with `akm remember "Service onboarding requires DNS approval from ops" --tag ops`
 9. Record whether the workflow helped with `akm feedback workflow:service-onboarding --positive`

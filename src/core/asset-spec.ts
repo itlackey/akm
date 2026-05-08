@@ -104,7 +104,7 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     },
     rendererName: "vault-env",
     actionBuilder: (ref) =>
-      `akm vault list ${ref} -> see key names; eval "$(akm vault load ${ref})" -> load values into the current shell (values never echoed)`,
+      `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
   },
   wiki: {
     stashDir: "wikis",

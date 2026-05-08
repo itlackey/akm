@@ -14,7 +14,7 @@ params:
   max_parallel: "Maximum number of issues the implement step may run in parallel. Defaults to `3` — tune to the host's CPU/memory budget."
   reviewers: "JSON array of reviewer agent roles required to approve each issue (e.g. `[\"senior-engineer\", \"security\", \"domain-expert\"]`). All listed reviewers must approve."
   required_checks: "JSON array of required status checks (e.g. `[\"lint\", \"typecheck\", \"unit\", \"integration\", \"e2e\"]`). All must pass before an issue is marked complete."
-  vault: "Optional `vault:` ref with credentials needed for CI, deploy previews, or private package registries. Loaded only at the shell level via `akm vault load`."
+  vault: "Optional `vault:` ref with credentials needed for CI, deploy previews, or private package registries. Use `akm vault run` for command-scoped env injection or `akm vault path` for explicit shell loading."
 ---
 
 # Workflow: GitHub Issues Parallel Implementer
@@ -30,7 +30,7 @@ You are the **orchestrator agent** for this run. Before doing any coding work, e
 1. Parse `issues` as JSON. Abort the run with `--state blocked` if it is not a non-empty array of positive integers.
 2. Confirm `repo` is reachable via `gh repo view {{ repo }}`. If the CLI is unauthenticated, surface the error verbatim and block the run — do not attempt to log in silently.
 3. Resolve `base_branch` (default `main`) and confirm it exists on the remote with `git ls-remote --heads origin {{ base_branch }}`.
-4. If `vault` is provided, call `akm vault show {{ vault }}` and verify every key the downstream tooling needs is declared. Do not print values. If any key is missing, block the run with notes listing the missing keys.
+4. If `vault` is provided, call `akm show {{ vault }}` and verify every key the downstream tooling needs is declared. Do not print values. If any key is missing, block the run with notes listing the missing keys.
 
 #### Capture ground truth for every issue
 For each issue number in `issues`:

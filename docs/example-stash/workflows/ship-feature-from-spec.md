@@ -156,9 +156,9 @@ real entry points before opening the PR.
 3. If integration requires credentials, load them only into the test
    shell:
 
-   ```sh
-   source <(akm vault load {{ vault }})
-   ```
+    ```sh
+    akm vault run {{ vault }} -- <integration-command>
+    ```
 
    The credentials must never appear in `integration.log`.
 4. If integration uncovers a gap, return to `failing-test` with a new test

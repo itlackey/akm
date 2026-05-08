@@ -257,7 +257,7 @@ describe("injectIntoEnv", () => {
 
 // ── quoteValue hardening (shell-metachar defence-in-depth) ──────────────────
 //
-// Even though `vault load` no longer `source`s the raw vault file (it
+// Even though vault usage no longer relies on sourcing the raw vault file (the
 // parses with dotenv and sources a safely-escaped temp file), the on-disk
 // vault format itself must be robust to direct `source` by any future
 // caller. These tests lock in that every non-trivial value is quoted.
@@ -328,7 +328,7 @@ describe("setKey: shell-metachar hardening", () => {
   });
 });
 
-// ── buildShellExportScript (vault load safety) ──────────────────────────────
+// ── buildShellExportScript (export-script safety) ───────────────────────────
 
 describe("buildShellExportScript", () => {
   test("emits export lines with `'\\''` escaping; no expansion-triggering syntax", () => {

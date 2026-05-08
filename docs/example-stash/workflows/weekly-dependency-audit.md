@@ -38,9 +38,9 @@ Set up an isolated workspace before touching the lockfile.
 2. If `vault` is provided, verify the keys it declares without surfacing
    values:
 
-   ```sh
-   akm vault show {{ vault }}
-   ```
+    ```sh
+    akm show {{ vault }}
+    ```
 
    Block the run if any key the registry needs is missing.
 3. Create `{{ workspace_dir }}/audit-context.md` with the run timestamp,
@@ -62,9 +62,12 @@ Produce one canonical list of candidates. Do not start upgrading yet.
 1. Load registry credentials only into the shell that runs the audit
    commands, never into agent context:
 
-   ```sh
-   source <(akm vault load {{ vault }})
-   ```
+    ```sh
+    akm vault run {{ vault }} -- bun outdated --json
+    ```
+
+    Use `akm vault run {{ vault }} -- <command>` for each audit command that
+    needs registry credentials.
 
 2. Run the package-manager-native commands and capture full output to disk:
 

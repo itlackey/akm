@@ -454,23 +454,25 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
   // needing --detail full or --for-agent (REC-03).
-  if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens"]);
+  if (detail === "brief") return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
     // visible without forcing callers up to `--detail full`. Optional
     // `quality` (v1 spec §4.2) is also surfaced when present so callers
     // can see why a `proposed` entry showed up under `--include-proposed`.
-    return capDescription(
+    const shaped = capDescription(
       pickFields(hit, ["type", "name", "description", "action", "score", "estimatedTokens", "warnings", "quality"]),
       NORMAL_DESCRIPTION_LIMIT,
     );
+    if (Array.isArray(hit.keys) && hit.keys.length > 0) shaped.keys = hit.keys;
+    return shaped;
   }
   return hit;
 }
 
 /** Agent-optimized search hit: only fields an LLM agent needs to decide and act */
 export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<string, unknown> {
-  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens"]);
+  const picked = pickFields(hit, ["name", "ref", "type", "description", "action", "score", "estimatedTokens", "keys"]);
   return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);
 }
 

@@ -403,22 +403,7 @@ export function formatRegistryBuildIndexPlain(r: Record<string, unknown>): strin
 }
 
 export function formatVaultListPlain(r: Record<string, unknown>): string {
-  // Single-vault listing: { ref, path, entries: [{ key, comment? }, ...] }
-  if (typeof r.ref === "string" && Array.isArray(r.entries)) {
-    const ref = r.ref;
-    const entries = r.entries as Array<Record<string, unknown>>;
-    if (entries.length === 0) {
-      return `No keys in ${ref}. Set one with \`akm vault set ${ref} KEY=VALUE\`.`;
-    }
-    const lines = [ref];
-    for (const e of entries) {
-      const key = String(e.key ?? "?");
-      const comment = typeof e.comment === "string" && e.comment ? `  # ${e.comment}` : "";
-      lines.push(`  ${key}${comment}`);
-    }
-    return lines.join("\n");
-  }
-  // Multi-vault listing: { vaults: [{ ref, path, keyCount }, ...] }
+  // Multi-vault listing: { vaults: [{ ref, path, keys }, ...] }
   const vaults = Array.isArray(r.vaults) ? (r.vaults as Array<Record<string, unknown>>) : [];
   if (vaults.length === 0) {
     return "No vaults. Create one with `akm vault create <name>` then `akm vault set vault:<name> KEY=VALUE`.";
@@ -426,8 +411,16 @@ export function formatVaultListPlain(r: Record<string, unknown>): string {
   const lines: string[] = [];
   for (const v of vaults) {
     const ref = String(v.ref ?? "?");
-    const keyCount = typeof v.keyCount === "number" ? v.keyCount : 0;
-    lines.push(`${ref}\t${keyCount} key(s)`);
+    const keys = Array.isArray(v.keys) ? (v.keys as unknown[]).map(String) : [];
+    if (lines.length > 0) lines.push("");
+    lines.push(`## ${ref}`);
+    if (keys.length === 0) {
+      lines.push("- (no keys)");
+      continue;
+    }
+    for (const key of keys) {
+      lines.push(`- ${key}`);
+    }
   }
   return lines.join("\n");
 }
@@ -923,6 +916,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.id) lines.push(`  id: ${String(hit.id)}`);
     if (hit.ref) lines.push(`  ref: ${String(hit.ref)}`);
     if (hit.origin !== undefined) lines.push(`  origin: ${String(hit.origin)}`);
+    if (Array.isArray(hit.keys) && hit.keys.length > 0) lines.push(`  keys: ${hit.keys.join(", ")}`);
     if (hit.size) lines.push(`  size: ${String(hit.size)}`);
     if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
@@ -1095,6 +1089,9 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
     if (item.preview) lines.push(`  preview: ${String(item.preview)}`);
     if (item.ref) lines.push(`  ref: ${String(item.ref)}`);
     if (item.id) lines.push(`  id: ${String(item.id)}`);
+    if (Array.isArray(item.keys) && item.keys.length > 0) {
+      lines.push(`  keys: ${item.keys.join(", ")}`);
+    }
     if (Array.isArray(item.parameters) && item.parameters.length > 0) {
       lines.push(`  parameters: ${item.parameters.join(", ")}`);
     }

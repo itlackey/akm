@@ -144,7 +144,7 @@ describe("buildMemoryFrontmatter — description field (#20)", () => {
   });
 });
 
-// ── #35: vault list returns entries:[{key,comment}] ──────────────────────────
+// ── #35: vault metadata entries shape ────────────────────────────────────────
 
 describe("vault listEntries — entries shape (#35)", () => {
   function makeTmpVault(content: string): string {

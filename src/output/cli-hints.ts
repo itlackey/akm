@@ -56,7 +56,7 @@ akm registry search "<query>"                 # Search all registries
 | knowledge | A reference doc (use \`toc\` or \`section "..."\` to navigate) |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
-| vault | Key names only; use vault commands to inspect or load values safely |
+| vault | Key names only; use \`akm vault path\` or \`akm vault run\` to use values safely |
 | wiki | A page in a multi-wiki knowledge base. For any wiki task, start with \`akm wiki list\`, then \`akm wiki ingest <name>\` for the workflow. Run \`akm wiki -h\` for the full surface. |
 
 When an asset meaningfully helps or fails, record that with \`akm feedback\` so
@@ -188,9 +188,10 @@ akm vault create prod                         # Create a new vault
 akm vault set prod DB_URL postgres://...      # Set a key (or KEY=VALUE combined form)
 akm vault set prod DB_URL=postgres://...      # Combined KEY=VALUE form also works
 akm vault unset prod DB_URL                   # Remove a key
-akm vault list vault:prod                     # List key names (no values)
-akm vault show vault:prod                     # Same as list (alias)
-akm vault load vault:prod                     # Print export statements to source
+akm vault list                                # List all vaults across all stashes with key names
+akm vault path vault:prod                     # Print the vault file path for shell loading
+akm vault run vault:prod -- env               # Run one command with all vault vars injected
+akm vault run vault:prod/DB_URL -- printenv DB_URL # Inject one key for one command
 \`\`\`
 
 ## Workflows

@@ -111,14 +111,14 @@ Workflows live in the stash like any other asset, so `akm search workflow:…` f
 
 ## Vault asset type
 
-Vaults store secrets and environment configuration. Each vault is a `.env` file in the stash. The key constraint: vault values never appear in structured output. `akm vault show` and `akm vault list` display key names and metadata, but not the values themselves.
+Vaults store secrets and environment configuration. Each vault is a `.env` file in the stash. The key constraint: vault values never appear in structured output. `akm show vault:<name>` and `akm vault list` display key names and metadata, but not the values themselves.
 
 ```sh
 # List vaults
 akm vault list
 
 # Show keys in a vault (no values)
-akm vault show vault:prod-secrets
+akm show vault:prod-secrets
 
 # Create a new empty vault
 akm vault create prod-secrets
@@ -130,11 +130,14 @@ akm vault set vault:prod-secrets API_KEY=abc123 --comment "Rotate every 90 days"
 # Remove a key
 akm vault unset vault:prod-secrets API_KEY
 
-# Emit a source snippet for the current shell — the only way to get values out
-eval "$(akm vault load vault:prod-secrets)"
+# Print the vault file path for current-shell loading
+source "$(akm vault path vault:prod-secrets)"
+
+# Run one command with the vault injected
+akm vault run vault:prod-secrets -- env
 ```
 
-`akm vault load` emits a shell snippet that sources vault values into the current shell via a temporary mode-0600 file. Values never appear on akm's stdout. An agent can run `eval "$(akm vault load vault:prod-secrets)"` to load the environment without the values passing through any logged output.
+`akm vault path` is the current-shell loading path and `akm vault run` is the one-shot command execution path. Values never appear in structured output; `vault run` passes them directly to the child process environment.
 
 This is a deliberate tradeoff: vaults are not a full secrets manager. They are a thin, auditable layer that keeps your `.env` files alongside your other agent assets and prevents accidental leakage through `akm show` or `akm search` results.
 

@@ -24,6 +24,7 @@ export type CuratedStashItem = {
   ref: string;
   description?: string;
   preview?: string;
+  keys?: string[];
   parameters?: string[];
   run?: string;
   followUp: string;
@@ -204,6 +205,7 @@ async function enrichCuratedStashHit(query: string, hit: SourceSearchHit): Promi
     ref: hit.ref,
     ...(description ? { description } : {}),
     ...(preview ? { preview } : {}),
+    ...(shown?.keys?.length ? { keys: shown.keys } : {}),
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     followUp: `akm show ${hit.ref}`,

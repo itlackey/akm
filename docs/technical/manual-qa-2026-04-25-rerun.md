@@ -41,7 +41,7 @@ sandbox was torn down at the end with `~/.config/akm/` untouched.
 | 24 | `akm curate ""`                                                | returns hits                             | UsageError, exit 2                                       | Fixed |
 | 27 | `akm clone skill:does-not-exist`                               | leaks "Stash type root"                  | user-facing message + hint                               | Fixed |
 | 28 | `akm registry search docker --detail brief`                    | `[{}, {}, ...]`                          | `[{title, installRef, score, name}, ...]`                | Fixed |
-| 35 | `akm vault list vault:test-vault --format json`                | `{keys:[...], comments:[...]}`           | `{entries:[{key, comment}]}`                             | Fixed |
+| 35 | `akm vault list --format json`                                 | per-vault/parallel-array assumptions      | `vaults:[{ref, path, keys}]`                             | Fixed |
 | 36 | `akm config set llm.endpoint http://localhost:1234/v1`         | `Unknown config key`                     | persists; `get` returns the URL; round-trips             | Fixed |
 | 38 | OpenViking config error remediation                            | "akm config sources remove" (phantom)    | "akm remove ov" (real) + config file path                | Fixed |
 | 38 | `stashes[]` deprecation warning                                | "akm config edit" (phantom)              | "edit it directly at <configPath>"                       | Fixed |

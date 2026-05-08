@@ -64,7 +64,7 @@ Every command exits with one of the following codes:
 
 On failure, every command emits a JSON error envelope on **stderr** before
 exiting; stdout is left empty (or contains only command-specific side-effect
-output such as shell snippets from `vault load`):
+output such as a direct path from `vault path`):
 
 ```json
 {"ok": false, "error": "<message>", "hint": "<optional hint>"}
@@ -1037,52 +1037,65 @@ akm hints
 
 Manage `.env`-backed secret vaults. Each vault is a mode-0600 file stored
 under `vaults/` in your stash. The key security property: **vault values never
-appear in structured output**. `list` and `show` return key names and comments
-only.
+appear in structured output**. `list` and `show` key metadata only; `path` and
+`run` are the supported value-use paths.
 
 ```sh
 akm vault list
-akm vault list vault:prod
-akm vault show vault:prod
+akm vault path vault:prod
 akm vault create prod
 akm vault set vault:prod DATABASE_URL https://db.example.com
 akm vault set vault:prod DATABASE_URL=https://db.example.com
 akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
 akm vault unset vault:prod DATABASE_URL
-eval "$(akm vault load vault:prod)"
+source "$(akm vault path vault:prod)"
+akm vault run vault:prod -- env
+akm vault run vault:prod/API_KEY -- printenv API_KEY
 ```
 
 Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `list` | List all vaults with key counts |
-| `list <ref>` | List keys and comments in one vault (no values) |
-| `show <ref>` | Alias for `list <ref>` — same output |
+| `list` | List all vaults across all stashes with key names only |
+| `path <ref>` | Print the absolute vault file path for direct shell loading |
+| `run <ref[/KEY]> -- <command>` | Run one command with a whole vault or single key injected into the subprocess env |
 | `create <name>` | Create an empty `.env` vault (mode 0600). No-op if it already exists |
 | `set <ref> <KEY> <VALUE>` | Set a key in the vault |
 | `unset <ref> <KEY>` | Remove a key from the vault |
-| `load <ref>` | Emit a shell snippet that loads vault values into the current shell |
 
 #### vault list
 
 ```sh
-akm vault list                      # All vaults: name + keyCount
-akm vault list vault:prod           # Keys + comments for vault:prod (no values)
+akm vault list
 ```
 
-The top-level `list` returns one entry per vault with `name` and `keyCount`.
-The per-vault `list <ref>` returns an array of `{key, comment}` objects —
-values are never included.
+`vault list` returns one entry per vault across all configured stashes. The
+structured shape is `vaults: [{ ref, path, keys }]` and values are never
+included.
 
-#### vault show
+Text output uses Markdown sections so the result is readable in terminals and
+copy-paste friendly in agent transcripts:
+
+```md
+## vault:prod
+
+- DATABASE_URL
+- API_KEY
+```
+
+#### vault path
 
 ```sh
-akm vault show vault:prod
+akm vault path vault:prod
 ```
 
-An alias for `vault list <ref>`. Returns the same `{key, comment}` array as
-`vault list vault:prod`.
+Prints the absolute path to the vault file. This is the supported current-shell
+loading path:
+
+```sh
+source "$(akm vault path vault:prod)"
+```
 
 #### vault create
 
@@ -1122,20 +1135,20 @@ akm vault unset vault:prod DATABASE_URL
 Removes the key and its associated comment from the vault. Exits 0 whether or
 not the key existed.
 
-#### vault load
+#### vault run
 
 ```sh
-eval "$(akm vault load vault:prod)"
+akm vault run vault:prod -- env
+akm vault run vault:prod/API_KEY -- printenv API_KEY
 ```
 
-Emits a shell snippet that loads vault values into the current shell session.
-The implementation writes a mode-0600 temp file, sources it, then immediately
-removes it. **Values never appear on akm's stdout** — the snippet is the only
-output, and the values are loaded directly into the shell environment.
+Runs one subprocess with env injected from the selected vault. When you pass a
+`/KEY` suffix, only that key is injected. **Values never appear in akm's
+structured output**; they are passed directly to the child process environment.
 
-Use `eval "$(akm vault load vault:<name>)"` in shell scripts or agent tool
-calls to hydrate the environment before running commands that need those
-secrets.
+Use `akm vault run vault:<name> -- <command>` when a command needs the full
+vault, or `akm vault run vault:<name>/<KEY> -- <command>` when you want to
+scope env injection to one variable.
 
 ### wiki
 
