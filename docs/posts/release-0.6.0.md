@@ -111,4 +111,4 @@ If something looks wrong after upgrade, the guide has a [troubleshooting section
 
 Thank you to everyone who stayed on pre-v1 through the terminology churn. The point of doing this now — while the installed base is small enough to move together — is that we only do it once. The v1 surface begins here.
 
-Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).
+Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md).

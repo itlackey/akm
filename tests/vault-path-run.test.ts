@@ -88,9 +88,12 @@ describe("vault run", () => {
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "FOO=bar\nBAR=baz\n", "utf8");
 
-    const { stdout, stderr, status } = runCli(["vault", "run", "vault:prod", "--", "bash", "-lc", "printf '%s %s' \"$FOO\" \"$BAR\""], {
-      AKM_STASH_DIR: stashDir,
-    });
+    const { stdout, stderr, status } = runCli(
+      ["vault", "run", "vault:prod", "--", "bash", "-lc", 'printf \'%s %s\' "$FOO" "$BAR"'],
+      {
+        AKM_STASH_DIR: stashDir,
+      },
+    );
 
     expect(status).toBe(0);
     expect(stdout.trim()).toBe("bar baz");
@@ -103,7 +106,15 @@ describe("vault run", () => {
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "FOO=bar\nBAR=baz\n", "utf8");
 
     const { stdout, stderr, status } = runCli(
-      ["vault", "run", "vault:prod/FOO", "--", "bash", "-lc", "printf '%s|%s' \"${FOO-}\" \"${BAR-}\""],
+      [
+        "vault",
+        "run",
+        "vault:prod/FOO",
+        "--",
+        "bash",
+        "-lc",
+        `printf '%s|%s' "{FOO-}" "{BAR-}"`.replace(/\u007f/g, "$"),
+      ],
       { AKM_STASH_DIR: stashDir },
     );
 

@@ -236,7 +236,7 @@ Or reinstall from scratch:
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 ```
 
-Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).
+Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/.github/CHANGELOG.md).
 
 
 ---

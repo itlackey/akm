@@ -15,3 +15,5 @@ tests/fixtures/bench/opencode-providers.local.json
 tests/bench/*.json
 **/__pycache__/
 tests/bench/baselines/
+.claude
+CLAUDE.md

@@ -243,8 +243,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   if (draftFilePath && fs.existsSync(draftFilePath)) {
     const draftContent = fs.readFileSync(draftFilePath, "utf8");
     fs.unlinkSync(draftFilePath);
+    if (!options.ref) {
+      throw new Error("reflect proposal draft path requires options.ref");
+    }
     payload = {
-      ref: options.ref!,
+      ref: options.ref,
       content: draftContent,
     };
   } else {

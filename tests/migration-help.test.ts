@@ -31,7 +31,7 @@ describe("migration help", () => {
     };
 
     const staticFiles = (packageJson.files ?? []).filter((entry) => entry !== "dist");
-    expect(staticFiles).toContain("CHANGELOG.md");
+    expect(staticFiles).toContain(".github/CHANGELOG.md");
     expect(staticFiles).toContain("docs/migration/release-notes");
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);

@@ -34,7 +34,7 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md",
+    ".github/CHANGELOG.md",
     "LICENSE",
     "docs/migration/release-notes"
   ],

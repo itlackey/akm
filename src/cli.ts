@@ -50,7 +50,7 @@ import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
-import { resolveSourceEntries, type SearchSource as IndexSearchSource } from "./indexer/search-source";
+import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
 import { insertUsageEvent } from "./indexer/usage-events";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import {
@@ -1046,7 +1046,7 @@ function validateFeedbackTags(raw: string[]): string[] {
         "INVALID_FLAG_VALUE",
       );
     }
-    const key = parts[0]!;
+    const key = parts[0];
     if (!TAG_KEY_RE.test(key)) {
       throw new UsageError(
         `Invalid tag key "${key}" in "${tag}". Key must match [a-z_][a-z0-9_]*.`,
@@ -1058,10 +1058,7 @@ function validateFeedbackTags(raw: string[]): string[] {
     out.push(tag);
   }
   if (out.length > MAX_FEEDBACK_TAGS) {
-    throw new UsageError(
-      `Too many tags: ${out.length}. Maximum is ${MAX_FEEDBACK_TAGS}.`,
-      "INVALID_FLAG_VALUE",
-    );
+    throw new UsageError(`Too many tags: ${out.length}. Maximum is ${MAX_FEEDBACK_TAGS}.`, "INVALID_FLAG_VALUE");
   }
   return out;
 }
@@ -1117,7 +1114,11 @@ const feedbackCommand = defineCommand({
       const signal = args.positive ? "positive" : "negative";
       const rawTags = parseAllFlagValues("--tag");
       const validatedTags = validateFeedbackTags(rawTags);
-      const metadataObj = { signal, ...(args.note ? { note: args.note } : {}), ...(validatedTags.length > 0 ? { tags: validatedTags } : {}) };
+      const metadataObj = {
+        signal,
+        ...(args.note ? { note: args.note } : {}),
+        ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
+      };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
       // Auto-index when stale so the index is current before recording feedback.
@@ -2100,7 +2101,12 @@ function makeVaultRef(name: string, source?: IndexSearchSource): string {
   return source?.registryId ? `${source.registryId}//vault:${name}` : `vault:${name}`;
 }
 
-function resolveVaultPath(ref: string): { name: string; absPath: string; source: IndexSearchSource; parsedRef: ReturnType<typeof parseAssetRef> } {
+function resolveVaultPath(ref: string): {
+  name: string;
+  absPath: string;
+  source: IndexSearchSource;
+  parsedRef: ReturnType<typeof parseAssetRef>;
+} {
   const parsed = parseVaultRef(ref);
   if (parsed.type !== "vault") {
     throw new UsageError(`Expected a vault ref (vault:<name>); got "${ref}".`);
@@ -2130,15 +2136,15 @@ function listVaultsRecursive(
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           walk(full);
-        continue;
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
+        const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
+        if (!canonical) continue;
+        const { keys } = listKeysFn(full);
+        result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
       }
-      if (!entry.isFile()) continue;
-      if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-      const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
-      if (!canonical) continue;
-      const { keys } = listKeysFn(full);
-      result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
-    }
     };
     walk(vaultsDir);
   }
@@ -2255,7 +2261,8 @@ const vaultUnsetCommand = defineCommand({
 const vaultPathCommand = defineCommand({
   meta: {
     name: "path",
-    description: 'Print the absolute vault file path so you can load it directly, e.g. `source "$(akm vault path vault:prod)"`.',
+    description:
+      'Print the absolute vault file path so you can load it directly, e.g. `source "$(akm vault path vault:prod)"`.',
   },
   args: {
     ref: { type: "positional", description: "Vault ref", required: true },
@@ -2274,7 +2281,8 @@ const vaultPathCommand = defineCommand({
 const vaultRunCommand = defineCommand({
   meta: {
     name: "run",
-    description: "Run a command with env injected from a vault or a single vault key: `akm vault run <ref[/KEY]> -- <command>`",
+    description:
+      "Run a command with env injected from a vault or a single vault key: `akm vault run <ref[/KEY]> -- <command>`",
   },
   args: {
     target: { type: "positional", description: "Vault ref or ref/key target", required: true },
@@ -2870,7 +2878,12 @@ const distillCommand = defineCommand({
       const excludeTags = [
         ...new Set([
           ...excludeTagsRaw,
-          ...(excludeTagsEnv ? excludeTagsEnv.split(",").map((s) => s.trim()).filter(Boolean) : []),
+          ...(excludeTagsEnv
+            ? excludeTagsEnv
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : []),
         ]),
       ];
       const includeTagsRaw = parseAllFlagValues("--include-tags");
@@ -2878,7 +2891,12 @@ const distillCommand = defineCommand({
       const includeTags = [
         ...new Set([
           ...includeTagsRaw,
-          ...(includeTagsEnv ? includeTagsEnv.split(",").map((s) => s.trim()).filter(Boolean) : []),
+          ...(includeTagsEnv
+            ? includeTagsEnv
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : []),
         ]),
       ];
       const result = await akmDistill({

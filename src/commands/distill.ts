@@ -267,7 +267,12 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     assetContent = null;
   }
 
-  const { events } = readEventsImpl({ ref: inputRef, type: "feedback", excludeTags: options.excludeTags, includeTags: options.includeTags });
+  const { events } = readEventsImpl({
+    ref: inputRef,
+    type: "feedback",
+    excludeTags: options.excludeTags,
+    includeTags: options.includeTags,
+  });
 
   // #267 — feedback exclusion. Filter events whose `ref` matches the
   // exclusion list BEFORE the prompt is built. The original event stream
