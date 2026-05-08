@@ -253,12 +253,14 @@ export interface TasksSyncResult {
   installed: string[];
   removed: string[];
   unchanged: string[];
+  skipped: { id: string; reason: string }[];
   backend: string;
 }
 
 /**
  * Reconcile the on-disk task files with the OS scheduler.
- *   • install missing tasks
+ *   • install missing tasks (after validating them — invalid files are
+ *     skipped with a per-task reason rather than aborting the whole sync)
  *   • remove orphan scheduler entries that no longer have a backing file
  */
 export async function akmTasksSync(): Promise<TasksSyncResult> {
@@ -271,16 +273,25 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
         .map((f) => f.slice(0, -3))
     : [];
   const sched = selectBackend();
+  const backend = backendNameForPlatform();
   const present = new Set((await sched.list()).map((t) => t.id));
   const installed: string[] = [];
   const unchanged: string[] = [];
+  const skipped: { id: string; reason: string }[] = [];
 
   for (const id of fileIds) {
     const filePath = path.join(typeRoot, `${id}.md`);
     let task: TaskDocument;
     try {
       task = parseTaskDocument({ markdown: fs.readFileSync(filePath, "utf8"), filePath, id });
-    } catch {
+    } catch (err) {
+      skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    try {
+      await validateTaskDocument(task, { backend, stashDir });
+    } catch (err) {
+      skipped.push({ id, reason: err instanceof Error ? err.message : String(err) });
       continue;
     }
     if (present.has(id)) {
@@ -298,7 +309,7 @@ export async function akmTasksSync(): Promise<TasksSyncResult> {
       removed.push(installedId);
     }
   }
-  return { installed, removed, unchanged, backend: sched.name };
+  return { installed, removed, unchanged, skipped, backend: sched.name };
 }
 
 export interface TasksDoctorResult {

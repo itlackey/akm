@@ -47,11 +47,13 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
     return;
   }
 
-  // Prompt target.
-  if (task.target.profile) {
-    const config = loadConfig();
-    requireAgentProfile(config.agent, task.target.profile);
-  }
+  // Prompt target. Resolve the profile unconditionally — when no profile is
+  // set on the task, requireAgentProfile falls back to config.agent.default
+  // and throws a clear error if neither is configured. Catching this at
+  // `tasks add` / `tasks sync` time is much more useful than failing only
+  // when the OS scheduler fires.
+  const config = loadConfig();
+  requireAgentProfile(config.agent, task.target.profile);
 
   const src = task.target.source;
   if (src.kind === "asset") {

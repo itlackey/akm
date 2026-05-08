@@ -5,7 +5,10 @@
  * Responsibilities:
  *
  *   1. Resolve the task file via `resolveAssetPath(stashDir, "task", id)`.
- *   2. Parse + validate the task document.
+ *   2. Parse the task document. (Validation runs at `tasks add` /
+ *      `tasks sync` time, not here — at run time we still want to attempt
+ *      execution and surface the actual failure rather than re-fail on a
+ *      validation error that the user already knows about.)
  *   3. Refuse to run when `enabled === false` (defense-in-depth).
  *   4. Dispatch by target kind:
  *        • workflow → `startWorkflowRun(ref, params)`
@@ -31,7 +34,7 @@ import { startWorkflowRun } from "../workflows/runs";
 import { parseTaskDocument } from "./parser";
 import type { TaskDocument } from "./schema";
 
-export type TaskRunStatus = "completed" | "blocked" | "failed" | "disabled";
+export type TaskRunStatus = "completed" | "blocked" | "failed" | "disabled" | "active";
 
 export interface TaskRunResult {
   id: string;
@@ -157,13 +160,13 @@ async function runWorkflowTask(input: {
   }
 
   const finishedAt = now();
-  const status: TaskRunStatus = error ? "failed" : ((detail?.run.status as TaskRunStatus | undefined) ?? "completed");
+  const status: TaskRunStatus = error ? "failed" : mapWorkflowStatus(detail?.run.status);
   const log = renderWorkflowLog({ task, detail, error });
   fs.writeFileSync(logPath, log);
 
   const result: TaskRunResult = {
     id: task.id,
-    status: status === "completed" || status === "blocked" || status === "failed" ? status : "completed",
+    status,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
@@ -177,6 +180,25 @@ async function runWorkflowTask(input: {
   appendHistory(historyDir, task.id, result);
   if (error) throw error;
   return result;
+}
+
+/**
+ * Map the workflow runtime's status into the task-runner status space.
+ * Workflows can legitimately remain `active` after `startWorkflowRun`
+ * returns (multi-step workflows pause for user input); recording them as
+ * "completed" would be misleading. We preserve "active" as a first-class
+ * task status with exit code 0 — the OS scheduler treats it as success.
+ */
+function mapWorkflowStatus(status: string | undefined): TaskRunStatus {
+  switch (status) {
+    case "completed":
+    case "blocked":
+    case "failed":
+    case "active":
+      return status;
+    default:
+      return "completed";
+  }
 }
 
 function renderWorkflowLog(input: { task: TaskDocument; detail?: WorkflowRunDetail; error?: Error }): string {
@@ -331,6 +353,8 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
 export function exitCodeForStatus(status: TaskRunStatus): number {
   switch (status) {
     case "completed":
+      return 0;
+    case "active":
       return 0;
     case "blocked":
       return 1;

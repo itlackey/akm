@@ -12,11 +12,16 @@
  *   • a launchd plist `<StartCalendarInterval>` / `<StartInterval>` (macOS),
  *   • Task Scheduler XML triggers (Windows).
  *
- * The supported subset is the intersection of patterns the three OS
- * schedulers can express without ambiguity. Patterns outside the subset
- * (multi-value lists, ranges, step values other than `*\/N`, day-of-month
- * AND day-of-week combinations) are rejected with a
- * {@link UsageError} and a hint listing accepted forms.
+ * The shared subset is `*`, single integers, `*\/N`, plus the `@hourly /
+ * @daily / @weekly / @monthly` aliases. Patterns outside that — multi-value
+ * lists, ranges, step values other than `*\/N`, day-of-month AND
+ * day-of-week combinations — are rejected with a {@link UsageError}.
+ *
+ * Cron is the most permissive of the three backends; some patterns it
+ * accepts (e.g. `@hourly` = `0 * * * *`) have no clean schtasks primitive.
+ * Validation runs against the *active* backend, so a task authored on
+ * Linux may fail to translate when copied to macOS/Windows. `tasks sync`
+ * re-validates against the local backend and surfaces any incompatibility.
  */
 
 import { UsageError } from "../core/errors";
@@ -75,9 +80,12 @@ export function parseSchedule(input: string, backend: ScheduleBackend): Schedule
   const cron = expandAlias(input);
   const fields = parseCronFields(cron, input);
   const spec: ScheduleSpec = { raw: input, cron, fields };
-  // Eagerly validate translatability so the caller does not silently accept
-  // expressions that work for crontab but cannot be expressed on launchd /
-  // schtasks. The translator throws on unsupported combinations.
+  // Validate translatability for the active backend so the caller does not
+  // silently accept expressions that backend cannot run. Note: cron is the
+  // most permissive of the three (e.g. `@hourly` is `0 * * * *` which has
+  // no clean schtasks primitive), so a task authored on Linux may not be
+  // portable to macOS/Windows. `tasks sync` on the destination platform
+  // re-runs this with the local backend and will surface any incompatibility.
   if (backend === "launchd") translateToLaunchd(spec);
   if (backend === "schtasks") translateToSchtasks(spec);
   return spec;

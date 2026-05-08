@@ -125,7 +125,7 @@ export function buildSchtasksXml(task: TaskDocument, akmArgv: string[], logDir: 
   const triggerXml = renderSchtasksTrigger(trigger);
   const logPath = path.join(logDir, `${task.id}.log`);
 
-  return `<?xml version="1.0" encoding="UTF-16"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>akm scheduled task: ${escapeXml(task.id)}</Description>
