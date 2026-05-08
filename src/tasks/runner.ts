@@ -178,7 +178,11 @@ async function runWorkflowTask(input: {
     },
   };
   appendHistory(historyDir, task.id, result);
-  if (error) throw error;
+  // Don't re-throw on workflow failure: the OS scheduler reads exit codes,
+  // not exceptions, and the CLI maps `status: "failed"` to a non-zero exit
+  // via exitCodeForStatus(). Throwing here would route through the generic
+  // runWithJsonErrors path and lose the structured result/history we just
+  // recorded.
   return result;
 }
 

@@ -219,7 +219,14 @@ export async function akmTasksSetEnabled(
   const updated = setEnabledInMarkdown(markdown, enabled);
   fs.writeFileSync(filePath, updated, "utf8");
   const sched = selectBackend();
-  await sched.setEnabled(normalised, enabled);
+  try {
+    await sched.setEnabled(normalised, enabled);
+  } catch (err) {
+    // Roll the file back so the markdown source-of-truth and the OS
+    // scheduler don't diverge silently when the backend call fails.
+    fs.writeFileSync(filePath, markdown, "utf8");
+    throw err;
+  }
   return { id: normalised, enabled, backend: sched.name };
 }
 

@@ -28,6 +28,7 @@ export interface SchtasksFs {
   writeFile(file: string, content: string): void;
   removeFile(file: string): void;
   tmpdir(): string;
+  ensureDir(dir: string): void;
 }
 
 export interface SchtasksBackendOptions {
@@ -54,7 +55,10 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
   return {
     name: "schtasks",
     install(task: TaskDocument) {
-      const xml = buildSchtasksXml(task, akmArgv, logDir);
+      // The generated XML sets <WorkingDirectory> to logDir; create it
+      // before registering so the scheduler doesn't fail to launch the job.
+      fsLike.ensureDir(logDir);
+      const xml = buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder });
       const tmpFile = path.join(fsLike.tmpdir(), `akm-task-${task.id}-${Date.now()}.xml`);
       fsLike.writeFile(tmpFile, xml);
       try {
@@ -117,19 +121,34 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
 
-export function buildSchtasksXml(task: TaskDocument, akmArgv: string[], logDir: string): string {
+export interface BuildSchtasksXmlOptions {
+  /** Task folder prefix (e.g. `\\akm\\`). Used to build the <URI>. */
+  folderPrefix?: string;
+  /** Override the StartBoundary timestamp (tests). Defaults to install time. */
+  now?: () => Date;
+}
+
+export function buildSchtasksXml(
+  task: TaskDocument,
+  akmArgv: string[],
+  logDir: string,
+  options: BuildSchtasksXmlOptions = {},
+): string {
+  const folder = options.folderPrefix ?? DEFAULT_FOLDER_PREFIX;
+  const now = options.now ? options.now() : new Date();
+  const startBoundary = formatStartBoundary(now);
   const spec = parseSchedule(task.schedule, "schtasks");
   const trigger = translateToSchtasks(spec);
   const command = akmArgv[0];
   const args = [...akmArgv.slice(1), "tasks", "run", task.id].map((a) => quoteArg(a)).join(" ");
-  const triggerXml = renderSchtasksTrigger(trigger);
+  const triggerXml = renderSchtasksTrigger(trigger, startBoundary);
   const logPath = path.join(logDir, `${task.id}.log`);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>akm scheduled task: ${escapeXml(task.id)}</Description>
-    <URI>\\akm\\${escapeXml(task.id)}</URI>
+    <URI>${escapeXml(folder)}${escapeXml(task.id)}</URI>
   </RegistrationInfo>
   <Triggers>
 ${triggerXml}
@@ -158,8 +177,7 @@ ${triggerXml}
 `;
 }
 
-function renderSchtasksTrigger(trigger: SchtasksTrigger): string {
-  const startBoundary = "2025-01-01T00:00:00";
+function renderSchtasksTrigger(trigger: SchtasksTrigger, startBoundary: string): string {
   switch (trigger.kind) {
     case "minute":
       return `    <TimeTrigger>
@@ -201,10 +219,25 @@ ${days}
 }
 
 function pad(base: string, hour: number, minute: number): string {
-  // Replace HH:MM in `2025-01-01T00:00:00` with the configured time.
+  // Rewrite the time component of an ISO-8601 boundary while preserving
+  // the date so daily/weekly triggers fire at the configured wall-clock
+  // time rather than the install instant.
   const hh = String(hour).padStart(2, "0");
   const mm = String(minute).padStart(2, "0");
   return base.replace(/T\d\d:\d\d:\d\d$/, `T${hh}:${mm}:00`);
+}
+
+function formatStartBoundary(d: Date): string {
+  // Local-time ISO-8601 (no zone suffix) — Task Scheduler interprets a
+  // bare boundary in the registering user's timezone, which matches what
+  // a user typing "0 9 * * *" intuitively means ("9am local").
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}`;
 }
 
 function quoteArg(s: string): string {
@@ -246,6 +279,9 @@ function defaultSchtasksFs(): SchtasksFs {
       } catch {
         /* ignore */
       }
+    },
+    ensureDir(dir) {
+      fs.mkdirSync(dir, { recursive: true });
     },
     tmpdir() {
       return os.tmpdir();

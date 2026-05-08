@@ -64,6 +64,9 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
     install(task: TaskDocument) {
       const xml = buildPlistXml(task, akmArgv, logDir);
       fsLike.ensureDir(agentsDir);
+      // launchd refuses to start a job when StandardOutPath/StandardErrorPath
+      // points at a non-existent directory; create it before bootstrap.
+      fsLike.ensureDir(logDir);
       fsLike.writeFile(plistPath(task.id), xml);
       const bootout = exec.run(["launchctl", "bootout", target(task.id)]);
       // bootout returning non-zero is fine — agent might not be loaded.

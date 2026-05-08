@@ -12,6 +12,7 @@
 // crontab.
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
@@ -50,6 +51,10 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): TaskBackend {
   return {
     name: "cron",
     install(task: TaskDocument) {
+      // Create the log directory before writing the crontab line — cron
+      // appends with `>>` and the surrounding shell will fail the entire
+      // entry if the parent directory doesn't exist.
+      ensureDir(logDir);
       const cronLine = buildCronLine(task, akmArgv, logDir);
       const existing = readCrontab(exec);
       const block = renderBlock(task.id, cronLine, task.enabled);
@@ -182,6 +187,15 @@ function writeCrontab(exec: CronExec, content: string): void {
       "INVALID_CONFIG_FILE",
       "Ensure the `crontab` binary is on PATH and your shell can write the user crontab.",
     );
+  }
+}
+
+function ensureDir(dir: string): void {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // Best-effort: the install will surface a clearer error if the cron
+    // line later fails at runtime due to a missing redirection target.
   }
 }
 

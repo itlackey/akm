@@ -125,7 +125,11 @@ function parseField(raw: string, name: string, limit: { min: number; max: number
   const stepMatch = raw.match(/^\*\/(\d+)$/);
   if (stepMatch) {
     const step = Number(stepMatch[1]);
-    if (!Number.isInteger(step) || step <= 0 || step > limit.max + 1) {
+    // Step must be ≥1 and ≤ the field's range size, not just `max`. For
+    // 1-based fields like day-of-month (1-31) and month (1-12) the previous
+    // `max + 1` bound let invalid steps like `*/32` or `*/13` slip through.
+    const range = limit.max - limit.min + 1;
+    if (!Number.isInteger(step) || step <= 0 || step > range) {
       throw new UsageError(
         `Invalid ${name} step "${raw}" in schedule "${original}". ${SUPPORTED_HINT}`,
         "INVALID_FLAG_VALUE",
