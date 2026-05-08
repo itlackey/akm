@@ -220,6 +220,20 @@ describe("akm reflect", () => {
     expect(listProposals(stash).length).toBe(0);
   });
 
+  test("raw markdown output for an existing ref falls back to proposal content", async () => {
+    const stash = makeStashDir();
+    const result = await akmReflect({
+      ref: "lesson:any",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: { spawn: fakeSpawn("# Title\n\nUse rg for recursive search.\n", "", 0) },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected success");
+    expect(result.proposal.payload.content).toContain("# Title");
+    expect(listProposals(stash).length).toBe(1);
+  });
+
   test("timeout → no proposal, reason=timeout", async () => {
     const stash = makeStashDir();
     const fakeTimers: Array<{ id: number; cb: () => void }> = [];
@@ -287,6 +301,34 @@ describe("akm reflect", () => {
     // No ref on the event — we did not pass one in.
     expect(events.events[0]?.ref).toBeUndefined();
     expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
+  });
+
+  test("uses captured JSON contract for reflect prompts", async () => {
+    const stash = makeStashDir();
+    let capturedCmd: string[] = [];
+    let capturedStdoutMode: string | undefined;
+    let capturedStderrMode: string | undefined;
+    const result = await akmReflect({
+      ref: "lesson:rg-over-grep",
+      stashDir: stash,
+      task: "Tighten the guidance",
+      agentProfile: makeProfile({ stdio: "interactive" }),
+      runAgentOptions: {
+        spawn: (cmd, opts) => {
+          capturedCmd = cmd;
+          capturedStdoutMode = opts.stdout;
+          capturedStderrMode = opts.stderr;
+          return fakeSpawn(VALID_LESSON_PAYLOAD, "", 0)(cmd, opts);
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedStdoutMode).toBe("pipe");
+    expect(capturedStderrMode).toBe("pipe");
+    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
+    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
   });
 });
 

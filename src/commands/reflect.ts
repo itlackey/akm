@@ -20,8 +20,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
@@ -124,6 +122,24 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
   return report.findings.map((f) => `[${f.kind}] ${f.message}`);
 }
 
+function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined) {
+  if (!ref) return undefined;
+  const trimmed = stripMarkdownFence(stdout).trim();
+  if (!trimmed) return undefined;
+  if (!looksLikeAssetContent(trimmed)) return undefined;
+  return { ref, content: trimmed };
+}
+
+function stripMarkdownFence(stdout: string): string {
+  const trimmed = stdout.trim();
+  const match = trimmed.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
+  return match?.[1] ?? trimmed;
+}
+
+function looksLikeAssetContent(value: string): boolean {
+  return value.startsWith("#") || value.startsWith("---");
+}
+
 function loadAgentConfigFromDisk(): AgentConfig | undefined {
   const config = loadConfig();
   return parseAgentConfig((config as unknown as { agent?: unknown }).agent);
@@ -169,14 +185,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 2. Resolve target asset content (if a ref is supplied).
   let assetContent: string | undefined;
-  let assetFilePath: string | undefined;
   let parsedRef: { type: string; name: string } | undefined;
   if (options.ref) {
     parsedRef = parseAssetRef(options.ref);
     try {
       const entry = await lookup(parsedRef);
       if (entry?.filePath && fs.existsSync(entry.filePath)) {
-        assetFilePath = entry.filePath;
         assetContent = fs.readFileSync(entry.filePath, "utf8");
       }
     } catch {
@@ -195,18 +209,9 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
 
   // 4. Build the prompt.
-  // When the asset file is known, give opencode a temp draft path outside
-  // the stash. Using os.tmpdir() keeps the draft away from git tracking,
-  // AKM indexing, and stash pollution — a crash leaves the file in /tmp,
-  // not inside the repo. AKM pre-specifies the path so there's no need to
-  // parse opencode's stdout for a filename.
-  const draftFilePath = assetFilePath
-    ? path.join(
-        os.tmpdir(),
-        `akm-reflect-${path.basename(assetFilePath, path.extname(assetFilePath))}-${Date.now()}.md`,
-      )
-    : undefined;
-
+  // Keep reflect on the same captured JSON path the bench harness already
+  // uses successfully. The draft-file interactive path proved brittle with
+  // local opencode models and caused proposal generation failures.
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
   const prompt = buildReflectPrompt({
@@ -217,14 +222,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
     ...(options.task ? { task: options.task } : {}),
-    ...(draftFilePath ? { draftFilePath } : {}),
   });
 
   // 5. Spawn the agent.
-  // When opencode writes a draft file, run it interactively so its file tools
-  // work normally. When we need stdout JSON (no file path), capture output.
   const runOptions: RunAgentOptions = {
-    stdio: draftFilePath ? "interactive" : "captured",
+    stdio: "captured",
     parseOutput: "text",
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.runAgentOptions ?? {}),
@@ -235,35 +237,25 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     return failureEnvelope(result, options.ref);
   }
 
-  // 6. Resolve the proposal content.
-  // Path A (preferred): opencode wrote a draft file — read it directly.
-  // Path B (fallback): no draft file — parse stdout JSON (legacy / new assets).
+  // 6. Resolve the proposal content from stdout JSON.
   let payload: ReturnType<typeof parseAgentProposalPayload>;
-
-  if (draftFilePath && fs.existsSync(draftFilePath)) {
-    const draftContent = fs.readFileSync(draftFilePath, "utf8");
-    fs.unlinkSync(draftFilePath);
-    if (!options.ref) {
-      throw new Error("reflect proposal draft path requires options.ref");
-    }
-    payload = {
-      ref: options.ref,
-      content: draftContent,
+  try {
+    payload = parseAgentProposalPayload(result.stdout ?? "");
+  } catch (err) {
+    const fallback = fallbackPayloadFromRawContent(result.stdout ?? "", options.ref);
+    if (fallback) {
+      payload = fallback;
+    } else {
+    return {
+      schemaVersion: 1,
+      ok: false,
+      reason: "parse_error",
+      error: err instanceof Error ? err.message : String(err),
+      ...(options.ref ? { ref: options.ref } : {}),
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      ...(result.stderr ? { stderr: result.stderr } : {}),
     };
-  } else {
-    try {
-      payload = parseAgentProposalPayload(result.stdout ?? "");
-    } catch (err) {
-      return {
-        schemaVersion: 1,
-        ok: false,
-        reason: "parse_error",
-        error: err instanceof Error ? err.message : String(err),
-        ...(options.ref ? { ref: options.ref } : {}),
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        ...(result.stderr ? { stderr: result.stderr } : {}),
-      };
     }
   }
 
