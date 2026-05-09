@@ -471,7 +471,7 @@ in, per feature." See v1 spec §14 for the boundary rules.
 | Feature flag | Use site | Behaviour when disabled |
 | --- | --- | --- |
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
-| `feedback_distillation` | `akm distill <ref>` | `akm distill` exits 0 with `outcome: "skipped"` |
+| `feedback_distillation` | `akm improve <ref>` | `akm improve` exits 0 with `outcome: "skipped"` |
 | `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
 | `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 

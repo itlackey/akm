@@ -64,22 +64,23 @@ Exit codes:
 Check `ok === false` or a non-zero exit code to detect failure. The `hint`
 field, when present, describes a corrective action.
 
-## Proposals & reflection (0.7.0+)
+## Proposals & improvement (0.8.0+)
 
-`akm` ships a proposal queue so reflective edits and new asset drafts
+`akm` ships a proposal queue so reflective edits, improvements, and feedback-distilled lessons
 land out-of-band before they touch the live stash. None of these commands
-mutate stash content directly — they always go through `akm proposal
-accept`.
+mutate stash content directly — they always go through `akm accept`.
 
 ```sh
-akm reflect <ref>                              # Reflect on an existing asset
-akm propose <type> <name> --task "..."         # Draft a new asset proposal
-akm distill <ref>                              # Summarise feedback into a lesson proposal
-akm proposal list                              # List pending proposals
-akm proposal show <id>                         # Render the proposal body
-akm proposal diff <id>                         # See proposed delta vs. live
-akm proposal accept <id>                       # Validate + promote into the stash
-akm proposal reject <id> --reason "..."        # Archive with a reason
+akm improve <ref>                              # Produce an improvement proposal for an existing asset
+akm improve <ref> --task "tighten the description"
+akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
+akm proposals                                  # List pending proposals
+akm proposals --status pending|accepted|rejected
+akm show proposal <id>                         # Render the proposal body
+akm diff proposal <id>                         # See proposed delta vs. live
+akm accept <id>                                # Validate + promote into the stash
+akm reject <id> --reason "..."                 # Archive with a reason
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history --ref <ref>                        # Per-asset state-change trail
 ```

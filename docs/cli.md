@@ -897,7 +897,7 @@ akm events tail --format jsonl                    # Stream as JSONL
 | Flag | Description |
 | --- | --- |
 | `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
-| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `reflect_invoked`, `propose_invoked`, `distill_invoked`. |
+| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`. |
 | `--ref` | Filter by asset ref (`[origin//]type:name`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
@@ -1364,7 +1364,7 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 | `--profile` | Override the default agent profile |
 | `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
-Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
+Exactly one of `--task` or `--file` is required. Emits `improve_invoked`.
 
 ### proposals
 
@@ -1430,5 +1430,5 @@ akm diff proposal <id> --target team-stash
 **Status: Available since 0.8.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
-`distill_invoked` payloads. Backwards compatible: scripts without `--reason`
+`improve_invoked` payloads. Backwards compatible: scripts without `--reason`
 behave exactly as today.

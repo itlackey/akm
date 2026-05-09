@@ -78,7 +78,7 @@ my-stash/
   vaults/         # Environment vaults (.env)
   workflows/      # Step-by-step workflow documents (.md)
   wikis/          # Multi-wiki knowledge bases (see docs/wikis.md)
-  lessons/        # Distilled lessons (.md, see akm distill / proposals)
+   lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md)
 ```
 
@@ -96,7 +96,7 @@ There are ten asset types:
 | **vault** | A key/value environment vault | Key names and comments, never secret values |
 | **workflow** | A structured multi-step procedure | Parsed steps, completion criteria, and resumable run state |
 | **wiki** | A page inside a multi-wiki knowledge base | Markdown page with TOC / section / lines views (see [wikis.md](wikis.md)) |
-| **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm distill`](cli.md#distill)) |
+| **lesson** | A distilled feedback lesson | `when_to_use` guidance plus the lesson body (see [`akm improve`](cli.md#improve)) |
 | **memory** | Context from external systems | Background information the agent should consider |
 
 ### Classification Taxonomy

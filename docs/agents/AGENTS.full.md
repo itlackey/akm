@@ -74,33 +74,35 @@ akm feedback agent:reviewer --negative         # Record that an asset missed the
 Use `akm feedback` whenever an asset materially helps or fails so future search
 ranking can learn from actual usage.
 
-## Proposals & reflection (0.7.0+)
+## Proposals & improvement (0.8.0+)
 
 Reflective edits, new asset drafts, and feedback-distilled lessons land
-in a durable proposal queue first — `akm proposal accept` is the only
+in a durable proposal queue first — `akm accept` is the only
 path that mutates the live stash.
 
 ```sh
-akm reflect <ref>                              # Produce a reflection proposal for an existing asset
-akm reflect <ref> --task "tighten the description"
-akm propose <type> <name> --task "..."         # Draft a new asset proposal from a description
-akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
-akm distill <ref>                              # Summarise feedback events into a lesson proposal
-akm proposal list                              # List pending proposals
-akm proposal list --status pending|accepted|rejected
-akm proposal show <id>                         # Render the proposal body and metadata
-akm proposal diff <id>                         # Show the proposed delta vs. the live ref
-akm proposal accept <id>                       # Validate and promote via writeAssetToSource
-akm proposal reject <id> --reason "..."        # Archive with a reason; body is preserved
+akm improve <ref>                              # Produce an improvement proposal for an existing asset
+akm improve <ref> --task "tighten the description"
+akm improve <type> <name> --task "..."         # Draft a new asset proposal from a description
+akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
+akm proposals                                  # List pending proposals
+akm proposals --status pending|accepted|rejected
+akm show proposal <id>                         # Render the proposal body and metadata
+akm diff proposal <id>                         # Show the proposed delta vs. the live ref
+akm accept <id>                                # Validate and promote via writeAssetToSource
+akm reject <id> --reason "..."                 # Archive with a reason; body is preserved
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history                                    # Per-asset (or stash-wide) state-change trail
 akm history --ref <ref>
 ```
 
-`akm distill` is gated by `llm.features.feedback_distillation` — when the
-flag is `false` (the default), the command exits with a `ConfigError`.
-The five `proposal` subcommands are `list`, `show`, `diff`, `accept`, and
-`reject`.
+The `akm improve` command replaces both `akm reflect` and `akm distill` workflows.
+The five proposal subcommands are now accessed via:
+- `akm proposals` (list)
+- `akm show proposal` (show)
+- `akm diff proposal` (diff)
+- `akm accept` (accept)
+- `akm reject` (reject)
 
 ## Wikis
 

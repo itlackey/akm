@@ -351,7 +351,7 @@ field. The contract is:
     Included in default search.
   - `"proposed"` — sitting in the proposal queue, not yet promoted.
     **Excluded from default search**; surfaced only with
-    `--include-proposed` or via `akm proposal *` commands.
+    `--include-proposed` or via `akm proposals` commands.
 - Unknown quality values **parse, warn once, and remain searchable** (treated
   as included-by-default). They must not crash the indexer or the search
   pipeline.
@@ -812,7 +812,7 @@ content is never mutated by reflection, generation, or distillation paths.
   `<stashRoot>/.akm/proposals/archive/<id>/`. The move is the archival
   state — there is no separate `archived` status, so the on-disk
   location is the source of truth for "active vs. archived" listings.
-- Invalid `proposal.json` files are surfaced via `akm proposal list`
+- Invalid `proposal.json` files are surfaced via `akm proposals`
   with a clear warning entry. They do not crash the queue.
 - The proposal store is queue state, not asset state, so it does **not**
   go through `writeAssetToSource()` for proposal writes themselves
@@ -849,13 +849,11 @@ The following events are emitted into `usage_events`:
 
 | Event | When |
 |---|---|
-| `propose_invoked` | every successful `akm propose` call |
-| `reflect_invoked` | every successful `akm reflect` call |
-| `distill_invoked` | every successful `akm distill` call |
-| `promoted` | `proposal accept` after validation passes |
-| `rejected` | `proposal reject` |
+| `improve_invoked` | every successful `akm improve` call |
+| `promoted` | `accept` after validation passes |
+| `rejected` | `reject` |
 
-All five event names are part of the v1 contract (§9.7). Plugin authors may
+All three event names are part of the v1 contract (§9.7). Plugin authors may
 emit additional events but cannot reuse these names.
 
 ---
@@ -903,13 +901,11 @@ change the default with `akm config set agent.default <name>`.
 ```sh
 akm agent <profile> [args...]            # raw shell-out
 akm improve [ref] [--task ...]           # produces improvement proposals
-akm propose <type> <name> --task "..."   # produces generation proposals
 ```
 
-`improve` and `propose` build prompts from asset content, feedback signals
-(§6.6), and renderer schema. They write **only** to the proposal queue
-(§11). They never mutate live stash content. They emit `reflect_invoked` /
-`propose_invoked` (§11.3).
+`improve` builds prompts from asset content, feedback signals (§6.6), and
+renderer schema. It writes **only** to the proposal queue (§11). It never
+mutates live stash content. It emits `improve_invoked` (§11.3).
 
 When reinforced memory facts are consolidated into proposals, `knowledge` is
 the more authoritative destination. The deterministic search pipeline also
@@ -1068,7 +1064,7 @@ agent path (§12).
    `llm.features.feedback_distillation`).
 4. Writes the response as a `lesson` **proposal** (§13) into the queue
    (§11).
-5. Emits `distill_invoked`.
+5. Emits `improve_invoked`.
 
 It never mutates the live stash. Promotion remains a human-initiated
 `akm accept`.

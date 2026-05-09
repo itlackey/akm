@@ -363,12 +363,12 @@ akm events tail --format jsonl
 
 Real-world use: another process is watching `akm` activity and reacting when new feedback, imports, or proposals land.
 
-### `akm reflect`
+### `akm improve`
 
-Ask an external agent to propose improvements to an existing asset.
+Ask an external agent to propose improvements to an existing asset or to generate a new asset proposal.
 
 ```sh
-akm reflect skill:code-review --task "make this stricter about test coverage"
+akm improve skill:code-review --task "make this stricter about test coverage"
 ```
 
 Real-world use: you have a decent review skill, but you want an agent to improve it based on how it's actually being used.
@@ -383,24 +383,24 @@ akm propose workflow incident-rollback --task "Rollback procedure for failed pro
 
 Real-world use: repeated gaps in your stash show up in `history` and `events`, so you create a first draft for the missing workflow or skill.
 
-### `akm proposal`
+### Proposal Queue
 
 Review, diff, accept, or reject queued proposals.
 
 ```sh
-akm proposal list
-akm proposal diff 42
-akm proposal accept 42
+akm proposals
+akm diff proposal 42
+akm accept 42
 ```
 
 Real-world use: keep human review in the loop before generated assets become part of the live stash.
 
-### `akm distill`
+### `akm improve`
 
 Summarize feedback into a reusable lesson proposal.
 
 ```sh
-akm distill skill:code-review
+akm improve skill:code-review
 ```
 
 Real-world use: repeated feedback on a skill gets turned into a lesson asset that captures what people learned from using it.

@@ -462,36 +462,35 @@ Run only inside the sandbox.
 
 ### 15.1 Proposal queue (no external agent required if seeded by prior steps)
 
-- [ ] `akm proposal list` returns a structured queue view.
-- [ ] `akm proposal list --status pending` filters correctly.
-- [ ] If any proposal exists, `akm proposal show <id>` renders metadata/body.
-- [ ] If any proposal exists, `akm proposal diff <id>` renders the pending delta.
-- [ ] If any valid proposal exists, `akm proposal accept <id>` promotes it
+- [ ] `akm proposals` returns a structured queue view.
+- [ ] `akm proposals --status pending` filters correctly.
+- [ ] If any proposal exists, `akm show proposal <id>` renders metadata/body.
+- [ ] If any proposal exists, `akm diff proposal <id>` renders the pending delta.
+- [ ] If any valid proposal exists, `akm accept <id>` promotes it
       through the normal write-target path and emits the expected mutation
       result without a stack trace.
-- [ ] `akm proposal reject <id> --reason "manual qa"` archives it cleanly.
+- [ ] `akm reject <id> --reason "manual qa"` archives it cleanly.
 
-### 15.2 reflect / propose
+### 15.2 improve / propose
 
-- [ ] `akm reflect skill:k8s-deploy --task "tighten the description"` either
+- [ ] `akm improve skill:k8s-deploy --task "tighten the description"` either
       queues a proposal successfully or fails with a structured config/usage
       envelope if no agent profile is configured.
-- [ ] `akm propose skill qa-generated-skill --task "simple review helper"`
+- [ ] `akm improve skill qa-generated-skill --task "simple review helper"`
       either queues a proposal successfully or fails structurally if the agent
       runtime is not configured.
-- [ ] Any successful `reflect` emits a `reflect_invoked` event.
-- [ ] Any successful `propose` emits a `propose_invoked` event.
+- [ ] Any successful `improve` emits a `improve_invoked` event.
 
-### 15.3 distill
+### 15.3 improve / lesson
 
-- [ ] `akm distill skill:k8s-deploy` returns `outcome: "skipped"` when
+- [ ] `akm improve skill:k8s-deploy` returns `outcome: "skipped"` when
       `llm.features.feedback_distillation` is disabled, or queues a lesson
       proposal when enabled.
-- [ ] `akm distill skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
+- [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "memory:test-memory"`
       accepts valid refs.
-- [ ] `akm distill skill:k8s-deploy --exclude-feedback-from "not-a-ref"` fails
+- [ ] `akm improve skill:k8s-deploy --exclude-feedback-from "not-a-ref"` fails
       with `INVALID_FLAG_VALUE`.
-- [ ] Any successful `distill` emits a `distill_invoked` event.
+- [ ] Any successful `improve` emits a `improve_invoked` event.
 
 ---
 
