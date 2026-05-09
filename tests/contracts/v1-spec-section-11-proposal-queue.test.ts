@@ -15,7 +15,7 @@ import { extractSection, readDoc, SPEC_PATH } from "./spec-helpers";
 
 const REQUIRED_PROPOSAL_FIELDS = ["id", "ref", "status", "source", "sourceRun", "createdAt", "updatedAt"];
 
-const REQUIRED_PROPOSAL_COMMANDS = ["list", "show", "diff", "accept", "reject"];
+const REQUIRED_PROPOSAL_COMMANDS = ["proposals", "show proposal", "diff proposal", "accept", "reject"];
 
 const REQUIRED_EVENTS = ["propose_invoked", "reflect_invoked", "distill_invoked", "promoted", "rejected"];
 
@@ -51,7 +51,7 @@ describe("v1 spec §11 — proposal queue", () => {
 
   test("§11.2 lists every proposal subcommand", () => {
     for (const cmd of REQUIRED_PROPOSAL_COMMANDS) {
-      expect(section).toContain(`akm proposal ${cmd}`);
+      expect(section).toContain(`akm ${cmd}`);
     }
   });
 
@@ -75,7 +75,7 @@ describe("v1 spec §11 — proposal queue", () => {
   });
 
   test("§11.2 names a `--reason` flag on `reject`", () => {
-    expect(section).toMatch(/akm proposal reject.*--reason/);
+    expect(section).toMatch(/akm reject.*--reason/);
   });
 
   test("§11.3 declares every locked event name", () => {

@@ -7,9 +7,9 @@ import { defineCommand, runMain } from "citty";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
-import { akmDistill } from "./commands/distill";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
+import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
@@ -22,7 +22,6 @@ import {
   akmProposalShow,
 } from "./commands/proposal";
 import { akmPropose } from "./commands/propose";
-import { akmReflect } from "./commands/reflect";
 import { searchRegistry } from "./commands/registry-search";
 import {
   buildMemoryFrontmatter,
@@ -638,6 +637,16 @@ const showCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const subcommand = Array.isArray(args._) ? args._[0] : undefined;
+      if (subcommand === "proposal") {
+        const proposalId = Array.isArray(args._) ? args._[1] : undefined;
+        if (typeof proposalId !== "string" || !proposalId.trim()) {
+          throw new UsageError("Usage: akm show proposal <id>", "MISSING_REQUIRED_ARGUMENT");
+        }
+        const result = akmProposalShow({ id: proposalId.trim() });
+        output("proposal-show", result);
+        return;
+      }
       try {
         parseAssetRef(args.ref);
       } catch (error) {
@@ -2757,16 +2766,12 @@ const eventsCommand = defineCommand({
 
 // ── proposal substrate (#225) ────────────────────────────────────────────────
 
-const proposalListCommand = defineCommand({
-  meta: { name: "list", description: "List pending proposals (use --include-archive to see decided ones)" },
+const proposalsCommand = defineCommand({
+  meta: { name: "proposals", description: "List proposal queue entries" },
   args: {
     status: { type: "string", description: "Filter by status (pending|accepted|rejected)" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
-    "include-archive": {
-      type: "boolean",
-      description: "Include accepted/rejected proposals from the archive",
-      default: false,
-    },
+    type: { type: "string", description: "Filter by asset type" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
@@ -2774,28 +2779,15 @@ const proposalListCommand = defineCommand({
       const result = akmProposalList({
         status,
         ref: args.ref,
-        includeArchive: getHyphenatedBoolean(args, "include-archive"),
+        includeArchive: status === "accepted" || status === "rejected",
       });
       output("proposal-list", result);
     });
   },
 });
 
-const proposalShowCommand = defineCommand({
-  meta: { name: "show", description: "Show a proposal's metadata, payload, and validation report" },
-  args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
-  },
-  run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = akmProposalShow({ id: args.id });
-      output("proposal-show", result);
-    });
-  },
-});
-
-const proposalAcceptCommand = defineCommand({
-  meta: { name: "accept", description: "Validate and promote a proposal to a real asset" },
+const acceptCommand = defineCommand({
+  meta: { name: "accept", description: "Accept a proposal and promote it into the stash" },
   args: {
     id: { type: "positional", description: "Proposal id (uuid)", required: true },
     target: { type: "string", description: "Override the write target by source name" },
@@ -2808,147 +2800,42 @@ const proposalAcceptCommand = defineCommand({
   },
 });
 
-const proposalRejectCommand = defineCommand({
-  meta: { name: "reject", description: "Archive a pending proposal with an optional reason" },
+const rejectCommand = defineCommand({
+  meta: { name: "reject", description: "Reject a proposal and record the reason" },
   args: {
     id: { type: "positional", description: "Proposal id (uuid)", required: true },
-    reason: { type: "string", description: "Reason for rejection (recorded in the archived proposal)" },
+    reason: { type: "string", description: "Reason for rejection (required)" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      if (!args.reason || !String(args.reason).trim()) {
+        throw new UsageError("Usage: akm reject <id> --reason '<reason>'", "MISSING_REQUIRED_ARGUMENT");
+      }
       const result = akmProposalReject({ id: args.id, reason: args.reason });
       output("proposal-reject", result);
     });
   },
 });
 
-const proposalDiffCommand = defineCommand({
-  meta: { name: "diff", description: "Show the diff between an existing asset and a pending proposal" },
+const diffCommand = defineCommand({
+  meta: { name: "diff", description: "Show the diff for a proposal" },
   args: {
+    subject: { type: "positional", description: "Only supported value: proposal", required: true },
     id: { type: "positional", description: "Proposal id (uuid)", required: true },
     target: { type: "string", description: "Override the write target by source name" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
+      if (args.subject !== "proposal") {
+        throw new UsageError("Usage: akm diff proposal <id>", "INVALID_FLAG_VALUE");
+      }
       const result = akmProposalDiff({ id: args.id, target: args.target });
       output("proposal-diff", result);
     });
   },
 });
 
-const proposalCommand = defineCommand({
-  meta: {
-    name: "proposal",
-    description: "Review and promote queued asset proposals (durable storage under .akm/proposals/)",
-  },
-  subCommands: {
-    list: proposalListCommand,
-    show: proposalShowCommand,
-    accept: proposalAcceptCommand,
-    reject: proposalRejectCommand,
-    diff: proposalDiffCommand,
-  },
-});
-
 // ── distill (#228) ──────────────────────────────────────────────────────────
-
-const distillCommand = defineCommand({
-  meta: {
-    name: "distill",
-    description:
-      "Distil feedback for an asset into a queued lesson proposal (gated on llm.features.feedback_distillation)",
-  },
-  args: {
-    ref: { type: "positional", description: "Asset ref (type:name) to distil from", required: true },
-    "source-run": {
-      type: "string",
-      description: "Optional run id propagated onto the queued proposal for traceability",
-    },
-    "exclude-feedback-from": {
-      type: "string",
-      description:
-        "Comma-separated asset refs whose feedback events MUST be filtered out before the LLM input is built. Falls back to AKM_DISTILL_EXCLUDE_FEEDBACK_FROM when omitted.",
-    },
-    "exclude-tags": {
-      type: "string",
-      description: "Exclude feedback events matching these tags (repeatable, e.g. --exclude-tags slice:eval)",
-    },
-    "include-tags": {
-      type: "string",
-      description: "Only include feedback events with ALL these tags (repeatable)",
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const excludeFlag = getHyphenatedArg(args, "exclude-feedback-from");
-      const excludeEnv = process.env.AKM_DISTILL_EXCLUDE_FEEDBACK_FROM;
-      // CLI flag takes precedence over the env var when both are present.
-      const excludeRaw = excludeFlag ?? excludeEnv;
-      const excludeFeedbackFromRefs = parseExcludeFeedbackFromRefs(excludeRaw);
-      const excludeTagsRaw = parseAllFlagValues("--exclude-tags");
-      const excludeTagsEnv = process.env.AKM_DISTILL_EXCLUDE_TAGS;
-      const excludeTags = [
-        ...new Set([
-          ...excludeTagsRaw,
-          ...(excludeTagsEnv
-            ? excludeTagsEnv
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-            : []),
-        ]),
-      ];
-      const includeTagsRaw = parseAllFlagValues("--include-tags");
-      const includeTagsEnv = process.env.AKM_DISTILL_INCLUDE_TAGS;
-      const includeTags = [
-        ...new Set([
-          ...includeTagsRaw,
-          ...(includeTagsEnv
-            ? includeTagsEnv
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-            : []),
-        ]),
-      ];
-      const result = await akmDistill({
-        ref: args.ref,
-        sourceRun: getHyphenatedArg(args, "source-run"),
-        ...(excludeFeedbackFromRefs.length > 0 ? { excludeFeedbackFromRefs } : {}),
-        ...(excludeTags.length > 0 ? { excludeTags } : {}),
-        ...(includeTags.length > 0 ? { includeTags } : {}),
-      });
-      output("distill", result);
-    });
-  },
-});
-
-/**
- * Parse a comma-separated list of asset refs (#267 — `--exclude-feedback-from`
- * and `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM`). Each entry is validated against
- * the canonical `[origin//]type:name` grammar via `parseAssetRef`; an
- * invalid entry surfaces as a UsageError → exit 2.
- */
-function parseExcludeFeedbackFromRefs(raw: string | undefined): string[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  const refs = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  for (const ref of refs) {
-    try {
-      parseAssetRef(ref);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new UsageError(
-        `Invalid --exclude-feedback-from ref "${ref}": ${message}`,
-        "INVALID_FLAG_VALUE",
-        "Each ref must match `[origin//]type:name`, e.g. skill:deploy or team//memory:auth-tips.",
-      );
-    }
-  }
-  return refs;
-}
 
 function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | "rejected" | undefined {
   if (raw === undefined) return undefined;
@@ -2961,38 +2848,39 @@ function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | 
   );
 }
 
-// ── reflect / propose (agent proposal-producers, #226) ──────────────────────
-
-const reflectCommand = defineCommand({
+const improveCommand = defineCommand({
   meta: {
-    name: "reflect",
-    description: "Ask the configured agent CLI to review an asset (or recent feedback) and queue a revised proposal",
+    name: "improve",
+    description: "Analyze existing AKM assets and generate improvement proposals",
   },
   args: {
-    ref: {
+    scope: {
       type: "positional",
-      description: "Asset ref (type:name) to reflect on. Optional — omit to reflect across recent feedback.",
+      description: "Optional asset type or asset ref to improve",
       required: false,
     },
-    task: { type: "string", description: "Optional task hint passed into the reflection prompt" },
-    profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
-    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    task: { type: "string", description: "Add extra guidance for this improvement pass" },
+    "dry-run": { type: "boolean", description: "Show planned actions without generating proposals", default: false },
+    target: { type: "string", description: "Override the write target for accepted proposals" },
+    "auto-accept": {
+      type: "string",
+      description: "Automatically accept low-risk proposals (only 'safe' is supported)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
-      const timeoutMs =
-        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
-      const result = await akmReflect({
-        ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
-        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
-        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
-        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
-      });
-      output("reflect", result);
-      if (result.ok === false) {
-        process.exit(EXIT_GENERAL);
+      const autoAcceptRaw = getHyphenatedArg<string>(args, "auto-accept");
+      if (autoAcceptRaw !== undefined && autoAcceptRaw !== "safe") {
+        throw new UsageError("--auto-accept only supports the value 'safe'.", "INVALID_FLAG_VALUE");
       }
+      const result = await akmImprove({
+        scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
+        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
+        dryRun: getHyphenatedBoolean(args, "dry-run"),
+        target: typeof args.target === "string" && args.target.trim() ? args.target : undefined,
+        autoAccept: autoAcceptRaw === "safe" ? "safe" : undefined,
+      });
+      output("improve", result);
     });
   },
 });
@@ -3009,6 +2897,7 @@ const proposeCommand = defineCommand({
     type: { type: "positional", description: "Asset type (skill, command, knowledge, lesson, ...)", required: false },
     name: { type: "positional", description: "Asset name (slug or path under the type dir)", required: false },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
+    file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
     profile: { type: "string", description: "Override the agent profile (defaults to agent.default)" },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
@@ -3017,20 +2906,26 @@ const proposeCommand = defineCommand({
       // citty silently shows help and exits 0 when required positionals are
       // omitted. Re-validate explicitly so the exit code is 2 (USAGE) and a
       // structured JSON error reaches scripted callers.
-      if (!args.type || !args.name || !args.task) {
+      const taskFromFlag = typeof args.task === "string" ? args.task : undefined;
+      const fileFromFlag = typeof args.file === "string" ? args.file : undefined;
+      if (!args.type || !args.name || (!taskFromFlag && !fileFromFlag)) {
         throw new UsageError(
-          "Usage: akm propose <type> <name> --task '<task>'.",
+          "Usage: akm propose <type> <name> (--task '<task>' | --file <path>).",
           "MISSING_REQUIRED_ARGUMENT",
-          "Provide the asset type, name, and a --task description, e.g. `akm propose skill deploy --task 'Deploy a service'`.",
+          "Provide the asset type, name, and exactly one of --task or --file.",
         );
       }
+      if (taskFromFlag && fileFromFlag) {
+        throw new UsageError("Pass exactly one of --task or --file.", "INVALID_FLAG_VALUE");
+      }
+      const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
       const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
       const timeoutMs =
         typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
       const result = await akmPropose({
         type: String(args.type),
         name: String(args.name),
-        task: String(args.task ?? ""),
+        task: taskText,
         profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });
@@ -3286,10 +3181,12 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
-    proposal: proposalCommand,
-    reflect: reflectCommand,
+    improve: improveCommand,
     propose: proposeCommand,
-    distill: distillCommand,
+    proposals: proposalsCommand,
+    accept: acceptCommand,
+    reject: rejectCommand,
+    diff: diffCommand,
     help: helpCommand,
     hints: hintsCommand,
     completions: completionsCommand,
@@ -3420,6 +3317,7 @@ function hasWikiSubcommand(args: Record<string, unknown>): boolean {
 function normalizeShowArgv(argv: string[]): string[] {
   // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
   if (argv[2] !== "show") return argv;
+  if (argv[3] === "proposal") return argv;
   if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
     throw new UsageError(
       'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',

@@ -21,7 +21,7 @@ That's the big idea. The practical question is how the command surface fits toge
 
 This post walks through the CLI by job-to-be-done, with real examples of when you'd use each command.
 
-> This command-family framing reflects `akm` v0.7.0.
+> This command-family framing reflects `akm` v0.8.0.
 
 ## The Short Version
 
@@ -32,7 +32,7 @@ You can think about `akm` in seven layers:
 3. **Find and inspect assets** — `curate`, `search`, `show`
 4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
 5. **Run repeatable procedures** — `workflow`
-6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
+6. **Continuously improve the stash** — `feedback`, `history`, `events`, `improve`, `propose`, `proposals`, `accept`, `reject`
 7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
 
 If you only remember one mental model, make it this:

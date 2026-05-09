@@ -37,7 +37,6 @@ type Draft = {
 };
 
 let compressor: (body: string) => Draft | undefined = () => undefined;
-
 mock.module("../src/llm/memory-infer", () => ({
   compressMemoryToDerivedMemory: async (_config: unknown, body: string) => compressor(body),
 }));
@@ -62,6 +61,7 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+  mock.restore();
 });
 
 function writeMemory(name: string, frontmatter: Record<string, unknown>, body: string): string {

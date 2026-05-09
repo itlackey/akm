@@ -35,7 +35,7 @@ const SHIPPED_COMMANDS = [
   "config",
 ] as const;
 
-const PLANNED_FOR_V1 = ["agent", "reflect", "propose", "proposal", "distill"] as const;
+const PLANNED_FOR_V1 = ["agent", "improve", "propose", "proposals", "accept", "reject"] as const;
 
 describe("v1 spec §9.4 — CLI command surface", () => {
   const spec = readDoc(SPEC_PATH);
@@ -72,8 +72,8 @@ describe("v1 spec §9.4 — CLI command surface", () => {
 describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   const cli = readDoc(CLI_DOC_PATH);
 
-  test("cli.md has an Available-since-0.7.0 section listing the 0.7.0 commands", () => {
-    const planned = extractSection(cli, "## Agent reflection and proposal queue (0.7.0+)");
+  test("cli.md has a 0.8.0 improvement section listing the new command family", () => {
+    const planned = extractSection(cli, "## Improvement Flow (0.8.0+)");
     expect(planned).not.toBe("");
     for (const cmd of PLANNED_FOR_V1) {
       expect(planned).toContain(`### ${cmd}`);
@@ -81,6 +81,6 @@ describe("v1 spec §9.4 — cli.md mirrors the surface", () => {
   });
 
   test("cli.md uses the documented status legend", () => {
-    expect(cli).toMatch(/Available since 0\.7\.0/);
+    expect(cli).toMatch(/Available since 0\.8\.0/);
   });
 });

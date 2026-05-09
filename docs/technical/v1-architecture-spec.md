@@ -653,14 +653,12 @@ hints | config *`.
 **`Planned for v1`** (declared by this spec, implemented across milestones
 0.7 – 1.0):
 - `agent <name> [args...]` — dispatch a configured agent profile (§12).
-- `reflect [ref] [--task ...]` — produce reflection proposals into the
+- `improve [ref|type] [--task ...]` — produce improvement proposals into the
   proposal queue (§11, §12).
 - `propose <type> <name> [--task ...]` — produce generation proposals into
   the proposal queue (§11, §12).
-- `proposal list | show | accept | reject | diff` — operate the proposal
+- `proposals` / `show proposal` / `diff proposal` / `accept` / `reject` — operate the proposal
   queue (§11).
-- `distill <ref>` — gated bounded LLM call producing a `lesson` proposal
-  (§13, §14).
 
 Renaming or removing any command above after v1.0 is a major version bump.
 
@@ -671,7 +669,7 @@ Renaming or removing any command above after v1.0 is a major version bump.
   fallback.
 - New planned commands (§9.4) each register their own shape; the
   `proposal-list`, `proposal-show`, `proposal-diff`, `agent-result`,
-  `reflect-result`, `propose-result`, and `distill-result` shapes are
+  `improve-result` and `propose-result` shapes are
   reserved.
 
 ### 9.6 Indexer and storage (shipped)
@@ -825,12 +823,12 @@ content is never mutated by reflection, generation, or distillation paths.
 ### 11.2 Commands
 
 ```sh
-akm proposal list                       # list pending proposals
-akm proposal list --status accepted     # filter by status
-akm proposal show <id>                  # render one proposal
-akm proposal diff <id>                  # diff vs. the live ref (if any)
-akm proposal accept <id>                # validate, then promote
-akm proposal reject <id> --reason "…"   # archive with reason
+akm proposals                           # list pending proposals
+akm proposals --status accepted         # filter by status
+akm show proposal <id>                  # render one proposal
+akm diff proposal <id>                  # diff vs. the live ref (if any)
+akm accept <id>                         # validate, then promote
+akm reject <id> --reason "…"            # archive with reason
 ```
 
 `accept` runs full validation (frontmatter, type-renderer, ref grammar,
@@ -904,11 +902,11 @@ change the default with `akm config set agent.default <name>`.
 
 ```sh
 akm agent <profile> [args...]            # raw shell-out
-akm reflect [ref] [--task ...]           # produces reflection proposals
+akm improve [ref] [--task ...]           # produces improvement proposals
 akm propose <type> <name> --task "..."   # produces generation proposals
 ```
 
-`reflect` and `propose` build prompts from asset content, feedback signals
+`improve` and `propose` build prompts from asset content, feedback signals
 (§6.6), and renderer schema. They write **only** to the proposal queue
 (§11). They never mutate live stash content. They emit `reflect_invoked` /
 `propose_invoked` (§11.3).
@@ -947,8 +945,8 @@ proposal-accept path.
 
 ### 13.3 Origin
 
-Lessons normally arrive via `akm distill <ref>` (§14.5) as `proposed`
-quality (§4.2) and are promoted via `akm proposal accept`. They can also be
+Lessons normally arrive via `akm improve <ref>` (§14.5) as `proposed`
+quality (§4.2) and are promoted via `akm accept`. They can also be
 authored directly with `akm import` or `akm remember`-style flows.
 
 ---
@@ -966,7 +964,7 @@ to the schema is itself a non-event.
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline (no rerank) |
 | `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
 | `memory_consolidation` | `akm remember --enrich` consolidation pass | `--enrich` is a no-op; warning printed |
-| `feedback_distillation` | `akm distill <ref>` (§14.5) | `akm distill` exits with `ConfigError` and a hint |
+| `feedback_distillation` | improve-driven lesson distillation (§14.5) | improve skips lesson distillation cleanly when disabled |
 | `embedding_fallback_score` | scorer fallback when no embeddings available | Scorer uses lexical-only score |
 | `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
 | `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during `akm index`, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
@@ -1055,9 +1053,9 @@ prior responses, no streaming sessions, no persistent connections. Each
 call is a single request/response cycle. Long-lived state belongs in the
 agent path (§12).
 
-### 14.5 `akm distill <ref>`
+### 14.5 Improve-driven lesson distillation
 
-`akm distill <ref>` is the canonical example. It:
+`akm improve <ref>` is the canonical example. It:
 
 1. Reads `feedback` events (§6.6) for `<ref>`.
 2. Builds one prompt summarising the feedback.
@@ -1068,7 +1066,7 @@ agent path (§12).
 5. Emits `distill_invoked`.
 
 It never mutates the live stash. Promotion remains a human-initiated
-`akm proposal accept`.
+`akm accept`.
 
 ---
 

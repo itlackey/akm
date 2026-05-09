@@ -46,6 +46,7 @@ describe("v1 spec §14 — llm.features.*", () => {
     const flat = section.replace(/\s+/g, " ");
     expect(flat).toMatch(/`lesson` \*\*proposal\*\*/i);
     expect(section).toContain("distill_invoked");
+    expect(section).toContain("akm improve");
   });
 
   test("§14 documents orthogonality between llm.features.* and index.<pass>.llm", () => {

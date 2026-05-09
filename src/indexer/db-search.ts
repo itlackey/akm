@@ -21,12 +21,10 @@ import { warn } from "../core/warn";
 import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "../sources/types";
 import {
   closeDatabase,
-  type DbSearchResult,
   getAllEntries,
   getEntryById,
   getEntryCount,
   getMeta,
-  getUtilityScoresByIds,
   openExistingDatabase,
   sanitizeFtsQuery,
   searchFts,
@@ -34,8 +32,9 @@ import {
 } from "./db";
 import { ensureIndex } from "./ensure-index";
 import { getRenderer } from "./file-context";
-import { computeGraphBoost, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
+import { type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
+import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -257,24 +256,7 @@ async function searchDatabase(
   // ── Score normalization ──────────────────────────────────────────────
   // Normalized BM25 + cosine similarity with weighted addition
   // (FTS 0.7, vector 0.3) for well-differentiated combined scores.
-
-  // Normalize FTS BM25 scores to 0-1 range
-  const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
-  if (ftsResults.length > 0) {
-    // BM25 scores are negative; most negative = best match
-    const bestBm25 = ftsResults[0].bm25Score; // most negative (best)
-    const worstBm25 = ftsResults[ftsResults.length - 1].bm25Score; // least negative (worst)
-    const range = bestBm25 - worstBm25; // negative range
-
-    for (const r of ftsResults) {
-      // Normalize: best match = 1.0, worst match approaches 0
-      // When range is 0 (all same score), all get 1.0
-      const normalized = range !== 0 ? (r.bm25Score - worstBm25) / range : 1.0;
-      // Scale to 0.3-1.0 range so even the worst FTS hit has a meaningful base score
-      const ftsScore = 0.3 + normalized * 0.7;
-      ftsScoreMap.set(r.id, { score: ftsScore, result: r });
-    }
-  }
+  const ftsScoreMap = normalizeFtsScores(ftsResults);
 
   // Build embedding score map (cosine similarities already 0-1)
   const embedScoreMap = new Map<number, number>();
@@ -285,53 +267,12 @@ async function searchDatabase(
   }
 
   // ── Combine FTS + vector scores ──────────────────────────────────────
-  const FTS_WEIGHT = 0.7;
-  const VEC_WEIGHT = 0.3;
-  const MAX_BOOST_SUM = 3.0;
-
-  const scored: Array<{
-    id: number;
-    entry: StashEntry;
-    filePath: string;
-    score: number;
-    rankingMode: "hybrid" | "semantic" | "fts";
-    utilityBoosted?: boolean;
-  }> = [];
-  const seenIds = new Set<number>();
-
-  // Process FTS results
-  for (const [id, { score: ftsScore, result }] of ftsScoreMap) {
-    seenIds.add(id);
-    const embedScore = embedScoreMap.get(id);
-    let combinedScore: number;
-    let rankingMode: "hybrid" | "fts";
-    if (embedScore !== undefined) {
-      combinedScore = ftsScore * FTS_WEIGHT + embedScore * VEC_WEIGHT;
-      rankingMode = "hybrid";
-    } else {
-      combinedScore = ftsScore;
-      rankingMode = "fts";
-    }
-    scored.push({ id, entry: result.entry, filePath: result.filePath, score: combinedScore, rankingMode });
-  }
-
-  // Add vec-only results not already in FTS results
-  if (embeddingScores) {
-    for (const [id, cosine] of embeddingScores) {
-      if (seenIds.has(id)) continue;
-      const found = getEntryById(db, id);
-      if (found) {
-        if (typeFilter && found.entry.type !== typeFilter) continue;
-        scored.push({
-          id,
-          entry: found.entry,
-          filePath: found.filePath,
-          score: cosine * VEC_WEIGHT, // Only vector score, no FTS
-          rankingMode: "semantic",
-        });
-      }
-    }
-  }
+  const scored = combineSearchScores({
+    ftsScoreMap,
+    embedScoreMap,
+    getEntryById: (id) => getEntryById(db, id) ?? undefined,
+    typeFilter,
+  });
 
   // ── Scoring Phase ──────────────────────────────────────────────────────
   // Apply boosts as multiplicative factors (all boosts in a single phase
@@ -341,9 +282,6 @@ async function searchDatabase(
   // user's intent. An exact name match is the strongest signal. Actionable
   // asset types (skills, commands, agents) are more useful than passive
   // reference docs. Curated metadata is more reliable than auto-generated.
-  const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const queryLower = query.toLowerCase().trim();
-
   // Graph boost context (#207). Built once per query and reused across
   // every scored entry so the disk read + JSON parse only happens once
   // per search invocation. `null` when no graph file is present, when
@@ -361,178 +299,7 @@ async function searchDatabase(
     return loadGraphBoostContext(primaryDir, query);
   })();
 
-  for (const item of scored) {
-    const entry = item.entry;
-    let boostSum = 0;
-
-    // ── 1. Exact / near-exact name match (strongest signal) ──
-    // If the query IS the asset name (or very close), this is almost certainly
-    // what the user wants. This is the single most important ranking signal.
-    const nameLower = entry.name.toLowerCase();
-    const rawNameBase = nameLower.split("/").pop() ?? nameLower; // last segment for path-based names
-    const nameBase =
-      entry.type === "memory" && rawNameBase.endsWith(".derived")
-        ? rawNameBase.slice(0, -".derived".length)
-        : rawNameBase;
-    if (nameBase === queryLower || nameLower === queryLower) {
-      // Exact match: massive boost
-      boostSum += 2.0;
-    } else if (nameBase.includes(queryLower) || queryLower.includes(nameBase)) {
-      // Near-exact: query is substring of name or vice versa
-      boostSum += 1.0;
-    } else {
-      // Token overlap: how many query tokens appear in the base name?
-      const nameTokens = nameBase.split(/[-_\s]+/).filter(Boolean);
-      const matchCount = queryTokens.filter((qt) => nameTokens.some((nt) => nt === qt || nt.includes(qt))).length;
-      if (matchCount > 0) {
-        // Proportional to how many query tokens match (0.3 per token, max 0.9)
-        boostSum += Math.min(0.9, matchCount * 0.3);
-      }
-    }
-
-    // ── 2. Type relevance boost ──
-    // Actionable assets (skills, commands, agents) are generally more useful
-    // than passive reference material when the user is searching for something
-    // to use. Knowledge docs are reference — valuable but secondary.
-    const TYPE_BOOST: Record<string, number> = {
-      skill: 0.4,
-      command: 0.35,
-      workflow: 0.35,
-      agent: 0.3,
-      script: 0.2,
-      memory: 0.1,
-      knowledge: 0,
-    };
-    boostSum += TYPE_BOOST[entry.type] ?? 0;
-
-    // ── 2.5. Derived-vs-raw memory preference ──
-    // Raw memories are user notes and may be incomplete or unvetted. Compressed
-    // `.derived` memories are the higher-signal retrieval target, but the
-    // preference should stay modest so stronger relevance signals still dominate.
-    if (entry.type === "memory") {
-      if (entry.name.toLowerCase().endsWith(".derived")) {
-        boostSum += 0.18;
-      } else {
-        boostSum -= 0.08;
-      }
-    }
-
-    // ── 3. Tag exact match ──
-    // Exact tag equality is a strong signal — the author explicitly tagged
-    // this asset with the user's search term.
-    if (entry.tags) {
-      let tagBoost = 0;
-      for (const tag of entry.tags) {
-        if (queryTokens.some((t) => tag.toLowerCase() === t)) {
-          tagBoost += 0.15;
-        }
-      }
-      boostSum += Math.min(0.3, tagBoost);
-    }
-
-    // ── 4. Search hint match ──
-    // Hints are author-curated retrieval cues (e.g. "use when deploying to k8s").
-    if (entry.searchHints) {
-      let hintBoost = 0;
-      for (const hint of entry.searchHints) {
-        const hintLower = hint.toLowerCase();
-        for (const token of queryTokens) {
-          if (hintLower.includes(token)) {
-            hintBoost += 0.12;
-            break;
-          }
-        }
-      }
-      boostSum += Math.min(0.24, hintBoost);
-    }
-
-    // ── 5. Alias match ──
-    // Aliases are alternate names the author defined for discovery.
-    if (entry.aliases) {
-      for (const alias of entry.aliases) {
-        const aliasLower = alias.toLowerCase();
-        if (aliasLower === queryLower) {
-          boostSum += 1.5; // Nearly as strong as exact name match
-          break;
-        }
-        if (queryTokens.some((t) => aliasLower.includes(t))) {
-          boostSum += 0.3;
-        }
-      }
-    }
-
-    // ── 6. Description relevance ──
-    // All query tokens appearing in description suggests strong relevance.
-    if (entry.description) {
-      const descLower = entry.description.toLowerCase();
-      const descMatchCount = queryTokens.filter((t) => descLower.includes(t)).length;
-      if (descMatchCount === queryTokens.length && queryTokens.length > 1) {
-        // All query tokens found in description — high relevance
-        boostSum += 0.25;
-      } else if (descMatchCount > 0) {
-        boostSum += 0.1;
-      }
-    }
-
-    // ── 7. Metadata quality signals ──
-    // Curated metadata is the only boost-bearing quality marker. `generated`
-    // and `proposed` (and unknown values) get no boost. `proposed` is also
-    // filtered out by default downstream (v1 spec §4.2).
-    const qualityBoost = entry.quality === "curated" ? 0.05 : 0;
-    boostSum += qualityBoost;
-
-    const confidenceBoost =
-      typeof entry.confidence === "number" ? Math.min(0.05, Math.max(0, entry.confidence) * 0.05) : 0;
-    boostSum += confidenceBoost;
-
-    // ── 8. Graph signal (opt-in, #207) ──
-    // When the graph-extraction pass has produced a `graph.json`,
-    // contribute an additive boost based on how many of this entry's
-    // extracted entities match the query (or are one hop away from a
-    // match). Computed inside the same loop so all boosts are in one
-    // place and the per-call cost is one map lookup when the graph is
-    // absent. There is no parallel scoring track — `boostSum` is the
-    // single accumulator and the existing `MAX_BOOST_SUM` cap below
-    // applies to graph contributions exactly as it does to every other
-    // boost.
-    if (graphContext) {
-      boostSum += computeGraphBoost(graphContext, item.filePath);
-    }
-
-    const cappedBoost = Math.min(boostSum, MAX_BOOST_SUM);
-    item.score = item.score * (1 + cappedBoost);
-  }
-
-  // Utility-based re-ranking (MemRL pattern).
-  // After the FTS+boost scoring pass, apply a multiplicative
-  // utility factor based on aggregated usage telemetry.
-  // Batch-load all utility scores in one query to avoid N+1.
-  const UTILITY_WEIGHT = 0.5;
-  const UTILITY_MAX_BOOST = 1.5; // Cap at 1.5x multiplier
-  const RECENCY_DECAY_DAYS = 30;
-  const utilScoresMap = getUtilityScoresByIds(
-    db,
-    scored.map((s) => s.id),
-  );
-  for (const item of scored) {
-    const utilScore = utilScoresMap.get(item.id);
-    if (utilScore && utilScore.utility > 0) {
-      // Compute recency factor: exponential decay based on days since last use
-      let recencyFactor = 1;
-      if (utilScore.lastUsedAt) {
-        const lastUsedMs = new Date(utilScore.lastUsedAt).getTime();
-        const daysSinceLastUse = Number.isNaN(lastUsedMs)
-          ? Infinity
-          : Math.max(0, (Date.now() - lastUsedMs) / (1000 * 60 * 60 * 24));
-        recencyFactor = Math.exp(-daysSinceLastUse / RECENCY_DECAY_DAYS);
-      }
-      // Compute raw utility boost and cap it
-      const rawBoost = 1 + utilScore.utility * recencyFactor * UTILITY_WEIGHT;
-      const cappedBoost = Math.min(rawBoost, UTILITY_MAX_BOOST);
-      item.score = item.score * cappedBoost;
-      item.utilityBoosted = true;
-    }
-  }
+  applyRankingRules({ db, query, items: scored, graphContext });
 
   // ── minScore floor ──────────────────────────────────────────────────────
   // Drop semantic-only hits (cosine-only, no FTS match) whose score falls

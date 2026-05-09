@@ -26,6 +26,9 @@ let embedBatchImpl:
 const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalAkmStashDir = process.env.AKM_STASH_DIR;
+const originalAkmVerbose = process.env.AKM_VERBOSE;
+const originalFetch = globalThis.fetch;
 
 mock.module("../src/llm/embedder.js", () => ({
   ...embedderModule,
@@ -39,6 +42,17 @@ beforeEach(() => {
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-cache-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
+  }
+  if (originalAkmVerbose === undefined) {
+    delete process.env.AKM_VERBOSE;
+  } else {
+    process.env.AKM_VERBOSE = originalAkmVerbose;
+  }
+  globalThis.fetch = originalFetch;
   embedBatchImpl = undefined;
 
   const dbPath = getDbPath();
@@ -63,6 +77,17 @@ afterEach(() => {
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
+  if (originalAkmStashDir === undefined) {
+    delete process.env.AKM_STASH_DIR;
+  } else {
+    process.env.AKM_STASH_DIR = originalAkmStashDir;
+  }
+  if (originalAkmVerbose === undefined) {
+    delete process.env.AKM_VERBOSE;
+  } else {
+    process.env.AKM_VERBOSE = originalAkmVerbose;
+  }
+  globalThis.fetch = originalFetch;
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
@@ -569,132 +594,6 @@ test("akmIndex reports progress events and semantic-search verification details"
   } finally {
     warnSpy.mockRestore();
     globalThis.fetch = originalFetch;
-  }
-});
-
-test("akmIndex memory inference uses the configured llm maxTokens budget", async () => {
-  const requestBodies: Record<string, unknown>[] = [];
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      requestBodies.push((await request.json()) as Record<string, unknown>);
-      return new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: JSON.stringify({
-                  title: "Derived memory",
-                  description: "Why the compressed memory matters.",
-                  tags: ["memory", "inference", "llm"],
-                  searchHints: ["derived memory", "memory inference", "llm summary"],
-                  content: "## Summary\n\nUse the configured token budget.",
-                }),
-              },
-            },
-          ],
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    },
-  });
-
-  try {
-    const stashDir = tmpStash();
-    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
-
-    process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({
-      semanticSearchMode: "off",
-      llm: {
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 1024,
-        features: { graph_extraction: false, memory_inference: true },
-      },
-    });
-
-    await akmIndex({ stashDir, enrich: true });
-
-    const memoryInferenceRequest = requestBodies.find(
-      (body) =>
-        Array.isArray(body.messages) &&
-        body.messages.some(
-          (message) =>
-            typeof message === "object" &&
-            message !== null &&
-            "content" in message &&
-            typeof message.content === "string" &&
-            message.content.includes("Compress the memory below into one concise, information-dense derived memory."),
-        ),
-    );
-
-    expect(memoryInferenceRequest).toBeDefined();
-    expect(memoryInferenceRequest).toMatchObject({
-      model: "test-model",
-      max_tokens: 1024,
-      temperature: 0.1,
-    });
-  } finally {
-    server.stop();
-  }
-});
-
-test("akmIndex warns and reports skipped memory inference when LLM returns unusable output", async () => {
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-  const server = Bun.serve({
-    port: 0,
-    fetch() {
-      return new Response(
-        JSON.stringify({
-          choices: [{ message: { content: "" } }],
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    },
-  });
-
-  try {
-    const stashDir = tmpStash();
-    writeFile(path.join(stashDir, "memories", "parent.md"), "---\n---\n\nA memory that needs inference.\n");
-
-    process.env.AKM_STASH_DIR = stashDir;
-    saveConfig({
-      semanticSearchMode: "off",
-      llm: {
-        endpoint: `http://localhost:${server.port}`,
-        model: "test-model",
-        maxTokens: 1024,
-        features: { memory_inference: true },
-      },
-    });
-
-    const messages: string[] = [];
-    await akmIndex({
-      stashDir,
-      enrich: true,
-      onProgress: ({ phase, message }) => {
-        if (phase === "llm") messages.push(message);
-      },
-    });
-
-    expect(
-      messages.some((message) =>
-        message.includes(
-          "Memory inference reviewed 1 memory; wrote 0 derived memories from 0 parent memories; skipped 1 memory with unusable LLM responses.",
-        ),
-      ),
-    ).toBe(true);
-    expect(warnSpy).toHaveBeenCalledWith(
-      "Memory inference skipped 1 memory because the LLM returned empty, invalid, or incomplete derived payloads. Check your model and token budget.",
-    );
-  } finally {
-    warnSpy.mockRestore();
-    server.stop();
   }
 });
 

@@ -49,6 +49,8 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "reflect":
     case "propose":
       return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
+    case "improve":
+      return result;
     // Output shape registration for `akm distill <ref>` (#228). The shape is
     // simple — outcome + ids + optional payload — so `brief` strips the full
     // proposal blob, `normal` keeps the headline fields, and `full` projects

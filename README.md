@@ -31,12 +31,12 @@ That means `akm` is not just a search tool. It is the layer that helps agents:
 - **discover the right capability on demand** instead of front-loading a giant prompt
 - **reuse knowledge across tools and projects** instead of rebuilding the same library in every assistant
 - **keep local knowledge structured** with memories, imported docs, wikis, workflows, and vaults
-- **improve continuously** with feedback, history, events, reflection, proposals, and distilled lessons
+- **improve continuously** with feedback, history, events, improvement passes, proposals, and distilled lessons
 - **share and version agent assets like code** through git, npm, registries, and writable stashes
 
 ## What you get
 
-> This command model reflects the v0.7.0 workflow framing.
+> This command model reflects the v0.8.0 CLI revision.
 
 Think about `akm` in seven layers:
 
@@ -45,7 +45,7 @@ Think about `akm` in seven layers:
 3. **Find and inspect assets** — `curate`, `search`, `show`
 4. **Build local knowledge and operational context** — `remember`, `import`, `wiki`, `vault`
 5. **Run repeatable procedures** — `workflow`
-6. **Continuously improve the stash** — `feedback`, `history`, `events`, `reflect`, `propose`, `proposal`, `distill`
+6. **Continuously improve the stash** — `feedback`, `history`, `events`, `improve`, `propose`, `proposals`, `accept`, `reject`
 7. **Operate the CLI comfortably** — `help`, `hints`, `completions`, `upgrade`
 
 If you only remember one mental model, make it this:

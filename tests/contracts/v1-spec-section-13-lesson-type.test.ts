@@ -23,8 +23,8 @@ describe("v1 spec §13 — lesson asset type", () => {
   });
 
   test("§13.3 routes distill output through the proposal queue", () => {
-    expect(section).toMatch(/akm distill/);
-    expect(section).toMatch(/akm proposal accept/);
+    expect(section).toMatch(/akm improve/);
+    expect(section).toMatch(/akm accept/);
   });
 
   test("`lesson` is registered as a well-known asset type at runtime", () => {

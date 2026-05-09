@@ -218,6 +218,9 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "distill": {
       return formatDistillPlain(r);
     }
+    case "improve": {
+      return formatImprovePlain(r);
+    }
     case "info":
       return formatInfoPlain(r);
     case "config":
@@ -463,7 +466,7 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
   const proposals = Array.isArray(r.proposals) ? (r.proposals as Array<Record<string, unknown>>) : [];
   const total = typeof r.totalCount === "number" ? r.totalCount : proposals.length;
   if (proposals.length === 0) {
-    return `${total} proposal(s).\nNo proposals.\nGenerate one with \`akm reflect <ref>\`, \`akm propose <type> <name> --task ...\`, or \`akm distill <ref>\`.`;
+    return `${total} proposal(s).\nNo proposals.\nGenerate one with \`akm improve\`, \`akm propose <type> <name> --task ...\`, or \`akm improve <ref>\`.`;
   }
   const lines = [`${total} proposal(s)`, ""];
   for (const p of proposals) {
@@ -527,7 +530,7 @@ export function formatDistillPlain(r: Record<string, unknown>): string {
   const lessonRef = String(r.lessonRef ?? "?");
   if (outcome === "queued") {
     const id = String(r.proposalId ?? "?");
-    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm proposal show ${id}\` to review.`;
+    return `Distilled ${inputRef} → proposal ${id} (${lessonRef}). Run \`akm show proposal ${id}\` to review.`;
   }
   if (outcome === "validation_failed") {
     const findings = Array.isArray(r.findings) ? (r.findings as Array<Record<string, unknown>>) : [];
@@ -540,6 +543,18 @@ export function formatDistillPlain(r: Record<string, unknown>): string {
   // skipped
   const message = typeof r.message === "string" ? r.message : "feature disabled or LLM unavailable";
   return `Distill skipped for ${inputRef}: ${message}`;
+}
+
+export function formatImprovePlain(r: Record<string, unknown>): string {
+  const scope = (r.scope as Record<string, unknown> | undefined) ?? {};
+  const mode = String(scope.mode ?? "all");
+  const value = typeof scope.value === "string" ? ` ${scope.value}` : "";
+  const plannedRefs = Array.isArray(r.plannedRefs) ? r.plannedRefs.length : 0;
+  if (r.dryRun === true) {
+    return `Improve dry-run:${mode === "all" ? " all assets" : value} (${plannedRefs} planned ref(s))`;
+  }
+  const actions = Array.isArray(r.actions) ? r.actions.length : 0;
+  return `Improve:${mode === "all" ? " all assets" : value} queued ${actions} action(s) across ${plannedRefs} ref(s)`;
 }
 
 export function formatProposalDiffPlain(r: Record<string, unknown>): string {

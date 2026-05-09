@@ -1292,15 +1292,10 @@ source <(akm completions)
 
 ---
 
-## Agent reflection and proposal queue (0.7.0+)
+## Improvement Flow (0.8.0+)
 
-The commands below shipped in 0.7.0 and form part of the locked v1.0
-surface declared by the v1 architecture spec
-([`technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
-§9.4, §11–§14). They run today on the current pre-release build; the
-shape and flag set documented here is the locked v1 contract. The
-`agent` subcommand itself remains the one piece of this group that is
-still on the roadmap — see its subsection below.
+These commands define the v0.8.0 self-improvement surface. This is a hard
+break from the older `reflect` / `proposal` / `distill` public UX.
 
 ### agent (Planned for v1)
 
@@ -1321,116 +1316,113 @@ Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
 failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |
 parse_error`.
 
-### reflect
+### improve
 
-**Status: Available since 0.7.0.**
-Produce reflection proposals for an existing asset. Proposals land in the
-durable proposal queue and never mutate live stash content.
+**Status: Available since 0.8.0.**
+Improve existing assets and write the results to the proposal queue.
 
 ```sh
-akm reflect <ref>
-akm reflect [ref] --task "tighten the description"
-akm reflect --profile claude
+akm improve
+akm improve memory
+akm improve skill:code-review
+akm improve workflow:release-checklist --task "reduce duplication"
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--task` | Optional task hint passed into the reflection prompt |
-| `--profile` | Override the default agent profile from `agent.default` |
-| `--timeout-ms` | Override `agent.timeoutMs` for this call |
+| `--task` | Optional extra guidance for this improvement pass |
+| `--dry-run` | Show planned refs without generating proposals |
+| `--target` | Override the write target used later by `accept` |
+| `--auto-accept safe` | Reserved low-risk auto-accept mode |
 
-Emits the `reflect_invoked` usage event. Returns the `id` of the new
-proposal row. Validation/timeout/parse errors return non-zero with a
-`ConfigError` or `UsageError` envelope.
+`akm improve` is the public entrypoint for whole-stash, type-scoped, and
+ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
+flow that used to be split across multiple commands.
 
 ### propose
 
-**Status: Available since 0.7.0.**
+**Status: Available since 0.8.0.**
 Generate a brand-new asset proposal from a description. Output is always a
 proposal — never a direct write.
 
 ```sh
 akm propose <type> <name> --task "..."
+akm propose <type> <name> --file ./prompt.md
 akm propose skill code-review --task "PR-style review skill"
-akm propose lesson docker-cleanup --task "consolidate cleanup feedback"
+akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--task` | Required. Free-form description of what the asset should do |
+| `--task` | Inline task text |
+| `--file` | Read task text from a UTF-8 file |
 | `--profile` | Override the default agent profile |
 | `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
-Emits `propose_invoked`. Returns the new proposal id. Same failure model as
-`reflect`.
+Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
-### proposal
+### proposals
 
-**Status: Available since 0.7.0.**
-Review and operate the proposal queue. Five subcommands.
-
-```sh
-akm proposal list
-akm proposal list --status pending|accepted|rejected
-akm proposal show <id>
-akm proposal diff <id>
-akm proposal accept <id>
-akm proposal reject <id> --reason "..."
-```
-
-| Subcommand | Description |
-| --- | --- |
-| `list` | List proposals, optionally filtered by status |
-| `show <id>` | Render the proposal body and metadata |
-| `diff <id>` | Show the proposed delta vs. the live ref (or vs. empty) |
-| `accept <id>` | Validate and promote via `writeAssetToSource` |
-| `reject <id>` | Archive with a reason; body is preserved |
-
-#### proposal list flags
-
-| Flag | Description |
-| --- | --- |
-| `--status` | Filter by status (`pending`, `accepted`, or `rejected`) |
-| `--ref` | Filter by asset ref (`[origin//]type:name`) |
-| `--include-archive` | Include accepted/rejected proposals from the archive (default: `false`, pending only) |
-
-#### proposal accept / diff flags
-
-| Flag | Description |
-| --- | --- |
-| `--target <name>` | Override the write destination by source name. Same semantics as `akm import --target`: `--target` → `defaultWriteTarget` → `stashDir`. Applies to both `accept` and `diff` so previews match the target you would actually promote to. |
-
-`accept` runs full validation (frontmatter, type-renderer, ref grammar,
-write-source policy) **before** promoting. Failures keep the proposal in
-`pending` and emit a structured `warnings` array. Successful promotion
-emits the `promoted` event; reject emits `rejected`.
-
-### distill
-
-**Status: Available since 0.7.0.**
-Bounded in-tree LLM call that summarises feedback events for a ref into a
-`lesson` proposal. Gated behind `llm.features.feedback_distillation`.
+**Status: Available since 0.8.0.**
+List proposal queue entries.
 
 ```sh
-akm distill <ref>
-akm distill skill:deploy --source-run run-42
-akm distill skill:deploy --exclude-feedback-from "memory:retro,lesson:flaky-tests"
+akm proposals
+akm proposals --status pending|accepted|rejected
+akm proposals --ref skill:deploy
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--source-run <id>` | Optional run id propagated onto the queued proposal for traceability |
-| `--exclude-feedback-from <refs>` | Comma-separated asset refs whose feedback events are filtered out before the LLM input is built. Falls back to the `AKM_DISTILL_EXCLUDE_FEEDBACK_FROM` env var when the flag is omitted; the flag wins when both are set. |
+| `--status` | Filter by `pending`, `accepted`, or `rejected` |
+| `--ref` | Filter by exact asset ref |
+| `--type` | Reserved type filter |
 
-If `llm.features.feedback_distillation` is `false` (the default), the
-command exits 0 with `outcome: "skipped"` when the feature gate is false.
-On a successful call, the response is written to the proposal queue as a
-`lesson` (see v1 spec §13). The live stash is never mutated. Emits
-`distill_invoked`.
+### accept
+
+**Status: Available since 0.8.0.**
+Accept a proposal and promote it into the stash.
+
+```sh
+akm accept <id>
+akm accept <id> --target team-stash
+```
+
+### reject
+
+**Status: Available since 0.8.0.**
+Reject a proposal and archive the reason.
+
+```sh
+akm reject <id> --reason "duplicates existing workflow"
+```
+
+### show proposal
+
+Inspect a queued proposal.
+
+```sh
+akm show proposal <id>
+```
+
+### diff proposal
+
+Preview the proposed change against the live asset.
+
+```sh
+akm diff proposal <id>
+akm diff proposal <id> --target team-stash
+```
+
+| Flag | Description |
+| --- | --- |
+| `--target <name>` | Override the write destination by source name for `accept` and `diff proposal` |
+
+`accept` runs full validation before promoting. `reject` requires `--reason`.
 
 ### feedback (`--reason` extension)
 
-**Status: Available since 0.7.0.**
+**Status: Available since 0.8.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
 `distill_invoked` payloads. Backwards compatible: scripts without `--reason`
