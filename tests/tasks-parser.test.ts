@@ -71,6 +71,16 @@ describe("parseTaskDocument", () => {
     }
   });
 
+  test("windows absolute prompt path is treated as file on non-windows hosts", () => {
+    const md = ["---", 'schedule: "@hourly"', "prompt: C:\\prompts\\triage.md", "---"].join("\n");
+    const task = parseTaskDocument({ markdown: md, filePath: "/stash/tasks/triage.md", id: "triage" });
+    if (task.target.kind === "prompt" && task.target.source.kind === "file") {
+      expect(task.target.source.path).toBe("C:\\prompts\\triage.md");
+    } else {
+      throw new Error("expected file prompt target");
+    }
+  });
+
   test("rejects task with both workflow and prompt", () => {
     const md = ["---", 'schedule: "@daily"', "workflow: workflow:foo", "prompt: inline", "---", "", "body", ""].join(
       "\n",

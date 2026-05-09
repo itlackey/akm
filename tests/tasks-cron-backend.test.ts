@@ -22,6 +22,12 @@ describe("cron backend helpers", () => {
     expect(line).toContain("'/Applications/My Stuff/akm'");
   });
 
+  test("buildCronLine escapes apostrophes for POSIX shell", () => {
+    const line = buildCronLine(TASK, ["/opt/akm's/bin/akm"], "/var/log/akm's");
+    expect(line).toContain("'/opt/akm'\\''s/bin/akm'");
+    expect(line).toContain("'/var/log/akm'\\''s/ping.log'");
+  });
+
   test("renderBlock wraps the cron line in begin/end markers", () => {
     const block = renderBlock("ping", "* * * * * /bin/akm tasks run ping", true);
     expect(block.split("\n")).toEqual([

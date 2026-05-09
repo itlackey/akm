@@ -143,6 +143,10 @@ function resolvePromptSource(
     return { kind: "file", path: trimmed };
   }
 
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) {
+    return { kind: "file", path: trimmed };
+  }
+
   if (/^[a-z][a-z0-9_-]*:[^\s]/i.test(trimmed)) {
     return { kind: "asset", ref: trimmed };
   }

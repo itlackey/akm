@@ -22,6 +22,7 @@ describe("buildSchtasksXml", () => {
     expect(xml).toContain("<Command>C:/akm/akm.exe</Command>");
     expect(xml).toContain("<Arguments>tasks run ping</Arguments>");
     expect(xml).toContain("<Enabled>true</Enabled>");
+    expect(xml).not.toContain("<WorkingDirectory>");
   });
 
   test("daily at 09:30 -> CalendarTrigger ScheduleByDay", () => {

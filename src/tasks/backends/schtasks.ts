@@ -73,8 +73,6 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): TaskBack
   return {
     name: "schtasks",
     install(task: TaskDocument) {
-      // The generated XML sets <WorkingDirectory> to logDir; create it
-      // before registering so the scheduler doesn't fail to launch the job.
       fsLike.ensureDir(logDir);
       const xml = buildSchtasksXml(task, akmArgv, logDir, { folderPrefix: folder });
       const tmpFile = path.join(fsLike.tmpdir(), `akm-task-${task.id}-${Date.now()}.xml`);
@@ -187,7 +185,6 @@ ${triggerXml}
     <Exec>
       <Command>${escapeXml(command)}</Command>
       <Arguments>${escapeXml(args)}</Arguments>
-      <WorkingDirectory>${escapeXml(logDir)}</WorkingDirectory>
     </Exec>
   </Actions>
   <!-- Log target (informational only; schtasks doesn't redirect): ${escapeXml(logPath)} -->
