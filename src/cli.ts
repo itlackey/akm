@@ -30,7 +30,7 @@ import {
   runAutoHeuristics,
   runLlmEnrich,
 } from "./commands/remember";
-import { akmSearch, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
+import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";
 import { akmShowUnified } from "./commands/show";
 import { akmAdd } from "./commands/source-add";
@@ -279,6 +279,12 @@ const searchCommand = defineCommand({
       description: 'Include entries with quality:"proposed" in the result set. Excluded by default (v1 spec §4.2).',
       default: false,
     },
+    belief: {
+      type: "string",
+      description:
+        "Memory belief filter: all|current|historical. current keeps active memory beliefs; historical keeps contradicted/superseded/archived memory beliefs.",
+      default: "all",
+    },
     format: { type: "string", description: "Output format (json|jsonl|text|yaml)" },
     detail: { type: "string", description: "Detail level (brief|normal|full|summary|agent)" },
   },
@@ -301,7 +307,8 @@ const searchCommand = defineCommand({
       const filterTokens = parseAllFlagValues("--filter");
       const filters = parseScopeFilterFlags(filterTokens, "--filter");
       const includeProposed = (args as Record<string, unknown>)["include-proposed"] === true;
-      const result = await akmSearch({ query, type, limit, source, filters, includeProposed });
+      const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
+      const result = await akmSearch({ query, type, limit, source, filters, includeProposed, belief });
       output("search", result);
     });
   },

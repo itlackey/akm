@@ -4,6 +4,7 @@ import type { InstalledStashEntry, KitSource } from "../registry/types";
 export type AkmSearchType = string;
 export type SearchSource = "stash" | "registry" | "both";
 export type SearchHitSize = "small" | "medium" | "large";
+export type BeliefFilterMode = "all" | "current" | "historical";
 
 export interface SourceSearchHit {
   type: string;
@@ -39,6 +40,8 @@ export interface SourceSearchHit {
    * `quality` field.
    */
   quality?: string;
+  beliefState?: string;
+  currentBeliefRefs?: string[];
 }
 
 export interface RegistrySearchResultHit {

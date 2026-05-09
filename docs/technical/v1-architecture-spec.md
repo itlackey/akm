@@ -911,6 +911,11 @@ akm propose <type> <name> --task "..."   # produces generation proposals
 (§11). They never mutate live stash content. They emit `reflect_invoked` /
 `propose_invoked` (§11.3).
 
+When reinforced memory facts are consolidated into proposals, `knowledge` is
+the more authoritative destination. The deterministic search pipeline also
+ranks `knowledge` above `memory` hits, including inferred `.derived`
+memories, when the other signals are otherwise comparable.
+
 Both commands return structured failures and exit non-zero on
 CLI/timeout/parse/validation errors.
 

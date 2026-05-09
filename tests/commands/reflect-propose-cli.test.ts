@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { type AkmDistillOptions, type AkmDistillResult, akmDistill } from "../../src/commands/distill";
 import { akmImprove } from "../../src/commands/improve";
 import { akmPropose } from "../../src/commands/propose";
+import type { AkmReflectOptions } from "../../src/commands/reflect";
+import type { AkmConfig } from "../../src/core/config";
+import { listProposals } from "../../src/core/proposals";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/spawn";
 
@@ -105,6 +109,113 @@ describe("improve argv coercion", () => {
   test("ref scope is preserved", async () => {
     const result = await akmImprove({ scope: "skill:deploy", dryRun: true });
     expect(result.scope).toEqual({ mode: "ref", value: "skill:deploy" });
+  });
+
+  test("memory-focused improve run can queue knowledge-oriented distill proposals", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: Deployment requires VPN access",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.92",
+        "quality: curated",
+        "---",
+        "",
+        "Connect the VPN before production deploys so cluster access works.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const reflected: AkmReflectOptions[] = [];
+    const distilled: AkmDistillOptions[] = [];
+    const config = {
+      stashDir: stash,
+      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      defaultWriteTarget: "stash",
+    } as AkmConfig;
+
+    const feedbackEvents = (() => ({
+      events: [0, 1].map((i) => ({
+        schemaVersion: 1 as const,
+        id: i,
+        ts: `2026-04-27T00:00:0${i}Z`,
+        eventType: "feedback",
+        ref: "memory:deploy-fact",
+        metadata: { signal: "positive" },
+      })),
+      nextOffset: 0,
+    })) as never;
+
+    const result = await akmImprove({
+      scope: "memory:deploy-fact",
+      stashDir: stash,
+      ensureIndexFn: async () => undefined,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        updated: 0,
+        deleted: 0,
+        warnings: [],
+      }),
+      reflectFn: async (options) => {
+        reflected.push(options);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          ref: options.ref ?? "memory:deploy-fact",
+          agentProfile: "fake-agent",
+          durationMs: 1,
+          proposal: {
+            id: "reflect-1",
+            ref: "memory:deploy-fact",
+            status: "pending",
+            source: "reflect",
+            createdAt: "2026-05-01T00:00:00.000Z",
+            updatedAt: "2026-05-01T00:00:00.000Z",
+            payload: { content: "# reflect" },
+          },
+        };
+      },
+      distillFn: async (options) => {
+        distilled.push(options);
+        return akmDistill({
+          ...options,
+          config,
+          stashDir: stash,
+          chat: async () => {
+            throw new Error("chat must not be called for deterministic memory promotion");
+          },
+          lookupFn: async () => memoryFile,
+          readEventsFn: feedbackEvents,
+        });
+      },
+    });
+
+    expect(reflected.map((call) => call.ref)).toContain("memory:deploy-fact");
+    expect(distilled).toHaveLength(1);
+    expect(distilled[0].proposalKind).toBe("auto");
+    expect(result.actions?.some((action) => action.mode === "distill")).toBe(true);
+    const distillAction = result.actions?.find((action) => action.mode === "distill");
+    expect(distillAction?.mode).toBe("distill");
+    if (!distillAction || distillAction.mode !== "distill") {
+      throw new Error("expected distill action");
+    }
+    const distillResult = distillAction.result as AkmDistillResult;
+    expect(distillResult.ok).toBe(true);
+    if (distillResult.ok !== true || distillResult.outcome !== "queued") {
+      throw new Error("expected queued distill result");
+    }
+    expect(distillResult.proposalKind).toBe("knowledge");
+    expect(distillResult.proposalRef).toBe("knowledge:deploy-fact");
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].ref).toBe("knowledge:deploy-fact");
   });
 });
 

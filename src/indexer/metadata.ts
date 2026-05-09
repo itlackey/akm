@@ -106,6 +106,10 @@ export interface StashEntry {
   xrefs?: string[];
   /** Source identifiers this page was distilled from (typically `raw/<slug>` files). */
   sources?: string[];
+  beliefState?: "active" | "superseded" | "contradicted" | "archived" | (string & {});
+  supersededBy?: string[];
+  contradictedBy?: string[];
+  currentBeliefRefs?: string[];
 }
 
 export interface StashFile {
@@ -300,6 +304,27 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
       .map((s) => s.trim());
     if (filtered.length > 0) result.sources = filtered;
   }
+  if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
+    result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
+  }
+  if (Array.isArray(e.supersededBy)) {
+    const filtered = e.supersededBy
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (filtered.length > 0) result.supersededBy = filtered;
+  }
+  if (Array.isArray(e.contradictedBy)) {
+    const filtered = e.contradictedBy
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (filtered.length > 0) result.contradictedBy = filtered;
+  }
+  if (Array.isArray(e.currentBeliefRefs)) {
+    const filtered = e.currentBeliefRefs
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.trim());
+    if (filtered.length > 0) result.currentBeliefRefs = filtered;
+  }
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
     if (scope) result.scope = scope;
@@ -413,6 +438,18 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
 
   const quality = toStringOrUndefined(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
+
+  const beliefState = toStringOrUndefined(fmData.beliefState);
+  if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];
+
+  const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);
+  if (supersededBy) entry.supersededBy = supersededBy;
+
+  const contradictedBy = normalizeStringListOrUndefined(fmData.contradictedBy);
+  if (contradictedBy) entry.contradictedBy = contradictedBy;
+
+  const currentBeliefRefs = normalizeStringListOrUndefined(fmData.currentBeliefRefs);
+  if (currentBeliefRefs) entry.currentBeliefRefs = currentBeliefRefs;
 
   const intent = normalizeIntent(fmData.intent);
   if (intent) entry.intent = intent;

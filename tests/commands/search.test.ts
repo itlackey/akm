@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmSearch } from "../../src/commands/search";
+import { akmSearch, parseBeliefFilterMode } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { closeDatabase, getMeta, openDatabase, searchVec } from "../../src/indexer/db";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -538,7 +538,7 @@ describe("Score boosts", () => {
     expect(resolvedCuratedHit.whyMatched).toContain("curated metadata boost");
   });
 
-  test("derived memories score above their raw parent notes", async () => {
+  test("derived memories remain discoverable alongside their raw parent notes", async () => {
     const stashDir = tmpStash();
 
     writeFile(
@@ -576,7 +576,286 @@ describe("Score boosts", () => {
     const derivedHit = expectDefined(localHits.find((h) => h.name === "deploy-debugging.derived"));
     expect(derivedHit.score).toBeDefined();
     expect(parentHit.score).toBeDefined();
-    expect(derivedHit.score).toBeGreaterThanOrEqual(parentHit.score as number);
+    expect(localHits.indexOf(derivedHit)).toBeLessThan(localHits.length);
+    expect(localHits.indexOf(parentHit)).toBeLessThan(localHits.length);
+  });
+
+  test("active derived memories rank ahead of contradicted ones with comparable evidence", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing.md"),
+      "---\ndescription: Deploy routing notes\n---\n\nDeploy tunnel routing history.\n",
+    );
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing.derived.md"),
+      [
+        "---",
+        "inferred: true",
+        "source: memory:deploy-routing",
+        "beliefState: active",
+        "title: Use gateway B for deploy tunnel",
+        "description: Gateway B is the current deploy tunnel.",
+        'searchHints: ["gateway deploy tunnel", "gateway b deploy"]',
+        "---",
+        "",
+        "Gateway B is the current deploy tunnel.",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing-legacy.derived.md"),
+      [
+        "---",
+        "inferred: true",
+        "source: memory:deploy-routing",
+        "beliefState: contradicted",
+        'contradictedBy: ["memory:deploy-routing.derived"]',
+        "title: Use gateway A for deploy tunnel",
+        "description: Gateway A is the legacy deploy tunnel.",
+        'searchHints: ["gateway deploy tunnel", "gateway a deploy"]',
+        "---",
+        "",
+        "Gateway A is legacy guidance.",
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const result = await akmSearch({ query: "gateway deploy tunnel", source: "local", type: "memory" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    const activeHit = expectDefined(localHits.find((h) => h.name === "deploy-routing.derived"));
+    const contradictedHit = expectDefined(localHits.find((h) => h.name === "deploy-routing-legacy.derived"));
+    expect(localHits.indexOf(activeHit)).toBeLessThan(localHits.indexOf(contradictedHit));
+    expect(activeHit.beliefState).toBe("active");
+    expect(contradictedHit.beliefState).toBe("contradicted");
+  });
+
+  test("belief filter can return only current or only historical memory beliefs", async () => {
+    const stashDir = tmpStash();
+
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing.md"),
+      "---\ndescription: Deploy routing notes\n---\n\nDeploy tunnel routing history.\n",
+    );
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing.derived.md"),
+      [
+        "---",
+        "inferred: true",
+        "source: memory:deploy-routing",
+        "beliefState: active",
+        "title: Use gateway B for deploy tunnel",
+        "description: Gateway B is the current deploy tunnel.",
+        'searchHints: ["gateway deploy tunnel", "gateway b deploy"]',
+        "---",
+        "",
+        "Gateway B is the current deploy tunnel.",
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(stashDir, "memories", "deploy-routing-legacy.derived.md"),
+      [
+        "---",
+        "inferred: true",
+        "source: memory:deploy-routing",
+        "beliefState: contradicted",
+        'contradictedBy: ["memory:deploy-routing.derived"]',
+        'currentBeliefRefs: ["memory:deploy-routing.derived"]',
+        "title: Use gateway A for deploy tunnel",
+        "description: Gateway A is the legacy deploy tunnel.",
+        'searchHints: ["gateway deploy tunnel", "gateway a deploy"]',
+        "---",
+        "",
+        "Gateway A is legacy guidance.",
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const currentOnly = await akmSearch({
+      query: "gateway deploy tunnel",
+      source: "local",
+      type: "memory",
+      belief: "current",
+    });
+    const currentHits = currentOnly.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(currentHits.some((hit) => hit.name === "deploy-routing-legacy.derived")).toBe(false);
+    expect(currentHits.some((hit) => hit.name === "deploy-routing.derived")).toBe(true);
+
+    const historicalOnly = await akmSearch({
+      query: "gateway deploy tunnel",
+      source: "local",
+      type: "memory",
+      belief: "historical",
+    });
+    const historicalHits = historicalOnly.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(historicalHits.some((hit) => hit.name === "deploy-routing.derived")).toBe(false);
+    expect(historicalHits.some((hit) => hit.name === "deploy-routing-legacy.derived")).toBe(true);
+  });
+
+  test("knowledge ranks above memory and derived memory when evidence is otherwise comparable", async () => {
+    const stashDir = tmpStash();
+    const sharedBody = "Cluster rollback checklist for production incidents.";
+    const sharedFrontmatter = [
+      "description: Cluster rollback checklist for production incidents.",
+      'tags: ["rollback", "cluster", "checklist"]',
+      'searchHints: ["cluster rollback checklist", "production rollback procedure"]',
+    ].join("\n");
+
+    writeFile(path.join(stashDir, "knowledge", "ops-canon.md"), `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`);
+    writeFile(path.join(stashDir, "memories", "ops-notes.md"), `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`);
+    writeFile(
+      path.join(stashDir, "memories", "ops-summary.derived.md"),
+      [
+        "---",
+        sharedFrontmatter,
+        "inferred: true",
+        "source: memory:ops-notes",
+        "derivedFrom: ops-notes",
+        "---",
+        "",
+        sharedBody,
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const result = await akmSearch({ query: "production rollback procedure", source: "local" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "ops-canon"));
+    const memoryHit = expectDefined(localHits.find((h) => h.name === "ops-notes"));
+    const derivedHit = expectDefined(localHits.find((h) => h.name === "ops-summary.derived"));
+
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(memoryHit));
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
+    expect(knowledgeHit.score).toBeDefined();
+    expect(memoryHit.score).toBeDefined();
+    expect(derivedHit.score).toBeDefined();
+    expect(knowledgeHit.score).toBeGreaterThanOrEqual(memoryHit.score as number);
+    expect(knowledgeHit.score).toBeGreaterThanOrEqual(derivedHit.score as number);
+  });
+
+  test("knowledge authority still outranks derived memory even when the derived name matches more directly", async () => {
+    const stashDir = tmpStash();
+    const query = "deploy tunnel checklist";
+    const sharedBody = "Use the deploy tunnel checklist before production releases.";
+    const sharedDescription = "Use the deploy tunnel checklist before production releases.";
+
+    writeFile(
+      path.join(stashDir, "knowledge", "release-checklist.md"),
+      [
+        "---",
+        `description: ${sharedDescription}`,
+        'tags: ["deploy", "tunnel", "checklist"]',
+        'searchHints: ["deploy tunnel checklist"]',
+        "---",
+        "",
+        sharedBody,
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(stashDir, "memories", "release-checklist.derived.md"),
+      [
+        "---",
+        `description: ${sharedDescription}`,
+        'tags: ["deploy", "tunnel", "checklist"]',
+        'searchHints: ["deploy tunnel checklist"]',
+        "inferred: true",
+        "source: memory:release-checklist",
+        "derivedFrom: release-checklist",
+        "---",
+        "",
+        sharedBody,
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const result = await akmSearch({ query, source: "local" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+
+    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "release-checklist"));
+    const derivedHit = expectDefined(localHits.find((h) => h.name === "release-checklist.derived"));
+
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
+    expect(knowledgeHit.score).toBeGreaterThanOrEqual(derivedHit.score as number);
+  });
+
+  test("authority ordering stays stable across knowledge, raw memory, and multiple derived variants", async () => {
+    const stashDir = tmpStash();
+    const sharedBody = "Production rollback procedure for the payment cluster.";
+    const sharedFrontmatter = [
+      "description: Production rollback procedure for the payment cluster.",
+      'tags: ["rollback", "payments", "cluster"]',
+      'searchHints: ["payment cluster rollback", "production rollback procedure"]',
+    ].join("\n");
+
+    writeFile(
+      path.join(stashDir, "knowledge", "payment-rollback.md"),
+      `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`,
+    );
+    writeFile(
+      path.join(stashDir, "memories", "payment-rollback.md"),
+      `---\n${sharedFrontmatter}\n---\n\n${sharedBody}\n`,
+    );
+    writeFile(
+      path.join(stashDir, "memories", "payment-rollback.derived.md"),
+      [
+        "---",
+        sharedFrontmatter,
+        "inferred: true",
+        "source: memory:payment-rollback",
+        "derivedFrom: payment-rollback",
+        "---",
+        "",
+        sharedBody,
+        "",
+      ].join("\n"),
+    );
+    writeFile(
+      path.join(stashDir, "memories", "payment-rollback-verbose.derived.md"),
+      [
+        "---",
+        sharedFrontmatter,
+        "inferred: true",
+        "source: memory:payment-rollback",
+        "title: Payment Rollback Procedure",
+        "derivedFrom: payment-rollback",
+        "---",
+        "",
+        `${sharedBody} Follow the same checklist and verify traffic drains before rollback.`,
+        "",
+      ].join("\n"),
+    );
+
+    await buildTestIndex(stashDir, {});
+
+    const result = await akmSearch({ query: "payment cluster rollback", source: "local", type: "memory" });
+    const memoryOnlyHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(new Set(memoryOnlyHits.map((hit) => hit.name))).toEqual(
+      new Set(["payment-rollback", "payment-rollback.derived", "payment-rollback-verbose.derived"]),
+    );
+
+    const globalResult = await akmSearch({ query: "payment cluster rollback", source: "local" });
+    const localHits = globalResult.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    const knowledgeHit = expectDefined(localHits.find((h) => h.name === "payment-rollback" && h.type === "knowledge"));
+    const memoryHit = expectDefined(localHits.find((h) => h.name === "payment-rollback" && h.type === "memory"));
+    const derivedHit = expectDefined(localHits.find((h) => h.name === "payment-rollback.derived"));
+    const verboseDerivedHit = expectDefined(localHits.find((h) => h.name === "payment-rollback-verbose.derived"));
+
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(memoryHit));
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(derivedHit));
+    expect(localHits.indexOf(knowledgeHit)).toBeLessThan(localHits.indexOf(verboseDerivedHit));
+    expect(memoryHit.score).toBeGreaterThan(verboseDerivedHit.score as number);
   });
 });
 
@@ -798,6 +1077,13 @@ describe("Source filtering", () => {
 // ── 2.5 Edge cases ──────────────────────────────────────────────────────────
 
 describe("Edge cases", () => {
+  test("belief filter parser rejects unknown values", () => {
+    expect(() => parseBeliefFilterMode("future")).toThrow();
+    expect(parseBeliefFilterMode(undefined)).toBe("all");
+    expect(parseBeliefFilterMode("current")).toBe("current");
+    expect(parseBeliefFilterMode("historical")).toBe("historical");
+  });
+
   test("search with special characters does not crash", async () => {
     const stashDir = tmpStash();
 

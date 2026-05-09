@@ -22,6 +22,7 @@ import "../sources/providers/index";
 import { insertUsageEvent } from "../indexer/usage-events";
 import type {
   AkmSearchType,
+  BeliefFilterMode,
   RegistrySearchResultHit,
   SearchHit,
   SearchResponse,
@@ -53,6 +54,13 @@ export async function akmSearch(input: {
    * effect on registry hits.
    */
   includeProposed?: boolean;
+  /**
+   * Memory belief-state filter. Applies only to memory hits:
+   * - `all` keeps current + historical memory hits (default)
+   * - `current` keeps active/unspecified memory beliefs
+   * - `historical` keeps contradicted/superseded/archived memory beliefs
+   */
+  belief?: BeliefFilterMode;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
   const query = input.query.trim();
@@ -82,6 +90,7 @@ export async function akmSearch(input: {
 
   const filters = normalizeScopeFilters(input.filters);
   const includeProposed = input.includeProposed === true;
+  const belief = input.belief ?? "all";
   const localResult =
     source === "registry"
       ? undefined
@@ -94,6 +103,7 @@ export async function akmSearch(input: {
           config,
           filters,
           includeProposed,
+          beliefFilter: belief,
         });
 
   const registryResult =
@@ -266,6 +276,15 @@ export function parseSearchSource(source: SearchSource | string | undefined): Se
   throw new UsageError(
     `Invalid value for --source: ${String(source)}. Expected one of: stash|registry|both`,
     "INVALID_SOURCE_VALUE",
+  );
+}
+
+export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMode {
+  if (value === undefined || value === "all") return "all";
+  if (value === "current" || value === "historical") return value;
+  throw new UsageError(
+    `Invalid value for --belief: ${String(value)}. Expected one of: all|current|historical`,
+    "INVALID_FLAG_VALUE",
   );
 }
 

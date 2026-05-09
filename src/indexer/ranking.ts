@@ -25,14 +25,23 @@ const TYPE_BOOST: Record<string, number> = {
   workflow: 0.35,
   agent: 0.3,
   script: 0.2,
-  memory: 0.1,
-  knowledge: 0,
+  knowledge: 0.22,
+  memory: -0.02,
 };
 
 const MAX_BOOST_SUM = 3.0;
 const UTILITY_WEIGHT = 0.5;
 const UTILITY_MAX_BOOST = 1.5;
 const RECENCY_DECAY_DAYS = 30;
+
+function beliefStateBoost(entry: StashEntry): number {
+  if (entry.type !== "memory") return 0;
+  if (entry.beliefState === "contradicted") return -0.45;
+  if (entry.beliefState === "superseded") return -0.25;
+  if (entry.beliefState === "archived") return -0.6;
+  if (entry.beliefState === "active") return 0.06;
+  return 0;
+}
 
 export function normalizeFtsScores(results: DbSearchResult[]): Map<number, { score: number; result: DbSearchResult }> {
   const ftsScoreMap = new Map<number, { score: number; result: DbSearchResult }>();
@@ -118,7 +127,8 @@ export function applyRankingRules(options: RankEntriesOptions): RankedEntryInput
     boostSum += TYPE_BOOST[entry.type] ?? 0;
 
     if (entry.type === "memory") {
-      boostSum += entry.name.toLowerCase().endsWith(".derived") ? 0.18 : -0.08;
+      boostSum += entry.name.toLowerCase().endsWith(".derived") ? 0.12 : -0.08;
+      boostSum += beliefStateBoost(entry);
     }
 
     if (entry.tags) {

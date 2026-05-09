@@ -1339,6 +1339,11 @@ akm improve workflow:release-checklist --task "reduce duplication"
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow that used to be split across multiple commands.
 
+When reinforced facts need promotion, `knowledge` is the higher-authority
+destination than `memory`. The deterministic search ranking also prefers
+`knowledge` over `memory` hits, including inferred `.derived` memories, when
+the evidence is otherwise comparable.
+
 ### propose
 
 **Status: Available since 0.8.0.**

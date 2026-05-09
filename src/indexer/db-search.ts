@@ -18,7 +18,7 @@ import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-re
 import type { AkmConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
-import type { AkmSearchType, SearchHitSize, SourceSearchHit } from "../sources/types";
+import type { AkmSearchType, BeliefFilterMode, SearchHitSize, SourceSearchHit } from "../sources/types";
 import {
   closeDatabase,
   getAllEntries,
@@ -93,6 +93,7 @@ export async function searchLocal(input: {
    * scoring pipeline.
    */
   includeProposed?: boolean;
+  beliefFilter?: BeliefFilterMode;
 }): Promise<{
   hits: SourceSearchHit[];
   tip?: string;
@@ -103,6 +104,7 @@ export async function searchLocal(input: {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const filters = input.filters;
   const includeProposed = input.includeProposed === true;
+  const beliefFilter = input.beliefFilter ?? "all";
   const rendererRegistry = input.rendererRegistry ?? defaultRendererRegistry;
   const allSourceDirs = sources.map((s) => s.path);
   const rawStatus = readSemanticStatus();
@@ -161,6 +163,7 @@ export async function searchLocal(input: {
       rendererRegistry,
       filters,
       includeProposed,
+      beliefFilter,
     );
     return {
       hits,
@@ -191,6 +194,7 @@ async function searchDatabase(
   rendererRegistry: RendererRegistry = defaultRendererRegistry,
   filters?: StashEntryScope,
   includeProposed = false,
+  beliefFilter: BeliefFilterMode = "all",
 ): Promise<{
   hits: SourceSearchHit[];
   embedMs?: number;
@@ -222,7 +226,10 @@ async function searchDatabase(
     const qualityFiltered = includeProposed
       ? scopeFiltered
       : scopeFiltered.filter((ie) => !isProposedQuality(ie.entry.quality));
-    const selected = qualityFiltered.slice(0, limit);
+    const beliefFiltered = qualityFiltered.filter((ie) =>
+      matchBeliefFilter(ie.entry.type, ie.entry.beliefState, beliefFilter),
+    );
+    const selected = beliefFiltered.slice(0, limit);
     const hits = await Promise.all(
       selected.map((ie) =>
         buildDbHit({
@@ -329,10 +336,13 @@ async function searchDatabase(
   const qualityFiltered = includeProposed
     ? scopeFiltered
     : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+  const beliefFiltered = qualityFiltered.filter((item) =>
+    matchBeliefFilter(item.entry.type, item.entry.beliefState, beliefFilter),
+  );
 
   const rankMs = Date.now() - tRank0;
 
-  const selected = qualityFiltered.slice(0, limit);
+  const selected = beliefFiltered.slice(0, limit);
   const hits = await Promise.all(
     selected.map(({ entry, filePath, score, rankingMode, utilityBoosted }) => {
       // CLAUDE.md locks SearchHit.score in [0,1]. The boost loop above can
@@ -358,6 +368,13 @@ async function searchDatabase(
   );
 
   return { embedMs, rankMs, hits };
+}
+
+function matchBeliefFilter(type: string, beliefState: string | undefined, filter: BeliefFilterMode): boolean {
+  if (filter === "all") return true;
+  if (type !== "memory") return true;
+  if (filter === "current") return beliefState === undefined || beliefState === "active";
+  return beliefState === "contradicted" || beliefState === "superseded" || beliefState === "archived";
 }
 
 // ── Vector scorer ───────────────────────────────────────────────────────────
@@ -458,6 +475,8 @@ export async function buildDbHit(input: {
     // Surface optional quality (v1 spec §4.2). Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
+    ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),
+    ...(input.entry.currentBeliefRefs ? { currentBeliefRefs: input.entry.currentBeliefRefs } : {}),
   };
 
   const renderer = await rendererForType(input.entry.type, rendererRegistry);
@@ -514,6 +533,9 @@ export function buildWhyMatched(
   if (tokens.some((t) => desc.includes(t))) reasons.push("matched description");
   if (qualityBoost > 0) reasons.push("curated metadata boost");
   if (confidenceBoost > 0) reasons.push("metadata confidence boost");
+  if (entry.beliefState === "active") reasons.push("active belief state");
+  if (entry.beliefState === "contradicted") reasons.push("contradicted belief state");
+  if (entry.beliefState === "superseded") reasons.push("superseded belief state");
   if (utilityBoosted) reasons.push("usage history boost");
 
   return reasons;

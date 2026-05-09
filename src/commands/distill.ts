@@ -59,6 +59,7 @@ import { createProposal, type Proposal, type ProposalsContext } from "../core/pr
 import { lookup as indexerLookup } from "../indexer/indexer";
 import { type ChatMessage, chatCompletion } from "../llm/client";
 import { tryLlmFeature } from "../llm/feature-gate";
+import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,12 @@ export type DistillOutcome = "queued" | "skipped" | "validation_failed";
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
   ref: string;
+  /**
+   * Proposal target mode. `lesson` preserves the legacy behaviour.
+   * `auto` lets memory refs graduate into knowledge proposals when a
+   * deterministic stability heuristic says they are reinforced enough.
+   */
+  proposalKind?: "lesson" | "knowledge" | "auto";
   /** Override the resolved stash root (test seam). */
   stashDir?: string;
   /** Override the loaded config (test seam). */
@@ -133,8 +140,15 @@ export interface AkmDistillResult {
   outcome: DistillOutcome;
   /** Original input ref (verbatim). */
   inputRef: string;
-  /** Proposed lesson ref (always present, even when skipped — useful for UX). */
+  /**
+   * Historical field name kept for compatibility. Carries the queued proposal
+   * ref, which may now be a `knowledge:` ref when memory promotion fires.
+   */
   lessonRef: string;
+  /** Explicit queued proposal ref. Mirrors `lessonRef`. */
+  proposalRef?: string;
+  /** Type of proposal the invocation targeted or queued. */
+  proposalKind?: "lesson" | "knowledge";
   /** Proposal id when `outcome === "queued"`. */
   proposalId?: string;
   /** Human-readable hint surfaced when the call was skipped. */
@@ -179,9 +193,15 @@ export function deriveLessonRef(inputRef: string): string {
   return `lesson:${safe}-lesson`;
 }
 
+interface DistillValidationFinding {
+  kind: string;
+  field: string;
+  message: string;
+}
+
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = [
+const LESSON_SYSTEM_PROMPT = [
   "You are the akm `distill` distiller.",
   "Given an asset and recent feedback events about it, produce a single",
   "concise *lesson* an agent should remember next time it works on this",
@@ -199,10 +219,34 @@ const SYSTEM_PROMPT = [
   "Output ONLY the lesson file contents — no prose, no fences, no preamble.",
 ].join("\n");
 
+const KNOWLEDGE_SYSTEM_PROMPT = [
+  "You are the akm `distill` distiller.",
+  "Given an asset and recent feedback events about it, produce a concise",
+  "*knowledge* markdown document capturing the durable, reusable facts.",
+  "Prefer stable guidance over narrative recap.",
+  "If you include YAML frontmatter, keep it compatible with normal knowledge",
+  "assets (for example `description`, `tags`, `sources`, `observed_at`).",
+  "Include a meaningful markdown body.",
+  "Output ONLY the knowledge file contents — no prose, no fences, no preamble.",
+].join("\n");
+
+function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
+  const parsed = parseFrontmatter(content);
+  if (parsed.content.trim().length > 0) return [];
+  return [
+    {
+      kind: "missing-body",
+      field: "body",
+      message: `Distilled knowledge for ${inputRef} must include a non-empty markdown body.`,
+    },
+  ];
+}
+
 interface BuildPromptInput {
   inputRef: string;
   assetContent: string | null;
   feedback: { ts: string; eventType: string; metadata?: Record<string, unknown> }[];
+  proposalKind?: "lesson" | "knowledge";
 }
 
 /** Pure: build the user-prompt body. Exported for tests. */
@@ -229,7 +273,7 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
     }
   }
   lines.push("");
-  lines.push("Produce the lesson markdown file now.");
+  lines.push(`Produce the ${input.proposalKind === "knowledge" ? "knowledge" : "lesson"} markdown file now.`);
   return lines.join("\n");
 }
 
@@ -247,7 +291,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   }
   // Validate the ref shape up front so a typo never reaches the LLM.
   parseAssetRef(inputRef);
-  const lessonRef = deriveLessonRef(inputRef);
+  const targetKind = options.proposalKind ?? "lesson";
 
   const config = options.config ?? loadConfig();
   const stash = options.stashDir ?? resolveStashDir();
@@ -293,9 +337,68 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     ...(e.metadata !== undefined ? { metadata: e.metadata } : {}),
   }));
 
-  const userPrompt = buildDistillPrompt({ inputRef, assetContent, feedback });
+  const promotion =
+    targetKind === "lesson"
+      ? null
+      : assessMemoryKnowledgePromotionCandidate({
+          inputRef,
+          assetContent,
+          feedbackEvents: filteredEvents.map((event) => ({
+            ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
+          })),
+        });
+
+  if (promotion?.promote && promotion.content && (targetKind === "knowledge" || targetKind === "auto")) {
+    const knowledgeParsed = parseFrontmatter(promotion.content);
+    const proposal = createProposal(
+      stash,
+      {
+        ref: promotion.knowledgeRef,
+        source: "distill",
+        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+        payload: {
+          content: promotion.content,
+          ...(Object.keys(knowledgeParsed.data).length > 0 ? { frontmatter: knowledgeParsed.data } : {}),
+        },
+      },
+      options.ctx,
+    );
+
+    appendEvent({
+      eventType: "distill_invoked",
+      ref: inputRef,
+      metadata: {
+        outcome: "queued",
+        lessonRef: promotion.knowledgeRef,
+        proposalRef: promotion.knowledgeRef,
+        proposalKind: "knowledge",
+        proposalId: proposal.id,
+        ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+      },
+    });
+
+    return {
+      schemaVersion: 1,
+      ok: true,
+      outcome: "queued",
+      inputRef,
+      lessonRef: promotion.knowledgeRef,
+      proposalRef: promotion.knowledgeRef,
+      proposalKind: "knowledge",
+      proposalId: proposal.id,
+      proposal,
+      ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+    };
+  }
+
+  const effectiveProposalKind = targetKind === "knowledge" ? "knowledge" : "lesson";
+  const effectiveLessonRef =
+    effectiveProposalKind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
+
+  const userPrompt = buildDistillPrompt({ inputRef, assetContent, feedback, proposalKind: effectiveProposalKind });
   const messages: ChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: effectiveProposalKind === "knowledge" ? KNOWLEDGE_SYSTEM_PROMPT : LESSON_SYSTEM_PROMPT },
     { role: "user", content: userPrompt },
   ];
 
@@ -325,7 +428,8 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ref: inputRef,
       metadata: {
         outcome: "skipped",
-        lessonRef,
+        lessonRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
       },
     });
@@ -334,7 +438,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       ok: true,
       outcome: "skipped",
       inputRef,
-      lessonRef,
+      lessonRef: effectiveLessonRef,
+      proposalRef: effectiveLessonRef,
+      proposalKind: effectiveProposalKind,
       message: "feedback distillation is disabled or the LLM call failed; no proposal created.",
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
     };
@@ -347,23 +453,29 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   // canonical gate for required frontmatter (v1 spec §13). On failure we
   // surface a structured error and exit non-zero — but still emit
   // `distill_invoked` so the failure is observable.
-  const lintReport = lintLessonContent(content, `distill:${inputRef}`);
-  if (lintReport.findings.length > 0) {
+  const findings =
+    effectiveProposalKind === "knowledge"
+      ? validateKnowledgeContent(content, inputRef)
+      : lintLessonContent(content, `distill:${inputRef}`).findings;
+  if (findings.length > 0) {
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
       metadata: {
         outcome: "validation_failed",
-        lessonRef,
-        findingKinds: lintReport.findings.map((f) => f.kind),
+        lessonRef: effectiveLessonRef,
+        proposalKind: effectiveProposalKind,
+        findingKinds: findings.map((f) => f.kind),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
       },
     });
-    const message = lintReport.findings.map((f) => f.message).join("\n");
+    const message = findings.map((f) => f.message).join("\n");
     throw new UsageError(
-      `Distilled lesson failed validation:\n${message}`,
+      `Distilled ${effectiveProposalKind} failed validation:\n${message}`,
       "MISSING_REQUIRED_ARGUMENT",
-      "Lessons require non-empty `description` and `when_to_use` frontmatter fields. See v1 spec §13.",
+      effectiveProposalKind === "knowledge"
+        ? "Knowledge proposals require a non-empty markdown body."
+        : "Lessons require non-empty `description` and `when_to_use` frontmatter fields. See v1 spec §13.",
     );
   }
 
@@ -374,7 +486,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   const proposal = createProposal(
     stash,
     {
-      ref: lessonRef,
+      ref: effectiveLessonRef,
       source: "distill",
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       payload: {
@@ -390,7 +502,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     ref: inputRef,
     metadata: {
       outcome: "queued",
-      lessonRef,
+      lessonRef: effectiveLessonRef,
+      proposalRef: effectiveLessonRef,
+      proposalKind: effectiveProposalKind,
       proposalId: proposal.id,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
@@ -402,7 +516,9 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     ok: true,
     outcome: "queued",
     inputRef,
-    lessonRef,
+    lessonRef: effectiveLessonRef,
+    proposalRef: effectiveLessonRef,
+    proposalKind: effectiveProposalKind,
     proposalId: proposal.id,
     proposal,
     ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
