@@ -25,9 +25,14 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function runCli(stashDir: string, args: string[], config?: Record<string, unknown>): string {
-  const xdgCache = makeTempDir("akm-output-cache-");
-  const xdgConfig = makeTempDir("akm-output-config-");
+interface CliEnvDirs {
+  xdgCache: string;
+  xdgConfig: string;
+}
+
+function runCli(stashDir: string, args: string[], config?: Record<string, unknown>, envDirs?: CliEnvDirs): string {
+  const xdgCache = envDirs?.xdgCache ?? makeTempDir("akm-output-cache-");
+  const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-output-config-");
   if (config) writeConfig(xdgConfig, config);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -173,6 +178,10 @@ describe("output baseline", () => {
 
   test("show shaped output includes action across all asset types", () => {
     const stashDir = makeTempDir("akm-output-stash-");
+    const envDirs = {
+      xdgCache: makeTempDir("akm-output-cache-shared-"),
+      xdgConfig: makeTempDir("akm-output-config-shared-"),
+    };
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
     writeFile(path.join(stashDir, "skills", "ops", "SKILL.md"), "# Ops\nFollow this.\n");
     writeFile(
@@ -184,7 +193,7 @@ describe("output baseline", () => {
 
     const refs = ["script:deploy.sh", "skill:ops", "command:release.md", "agent:coach.md", "knowledge:guide.md"];
     for (const ref of refs) {
-      const output = runCli(stashDir, ["show", ref, "--format=json"]);
+      const output = runCli(stashDir, ["show", ref, "--format=json"], undefined, envDirs);
       const json = JSON.parse(output) as Record<string, unknown>;
       expect(json.origin).toBeNull();
       expect(typeof json.action).toBe("string");
