@@ -3,6 +3,9 @@ import { buildWorkflowAction } from "../output/renderers";
 import { registerActionBuilder, registerTypeRenderer } from "./asset-registry";
 import { toPosix } from "./common";
 
+const buildTaskAction = (ref: string): string =>
+  `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`;
+
 export interface AssetSpec {
   stashDir: string;
   isRelevantFile: (fileName: string) => boolean;
@@ -123,6 +126,15 @@ const ASSET_SPECS_INTERNAL: Record<string, AssetSpec> = {
     ...markdownSpec,
     rendererName: "lesson-md",
     actionBuilder: (ref) => `akm show ${ref} -> read the lesson and apply when_to_use`,
+  },
+  // Scheduled tasks. A task file pairs a cron-style schedule with a target
+  // (workflow ref or prompt) that `akm tasks` registers with the OS-native
+  // scheduler (cron / launchd / schtasks). Stored under <stash>/tasks/<id>.md.
+  task: {
+    stashDir: "tasks",
+    ...markdownSpec,
+    rendererName: "task-md",
+    actionBuilder: buildTaskAction,
   },
 };
 

@@ -108,6 +108,16 @@ export function getBinDir(): string {
   return path.join(getCacheDir(), "bin");
 }
 
+// ── Scheduled-task runtime directories (logs + history) ──────────────────────
+
+export function getTaskLogDir(): string {
+  return path.join(getCacheDir(), "tasks", "logs");
+}
+
+export function getTaskHistoryDir(): string {
+  return path.join(getCacheDir(), "tasks", "history");
+}
+
 // ── Default stash directory ──────────────────────────────────────────────────
 
 export function getDefaultStashDir(): string {

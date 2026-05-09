@@ -667,6 +667,59 @@ const vaultEnvRenderer: AssetRenderer = {
   },
 };
 
+// ── 7. task-md ───────────────────────────────────────────────────────────────
+
+const TASK_PAGE_ACTION =
+  "Scheduled task — `akm tasks show <id>` for parsed details, `akm tasks run <id>` to invoke now.";
+
+const taskMdRenderer: AssetRenderer = {
+  name: "task-md",
+
+  buildShowResponse(ctx: RenderContext): ShowResponse {
+    const name = deriveName(ctx);
+    return {
+      type: "task",
+      name,
+      path: ctx.absPath,
+      action: TASK_PAGE_ACTION,
+      content: ctx.content(),
+    };
+  },
+
+  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
+    try {
+      const parsed = parseFrontmatter(ctx.content());
+      const fm = parsed.data;
+
+      const desc = toStringOrUndefined(fm.description);
+      if (desc && !entry.description) {
+        entry.description = desc;
+        entry.source = "frontmatter";
+        entry.confidence = 0.9;
+      }
+
+      if (Array.isArray(fm.tags)) {
+        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+        if (fmTags.length > 0) {
+          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+        }
+      }
+      entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
+
+      const hints = new Set<string>(entry.searchHints ?? []);
+      const schedule = toStringOrUndefined(fm.schedule);
+      if (schedule) hints.add(`schedule:${schedule}`);
+      const workflow = toStringOrUndefined(fm.workflow);
+      if (workflow) hints.add(`workflow:${workflow}`);
+      const prompt = toStringOrUndefined(fm.prompt);
+      if (prompt) hints.add(`prompt:${prompt}`);
+      if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
+    } catch {
+      // Non-fatal: skip metadata extraction on error
+    }
+  },
+};
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 /** All built-in renderers. */
@@ -681,6 +734,7 @@ const builtinRenderers: AssetRenderer[] = [
   workflowMdRenderer,
   scriptSourceRenderer,
   vaultEnvRenderer,
+  taskMdRenderer,
 ];
 
 /**

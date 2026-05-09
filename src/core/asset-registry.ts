@@ -24,6 +24,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   workflow: "workflow-md",
   vault: "vault-env",
   wiki: "wiki-md",
+  task: "task-md",
 };
 
 /** Map asset types to action builder functions for search results. */
@@ -38,6 +39,8 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   vault: (ref) =>
     `akm show ${ref} -> inspect keys; source "$(akm vault path ${ref})" -> load values; akm vault run ${ref} -- <command> -> run with injected env`,
   wiki: (ref) => `akm show ${ref} -> read the wiki page`,
+  task: (ref) =>
+    `akm tasks show ${ref.replace(/^task:/, "")} -> inspect; akm tasks run <id> -> run now; akm tasks remove <id> -> unschedule`,
 };
 
 /**
