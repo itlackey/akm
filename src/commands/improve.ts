@@ -104,7 +104,12 @@ function collectEligibleRefs(
     };
   }
 
-  const sources = resolveSourceEntries(stashDir);
+  let sources: ReturnType<typeof resolveSourceEntries>;
+  try {
+    sources = resolveSourceEntries(stashDir);
+  } catch {
+    return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
+  }
   if (sources.length === 0) {
     return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
   }
