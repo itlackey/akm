@@ -224,7 +224,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const distillFn = options.distillFn ?? akmDistill;
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
   const reindexFn = options.reindexFn ?? akmIndex;
-  const primaryStashDir = resolveSourceEntries(options.stashDir)[0]?.path;
+  let primaryStashDir: string | undefined;
+  try {
+    primaryStashDir = resolveSourceEntries(options.stashDir)[0]?.path;
+  } catch {
+    primaryStashDir = undefined;
+  }
   const cleanupParentRef = memoryCleanupParentRef(scope, options.stashDir);
   const memoryCleanupPlan = shouldAnalyzeMemoryCleanup(scope, memorySummary.eligible, primaryStashDir)
     ? analyzeMemoryCleanup(primaryStashDir as string, cleanupParentRef ? { parentRef: cleanupParentRef } : undefined)
