@@ -36,7 +36,7 @@ The user never picks the kind. `akm add` infers it from the input shape.
    scripts, skills, commands, agents, knowledge documents, vaults,
    workflows, wikis, and memories.
 
-Your **working stash** (`~/akm`) is created by `akm init` — it's the
+Your **working stash** (`~/akm`) is created by `akm setup` — it's the
 primary directory for your personal, editable assets, and is registered as
 a `filesystem` source automatically.
 
@@ -49,7 +49,7 @@ The two terms come up often:
 
 - **Source** is the configuration concept (`sources[]` in your config file).
   It's any directory akm has been told to index. Configured via `akm add`.
-- **Working stash** is the special source created by `akm init` — the
+- **Working stash** is the special source created by `akm setup` — the
   default destination for `akm remember`, `akm import`, and other writes.
   Tracked as `stashDir` in config and registered automatically as a
   `filesystem` source.
@@ -211,10 +211,10 @@ this precedence:
 
 1. `--target <name>` flag (must name a writable source)
 2. The root-level `defaultWriteTarget` field in config
-3. The working stash (`stashDir` from `akm init`)
+3. The working stash (`stashDir` from `akm setup`)
 
 If none are configured, write commands raise a `ConfigError` pointing at
-`akm init`.
+`akm setup`.
 
 ## Glossary
 
@@ -227,7 +227,7 @@ These terms have precise meanings in akm. Use this table to avoid confusion:
 | **git source** | A git repo cloned into akm's cache, updatable | A GitHub repo |
 | **npm source** | An npm package installed into akm's cache, updatable | `@scope/my-stash` |
 | **website source** | A crawled website stored as knowledge | `https://docs.example.com` |
-| **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm init` |
+| **working stash** | Your primary directory for editable assets (`~/akm`) | Created by `akm setup` |
 | **registry** | A discovery index for finding sources | The official registry, skills.sh |
 | **ref** (asset ref) | A `type:name` handle for an asset | `script:deploy.sh` |
 | **origin** | Optional prefix narrowing an asset ref to a source | `npm:@scope/pkg//script:deploy.sh` |

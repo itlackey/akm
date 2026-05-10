@@ -98,14 +98,13 @@ akm wiki create architecture
 akm feedback skill:deploy --positive
 ```
 
-If you want to skip the wizard, `akm init --dir ~/custom-stash` initializes the
-working stash at a custom path.
+For non-interactive use, `akm setup --yes` accepts all defaults, or `akm setup --dir ~/custom-stash` initializes at a custom path.
 
 ### Why this workflow matters
 
 This quick start is doing more than showing random commands:
 
-- `setup` / `init` create the local workspace
+- `setup` creates the local workspace
 - `add` connects existing sources of agent knowledge
 - `curate` gives the agent the strongest first list for the task
 - `search` is there when the agent needs deeper discovery beyond the curated shortlist

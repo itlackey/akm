@@ -56,7 +56,7 @@ directory. Project config files are meant to be edited directly in the project.
 | `writable` | boolean | `false` | Root-level flag controlling whether the primary stash pushes on `akm save` (when a git remote is configured). Per-source `writable` lives inside each `sources[]` entry |
 | `stashInheritance` | `"merge"` \| `"replace"` | `"merge"` | How per-project sources compose with global ones. `merge` keeps both; `replace` hides globals when a project-level config is present |
 | `registries` | array | official + skills.sh | Configured registries (managed via `akm registry add/remove`) |
-| `stashDir` | string | platform default | Path to the working stash created by `akm init` |
+| `stashDir` | string | platform default | Path to the working stash created by `akm setup` |
 | `security.installAudit.enabled` | boolean | `true` | Enable or disable install-time auditing |
 | `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
@@ -110,7 +110,7 @@ and other write commands when `--target` is omitted. Resolution order:
 3. Working stash (`stashDir`)
 
 If none of those are configured, write commands raise a `ConfigError` that
-points at `akm init`.
+points at `akm setup`.
 
 ## Memory scope
 

@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as p from "@clack/prompts";
-import { akmInit } from "../commands/init";
+import { akmInit, type InitResponse } from "../commands/init";
 import { isHttpUrl } from "../core/common";
 import type {
   AkmConfig,
@@ -39,6 +39,17 @@ import { probeLlmCapabilities } from "../llm/client";
 import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
 import { detectAgentPlatforms, detectOllama } from "./detect";
 import { createSetupContext, runSetupSteps, type SetupStep } from "./steps";
+
+// ── Interfaces ──────────────────────────────────────────────────────────────
+
+export interface SetupSummary {
+  configPath: string;
+  stashDir: string;
+  stashCreated: boolean;
+  written: boolean;
+  fields: string[];
+  ripgrep?: InitResponse["ripgrep"];
+}
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -1639,11 +1650,20 @@ export function buildSetupSteps(options: {
   return { steps, outcome };
 }
 
-export async function runSetupWizard(): Promise<void> {
+export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }): Promise<void> {
   p.intro("akm setup");
 
   const current = loadUserConfig();
   const configPath = getConfigPath();
+
+  // Resolve stash directory early so akmInit can run before any prompts
+  const resolvedStashDir = opts?.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
+
+  // Bootstrap directory structure before any prompts so the stash exists
+  // even if the wizard is interrupted after this point.
+  if (!opts?.noInit) {
+    await akmInit({ dir: resolvedStashDir });
+  }
 
   // Quick connectivity check — skip network-dependent steps when offline
   const online = await isOnline();
@@ -1725,9 +1745,6 @@ export async function runSetupWizard(): Promise<void> {
 
   // Save config
   saveConfig(newConfig);
-
-  // Initialize stash directory
-  await akmInit({ dir: stashDir });
 
   if (semanticSearchMode.mode === "off") {
     clearSemanticStatus();
@@ -1813,4 +1830,137 @@ export async function runSetupWizard(): Promise<void> {
   }
 
   p.outro(`Configuration saved to ${configPath}`);
+}
+
+// ── Non-interactive / scripting entry points ─────────────────────────────────
+
+/**
+ * Run setup in non-interactive mode, applying all defaults.
+ * Safe to call from CI or scripts. Idempotent — re-running produces the same result.
+ */
+export async function runSetupWithDefaults(opts: {
+  dir?: string;
+  noInit?: boolean;
+  probe?: boolean;
+}): Promise<SetupSummary> {
+  const current = loadUserConfig();
+  const stashDir = opts.dir ? path.resolve(opts.dir) : (current.stashDir ?? getDefaultStashDir());
+
+  // Bootstrap directory structure first
+  let initResult: InitResponse | undefined;
+  if (!opts.noInit) {
+    initResult = await akmInit({ dir: stashDir });
+  }
+
+  // Run steps in non-interactive mode (applies defaults, skips prompts)
+  const ctx = createSetupContext(current, { nonInteractive: true });
+  const { steps } = buildSetupSteps({
+    online: false,
+    semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
+  });
+  await runSetupSteps(steps, ctx);
+
+  // Ensure stashDir is set
+  if (!ctx.config.stashDir) ctx.apply({ stashDir });
+
+  // Auto-detect agent CLI if not already configured
+  if (!ctx.config.agent) {
+    const detected = detectAgentCliProfiles(undefined);
+    const defaultProfile = pickDefaultAgentProfile(detected, undefined);
+    if (defaultProfile) {
+      ctx.apply({ agent: { default: defaultProfile } });
+    }
+  }
+
+  saveConfig(ctx.config);
+
+  return {
+    configPath: getConfigPath(),
+    stashDir,
+    stashCreated: initResult?.created ?? false,
+    written: true,
+    fields: Object.keys(ctx.config).filter((k) => ctx.config[k as keyof AkmConfig] !== undefined),
+    ripgrep: initResult?.ripgrep,
+  };
+}
+
+/**
+ * Apply a JSON config blob non-interactively, merging it with the current config.
+ * Validates required sub-fields and strips unknown/restricted keys.
+ */
+export async function runSetupFromConfig(opts: {
+  configJson: string;
+  dir?: string;
+  noInit?: boolean;
+  probe?: boolean;
+}): Promise<SetupSummary> {
+  // Phase 1: Parse JSON
+  let incoming: Partial<AkmConfig>;
+  try {
+    incoming = JSON.parse(opts.configJson);
+  } catch (e) {
+    throw new Error(`Invalid JSON in --config: ${(e as Error).message}`);
+  }
+
+  // Phase 2: Validate — only allow safe top-level keys
+  const ALLOWED_KEYS = new Set(["stashDir", "llm", "embedding", "agent", "semanticSearchMode", "output"]);
+  for (const key of Object.keys(incoming)) {
+    if (!ALLOWED_KEYS.has(key)) {
+      console.warn(`[akm setup] Ignoring unknown or restricted config key: "${key}"`);
+      delete (incoming as Record<string, unknown>)[key];
+    }
+  }
+
+  // Validate required sub-fields
+  if (incoming.llm) {
+    if (!incoming.llm.endpoint?.trim()) throw new Error("llm.endpoint is required when llm is provided");
+    if (!incoming.llm.model?.trim()) throw new Error("llm.model is required when llm is provided");
+  }
+  if (incoming.embedding) {
+    if (!incoming.embedding.endpoint?.trim()) throw new Error("embedding.endpoint is required when embedding is provided");
+    if (!incoming.embedding.model?.trim()) throw new Error("embedding.model is required when embedding is provided");
+  }
+
+  // Phase 3: Merge with existing config
+  const current = loadUserConfig();
+  const stashDir = opts.dir
+    ? path.resolve(opts.dir)
+    : incoming.stashDir
+      ? path.resolve(incoming.stashDir)
+      : (current.stashDir ?? getDefaultStashDir());
+
+  const merged: AkmConfig = {
+    ...current,
+    ...incoming,
+    stashDir,
+  };
+
+  // Bootstrap directory structure
+  let initResult: InitResponse | undefined;
+  if (!opts.noInit) {
+    initResult = await akmInit({ dir: stashDir });
+  }
+
+  // Optional probe
+  if (opts.probe && merged.llm) {
+    try {
+      const caps = await probeLlmCapabilities(merged.llm);
+      if (caps.reachable) {
+        merged.llm = { ...merged.llm, capabilities: { structuredOutput: caps.structuredOutput ?? false } };
+      }
+    } catch {
+      // Non-fatal: probe failure is informational only
+    }
+  }
+
+  saveConfig(merged);
+
+  return {
+    configPath: getConfigPath(),
+    stashDir,
+    stashCreated: initResult?.created ?? false,
+    written: true,
+    fields: Object.keys(incoming).filter((k) => (incoming as Record<string, unknown>)[k] !== undefined),
+    ripgrep: initResult?.ripgrep,
+  };
 }

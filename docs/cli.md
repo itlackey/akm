@@ -79,13 +79,15 @@ code to detect failure. Scripts can rely on the exit code alone.
 
 ### init
 
+> **Note:** `akm setup` is the recommended entry point — it runs the same directory initialization plus guides you through AI connection configuration. `akm init` remains available as a low-level building block.
+
 Create the stash directory structure and persist the working stash path in
 config.
 
 ```sh
-akm init                         # Initialize at the default location
-akm init --dir ~/custom-stash    # Initialize at a custom location
-akm init --stashDir ~/custom-stash # Legacy alias for --dir
+akm setup                        # Interactive setup wizard (creates stash + configures connections)
+akm setup --dir ~/custom-stash   # Initialize at a custom location
+akm setup --yes                  # Non-interactive, accepts all defaults
 ```
 
 Creates one subdirectory per asset type under the stash path — currently
@@ -650,7 +652,7 @@ akm clone "/path/to/stash//skill:code-review" --dest ./project/.claude
 
 When `--dest` is provided, the working stash (`AKM_STASH_DIR`) is not
 required. This makes clone usable in CI or fresh environments without
-running `akm init` first.
+running `akm setup` first.
 
 ### save
 
@@ -701,7 +703,7 @@ your config file (`~/.config/akm/config.json` or the path shown by
 When `writable: true` is set and the primary stash has a git remote configured,
 `akm save` will stage, commit, and push.
 
-When `akm init` successfully initializes the default stash as a local git repo
+When `akm setup` successfully initializes the default stash as a local git repo
 (requires `git` to be installed), `akm save` will commit there safely without
 pushing. If git is unavailable, the stash will not be a git repo and save will
 return a skipped result.

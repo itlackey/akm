@@ -17,7 +17,7 @@ set -euo pipefail
 curl -fsSL https://raw.githubusercontent.com/itlackey/akm/main/install.sh | bash
 
 # 2. Initialize stash
-akm init
+akm setup
 
 # 3. Local embeddings are on by default — nothing to configure
 
@@ -72,10 +72,10 @@ akm info
 
 ```sh
 # Use the default location (~/akm)
-akm init
+akm setup
 
 # Or specify a custom path
-akm init --dir /path/to/stash
+akm setup --dir /path/to/stash
 ```
 
 Verify:

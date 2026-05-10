@@ -167,12 +167,55 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard. Step 1: configure a small model connection (for indexing/enrichment). Step 2: configure an agent connection (CLI agent, embedded SDK, or none). Shows which features are enabled at the end.",
+      "Interactive configuration wizard. Step 1: configure a small model connection (for indexing/enrichment). Step 2: configure an agent connection (CLI agent, embedded SDK, or none). Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
   },
-  async run() {
+  args: {
+    config: {
+      type: "string",
+      description: 'Config JSON to apply non-interactively, e.g. \'{"llm":{"endpoint":"...","model":"..."}}\'',
+    },
+    yes: {
+      type: "boolean",
+      default: false,
+      description: "Accept all defaults, skip all prompts. Idempotent — safe to run in CI.",
+    },
+    dir: {
+      type: "string",
+      description: "Stash directory path (overrides stashDir in config or --config JSON)",
+    },
+    probe: {
+      type: "boolean",
+      default: false,
+      description: "Probe LLM/embedding endpoints after writing config to verify connectivity",
+    },
+  },
+  async run({ args }) {
     await runWithJsonErrors(async () => {
-      const { runSetupWizard } = await import("./setup/setup");
-      await runSetupWizard();
+      const noInit = getHyphenatedBoolean(args, "no-init");
+      if (args.config) {
+        // Non-interactive config mode
+        const { runSetupFromConfig } = await import("./setup/setup");
+        const result = await runSetupFromConfig({
+          configJson: args.config,
+          dir: args.dir,
+          noInit,
+          probe: args.probe,
+        });
+        output("setup", result);
+      } else if (args.yes) {
+        // Defaults mode — no prompts
+        const { runSetupWithDefaults } = await import("./setup/setup");
+        const result = await runSetupWithDefaults({
+          dir: args.dir,
+          noInit,
+          probe: args.probe,
+        });
+        output("setup", result);
+      } else {
+        // Interactive wizard
+        const { runSetupWizard } = await import("./setup/setup");
+        await runSetupWizard({ dir: args.dir, noInit });
+      }
     });
   },
 });

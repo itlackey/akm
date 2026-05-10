@@ -165,7 +165,7 @@ akm clone <ref> --force                       # Overwrite existing
 akm clone "npm:@scope/pkg//script:deploy.sh"  # Clone from remote package
 ```
 
-When `--dest` is provided, `akm init` is not required first.
+When `--dest` is provided, `akm setup` is not required first.
 
 ## Save
 
@@ -224,9 +224,9 @@ akm config path --all                         # Show all config paths
 ## Other Commands
 
 ```sh
-akm setup                                     # Guided config, init, and index
-akm init                                      # Initialize working stash
-akm init --dir ~/custom-stash                 # Initialize at a custom path
+akm setup                                     # Interactive setup (creates stash + configures connections)
+akm setup --dir ~/custom-stash                # Initialize at a custom path
+akm setup --yes                               # Non-interactive, accepts all defaults
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm list                                      # List all sources

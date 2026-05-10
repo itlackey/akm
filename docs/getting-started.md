@@ -28,12 +28,12 @@ config, initializes the stash directory, and builds the search index.
 
 ## Initialize Your Working Stash
 
-If you prefer to skip the wizard, run `akm init` to create your working stash —
+For non-interactive use, run `akm setup --yes` to create your working stash —
 the primary directory where your personal assets live:
 
 ```sh
-akm init
-akm init --dir ~/custom-stash
+akm setup --yes
+akm setup --dir ~/custom-stash
 ```
 
 This creates `~/akm` with subdirectories for each asset type: `scripts/`,
@@ -74,10 +74,10 @@ Build the search index so your assets are discoverable:
 akm index
 ```
 
-**`init` vs `index`:** `akm init` creates your working stash directory (run
+**`setup` vs `index`:** `akm setup` creates your working stash directory (run
 once). `akm index` scans all sources, then builds the
 search database (run whenever you add or change assets). They are separate
-steps — `init` sets up the folders, `index` makes their contents searchable.
+steps — `setup` creates the stash, `index` makes its contents searchable.
 
 Run `akm index --full` to force a complete rebuild instead of an incremental
 update. If a workflow file is malformed, akm now skips that asset, continues
@@ -156,7 +156,7 @@ export XDG_DATA_HOME="$SANDBOX/data"
 export XDG_CACHE_HOME="$SANDBOX/cache"
 export AKM_STASH_DIR="$SANDBOX/stash"
 
-akm init                        # initialize the sandbox stash
+akm setup --yes                 # initialize the sandbox stash
 akm index --full                # empty but valid index
 akm workflow create demo        # create a template-backed workflow asset
 akm workflow start workflow:demo
