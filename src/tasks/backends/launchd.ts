@@ -29,6 +29,7 @@ import { resolveAkmInvocation } from "../resolveAkmBin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import type { TaskDocument } from "../schema";
 import type { InstalledTaskRef, TaskBackend } from "./index";
+import launchdTemplate from "./launchd-template.xml" with { type: "text" };
 
 export interface LaunchdExec {
   run(args: string[]): { status: number; stdout: string; stderr: string };
@@ -137,26 +138,11 @@ export function buildPlistXml(task: TaskDocument, akmArgv: string[], logDir: str
   const logPath = path.join(logDir, `${task.id}.log`);
   const triggerXml = renderLaunchdTrigger(trigger);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LAUNCHD_LABEL_PREFIX}${escapeXml(task.id)}</string>
-  <key>ProgramArguments</key>
-  <array>
-${programArgs}
-  </array>
-  <key>StandardOutPath</key>
-  <string>${escapeXml(logPath)}</string>
-  <key>StandardErrorPath</key>
-  <string>${escapeXml(logPath)}</string>
-  <key>RunAtLoad</key>
-  <false/>
-${triggerXml}
-</dict>
-</plist>
-`;
+  return launchdTemplate
+    .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(task.id))
+    .replace("{{PROGRAM_ARGS}}", programArgs)
+    .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
+    .replace("{{TRIGGER_XML}}", triggerXml);
 }
 
 function renderLaunchdTrigger(trigger: LaunchdTrigger): string {

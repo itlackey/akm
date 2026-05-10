@@ -37,6 +37,7 @@ import { resolveAkmInvocation } from "../resolveAkmBin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import type { TaskDocument } from "../schema";
 import type { InstalledTaskRef, TaskBackend } from "./index";
+import schtasksTemplate from "./schtasks-template.xml" with { type: "text" };
 
 export interface SchtasksExec {
   run(args: string[]): { status: number; stdout: string; stderr: string };
@@ -160,36 +161,14 @@ export function buildSchtasksXml(
   const triggerXml = renderSchtasksTrigger(trigger, startBoundary);
   const logPath = path.join(logDir, `${task.id}.log`);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>akm scheduled task: ${escapeXml(task.id)}</Description>
-    <URI>${escapeXml(folder)}${escapeXml(task.id)}</URI>
-  </RegistrationInfo>
-  <Triggers>
-${triggerXml}
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <Enabled>${task.enabled ? "true" : "false"}</Enabled>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>${escapeXml(command)}</Command>
-      <Arguments>${escapeXml(args)}</Arguments>
-    </Exec>
-  </Actions>
-  <!-- Log target (informational only; schtasks doesn't redirect): ${escapeXml(logPath)} -->
-</Task>
-`;
+  return schtasksTemplate
+    .replaceAll("{{TASK_ID}}", escapeXml(task.id))
+    .replaceAll("{{FOLDER}}", escapeXml(folder))
+    .replace("{{TRIGGER_XML}}", triggerXml)
+    .replace("{{ENABLED}}", task.enabled ? "true" : "false")
+    .replace("{{COMMAND}}", escapeXml(command))
+    .replace("{{ARGS}}", escapeXml(args))
+    .replace("{{LOG_PATH}}", escapeXml(logPath));
 }
 
 function renderSchtasksTrigger(trigger: SchtasksTrigger, startBoundary: string): string {

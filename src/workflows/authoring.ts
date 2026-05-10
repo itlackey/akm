@@ -4,6 +4,7 @@ import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isWithin, resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
+import workflowTemplate from "./workflow-template.md" with { type: "text" };
 import { parseWorkflow } from "./parser";
 import type { WorkflowError } from "./schema";
 
@@ -167,29 +168,8 @@ export function validateWorkflowSource(target: string): {
 }
 
 function renderWorkflowTemplate(input: { title: string; firstStepTitle: string; firstStepId: string }): string {
-  return `---
-description: Describe what this workflow accomplishes
-tags:
-  - example
-params:
-  example_param: Explain this parameter
----
-
-# Workflow: ${input.title}
-
-## Step: ${input.firstStepTitle}
-Step ID: ${input.firstStepId}
-
-### Instructions
-Describe what to do in this step.
-
-### Completion Criteria
-- Confirm the first step is complete
-
-## Step: Second Step
-Step ID: second-step
-
-### Instructions
-Describe what happens next.
-`;
+  return workflowTemplate
+    .replace("{{TITLE}}", input.title)
+    .replace("{{FIRST_STEP_TITLE}}", input.firstStepTitle)
+    .replace("{{FIRST_STEP_ID}}", input.firstStepId);
 }

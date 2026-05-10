@@ -19,9 +19,11 @@
  */
 
 import { toErrorMessage } from "../core/common";
-import type { LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { warn } from "../core/warn";
+import userPromptTemplate from "./prompts/graph-extract-user-prompt.md" with { type: "text" };
 import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
+import { tryLlmFeature, type TryLlmFeatureFallbackEvent } from "./feature-gate";
 
 /** Hard cap on body chars sent to the model. */
 const MAX_BODY_CHARS = 4000;
@@ -33,21 +35,11 @@ const MAX_ENTITIES_PER_ASSET = 32;
 const MAX_RELATIONS_PER_ASSET = 32;
 
 const SYSTEM_PROMPT =
-  "You extract a knowledge graph from developer notes. Return only valid JSON. " + "No prose, no markdown fences.";
+  "You extract a knowledge graph from developer notes. Return ONLY valid JSON — no prose, no markdown fences, no preamble.";
 
-const USER_PROMPT_PREFIX = `Extract entities and relations from the asset body below.
-
-Rules:
-- Output ONLY a JSON object: {"entities": ["Entity One", ...], "relations": [{"from": "A", "to": "B", "type": "uses"}, ...]}.
-- Entities are short, canonical noun phrases (project names, services, tools, people, file/dir names, technical concepts).
-- Relations connect two entities that both appear in the entities array.
-- "type" is a short verb phrase (e.g. "uses", "depends on", "owns", "documents"). Optional; omit when unsure.
-- Drop pleasantries, meta-commentary, and timestamps.
-- Limit to at most ${MAX_ENTITIES_PER_ASSET} entities and ${MAX_RELATIONS_PER_ASSET} relations per asset.
-- Return {"entities": [], "relations": []} if the body has no extractable graph content.
-
-Asset body:
-`;
+const USER_PROMPT_PREFIX = userPromptTemplate
+  .replace("{{MAX_ENTITIES}}", String(MAX_ENTITIES_PER_ASSET))
+  .replace("{{MAX_RELATIONS}}", String(MAX_RELATIONS_PER_ASSET));
 
 /** Single edge. `type` is optional — callers tolerate undefined and use "" for grouping. */
 export interface GraphRelation {
@@ -68,11 +60,16 @@ export interface GraphExtraction {
  * Returns `{entities: [], relations: []}` on any failure (timeout, invalid
  * JSON, empty response). Errors are logged via `warn()` but never thrown — a
  * failed extraction for one asset must not abort the rest of the index pass.
+ *
+ * Routes through `tryLlmFeature("graph_extraction", ...)` so the feature gate
+ * and onFallback hook are honoured uniformly (Fix C5).
  */
 export async function extractGraphFromBody(
   llmConfig: LlmConnectionConfig,
   body: string,
   signal?: AbortSignal,
+  akmConfig?: AkmConfig,
+  onFallback?: (evt: TryLlmFeatureFallbackEvent) => void,
 ): Promise<GraphExtraction> {
   const empty: GraphExtraction = { entities: [], relations: [] };
   const trimmedBody = body.trim();
@@ -80,62 +77,62 @@ export async function extractGraphFromBody(
 
   const userPrompt = `${USER_PROMPT_PREFIX}${trimmedBody.slice(0, MAX_BODY_CHARS)}`;
 
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const raw = await Promise.race([
-      chatCompletion(
-        llmConfig,
-        [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        { maxTokens: 1024, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
-      ),
-      new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(
-          () => reject(new Error("graph extraction timed out")),
-          llmConfig.timeoutMs ?? 120_000,
+  return tryLlmFeature(
+    "graph_extraction",
+    akmConfig,
+    async () => {
+      try {
+        const raw = await chatCompletion(
+          llmConfig,
+          [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: userPrompt },
+          ],
+          { maxTokens: 1024, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
         );
-      }),
-    ]);
-    if (!raw) return empty;
-    const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
-    if (!parsed) {
-      warn("graph extraction: invalid JSON response from LLM; skipping asset.");
-      return empty;
-    }
+        if (!raw) return empty;
+        const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
+        if (!parsed) {
+          warn("graph extraction: invalid JSON response from LLM; skipping asset.");
+          return empty;
+        }
 
-    const entities = Array.isArray(parsed.entities)
-      ? parsed.entities
-          .filter((e): e is string => typeof e === "string")
-          .map((e) => e.trim())
-          .filter((e) => e.length > 0)
-          .slice(0, MAX_ENTITIES_PER_ASSET)
-      : [];
+        const entities = Array.isArray(parsed.entities)
+          ? parsed.entities
+              .filter((e): e is string => typeof e === "string")
+              .map((e) => e.trim())
+              .filter((e) => e.length > 0)
+              .slice(0, MAX_ENTITIES_PER_ASSET)
+          : [];
 
-    const entitySet = new Set(entities);
-    const relations = Array.isArray(parsed.relations)
-      ? parsed.relations
-          .filter(
-            (r): r is { from: unknown; to: unknown; type?: unknown } =>
-              typeof r === "object" && r !== null && !Array.isArray(r),
-          )
-          .map((r) => ({
-            from: typeof r.from === "string" ? r.from.trim() : "",
-            to: typeof r.to === "string" ? r.to.trim() : "",
-            type: typeof r.type === "string" && r.type.trim() ? r.type.trim() : undefined,
-          }))
-          // Both endpoints must be non-empty AND mentioned in entities[];
-          // dangling relations are noise and inflate the boost component.
-          .filter((r) => r.from && r.to && entitySet.has(r.from) && entitySet.has(r.to))
-          .slice(0, MAX_RELATIONS_PER_ASSET)
-      : [];
+        const entitySet = new Set(entities);
+        const relations = Array.isArray(parsed.relations)
+          ? parsed.relations
+              .filter(
+                (r): r is { from: unknown; to: unknown; type?: unknown } =>
+                  typeof r === "object" && r !== null && !Array.isArray(r),
+              )
+              .map((r) => ({
+                from: typeof r.from === "string" ? r.from.trim() : "",
+                to: typeof r.to === "string" ? r.to.trim() : "",
+                type: typeof r.type === "string" && r.type.trim() ? r.type.trim() : undefined,
+              }))
+              // Both endpoints must be non-empty AND mentioned in entities[];
+              // dangling relations are noise and inflate the boost component.
+              .filter((r) => r.from && r.to && entitySet.has(r.from) && entitySet.has(r.to))
+              .slice(0, MAX_RELATIONS_PER_ASSET)
+          : [];
 
-    return { entities, relations };
-  } catch (err) {
-    warn(`graph extraction failed: ${toErrorMessage(err)}`);
-    return empty;
-  } finally {
-    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-  }
+        return { entities, relations };
+      } catch (err) {
+        warn(`graph extraction failed: ${toErrorMessage(err)}`);
+        return empty;
+      }
+    },
+    empty,
+    {
+      timeoutMs: llmConfig.timeoutMs ?? 120_000,
+      onFallback,
+    },
+  );
 }
