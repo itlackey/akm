@@ -35,8 +35,8 @@ describe("v1 spec §12 — agent CLI integration", () => {
     }
   });
 
-  test("§12.4 declares reflect/propose write only to the proposal queue", () => {
-    expect(section).toMatch(/write\s*\*\*only\*\*\s*to the proposal queue/i);
+  test("§12.4 declares improve write only to the proposal queue", () => {
+    expect(section).toMatch(/writes\s*\*\*only\*\*\s*to the proposal queue/i);
   });
 
   test("§12 stops before §13 (helper boundary check)", () => {

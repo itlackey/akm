@@ -117,6 +117,10 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       startWorkflowRunImpl,
     });
   }
+
+  // Resolve config once here so runPromptTask does not call loadConfig()
+  // on every dispatch in a batch run (Fix C6).
+  const config = loadConfig();
   return await runPromptTask({
     task,
     stashDir,
@@ -126,6 +130,8 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     now,
     runAgentImpl,
     agentOptions: options.agentOptions,
+    agentConfig: config.agent,
+    agentTimeoutMs: config.agent?.timeoutMs,
   });
 }
 
@@ -227,17 +233,25 @@ async function runPromptTask(input: {
   now: () => Date;
   runAgentImpl: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
   agentOptions?: Partial<RunAgentOptions>;
+  /** Pre-resolved agent config (avoids re-reading config file per task in batch runs). */
+  agentConfig?: ReturnType<typeof loadConfig>["agent"];
+  /** Pre-resolved agent timeout (ms) from the calling context. */
+  agentTimeoutMs?: number;
 }): Promise<TaskRunResult> {
   const { task, stashDir, logPath, historyDir, startedAt, now, runAgentImpl, agentOptions } = input;
   if (task.target.kind !== "prompt") throw new Error("invariant: prompt target");
 
-  const config = loadConfig();
-  const profile = requireAgentProfile(config.agent, task.target.profile);
+  // Use pre-resolved agent config when available to avoid redundant loadConfig()
+  // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
+  // that invoke runPromptTask directly without threading config.
+  const agentCfg = input.agentConfig !== undefined ? input.agentConfig : loadConfig().agent;
+  const agentTimeoutMs = input.agentTimeoutMs !== undefined ? input.agentTimeoutMs : agentCfg?.timeoutMs;
+  const profile = requireAgentProfile(agentCfg, task.target.profile);
   const promptText = await resolvePromptText(task, stashDir);
 
   const result = await runAgentImpl(profile, promptText, {
     stdio: "captured",
-    timeoutMs: config.agent?.timeoutMs,
+    timeoutMs: agentTimeoutMs,
     cwd: stashDir,
     ...agentOptions,
   });

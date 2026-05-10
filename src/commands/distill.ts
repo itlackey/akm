@@ -256,8 +256,9 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   lines.push("");
   lines.push("Asset content:");
   if (input.assetContent) {
+    const body = input.assetContent.trim().slice(0, 3000);
     lines.push("```");
-    lines.push(input.assetContent.trim());
+    lines.push(body);
     lines.push("```");
   } else {
     lines.push("(asset is not currently indexed; distil from feedback signal alone)");
@@ -420,6 +421,13 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       return chat(config.llm, messages);
     },
     null as string | null,
+    {
+      onFallback: (evt) => {
+        // Log the fallback reason; the caller (raw === null path) handles
+        // emitting the distill_invoked event so we don't double-emit here.
+        console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+      },
+    },
   );
 
   if (raw === null || raw.trim() === "") {

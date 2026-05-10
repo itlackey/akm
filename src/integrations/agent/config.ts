@@ -38,7 +38,10 @@ import {
 const KNOWN_AGENT_KEYS = new Set(["default", "timeoutMs", "profiles"]);
 
 /** Keys recognised on a profile entry. */
-const KNOWN_PROFILE_KEYS = new Set(["bin", "args", "stdio", "env", "envPassthrough", "timeoutMs", "parseOutput"]);
+const KNOWN_PROFILE_KEYS = new Set([
+  "bin", "args", "stdio", "env", "envPassthrough", "timeoutMs", "parseOutput",
+  "sdkMode", "model", "endpoint", "apiKey",
+]);
 
 /**
  * Default hard timeout for an agent CLI. Spec §12.2 calls for a hard
@@ -58,6 +61,14 @@ export interface AgentProfileConfig {
   envPassthrough?: string[];
   timeoutMs?: number;
   parseOutput?: AgentParseMode;
+  /** Use embedded @opencode-ai/sdk instead of Bun.spawn. Requires no CLI binary. */
+  sdkMode?: boolean;
+  /** Model to use when sdkMode is true (e.g. "anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder"). */
+  model?: string;
+  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from config.llm.endpoint. */
+  endpoint?: string;
+  /** API key for sdkMode endpoint. If absent, inherits from config.llm.apiKey. */
+  apiKey?: string;
 }
 
 /** Persisted form of the `agent` block. */
@@ -207,6 +218,30 @@ function parseAgentProfileConfig(name: string, value: unknown): AgentProfileConf
     warn(`[akm] Ignoring agent.profiles."${name}".parseOutput: expected "text" or "json".`);
   }
 
+  if (raw.sdkMode === true || raw.sdkMode === false) {
+    out.sdkMode = raw.sdkMode;
+  } else if (raw.sdkMode !== undefined) {
+    warn(`[akm] Ignoring agent.profiles."${name}".sdkMode: expected a boolean.`);
+  }
+
+  if (typeof raw.model === "string" && raw.model.trim()) {
+    out.model = raw.model.trim();
+  } else if (raw.model !== undefined) {
+    warn(`[akm] Ignoring agent.profiles."${name}".model: expected a non-empty string.`);
+  }
+
+  if (typeof raw.endpoint === "string" && raw.endpoint.trim()) {
+    out.endpoint = raw.endpoint.trim();
+  } else if (raw.endpoint !== undefined) {
+    warn(`[akm] Ignoring agent.profiles."${name}".endpoint: expected a non-empty string.`);
+  }
+
+  if (typeof raw.apiKey === "string" && raw.apiKey.trim()) {
+    out.apiKey = raw.apiKey.trim();
+  } else if (raw.apiKey !== undefined) {
+    warn(`[akm] Ignoring agent.profiles."${name}".apiKey: expected a non-empty string.`);
+  }
+
   return out;
 }
 
@@ -247,6 +282,10 @@ export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig
       : base.envPassthrough,
     timeoutMs: overrides.timeoutMs ?? base.timeoutMs,
     parseOutput: overrides.parseOutput ?? base.parseOutput,
+    sdkMode: overrides.sdkMode ?? base.sdkMode,
+    model: overrides.model ?? base.model,
+    endpoint: overrides.endpoint ?? base.endpoint,
+    apiKey: overrides.apiKey ?? base.apiKey,
   };
   return merged;
 }
@@ -328,6 +367,13 @@ export function requireAgentProfile(agent: AgentConfig | undefined, requested?: 
       "INVALID_CONFIG_FILE",
       `Define agent.profiles."${name}".bin in config.json, or pick one of: ${listAgentProfileNames(agent).join(", ")}.`,
     );
+  }
+  // Apply the top-level agent.timeoutMs as the effective default for this
+  // profile when the profile itself has no timeout override. This makes
+  // `agent.timeoutMs` the universal fallback without requiring every
+  // profile definition in config.json to repeat it.
+  if (profile.timeoutMs === undefined && agent?.timeoutMs !== undefined) {
+    return { ...profile, timeoutMs: agent.timeoutMs };
   }
   return profile;
 }

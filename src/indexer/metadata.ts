@@ -61,13 +61,15 @@ export interface StashEntry {
   intent?: StashIntent;
   filename?: string;
   /**
-   * Asset quality marker (v1 spec §4.2). Three values are well-known:
+   * Asset quality marker (v1 spec §4.2). Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
+   * `"enriched"` marks entries that have been LLM-enhanced (also included in
+   * default search, excluded from re-enrichment unless `--re-enrich` is set);
    * `"proposed"` is excluded from default search and surfaced only with
    * `--include-proposed`. Unknown string values parse with a one-time
    * `console.warn` and remain searchable (treated as included-by-default).
    */
-  quality?: "generated" | "curated" | "proposed" | (string & {});
+  quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
   confidence?: number;
   source?: "package" | "frontmatter" | "comments" | "filename" | "manual" | "llm";
   aliases?: string[];
@@ -128,11 +130,11 @@ const STASH_FILENAME = ".stash.json";
 // ── Quality semantics (v1 spec §4.2) ────────────────────────────────────────
 
 /**
- * Well-known quality values. `generated` and `curated` are included in
+ * Well-known quality values. `generated`, `curated`, and `enriched` are included in
  * default search; `proposed` is excluded by default and opt-in via
  * `--include-proposed`. Unknown values warn once and remain searchable.
  */
-export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "proposed"]);
+export const KNOWN_QUALITY_VALUES = new Set(["generated", "curated", "enriched", "proposed"]);
 
 /** Tracks unknown quality values we've already warned about (one warn per value per process). */
 const warnedUnknownQualityValues = new Set<string>();

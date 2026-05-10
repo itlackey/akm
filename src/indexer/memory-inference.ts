@@ -35,6 +35,7 @@ import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig, SourceConfigEntry } from "../core/config";
+import { concurrentMap } from "../core/concurrent";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
@@ -122,20 +123,41 @@ export async function runMemoryInferencePass(
   result.considered = pending.length;
   if (pending.length === 0) return result;
 
-  for (const record of pending) {
-    if (signal?.aborted) return result;
-    const derived = await compressMemoryToDerivedMemory(llmConfig, record.body, signal);
-    if (!derived) {
+  const perRecordResults = await concurrentMap(
+    pending,
+    async (record) => {
+      if (signal?.aborted) return undefined;
+      const derived = await compressMemoryToDerivedMemory(
+        llmConfig,
+        record.body,
+        signal,
+        config,
+        (evt) => {
+          console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+        },
+      );
+      if (!derived) {
+        return { skipped: true } as const;
+      }
+      const written = await writeDerivedMemory(record, derived);
+      if (written > 0) {
+        markParentProcessed(record);
+        return { skipped: false, splitParent: true, written } as const;
+      }
+      return { skipped: false, splitParent: false, written: 0 } as const;
+    },
+    4,
+  );
+
+  for (const res of perRecordResults) {
+    if (!res) continue;
+    if (res.skipped) {
       result.skippedNoFacts += 1;
       // Intentionally NOT marked processed — a transient LLM failure should
       // be retried on the next index run.
-      continue;
-    }
-    const written = await writeDerivedMemory(record, derived);
-    if (written > 0) {
-      markParentProcessed(record);
+    } else if (res.splitParent) {
       result.splitParents += 1;
-      result.writtenFacts += written;
+      result.writtenFacts += res.written;
     }
   }
 

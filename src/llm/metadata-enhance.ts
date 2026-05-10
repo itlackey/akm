@@ -26,8 +26,8 @@ export async function enhanceMetadata(
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
   if (entry.tags?.length) contextParts.push(`Current tags: ${entry.tags.join(", ")}`);
   if (fileContent) {
-    // Limit content to first 2000 chars to stay within token limits
-    const truncated = fileContent.length > 2000 ? `${fileContent.slice(0, 2000)}\n... (truncated)` : fileContent;
+    // Limit content to first 4000 chars to stay within token limits (matches other modules)
+    const truncated = fileContent.length > 4000 ? `${fileContent.slice(0, 4000)}\n... (truncated)` : fileContent;
     contextParts.push(`File content:\n${truncated}`);
   }
 

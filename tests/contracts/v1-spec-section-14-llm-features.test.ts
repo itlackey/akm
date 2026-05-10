@@ -42,10 +42,10 @@ describe("v1 spec §14 — llm.features.*", () => {
     expect(section).toMatch(/no streaming sessions/i);
   });
 
-  test("§14.5 routes distill output through the proposal queue", () => {
+  test("§14.5 routes improve output through the proposal queue", () => {
     const flat = section.replace(/\s+/g, " ");
     expect(flat).toMatch(/`lesson` \*\*proposal\*\*/i);
-    expect(section).toContain("distill_invoked");
+    expect(section).toContain("improve_invoked");
     expect(section).toContain("akm improve");
   });
 

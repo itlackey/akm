@@ -17,3 +17,4 @@ tests/bench/*.json
 tests/bench/baselines/
 .claude
 CLAUDE.md
+_debug_agent.ts

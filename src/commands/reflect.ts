@@ -38,6 +38,7 @@ import {
   requireAgentProfile,
   runAgent,
 } from "../integrations/agent";
+import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
 
 export interface AkmReflectOptions {
@@ -142,7 +143,7 @@ function looksLikeAssetContent(value: string): boolean {
 
 function loadAgentConfigFromDisk(): AgentConfig | undefined {
   const config = loadConfig();
-  return parseAgentConfig((config as unknown as { agent?: unknown }).agent);
+  return parseAgentConfig(config.agent);
 }
 
 function resolveProfile(options: AkmReflectOptions): AgentProfile {
@@ -225,15 +226,49 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   });
 
   // 5. Spawn the agent.
-  const runOptions: RunAgentOptions = {
-    stdio: "captured",
-    parseOutput: "text",
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options.runAgentOptions ?? {}),
-  };
-  const result = await runAgent(profile, prompt, runOptions);
+  // Use runProposalAgentPipeline for the shared spawn step, but fall back to
+  // raw runAgent when a custom spawn function is injected (test seam).
+  let result: AgentRunResult;
+  if (options.runAgentOptions?.spawn) {
+    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+    const runOptions: RunAgentOptions = {
+      stdio: "captured",
+      parseOutput: "text",
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.runAgentOptions ?? {}),
+    };
+    result = await runAgent(profile, prompt, runOptions);
+  } else {
+    // Production path: route through runProposalAgentPipeline (shared logic).
+    const pipelineResult = await runProposalAgentPipeline({
+      profile,
+      prompt,
+      // reflect always uses captured stdout (no draft file path).
+      draftFilePath: undefined,
+      timeoutMs: options.timeoutMs,
+    });
+    result = {
+      ok: pipelineResult.ok,
+      exitCode: pipelineResult.exitCode,
+      stdout: pipelineResult.stdout,
+      stderr: pipelineResult.stderr,
+      durationMs: pipelineResult.durationMs,
+      error: pipelineResult.error,
+      reason: pipelineResult.reason as AgentFailureReason | undefined,
+    };
+  }
 
   if (!result.ok) {
+    // B3: ENOENT / not-found gives an actionable hint.
+    if (
+      result.reason === "spawn_failed" &&
+      (result.error?.includes("ENOENT") || result.error?.toLowerCase().includes("not found"))
+    ) {
+      return {
+        ...failureEnvelope(result, options.ref),
+        error: `The agent binary '${profile.bin}' was not found on PATH. Run \`akm setup\` to configure an agent CLI, or install ${profile.bin} and retry.`,
+      };
+    }
     return failureEnvelope(result, options.ref);
   }
 

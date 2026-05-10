@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
+import { concurrentMap } from "../core/concurrent";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
@@ -93,6 +94,11 @@ interface IndexOptions {
   stashDir?: string;
   full?: boolean;
   enrich?: boolean;
+  /**
+   * When true, re-enrich all entries regardless of quality (including already
+   * `"enriched"` entries). Default: false — already-enriched entries are skipped.
+   */
+  reEnrich?: boolean;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
 }
@@ -115,6 +121,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const onProgress = options?.onProgress ?? (() => {});
   const signal = options?.signal;
   const enrich = options?.enrich === true;
+  const reEnrich = options?.reEnrich === true;
 
   // Load config and resolve all stash sources
   const { loadConfig } = await import("../core/config.js");
@@ -294,7 +301,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     throwIfAborted(signal);
 
     // Enhance entries with LLM if configured
-    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich);
+    await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich, reEnrich);
     onProgress({
       phase: "llm",
       message:
@@ -746,7 +753,9 @@ async function indexEntries(
           }
         }
 
-        // Collect dirs needing LLM enhancement during the first walk
+        // Collect dirs needing LLM enhancement during the first walk.
+        // Only dirs with "generated" entries need enrichment (unless reEnrich
+        // forces re-processing of already-enriched entries).
         if (stash.entries.some((e) => e.quality === "generated")) {
           dirsNeedingLlm.push({ dirPath, files, currentStashDir, stash });
         }
@@ -928,6 +937,7 @@ async function enhanceDirsWithLlm(
   }>,
   signal?: AbortSignal,
   enrich = false,
+  reEnrich = false,
 ): Promise<void> {
   if (!enrich) return;
 
@@ -937,29 +947,58 @@ async function enhanceDirsWithLlm(
   const llmConfig = resolveIndexPassLLM("enrichment", config);
   if (!llmConfig || dirsNeedingLlm.length === 0) return;
 
+  // P3 — 5-minute wall-clock budget. Combine with the caller's signal so
+  // either the user cancellation OR the deadline aborts the pass.
+  const enrichDeadline = AbortSignal.timeout(5 * 60 * 1000); // 5 minutes
+  let deadlineHit = false;
+  const enrichSignal: AbortSignal = (() => {
+    if (!signal) return enrichDeadline;
+    // Combine: abort when either fires.
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    enrichDeadline.addEventListener("abort", () => {
+      deadlineHit = true;
+      controller.abort();
+    }, { once: true });
+    return controller.signal;
+  })();
+
   // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
   // as a single visible warning instead of silently degrading every entry
   // and leaving the user wondering why nothing got enhanced.
   const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
 
-  for (const { dirPath, files, currentStashDir, stash: originalStash } of dirsNeedingLlm) {
-    throwIfAborted(signal);
-    // Only enhance generated entries; user-provided overrides should not be overwritten
-    const generatedEntries = originalStash.entries.filter((e) => e.quality === "generated");
-    if (generatedEntries.length === 0) continue;
-    const generatedStash: StashFile = { entries: generatedEntries };
-    const enhanced = await enhanceStashWithLlm(llmConfig, generatedStash, files, summary, signal);
+  await concurrentMap(
+    dirsNeedingLlm,
+    async ({ dirPath, files, currentStashDir, stash: originalStash }) => {
+      if (enrichSignal.aborted) return undefined;
+      // Only enhance generated entries (or all when reEnrich=true);
+      // user-provided overrides should not be overwritten.
+      const entriesToEnhance = originalStash.entries.filter(
+        (e) => e.quality === "generated" || (reEnrich && e.quality === "enriched"),
+      );
+      if (entriesToEnhance.length === 0) return undefined;
+      const targetStash: StashFile = { entries: entriesToEnhance };
+      const enhanced = await enhanceStashWithLlm(llmConfig, targetStash, files, summary, enrichSignal);
 
-    // Re-upsert the enhanced entries in a single transaction so a crash
-    // cannot leave half the entries updated and the rest stale.
-    db.transaction(() => {
-      for (const entry of enhanced.entries) {
-        const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-        const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-        const searchText = buildSearchText(entry);
-        upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
-      }
-    })();
+      // Re-upsert the enhanced entries in a single transaction so a crash
+      // cannot leave half the entries updated and the rest stale.
+      db.transaction(() => {
+        for (const entry of enhanced.entries) {
+          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+          const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+          const searchText = buildSearchText(entry);
+          upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
+        }
+      })();
+      return undefined;
+    },
+    4,
+  );
+
+  if (deadlineHit) {
+    warn("[akm] LLM enrichment budget exceeded (5m) — re-run `akm index --enrich` to continue.");
   }
 
   if (summary.attempted > 0 && summary.succeeded === 0) {
@@ -1269,40 +1308,50 @@ async function enhanceStashWithLlm(
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
 
-  const enhanced: StashEntry[] = [];
-  for (const entry of stash.entries) {
-    throwIfAborted(signal);
-    summary.attempted++;
-    try {
-      const entryFile = entry.filename
-        ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
-        : files[0];
-      let fileContent: string | undefined;
-      if (entryFile) {
-        try {
-          fileContent = fs.readFileSync(entryFile, "utf8");
-        } catch {
-          /* ignore unreadable files */
+  const results = await concurrentMap(
+    stash.entries,
+    async (entry) => {
+      if (signal?.aborted) return entry;
+      summary.attempted++;
+      try {
+        const entryFile = entry.filename
+          ? (files.find((f) => path.basename(f) === entry.filename) ?? files[0])
+          : files[0];
+        let fileContent: string | undefined;
+        if (entryFile) {
+          try {
+            fileContent = fs.readFileSync(entryFile, "utf8");
+          } catch {
+            /* ignore unreadable files */
+          }
         }
-      }
 
-      const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
-      const updated = { ...entry };
-      if (improvements.description) updated.description = improvements.description;
-      if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
-      if (improvements.tags?.length) updated.tags = improvements.tags;
-      enhanced.push(updated);
-      summary.succeeded++;
-    } catch (err) {
-      enhanced.push(entry);
-      const msg = toErrorMessage(err);
-      // failureSamples is bounded to 3 items, so a linear scan is cheaper
-      // than maintaining a parallel Set for membership checks (#177 review).
-      if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
-        summary.failureSamples.push(msg);
+        const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
+        const updated = { ...entry };
+        if (improvements.description) updated.description = improvements.description;
+        if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;
+        if (improvements.tags?.length) updated.tags = improvements.tags;
+        // Mark as enriched so subsequent index runs skip re-enrichment (P2)
+        updated.quality = "enriched";
+        summary.succeeded++;
+        return updated;
+      } catch (err) {
+        const msg = toErrorMessage(err);
+        // failureSamples is bounded to 3 items, so a linear scan is cheaper
+        // than maintaining a parallel Set for membership checks (#177 review).
+        if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
+          summary.failureSamples.push(msg);
+        }
+        return entry;
       }
-    }
-  }
+    },
+    4,
+  );
+
+  // concurrentMap returns Array<T | undefined>; filter out undefined slots
+  // (which can only occur if the callback itself returned undefined, which
+  // it never does above — but TypeScript needs the filter for type safety).
+  const enhanced: StashEntry[] = results.map((r, i) => r ?? stash.entries[i]);
   return { entries: enhanced };
 }
 

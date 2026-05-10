@@ -432,24 +432,52 @@ Per-key contract:
 | `agent.default` | optional | Default profile name. If unset, agent commands require an explicit `--profile` flag |
 | `agent.timeoutMs` | optional | Hard timeout for spawned agent CLIs (default 60_000) |
 | `agent.profiles[<name>]` | optional | Per-profile overrides on top of built-in defaults for `opencode`, `claude`, `codex`, `gemini`, `aider` |
-| `agent.profiles[<name>].bin` | required if profile defined | Command to spawn |
+| `agent.profiles[<name>].bin` | required unless `sdkMode` is `true` | Command to spawn |
 | `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
 | `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
 | `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
 | `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |
 | `agent.profiles[<name>].timeoutMs` | optional | Per-profile override of `agent.timeoutMs` |
 | `agent.profiles[<name>].parseOutput` | optional | `"text"` or `"json"` |
+| `agent.profiles[<name>].sdkMode` | optional | When `true`, uses the embedded OpenCode SDK instead of spawning a CLI binary. No `bin` field required. |
+| `agent.profiles[<name>].model` | optional | Model identifier to use when `sdkMode` is `true` (e.g. `"qwen2.5-coder:32b"`, `"anthropic/claude-sonnet-4-5"`). Same model as the small connection is valid. |
+| `agent.profiles[<name>].endpoint` | optional | OpenAI-compatible chat completions endpoint for `sdkMode`. If absent, inherits from `config.llm.endpoint`. |
+| `agent.profiles[<name>].apiKey` | optional | API key for the `sdkMode` endpoint. If absent, inherits from `config.llm.apiKey`. |
 
 Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
 disables all agent commands with a `ConfigError` whose hint points at this
 section.
 
+### SDK-mode agent profile
+
+When `sdkMode: true` is set, akm uses the embedded OpenCode SDK to run the
+agent without spawning a separate CLI binary. This is useful for local model
+integrations where no CLI wrapper is available. A minimal SDK-mode config:
+
+```json
+{
+  "agent": {
+    "default": "local",
+    "profiles": {
+      "local": {
+        "sdkMode": true,
+        "model": "qwen2.5-coder:32b"
+      }
+    }
+  }
+}
+```
+
+If `endpoint` and `apiKey` are omitted, the profile inherits them from the
+top-level `llm` block.
+
 ## `llm.features.*` map
 
 **Status: Available since 0.7.0.**
-Gates the small set of bounded in-tree LLM call sites. All defaults are
-`false` — the v1 contract is "the in-tree LLM does nothing unless you opt
-in, per feature." See v1 spec §14 for the boundary rules.
+Gates the small set of bounded in-tree LLM call sites. Most flags default to
+`false`; `memory_inference` and `graph_extraction` default to `true` when an
+LLM is configured (though the passes also require `akm.llm` to be set and
+`index.<pass>.llm` to not be `false`). See v1 spec §14 for the boundary rules.
 
 ```jsonc
 {
@@ -462,18 +490,18 @@ in, per feature." See v1 spec §14 for the boundary rules.
       "curate_rerank":         false,
       "feedback_distillation": false,
       "memory_inference":      true,
-      "graph_extraction":      false
+      "graph_extraction":      true
     }
   }
 }
 ```
 
-| Feature flag | Use site | Behaviour when disabled |
-| --- | --- | --- |
-| `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
-| `feedback_distillation` | `akm improve <ref>` | `akm improve` exits 0 with `outcome: "skipped"` |
-| `memory_inference` | `akm index` memory-inference pass (split a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain |
-| `graph_extraction` | `akm index` graph-extraction pass (entities + relations from memory/knowledge → `graph.json` boost) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
+| Feature flag | Default | Use site | Behaviour when disabled |
+| --- | --- | --- | --- |
+| `curate_rerank` | `false` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
+| `feedback_distillation` | `false` | `akm distill <ref>` / `akm improve <ref>` | The command exits 0 with `outcome: "skipped"` rather than failing |
+| `memory_inference` | `true` | `akm index` memory-inference pass (splits a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain on disk |
+| `graph_extraction` | `true` | `akm index` graph-extraction pass (extracts entities + relations from memory/knowledge files into `graph.json` for search boosting) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 
 Unknown keys under `llm.features` are warn-and-ignore. The keys above
 are locked and cannot be renamed after v1.0.

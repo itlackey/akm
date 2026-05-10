@@ -2,6 +2,7 @@ import {
   type AkmConfig,
   DEFAULT_CONFIG,
   type EmbeddingConnectionConfig,
+  getSources,
   type InstallAuditConfig,
   type LlmConnectionConfig,
   type OutputConfig,
@@ -123,7 +124,7 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
     case "sources":
     case "stashes":
       // "stashes" is an alias for "sources" for backwards-compat.
-      return config.sources ?? config.stashes ?? [];
+      return getSources(config);
     case "output.format":
       return config.output?.format ?? null;
     case "output.detail":
@@ -201,7 +202,7 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
       return { ...config, llm: mergeLlmLike(config.llm, { apiKey: requireNonEmptyString(rawValue, key) }) };
     case "defaultWriteTarget": {
       const name = requireNonEmptyString(rawValue, key);
-      const knownNames = (config.sources ?? config.stashes ?? [])
+      const knownNames = getSources(config)
         .map((s) => s.name)
         .filter((n): n is string => typeof n === "string");
       if (knownNames.length > 0 && !knownNames.includes(name)) {
@@ -260,7 +261,7 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
     case "sources":
     case "stashes":
       // "stashes" is kept as an alias for backwards-compat; both clear `sources`.
-      return { ...config, sources: undefined, stashes: undefined };
+      return { ...config, sources: undefined };
     case "output.format":
       return { ...config, output: mergeOutputConfig(config.output, { format: undefined }) };
     case "output.detail":
@@ -306,7 +307,7 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
     output: mergeOutputConfig(DEFAULT_CONFIG.output, config.output) ?? null,
     stashDir: config.stashDir ?? null,
     installed: config.installed ?? [],
-    sources: config.sources ?? config.stashes ?? [],
+    sources: getSources(config),
   };
   if (config.defaultWriteTarget) result.defaultWriteTarget = config.defaultWriteTarget;
   if (config.embedding) result.embedding = config.embedding;

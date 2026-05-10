@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { SourceConfigEntry } from "../core/config";
-import { loadConfig, loadUserConfig, saveConfig } from "../core/config";
+import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { resolveSourceEntries } from "../indexer/search-source";
 
@@ -49,7 +49,7 @@ export function addStash(opts: {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
   }
   const config = loadUserConfig();
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   const isRemoteUrl =
     target.startsWith("http://") ||
     target.startsWith("https://") ||
@@ -82,7 +82,7 @@ export function addStash(opts: {
   }
 
   sources.push(entry);
-  saveConfig({ ...config, sources, stashes: undefined });
+  saveConfig({ ...config, sources });
 
   return { sources, added: true, entry };
 }
@@ -93,7 +93,7 @@ export function addStash(opts: {
  */
 export function removeStash(target: string): SourceRemoveResult {
   const config = loadUserConfig();
-  const sources = [...(config.sources ?? config.stashes ?? [])];
+  const sources = [...getSources(config)];
   const isUrl =
     target.startsWith("http://") ||
     target.startsWith("https://") ||
@@ -119,7 +119,7 @@ export function removeStash(target: string): SourceRemoveResult {
   }
 
   const removed = sources.splice(idx, 1)[0];
-  saveConfig({ ...config, sources, stashes: undefined });
+  saveConfig({ ...config, sources });
 
   return { sources, removed: true, entry: removed };
 }
@@ -130,7 +130,7 @@ export function removeStash(target: string): SourceRemoveResult {
 export function listStashes(): SourceListResult {
   const config = loadConfig();
   const localSources = resolveSourceEntries();
-  const sources = config.sources ?? config.stashes ?? [];
+  const sources = getSources(config);
 
   return { localSources, sources };
 }

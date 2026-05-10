@@ -50,3 +50,4 @@ export type {
   SpawnFn,
 } from "./spawn";
 export { runAgent } from "./spawn";
+export { runAgentSdk } from "./sdk-runner";

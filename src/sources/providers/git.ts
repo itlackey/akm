@@ -5,7 +5,7 @@ import path from "node:path";
 import { TYPE_DIRS } from "../../core/asset-spec";
 import { resolveStashDir } from "../../core/common";
 import type { SourceConfigEntry } from "../../core/config";
-import { loadConfig } from "../../core/config";
+import { getSources, loadConfig } from "../../core/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { getRegistryCacheDir, getRegistryIndexCacheDir } from "../../core/paths";
 import { sanitizeCommitMessage } from "../../core/write-source";
@@ -474,7 +474,7 @@ export function saveGitStash(name?: string, message?: string, writableOverride?:
 
   if (name) {
     const config = loadConfig();
-    const stash = findGitStashByTarget(config.sources ?? config.stashes ?? [], name);
+    const stash = findGitStashByTarget(getSources(config), name);
     if (!stash) throw new UsageError(`No git stash found with name "${name}"`);
     if (!GIT_STASH_TYPES.has(stash.type)) {
       throw new UsageError(`Stash "${name}" is not a git stash (type: ${stash.type})`);

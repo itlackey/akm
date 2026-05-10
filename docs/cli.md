@@ -101,10 +101,26 @@ Run the interactive first-run wizard.
 akm setup
 ```
 
-The wizard lets you choose a stash directory, configure embedding and LLM
-providers, review semantic-search assets, review registries, and add stash
-sources. When you save, akm writes the config file, initializes the stash
-directory, and builds the search index.
+The setup wizard configures AKM in two steps:
+
+**Step 1 — Small model connection** (for background processing)
+Configures the OpenAI-compatible endpoint and model used for `akm index --enrich`,
+`akm distill`, `akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
+OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
+
+**Step 2 — Agent connection** (for agentic commands)
+Configures how `akm propose`, `akm reflect`, and `akm tasks run` dispatch AI sessions.
+Options:
+- **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
+- **New connection** — separate endpoint, model, and API key
+- **Installed CLI agent** — use an installed agent binary (opencode, claude, codex, etc.)
+- **None** — agentic commands disabled with a clear warning
+
+A feature capability summary is shown at the end of setup.
+
+The wizard also lets you choose a stash directory, review registries, and add stash
+sources. When you save, akm writes the config file, initializes the stash directory,
+and builds the search index.
 
 ### index
 

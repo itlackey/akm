@@ -27,7 +27,9 @@ import {
   requireAgentProfile,
   runAgent,
 } from "../integrations/agent";
+import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { callAi } from "../llm/call-ai";
 
 export interface AkmProposeOptions {
   type: string;
@@ -67,7 +69,7 @@ export type AkmProposeResult = AkmProposeSuccess | AkmProposeFailure;
 
 function loadAgentConfigFromDisk(): AgentConfig | undefined {
   const config = loadConfig();
-  return parseAgentConfig((config as unknown as { agent?: unknown }).agent);
+  return parseAgentConfig(config.agent);
 }
 
 function resolveProfile(options: AkmProposeOptions): AgentProfile {
@@ -159,15 +161,48 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 4. Spawn the agent.
   // Real agent runs use interactive mode so file tools can write the draft.
   // Injected/custom spawns still need captured stdout for JSON payload tests.
-  const runOptions: RunAgentOptions = {
-    stdio: options.runAgentOptions?.spawn ? "captured" : "interactive",
-    parseOutput: "text",
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options.runAgentOptions ?? {}),
-  };
-  const result = await runAgent(profile, prompt, runOptions);
+  // Use callAi for the unified AI dispatch path (agent CLI preferred, LLM HTTP fallback).
+  const useCustomSpawn = Boolean(options.runAgentOptions?.spawn);
+  let result: AgentRunResult;
+  if (useCustomSpawn) {
+    // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
+    const runOptions: RunAgentOptions = {
+      stdio: "captured",
+      parseOutput: "text",
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.runAgentOptions ?? {}),
+    };
+    result = await runAgent(profile, prompt, runOptions);
+  } else {
+    // Production path: route through runProposalAgentPipeline (shared logic).
+    const pipelineResult = await runProposalAgentPipeline({
+      profile,
+      prompt,
+      draftFilePath: resolvedDraftPath,
+      timeoutMs: options.timeoutMs,
+    });
+    result = {
+      ok: pipelineResult.ok,
+      exitCode: pipelineResult.exitCode,
+      stdout: pipelineResult.stdout,
+      stderr: pipelineResult.stderr,
+      durationMs: pipelineResult.durationMs,
+      error: pipelineResult.error,
+      reason: pipelineResult.reason as AgentFailureReason | undefined,
+    };
+  }
 
   if (!result.ok) {
+    // B3: ENOENT / not-found gives an actionable hint.
+    if (
+      result.reason === "spawn_failed" &&
+      (result.error?.includes("ENOENT") || result.error?.toLowerCase().includes("not found"))
+    ) {
+      return {
+        ...failureEnvelope(result, options.type, options.name),
+        error: `The agent binary '${profile.bin}' was not found on PATH. Run \`akm setup\` to configure an agent CLI, or install ${profile.bin} and retry.`,
+      };
+    }
     return failureEnvelope(result, options.type, options.name);
   }
 
@@ -185,6 +220,22 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       content: draftContent,
     };
   } else {
+    // B1: When interactive mode was used and stdout is empty, the agent did not
+    // write the draft file and stdout was not captured — surface an actionable error.
+    const stdioWasInteractive = !useCustomSpawn;
+    if (stdioWasInteractive && (result.stdout ?? "") === "") {
+      return {
+        schemaVersion: 1,
+        ok: false,
+        reason: "parse_error",
+        error:
+          "Agent did not write draft file and stdout was not captured (interactive mode). Check that the agent CLI understood the file-write instruction, or configure a headless profile with stdio: 'captured'.",
+        type: options.type,
+        name: options.name,
+        exitCode: result.exitCode,
+        ...(result.stderr ? { stderr: result.stderr } : {}),
+      };
+    }
     try {
       payload = parseAgentProposalPayload(result.stdout ?? "");
     } catch (err) {

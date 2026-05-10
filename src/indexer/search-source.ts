@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../core/config";
-import { loadConfig } from "../core/config";
+import { getSources, loadConfig } from "../core/config";
 import { resolveSourceProviderFactory } from "../sources/provider-factory";
 // Eager side-effect imports so all built-in source providers self-register
 // before resolveEntryContentDir() runs.
@@ -35,7 +35,7 @@ export interface SearchSource {
  *   1. The primary stash directory (the entry marked `primary: true`, or the
  *      legacy top-level `stashDir`). Always emitted, even when the directory
  *      does not yet exist on disk, so callers can use it as the clone target.
- *   2. Each entry in `config.sources ?? config.stashes[]` (in declared order), excluding the
+ *   2. Each entry in `config.sources[]` (in declared order), excluding the
  *      one already emitted as the primary.
  *   3. Each entry in `config.installed[]` (registry-managed stashes).
  *
@@ -69,7 +69,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
   // (1) + (2) Single pass over declared stashes — primary first if present,
   // then the rest in declared order. The primary's directory is already
   // injected as `sources[0]` above, so we only need to dedupe the source set.
-  const stashes = config.sources ?? config.stashes ?? [];
+  const stashes = getSources(config);
   const primaryIdx = stashes.findIndex((entry) => entry.primary === true);
   const ordered: SourceConfigEntry[] = [];
   if (primaryIdx >= 0) {
@@ -257,8 +257,7 @@ function isValidDirectory(dir: string): boolean {
 export async function ensureSourceCaches(config?: AkmConfig, options?: { force?: boolean }): Promise<void> {
   const cfg = config ?? loadConfig();
   const force = options?.force === true;
-  // Use sources[] (current key) with fallback to stashes[] (deprecated, one-release compat).
-  const entries = cfg.sources ?? cfg.stashes ?? [];
+  const entries = getSources(cfg);
   for (const entry of entries) {
     if (!GIT_STASH_TYPES.has(entry.type) || !entry.url || entry.enabled === false) continue;
     try {

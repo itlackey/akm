@@ -167,7 +167,7 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard: detects services and walks you through embeddings, LLM, registries, sources, and agent profiles. Writes config once at the end.",
+      "Interactive configuration wizard. Step 1: configure a small model connection (for indexing/enrichment). Step 2: configure an agent connection (CLI agent, embedded SDK, or none). Shows which features are enabled at the end.",
   },
   async run() {
     await runWithJsonErrors(async () => {

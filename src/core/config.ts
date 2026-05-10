@@ -174,6 +174,21 @@ export interface ConfiguredSource {
 }
 
 /**
+ * Provider-specific options for a configured source entry.
+ * Fields accessed by name are listed explicitly for type safety; additional
+ * provider-specific keys are accepted via the index signature.
+ */
+export interface SourceConfigEntryOptions {
+  /**
+   * When true and the source is a git repo, akm will run `git push` after
+   * every asset commit (write-source.ts §5).
+   */
+  pushOnCommit?: boolean;
+  /** Pass-through catch-all for provider-specific options not listed above. */
+  [key: string]: unknown;
+}
+
+/**
  * @deprecated Use {@link ConfiguredSource} (runtime) and let the loader derive
  * {@link SourceSpec} from the persisted fields. `SourceConfigEntry` describes
  * the on-disk JSON shape; new code should not reach for it directly.
@@ -193,8 +208,8 @@ export interface SourceConfigEntry {
   writable?: boolean;
   /** Marks this entry as the primary working stash (replaces top-level stashDir). */
   primary?: boolean;
-  /** Arbitrary provider-specific options */
-  options?: Record<string, unknown>;
+  /** Typed provider-specific options (see {@link SourceConfigEntryOptions}). */
+  options?: SourceConfigEntryOptions;
   /** If set, all .md files in this stash are indexed as wiki pages under this wiki name */
   wikiName?: string;
 }
@@ -253,14 +268,6 @@ export interface AkmConfig {
   stashInheritance?: "merge" | "replace";
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
-  /**
-   * @deprecated Removed. The legacy `stashes[]` config key is no longer
-   * loaded or persisted (one-cycle compat shim retired in #284). The field
-   * is retained on the runtime type only as a structural placeholder for
-   * defensive `config.sources ?? config.stashes ?? []` reads in downstream
-   * call sites; it is never populated by the loader.
-   */
-  stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
   security?: SecurityConfig;
   /** Output defaults for CLI rendering */
@@ -341,6 +348,46 @@ export const DEFAULT_CONFIG: AkmConfig = {
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
+// ── Private helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns `value` if it is a finite positive integer; otherwise `undefined`.
+ * Used to validate numeric config fields like `dimension`, `contextLength`,
+ * `timeoutMs`, `maxTokens`, and `ollamaOptions.num_ctx`.
+ */
+function parsePositiveInteger(fieldPath: string, value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Returns `value` if it is a string present in `allowed`; otherwise `undefined`.
+ */
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
+/**
+ * Validates that `url` starts with `http://` or `https://`. Returns `url` on
+ * success and warns+returns `undefined` on failure. `fieldName` is used only
+ * in the warning message.
+ */
+function isValidHttpUrl(url: unknown, fieldName: string): string | undefined {
+  if (typeof url !== "string" || !url) return undefined;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    warn(`[akm] Ignoring ${fieldName}: endpoint must start with http:// or https://, got "${url}"`);
+    return undefined;
+  }
+  return url;
+}
+
+function clearAllCaches(): void {
+  cachedConfig = undefined;
+  cachedUserConfig = undefined;
+}
+
 export function getConfigDir(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string {
   return _getConfigDir(env, platform);
 }
@@ -357,8 +404,7 @@ let cachedConfig: { config: AkmConfig; signature: string } | undefined;
 let cachedUserConfig: { config: AkmConfig; path: string; mtime: number; size: number; contentHash: string } | undefined;
 
 export function resetConfigCache(): void {
-  cachedConfig = undefined;
-  cachedUserConfig = undefined;
+  clearAllCaches();
 }
 
 function hashString(text: string): string {
@@ -419,6 +465,20 @@ export function loadUserConfig(): AkmConfig {
   return finalConfig;
 }
 
+export function getSources(config: AkmConfig): SourceConfigEntry[] {
+  return config.sources ?? [];
+}
+
+export function getEffectiveRegistries(config: AkmConfig): RegistryConfigEntry[] {
+  return config.registries ?? DEFAULT_CONFIG.registries ?? [];
+}
+
+export function requireLlmConfig(config: AkmConfig): LlmConnectionConfig {
+  if (!config.llm)
+    throw new ConfigError("LLM is not configured. Run `akm config set llm` to configure one.", "LLM_NOT_CONFIGURED");
+  return config.llm;
+}
+
 export function loadConfig(): AkmConfig {
   const configPaths = getEffectiveConfigPaths();
   const signature = getConfigSignature(configPaths);
@@ -439,8 +499,7 @@ export function loadConfig(): AkmConfig {
 }
 
 export function saveConfig(config: AkmConfig): void {
-  cachedConfig = undefined;
-  cachedUserConfig = undefined;
+  clearAllCaches();
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
@@ -484,31 +543,7 @@ function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
   const current = loadUserConfig();
-  // Shallow-merge for top-level scalar fields; deep-merge known object-type config keys.
-  const merged: AkmConfig = { ...current, ...partial };
-  // Deep-merge output — partial update should not wipe sibling keys
-  if (current.output && partial.output && partial.output !== current.output) {
-    merged.output = { ...current.output, ...partial.output };
-  }
-  // Deep-merge embedding — only when both sides are objects and partial does not intend to clear
-  if (current.embedding && partial.embedding && partial.embedding !== current.embedding) {
-    merged.embedding = { ...current.embedding, ...partial.embedding };
-  }
-  // Deep-merge llm — same pattern
-  if (current.llm && partial.llm && partial.llm !== current.llm) {
-    merged.llm = { ...current.llm, ...partial.llm };
-  }
-  // Deep-merge index per-pass entries so partial updates don't wipe siblings.
-  if (current.index && partial.index && partial.index !== current.index) {
-    const mergedIndex: IndexConfig = { ...current.index };
-    for (const [passName, passOverride] of Object.entries(partial.index)) {
-      mergedIndex[passName] = { ...(mergedIndex[passName] ?? {}), ...passOverride };
-    }
-    merged.index = mergedIndex;
-  }
-  if (current.security && partial.security && partial.security !== current.security) {
-    merged.security = mergeSecurityConfig(current.security, partial.security);
-  }
+  const merged = mergeLoadedConfig(current, partial);
   saveConfig(merged);
   return merged;
 }
@@ -522,16 +557,8 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
  * combining multiple config sources so project config files only override what
  * they set.
  */
-function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
+function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   const config: Partial<AkmConfig> = {};
-
-  if (Array.isArray(raw.stashes)) {
-    throw new ConfigError(
-      "The legacy `stashes[]` config key is no longer supported; rename it to `sources[]`.",
-      "INVALID_CONFIG_FILE",
-      `Edit ${_getConfigPath()} and replace \`stashes\` with \`sources\`.`,
-    );
-  }
 
   if (typeof raw.stashDir === "string" && raw.stashDir.trim()) {
     config.stashDir = raw.stashDir.trim();
@@ -540,7 +567,7 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   // Backward compatibility: coerce legacy boolean values to string
   if (typeof raw.semanticSearchMode === "boolean") {
     config.semanticSearchMode = raw.semanticSearchMode ? "auto" : "off";
-  } else if (raw.semanticSearchMode === "off" || raw.semanticSearchMode === "auto") {
+  } else if (isOneOf(raw.semanticSearchMode, ["off", "auto"] as const)) {
     config.semanticSearchMode = raw.semanticSearchMode;
   }
 
@@ -559,7 +586,7 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   const registries = parseRegistriesConfig(raw.registries);
   if (registries) config.registries = registries;
 
-  if (raw.stashInheritance === "replace" || raw.stashInheritance === "merge") {
+  if (isOneOf(raw.stashInheritance, ["replace", "merge"] as const)) {
     config.stashInheritance = raw.stashInheritance;
   }
 
@@ -599,17 +626,25 @@ function pickKnownKeys(raw: Record<string, unknown>): Partial<AkmConfig> {
   return config;
 }
 
-function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
-  const raw = readConfigObject(configPath);
-  const expanded = raw ? expandEnvVars(raw) : undefined;
-  return expanded ? pickKnownKeys(expanded) : undefined;
-}
-
-function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
+function parseConfigText(text: string): Partial<AkmConfig> | undefined {
   const raw = parseConfigObjectFromText(text);
   if (!raw) return undefined;
   const expanded = expandEnvVars(raw);
-  return pickKnownKeys(expanded);
+  return parseConfigLayer(expanded);
+}
+
+function readNormalizedConfig(configPath: string): Partial<AkmConfig> | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return undefined;
+  }
+  return parseConfigText(text);
+}
+
+function readNormalizedConfigFromText(text: string): Partial<AkmConfig> | undefined {
+  return parseConfigText(text);
 }
 
 function parseOutputConfig(value: unknown): OutputConfig | undefined {
@@ -617,11 +652,11 @@ function parseOutputConfig(value: unknown): OutputConfig | undefined {
   const obj = value as Record<string, unknown>;
   const output: OutputConfig = {};
 
-  if (obj.format === "json" || obj.format === "yaml" || obj.format === "text") {
+  if (isOneOf(obj.format, ["json", "yaml", "text"] as const)) {
     output.format = obj.format;
   }
 
-  if (obj.detail === "brief" || obj.detail === "normal" || obj.detail === "full") {
+  if (isOneOf(obj.detail, ["brief", "normal", "full"] as const)) {
     output.detail = obj.detail;
   }
 
@@ -774,8 +809,7 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     }
     return undefined;
   }
-  if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    warn(`[akm] Ignoring embedding config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
+  if (!isValidHttpUrl(obj.endpoint, "embedding config")) {
     // Still return localModel-only config if localModel was set
     if (localModel) {
       return { endpoint: "", model: "", localModel };
@@ -800,15 +834,9 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     result.provider = obj.provider;
   }
   if ("dimension" in obj) {
-    if (
-      typeof obj.dimension !== "number" ||
-      !Number.isFinite(obj.dimension) ||
-      !Number.isInteger(obj.dimension) ||
-      obj.dimension <= 0
-    ) {
-      return undefined;
-    }
-    result.dimension = obj.dimension;
+    const dim = parsePositiveInteger("embedding.dimension", obj.dimension);
+    if (dim === undefined) return undefined;
+    result.dimension = dim;
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
@@ -817,26 +845,16 @@ function parseEmbeddingConfig(value: unknown): EmbeddingConnectionConfig | undef
     result.localModel = localModel;
   }
   if ("contextLength" in obj) {
-    if (
-      typeof obj.contextLength !== "number" ||
-      !Number.isFinite(obj.contextLength) ||
-      !Number.isInteger(obj.contextLength) ||
-      obj.contextLength <= 0
-    ) {
-      return undefined;
-    }
-    result.contextLength = obj.contextLength;
+    const ctx = parsePositiveInteger("embedding.contextLength", obj.contextLength);
+    if (ctx === undefined) return undefined;
+    result.contextLength = ctx;
   }
   if (typeof obj.ollamaOptions === "object" && obj.ollamaOptions !== null && !Array.isArray(obj.ollamaOptions)) {
     const opts = obj.ollamaOptions as Record<string, unknown>;
     const parsed: EmbeddingConnectionConfig["ollamaOptions"] = {};
-    if (
-      typeof opts.num_ctx === "number" &&
-      Number.isFinite(opts.num_ctx) &&
-      Number.isInteger(opts.num_ctx) &&
-      opts.num_ctx > 0
-    ) {
-      parsed.num_ctx = opts.num_ctx;
+    const numCtx = parsePositiveInteger("embedding.ollamaOptions.num_ctx", opts.num_ctx);
+    if (numCtx !== undefined) {
+      parsed.num_ctx = numCtx;
     }
     if (Object.keys(parsed).length > 0) {
       result.ollamaOptions = parsed;
@@ -849,8 +867,7 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const obj = value as Record<string, unknown>;
   if (typeof obj.endpoint !== "string" || !obj.endpoint) return undefined;
-  if (!obj.endpoint.startsWith("http://") && !obj.endpoint.startsWith("https://")) {
-    warn(`[akm] Ignoring llm config: endpoint must start with http:// or https://, got "${obj.endpoint}"`);
+  if (!isValidHttpUrl(obj.endpoint, "llm config")) {
     return undefined;
   }
   if (!obj.endpoint.endsWith("/chat/completions")) {
@@ -871,26 +888,14 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     result.temperature = obj.temperature;
   }
   if ("timeoutMs" in obj) {
-    if (
-      typeof obj.timeoutMs !== "number" ||
-      !Number.isFinite(obj.timeoutMs) ||
-      !Number.isInteger(obj.timeoutMs) ||
-      obj.timeoutMs <= 0
-    ) {
-      return undefined;
-    }
-    result.timeoutMs = obj.timeoutMs;
+    const t = parsePositiveInteger("llm.timeoutMs", obj.timeoutMs);
+    if (t === undefined) return undefined;
+    result.timeoutMs = t;
   }
   if ("maxTokens" in obj) {
-    if (
-      typeof obj.maxTokens !== "number" ||
-      !Number.isFinite(obj.maxTokens) ||
-      !Number.isInteger(obj.maxTokens) ||
-      obj.maxTokens <= 0
-    ) {
-      return undefined;
-    }
-    result.maxTokens = obj.maxTokens;
+    const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);
+    if (m === undefined) return undefined;
+    result.maxTokens = m;
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
@@ -936,22 +941,8 @@ function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
       warn(`[akm] Ignoring llm.features.${key}: expected boolean, got ${typeof value}.`);
       continue;
     }
-    switch (key) {
-      case "memory_inference":
-        out.memory_inference = value;
-        break;
-      case "graph_extraction":
-        out.graph_extraction = value;
-        break;
-      case "curate_rerank":
-        out.curate_rerank = value;
-        break;
-      case "feedback_distillation":
-        out.feedback_distillation = value;
-        break;
-      // No default: LOCKED_LLM_FEATURE_KEYS is the source of truth for which
-      // keys are accepted. Adding a new locked key requires an arm here AND a
-      // field on LlmFeatureFlags above.
+    if (LOCKED_LLM_FEATURE_KEYS.has(key as keyof LlmFeatureFlags)) {
+      (out as Record<string, boolean>)[key] = value as boolean;
     }
   }
   return out;
@@ -1139,6 +1130,9 @@ function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined
   if (typeof obj.blockOnCritical === "boolean") config.blockOnCritical = obj.blockOnCritical;
   if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
   const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
+  if (!obj.registryAllowlist && obj.registryWhitelist) {
+    console.warn("[akm] config: `registryWhitelist` is deprecated; rename it to `registryAllowlist`");
+  }
   if (rawAllowlist) {
     config.registryAllowlist = rawAllowlist;
   }
@@ -1211,7 +1205,7 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
     );
   }
   if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-    entry.options = obj.options as Record<string, unknown>;
+    entry.options = obj.options as SourceConfigEntryOptions;
   }
   const wikiName = asNonEmptyString(obj.wikiName);
   if (wikiName) entry.wikiName = wikiName;

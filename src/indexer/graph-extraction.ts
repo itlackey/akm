@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../core/config";
+import { concurrentMap } from "../core/concurrent";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
@@ -143,25 +144,47 @@ export async function runGraphExtractionPass(
   let totalEntities = 0;
   let totalRelations = 0;
 
-  for (const candidate of eligible) {
-    if (signal?.aborted) break;
-    const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal);
-    if (extraction.entities.length === 0) continue;
+  const extractionResults = await concurrentMap(
+    eligible,
+    async (candidate) => {
+      if (signal?.aborted) return undefined;
+      const extraction = await extractGraphFromBody(
+        llmConfig,
+        candidate.body,
+        signal,
+        config,
+        (evt) => {
+          console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+        },
+      );
+      if (extraction.entities.length === 0) return undefined;
+      return {
+        absPath: candidate.absPath,
+        type: candidate.type,
+        entities: extraction.entities,
+        relations: extraction.relations,
+      };
+    },
+    4,
+  );
+
+  for (const result of extractionResults) {
+    if (!result) continue;
     nodes.push({
-      path: candidate.absPath,
-      type: candidate.type,
+      path: result.absPath,
+      type: result.type,
       // Lower-case once at write time so the search-time boost can do a
       // single case-folded comparison without re-canonicalising on every
       // query.
-      entities: extraction.entities.map((e) => e.toLowerCase()),
-      relations: extraction.relations.map((r) => ({
+      entities: result.entities.map((e) => e.toLowerCase()),
+      relations: result.relations.map((r) => ({
         from: r.from.toLowerCase(),
         to: r.to.toLowerCase(),
         ...(r.type ? { type: r.type.toLowerCase() } : {}),
       })),
     });
-    totalEntities += extraction.entities.length;
-    totalRelations += extraction.relations.length;
+    totalEntities += result.entities.length;
+    totalRelations += result.relations.length;
   }
 
   if (nodes.length === 0) {

@@ -20,7 +20,7 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
-import { DEFAULT_CONFIG, getConfigPath, loadUserConfig, saveConfig } from "../core/config";
+import { DEFAULT_CONFIG, getConfigPath, getSources, loadUserConfig, saveConfig } from "../core/config";
 import { getDefaultStashDir } from "../core/paths";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
@@ -816,7 +816,7 @@ export async function stepAddSources(
   current: AkmConfig,
   options?: { promptForAdditional?: boolean },
 ): Promise<SourceConfigEntry[]> {
-  const existingSources: SourceConfigEntry[] = [...(current.sources ?? current.stashes ?? [])];
+  const existingSources: SourceConfigEntry[] = [...getSources(current)];
   const sources: SourceConfigEntry[] = [];
 
   if (existingSources.length > 0) {
@@ -905,7 +905,7 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
     return [];
   }
 
-  const existingPaths = new Set((current.sources ?? current.stashes ?? []).map((s) => s.path));
+  const existingPaths = new Set(getSources(current).map((s) => s.path));
 
   // Filter out platforms already configured
   const newPlatforms = platforms.filter((pl) => !existingPaths.has(pl.path));
@@ -939,6 +939,466 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
     }
   }
   return entries;
+}
+
+// ── Two-step connection configuration ──────────────────────────────────────
+
+/**
+ * Small model connection options for enrichment features (Step 1/2).
+ */
+interface SmallModelProviderChoice {
+  /** "ollama" | "openai" | "lmstudio" | "custom" | "skip" */
+  provider: string;
+  endpoint?: string;
+  model?: string;
+  apiKey?: string;
+}
+
+/**
+ * Result of the small model connection step.
+ */
+export interface SmallModelConnectionResult {
+  llm?: LlmConnectionConfig;
+  /** True when user chose to skip the small model step entirely. */
+  skipped: boolean;
+  /** Detected Ollama endpoint (when available), surfaced for the agent step. */
+  ollamaEndpoint?: string;
+}
+
+/**
+ * Step 1/2: Configure the small model connection used for enrichment features.
+ *
+ * Detects Ollama automatically and pre-selects it. The user may also choose
+ * OpenAI, LM Studio, a custom endpoint, or skip the step entirely.
+ */
+export async function stepSmallModelConnection(current: AkmConfig): Promise<SmallModelConnectionResult> {
+  p.log.step("Step 1/2: Configure your small model connection");
+
+  p.note(
+    [
+      "This connection is used for background processing:",
+      "  • akm index --enrich  (metadata enrichment, memory inference, graph extraction)",
+      "  • akm distill         (lesson distillation)",
+      "  • akm remember --enrich (memory compression)",
+      "  • akm curate --rerank   (search reranking)",
+    ].join("\n"),
+  );
+
+  // Probe for Ollama in the background while showing the note.
+  const spin = p.spinner();
+  spin.start("Detecting local services...");
+  const ollama = await detectOllama();
+  spin.stop(ollama.available ? `Ollama detected at ${ollama.endpoint}` : "No local services detected");
+
+  const ollamaEndpoint = ollama.available ? ollama.endpoint : undefined;
+
+  const providerOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  if (ollama.available) {
+    providerOptions.push({
+      value: "ollama",
+      label: "Ollama (local)",
+      hint: `detected at ${ollama.endpoint}`,
+    });
+  }
+  providerOptions.push(
+    { value: "openai", label: "OpenAI", hint: "requires AKM_LLM_API_KEY" },
+    { value: "lmstudio", label: "LM Studio / local server", hint: "http://localhost:1234" },
+    { value: "custom", label: "Custom OpenAI-compatible endpoint" },
+    { value: "skip", label: "Skip — disable enrichment features" },
+  );
+
+  if (current.llm) {
+    providerOptions.push({
+      value: "keep",
+      label: `Keep current: ${current.llm.provider ?? current.llm.endpoint}`,
+      hint: current.llm.model,
+    });
+  }
+
+  const initialValue = current.llm ? "keep" : ollama.available ? "ollama" : "openai";
+
+  const providerChoice = await prompt(() =>
+    p.select({
+      message: "Provider:",
+      options: providerOptions,
+      initialValue,
+    }),
+  );
+
+  if (providerChoice === "keep") {
+    return { llm: cloneLlmConfig(current.llm), skipped: false, ollamaEndpoint };
+  }
+
+  if (providerChoice === "skip") {
+    p.note(
+      [
+        "Enrichment features disabled:",
+        "  • akm index --enrich  — LLM metadata enrichment",
+        "  • akm distill         — lesson generation",
+        "  • akm remember --enrich",
+        "  • akm curate --rerank",
+        "",
+        "You can configure this later with `akm setup`.",
+      ].join("\n"),
+      "Warning",
+    );
+    return { llm: undefined, skipped: true, ollamaEndpoint };
+  }
+
+  let llm: LlmConnectionConfig;
+
+  if (providerChoice === "ollama") {
+    const ollamaChatModels = ollama.models.filter(
+      (m) => !m.includes("embed") && !m.includes("nomic") && !m.includes("minilm") && !m.includes("bge"),
+    );
+    let model: string;
+    if (ollamaChatModels.length > 0) {
+      model = await prompt(() =>
+        p.select({
+          message: "Model name:",
+          options: [
+            ...ollamaChatModels.map((m) => ({ value: m, label: m })),
+            { value: "__custom__", label: "Enter a model name manually..." },
+          ],
+          initialValue: ollamaChatModels[0],
+        }),
+      );
+      if (model === "__custom__") {
+        model = await prompt(() =>
+          p.text({
+            message: "Model name:",
+            placeholder: "llama3.2",
+            validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+          }),
+        );
+      }
+    } else {
+      model = await prompt(() =>
+        p.text({
+          message: "Model name (e.g. llama3.2):",
+          placeholder: "llama3.2",
+          defaultValue: "llama3.2",
+          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+        }),
+      );
+    }
+    llm = {
+      provider: "ollama",
+      endpoint: `${ollama.endpoint}/v1/chat/completions`,
+      model: model.trim(),
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+  } else if (providerChoice === "openai") {
+    const model = await prompt(() =>
+      p.text({
+        message: "Model name:",
+        placeholder: "gpt-4o-mini",
+        defaultValue: "gpt-4o-mini",
+        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+      }),
+    );
+    if (!process.env.AKM_LLM_API_KEY) {
+      p.log.info("Set AKM_LLM_API_KEY in your shell before running `akm index`.");
+    }
+    llm = {
+      provider: "openai",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      model: model.trim() || "gpt-4o-mini",
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+  } else if (providerChoice === "lmstudio") {
+    const endpoint = await prompt(() =>
+      p.text({
+        message: "Endpoint URL:",
+        placeholder: "http://localhost:1234/v1/chat/completions",
+        defaultValue: "http://localhost:1234/v1/chat/completions",
+        validate: (v) => {
+          if (!v?.trim()) return "Endpoint cannot be empty";
+          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
+        },
+      }),
+    );
+    const model = await prompt(() =>
+      p.text({
+        message: "Model name:",
+        placeholder: "local-model",
+        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+      }),
+    );
+    llm = {
+      provider: "lmstudio",
+      endpoint: endpoint.trim(),
+      model: model.trim(),
+      temperature: 0.3,
+      maxTokens: 1024,
+    };
+  } else {
+    // custom
+    const endpoint = await prompt(() =>
+      p.text({
+        message: "OpenAI-compatible chat completions endpoint:",
+        placeholder: "https://your-host/v1/chat/completions",
+        validate: (v) => {
+          if (!v?.trim()) return "Endpoint cannot be empty";
+          if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
+        },
+      }),
+    );
+    const model = await prompt(() =>
+      p.text({
+        message: "Model name:",
+        placeholder: "gpt-4o-mini",
+        validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+      }),
+    );
+    const apiKeyInput = await promptOrBack(() =>
+      p.text({
+        message: "API key (optional — press Enter to skip):",
+        placeholder: "",
+      }),
+    );
+    llm = {
+      provider: "custom",
+      endpoint: endpoint.trim(),
+      model: model.trim(),
+      temperature: 0.3,
+      maxTokens: 1024,
+      ...(apiKeyInput?.trim() ? { apiKey: apiKeyInput.trim() } : {}),
+    };
+  }
+
+  // Best-effort probe — never blocks setup.
+  const probeSpin = p.spinner();
+  probeSpin.start("Probing LLM (structured-output round-trip)...");
+  const probe = await probeLlmCapabilities(llm);
+  if (probe.reachable && probe.structuredOutput) {
+    probeSpin.stop("LLM reachable; structured output verified.");
+    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: true };
+  } else if (probe.reachable) {
+    probeSpin.stop("LLM reachable but structured-output probe failed.");
+    llm.capabilities = { ...(llm.capabilities ?? {}), structuredOutput: false };
+  } else {
+    probeSpin.stop("LLM not reachable.");
+    p.log.warn(
+      `Could not reach the LLM endpoint${probe.error ? ` (${probe.error})` : ""}. Configuration was saved; verify your endpoint and API key, then retry.`,
+    );
+  }
+
+  return { llm, skipped: false, ollamaEndpoint };
+}
+
+/**
+ * Step 2/2: Configure the agent connection used for agentic features.
+ *
+ * Options depend on whether Step 1 was completed or skipped.
+ */
+export async function stepAgentConnection(
+  current: AkmConfig,
+  smallModel: SmallModelConnectionResult,
+): Promise<AgentConfig | undefined> {
+  p.log.step("Step 2/2: Configure your agent connection");
+
+  p.note(
+    [
+      "This connection is used for agentic commands:",
+      "  • akm propose   (generate improvement proposals)",
+      "  • akm reflect   (reflect on assets and generate proposals)",
+      "  • akm tasks run (run automated task prompts)",
+    ].join("\n"),
+  );
+
+  // Detect available CLI agents.
+  const detections = detectAgentCliProfiles(current.agent);
+  const availableClis = detections.filter((d) => d.available);
+
+  const agentOptions: Array<{ value: string; label: string; hint?: string }> = [];
+
+  if (!smallModel.skipped && smallModel.llm) {
+    agentOptions.push({
+      value: "same-connection",
+      label: "Same connection, select model",
+      hint: `uses ${smallModel.llm.endpoint.replace("/v1/chat/completions", "")}`,
+    });
+  }
+  agentOptions.push({ value: "new-connection", label: "New connection (different endpoint)" });
+
+  if (availableClis.length > 0) {
+    agentOptions.push({
+      value: "cli-agent",
+      label: "Installed CLI agent",
+      hint: availableClis.map((d) => d.name).join(", ") + " detected",
+    });
+  }
+  agentOptions.push({ value: "none", label: "None — disable agentic features" });
+
+  if (current.agent) {
+    const currentDesc = current.agent.default
+      ? `CLI: ${current.agent.default}`
+      : current.agent.profiles?.default?.model
+        ? `SDK: ${current.agent.profiles.default.model}`
+        : "configured";
+    agentOptions.push({ value: "keep", label: `Keep current: ${currentDesc}` });
+  }
+
+  const initialAgentValue = current.agent
+    ? "keep"
+    : availableClis.length > 0 && smallModel.skipped
+      ? "cli-agent"
+      : !smallModel.skipped && smallModel.llm
+        ? "same-connection"
+        : availableClis.length > 0
+          ? "cli-agent"
+          : "none";
+
+  const agentChoice = await prompt(() =>
+    p.select({
+      message: "How do you want to run agent commands?",
+      options: agentOptions,
+      initialValue: initialAgentValue,
+    }),
+  );
+
+  if (agentChoice === "keep") {
+    return current.agent;
+  }
+
+  if (agentChoice === "none") {
+    p.note(
+      [
+        "Agentic features disabled:",
+        '  • akm propose — will show "no agent configured" error',
+        '  • akm reflect — will show "no agent configured" error',
+        '  • akm tasks run — will show "no agent configured" error',
+        "",
+        "You can configure this later with `akm setup`.",
+      ].join("\n"),
+      "Warning",
+    );
+    return undefined;
+  }
+
+  if (agentChoice === "same-connection") {
+    if (smallModel.skipped || !smallModel.llm) {
+      p.log.warn(
+        "You skipped the small model connection. Configure one to use the same connection. Falling back to 'new connection'.",
+      );
+      // Fall through to new-connection flow
+    } else {
+      const baseEndpoint = smallModel.llm.endpoint.replace("/v1/chat/completions", "");
+      p.log.info(`Endpoint: ${baseEndpoint} (from Step 1)`);
+      const agentModel = await prompt(() =>
+        p.text({
+          message: "Model to use for agent tasks (same model is fine, larger models work better):",
+          placeholder: "qwen2.5-coder:32b",
+          validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+        }),
+      );
+      const profileName = smallModel.llm.provider ?? "default";
+      return {
+        ...(current.agent ?? {}),
+        profiles: {
+          ...(current.agent?.profiles ?? {}),
+          [profileName]: {
+            ...(current.agent?.profiles?.[profileName] ?? {}),
+            sdkMode: true,
+            model: agentModel.trim(),
+            endpoint: smallModel.llm.endpoint,
+          },
+        },
+        default: profileName,
+      };
+    }
+  }
+
+  if (agentChoice === "cli-agent") {
+    if (availableClis.length === 0) {
+      p.log.warn("No agent CLIs detected on PATH.");
+      return current.agent;
+    }
+
+    const initialCli = pickDefaultAgentProfile(detections, current.agent?.default) ?? availableClis[0]?.name;
+    const selectedCli = await prompt(() =>
+      p.select({
+        message: "Which CLI agent?",
+        options: availableClis.map((d) => ({
+          value: d.name,
+          label: d.name,
+          hint: d.resolvedPath ?? d.bin,
+        })),
+        initialValue: initialCli,
+      }),
+    );
+
+    return {
+      ...(current.agent ?? {}),
+      default: selectedCli,
+    };
+  }
+
+  // "new-connection" (also fall-through from "same-provider" when Step 1 was skipped)
+  const newEndpoint = await prompt(() =>
+    p.text({
+      message: "OpenAI-compatible chat completions endpoint:",
+      placeholder: "https://your-host/v1/chat/completions",
+      validate: (v) => {
+        if (!v?.trim()) return "Endpoint cannot be empty";
+        if (!v.startsWith("http://") && !v.startsWith("https://")) return "Must start with http:// or https://";
+      },
+    }),
+  );
+  const newApiKeyInput = await promptOrBack(() =>
+    p.text({
+      message: "API key (optional — press Enter to skip):",
+      placeholder: "",
+    }),
+  );
+  const newModel = await prompt(() =>
+    p.text({
+      message: "Model name (larger is better, e.g. gpt-4o):",
+      placeholder: "gpt-4o",
+      validate: (v) => (!v?.trim() ? "Model name cannot be empty" : undefined),
+    }),
+  );
+
+  const customProfile: import("../integrations/agent/config").AgentProfileConfig = {
+    sdkMode: true,
+    endpoint: newEndpoint.trim(),
+    model: newModel.trim(),
+    ...(newApiKeyInput?.trim() ? { apiKey: newApiKeyInput.trim() } : {}),
+  };
+
+  return {
+    ...(current.agent ?? {}),
+    profiles: {
+      ...(current.agent?.profiles ?? {}),
+      custom: customProfile,
+    },
+    default: "custom",
+  };
+}
+
+/**
+ * Print a feature capability summary after both connection steps are complete.
+ */
+function printCapabilitySummary(smallModelSkipped: boolean, agentConfigured: boolean): void {
+  const lines: string[] = ["Setup complete. Here's what's enabled:", ""];
+  lines.push("  ✓ akm search, akm curate, akm show — always available");
+
+  if (!smallModelSkipped) {
+    lines.push("  ✓ akm index --enrich, akm distill, akm remember — small model configured");
+  } else {
+    lines.push("  ✗ akm index --enrich, akm distill, akm remember — run `akm setup` to enable");
+  }
+
+  if (agentConfigured) {
+    lines.push("  ✓ akm propose, akm reflect, akm tasks — agent configured");
+  } else {
+    lines.push("  ✗ akm propose, akm reflect, akm tasks — run `akm setup` to enable");
+  }
+
+  p.note(lines.join("\n"), "Feature Summary");
 }
 
 // ── Agent CLI detection step (v1 spec §12.3) ────────────────────────────────
@@ -1212,6 +1672,17 @@ export async function runSetupWizard(): Promise<void> {
   }));
   await runSetupSteps(labeledSteps, ctx);
 
+  // ── Two-step connection configuration ──────────────────────────────────────
+  // Step 1/2: Small model connection (for enrichment features)
+  const smallModelResult = await stepSmallModelConnection(ctx.config);
+  if (!smallModelResult.skipped) {
+    ctx.apply({ llm: smallModelResult.llm });
+  }
+
+  // Step 2/2: Agent connection (for agentic features)
+  const agentConfig = await stepAgentConnection(ctx.config, smallModelResult);
+  ctx.apply({ agent: agentConfig });
+
   const newConfig: AkmConfig = {
     ...ctx.config,
     // Preserve fields the steps don't manage explicitly.
@@ -1222,7 +1693,11 @@ export async function runSetupWizard(): Promise<void> {
   const embedding = newConfig.embedding;
   const llm = newConfig.llm;
   const registries = newConfig.registries;
-  const allStashes = newConfig.sources ?? newConfig.stashes ?? [];
+  const allStashes = getSources(newConfig);
+
+  // Feature capability summary
+  const agentConfigured = Boolean(agentConfig);
+  printCapabilitySummary(smallModelResult.skipped, agentConfigured);
 
   // Confirm before saving
   const effectiveRegistries = registries ?? DEFAULT_CONFIG.registries ?? [];

@@ -17,7 +17,7 @@ const REQUIRED_PROPOSAL_FIELDS = ["id", "ref", "status", "source", "sourceRun", 
 
 const REQUIRED_PROPOSAL_COMMANDS = ["proposals", "show proposal", "diff proposal", "accept", "reject"];
 
-const REQUIRED_EVENTS = ["propose_invoked", "reflect_invoked", "distill_invoked", "promoted", "rejected"];
+const REQUIRED_EVENTS = ["improve_invoked", "promoted", "rejected"];
 
 describe("v1 spec §11 — proposal queue", () => {
   const spec = readDoc(SPEC_PATH);

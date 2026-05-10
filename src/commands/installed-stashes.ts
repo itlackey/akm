@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isWithin, resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
+import { getSources, loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { akmIndex } from "../indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../integrations/lockfile";
@@ -37,7 +37,7 @@ export async function akmListSources(input?: { stashDir?: string; kind?: SourceK
 
   // Stash entries — each entry exposes its provider type as kind (spec §2.1).
   // Writable defaults: true for filesystem, false for git/npm/website (CLAUDE.md "Writes").
-  for (const stash of config.sources ?? config.stashes ?? []) {
+  for (const stash of getSources(config)) {
     const kind: SourceKind = (stash.type as SourceKind) ?? "filesystem";
     if (kindFilter && !kindFilter.includes(kind)) continue;
 
@@ -140,7 +140,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
         stashRoot: entry.stashRoot,
       },
       config: {
-        sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+        sourceCount: getSources(updatedConfig).length,
         installedKitCount: updatedConfig.installed?.length ?? 0,
       },
       index: {
@@ -174,7 +174,7 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
       stashRoot: removedEntry.path ?? "",
     },
     config: {
-      sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+      sourceCount: getSources(updatedConfig).length,
       installedKitCount: updatedConfig.installed?.length ?? 0,
     },
     index: {
@@ -202,7 +202,7 @@ export async function akmUpdate(input?: {
   // Check if the target refers to a website source — those are syncable via
   // ensureWebsiteMirror and are stored in sources[] not installed[].
   if (target && !all) {
-    const stashes = config.sources ?? config.stashes ?? [];
+    const stashes = getSources(config);
     const isUrl = target.startsWith("http://") || target.startsWith("https://");
     const resolvedPath = !isUrl ? path.resolve(target) : undefined;
     const gitMatch = stashes.find((s) => {
@@ -231,7 +231,7 @@ export async function akmUpdate(input?: {
         all,
         processed: [],
         config: {
-          sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+          sourceCount: getSources(updatedConfig).length,
           installedKitCount: updatedConfig.installed?.length ?? 0,
         },
         index: {
@@ -261,7 +261,7 @@ export async function akmUpdate(input?: {
         all,
         processed: [],
         config: {
-          sourceCount: (updatedConfig.sources ?? updatedConfig.stashes ?? []).length,
+          sourceCount: getSources(updatedConfig).length,
           installedKitCount: updatedConfig.installed?.length ?? 0,
         },
         index: {
@@ -360,7 +360,7 @@ export async function akmUpdate(input?: {
     all,
     processed,
     config: {
-      sourceCount: (finalConfig.sources ?? finalConfig.stashes ?? []).length,
+      sourceCount: getSources(finalConfig).length,
       installedKitCount: finalConfig.installed?.length ?? 0,
     },
     index: {
@@ -390,7 +390,7 @@ function selectTargets(
 
   // Check if target matches a stash source and give a helpful message
   const config = loadConfig();
-  const stashes = config.sources ?? config.stashes ?? [];
+  const stashes = getSources(config);
   const isUrl = target.startsWith("http://") || target.startsWith("https://");
   const resolvedPath = !isUrl ? path.resolve(target) : undefined;
   const stashMatch = stashes.find((s) => {

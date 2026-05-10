@@ -24,6 +24,7 @@
  */
 
 import { TYPE_DIRS } from "../../core/asset-spec";
+import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 
 /** Agent-returned proposal payload (after JSON parse). */
 export interface AgentProposalPayload {
@@ -208,7 +209,8 @@ export function buildProposePrompt(input: ProposePromptInput): string {
  *  2. Prose preamble / postamble around the JSON object (handled by `extractEmbeddedJson`).
  */
 export function parseAgentProposalPayload(stdout: string): AgentProposalPayload {
-  const trimmed = stripJsonFences(stdout).trim();
+  // Strip <think> blocks and fences, then attempt full parse with embedded fallback.
+  const trimmed = stripCodeFences(stripThinkBlocks(stdout)).trim();
   if (!trimmed) throw new Error("agent produced empty output");
 
   let parsed: Record<string, unknown>;
@@ -218,7 +220,7 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
     // Agent output contains prose before/after the JSON object (e.g. a local
     // LLM that narrates before responding). Try extracting the first balanced
     // top-level `{…}` from the text rather than failing immediately.
-    const embedded = extractEmbeddedJson(trimmed);
+    const embedded = parseEmbeddedJsonResponse<Record<string, unknown>>(trimmed);
     if (!embedded) throw directErr;
     parsed = embedded;
   }
@@ -240,60 +242,10 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
 }
 
 /**
- * Extract the first balanced top-level `{…}` object from `text`. Used as a
- * fallback when direct `JSON.parse` fails due to surrounding prose. Kept
- * local to `agent/` (mirrors `parseEmbeddedJsonResponse` in `src/llm/client.ts`
- * without importing across the one-way boundary — v1 spec §9.7).
- */
-function extractEmbeddedJson(text: string): Record<string, unknown> | undefined {
-  for (let start = 0; start < text.length; start++) {
-    if (text[start] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === "\\") {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === "{") depth++;
-      if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-/**
  * Strip `\`\`\`json … \`\`\`` fences and `<think>…</think>` reasoning blocks
- * from agent output. Mirrors `client.ts` but kept local to `agent/` per v1
- * spec §9.7 (one-way boundary — `agent/` does not import from `llm/`).
+ * from agent output. Thin wrapper around `core/parse` helpers, kept exported
+ * for backward compatibility (re-exported from `integrations/agent/index.ts`).
  */
 export function stripJsonFences(text: string): string {
-  const stripped = text
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim();
-  const fenced = stripped.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/);
-  if (fenced) return fenced[1] ?? stripped;
-  return stripped;
+  return stripCodeFences(stripThinkBlocks(text));
 }
