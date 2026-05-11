@@ -17,7 +17,7 @@ import {
   type MemoryContradictionCandidate,
   type MemoryPruneCandidate,
 } from "../core/memory-improve";
-import { createProposal, listProposals } from "../core/proposals";
+import { listProposals } from "../core/proposals";
 import {
   closeDatabase,
   getAllEntries,
@@ -446,8 +446,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const schemaRepairs: Array<{
       ref: string;
       reason: string;
-      outcome: "queued" | "skipped" | "error";
-      proposalId?: string;
+      outcome: "written" | "skipped" | "error";
       error?: string;
     }> = [];
     const repairedRefs = new Set<string>();
@@ -464,8 +463,6 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       }
       if (agentProfileForRepair) {
-        const stashSources = resolveSourceEntries(options.stashDir);
-        const primaryStashForRepair = stashSources[0]?.path ?? options.stashDir;
         for (const failure of validationFailures) {
           if (Date.now() - startMs >= budgetMs) break;
 
@@ -505,25 +502,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
             const payload = parseAgentProposalPayload(agentResult.stdout);
 
-            if (primaryStashForRepair) {
-              const proposal = createProposal(primaryStashForRepair, {
-                ref: payload.ref || failure.ref,
-                source: "schema-repair",
-                payload: {
-                  content: payload.content,
-                  ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
-                },
-              });
-              schemaRepairs.push({
-                ref: failure.ref,
-                reason: failure.reason,
-                outcome: "queued",
-                proposalId: proposal.id,
-              });
-              repairedRefs.add(failure.ref);
-            } else {
-              schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-            }
+            // Write repaired content directly to the asset file — schema fixes
+            // are mechanical (add missing frontmatter), not editorial proposals.
+            fs.writeFileSync(filePath, payload.content, "utf8");
+            console.error(`[improve] schema-repair written: ${failure.ref}`);
+            schemaRepairs.push({
+              ref: failure.ref,
+              reason: failure.reason,
+              outcome: "written",
+            });
+            repairedRefs.add(failure.ref);
           } catch (e) {
             schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "error", error: String(e) });
           }
