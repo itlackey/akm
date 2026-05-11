@@ -14,6 +14,7 @@ import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
+import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 import {
   akmProposalAccept,
@@ -3012,6 +3013,28 @@ const agentCommand = defineCommand({
   },
 });
 
+const lintCommand = defineCommand({
+  meta: {
+    name: "lint",
+    description:
+      "Scan stash .md files for structural issues (unquoted colons, missing updated field, orphaned stubs, placeholder stubs, missing name/type, stale paths). Use --fix to auto-fix Tier 1 issues.",
+  },
+  args: {
+    fix: { type: "boolean", description: "Apply auto-fixes in place", default: false },
+    dir: { type: "string", description: "Override stash root directory (default: from config)" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = akmLint({
+        fix: args.fix ?? false,
+        dir: typeof args.dir === "string" && args.dir.trim() ? args.dir.trim() : undefined,
+      });
+      output("lint", result);
+      if (!result.ok) process.exit(EXIT_GENERAL);
+    });
+  },
+});
+
 const improveCommand = defineCommand({
   meta: {
     name: "improve",
@@ -3369,6 +3392,7 @@ const main = defineCommand({
     history: historyCommand,
     events: eventsCommand,
     agent: agentCommand,
+    lint: lintCommand,
     improve: improveCommand,
     propose: proposeCommand,
     proposals: proposalsCommand,

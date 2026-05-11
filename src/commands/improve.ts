@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { stringify as yamlStringify } from "yaml";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
@@ -28,8 +29,7 @@ import {
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
-import { type AgentConfig, requireAgentProfile, runAgent } from "../integrations/agent";
-import { buildSchemaRepairPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { chatCompletion } from "../llm/client";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -52,7 +52,7 @@ export interface AkmImproveOptions {
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
-  /** When true (default), attempt agent-driven schema repair on validation failures before skipping. Requires agent config. */
+  /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
 }
 
@@ -104,8 +104,7 @@ export interface AkmImproveResult {
   schemaRepairs?: Array<{
     ref: string;
     reason: string;
-    outcome: "queued" | "skipped" | "error";
-    proposalId?: string;
+    outcome: "written" | "skipped" | "error";
     error?: string;
   }>;
   consolidation?: ConsolidateResult;
@@ -453,16 +452,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
       const baseConfigForRepair = options.config ?? loadConfig();
-      const agentCfg: AgentConfig | undefined = baseConfigForRepair.agent;
-      let agentProfileForRepair: ReturnType<typeof requireAgentProfile> | undefined;
-      if (agentCfg) {
-        try {
-          agentProfileForRepair = requireAgentProfile(agentCfg);
-        } catch {
-          // No usable agent profile — skip repair pass silently.
-        }
-      }
-      if (agentProfileForRepair) {
+      const llmCfg = baseConfigForRepair.llm;
+      if (llmCfg) {
         for (const failure of validationFailures) {
           if (Date.now() - startMs >= budgetMs) break;
 
@@ -489,43 +480,47 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
           try {
             const raw = fs.readFileSync(filePath, "utf8");
-            const parsed = parseAssetRef(failure.ref);
+            const fm = parseFrontmatter(raw);
 
-            const prompt = buildSchemaRepairPrompt({
-              ref: failure.ref,
-              type: parsed.type,
-              name: parsed.name,
-              reason: failure.reason,
-              assetContent: raw,
-            });
+            // Only handle "missing description" via LLM — skip unknown reasons.
+            if (!failure.reason.includes("missing description")) {
+              schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+              continue;
+            }
 
-            console.error(`[improve] schema-repair ${failure.ref} (${failure.reason})`);
+            console.error(`[improve] schema-repair ${failure.ref} (missing description)`);
 
-            const agentResult = await runAgent(agentProfileForRepair, prompt, {
-              ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-            });
+            const bodyPreview = (fm.content ?? raw).slice(0, 2000);
+            const llmResponse = await chatCompletion(llmCfg, [
+              {
+                role: "system",
+                content:
+                  "You generate concise asset descriptions. Respond with exactly one sentence — no preamble, no quotes, no period at the end unless natural. The sentence describes what this asset is and what it covers.",
+              },
+              {
+                role: "user",
+                content: `Write a one-sentence description for this ${parseAssetRef(failure.ref).type} asset:\n\n${bodyPreview}`,
+              },
+            ]);
 
-            if (!agentResult.ok) {
+            const description = llmResponse.trim().replace(/^["']|["']$/g, "");
+            if (!description) {
               schemaRepairs.push({
                 ref: failure.ref,
                 reason: failure.reason,
                 outcome: "error",
-                error: agentResult.error ?? `agent failure (${agentResult.reason ?? "unknown"})`,
+                error: "LLM returned empty description",
               });
               continue;
             }
 
-            const payload = parseAgentProposalPayload(agentResult.stdout);
-
-            // Write repaired content directly to the asset file — schema fixes
-            // are mechanical (add missing frontmatter), not editorial proposals.
-            fs.writeFileSync(filePath, payload.content, "utf8");
+            // Patch description into frontmatter and rewrite the file.
+            const newFm = { ...fm.data, description };
+            const fmStr = yamlStringify(newFm).trimEnd();
+            const newContent = `---\n${fmStr}\n---\n${fm.content}`;
+            fs.writeFileSync(filePath, newContent, "utf8");
             console.error(`[improve] schema-repair written: ${failure.ref}`);
-            schemaRepairs.push({
-              ref: failure.ref,
-              reason: failure.reason,
-              outcome: "written",
-            });
+            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "written" });
             repairedRefs.add(failure.ref);
           } catch (e) {
             schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "error", error: String(e) });
