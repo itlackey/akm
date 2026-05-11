@@ -43,7 +43,7 @@ export interface ConsolidateResult {
   shape: "consolidate-result";
   dryRun: boolean;
   previewOnly: boolean;
-  source: string;
+  target: string;
   processed: number;
   merged: number;
   deleted: number;
@@ -54,11 +54,10 @@ export interface ConsolidateResult {
 }
 
 export interface AkmConsolidateOptions {
-  source?: string;
-  dryRun?: boolean;
-  previewWithAi?: boolean;
-  execute?: boolean;
-  yes?: boolean;
+  target?: string; // which source to target; defaults to primary writable stash
+  dryRun?: boolean; // generate AI plan but skip all writes
+  autoAccept?: "safe"; // skip interactive confirmation (mirrors improve --auto-accept)
+  task?: string; // extra guidance appended to the system prompt
   stashDir?: string;
   config?: AkmConfig;
 }
@@ -85,7 +84,7 @@ Return ONLY JSON (no prose, no code fences):
 
 // ── Memory loading ───────────────────────────────────────────────────────────
 
-interface MemoryEntry {
+export interface MemoryEntry {
   name: string;
   filePath: string;
   description: string;
@@ -131,7 +130,7 @@ function loadMemoriesFromFs(memoriesDir: string, stashDir: string): MemoryEntry[
 
 // ── Chunk helpers ────────────────────────────────────────────────────────────
 
-function buildChunkPrompt(
+export function buildChunkPrompt(
   sourceName: string,
   memories: MemoryEntry[],
   chunkIndex: number,
@@ -309,44 +308,34 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const stashDir = opts.stashDir ?? resolveStashDir();
 
   if (!isLlmFeatureEnabled(config, "memory_consolidation")) {
-    throw new ConfigError(
-      "The memory_consolidation feature is disabled. Set `llm.features.memory_consolidation: true` in your config.",
-      "INVALID_CONFIG_FILE",
-    );
+    return {
+      ok: true,
+      shape: "consolidate-result" as const,
+      dryRun: opts.dryRun ?? false,
+      previewOnly: false,
+      target: opts.target ?? stashDir,
+      processed: 0,
+      merged: 0,
+      deleted: 0,
+      promoted: [],
+      warnings: [],
+      durationMs: Date.now() - startMs,
+    };
   }
 
   checkForIncompleteJournal(stashDir);
 
   const warnings: string[] = [];
 
-  // -- Dry run: no AI, just list what's there --------------------------------
-  if (opts.dryRun) {
-    const memories = loadMemoriesForSource(opts.source, stashDir, warnings);
-    return {
-      ok: true,
-      shape: "consolidate-result",
-      dryRun: true,
-      previewOnly: false,
-      source: opts.source ?? stashDir,
-      processed: memories.length,
-      merged: 0,
-      deleted: 0,
-      promoted: [],
-      planned: [],
-      warnings,
-      durationMs: Date.now() - startMs,
-    };
-  }
-
-  const memories = loadMemoriesForSource(opts.source, stashDir, warnings);
+  const memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
   if (memories.length === 0) {
     return {
       ok: true,
       shape: "consolidate-result",
-      dryRun: false,
+      dryRun: opts.dryRun ?? false,
       previewOnly: false,
-      source: opts.source ?? stashDir,
+      target: opts.target ?? stashDir,
       processed: 0,
       merged: 0,
       deleted: 0,
@@ -369,7 +358,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const chunkSize = 20;
 
   // -- Phase A: plan generation -----------------------------------------------
-  const sourceName = opts.source ?? stashDir;
+  const sourceName = opts.target ?? stashDir;
   const chunks: MemoryEntry[][] = [];
   for (let i = 0; i < memories.length; i += chunkSize) {
     chunks.push(memories.slice(i, i + chunkSize));
@@ -419,19 +408,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays);
   warnings.push(...mergeWarnings);
 
-  // -- Preview-only paths -------------------------------------------------------
-  const isPreviewOnly = opts.previewWithAi || (isHttpPath && !opts.execute);
-
-  if (isPreviewOnly) {
-    if (isHttpPath && !opts.execute) {
-      console.log("HTTP path: use --execute to apply these operations. Review the plan above carefully.");
-    }
+  // -- Dry-run: show AI plan without executing any writes --------------------
+  if (opts.dryRun) {
     return {
       ok: true,
       shape: "consolidate-result",
-      dryRun: false,
+      dryRun: true,
       previewOnly: true,
-      source: sourceName,
+      target: sourceName,
       processed: memories.length,
       merged: 0,
       deleted: 0,
@@ -442,30 +426,29 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     };
   }
 
-  // -- HTTP path confirmation ------------------------------------------------
-  if (isHttpPath && opts.execute && !opts.yes) {
-    const n = allOps.length;
-    const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
-    if (!answer) {
-      return {
-        ok: true,
-        shape: "consolidate-result",
-        dryRun: false,
-        previewOnly: true,
-        source: sourceName,
-        processed: memories.length,
-        merged: 0,
-        deleted: 0,
-        promoted: [],
-        planned: allOps,
-        warnings: [...warnings, "Aborted by user."],
-        durationMs: Date.now() - startMs,
-      };
-    }
-  }
-
-  if (isHttpPath && opts.execute && opts.yes) {
+  // -- HTTP path: warn about quality and confirm unless auto-accepted --------
+  if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
+    if (!opts.autoAccept) {
+      const n = allOps.length;
+      const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
+      if (!answer) {
+        return {
+          ok: true,
+          shape: "consolidate-result",
+          dryRun: false,
+          previewOnly: true,
+          target: sourceName,
+          processed: memories.length,
+          merged: 0,
+          deleted: 0,
+          promoted: [],
+          planned: allOps,
+          warnings: [...warnings, "Aborted by user."],
+          durationMs: Date.now() - startMs,
+        };
+      }
+    }
   }
 
   // -- Phase B + writes -------------------------------------------------------
@@ -648,7 +631,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     shape: "consolidate-result",
     dryRun: false,
     previewOnly: false,
-    source: sourceName,
+    target: sourceName,
     processed: memories.length,
     merged,
     deleted,
