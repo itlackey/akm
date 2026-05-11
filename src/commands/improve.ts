@@ -763,7 +763,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         });
       }
     } else {
-      const daysAgo = Math.round((Date.now() - new Date(lastConsolidation!.ts!).getTime()) / 86400000);
+      const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
       console.error(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
     }
 
