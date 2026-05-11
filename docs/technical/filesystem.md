@@ -5,7 +5,7 @@ Quick reference for where akm stores source data, config, and cache state.
 ## Working Stash
 
 The working stash is the user's primary writable filesystem source, created by
-`akm init`. It's just a filesystem source — the same path can be referenced by
+`akm setup`. It's just a filesystem source — the same path can be referenced by
 `config.stashDir` and as a `sources[]` entry of kind `filesystem`.
 
 | Env / Default | Path |

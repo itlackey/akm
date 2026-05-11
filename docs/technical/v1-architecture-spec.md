@@ -4,7 +4,7 @@
 **Target:** v1.0 freeze
 **Audience:** akm core contributors
 
-> **Reading guide.** This spec defines the v1.0 contract. It mixes shipped pre-release surfaces (sources, indexer, search, show, write-source, registry providers, vault, wiki, workflow) with **planned v1 surfaces** (proposal queue, agent CLI integration, `quality: "proposed"`, `lesson` asset type, `llm.features.*`). Planned surfaces are explicitly marked **`Planned for v1`** in their section heading and in §9. Implementation tracks against these declarations via `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md`. Anything in §9 — shipped or planned — is part of the locked contract once v1.0 ships.
+> **Reading guide.** This spec defines the v1.0 contract. It mixes shipped pre-release surfaces (sources, indexer, search, show, write-source, registry providers, vault, wiki, workflow, agent CLI integration, LLM/agent boundary) with **planned v1 surfaces** (proposal queue, `quality: "proposed"`, `lesson` asset type, `llm.features.*`). Planned surfaces are explicitly marked **`Planned for v1`** in their section heading and in §9. Implementation tracks against these declarations via `docs/reviews/v1-implementation-plan.md` and `docs/reviews/v1-agent-reflection-issues.md`. Anything in §9 — shipped or planned — is part of the locked contract once v1.0 ships.
 
 ---
 
@@ -344,11 +344,14 @@ union. The v1 contract is:
 Search hits, registry hits, and indexed assets carry an optional `quality`
 field. The contract is:
 
-- The field is a string. Three values are well-known:
+- The field is a string. Four values are well-known:
   - `"generated"` — produced by an automated pipeline. Included in default
     search.
   - `"curated"` — promoted by a human or via the proposal queue (§11).
     Included in default search.
+  - `"enriched"` — LLM enrichment pass completed for this asset. Written by
+    the indexer after a successful `--enrich` run. Included in default search;
+    subsequent index runs skip re-enrichment unless `--re-enrich` is passed.
   - `"proposed"` — sitting in the proposal queue, not yet promoted.
     **Excluded from default search**; surfaced only with
     `--include-proposed` or via `akm proposals` commands.
@@ -361,7 +364,7 @@ field. The contract is:
 
 ```ts
 // src/core/types.ts
-export type AssetQuality = "generated" | "curated" | "proposed" | (string & {});
+export type AssetQuality = "generated" | "curated" | "enriched" | "proposed" | (string & {});
 
 export interface SearchHit {
   // ...existing fields...
@@ -408,11 +411,19 @@ introduces on the locked hit type. Both are optional. Renderers in
   "embedder": { "kind": "...", "options": { /* ... */ } },
   "scorer":   { "weights": { "relevance": 0.7, "utility": 0.3 } },
 
-  // Planned for v1 — agent CLI integration (§12).
+  // Agent CLI integration (§12). Built-in profiles: opencode, claude, codex, gemini, aider.
+  // Users can override built-ins or add new profiles. Unknown keys are warn-and-ignored.
   "agent": {
     "default": "opencode",
     "profiles": {
-      "opencode": { /* built-in profile fields, overridable */ }
+      "opencode": { /* built-in profile fields, overridable */ },
+      // sdkMode profile example — no CLI binary required:
+      "opencode-sdk": {
+        "sdkMode": true,
+        "model": "anthropic/claude-sonnet-4-5",
+        "endpoint": "https://api.openai.com/v1",  // optional; inherits from llm.endpoint
+        "apiKey": "sk-..."                         // optional; inherits from llm.apiKey
+      }
     },
     "timeoutMs": 60000
   },
@@ -423,10 +434,10 @@ introduces on the locked hit type. Both are optional. Renderers in
     "model": "...",
     "features": {
       "curate_rerank":          false,
-      "tag_dedup":              false,
       "memory_consolidation":   false,
       "feedback_distillation":  false,
-      "embedding_fallback_score": false
+      "memory_inference":       false,
+      "graph_extraction":       false
     }
   },
 
@@ -505,7 +516,7 @@ The index knows which file corresponds to each ref. Read it.
    `src/sources/website-ingest.ts` module rather than the website provider
    itself, so one-shot URL ingest and persistent website mirrors reuse the same
    normalization and markdown conversion logic.
-2. Pick target: `--target <name>`, else `config.defaultWriteTarget`, else the user's working stash (`config.stashDir` — the source created by `akm init`). `ConfigError` if none configured (hint: run `akm init`).
+2. Pick target: `--target <name>`, else `config.defaultWriteTarget`, else the user's working stash (`config.stashDir` — the source created by `akm setup`). `ConfigError` if none configured (hint: run `akm setup`).
 3. Call `writeAssetToSource(source, config, ref, content)`.
 4. Indexer refreshes against that source's path.
 
@@ -537,9 +548,11 @@ src/
     types.ts              # AssetRef, SearchHit, KitResult, KitManifest, ...
     refs.ts               # parseAssetRef, parseInstallRef
     errors.ts             # UsageError, ConfigError, NotFoundError, exit codes
-    config.ts             # load, validate, resolve env references
+    config.ts             # load, validate, resolve env references; getSources() helper
     output.ts             # exhaustive shape registry
     write-source.ts       # writeAssetToSource / deleteAssetFromSource
+    parse.ts              # shared JSON parsing utilities (stripThinkBlocks, extractJson, …)
+    concurrent.ts         # shared concurrency helpers
 
   providers/
     types.ts              # SourceProvider interface
@@ -562,6 +575,14 @@ src/
   renderers/              # one file per type, three verbosity levels
   embedders/
   ingest/                 # ingest transformers
+
+  integrations/
+    agent/
+      sdk-runner.ts       # @opencode-ai/sdk runner; enables CLI-free sdkMode profiles
+      pipeline.ts         # shared propose/reflect agent pipeline (prompt → spawn/sdk → result)
+
+  llm/
+    call-ai.ts            # unified adapter: prefers config.agent, falls back to config.llm
 
   indexer.ts              # walks every source's path(), runs FTS+vec index
   commands/               # one file per CLI subcommand
@@ -615,8 +636,8 @@ v1.0 freeze surface and must ship before v1.0 GA.
 - Asset *type* is an open string set (§4.1); the renderer registry is the
   authority for "is this type well-known?".
 - Asset *quality* is an open string set (§4.2); `"proposed"` is excluded from
-  default search; `"generated"` and `"curated"` are included by default;
-  unknown values parse-warn-include.
+  default search; `"generated"`, `"curated"`, and `"enriched"` are included by
+  default; unknown values parse-warn-include.
 - `SearchHit.quality` and `SearchHit.warnings` are optional fields on the
   locked hit type.
 
@@ -624,12 +645,16 @@ v1.0 freeze surface and must ship before v1.0 GA.
 
 - Configuration JSON Schema, including literal-or-env value form and the
   `writable` flag.
-- **`Planned for v1`** — `agent.*` block: `agent.default`,
-  `agent.profiles[<name>]`, `agent.timeoutMs`. Unknown keys are
-  warn-and-ignore. Missing `agent` block disables agent commands with a
-  clear `ConfigError` (§12).
+- `agent.*` block (shipped): `agent.default`, `agent.profiles[<name>]`,
+  `agent.timeoutMs`. Profile fields include `bin`, `args`, `stdio`, `env`,
+  `envPassthrough`, `timeoutMs`, `parseOutput`, `sdkMode`, `model`,
+  `endpoint`, `apiKey`. Unknown keys are warn-and-ignore. Missing `agent`
+  block disables agent commands with a clear `ConfigError` (§12).
 - **`Planned for v1`** — `llm.features.*` map with the keys named in §14.
-  All defaults are `false`. Unknown feature keys warn and are ignored.
+  Locked keys: `curate_rerank`, `memory_consolidation`, `feedback_distillation`,
+  `memory_inference`, `graph_extraction`. All defaults are `false`. Unknown keys
+  warn and are ignored. (`tag_dedup` and `embedding_fallback_score` were removed
+  in 0.7.0 as phantom keys that were never read at any call site.)
 
 ### 9.3 Errors and exit codes (shipped)
 
@@ -650,15 +675,31 @@ remember | import | feedback | registry * | info | curate | workflow * |
 vault * | wiki * | enable | disable | completions | upgrade | save | help |
 hints | config *`.
 
-**`Planned for v1`** (declared by this spec, implemented across milestones
-0.7 – 1.0):
-- `agent <name> [args...]` — dispatch a configured agent profile (§12).
+`akm setup` accepts the following flags:
+- `--config <json>` — apply config JSON non-interactively (scripting/CI mode).
+- `--yes` — accept all defaults, skip all prompts (idempotent, safe for CI).
+- `--dir <path>` — stash directory path (overrides `stashDir` in config or `--config` JSON).
+- `--probe` — probe LLM/embedding endpoints after writing config to verify connectivity.
+- `--no-init` — skip the `akmInit()` call (useful when the stash directory already exists).
+
+**Shipped in pre-release milestones (0.7–0.8):**
+- `proposals` / `show proposal` / `diff proposal` / `accept` / `reject` — operate the
+  proposal queue (§11). Note: `--type` filter on `akm proposals` is declared but
+  silently ignored in the current implementation; use `--ref` to filter instead.
 - `improve [ref|type] [--task ...]` — produce improvement proposals into the
   proposal queue (§11, §12).
 - `propose <type> <name> [--task ...]` — produce generation proposals into
   the proposal queue (§11, §12).
-- `proposals` / `show proposal` / `diff proposal` / `accept` / `reject` — operate the proposal
-  queue (§11).
+
+**`Planned for v1`** (declared by this spec, implemented across milestones
+0.9 – 1.0):
+- `agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]`
+  — dispatch a configured agent profile with an optional prompt sourced from inline
+  text or from a `command:` or `workflow:` asset ref (§12).
+
+Memory consolidation runs automatically as part of `akm improve` whenever
+`llm.features.memory_consolidation` is enabled (§14.6). It is not a separate
+command and has no dedicated flag — the feature flag is the sole control.
 
 Renaming or removing any command above after v1.0 is a major version bump.
 
@@ -683,22 +724,31 @@ Renaming or removing any command above after v1.0 is a major version bump.
   state under `<stashRoot>/.akm/proposals/`, managed by the proposal
   subsystem and untouched by index rebuilds.
 
-### 9.7 LLM/agent boundary (planned)
+### 9.7 LLM/agent boundary (shipped)
 
-**`Planned for v1`** — the boundary documented in §12 and §14 is a locked
-invariant:
+The boundary documented in §12 and §14 is a locked invariant:
 
 - **In-tree LLM helpers** (the `llm.*` config) make **bounded, single-shot,
   stateless** calls. They never spawn shells, manage processes, or persist
   state outside the call site. Each call site is gated behind exactly one
   `llm.features.*` flag and degrades cleanly when disabled or on failure.
-- **External agents** (the `agent.*` config) are invoked via **CLI shell-out
-  only**, through the spawn wrapper documented in §12. akm never imports
-  vendor SDKs and never hosts a long-running agent process.
+- **External agents** (the `agent.*` config) are invoked via CLI shell-out
+  through the spawn wrapper documented in §12.2, **or** via the embedded
+  `@opencode-ai/sdk` when a profile has `sdkMode: true` (§12.1). The SDK
+  runner (`src/integrations/agent/sdk-runner.ts`) enables CLI-free agentic
+  commands; it does not import any Anthropic/OpenAI SDK directly — it delegates
+  to the OpenCode SDK's own HTTP layer.
 
-Crossing this boundary in either direction (calling out to a CLI from the
-in-tree LLM path; calling vendor SDKs from the agent path) is a contract
-violation.
+**`callAi()` adapter** (`src/llm/call-ai.ts`) — shipped. This unified adapter
+is used by `propose` and `reflect` to prefer the `config.agent` path (CLI
+shell-out or SDK mode) and fall back to `config.llm` (HTTP chat-completions)
+when no agent CLI is installed. When neither is configured it returns a
+structured error pointing the user at `akm setup`. It is **not** for use by
+background indexer passes, which call `chatCompletion` directly.
+
+Crossing the boundary in either direction (calling vendor SDKs from the agent
+path outside the sanctioned SDK runner; calling out to a CLI from the in-tree
+LLM feature-gate path) remains a contract violation.
 
 #### Tested at
 
@@ -719,9 +769,11 @@ implementation:
 - `agent-no-llm-sdk-guard.test.ts` — regression-only file-content guard.
   It scans `src/integrations/agent/**` for known LLM SDK package names
   (e.g. `@anthropic-ai/sdk`, `openai`, `@google/generative-ai`) and
-  fails if any are imported. **This guard is defence-in-depth**: the
-  primary enforcement is the seam tests above and code review. The guard
-  exists to surface accidental regressions in PRs.
+  fails if any are imported directly. The `@opencode-ai/sdk` import in
+  `sdk-runner.ts` is the single sanctioned exception — it uses a dynamic
+  `import()` so failures surface as a structured `spawn_failed` result
+  rather than a crash. **This guard is defence-in-depth**: the primary
+  enforcement is the seam tests above and code review.
 
 ---
 
@@ -729,7 +781,7 @@ implementation:
 
 Ordered. Each step leaves the build green.
 
-### Step 1 — Drop OpenViking
+### Step 1 — Drop OpenViking **[COMPLETE]**
 
 Remove `src/stash-providers/openviking.ts`, its tests, its registration, its config migration path. Document as "deferred to post-v1 when API-backed sources get their own tier."
 
@@ -737,7 +789,7 @@ Users with `openviking` in their config get a `ConfigError` at load with a hint 
 
 This single change removes most of the architectural complication the 0.6.0 code is carrying.
 
-### Step 2 — Rename `stash` → `source` throughout
+### Step 2 — Rename `stash` → `source` throughout **[COMPLETE]**
 
 Mechanical. Directory, modules, types, variable names, docs. Single commit.
 
@@ -789,7 +841,7 @@ Publish this spec as the locked v1 contract. Document the ephemeral-index semant
 
 ---
 
-## 11. Proposal queue (`Planned for v1`)
+## 11. Proposal queue (shipped)
 
 All proposal-producing commands write through one durable queue. Live stash
 content is never mutated by reflection, generation, or distillation paths.
@@ -858,26 +910,43 @@ emit additional events but cannot reuse these names.
 
 ---
 
-## 12. Agent CLI integration (`Planned for v1`)
+## 12. Agent CLI integration (shipped)
 
-External coding agents are invoked via CLI shell-out only. akm never imports
-a vendor SDK.
+External coding agents are invoked via CLI shell-out or, for profiles with
+`sdkMode: true`, via the embedded `@opencode-ai/sdk` runner
+(`src/integrations/agent/sdk-runner.ts`). The SDK runner enables CLI-free
+agentic commands: no `bin` on PATH is required when `sdkMode` is true.
 
 ### 12.1 Profiles
 
 Built-in profiles ship for `opencode`, `claude`, `codex`, `gemini`, and
-`aider`. A profile is a small record:
+`aider` (plus `-headless` variants for automation). A profile is a small record:
 
 ```ts
 interface AgentProfile {
-  readonly bin: string;                       // command to spawn
+  readonly name: string;
+  readonly bin: string;                       // command to spawn (ignored when sdkMode is true)
   readonly args: readonly string[];           // base args
   readonly stdio: "captured" | "interactive"; // capture for CI; interactive for users
   readonly env?: Record<string, string>;
+  readonly envPassthrough: readonly string[]; // env vars forwarded to the child process
   readonly timeoutMs?: number;                // overrides agent.timeoutMs
-  readonly parseOutput?: "text" | "json";
+  readonly parseOutput: "text" | "json";
+  /** When true, uses the embedded @opencode-ai/sdk instead of Bun.spawn. No CLI binary required. */
+  readonly sdkMode?: boolean;
+  /** Model identifier for sdkMode (e.g. "anthropic/claude-sonnet-4-5", "ollama/qwen2.5-coder"). */
+  readonly model?: string;
+  /** OpenAI-compatible endpoint for sdkMode. If absent, inherits from config.llm.endpoint. */
+  readonly endpoint?: string;
+  /** API key for sdkMode endpoint. If absent, inherits from config.llm.apiKey. */
+  readonly apiKey?: string;
 }
 ```
+
+The persisted user-override shape (`AgentProfileConfig` in
+`src/integrations/agent/config.ts`) mirrors these fields — every field is
+optional so users can override one piece of a built-in without re-stating the
+rest.
 
 Users can override or add profiles via `agent.profiles[<name>]` in config.
 Unknown keys are warn-and-ignore (§9.2).
@@ -899,9 +968,25 @@ change the default with `akm config set agent.default <name>`.
 ### 12.4 Commands
 
 ```sh
-akm agent <profile> [args...]            # raw shell-out
-akm improve [ref] [--task ...]           # produces improvement proposals
+# Dispatch a named agent profile.
+# Prompt may be supplied inline, or sourced from a command or workflow asset.
+akm agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]
+
+# Produces improvement proposals (writes only to the proposal queue)
+akm improve [ref] [--task ...]
 ```
+
+`akm agent <profile>` resolves the profile via `requireAgentProfile()`, then:
+1. Resolves the prompt: if `--command <ref>` or `--workflow <ref>` is given, the
+   asset is looked up via the index and its body becomes the prompt (with template
+   placeholders filled by any remaining `args`). If `--prompt` is given, that text
+   is used directly. If neither is given, the agent is launched interactively with
+   no injected prompt (equivalent to the bare shell-out described in §12.1).
+2. Routes to `runAgentSdk()` when the profile has `sdkMode: true`, else to
+   `runAgent()` (Bun.spawn).
+3. Returns an `agent-result` envelope. When `stdio: "interactive"`, stdout and
+   stderr are empty (output went to the TTY); the text renderer emits only the
+   profile name and exit status.
 
 `improve` builds prompts from asset content, feedback signals (§6.6), and
 renderer schema. It writes **only** to the proposal queue (§11). It never
@@ -960,13 +1045,14 @@ to the schema is itself a non-event.
 
 ### 14.1 Locked feature keys
 
+Five keys are locked in the v1 contract. (`tag_dedup` and `embedding_fallback_score`
+were removed in 0.7.0 — they were declared but never read at any call site.)
+
 | Key | Use site | Behaviour when disabled |
 |---|---|---|
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline (no rerank) |
-| `tag_dedup` | indexer LLM-deduplicates tags during enrichment | Dedup uses a deterministic string-equality pass |
-| `memory_consolidation` | `akm remember --enrich` consolidation pass | `--enrich` is a no-op; warning printed |
+| `memory_consolidation` | `akm consolidate` — agent-driven cross-memory dedup, merging, and promotion into `knowledge:` assets (§14.6) | `akm consolidate` exits with a structured `ConfigError` and a hint to enable the flag |
 | `feedback_distillation` | improve-driven lesson distillation (§14.5) | improve skips lesson distillation cleanly when disabled |
-| `embedding_fallback_score` | scorer fallback when no embeddings available | Scorer uses lexical-only score |
 | `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
 | `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during `akm index`, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
 
@@ -1012,23 +1098,20 @@ Failure is observable but never blocks unrelated commands.
     "temperature": 0.3,
     "maxTokens": 512,
     "features": {
-      "curate_rerank":            false,
-      "tag_dedup":                false,
-      "memory_consolidation":     false,
-      "feedback_distillation":    false,
-      "embedding_fallback_score": false,
-      "memory_inference":         true,
-      "graph_extraction":         false
+      "curate_rerank":          false,
+      "memory_consolidation":   false,
+      "feedback_distillation":  false,
+      "memory_inference":       true,
+      "graph_extraction":       false
     }
   }
 }
 ```
 
-All seven keys are configurable, default `false`, and must be set to the
+All five keys are configurable, default `false`, and must be set to the
 literal boolean `true` to opt in. (`memory_inference` and `graph_extraction`
-were the first two to ship; the remaining five — `curate_rerank`,
-`tag_dedup`, `memory_consolidation`, `feedback_distillation`,
-`embedding_fallback_score` — landed alongside the lesson asset type.)
+were the first two to ship. `memory_consolidation` gates the agent-driven
+consolidation pass described in §14.6.)
 Unknown keys under `llm.features` warn and are ignored (§9.2).
 
 #### Graceful-fallback contract
@@ -1069,6 +1152,76 @@ agent path (§12).
 It never mutates the live stash. Promotion remains a human-initiated
 `akm accept`.
 
+### 14.6 Agent-driven memory consolidation (`Planned for v1`)
+
+Memory consolidation is intentionally placed on the **agent path** (§12), not the
+in-tree LLM path (§14.4). Cross-memory deduplication and merging is a multi-step
+agentic task — it requires iterative reads, comparison, and targeted rewrites — and
+cannot be bounded to a single stateless request/response cycle.
+
+Consolidation runs automatically as part of `akm improve` when
+`llm.features.memory_consolidation` is enabled. It is not a separate command and
+has no dedicated flag — the feature flag is the sole on/off control.
+
+When the feature is disabled, `akmConsolidate()` returns immediately with
+`processed: 0` and no output is emitted. No `ConfigError` is thrown.
+
+Consolidation shares all of `improve`'s existing flags without adding new ones:
+
+```sh
+akm improve                          # improve + consolidate (if feature enabled)
+akm improve --dry-run                # plan without writing (both improve and consolidate)
+akm improve --target <name>          # target a specific source
+akm improve --auto-accept safe       # skip confirmation prompts
+akm improve --task "..."             # extra AI guidance for both passes
+akm improve memory:my-note           # improve a specific ref; consolidation skipped
+```
+
+Consolidation is skipped when a specific asset ref is passed as the scope
+(e.g. `memory:my-note` contains `:`). It runs when scope is absent or is a
+type-level scope like `memory`.
+
+1. **Collect** all `memory:` assets from configured writable sources.
+2. **Phase A — Plan**: sends chunked memory summaries (300 chars/body, 12 per chunk
+   on HTTP path; 1000 chars/body, 30 per chunk on agent path) to `callAi()`. Each
+   chunk returns a list of `merge`, `delete`, and `promote` operations without full
+   merged content — just refs and strategy. Plans from multiple chunks are merged,
+   with `merge` taking precedence over `delete` when the same ref appears in both.
+3. **Phase B — Merge content**: for each `merge` operation, a separate `callAi()`
+   call receives the full bodies of primary and secondaries and returns the merged
+   markdown as plain text. This phase-split avoids embedding full markdown inside
+   plan JSON (which corrupts parse pipelines).
+4. **Write changes** — before any writes: back up secondaries and write a
+   `.akm/consolidate-journal.json`. Then:
+   - Merges: overwrite primary via `writeAssetToSource()`, delete secondaries via
+     `deleteAssetFromSource()`.
+   - Deletes: `deleteAssetFromSource()`.
+   - Promotes: `createProposal()` into the proposal queue (§11) — human review
+     required before promotion lands in the live stash. Source memory is not deleted.
+5. **Emit event**: `consolidation_run` into `usage_events`. Clean up journal and
+   backups on success.
+
+#### Why agent, not in-tree LLM
+
+In-tree LLM calls are single-shot and stateless (§14.4). Consolidation requires
+reading many assets, comparing them, and executing writes — more than one request
+can encode. The agent path can paginate, chain calls, and use akm tools within a
+session. When only `config.llm` is configured (no agent), the HTTP path is used
+but operations are not auto-executed: `--execute` is required, and `--yes` or
+interactive confirmation is required for destructive steps.
+
+#### Graceful fallback when no agent is configured
+
+`callAi()` routes to `config.llm` (§9.7) for plan generation. The HTTP path emits
+a `warnings[]` entry noting the reduced context quality, and requires `--execute`
+to apply any operations (without it, the command is effectively `--preview-with-ai`).
+
+#### Output shape
+
+The `consolidate-result` shape is reserved in the output shape registry (§9.5).
+It carries: `processed` (count), `merged` (count), `deleted` (count),
+`promoted` (list of new proposal IDs), `warnings`, and `durationMs`.
+
 ---
 
 ## 15. Decisions (resolved)
@@ -1077,7 +1230,7 @@ The four open questions originally listed here are resolved as of 2026-04-24. Th
 
 1. **`writable` default on `filesystem`: `true`.** Users usually own the directories they point akm at. Read-only filesystem sources require explicit `writable: false`.
 2. **Registry results in default `akm search`: behind `--include-registry`.** Default output stays scannable. Registry results never merge into source hits (§6.1).
-3. **Write-target resolution: explicit `--target` → `config.defaultWriteTarget` → working stash (`config.stashDir`).** The working stash created by `akm init` is the implicit fallback. There is no "first-writable-in-source-array-order" fallback — it produced ambiguity without payoff.
+3. **Write-target resolution: explicit `--target` → `config.defaultWriteTarget` → working stash (`config.stashDir`).** The working stash created by `akm setup` (which calls `akmInit()` internally) is the implicit fallback. There is no "first-writable-in-source-array-order" fallback — it produced ambiguity without payoff.
 4. **`writable: true` on `website` / `npm` is rejected at config load.** `sync()` would clobber writes on the next refresh; the loader throws `ConfigError` with a remediation hint. See §5.4.
 
 ---

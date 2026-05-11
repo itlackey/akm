@@ -2962,55 +2962,11 @@ const agentCommand = defineCommand({
   },
 });
 
-const consolidateCommand = defineCommand({
-  meta: {
-    name: "consolidate",
-    description: "Analyze memory assets for duplication, staleness, and promotion candidates",
-  },
-  args: {
-    source: {
-      type: "string",
-      description: "Limit to memories from a named source (default: primary writable stash)",
-    },
-    "dry-run": {
-      type: "boolean",
-      description: "No AI call; just list which memories exist and exit",
-      default: false,
-    },
-    "preview-with-ai": {
-      type: "boolean",
-      description: "Run plan generation only, no writes; prints the plan and exits",
-      default: false,
-    },
-    execute: {
-      type: "boolean",
-      description: "Required on the HTTP path to actually apply operations",
-      default: false,
-    },
-    yes: {
-      type: "boolean",
-      description: "Skip confirmation prompts",
-      default: false,
-    },
-  },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const result = await akmConsolidate({
-        source: typeof args.source === "string" && args.source.trim() ? args.source.trim() : undefined,
-        dryRun: getHyphenatedBoolean(args, "dry-run"),
-        previewWithAi: getHyphenatedBoolean(args, "preview-with-ai"),
-        execute: args.execute === true,
-        yes: args.yes === true,
-      });
-      output("consolidate", result);
-    });
-  },
-});
-
 const improveCommand = defineCommand({
   meta: {
     name: "improve",
-    description: "Analyze existing AKM assets and generate improvement proposals",
+    description:
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when llm.features.memory_consolidation is enabled",
   },
   args: {
     scope: {
@@ -3019,7 +2975,7 @@ const improveCommand = defineCommand({
       required: false,
     },
     task: { type: "string", description: "Add extra guidance for this improvement pass" },
-    "dry-run": { type: "boolean", description: "Show planned actions without generating proposals", default: false },
+    "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
     target: { type: "string", description: "Override the write target for accepted proposals" },
     "auto-accept": {
       type: "string",
@@ -3032,14 +2988,36 @@ const improveCommand = defineCommand({
       if (autoAcceptRaw !== undefined && autoAcceptRaw !== "safe") {
         throw new UsageError("--auto-accept only supports the value 'safe'.", "INVALID_FLAG_VALUE");
       }
-      const result = await akmImprove({
+      const targetArg = typeof args.target === "string" && args.target.trim() ? args.target.trim() : undefined;
+      const taskArg = typeof args.task === "string" && args.task.trim() ? args.task : undefined;
+      const dryRun = getHyphenatedBoolean(args, "dry-run");
+      const autoAccept = autoAcceptRaw === "safe" ? ("safe" as const) : undefined;
+
+      const improveResult = await akmImprove({
         scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
-        task: typeof args.task === "string" && args.task.trim() ? args.task : undefined,
-        dryRun: getHyphenatedBoolean(args, "dry-run"),
-        target: typeof args.target === "string" && args.target.trim() ? args.target : undefined,
-        autoAccept: autoAcceptRaw === "safe" ? "safe" : undefined,
+        task: taskArg,
+        dryRun,
+        target: targetArg,
+        autoAccept,
       });
-      output("improve", result);
+      output("improve", improveResult);
+
+      // Memory consolidation runs automatically when llm.features.memory_consolidation
+      // is enabled; returns immediately (processed: 0) when the feature is disabled.
+      // Only runs when no specific asset ref is targeted (consolidation is stash-wide).
+      const scopeStr = typeof args.scope === "string" ? args.scope.trim() : "";
+      const isSpecificRef = scopeStr.includes(":");
+      if (!isSpecificRef) {
+        const consolidateResult = await akmConsolidate({
+          target: targetArg,
+          dryRun,
+          autoAccept,
+          task: taskArg,
+        });
+        if (consolidateResult.processed > 0 || consolidateResult.warnings.length > 0) {
+          output("consolidate", consolidateResult);
+        }
+      }
     });
   },
 });
@@ -3341,7 +3319,6 @@ const main = defineCommand({
     history: historyCommand,
     events: eventsCommand,
     agent: agentCommand,
-    consolidate: consolidateCommand,
     improve: improveCommand,
     propose: proposeCommand,
     proposals: proposalsCommand,

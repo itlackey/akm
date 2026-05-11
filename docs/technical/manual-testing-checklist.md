@@ -68,11 +68,11 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$AKM_STA
 alias akm='bun ./src/cli.ts'
 
 # 2.4 Verify isolation
-akm init | jq '.stashDir'
+akm setup --yes | jq '.stashDir'
 akm config path --all
 ```
 
-- [ ] `akm init` reports a stash path under `$AKM_SANDBOX`.
+- [ ] `akm setup --yes` reports a stash path under `$AKM_SANDBOX`.
 - [ ] `akm config path --all` reports config, stash, cache, and index paths
       under `$AKM_SANDBOX`.
 
@@ -126,6 +126,18 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm completions` prints a bash completion script to stdout.
 - [ ] `akm completions --install` writes only inside the sandboxed
       `$XDG_DATA_HOME` / `$HOME` tree.
+
+### 4.1 `akm setup` non-interactive paths
+
+- [ ] `akm setup --yes` runs without prompts, writes config with sandbox paths,
+      and exits zero.
+- [ ] `akm setup --yes | jq '.stashDir'` returns a path under `$AKM_SANDBOX`.
+- [ ] `akm setup --config '{"llm":{"endpoint":"http://localhost:1234/v1","model":"test-model"}}'`
+      applies the JSON blob non-interactively and exits zero.
+- [ ] `akm config get llm.endpoint` after the above returns
+      `http://localhost:1234/v1`.
+- [ ] `akm setup --config 'not-json'` fails with a structured usage error and
+      exits non-zero.
 
 ---
 
@@ -296,7 +308,7 @@ These cover the shared write-target path and git-backed save behavior.
 - [ ] `akm save --format json` on the primary sandbox stash returns either a
       commit result or a structured `skipped: true` no-op if the stash is not a
       git repo.
-- [ ] If `akm init` created a git repo, modify one file in the sandbox stash
+- [ ] If `akm setup` created a git repo, modify one file in the sandbox stash
       and run `akm save -m "Manual QA save test"`; verify it commits only inside
       the sandbox repo.
 - [ ] Add a second git-backed sandbox source with an explicit slash-containing

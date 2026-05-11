@@ -17,6 +17,19 @@ Built-in types today are:
 - `vault`
 - `wiki`
 
+## Asset Quality Values
+
+The `quality` field marks how an asset was produced. Four values are well-known:
+
+| Value | Meaning |
+| --- | --- |
+| `"generated"` | Heuristically indexed; included in default search |
+| `"curated"` | Human-authored; included in default search |
+| `"enriched"` | LLM enrichment pass has run for this asset; included in default search |
+| `"proposed"` | Pending review; excluded from default search, opt-in via `--include-proposed` |
+
+Unknown string values warn once at runtime and remain searchable.
+
 ## Built-in Matchers
 
 `src/indexer/matchers.ts` currently registers **five** built-in matchers:
