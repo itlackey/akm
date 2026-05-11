@@ -958,9 +958,11 @@ async function enhanceDirsWithLlm(
   const llmConfig = resolveIndexPassLLM("enrichment", config);
   if (!llmConfig || dirsNeedingLlm.length === 0) return;
 
-  // P3 — 5-minute wall-clock budget. Combine with the caller's signal so
-  // either the user cancellation OR the deadline aborts the pass.
-  const enrichDeadline = AbortSignal.timeout(5 * 60 * 1000); // 5 minutes
+  // P3 — wall-clock budget for the enrichment pass. Defaults to llm.timeoutMs
+  // (or 10 minutes if not set). Users can extend this via llm.timeoutMs in
+  // config — no separate knob needed.
+  const budgetMs = (llmConfig.timeoutMs ?? 10 * 60 * 1000) * dirsNeedingLlm.length;
+  const enrichDeadline = AbortSignal.timeout(budgetMs);
   let deadlineHit = false;
   const enrichSignal: AbortSignal = (() => {
     if (!signal) return enrichDeadline;
@@ -1034,7 +1036,9 @@ async function enhanceDirsWithLlm(
   );
 
   if (deadlineHit) {
-    warn("[akm] LLM enrichment budget exceeded (5m) — re-run `akm index --enrich` to continue.");
+    warn(
+      "[akm] LLM enrichment budget exceeded — re-run `akm index --enrich` to continue. Increase llm.timeoutMs for a larger budget.",
+    );
   }
 
   if (summary.attempted > 0 && summary.succeeded === 0) {
