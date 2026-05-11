@@ -56,6 +56,7 @@ import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
+import { stripMarkdownFences } from "../core/markdown";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup as indexerLookup } from "../indexer/indexer";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -676,18 +677,4 @@ async function defaultLookup(ref: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Best-effort fence stripping. Keeps the body intact when no fence is present. */
-function stripMarkdownFences(raw: string): string {
-  // Strip <think>…</think> reasoning blocks first — local LLMs (e.g. Qwen3)
-  // emit these before the content, which breaks YAML frontmatter detection.
-  const stripped = raw
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim();
-  // Only strip outer triple-fence pairs — leave inner code blocks alone.
-  const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
-  if (fence) return fence[1].trim();
-  return stripped;
 }
