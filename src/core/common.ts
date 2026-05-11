@@ -369,3 +369,17 @@ function parseRetryAfter(response: Response): number | undefined {
 export function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// ── String coercion ──────────────────────────────────────────────────────────
+
+/**
+ * Return the trimmed string value if non-empty, otherwise `undefined`.
+ * Consolidates `toStringOrUndefined` (frontmatter.ts), `asNonEmptyString`
+ * (config.ts), and `firstString` (memory-improve.ts) — all had the same
+ * "return a string or undefined" contract with minor semantic differences.
+ */
+export function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
