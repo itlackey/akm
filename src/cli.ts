@@ -7,7 +7,6 @@ import { defineCommand, runMain } from "citty";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
-import { akmConsolidate } from "./commands/consolidate";
 import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
@@ -2981,6 +2980,11 @@ const improveCommand = defineCommand({
       type: "string",
       description: "Automatically accept low-risk proposals (only 'safe' is supported)",
     },
+    limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
+    "timeout-ms": {
+      type: "string",
+      description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -2992,6 +2996,15 @@ const improveCommand = defineCommand({
       const taskArg = typeof args.task === "string" && args.task.trim() ? args.task : undefined;
       const dryRun = getHyphenatedBoolean(args, "dry-run");
       const autoAccept = autoAcceptRaw === "safe" ? ("safe" as const) : undefined;
+      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
+      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
+        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
+      }
+      const timeoutRaw = getHyphenatedArg<string>(args, "timeout-ms");
+      const timeoutMs = timeoutRaw !== undefined ? parseInt(timeoutRaw, 10) : undefined;
+      if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
+        throw new UsageError(`Invalid --timeout-ms value: "${timeoutRaw}". Must be a positive integer.`);
+      }
 
       const improveResult = await akmImprove({
         scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
@@ -2999,25 +3012,11 @@ const improveCommand = defineCommand({
         dryRun,
         target: targetArg,
         autoAccept,
+        ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
       });
       output("improve", improveResult);
-
-      // Memory consolidation runs automatically when llm.features.memory_consolidation
-      // is enabled; returns immediately (processed: 0) when the feature is disabled.
-      // Only runs when no specific asset ref is targeted (consolidation is stash-wide).
-      const scopeStr = typeof args.scope === "string" ? args.scope.trim() : "";
-      const isSpecificRef = scopeStr.includes(":");
-      if (!isSpecificRef) {
-        const consolidateResult = await akmConsolidate({
-          target: targetArg,
-          dryRun,
-          autoAccept,
-          task: taskArg,
-        });
-        if (consolidateResult.processed > 0 || consolidateResult.warnings.length > 0) {
-          output("consolidate", consolidateResult);
-        }
-      }
     });
   },
 });

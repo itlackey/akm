@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildChunkPrompt, type MemoryEntry } from "../src/commands/consolidate";
+import { buildChunkPrompt, isConsolidationEligibleMemoryName, type MemoryEntry } from "../src/commands/consolidate";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -236,5 +236,12 @@ describe("body truncation", () => {
     const prompt = buildChunkPrompt("/stash", [entry], 0, 1, 500);
 
     expect(prompt).toContain("(unreadable)");
+  });
+});
+
+describe("consolidation memory eligibility", () => {
+  it("excludes inferred derived memories from consolidation input", () => {
+    expect(isConsolidationEligibleMemoryName("release-process")).toBe(true);
+    expect(isConsolidationEligibleMemoryName("release-process.derived")).toBe(false);
   });
 });

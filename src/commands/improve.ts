@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { NotFoundError } from "../core/errors";
+import type { AkmConfig } from "../core/config";
+import { loadConfig } from "../core/config";
+import { ConfigError, NotFoundError } from "../core/errors";
+import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import {
   type ArchivedMemoryCleanupRecord,
@@ -14,10 +17,12 @@ import {
   type MemoryContradictionCandidate,
   type MemoryPruneCandidate,
 } from "../core/memory-improve";
-import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
+import { listProposals } from "../core/proposals";
+import { closeDatabase, getAllEntries, getUtilityScoresByIds, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
+import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 
@@ -28,6 +33,11 @@ export interface AkmImproveOptions {
   target?: string;
   autoAccept?: "safe";
   stashDir?: string;
+  config?: AkmConfig;
+  /** Wall-clock budget for the entire improve run in milliseconds. Defaults to 2 hours. */
+  timeoutMs?: number;
+  limit?: number;
+  consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
   reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
@@ -41,8 +51,13 @@ export interface ImproveEligibleRef {
 
 export interface ImproveActionResult {
   ref: string;
-  mode: "reflect" | "distill" | "memory-prune";
-  result: AkmReflectResult | AkmDistillResult | { ok: true; pruned: boolean; reason: MemoryPruneCandidate["reason"] };
+  mode: "reflect" | "distill" | "distill-skipped" | "memory-prune" | "error";
+  result:
+    | AkmReflectResult
+    | AkmDistillResult
+    | { ok: true; pruned: boolean; reason: MemoryPruneCandidate["reason"] }
+    | { ok: true; reason: string }
+    | { ok: false; error: string };
 }
 
 export interface ImproveMemoryCleanupResult {
@@ -73,6 +88,8 @@ export interface AkmImproveResult {
   memoryCleanup?: ImproveMemoryCleanupResult;
   plannedRefs: ImproveEligibleRef[];
   actions?: ImproveActionResult[];
+  validationFailures?: Array<{ ref: string; reason: string }>;
+  consolidation?: ConsolidateResult;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -252,77 +269,239 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     };
   }
 
-  if (primaryStashDir) {
-    await ensureIndexFn(primaryStashDir);
-  }
-
-  const actions: ImproveActionResult[] = [];
-  const appliedCleanup =
-    primaryStashDir && memoryCleanupPlan ? applyMemoryCleanup(primaryStashDir, memoryCleanupPlan) : undefined;
-  const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
-  const actionableRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
-  if (appliedCleanup) {
-    for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
-      const archived = appliedCleanup.archived.find((record) => record.ref === candidate.ref);
-      if (!archived) continue;
-      actions.push({
-        ref: candidate.ref,
-        mode: "memory-prune",
-        result: { ok: true, pruned: true, reason: candidate.reason },
-      });
+  const resolvedLockPath = primaryStashDir
+    ? path.join(primaryStashDir, ".akm", "improve.lock")
+    : path.join(options.stashDir ?? ".", ".akm", "improve.lock");
+  let staleLock = false;
+  if (fs.existsSync(resolvedLockPath)) {
+    let lock: { pid: number; startedAt: string } | null = null;
+    try {
+      lock = JSON.parse(fs.readFileSync(resolvedLockPath, "utf8")) as { pid: number; startedAt: string };
+    } catch {
+      staleLock = true;
     }
-    if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
-      await reindexFn({ stashDir: primaryStashDir });
+    if (lock !== null) {
+      try {
+        process.kill(lock.pid, 0);
+        throw new ConfigError(
+          `akm improve is already running (pid ${lock.pid}, started ${lock.startedAt}). Use SIGTERM to stop it.`,
+          "INVALID_CONFIG_FILE",
+        );
+      } catch (err) {
+        if (err instanceof ConfigError) throw err;
+        staleLock = true;
+      }
+    }
+    if (staleLock) {
+      try {
+        fs.unlinkSync(resolvedLockPath);
+      } catch {
+        // ignore
+      }
     }
   }
+  fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
+  fs.writeFileSync(resolvedLockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
 
-  for (const planned of actionableRefs) {
-    const reflectResult = await reflectFn({
-      ref: planned.ref,
-      task: options.task,
-      ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+  const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
+  const startMs = Date.now();
+
+  try {
+    const actions: ImproveActionResult[] = [];
+    const cleanupWarnings: string[] = [];
+
+    appendEvent({
+      eventType: "improve_invoked",
+      ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
+      metadata: { scope, dryRun: options.dryRun ?? false, assetCount: plannedRefs.length },
     });
-    actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
-    if (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir)) {
-      const parsedPlannedRef = parseAssetRef(planned.ref);
-      const distillResult = await distillFn({
-        ref: planned.ref,
-        ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-        ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-      });
-      actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+
+    if (primaryStashDir) {
+      try {
+        await ensureIndexFn(primaryStashDir);
+      } catch (err) {
+        cleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    let appliedCleanup: Awaited<ReturnType<typeof applyMemoryCleanup>> | undefined;
+    try {
+      appliedCleanup =
+        primaryStashDir && memoryCleanupPlan ? applyMemoryCleanup(primaryStashDir, memoryCleanupPlan) : undefined;
+    } catch (err) {
+      cleanupWarnings.push(`applyMemoryCleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
+    const postCleanupRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
+
+    const signalFiltered = postCleanupRefs.filter((candidate) => {
+      const { events } = readEvents({ type: "feedback", ref: candidate.ref });
+      return events.some(
+        (e) =>
+          (e.metadata !== undefined && typeof e.metadata.signal === "string") ||
+          (e.metadata !== undefined && typeof e.metadata.note === "string"),
+      );
+    });
+
+    const utilityMap = buildUtilityMap(signalFiltered);
+    const sorted = [...signalFiltered].sort((a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0));
+    const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
+
+    if (appliedCleanup) {
+      for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
+        const archived = appliedCleanup.archived.find((record) => record.ref === candidate.ref);
+        if (!archived) continue;
+        actions.push({
+          ref: candidate.ref,
+          mode: "memory-prune",
+          result: { ok: true, pruned: true, reason: candidate.reason },
+        });
+      }
+      if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
+        try {
+          await reindexFn({ stashDir: primaryStashDir });
+        } catch (err) {
+          cleanupWarnings.push(`reindex after cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    const validationFailures: Array<{ ref: string; reason: string }> = [];
+    for (const candidate of actionableRefs) {
+      try {
+        const filePath = findAssetFilePath(candidate.ref, options.stashDir);
+        if (!filePath) {
+          validationFailures.push({ ref: candidate.ref, reason: "not found in index" });
+          continue;
+        }
+        if (isLessonCandidate(candidate.ref)) {
+          const raw = fs.readFileSync(filePath, "utf8");
+          const fm = parseFrontmatter(raw).data;
+          if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
+        }
+      } catch (e) {
+        validationFailures.push({ ref: candidate.ref, reason: String(e) });
+      }
+    }
+    if (validationFailures.length > 0) {
+      console.error(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
+      for (const f of validationFailures) console.error(`  ${f.ref}: ${f.reason}`);
+    }
+    const validationFailureRefs = new Set(validationFailures.map((f) => f.ref));
+
+    let completedCount = 0;
+    for (const planned of actionableRefs) {
+      if (validationFailureRefs.has(planned.ref)) continue;
+      if (Date.now() - startMs >= budgetMs) {
+        const remaining = actionableRefs.length - completedCount;
+        console.error(
+          `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
+        );
+        actions.push({
+          ref: planned.ref,
+          mode: "error",
+          result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
+        });
+        break;
+      }
+      try {
+        const reflectResult = await reflectFn({
+          ref: planned.ref,
+          task: options.task,
+          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+        });
+        actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
+        if (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir)) {
+          const parsedPlannedRef = parseAssetRef(planned.ref);
+
+          const slug = `${parsedPlannedRef.type}-${parsedPlannedRef.name}`.toLowerCase();
+          const safe = slug
+            .replace(/[^a-z0-9-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "");
+          const lessonRef = `lesson:${safe}-lesson`;
+          const dedupeStashDir = primaryStashDir ?? options.stashDir;
+          if (dedupeStashDir) {
+            const existingProposals = listProposals(dedupeStashDir, { ref: lessonRef });
+            if (existingProposals.some((p) => p.status === "pending")) {
+              actions.push({
+                ref: planned.ref,
+                mode: "distill-skipped",
+                result: { ok: true, reason: "pending proposal exists" },
+              });
+              completedCount++;
+              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref}`);
+              continue;
+            }
+          }
+
+          const distillResult = await distillFn({
+            ref: planned.ref,
+            ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
+            ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+          });
+          actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+        }
+      } catch (err) {
+        actions.push({
+          ref: planned.ref,
+          mode: "error",
+          result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+        });
+      }
+      completedCount++;
+      console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref}`);
+    }
+
+    const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
+
+    const consolidation = await akmConsolidate({
+      ...options.consolidateOptions,
+      config: options.config ?? loadConfig(),
+      stashDir: options.stashDir,
+    });
+
+    return {
+      schemaVersion: 1,
+      ok: true,
+      scope,
+      dryRun: false,
+      ...(guidance ? { guidance } : {}),
+      memorySummary,
+      ...(memoryCleanupPlan
+        ? {
+            memoryCleanup: {
+              ...shapeMemoryCleanup(memoryCleanupPlan),
+              ...(appliedCleanup
+                ? {
+                    archived: appliedCleanup.archived,
+                    ...(appliedCleanup.transitionLogPath
+                      ? { transitionLogPath: appliedCleanup.transitionLogPath }
+                      : {}),
+                    ...(appliedCleanup.transitionLogEntries !== undefined
+                      ? { transitionLogEntries: appliedCleanup.transitionLogEntries }
+                      : {}),
+                    ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
+                  }
+                : cleanupWarnings.length > 0
+                  ? { warnings: cleanupWarnings }
+                  : {}),
+            },
+          }
+        : {}),
+      plannedRefs: actionableRefs,
+      actions,
+      ...(validationFailures.length > 0 ? { validationFailures } : {}),
+      ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
+    };
+  } finally {
+    try {
+      fs.unlinkSync(resolvedLockPath);
+    } catch {
+      // ignore
     }
   }
-
-  return {
-    schemaVersion: 1,
-    ok: true,
-    scope,
-    dryRun: false,
-    ...(guidance ? { guidance } : {}),
-    memorySummary,
-    ...(memoryCleanupPlan
-      ? {
-          memoryCleanup: {
-            ...shapeMemoryCleanup(memoryCleanupPlan),
-            ...(appliedCleanup
-              ? {
-                  archived: appliedCleanup.archived,
-                  ...(appliedCleanup.transitionLogPath ? { transitionLogPath: appliedCleanup.transitionLogPath } : {}),
-                  ...(appliedCleanup.transitionLogEntries !== undefined
-                    ? { transitionLogEntries: appliedCleanup.transitionLogEntries }
-                    : {}),
-                  ...(appliedCleanup.warnings && appliedCleanup.warnings.length > 0
-                    ? { warnings: appliedCleanup.warnings }
-                    : {}),
-                }
-              : {}),
-          },
-        }
-      : {}),
-    plannedRefs: actionableRefs,
-    actions,
-  };
 }
 
 function shouldAnalyzeMemoryCleanup(
@@ -345,4 +524,54 @@ function shapeMemoryCleanup(plan: MemoryCleanupPlan): ImproveMemoryCleanupResult
     beliefStateTransitions: plan.beliefStateTransitions,
     consolidationCandidates: plan.consolidationCandidates,
   };
+}
+
+function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
+  const map = new Map<string, number>();
+  if (refs.length === 0) return map;
+  const refSet = new Set(refs.map((r) => r.ref));
+  let db: Database | undefined;
+  try {
+    db = openExistingDatabase();
+    const allDbEntries = getAllEntries(db);
+    const idToRef = new Map<number, string>();
+    for (const indexed of allDbEntries) {
+      const ref = makeAssetRef(indexed.entry.type, indexed.entry.name);
+      if (refSet.has(ref)) idToRef.set(indexed.id, ref);
+    }
+    const ids = [...idToRef.keys()];
+    if (ids.length > 0) {
+      const scores = getUtilityScoresByIds(db, ids);
+      for (const [id, score] of scores) {
+        const ref = idToRef.get(id);
+        if (ref) map.set(ref, score.utility);
+      }
+    }
+  } catch {
+    // best-effort: if DB unavailable, all utilities default to 0
+  } finally {
+    if (db) closeDatabase(db);
+  }
+  return map;
+}
+
+function findAssetFilePath(ref: string, stashDir?: string): string | null {
+  try {
+    const parsed = parseAssetRef(ref);
+    const sources = resolveSourceEntries(stashDir);
+    for (const source of sources) {
+      const candidates = [
+        path.join(source.path, `${parsed.type}s`, `${parsed.name}.md`),
+        path.join(source.path, `${parsed.type}`, `${parsed.name}.md`),
+        path.join(source.path, `${parsed.type}s`, parsed.name),
+        path.join(source.path, `${parsed.type}`, parsed.name),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  return null;
 }

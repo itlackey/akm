@@ -337,9 +337,9 @@ export async function runGraphExtractionPass(
     totalRelations += result.relations.length;
   }
 
-  const assetRefs = extractionResults.filter(Boolean).map((r) => r!.absPath);
+  const assetRefs = extractionResults.filter(Boolean).map((r) => r?.absPath);
   const deduped = deduplicateGraph(
-    extractionResults.filter(Boolean).map((r) => ({ entities: r!.entities, relations: r!.relations })),
+    extractionResults.filter(Boolean).map((r) => ({ entities: r?.entities, relations: r?.relations })),
     assetRefs,
   );
 

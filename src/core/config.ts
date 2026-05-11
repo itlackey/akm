@@ -388,7 +388,7 @@ export const DEFAULT_CONFIG: AkmConfig = {
  * Used to validate numeric config fields like `dimension`, `contextLength`,
  * `timeoutMs`, `maxTokens`, and `ollamaOptions.num_ctx`.
  */
-function parsePositiveInteger(fieldPath: string, value: unknown): number | undefined {
+function parsePositiveInteger(_fieldPath: string, value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     return undefined;
   }
@@ -744,7 +744,7 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
   return value;
 }
 
-function readConfigObject(configPath: string): Record<string, unknown> | undefined {
+function _readConfigObject(configPath: string): Record<string, unknown> | undefined {
   try {
     const text = fs.readFileSync(configPath, "utf8");
     return parseConfigObjectFromText(text);

@@ -59,7 +59,7 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
 export async function runAgentSdk(
   profile: AgentProfile,
   prompt: string,
-  opts: RunAgentOptions = {},
+  _opts: RunAgentOptions = {},
   llmConfig?: LlmConnectionConfig,
 ): Promise<AgentRunResult> {
   const start = Date.now();

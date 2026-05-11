@@ -1239,7 +1239,7 @@ export async function stepAgentConnection(
     agentOptions.push({
       value: "cli-agent",
       label: "Installed CLI agent",
-      hint: availableClis.map((d) => d.name).join(", ") + " detected",
+      hint: `${availableClis.map((d) => d.name).join(", ")} detected`,
     });
   }
   agentOptions.push({ value: "none", label: "None — disable agentic features" });

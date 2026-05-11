@@ -14,6 +14,6 @@
   <string>{{LOG_PATH}}</string>
   <key>RunAtLoad</key>
   <false/>
-{{TRIGGER_XML}}
+{{ENV_VARS}}{{TRIGGER_XML}}
 </dict>
 </plist>

@@ -92,6 +92,10 @@ export interface MemoryEntry {
   stashDir: string;
 }
 
+export function isConsolidationEligibleMemoryName(name: string): boolean {
+  return !name.endsWith(".derived");
+}
+
 function loadMemoriesFromDb(sourceFilterPath?: string): MemoryEntry[] {
   let db: ReturnType<typeof openExistingDatabase> | undefined;
   try {
@@ -102,6 +106,7 @@ function loadMemoriesFromDb(sourceFilterPath?: string): MemoryEntry[] {
         if (!sourceFilterPath) return true;
         return path.resolve(e.stashDir) === path.resolve(sourceFilterPath);
       })
+      .filter((e) => isConsolidationEligibleMemoryName(e.entry.name))
       .map((e) => ({
         name: e.entry.name,
         filePath: e.filePath,
@@ -123,6 +128,7 @@ function loadMemoriesFromFs(memoriesDir: string, stashDir: string): MemoryEntry[
     if (!fname.endsWith(".md")) continue;
     const filePath = path.join(memoriesDir, fname);
     const name = fname.replace(/\.md$/, "");
+    if (!isConsolidationEligibleMemoryName(name)) continue;
     entries.push({ name, filePath, description: "", tags: [], stashDir });
   }
   return entries;
@@ -365,8 +371,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   const chunkOpsArrays: ConsolidateOperation[][] = [];
+  let consecutiveFailures = 0;
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    // Abort early if the first chunk failed — the LLM/agent is likely unavailable
+    // and continuing would waste minutes processing chunks that will all fail the same way.
+    if (chunkIdx > 0 && consecutiveFailures >= 2) {
+      const skipped = chunks.length - chunkIdx;
+      warnings.push(
+        `Consolidation aborted after ${consecutiveFailures} consecutive chunk failures — LLM may be unavailable. ${skipped} chunk(s) skipped.`,
+      );
+      break;
+    }
+
     const chunk = chunks[chunkIdx];
     const userPrompt = buildChunkPrompt(sourceName, chunk, chunkIdx, chunks.length, bodyTruncation);
 
@@ -379,14 +396,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
     if (!raw.ok) {
       warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
+      consecutiveFailures++;
       continue;
     }
 
     const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
     if (!parsed || !Array.isArray(parsed.operations)) {
       warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.`);
+      consecutiveFailures++;
       continue;
     }
+
+    consecutiveFailures = 0; // reset on success
 
     const ops: ConsolidateOperation[] = [];
     for (const op of parsed.operations) {
@@ -709,7 +730,7 @@ async function generateMergedContent(
 async function promptConfirm(message: string): Promise<boolean> {
   process.stdout.write(message);
   return new Promise((resolve) => {
-    const readline = require("readline");
+    const readline = require("node:readline");
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.once("line", (line: string) => {
       rl.close();

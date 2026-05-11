@@ -29,7 +29,6 @@ import {
 } from "../integrations/agent";
 import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
-import { callAi } from "../llm/call-ai";
 
 export interface AkmProposeOptions {
   type: string;

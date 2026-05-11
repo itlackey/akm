@@ -40,7 +40,7 @@ export interface AgentProposalPayload {
  */
 const TYPE_HINTS: Record<string, string> = {
   lesson:
-    "lesson assets MUST start with frontmatter containing `description` and `when_to_use` keys (both non-empty). Body should be 1–3 short paragraphs of practical guidance.",
+    "lesson assets MUST start with frontmatter containing `description` and `when_to_use` keys (both non-empty). Body: 1–3 short paragraphs of practical guidance. A lesson is NOT a restatement of the source asset — it answers: When should I reach for this? What goes wrong without it? What did real use reveal that the asset itself doesn't say?",
   skill:
     "skill assets are stored as `skills/<name>/SKILL.md`. Frontmatter typically includes `name`, `description`, and `when_to_use`.",
   command:
@@ -122,9 +122,12 @@ export interface ReflectPromptInput {
 export function buildReflectPrompt(input: ReflectPromptInput): string {
   const sections: string[] = [];
   if (input.ref && input.type && input.name) {
-    sections.push(
-      `You are reviewing an akm stash asset (${input.type}) called "${input.name}" and proposing an improved version.`,
-    );
+    // Change 2 — type-conditioned goal framing
+    const isLesson = input.type === "lesson";
+    const goalSentence = isLesson
+      ? `Your task is to distill what usage signals reveal about this ${input.type} asset — when to reach for it, what goes wrong without it, and what real use has revealed that the asset itself does not say. Do not reproduce the source content; your proposal must add information the source does not contain.`
+      : `Your task is to review this ${input.type} asset, identify what the feedback signals as broken, missing, or unclear, and produce an improved version. Do not reproduce the source content unchanged; your proposal must correct or add something the source lacks.`;
+    sections.push(goalSentence);
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
   } else {
@@ -135,6 +138,20 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
 
   if (input.task?.trim()) {
     sections.push(`Task / focus: ${input.task.trim()}`);
+  }
+
+  // Change 3 & 4 — feedback moved before asset content; missing else branch added
+  if (input.feedback && input.feedback.length > 0) {
+    sections.push("Recent feedback / signals:");
+    for (const line of input.feedback) sections.push(`- ${line}`);
+  } else if (!input.ref) {
+    sections.push("Recent feedback / signals:");
+    sections.push("- (no feedback events recorded)");
+  } else {
+    // ref is set but no feedback — explicitly constrain scope to schema compliance
+    sections.push(
+      "No usage feedback recorded. Limit your proposal to schema and structural improvements only: missing required frontmatter fields, unclear `when_to_use`, ambiguous description, or broken formatting. Do not speculate about runtime weaknesses you have not observed.",
+    );
   }
 
   if (input.assetContent?.trim()) {
@@ -148,20 +165,14 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
     sections.push("(No existing asset content was supplied.)");
   }
 
-  if (input.feedback && input.feedback.length > 0) {
-    sections.push("Recent feedback / signals:");
-    for (const line of input.feedback) sections.push(`- ${line}`);
-  } else if (!input.ref) {
-    sections.push("Recent feedback / signals:");
-    sections.push("- (no feedback events recorded)");
-  }
-
   if (input.schemaHints && input.schemaHints.length > 0) {
     sections.push("Schema / lint hints to address:");
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
 
-  sections.push("Produce a single proposal that addresses the feedback and respects the asset-type contract.");
+  sections.push(
+    "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the proposal's frontmatter is missing `when_to_use`, you MUST generate one — a one-line trigger sentence describing exactly when a user should reach for this asset.",
+  );
   sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }

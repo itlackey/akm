@@ -53,6 +53,12 @@ export interface LaunchdBackendOptions {
   logDir?: string;
   /** Override the akm invocation argv. */
   akmArgv?: string[];
+  /**
+   * Override the PATH captured for `EnvironmentVariables` in the plist.
+   * Set to `false` to disable PATH capture entirely.
+   * When omitted, `process.env.PATH` at install time is used.
+   */
+  envPath?: string | false;
 }
 
 export const LAUNCHD_LABEL_PREFIX = "com.akm.task.";
@@ -72,7 +78,17 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
   return {
     name: "launchd",
     install(task: TaskDocument) {
-      const xml = buildPlistXml(task, akmArgv, logDir);
+      // Capture PATH at install time so launchd (which strips the environment
+      // aggressively) can find the same binaries the user sees interactively.
+      let pathEnv: string | undefined;
+      if (options.envPath === false) {
+        pathEnv = undefined;
+      } else if (typeof options.envPath === "string") {
+        pathEnv = options.envPath;
+      } else {
+        pathEnv = process.env.PATH ?? "";
+      }
+      const xml = buildPlistXml(task, akmArgv, logDir, pathEnv);
       fsLike.ensureDir(agentsDir);
       // launchd refuses to start a job when StandardOutPath/StandardErrorPath
       // points at a non-existent directory; create it before bootstrap.
@@ -130,7 +146,7 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
 
 // ── XML builder (exported for tests) ────────────────────────────────────────
 
-export function buildPlistXml(task: TaskDocument, akmArgv: string[], logDir: string): string {
+export function buildPlistXml(task: TaskDocument, akmArgv: string[], logDir: string, pathEnv?: string): string {
   const spec = parseSchedule(task.schedule, "launchd");
   const trigger = translateToLaunchd(spec);
   const argv = [...akmArgv, "tasks", "run", task.id];
@@ -138,10 +154,16 @@ export function buildPlistXml(task: TaskDocument, akmArgv: string[], logDir: str
   const logPath = path.join(logDir, `${task.id}.log`);
   const triggerXml = renderLaunchdTrigger(trigger);
 
+  const envVarsXml =
+    pathEnv !== undefined
+      ? `  <key>EnvironmentVariables</key>\n  <dict>\n    <key>PATH</key>\n    <string>${escapeXml(pathEnv)}</string>\n  </dict>\n`
+      : "";
+
   return launchdTemplate
     .replace("{{LABEL}}", LAUNCHD_LABEL_PREFIX + escapeXml(task.id))
     .replace("{{PROGRAM_ARGS}}", programArgs)
     .replaceAll("{{LOG_PATH}}", escapeXml(logPath))
+    .replace("{{ENV_VARS}}", envVarsXml)
     .replace("{{TRIGGER_XML}}", triggerXml);
 }
 

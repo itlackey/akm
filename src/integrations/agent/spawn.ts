@@ -11,7 +11,9 @@
  * NEVER imports an LLM SDK. Agents are reachable only via shell-out;
  * this is a pre-emptive guarantee against the #222 invariant.
  */
-import { parseEmbeddedJsonResponse, parseJsonResponse } from "../../core/parse";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
 
@@ -120,6 +122,39 @@ export interface AgentRunResult {
 
 const DEFAULT_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MS;
 
+/**
+ * Supplement `existingPath` with well-known user binary directories when
+ * running in a scheduler context (cron/launchd) where PATH is stripped.
+ *
+ * Detection heuristic: if the current PATH does not contain the user's home
+ * directory, we are likely in a stripped scheduler env. In an interactive
+ * shell the user's home almost always appears (e.g. ~/.bun/bin, ~/.cargo/bin).
+ *
+ * Only directories that actually exist on disk are prepended, and only if
+ * they are not already present, so interactive-shell PATH ordering is never
+ * disturbed.
+ */
+export function supplementPathForSchedulerContext(existingPath: string): string {
+  const home = os.homedir();
+  // If PATH already contains the home directory, we are in an interactive
+  // shell — skip supplementation entirely.
+  if (existingPath.split(path.delimiter).some((d) => d.startsWith(home))) {
+    return existingPath;
+  }
+  const candidates = [
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin"),
+    path.join(home, ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+  ];
+  const existing = new Set(existingPath.split(path.delimiter).filter(Boolean));
+  const toAdd = candidates.filter((d) => !existing.has(d) && fs.existsSync(d));
+  if (toAdd.length === 0) return existingPath;
+  return [...toAdd, existingPath].filter(Boolean).join(path.delimiter);
+}
+
 function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
   if (options.spawn) return options.spawn;
   // Pull from globalThis so tests that swap it out at module level are honoured.
@@ -135,6 +170,10 @@ function resolveSpawnFn(options: RunAgentOptions): SpawnFn {
  *   • Every name in `profile.envPassthrough`.
  *   • Every entry in `profile.env`.
  *   • Every entry in `options.env` (highest precedence).
+ *
+ * PATH is supplemented with well-known user binary directories when running
+ * in a scheduler context (cron/launchd) where the inherited PATH is stripped.
+ * See {@link supplementPathForSchedulerContext}.
  */
 function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<string, string> {
   const source = options.envSource ?? process.env;
@@ -142,6 +181,11 @@ function buildChildEnv(profile: AgentProfile, options: RunAgentOptions): Record<
   for (const name of profile.envPassthrough) {
     const value = source[name];
     if (value !== undefined) env[name] = value;
+  }
+  // Supplement PATH after passthrough so the scheduler-context fix applies to
+  // the value actually coming from the environment source.
+  if (env.PATH !== undefined) {
+    env.PATH = supplementPathForSchedulerContext(env.PATH);
   }
   if (profile.env) {
     for (const [k, v] of Object.entries(profile.env)) env[k] = v;
@@ -344,21 +388,67 @@ export async function runAgent(
   }
 
   if (parseOutput === "json" && stdioMode === "captured") {
-    // Strip <think> blocks, code fences, escape control chars, then attempt
-    // direct parse with embedded-JSON fallback for local LLMs that emit prose
-    // around the payload. Uses shared core/parse utilities (gains array support
-    // and control-char escaping over the previous inline implementation).
-    const parsed = parseJsonResponse(stdout) ?? parseEmbeddedJsonResponse(stdout);
-    if (parsed === undefined) {
-      return {
-        ok: false,
-        exitCode,
-        stdout,
-        stderr,
-        durationMs,
-        reason: "parse_error",
-        error: "no JSON object found in agent output",
-      };
+    // Strip <think> blocks and code fences, then try direct parse with
+    // embedded-JSON fallback for local LLMs that emit prose around the payload.
+    const cleaned = stdout
+      .trim()
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .trim()
+      .replace(/^```(?:json)?\s*\n?/, "")
+      .replace(/\n?```\s*$/, "")
+      .trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Fallback: extract the first balanced {…} from prose output.
+      let found: unknown;
+      for (let s = 0; s < cleaned.length; s++) {
+        if (cleaned[s] !== "{") continue;
+        let depth = 0,
+          inStr = false,
+          esc = false;
+        for (let i = s; i < cleaned.length; i++) {
+          const c = cleaned[i];
+          if (inStr) {
+            if (esc) {
+              esc = false;
+            } else if (c === "\\") {
+              esc = true;
+            } else if (c === '"') {
+              inStr = false;
+            }
+            continue;
+          }
+          if (c === '"') {
+            inStr = true;
+            continue;
+          }
+          if (c === "{") depth++;
+          if (c === "}") {
+            depth--;
+            if (depth === 0) {
+              try {
+                found = JSON.parse(cleaned.slice(s, i + 1));
+              } catch {}
+              break;
+            }
+          }
+        }
+        if (found !== undefined) break;
+      }
+      if (found === undefined) {
+        return {
+          ok: false,
+          exitCode,
+          stdout,
+          stderr,
+          durationMs,
+          reason: "parse_error",
+          error: "no JSON object found in agent output",
+        };
+      }
+      parsed = found;
     }
     return { ok: true, exitCode, stdout, stderr, durationMs, parsed };
   }
