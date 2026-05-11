@@ -282,3 +282,345 @@ The workflow evals pattern (Larson 2025) acknowledges that LLM evaluator non-det
 ---
 
 *Report synthesized by Claude Sonnet 4.6 from four research and debate documents. No project source files were modified during analysis. All citations are traceable to the source documents at `/tmp/akm-comparison-research-memory-systems.md`, `/tmp/akm-comparison-research-patterns.md`, `/tmp/akm-comparison-analysis.md`, and `/tmp/akm-comparison-debater.md`.*
+
+---
+
+## Implementation Plan
+
+Debate-corrected implementation plan for P0–P2 recommendations. Each item names the exact file, function, and change needed. Corrections from the skeptic review supersede the original design sketches where they conflict.
+
+### Sequencing and dependencies
+
+```
+P0-B-Part1  ──────────────────────────────────────────┐
+(fix show→usage_events)                                │
+         │                                             ▼
+         └──► P0-A  (retrieval-count filter now live)  P0-B-Part2
+              (unblock zero-feedback assets)           (MemRL bump formula)
+
+P0-C   (independent — no deps)
+
+P1-A   (independent — but benefits from P1-B being safe first)
+P1-B   (independent — self-contained in consolidate.ts)
+P1-C   (independent — benefits from P0-B utility scores)
+
+P2-B   (requires lesson_quality_gate feature flag; benefits from P0-C reason text)
+```
+
+Recommended shipping order: **P0-C → P0-B-Part1 → P0-A → P0-B-Part2 → P1-B → P1-C → P1-A → P2-B**
+
+---
+
+### P0 — Days effort (highest ROI)
+
+#### P0-B-Part1: Fix show-event bug in usage_events (prerequisite for P0-A and P0-B-Part2)
+
+**File(s) and function:** `src/commands/show.ts` — the `appendEvent` call site (around line 230).
+
+**Change:** After the existing `appendEvent` call that writes to `events.jsonl`, insert a `show` event into the `usage_events` table via `insertUsageEvent`. The `entry_id` must be resolved from the DB using the pattern from `logSearchEvent` in `src/commands/search.ts` (lines 228–257): open the DB with `openExistingDatabase()`, call `resolveEntryIds([ref])`, insert, close. Without this fix, `utility_scores.show_count` is permanently zero for all assets, making `select_rate` always 0 and breaking the EMA formula in the indexer.
+
+**Code sketch:**
+```ts
+// src/commands/show.ts — after appendEvent(...)
+const db = openExistingDatabase(stashDir);
+const resolved = resolveEntryIds(db, [ref]);
+for (const { entryId } of resolved) {
+  insertUsageEvent(db, { event_type: "show", entry_ref: ref, entry_id: entryId });
+}
+db.close();
+```
+
+**Effort:** 2 hours
+
+---
+
+#### P0-A: Unblock zero-feedback assets in improve loop
+
+**File(s) and function:** `src/commands/improve.ts` — `akmImprove`, the `signalFiltered` block (lines 338–349, confirmed from source read).
+
+**Change:** The current filter (lines 338–345) keeps only refs with at least one `feedback` event carrying `metadata.signal` or `metadata.note`. The skeptic correctly identified that `utility >= 0.3` is vacuous on any stash where P0-B-Part1 has not shipped — `utility_scores` rows do not exist for never-retrieved assets and default to `0`. The corrected filter uses `search_count + show_count >= 3` from the `usage_events` table, which is a concrete count-based proxy that works even before EMA has warmed up. After computing `signalFiltered`, build a second candidate set from the remaining `postCleanupRefs` filtered by retrieval count, then merge signal-bearing refs first (higher editorial confidence), high-retrieval refs second. Add a startup warning if `utility_scores` is empty and the fallback threshold is set.
+
+**Code sketch:**
+```ts
+// src/commands/improve.ts — replace lines 347–349
+const RETRIEVAL_COUNT_THRESHOLD = 3; // search_count + show_count
+
+const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
+const noFeedbackRefs = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
+
+const retrievalCounts = getRetrievalCounts(db, noFeedbackRefs.map((r) => r.ref));
+// getRetrievalCounts: SELECT entry_ref, SUM(1) FROM usage_events
+//   WHERE event_type IN ('search','show') AND entry_ref IN (...)
+//   GROUP BY entry_ref
+const highRetrievalRefs = noFeedbackRefs.filter(
+  (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
+);
+
+const mergedRefs = [...signalFiltered, ...highRetrievalRefs];
+const utilityMap = buildUtilityMap(mergedRefs);
+const sorted = [...mergedRefs].sort(
+  (a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0),
+);
+const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
+```
+
+**Effort:** 3 hours (including `getRetrievalCounts` helper in `src/indexer/db.ts`)
+
+---
+
+#### P0-B-Part2: MemRL utility score bump on retrieval
+
+**File(s) and function:** `src/indexer/db.ts` — new `bumpUtilityScore` function; `src/commands/search.ts` — `logSearchEvent` (line 219).
+
+**Change:** Add `bumpUtilityScore(db, entryId, reward, lr=0.1)` implementing `utility = utility + lr × (reward − utility)`. The skeptic's objection was correct: synchronous per-hit writes in `logSearchEvent` double the write count on the hot path. Corrected approach: batch all bumps for a search call in a single SQLite transaction after the search loop, or defer entirely to the next `akm index` run. The deferred approach (preferred) means P0-B-Part1 alone closes most of the loop; Part2 adds near-real-time updates as a batch-transactional operation, not per-hit.
+
+**Code sketch:**
+```ts
+// src/indexer/db.ts — new function
+export function bumpUtilityScoresBatch(
+  db: Database,
+  entryIds: number[],
+  reward: number,
+  lr = 0.1,
+): void {
+  db.transaction(() => {
+    for (const entryId of entryIds) {
+      const existing = getUtilityScore(db, entryId);
+      const current = existing?.utility ?? 0;
+      const next = Math.max(0, Math.min(1, current + lr * (reward - current)));
+      upsertUtilityScore(db, entryId, {
+        utility: next,
+        showCount: (existing?.showCount ?? 0) + (reward > 0.5 ? 1 : 0),
+        searchCount: existing?.searchCount ?? 0,
+        selectRate: existing?.selectRate ?? 0,
+        lastUsedAt: reward > 0.5 ? new Date().toISOString() : existing?.lastUsedAt,
+      });
+    }
+  })();
+}
+
+// src/commands/search.ts — after logSearchEvent loop
+const resolvedIds = resolved.map((r) => r.entryId);
+bumpUtilityScoresBatch(db, resolvedIds, 1.0); // single transaction
+```
+
+**Effort:** 2 hours
+
+---
+
+#### P0-C: --reason for negative feedback (warning-only, opt-in hard error)
+
+**File(s) and function:** `src/cli.ts` — `feedbackCommand` definition (line 1138) and `run()` handler (~line 1183).
+
+**Change:** The skeptic correctly identified that a hard `UsageError` breaks agent callers that call `akm feedback --negative` from exit-code paths with no editorial judgment. Corrected approach: emit a `warn()` when `--negative` is set without `--reason`, but do not throw. Add a config key `feedback.requireReason: true` that upgrades the warning to a hard error for deployments where human-CLI use is enforced. Rename `--note` to `--reason` in the arg definition; keep `--note` as a silently accepted backward-compat alias. Storage side (`md.reason` read in `reflect.ts:104`) is already partially ready — no change needed there.
+
+**Code sketch:**
+```ts
+// src/cli.ts, feedbackCommand.run()
+const reason = (args.reason as string | undefined) ?? args.note; // compat alias
+
+if (args.negative && !reason?.trim()) {
+  if (config.feedback?.requireReason) {
+    throw new UsageError(
+      "Negative feedback requires --reason (feedback.requireReason is enabled).",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  } else {
+    warn("Warning: negative feedback without --reason provides less distillation signal.");
+  }
+}
+
+const metadataObj = {
+  signal,
+  ...(reason?.trim() ? { reason: reason.trim() } : {}),
+  ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
+};
+```
+
+**Effort:** 2 hours
+
+---
+
+### P1 — Days effort (significant improvement)
+
+#### P1-A: Volume-based consolidation trigger
+
+**File(s) and function:** `src/commands/improve.ts` — `akmImprove` (around line 459); `src/commands/consolidate.ts` — `AkmConsolidateOptions`.
+
+**Change:** Before calling `akmConsolidate`, check if `memorySummary.eligible > MEMORY_VOLUME_THRESHOLD` (default 100). If so, inject `{ memory_consolidation: true }` into the config passed to consolidation, bypassing the feature flag for that run. Guard: `!!config.llm || !!config.agent` (skeptic correctly noted the original `!!config.llm`-only guard would miss agent-path consolidation). Expose the threshold as `AkmImproveOptions.memoryVolumeConsolidationThreshold?: number`. Add `autoTriggered: true` to the `AkmConsolidateOptions` passed so the run can be identified in logs.
+
+**Code sketch:**
+```ts
+// src/commands/improve.ts — around line 459
+const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
+const hasLlm = !!baseConfig.llm || !!baseConfig.agent;
+const volumeTriggered = memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+
+const consolidationConfig = volumeTriggered
+  ? {
+      ...baseConfig,
+      llm: { ...baseConfig.llm!, features: { ...baseConfig.llm?.features, memory_consolidation: true } },
+    }
+  : baseConfig;
+
+const consolidation = await akmConsolidate({
+  ...options.consolidateOptions,
+  config: consolidationConfig,
+  stashDir: options.stashDir,
+  autoTriggered: volumeTriggered,
+});
+```
+
+**Effort:** 3 hours
+
+---
+
+#### P1-B: Soft-invalidation for memory deletes
+
+**File(s) and function:** `src/commands/consolidate.ts` — delete branch (lines 573–591) and merge secondaries path (line 564).
+
+**Change:** Keep the existing `backupFile` call (raw snapshot, belt-and-suspenders), then additionally write an annotated archive copy. The skeptic identified two issues: (1) timestamp collision in synchronous loops — corrected by using `<iso-timestamp>-<op-index>-<name>.md` where `op-index` is the loop position; (2) unbounded accumulation — corrected by adding TTL cleanup (90-day default) at the end of each `akmConsolidate` run. Wrap `parseFrontmatter` in `archiveMemory` in a `try/catch`; on parse failure, archive raw content and emit a warning (Risk 5 from skeptic).
+
+**Code sketch:**
+```ts
+// src/commands/consolidate.ts
+function archiveMemory(
+  filePath: string, stashDir: string, ref: string,
+  reason: string, opIndex: number, supersededBy?: string,
+): void {
+  const archiveDir = path.join(stashDir, ".akm", "archive");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const raw = fs.readFileSync(filePath, "utf8");
+  let content = raw;
+  try {
+    const parsed = parseFrontmatter(raw);
+    const fm = yamlStringify({
+      ...parsed.data, status: "superseded",
+      superseded_at: new Date().toISOString(),
+      ...(supersededBy ? { superseded_by: supersededBy } : {}),
+      superseded_reason: reason,
+    });
+    content = `---\n${fm}---\n${parsed.body}`;
+  } catch {
+    warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const safeName = path.basename(filePath, ".md");
+  fs.writeFileSync(path.join(archiveDir, `${ts}-${opIndex}-${safeName}.md`), content, "utf8");
+}
+
+// TTL cleanup at end of akmConsolidate run
+const archiveDir = path.join(stashDir, ".akm", "archive");
+const cutoff = Date.now() - (config.archiveRetentionDays ?? 90) * 86_400_000;
+for (const f of fs.readdirSync(archiveDir)) {
+  const fp = path.join(archiveDir, f);
+  if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+}
+```
+
+**Effort:** 4 hours
+
+---
+
+#### P1-C: akm remember --show-similar
+
+**File(s) and function:** `src/cli.ts` — `rememberCommand` handler (after the file write); `src/commands/remember.ts` — output type (add `similar?: SearchHit[]` if an interface is exported).
+
+**Change:** The skeptic correctly identified that unconditionally adding `similar` to the output shape is a breaking change and produces a non-deterministic response. Corrected approach: add `--show-similar` as an opt-in flag on `remember`. When set, always include `similar: SearchHit[]` in the result (even if empty, so the shape is deterministic). Never include when flag is absent. Implementation goes in `cli.ts` (not `remember.ts`) to keep the domain module clean. Verify whether `akmSearch` is already statically imported in `cli.ts` before adding a dynamic import — if so, use the static import directly (Risk 3).
+
+**Code sketch:**
+```ts
+// src/cli.ts — rememberCommand args
+showSimilar: { type: "boolean", description: "Return top-3 similar existing memories in output" },
+
+// src/cli.ts — after file write in rememberCommand.run()
+let similar: Array<{ ref: string; title?: string }> = [];
+if (args.showSimilar) {
+  try {
+    const result = await akmSearch({
+      query: memoryContent.slice(0, 500),
+      type: "memory", limit: 4,
+    });
+    similar = result.hits
+      .filter((h) => h.ref !== ref)
+      .slice(0, 3)
+      .map((h) => ({ ref: h.ref, ...(h.entry?.name ? { title: h.entry.name } : {}) }));
+  } catch { /* best-effort */ }
+  output("remember", { ok: true, ref, tags, similar });
+} else {
+  output("remember", { ok: true, ref, tags });
+}
+```
+
+**Effort:** 3 hours
+
+---
+
+### P2 — Weeks effort (architectural)
+
+#### P2-B: LLM-as-judge quality gate in distill
+
+**File(s) and function:** `src/commands/distill.ts` — `akmDistill` (after `lintLessonContent` block, before `createProposal` — must cover all `effectiveProposalKind` branches); `src/core/config.ts` — `LlmFeatureFlags` (add `lesson_quality_gate?: boolean`); `src/llm/feature-gate.ts` — `LlmFeatureKey` (auto-includes once `config.ts` is updated).
+
+**Change:** Add `lesson_quality_gate` to `LlmFeatureFlags` and `LOCKED_LLM_FEATURE_KEYS`. In `akmDistill`, after the lint gate passes, if `isLlmFeatureEnabled(config, "lesson_quality_gate")`, call `runLessonQualityJudge`. The skeptic identified two critical bugs in the design sketch: (1) `config.llm!` throws when only `config.agent` is set — add null guard as first line of judge function; (2) no timeout — wrap `chat()` in `Promise.race` with `setTimeout(8000)` matching the `runLlmEnrich` pattern. Add `judgeModel` override key in config for routing to a cheaper model. Fail-open: judge failure → lesson passes. The gate must be inserted at all `effectiveProposalKind` branches, not just the `lesson` branch.
+
+**Code sketch:**
+```ts
+// src/core/config.ts — LlmFeatureFlags
+lesson_quality_gate?: boolean;
+judgeModel?: string; // optional model override for the quality judge
+
+// src/commands/distill.ts — after lintLessonContent passes, before createProposal
+if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
+  const judgeResult = await runLessonQualityJudge(config, content, sourceContent, chat);
+  if (!judgeResult.pass) {
+    writeRejectedLesson(stash, inputRef, effectiveLessonRef, effectiveProposalKind, judgeResult);
+    return { ok: true, outcome: "quality_rejected", inputRef, /* ... */ };
+  }
+}
+
+// runLessonQualityJudge implementation
+async function runLessonQualityJudge(config, lessonContent, sourceContent, chat): Promise<JudgeResult> {
+  if (!config.llm) return { pass: true, score: -1, reason: "no LLM configured — passing through" };
+  const JUDGE_TIMEOUT_MS = 8_000;
+  try {
+    const raw = await Promise.race([
+      chat(config.llm, [
+        { role: "system", content: "Return only valid JSON. No prose." },
+        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent) },
+      ]),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("judge timeout")), JUDGE_TIMEOUT_MS)
+      ),
+    ]);
+    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
+    if (!parsed || typeof parsed.score !== "number") {
+      return { pass: true, score: -1, reason: "judge parse failed — passing through" };
+    }
+    return { pass: parsed.score >= 3, score: parsed.score, reason: parsed.reason ?? "" };
+  } catch {
+    return { pass: true, score: -1, reason: "judge failed — passing through" };
+  }
+}
+```
+
+**Effort:** 5 hours (including `lesson_quality_gate` flag wiring + all `effectiveProposalKind` branch coverage)
+
+---
+
+### Implementation risks and mitigations
+
+**Risk 1: P0-A passes zero assets if shipped before P0-B-Part1.**
+Even with the corrected `search_count + show_count >= 3` filter, the count will be zero for all assets on stashes where `show` events have never been written to `usage_events`. Mitigation: P0-A must check whether `usage_events` contains any `show` events and emit a warning if not: "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets. Ship P0-B-Part1 first for full coverage."
+
+**Risk 2: P0-B-Part2 utility bumps race with indexer's `computeAndUpdateUtilityScores`.**
+The indexer does a full EMA recompute on `utility_scores` at index time, which can overwrite bump-raised values if it runs with stale event counts. Mitigation: Document a clear authority model — the indexer is always authoritative (its EMA recompute wins); the real-time bump is a temporary hint between index runs. Add `MAX(computed, existing)` logic to `upsertUtilityScore` only if the team prefers persistent bumps; otherwise accept that `akm index` resets scores to event-derived values.
+
+**Risk 3: P1-C dynamic import in `rememberCommand` may bypass mocks in test environments.**
+If `akmSearch` is already statically imported in `cli.ts`, a dynamic `import("./commands/search")` is both unnecessary and inconsistent. Mitigation: Check the static import list at the top of `cli.ts` before writing the handler. Use the existing static import if present.
+
+**Risk 4: P2-B judge gate covers only one `effectiveProposalKind` branch.**
+`distill.ts` has separate `createProposal` call sites for `lesson`, `knowledge`, and `recall` proposal kinds. A judge inserted at only one branch leaves others unguarded. Mitigation: Insert the judge call in a shared position before the `effectiveProposalKind` branch, or explicitly test each branch in the unit test suite with the `lesson_quality_gate` flag enabled.
+
+**Risk 5: `parseFrontmatter` throws on corrupt YAML in `archiveMemory`.**
+Consolidation may target files with hand-edited or LLM-corrupted frontmatter. An unguarded parse failure in `archiveMemory` would abort the delete loop and leave the journal in a partially-completed state. Mitigation: Wrap `parseFrontmatter` in a `try/catch` inside `archiveMemory`; on failure, write the raw file content to the archive without frontmatter mutation and push a warning to the `warnings` array. The `backupFile` call (which copies raw content) already runs before `archiveMemory`, so data is preserved even if archiving degrades gracefully.
