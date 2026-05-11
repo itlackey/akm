@@ -240,9 +240,12 @@ export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string 
   );
   sections.push(`Target ref: ${input.ref}`);
   sections.push(`Schema requirements for ${input.type} assets: ${hintForType(input.type)}`);
-  sections.push("Current asset content (verbatim):");
+  const CONTENT_CAP = 3000;
+  const body = input.assetContent.trimEnd();
+  const truncated = body.length > CONTENT_CAP;
+  sections.push("Current asset content (first 3000 chars — sufficient to generate missing frontmatter):");
   sections.push("```");
-  sections.push(input.assetContent.trimEnd());
+  sections.push(truncated ? `${body.slice(0, CONTENT_CAP)}\n... [truncated]` : body);
   sections.push("```");
   sections.push(
     "Produce the minimal fix: add ONLY the missing required frontmatter field(s). " +

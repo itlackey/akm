@@ -466,8 +466,23 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         for (const failure of validationFailures) {
           if (Date.now() - startMs >= budgetMs) break;
 
-          const filePath = findAssetFilePath(failure.ref, options.stashDir);
+          let filePath = findAssetFilePath(failure.ref, options.stashDir);
           if (!filePath) {
+            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+            continue;
+          }
+          // Skill assets are stored as directories — resolve to the markdown file inside.
+          try {
+            if (fs.statSync(filePath).isDirectory()) {
+              const candidates = ["SKILL.md", "index.md", "README.md"];
+              const found = candidates.map((f) => path.join(filePath as string, f)).find((p) => fs.existsSync(p));
+              if (!found) {
+                schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+                continue;
+              }
+              filePath = found;
+            }
+          } catch {
             schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
             continue;
           }
