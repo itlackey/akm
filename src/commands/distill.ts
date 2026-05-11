@@ -47,6 +47,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
@@ -57,8 +58,8 @@ import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup as indexerLookup } from "../indexer/indexer";
-import { type ChatMessage, chatCompletion } from "../llm/client";
-import { tryLlmFeature } from "../llm/feature-gate";
+import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./d
  *   - `validation_failed`— LLM returned content but it failed lesson lint.
  *                          No proposal. Exit non-zero (UsageError).
  */
-export type DistillOutcome = "queued" | "skipped" | "validation_failed";
+export type DistillOutcome = "queued" | "skipped" | "validation_failed" | "quality_rejected";
 
 export interface AkmDistillOptions {
   /** Asset ref to distil from (`[origin//]type:name`). */
@@ -172,6 +173,15 @@ export interface AkmDistillResult {
    * shown) but the operator-visible meaning differs.
    */
   feedbackFullyFiltered?: boolean;
+  /**
+   * Judge score (1–5 float) when `outcome === "quality_rejected"`.
+   * Also present as -1 when the judge failed/timed out and fell back to pass-through.
+   */
+  score?: number;
+  /**
+   * One-sentence reason from the LLM judge when `outcome === "quality_rejected"`.
+   */
+  reason?: string;
 }
 
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
@@ -276,6 +286,59 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   lines.push("");
   lines.push(`Produce the ${input.proposalKind === "knowledge" ? "knowledge" : "lesson"} markdown file now.`);
   return lines.join("\n");
+}
+
+// ── LLM-as-judge quality gate (P2-B) ────────────────────────────────────────
+
+function buildJudgePrompt(lessonContent: string, sourceContent: string): string {
+  return [
+    "You are evaluating a proposed lesson asset for an akm knowledge base.",
+    "",
+    "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
+    "1. NOVELTY: Does the lesson add information not already present in the source asset?",
+    "2. ACTIONABILITY: Can an agent follow this lesson without additional context?",
+    "3. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
+    "",
+    "Source asset content:",
+    "```",
+    sourceContent.slice(0, 2000),
+    "```",
+    "",
+    "Proposed lesson content:",
+    "```",
+    lessonContent.slice(0, 1000),
+    "```",
+    "",
+    'Return ONLY valid JSON, no prose: {"score": <average score 1-5 as float>, "reason": "<one sentence>"}',
+  ].join("\n");
+}
+
+async function runLessonQualityJudge(
+  config: AkmConfig,
+  lessonContent: string,
+  sourceContent: string,
+  chat: (llmConfig: LlmConnectionConfig, messages: ChatMessage[]) => Promise<string>,
+): Promise<{ pass: boolean; score: number; reason: string }> {
+  if (!config.llm) {
+    return { pass: true, score: -1, reason: "no LLM configured — passing through" };
+  }
+  const JUDGE_TIMEOUT_MS = 8_000;
+  try {
+    const raw = await Promise.race([
+      chat(config.llm, [
+        { role: "system", content: "Return only valid JSON. No prose." },
+        { role: "user", content: buildJudgePrompt(lessonContent, sourceContent) },
+      ]),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("judge timeout")), JUDGE_TIMEOUT_MS)),
+    ]);
+    const parsed = parseEmbeddedJsonResponse<{ score: number; reason: string }>(raw);
+    if (!parsed || typeof parsed.score !== "number") {
+      return { pass: true, score: -1, reason: "judge parse failed — passing through" };
+    }
+    return { pass: parsed.score >= 3, score: parsed.score, reason: parsed.reason ?? "" };
+  } catch {
+    return { pass: true, score: -1, reason: "judge failed — passing through" };
+  }
 }
 
 // ── Main entry point ────────────────────────────────────────────────────────
@@ -485,6 +548,43 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         ? "Knowledge proposals require a non-empty markdown body."
         : "Lessons require non-empty `description` and `when_to_use` frontmatter fields. See v1 spec §13.",
     );
+  }
+
+  // LLM-as-judge quality gate (P2-B). Only active when the feature flag is
+  // explicitly enabled. Fail-open: judge failures always pass through.
+  if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
+    const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat);
+    if (!judgeResult.pass) {
+      const rejectDir = path.join(stash, ".akm", "distill-rejected");
+      fs.mkdirSync(rejectDir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      fs.writeFileSync(
+        path.join(rejectDir, `${ts}-${effectiveLessonRef}.md`),
+        `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${content}`,
+        "utf8",
+      );
+      appendEvent({
+        eventType: "distill_invoked",
+        ref: inputRef,
+        metadata: {
+          outcome: "quality_rejected",
+          lessonRef: effectiveLessonRef,
+          score: judgeResult.score,
+          reason: judgeResult.reason,
+          ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
+        },
+      });
+      return {
+        schemaVersion: 1,
+        ok: true,
+        outcome: "quality_rejected",
+        inputRef,
+        lessonRef: effectiveLessonRef,
+        score: judgeResult.score,
+        reason: judgeResult.reason,
+        ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
+      };
+    }
   }
 
   // Round-trip the parsed frontmatter so the proposal carries it as a

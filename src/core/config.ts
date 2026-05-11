@@ -119,6 +119,13 @@ export interface LlmFeatureFlags {
    * When false (or absent), `akm consolidate` throws a ConfigError.
    */
   memory_consolidation?: boolean;
+  /**
+   * Gates the LLM-as-judge quality gate in `akmDistill`. When enabled, each
+   * generated lesson is scored on novelty, actionability, and non-redundancy
+   * before entering the proposal queue. Fail-open: judge failures always pass.
+   * Default: false.
+   */
+  lesson_quality_gate?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -993,6 +1000,7 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "memory_inference",
   "graph_extraction",
   "memory_consolidation",
+  "lesson_quality_gate",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
