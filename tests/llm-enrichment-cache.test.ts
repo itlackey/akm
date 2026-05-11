@@ -159,7 +159,7 @@ describe("getLlmCacheEntry / upsertLlmCacheEntry", () => {
     const entry = getLlmCacheEntry(db, "my-ref", "hashABC");
     expect(entry).not.toBeUndefined();
     expect(entry?.bodyHash).toBe("hashABC");
-    expect(JSON.parse(entry!.resultJson)).toEqual({ foo: "bar" });
+    expect(JSON.parse(entry?.resultJson ?? "null")).toEqual({ foo: "bar" });
   });
 
   test("returns undefined (cache miss) when body hash has changed", () => {
@@ -173,7 +173,7 @@ describe("getLlmCacheEntry / upsertLlmCacheEntry", () => {
     upsertLlmCacheEntry(db, "my-ref", "hash2", JSON.stringify({ v: 2 }));
     const entry = getLlmCacheEntry(db, "my-ref", "hash2");
     expect(entry).toBeDefined();
-    expect(JSON.parse(entry!.resultJson)).toEqual({ v: 2 });
+    expect(JSON.parse(entry?.resultJson ?? "null")).toEqual({ v: 2 });
   });
 });
 

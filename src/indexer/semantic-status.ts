@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import { writeFileAtomic } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config";
 import { getCacheDir, getSemanticStatusPath } from "../core/paths";
