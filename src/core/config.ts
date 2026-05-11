@@ -5,7 +5,7 @@ import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config
 import type { InstalledStashEntry, KitSource } from "../registry/types";
 import { filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
-import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
+import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";
@@ -461,14 +461,6 @@ function isValidHttpUrl(url: unknown, fieldName: string): string | undefined {
 function clearAllCaches(): void {
   cachedConfig = undefined;
   cachedUserConfig = undefined;
-}
-
-export function getConfigDir(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string {
-  return _getConfigDir(env, platform);
-}
-
-export function getConfigPath(): string {
-  return _getConfigPath();
 }
 
 // ── Load / Save / Update ────────────────────────────────────────────────────
@@ -1278,7 +1270,7 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
     throw new ConfigError(
       `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
       "INVALID_CONFIG_FILE",
-      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${_getConfigPath()} to remove the openviking entry.`,
+      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
     );
   }
 
