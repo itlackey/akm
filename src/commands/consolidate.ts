@@ -359,16 +359,14 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const isAgentPath = !!config.agent;
   const isHttpPath = !isAgentPath && !!config.llm;
 
-  const bodyTruncation = isAgentPath ? 1000 : 300;
-  const baseChunkSize = isAgentPath ? 30 : 12;
-
-  // Warn if HTTP chunk size would exceed ~6000 estimated tokens
-  const estimatedTokens = Math.ceil(baseChunkSize * 200 + 400);
-  let chunkSize = baseChunkSize;
-  if (!isAgentPath && estimatedTokens > 6000) {
-    chunkSize = Math.floor((6000 - 400) / 200);
-    warnings.push(`Chunk size reduced from ${baseChunkSize} to ${chunkSize} to stay within ~6000 estimated tokens.`);
-  }
+  // Chunk sizing: 20 memories per chunk with 500-char body truncation works
+  // well across both agent-CLI and HTTP paths without overflowing local model
+  // context windows (≈10k–12k chars per chunk for typical memories).
+  // Both values are intentionally generous — reducing them causes silent
+  // failures when memories are large. Override via future config fields if
+  // needed.
+  const bodyTruncation = 500;
+  const chunkSize = 20;
 
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.source ?? stashDir;
@@ -386,7 +384,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     const raw = await tryLlmFeature(
       "memory_consolidation",
       config,
-      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT }),
+      // maxTokens: 2048 — plan output is a JSON array of ops; 2048 tokens is
+      // ample for 20 memories and avoids the silent truncation that caused
+      // ~50% of chunks to fail with the old 512 default.
+      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT, maxTokens: 2048 }),
       { ok: false as const, error: `chunk ${chunkIdx + 1} failed` },
       { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
     );
@@ -716,7 +717,9 @@ async function generateMergedContent(
   const result = await tryLlmFeature(
     "memory_consolidation",
     config,
-    () => callAi(config, prompt),
+    // maxTokens: 4096 — merge output is a full markdown file with YAML
+    // frontmatter; it can easily exceed 1000 tokens for content-rich memories.
+    () => callAi(config, prompt, { maxTokens: 4096 }),
     { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
     { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
   );

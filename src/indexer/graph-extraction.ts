@@ -233,7 +233,9 @@ export async function runGraphExtractionPass(
           relations: extraction.relations,
         };
       },
-      4,
+      // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
+      // in config.json for local model servers (LM Studio, Ollama).
+      config.llm?.concurrency ?? 4,
     );
   } else {
     // ── Batched path (with incremental cache) ────────────────────────────

@@ -1026,7 +1026,11 @@ async function enhanceDirsWithLlm(
       })();
       return undefined;
     },
-    4,
+    // Default concurrency of 4 works well for cloud LLM APIs. Local model
+    // servers (LM Studio, Ollama) run one inference at a time — set
+    // `llm.concurrency: 1` in config.json to avoid "Model reloaded" / 500
+    // errors from concurrent request overload.
+    config.llm?.concurrency ?? 4,
   );
 
   if (deadlineHit) {
@@ -1426,7 +1430,9 @@ async function enhanceStashWithLlm(
         return entry;
       }
     },
-    4,
+    // Default concurrency of 4 works well for cloud LLM APIs. Set
+    // `llm.concurrency: 1` in config.json for local model servers.
+    llmConfig.concurrency ?? 4,
   );
 
   // concurrentMap returns Array<T | undefined>; filter out undefined slots

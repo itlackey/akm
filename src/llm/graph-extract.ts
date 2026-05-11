@@ -333,7 +333,10 @@ export async function extractGraphFromBody(
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
           ],
-          { maxTokens: 1024, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
+          // 2048 tokens for a single asset: enough headroom for entities and
+          // relations without risking runaway output. Batch calls scale
+          // dynamically via Math.min(count * 512, 8192).
+          { maxTokens: 2048, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
         );
         if (!raw) return empty;
         const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);

@@ -69,14 +69,19 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   /**
    * Hard timeout in milliseconds applied by the `tryLlmFeature` wrapper for
    * every bounded in-tree LLM call (graph extraction, memory inference,
-   * feedback distillation, etc.). Defaults to 30_000 (30 s) when absent.
+   * feedback distillation, etc.). Defaults to 120_000 (2 min) when absent.
    *
-   * For slow local models set this to 60_000 or higher. For batch calls that
-   * process multiple assets per request, set `llm.featureGateTimeoutMs` to
-   * 60000–90000 in config.json to avoid premature timeouts while waiting for
-   * the model to process the larger payload.
+   * Local models are significantly slower than cloud APIs — the previous 30 s
+   * default caused widespread timeouts on LM Studio and Ollama. For very slow
+   * hardware or large batch calls, raise this to 180000–300000 in config.json.
    */
   featureGateTimeoutMs?: number;
+  /**
+   * Max parallel LLM requests issued by index passes (graph extraction,
+   * memory inference, metadata enrichment). Defaults to 4. Set to 1 for
+   * local model servers (LM Studio, Ollama) that run one inference at a time.
+   */
+  concurrency?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
@@ -933,6 +938,11 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     const fgt = parsePositiveInteger("llm.featureGateTimeoutMs", obj.featureGateTimeoutMs);
     if (fgt === undefined) return undefined;
     result.featureGateTimeoutMs = fgt;
+  }
+  if ("concurrency" in obj) {
+    const c = parsePositiveInteger("llm.concurrency", obj.concurrency);
+    if (c === undefined) return undefined;
+    result.concurrency = c;
   }
   if ("maxTokens" in obj) {
     const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);

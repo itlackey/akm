@@ -123,7 +123,10 @@ export async function chatCompletion(
           model: config.model,
           messages,
           temperature: options?.temperature ?? config.temperature ?? 0.3,
-          max_tokens: options?.maxTokens ?? config.maxTokens ?? 512,
+          // Default of 4096 is intentionally generous — 512 caused silent
+          // truncation for structured JSON outputs (consolidate, graph extraction).
+          // Lower via config.maxTokens or per-call options.maxTokens when needed.
+          max_tokens: options?.maxTokens ?? config.maxTokens ?? 4096,
           ...config.extraParams,
         }),
       },
