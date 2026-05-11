@@ -44,6 +44,8 @@ export interface AkmImproveOptions {
   timeoutMs?: number;
   limit?: number;
   consolidateOptions?: Omit<AkmConsolidateOptions, "config" | "stashDir">;
+  /** Number of eligible memory assets above which consolidation is forced even if the memory_consolidation feature flag is not set. Defaults to 100. */
+  memoryVolumeConsolidationThreshold?: number;
   reflectFn?: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
@@ -497,10 +499,29 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
 
+    const baseConfig = options.config ?? loadConfig();
+    const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
+    const hasLlm = !!(baseConfig.llm || baseConfig.agent);
+    const volumeTriggered =
+      typeof memorySummary?.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+    const consolidationConfig: AkmConfig = volumeTriggered
+      ? ({
+          ...baseConfig,
+          llm: {
+            ...baseConfig.llm,
+            features: {
+              ...baseConfig.llm?.features,
+              memory_consolidation: true,
+            },
+          },
+        } as AkmConfig)
+      : baseConfig;
+
     const consolidation = await akmConsolidate({
       ...options.consolidateOptions,
-      config: options.config ?? loadConfig(),
+      config: consolidationConfig,
       stashDir: options.stashDir,
+      autoTriggered: volumeTriggered,
     });
 
     return {

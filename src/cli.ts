@@ -1758,6 +1758,10 @@ const rememberCommand = defineCommand({
       type: "string",
       description: "Scope this memory to a channel name (persisted as `scope_channel` frontmatter)",
     },
+    showSimilar: {
+      type: "boolean",
+      description: "Return top-3 similar existing memories in output (opt-in)",
+    },
   },
   async run({ args }) {
     return runWithJsonErrors(async () => {
@@ -1796,7 +1800,12 @@ const rememberCommand = defineCommand({
           ref: result.ref,
           metadata: { path: result.path, force: args.force === true },
         });
-        output("remember", { ok: true, ...result });
+        if (args.showSimilar) {
+          const similar = await fetchSimilarMemories(body.slice(0, 500), result.ref);
+          output("remember", { ok: true, ...result, similar });
+        } else {
+          output("remember", { ok: true, ...result });
+        }
         return;
       }
 
@@ -1889,10 +1898,36 @@ const rememberCommand = defineCommand({
           ...(hasScope ? { scope: scopeFields } : {}),
         },
       });
-      output("remember", { ok: true, ...result });
+      if (args.showSimilar) {
+        const similar = await fetchSimilarMemories((body ?? args.content ?? "").slice(0, 500), result.ref);
+        output("remember", { ok: true, ...result, similar });
+      } else {
+        output("remember", { ok: true, ...result });
+      }
     });
   },
 });
+
+/**
+ * Best-effort top-3 similar memory search for `--show-similar`.
+ * Scoped to memory: type; excludes the just-written ref.
+ */
+async function fetchSimilarMemories(
+  query: string,
+  excludeRef: string,
+): Promise<Array<{ ref: string; title?: string }>> {
+  try {
+    const result = await akmSearch({ query, type: "memory", limit: 4 });
+    return (result.hits ?? [])
+      .filter(
+        (h): h is import("./sources/types").SourceSearchHit => "ref" in h && (h as { ref: string }).ref !== excludeRef,
+      )
+      .slice(0, 3)
+      .map((h) => ({ ref: h.ref, ...(h.name ? { title: h.name } : {}) }));
+  } catch {
+    return [];
+  }
+}
 
 function resolveRememberContentArg(content: string | undefined): string | undefined {
   if (content === undefined) return undefined;

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import type { AkmConfig } from "../core/config";
@@ -60,6 +61,8 @@ export interface AkmConsolidateOptions {
   task?: string; // extra guidance appended to the system prompt
   stashDir?: string;
   config?: AkmConfig;
+  /** When true, indicates the run was triggered automatically by volume threshold rather than by the memory_consolidation feature flag. */
+  autoTriggered?: boolean;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -306,6 +309,60 @@ function backupFile(filePath: string, backupDir: string, name: string): void {
   }
 }
 
+// ── Archive helper (P1-B: soft-invalidation) ─────────────────────────────────
+
+/**
+ * Move a memory asset to `.akm/archive/` with `status: superseded` frontmatter
+ * instead of deleting it outright. The live stash delete still happens after
+ * this call — this is belt-and-suspenders archival that survives the hard delete.
+ *
+ * Archive filename: `<iso-ts>-<opIndex>-<basename>.md`
+ * New frontmatter fields: status, superseded_at, superseded_by (optional),
+ * superseded_reason.
+ */
+function archiveMemory(
+  filePath: string,
+  stashDir: string,
+  ref: string,
+  reason: string,
+  opIndex: number,
+  supersededBy?: string,
+  warnings?: string[],
+): void {
+  const archiveDir = path.join(stashDir, ".akm", "archive");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch {
+    if (warnings) warnings.push(`archiveMemory: could not read ${ref} for archiving — skipping archive write`);
+    return;
+  }
+  let content = raw;
+  try {
+    const parsed = parseFrontmatter(raw);
+    const newFm: Record<string, unknown> = {
+      ...parsed.data,
+      status: "superseded",
+      superseded_at: new Date().toISOString(),
+      ...(supersededBy ? { superseded_by: supersededBy } : {}),
+      superseded_reason: reason,
+    };
+    const fmStr = yamlStringify(newFm).trimEnd();
+    content = `---\n${fmStr}\n---\n${parsed.content}`;
+  } catch {
+    if (warnings) warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const safeName = path.basename(filePath, ".md");
+  const archivePath = path.join(archiveDir, `${ts}-${opIndex}-${safeName}.md`);
+  try {
+    fs.writeFileSync(archivePath, content, "utf8");
+  } catch (e) {
+    if (warnings) warnings.push(`archiveMemory: write failed for ${ref}: ${String(e)}`);
+  }
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
@@ -490,7 +547,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     memoryByRef.set(`memory:${m.name}`, m);
   }
 
-  for (const op of allOps) {
+  for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
+    const op = allOps[opIndex];
     if (op.op === "merge") {
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
@@ -555,10 +613,13 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
         continue;
       }
 
-      // Delete secondaries
+      // Archive and delete secondaries (P1-B: soft-invalidation)
       for (const secRef of op.secondaries) {
         const secEntry = memoryByRef.get(secRef);
         if (!secEntry) continue;
+        if (fs.existsSync(secEntry.filePath)) {
+          archiveMemory(secEntry.filePath, stashDir, secRef, "merged into primary", opIndex, op.primary, warnings);
+        }
         try {
           const parsedSec = parseAssetRef(secRef);
           await deleteAssetFromSource(target.source, target.config, parsedSec);
@@ -579,6 +640,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
       if (fs.existsSync(entry.filePath)) {
         backupFile(entry.filePath, backupDir, entry.name);
+        // P1-B: soft-invalidation archive before hard delete
+        archiveMemory(entry.filePath, stashDir, op.ref, op.reason, opIndex, undefined, warnings);
       }
 
       try {
@@ -646,6 +709,21 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   cleanupJournal(stashDir, timestamp);
+
+  // TTL cleanup: remove archive entries older than archiveRetentionDays (default 90)
+  const archiveDir = path.join(stashDir, ".akm", "archive");
+  if (fs.existsSync(archiveDir)) {
+    const retentionMs = (config.archiveRetentionDays ?? 90) * 86_400_000;
+    const cutoff = Date.now() - retentionMs;
+    for (const fname of fs.readdirSync(archiveDir)) {
+      const fp = path.join(archiveDir, fname);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch {
+        /* ignore race conditions */
+      }
+    }
+  }
 
   return {
     ok: true,

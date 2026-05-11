@@ -328,6 +328,12 @@ export interface AkmConfig {
      */
     requireReason?: boolean;
   };
+  /**
+   * Number of days to retain soft-invalidated (superseded) memory assets in
+   * `.akm/archive/` before TTL cleanup removes them. Default: 90.
+   * Set to 0 to disable TTL cleanup entirely (archives accumulate indefinitely).
+   */
+  archiveRetentionDays?: number;
 }
 
 export interface OutputConfig {
