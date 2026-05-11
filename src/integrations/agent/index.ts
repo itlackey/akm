@@ -40,8 +40,14 @@ export {
   getBuiltinAgentProfile,
   listBuiltinAgentProfiles,
 } from "./profiles";
-export type { AgentProposalPayload, ProposePromptInput, ReflectPromptInput } from "./prompts";
-export { buildProposePrompt, buildReflectPrompt, parseAgentProposalPayload, stripJsonFences } from "./prompts";
+export type { AgentProposalPayload, ProposePromptInput, ReflectPromptInput, SchemaRepairPromptInput } from "./prompts";
+export {
+  buildProposePrompt,
+  buildReflectPrompt,
+  buildSchemaRepairPrompt,
+  parseAgentProposalPayload,
+  stripJsonFences,
+} from "./prompts";
 export { runAgentSdk } from "./sdk-runner";
 export type {
   AgentFailureReason,

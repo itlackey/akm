@@ -210,6 +210,51 @@ export function buildProposePrompt(input: ProposePromptInput): string {
   return sections.join("\n\n");
 }
 
+export interface SchemaRepairPromptInput {
+  ref: string;
+  type: string;
+  name: string;
+  /** Validation failure reason (e.g. "missing description"). */
+  reason: string;
+  /** Current verbatim file content of the failing asset. */
+  assetContent: string;
+  /**
+   * When provided, the agent writes directly to this file path using its
+   * file-editing tools. When absent, the agent returns a JSON payload via
+   * stdout (same contract as reflect/propose).
+   */
+  draftFilePath?: string;
+}
+
+/**
+ * Build the prompt for the schema repair pass in `akm improve`. Asks the
+ * agent to add the minimal required frontmatter to an asset that failed
+ * validation — without rewriting the body.
+ */
+export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string {
+  const sections: string[] = [];
+  sections.push(
+    `This ${input.type} asset failed schema validation with the error: "${input.reason}". ` +
+      `Your task is to fix the schema issue by adding or correcting the missing/invalid field(s) ` +
+      `while preserving all existing content.`,
+  );
+  sections.push(`Target ref: ${input.ref}`);
+  sections.push(`Schema requirements for ${input.type} assets: ${hintForType(input.type)}`);
+  sections.push("Current asset content (verbatim):");
+  sections.push("```");
+  sections.push(input.assetContent.trimEnd());
+  sections.push("```");
+  sections.push(
+    "Produce the minimal fix: add ONLY the missing required frontmatter field(s). " +
+      "Do not rewrite the body unless it is empty. " +
+      "If `description` is missing, generate a concise one-sentence description from the content. " +
+      "If `when_to_use` is missing, generate a one-line trigger sentence. " +
+      "Preserve all existing frontmatter keys and the full body verbatim.",
+  );
+  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  return sections.join("\n\n");
+}
+
 /**
  * Parse agent stdout into a proposal payload. The agent contract requires a
  * single JSON object; anything else is reported as a parse error so callers

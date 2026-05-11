@@ -17,7 +17,7 @@ import {
   type MemoryContradictionCandidate,
   type MemoryPruneCandidate,
 } from "../core/memory-improve";
-import { listProposals } from "../core/proposals";
+import { createProposal, listProposals } from "../core/proposals";
 import {
   closeDatabase,
   getAllEntries,
@@ -28,6 +28,8 @@ import {
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
+import { type AgentConfig, requireAgentProfile, runAgent } from "../integrations/agent";
+import { buildSchemaRepairPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -50,6 +52,8 @@ export interface AkmImproveOptions {
   distillFn?: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
   ensureIndexFn?: (stashDir: string) => Promise<unknown>;
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
+  /** When true (default), attempt agent-driven schema repair on validation failures before skipping. Requires agent config. */
+  repairValidationFailures?: boolean;
 }
 
 export interface ImproveEligibleRef {
@@ -97,6 +101,13 @@ export interface AkmImproveResult {
   plannedRefs: ImproveEligibleRef[];
   actions?: ImproveActionResult[];
   validationFailures?: Array<{ ref: string; reason: string }>;
+  schemaRepairs?: Array<{
+    ref: string;
+    reason: string;
+    outcome: "queued" | "skipped" | "error";
+    proposalId?: string;
+    error?: string;
+  }>;
   consolidation?: ConsolidateResult;
 }
 
@@ -431,7 +442,96 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       console.error(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
       for (const f of validationFailures) console.error(`  ${f.ref}: ${f.reason}`);
     }
-    const validationFailureRefs = new Set(validationFailures.map((f) => f.ref));
+    // Schema repair pass: attempt to fix validation failures via agent before skipping.
+    const schemaRepairs: Array<{
+      ref: string;
+      reason: string;
+      outcome: "queued" | "skipped" | "error";
+      proposalId?: string;
+      error?: string;
+    }> = [];
+    const repairedRefs = new Set<string>();
+
+    if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
+      const baseConfigForRepair = options.config ?? loadConfig();
+      const agentCfg: AgentConfig | undefined = baseConfigForRepair.agent;
+      let agentProfileForRepair: ReturnType<typeof requireAgentProfile> | undefined;
+      if (agentCfg) {
+        try {
+          agentProfileForRepair = requireAgentProfile(agentCfg);
+        } catch {
+          // No usable agent profile — skip repair pass silently.
+        }
+      }
+      if (agentProfileForRepair) {
+        const stashSources = resolveSourceEntries(options.stashDir);
+        const primaryStashForRepair = stashSources[0]?.path ?? options.stashDir;
+        for (const failure of validationFailures) {
+          if (Date.now() - startMs >= budgetMs) break;
+
+          const filePath = findAssetFilePath(failure.ref, options.stashDir);
+          if (!filePath) {
+            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+            continue;
+          }
+
+          try {
+            const raw = fs.readFileSync(filePath, "utf8");
+            const parsed = parseAssetRef(failure.ref);
+
+            const prompt = buildSchemaRepairPrompt({
+              ref: failure.ref,
+              type: parsed.type,
+              name: parsed.name,
+              reason: failure.reason,
+              assetContent: raw,
+            });
+
+            console.error(`[improve] schema-repair ${failure.ref} (${failure.reason})`);
+
+            const agentResult = await runAgent(agentProfileForRepair, prompt, {
+              ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+            });
+
+            if (!agentResult.ok) {
+              schemaRepairs.push({
+                ref: failure.ref,
+                reason: failure.reason,
+                outcome: "error",
+                error: agentResult.error ?? `agent failure (${agentResult.reason ?? "unknown"})`,
+              });
+              continue;
+            }
+
+            const payload = parseAgentProposalPayload(agentResult.stdout);
+
+            if (primaryStashForRepair) {
+              const proposal = createProposal(primaryStashForRepair, {
+                ref: payload.ref || failure.ref,
+                source: "schema-repair",
+                payload: {
+                  content: payload.content,
+                  ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
+                },
+              });
+              schemaRepairs.push({
+                ref: failure.ref,
+                reason: failure.reason,
+                outcome: "queued",
+                proposalId: proposal.id,
+              });
+              repairedRefs.add(failure.ref);
+            } else {
+              schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+            }
+          } catch (e) {
+            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "error", error: String(e) });
+          }
+        }
+      }
+    }
+
+    const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
 
     let completedCount = 0;
     for (const planned of actionableRefs) {
@@ -555,6 +655,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       plannedRefs: actionableRefs,
       actions,
       ...(validationFailures.length > 0 ? { validationFailures } : {}),
+      ...(schemaRepairs.length > 0 ? { schemaRepairs } : {}),
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
     };
   } finally {
