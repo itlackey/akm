@@ -1434,7 +1434,7 @@ const workflowNextCommand = defineCommand({
       // error before parseAssetRef gets to throw an unhelpful ref-parse error.
       if (looksLikeWorkflowRunId(args.target)) {
         const { hasWorkflowRun } = await import("./workflows/runs.js");
-        if (!hasWorkflowRun(args.target)) {
+        if (!(await hasWorkflowRun(args.target))) {
           throw new NotFoundError(
             `Workflow run "${args.target}" not found.`,
             "WORKFLOW_NOT_FOUND",
@@ -1481,7 +1481,7 @@ const workflowCompleteCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const result = completeWorkflowStep({
+      const result = await completeWorkflowStep({
         runId: args.runId,
         stepId: args.step,
         status: parseWorkflowStepState(args.state),
@@ -1502,7 +1502,7 @@ const workflowStatusCommand = defineCommand({
     target: { type: "positional", description: "Workflow run id or workflow ref (workflow:<name>)", required: true },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       const target = args.target;
       // Check if target looks like a workflow ref
       const parsed = (() => {
@@ -1514,16 +1514,16 @@ const workflowStatusCommand = defineCommand({
       })();
       if (parsed?.type === "workflow") {
         const ref = `${parsed.origin ? `${parsed.origin}//` : ""}workflow:${parsed.name}`;
-        const { runs } = listWorkflowRuns({ workflowRef: ref });
+        const { runs } = await listWorkflowRuns({ workflowRef: ref });
         if (runs.length === 0) {
           throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
         }
         const mostRecent = runs[0];
         if (!mostRecent) throw new NotFoundError(`No workflow runs found for ${ref}`, "WORKFLOW_NOT_FOUND");
-        const result = getWorkflowStatus(mostRecent.id);
+        const result = await getWorkflowStatus(mostRecent.id);
         output("workflow-status", result);
       } else {
-        const result = getWorkflowStatus(target);
+        const result = await getWorkflowStatus(target);
         output("workflow-status", result);
       }
     });
@@ -1540,8 +1540,8 @@ const workflowListCommand = defineCommand({
     active: { type: "boolean", description: "Only show active runs", default: false },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = listWorkflowRuns({ workflowRef: args.ref, activeOnly: args.active });
+    return runWithJsonErrors(async () => {
+      const result = await listWorkflowRuns({ workflowRef: args.ref, activeOnly: args.active });
       output("workflow-list", result);
     });
   },
@@ -1661,8 +1661,8 @@ const workflowResumeCommand = defineCommand({
     runId: { type: "positional", description: "Workflow run id", required: true },
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
-      const result = resumeWorkflowRun(args.runId);
+    return runWithJsonErrors(async () => {
+      const result = await resumeWorkflowRun(args.runId);
       output("workflow-resume", result);
     });
   },
@@ -1685,9 +1685,9 @@ const workflowCommand = defineCommand({
     validate: workflowValidateCommand,
   },
   run({ args }) {
-    return runWithJsonErrors(() => {
+    return runWithJsonErrors(async () => {
       if (hasWorkflowSubcommand(args)) return;
-      output("workflow-list", listWorkflowRuns({ activeOnly: true }));
+      output("workflow-list", await listWorkflowRuns({ activeOnly: true }));
     });
   },
 });
@@ -3059,6 +3059,14 @@ const improveCommand = defineCommand({
       type: "string",
       description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
     },
+    "reflect-cooldown-days": {
+      type: "string",
+      description: "Days before re-reflecting a recently reflected asset (default: 7, 0 to disable)",
+    },
+    "distill-cooldown-days": {
+      type: "string",
+      description: "Days before re-distilling an asset with a recent accepted proposal (default: 30, 0 to disable)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -3079,6 +3087,20 @@ const improveCommand = defineCommand({
       if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
         throw new UsageError(`Invalid --timeout-ms value: "${timeoutRaw}". Must be a positive integer.`);
       }
+      const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
+      const reflectCooldownDays = reflectCooldownRaw !== undefined ? parseInt(reflectCooldownRaw, 10) : undefined;
+      if (reflectCooldownDays !== undefined && Number.isNaN(reflectCooldownDays)) {
+        throw new UsageError(
+          `Invalid --reflect-cooldown-days value: "${reflectCooldownRaw}". Must be a non-negative integer.`,
+        );
+      }
+      const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
+      const distillCooldownDays = distillCooldownRaw !== undefined ? parseInt(distillCooldownRaw, 10) : undefined;
+      if (distillCooldownDays !== undefined && Number.isNaN(distillCooldownDays)) {
+        throw new UsageError(
+          `Invalid --distill-cooldown-days value: "${distillCooldownRaw}". Must be a non-negative integer.`,
+        );
+      }
 
       const improveResult = await akmImprove({
         scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
@@ -3088,6 +3110,8 @@ const improveCommand = defineCommand({
         autoAccept,
         ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
+        ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
         consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
       });
       output("improve", improveResult);

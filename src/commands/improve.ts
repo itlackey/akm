@@ -55,6 +55,10 @@ export interface AkmImproveOptions {
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
+  /** Cooldown in days before re-reflecting an asset that was recently reflected. Defaults to 7. Set to 0 to disable. */
+  reflectCooldownDays?: number;
+  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. */
+  distillCooldownDays?: number;
 }
 
 export interface ImproveEligibleRef {
@@ -554,6 +558,46 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         break;
       }
       try {
+        // Reflect cooldown — Event-sourced Idempotency Guard with Spaced Cooldown (SM-2 derived).
+        // Three-tier multiplier based on last proposal outcome:
+        //   approved proposal → 14d (ease × 2.0: "easily recalled" in SM-2 terms)
+        //   neutral (no outcome recorded) → base window (default 7d)
+        //   lapsed (rejected/error) → 3d (SM-2 lapse interval: accelerated re-review)
+        const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
+        if (REFLECT_COOLDOWN_DAYS > 0) {
+          const recentReflects = readEvents({ type: "reflect_invoked", ref: planned.ref });
+          const lastReflect = recentReflects.events.sort(
+            (a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime(),
+          )[0];
+          if (lastReflect?.ts) {
+            // Determine cooldown tier from the proposal outcome of the last reflect run.
+            const stashForProposals = primaryStashDir ?? options.stashDir;
+            let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
+            if (stashForProposals) {
+              const proposalsForRef = listProposals(stashForProposals, { ref: planned.ref });
+              const hasAccepted = proposalsForRef.some((p) => p.status === "accepted");
+              const hasRejected = proposalsForRef.some((p) => p.status === "rejected");
+              if (hasAccepted) effectiveCooldownDays = Math.max(REFLECT_COOLDOWN_DAYS, 14);
+              else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
+            }
+            const cooldownMs = effectiveCooldownDays * 24 * 60 * 60 * 1000;
+            if (Date.now() - new Date(lastReflect.ts).getTime() < cooldownMs) {
+              const daysAgo = Math.round((Date.now() - new Date(lastReflect.ts).getTime()) / 86400000);
+              actions.push({
+                ref: planned.ref,
+                mode: "distill-skipped",
+                result: {
+                  ok: true,
+                  reason: `reflect cooldown (last reflected ${daysAgo}d ago, effective window ${effectiveCooldownDays}d)`,
+                },
+              });
+              completedCount++;
+              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (reflect cooldown)`);
+              continue;
+            }
+          }
+        }
+
         const reflectResult = await reflectFn({
           ref: planned.ref,
           task: options.task,
@@ -580,6 +624,29 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               });
               completedCount++;
               console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref}`);
+              continue;
+            }
+          }
+
+          // Distill cooldown: skip if a distill_invoked event with outcome "queued" exists for this
+          // ref within the cooldown window (covers recently-accepted proposals whose queue entry has
+          // moved to the archive and is no longer "pending").
+          const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+          if (DISTILL_COOLDOWN_DAYS > 0) {
+            const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+            const recentDistills = readEvents({ type: "distill_invoked", ref: planned.ref });
+            const lastQueuedDistill = recentDistills.events
+              .filter((e) => e.metadata?.outcome === "queued")
+              .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
+            if (lastQueuedDistill?.ts && Date.now() - new Date(lastQueuedDistill.ts).getTime() < distillCooldownMs) {
+              const daysAgo = Math.round((Date.now() - new Date(lastQueuedDistill.ts).getTime()) / 86400000);
+              actions.push({
+                ref: planned.ref,
+                mode: "distill-skipped",
+                result: { ok: true, reason: `distill cooldown (last distilled ${daysAgo}d ago)` },
+              });
+              completedCount++;
+              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (distill cooldown)`);
               continue;
             }
           }
