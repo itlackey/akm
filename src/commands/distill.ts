@@ -342,6 +342,60 @@ async function runLessonQualityJudge(
   }
 }
 
+// ── Quality-rejection helper ─────────────────────────────────────────────────
+
+/**
+ * Write a rejected lesson to `.akm/distill-rejected/`, append a `distill_invoked`
+ * quality-rejected event, and return the `quality_rejected` envelope.
+ *
+ * @param stash     - Root stash directory.
+ * @param inputRef  - The original input ref (for the event).
+ * @param lessonRef - The proposed lesson/knowledge ref.
+ * @param content   - The raw content that failed the quality gate.
+ * @param score     - Quality score from the judge.
+ * @param reason    - Human-readable rejection reason.
+ * @param extraMeta - Optional additional metadata for the event.
+ */
+function writeQualityRejection(
+  stash: string,
+  inputRef: string,
+  lessonRef: string,
+  content: string,
+  score: number,
+  reason: string,
+  extraMeta: Record<string, unknown> = {},
+): AkmDistillResult {
+  const rejectDir = path.join(stash, ".akm", "distill-rejected");
+  fs.mkdirSync(rejectDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  fs.writeFileSync(
+    path.join(rejectDir, `${ts}-${lessonRef}.md`),
+    `---\nscore: ${score}\nreason: ${reason}\n---\n\n${content}`,
+    "utf8",
+  );
+  appendEvent({
+    eventType: "distill_invoked",
+    ref: inputRef,
+    metadata: {
+      outcome: "quality_rejected",
+      lessonRef,
+      score,
+      reason,
+      ...extraMeta,
+    },
+  });
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "quality_rejected",
+    inputRef,
+    lessonRef,
+    score,
+    reason,
+    ...extraMeta,
+  };
+}
+
 // ── Main entry point ────────────────────────────────────────────────────────
 
 /**
@@ -418,33 +472,14 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
       const judgeResult = await runLessonQualityJudge(config, promotion.content, assetContent ?? "", chat);
       if (!judgeResult.pass) {
-        const rejectDir = path.join(stash, ".akm", "distill-rejected");
-        fs.mkdirSync(rejectDir, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, "-");
-        fs.writeFileSync(
-          path.join(rejectDir, `${ts}-${promotion.knowledgeRef}.md`),
-          `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${promotion.content}`,
-          "utf8",
-        );
-        appendEvent({
-          eventType: "distill_invoked",
-          ref: inputRef,
-          metadata: {
-            outcome: "quality_rejected",
-            lessonRef: promotion.knowledgeRef,
-            score: judgeResult.score,
-            reason: judgeResult.reason,
-          },
-        });
-        return {
-          schemaVersion: 1,
-          ok: true,
-          outcome: "quality_rejected",
+        return writeQualityRejection(
+          stash,
           inputRef,
-          lessonRef: promotion.knowledgeRef,
-          score: judgeResult.score,
-          reason: judgeResult.reason,
-        };
+          promotion.knowledgeRef,
+          promotion.content,
+          judgeResult.score,
+          judgeResult.reason,
+        );
       }
     }
     const knowledgeParsed = parseFrontmatter(promotion.content);
@@ -589,35 +624,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
     const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat);
     if (!judgeResult.pass) {
-      const rejectDir = path.join(stash, ".akm", "distill-rejected");
-      fs.mkdirSync(rejectDir, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      fs.writeFileSync(
-        path.join(rejectDir, `${ts}-${effectiveLessonRef}.md`),
-        `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${content}`,
-        "utf8",
-      );
-      appendEvent({
-        eventType: "distill_invoked",
-        ref: inputRef,
-        metadata: {
-          outcome: "quality_rejected",
-          lessonRef: effectiveLessonRef,
-          score: judgeResult.score,
-          reason: judgeResult.reason,
-          ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        },
-      });
-      return {
-        schemaVersion: 1,
-        ok: true,
-        outcome: "quality_rejected",
+      return writeQualityRejection(
+        stash,
         inputRef,
-        lessonRef: effectiveLessonRef,
-        score: judgeResult.score,
-        reason: judgeResult.reason,
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-      };
+        effectiveLessonRef,
+        content,
+        judgeResult.score,
+        judgeResult.reason,
+        exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
+      );
     }
   }
 
