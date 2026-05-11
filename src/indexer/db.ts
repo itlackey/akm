@@ -1300,15 +1300,21 @@ export function computeBodyHash(body: string): string {
  */
 export function getRetrievalCounts(db: Database, refs: string[]): Map<string, number> {
   if (refs.length === 0) return new Map();
-  const placeholders = refs.map(() => "?").join(", ");
-  const rows = db
-    .prepare(
-      `SELECT entry_ref, COUNT(*) AS cnt FROM usage_events
-       WHERE event_type IN ('search','show') AND entry_ref IN (${placeholders})
-       GROUP BY entry_ref`,
-    )
-    .all(...(refs as import("bun:sqlite").SQLQueryBindings[])) as Array<{ entry_ref: string; cnt: number }>;
-  return new Map(rows.map((r) => [r.entry_ref, r.cnt]));
+  const result = new Map<string, number>();
+  // Chunk to stay within SQLITE_MAX_VARIABLE_NUMBER (same pattern as getUtilityScoresByIds).
+  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = db
+      .prepare(
+        `SELECT entry_ref, COUNT(*) AS cnt FROM usage_events
+         WHERE event_type IN ('search','show') AND entry_ref IN (${placeholders})
+         GROUP BY entry_ref`,
+      )
+      .all(...(chunk as import("bun:sqlite").SQLQueryBindings[])) as Array<{ entry_ref: string; cnt: number }>;
+    for (const r of rows) result.set(r.entry_ref, r.cnt);
+  }
+  return result;
 }
 
 /**
