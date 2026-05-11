@@ -1160,7 +1160,11 @@ const feedbackCommand = defineCommand({
         "Reindexing is required for the signal to affect search results.",
       default: false,
     },
-    note: { type: "string", description: "Optional note to attach to the feedback" },
+    reason: {
+      type: "string",
+      description: "Reason for the feedback (recommended for negative feedback, used by distillation)",
+    },
+    note: { type: "string", description: "Alias for --reason (backward-compatible, prefer --reason)" },
     tag: {
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
@@ -1184,11 +1188,23 @@ const feedbackCommand = defineCommand({
         throw new UsageError("Specify --positive or --negative.");
       }
       const signal = args.positive ? "positive" : "negative";
+      const reason = (args.reason as string | undefined) ?? (args.note as string | undefined);
+      if (args.negative === true && !reason?.trim()) {
+        const cfg = loadConfig();
+        if (cfg.feedback?.requireReason === true) {
+          throw new UsageError(
+            "Negative feedback requires --reason (feedback.requireReason is enabled).",
+            "MISSING_REQUIRED_ARGUMENT",
+          );
+        } else {
+          warn("Warning: negative feedback without --reason provides less distillation signal.");
+        }
+      }
       const rawTags = parseAllFlagValues("--tag");
       const validatedTags = validateFeedbackTags(rawTags);
       const metadataObj = {
         signal,
-        ...(args.note ? { note: args.note } : {}),
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
         ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       };
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
@@ -1229,7 +1245,7 @@ const feedbackCommand = defineCommand({
         ref,
         metadata: metadataObj,
       });
-      output("feedback", { ok: true, ref, signal, note: args.note ?? null, tags: validatedTags });
+      output("feedback", { ok: true, ref, signal, reason: reason?.trim() ?? null, tags: validatedTags });
     });
   },
 });

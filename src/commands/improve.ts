@@ -18,7 +18,13 @@ import {
   type MemoryPruneCandidate,
 } from "../core/memory-improve";
 import { listProposals } from "../core/proposals";
-import { closeDatabase, getAllEntries, getUtilityScoresByIds, openExistingDatabase } from "../indexer/db";
+import {
+  closeDatabase,
+  getAllEntries,
+  getRetrievalCounts,
+  getUtilityScoresByIds,
+  openExistingDatabase,
+} from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -344,8 +350,43 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       );
     });
 
-    const utilityMap = buildUtilityMap(signalFiltered);
-    const sorted = [...signalFiltered].sort((a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0));
+    // P0-A: also surface zero-feedback assets that have been retrieved many times.
+    const RETRIEVAL_COUNT_THRESHOLD = 3;
+
+    const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
+    const noFeedbackCandidates = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
+
+    let highRetrievalRefs: typeof postCleanupRefs = [];
+    let dbForRetrieval: import("bun:sqlite").Database | undefined;
+    try {
+      dbForRetrieval = openExistingDatabase();
+      const showEventCount = (
+        dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
+          cnt: number;
+        }
+      ).cnt;
+      if (showEventCount === 0) {
+        console.error(
+          "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
+        );
+      }
+      const retrievalCounts = getRetrievalCounts(
+        dbForRetrieval,
+        noFeedbackCandidates.map((r) => r.ref),
+      );
+      highRetrievalRefs = noFeedbackCandidates.filter(
+        (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
+      );
+    } catch {
+      // best-effort: if DB unavailable, highRetrievalRefs stays empty
+    } finally {
+      if (dbForRetrieval) closeDatabase(dbForRetrieval);
+    }
+
+    const mergedRefs = [...signalFiltered, ...highRetrievalRefs];
+
+    const utilityMap = buildUtilityMap(mergedRefs);
+    const sorted = [...mergedRefs].sort((a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0));
     const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
 
     if (appliedCleanup) {

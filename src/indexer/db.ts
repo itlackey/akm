@@ -1292,3 +1292,51 @@ export function computeBodyHash(body: string): string {
   hasher.update(body);
   return hasher.digest("hex");
 }
+
+/**
+ * Count search and show events for the given entry refs.
+ * Returns a Map<ref, count> with only refs that have at least one event.
+ * Used by the improve loop to find high-retrieval assets without feedback.
+ */
+export function getRetrievalCounts(db: Database, refs: string[]): Map<string, number> {
+  if (refs.length === 0) return new Map();
+  const placeholders = refs.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT entry_ref, COUNT(*) AS cnt FROM usage_events
+       WHERE event_type IN ('search','show') AND entry_ref IN (${placeholders})
+       GROUP BY entry_ref`,
+    )
+    .all(...(refs as import("bun:sqlite").SQLQueryBindings[])) as Array<{ entry_ref: string; cnt: number }>;
+  return new Map(rows.map((r) => [r.entry_ref, r.cnt]));
+}
+
+/**
+ * Apply a MemRL reward signal to a batch of entries via exponential moving
+ * average (EMA): next = clamp(current + lr * (reward - current), 0, 1).
+ *
+ * Wrapped in a single transaction so all bumps succeed or fail together.
+ * The indexer (`akm index`) will overwrite these values at next reindex run;
+ * bumps are intentionally temporary hints between index runs, not permanent
+ * overrides.
+ */
+export function bumpUtilityScoresBatch(db: Database, entryIds: number[], reward: number, lr = 0.1): void {
+  if (entryIds.length === 0) return;
+  db.transaction(() => {
+    const scoreMap = getUtilityScoresByIds(db, entryIds);
+    const now = new Date().toISOString();
+    const stmt = db.prepare(
+      `INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
+       VALUES (?, ?, 0, 0, 0, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET
+         utility = excluded.utility,
+         updated_at = excluded.updated_at`,
+    );
+    for (const entryId of entryIds) {
+      const existing = scoreMap.get(entryId);
+      const current = existing?.utility ?? 0;
+      const next = Math.max(0, Math.min(1, current + lr * (reward - current)));
+      stmt.run(entryId, next, now, now);
+    }
+  })();
+}

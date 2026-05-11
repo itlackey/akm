@@ -12,7 +12,7 @@
 import { loadConfig } from "../core/config";
 import { UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { closeDatabase, openExistingDatabase } from "../indexer/db";
+import { bumpUtilityScoresBatch, closeDatabase, openExistingDatabase } from "../indexer/db";
 import { searchLocal } from "../indexer/db-search";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveSourceEntries } from "../indexer/search-source";
@@ -236,6 +236,12 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
           entry_id: entryId,
           entry_ref: ref,
         });
+      }
+      // Bump utility scores for all resolved entries (MemRL retrieval signal).
+      // The indexer overwrites these at next reindex; bumps are temporary hints.
+      const resolvedIds = resolved.map((r) => r.entryId).filter((id): id is number => id !== undefined);
+      if (resolvedIds.length > 0) {
+        bumpUtilityScoresBatch(db, resolvedIds, 1.0);
       }
       // Count registry hits separately so registry-only searches record a
       // non-zero resultCount. response.hits is always [] when source="registry".

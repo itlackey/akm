@@ -317,6 +317,17 @@ export interface AkmConfig {
      */
     minScore?: number;
   };
+  /**
+   * Feedback-specific configuration.
+   */
+  feedback?: {
+    /**
+     * When true, negative feedback without --reason throws a hard error
+     * (exit 2). When false or absent, a non-blocking warning is emitted
+     * instead. Default: false.
+     */
+    requireReason?: boolean;
+  };
 }
 
 export interface OutputConfig {
@@ -654,6 +665,15 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
       searchConfig.minScore = searchRaw.minScore;
     }
     if (Object.keys(searchConfig).length > 0) config.search = searchConfig;
+  }
+
+  if (typeof raw.feedback === "object" && raw.feedback !== null && !Array.isArray(raw.feedback)) {
+    const feedbackRaw = raw.feedback as Record<string, unknown>;
+    const feedbackConfig: AkmConfig["feedback"] = {};
+    if (typeof feedbackRaw.requireReason === "boolean") {
+      feedbackConfig.requireReason = feedbackRaw.requireReason;
+    }
+    if (Object.keys(feedbackConfig).length > 0) config.feedback = feedbackConfig;
   }
 
   return config;
