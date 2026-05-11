@@ -955,17 +955,6 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
 // ── Two-step connection configuration ──────────────────────────────────────
 
 /**
- * Small model connection options for enrichment features (Step 1/2).
- */
-interface SmallModelProviderChoice {
-  /** "ollama" | "openai" | "lmstudio" | "custom" | "skip" */
-  provider: string;
-  endpoint?: string;
-  model?: string;
-  apiKey?: string;
-}
-
-/**
  * Result of the small model connection step.
  */
 export interface SmallModelConnectionResult {

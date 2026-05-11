@@ -8,10 +8,22 @@ import type { LlmConnectionConfig } from "../../core/config";
 import type { AgentProfile } from "./profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "./spawn";
 
-// Singleton server — started once per process, reused across calls
-let _server: { client: any; server: { close(): void } } | null = null;
+/** Minimal surface of the OpenCode SDK client used by this runner. */
+interface SdkClient {
+  session: {
+    create(args: { body: { title: string } }): Promise<{ data?: { id?: string } }>;
+    prompt(args: {
+      path: { id: string };
+      body: { parts: { type: string; text: string }[] };
+    }): Promise<{ data?: { parts?: { type: string; text?: string }[] } }>;
+    delete(args: { path: { id: string } }): Promise<unknown>;
+  };
+}
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<{ client: any }> {
+// Singleton server — started once per process, reused across calls
+let _server: { client: unknown; server: { close(): void } } | null = null;
+
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<{ client: unknown }> {
   if (_server) return _server;
 
   const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
@@ -53,7 +65,8 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
     _server = null;
   });
 
-  return _server!;
+  if (!_server) throw new Error("Failed to initialise OpenCode SDK server.");
+  return _server;
 }
 
 export async function runAgentSdk(
@@ -64,9 +77,9 @@ export async function runAgentSdk(
 ): Promise<AgentRunResult> {
   const start = Date.now();
 
-  let client: any;
+  let client: SdkClient;
   try {
-    ({ client } = await getOrStartServer(profile, llmConfig));
+    ({ client } = (await getOrStartServer(profile, llmConfig)) as { client: SdkClient });
   } catch (e) {
     return {
       ok: false,
@@ -100,8 +113,8 @@ export async function runAgentSdk(
       body: { parts: [{ type: "text", text: prompt }] },
     });
 
-    const parts: any[] = result.data?.parts ?? [];
-    const textPart = parts.find((p: any) => p.type === "text");
+    const parts = result.data?.parts ?? [];
+    const textPart = parts.find((p) => p.type === "text");
     const stdout = textPart?.text ?? "";
 
     return {
