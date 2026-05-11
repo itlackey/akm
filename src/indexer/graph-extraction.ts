@@ -35,6 +35,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -47,7 +48,9 @@ import {
 } from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
+import { walkMarkdownFiles } from "./walker";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
 export const GRAPH_FILE_SCHEMA_VERSION = 1;
@@ -188,49 +191,46 @@ export async function runGraphExtractionPass(
       async (candidate) => {
         if (signal?.aborted) return undefined;
 
-        // Incremental cache: skip LLM call when body hash is unchanged and
-        // --re-enrich was not requested.
-        const bodyHash = computeBodyHash(candidate.body);
-        if (db && !reEnrich) {
-          const cached = getLlmCacheEntry(db, candidate.absPath, bodyHash);
-          if (cached) {
-            try {
-              const parsed = JSON.parse(cached.resultJson) as {
-                entities?: string[];
-                relations?: Array<{ from: string; to: string; type?: string }>;
-              };
-              const entities = Array.isArray(parsed.entities) ? parsed.entities : [];
-              if (entities.length === 0) return undefined;
-              return {
-                absPath: candidate.absPath,
-                type: candidate.type,
-                entities,
-                relations: Array.isArray(parsed.relations) ? parsed.relations : [],
-              };
-            } catch {
-              // Cache entry corrupt — fall through to LLM call.
-            }
-          }
-        }
+        type GraphCacheShape = {
+          entities: string[];
+          relations: Array<{ from: string; to: string; type?: string }>;
+        };
 
-        const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+        const validate = (raw: unknown): GraphCacheShape | undefined => {
+          if (!raw || typeof raw !== "object") return undefined;
+          const obj = raw as Record<string, unknown>;
+          const entities = Array.isArray(obj.entities) ? (obj.entities as string[]) : [];
+          if (entities.length === 0) return undefined;
+          return {
+            entities,
+            relations: Array.isArray(obj.relations)
+              ? (obj.relations as Array<{ from: string; to: string; type?: string }>)
+              : [],
+          };
+        };
 
-        // Persist result to cache (even empty results so we skip on next run).
-        if (db) {
-          upsertLlmCacheEntry(
-            db,
-            candidate.absPath,
-            bodyHash,
-            JSON.stringify({ entities: extraction.entities, relations: extraction.relations }),
-          );
-        }
+        // withLlmCache handles hash computation, cache lookup, LLM call, and cache write.
+        // When db is undefined we skip caching by passing reEnrich=true.
+        const cached = await withLlmCache<GraphCacheShape>(
+          // biome-ignore lint/style/noNonNullAssertion: guarded below
+          db!,
+          candidate.absPath,
+          candidate.body,
+          !db || (reEnrich ?? false),
+          async () => {
+            const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+            // Cache empty results too so we skip on next run.
+            return { entities: extraction.entities, relations: extraction.relations };
+          },
+          validate,
+        );
 
-        if (extraction.entities.length === 0) return undefined;
+        if (!cached || cached.entities.length === 0) return undefined;
         return {
           absPath: candidate.absPath,
           type: candidate.type,
-          entities: extraction.entities,
-          relations: extraction.relations,
+          entities: cached.entities,
+          relations: cached.relations,
         };
       },
       // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
@@ -337,9 +337,11 @@ export async function runGraphExtractionPass(
     totalRelations += result.relations.length;
   }
 
-  const assetRefs = extractionResults.filter(Boolean).map((r) => r?.absPath);
+  const assetRefs = extractionResults.filter((r): r is NonNullable<typeof r> => Boolean(r)).map((r) => r.absPath);
   const deduped = deduplicateGraph(
-    extractionResults.filter(Boolean).map((r) => ({ entities: r?.entities, relations: r?.relations })),
+    extractionResults
+      .filter((r): r is NonNullable<typeof r> => Boolean(r))
+      .map((r) => ({ entities: r.entities, relations: r.relations })),
     assetRefs,
   );
 
@@ -417,23 +419,6 @@ export function collectEligibleFiles(stashRoot: string): EligibleFile[] {
   return out;
 }
 
-function* walkMarkdownFiles(root: string): Generator<string> {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkMarkdownFiles(full);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      yield full;
-    }
-  }
-}
-
 // ── Persistence ─────────────────────────────────────────────────────────────
 
 /**
@@ -451,9 +436,7 @@ function writeGraphFile(stashRoot: string, graph: GraphFile): boolean {
   const dir = path.dirname(target);
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${target}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-    fs.writeFileSync(tmp, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
-    fs.renameSync(tmp, target);
+    writeFileAtomic(target, `${JSON.stringify(graph, null, 2)}\n`);
     return true;
   } catch (err) {
     warn(`graph extraction: failed to write ${target}: ${err instanceof Error ? err.message : String(err)}`);

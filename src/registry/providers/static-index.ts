@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
+import { fetchWithRetry, jsonWithByteCap, toErrorMessage, writeFileAtomic } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { asString } from "../../integrations/github";
@@ -229,9 +229,7 @@ export function writeCachedIndex(cachePath: string, index: RegistryIndex): void 
   try {
     const dir = path.dirname(cachePath);
     fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = `${cachePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-    fs.writeFileSync(tmpPath, JSON.stringify(index), "utf8");
-    fs.renameSync(tmpPath, cachePath);
+    writeFileAtomic(cachePath, JSON.stringify(index));
   } catch {
     // Best-effort caching — don't fail the search if we can't write
   }

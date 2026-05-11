@@ -19,7 +19,6 @@
  * without touching the host launchctl.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +27,7 @@ import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
 import { type LaunchdTrigger, parseSchedule, translateToLaunchd } from "../schedule";
 import type { TaskDocument } from "../schema";
+import { escapeXml, spawnCommand } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 import launchdTemplate from "./launchd-template.xml" with { type: "text" };
 
@@ -62,7 +62,6 @@ export interface LaunchdBackendOptions {
 }
 
 export const LAUNCHD_LABEL_PREFIX = "com.akm.task.";
-const PLIST_PREFIX = "com.akm.task.";
 
 export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBackend {
   const exec = options.exec ?? defaultLaunchdExec();
@@ -71,7 +70,7 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
   const logDir = options.logDir ?? getTaskLogDir();
   const akmArgv = options.akmArgv ?? resolveAkmInvocation().argv;
 
-  const plistPath = (id: string) => path.join(agentsDir, `${PLIST_PREFIX}${id}.plist`);
+  const plistPath = (id: string) => path.join(agentsDir, `${LAUNCHD_LABEL_PREFIX}${id}.plist`);
   const label = (id: string) => `${LAUNCHD_LABEL_PREFIX}${id}`;
   const target = (id: string) => `gui/${exec.uid()}/${label(id)}`;
 
@@ -135,8 +134,8 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): TaskBacken
       if (!fsLike.exists(agentsDir)) return [];
       const ids: string[] = [];
       for (const file of fsLike.list(agentsDir)) {
-        if (file.startsWith(PLIST_PREFIX) && file.endsWith(".plist")) {
-          ids.push(file.slice(PLIST_PREFIX.length, -".plist".length));
+        if (file.startsWith(LAUNCHD_LABEL_PREFIX) && file.endsWith(".plist")) {
+          ids.push(file.slice(LAUNCHD_LABEL_PREFIX.length, -".plist".length));
         }
       }
       return ids.map((id) => ({ id }));
@@ -183,15 +182,6 @@ function renderLaunchdTrigger(trigger: LaunchdTrigger): string {
   return lines.join("\n");
 }
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function defaultAgentsDir(): string {
   // launchd's per-user LaunchAgents live under the user's home directory.
   // If we can't determine HOME, refuse rather than silently producing a
@@ -210,13 +200,7 @@ function defaultAgentsDir(): string {
 function defaultLaunchdExec(): LaunchdExec {
   return {
     run(args: string[]) {
-      const [bin, ...rest] = args;
-      const r = spawnSync(bin, rest, { encoding: "utf8" });
-      return {
-        status: r.status ?? 1,
-        stdout: r.stdout ?? "",
-        stderr: r.stderr ?? "",
-      };
+      return spawnCommand(args);
     },
     uid() {
       const fn = (process as { getuid?: () => number }).getuid;

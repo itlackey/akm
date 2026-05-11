@@ -27,7 +27,6 @@
  * Tests inject a fake exec + filesystem.
  */
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +35,7 @@ import { getTaskLogDir } from "../../core/paths";
 import { resolveAkmInvocation } from "../resolveAkmBin";
 import { parseSchedule, type SchtasksTrigger, translateToSchtasks } from "../schedule";
 import type { TaskDocument } from "../schema";
+import { escapeXml, spawnCommand } from "./exec-utils";
 import type { InstalledTaskRef, TaskBackend } from "./index";
 import schtasksTemplate from "./schtasks-template.xml" with { type: "text" };
 
@@ -239,25 +239,10 @@ function quoteArg(s: string): string {
   return `"${s.replace(/"/g, '\\"')}"`;
 }
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function defaultSchtasksExec(): SchtasksExec {
   return {
     run(args: string[]) {
-      const [bin, ...rest] = args;
-      const r = spawnSync(bin, rest, { encoding: "utf8" });
-      return {
-        status: r.status ?? 1,
-        stdout: r.stdout ?? "",
-        stderr: r.stderr ?? "",
-      };
+      return spawnCommand(args);
     },
   };
 }

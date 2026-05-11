@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fetchWithRetry } from "../../core/common";
+import { fetchWithRetry, writeFileAtomic } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
 import { registerProvider } from "../factory";
@@ -238,10 +238,7 @@ class SkillsShProvider implements RegistryProvider {
     try {
       const dir = path.dirname(cachePath);
       fs.mkdirSync(dir, { recursive: true });
-      const tmpPath = `${cachePath}.tmp.${process.pid}`;
-      // 0o600: owner read/write only — cache may contain search terms tied to API keys
-      fs.writeFileSync(tmpPath, JSON.stringify(entries), { encoding: "utf8", mode: 0o600 });
-      fs.renameSync(tmpPath, cachePath);
+      writeFileAtomic(cachePath, JSON.stringify(entries));
     } catch {
       // Best-effort caching
     }

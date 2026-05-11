@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
-import { filterNonEmptyStrings } from "./common";
+import { filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
 import { warn } from "./warn";
@@ -132,6 +132,12 @@ export interface LlmFeatureFlags {
    * Default: false.
    */
   lesson_quality_gate?: boolean;
+  /**
+   * Gates the `akm index` metadata-enhancement pass. Default: false.
+   * When false (or absent), metadata enhancement is skipped and falls back to
+   * returning an empty enrichment object (no description/searchHints/tags update).
+   */
+  metadata_enhance?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -293,6 +299,12 @@ export interface AkmConfig {
   stashInheritance?: "merge" | "replace";
   /** Additional asset sources (filesystem paths and remote providers) */
   sources?: SourceConfigEntry[];
+  /**
+   * @deprecated use sources
+   * Legacy alias for `sources` — preserved for backward-compatibility with
+   * existing configs and tests that reference `stashes`.
+   */
+  stashes?: SourceConfigEntry[];
   /** Security controls for install-time auditing and registry allowlists */
   security?: SecurityConfig;
   /** Output defaults for CLI rendering */
@@ -811,18 +823,7 @@ function parseConfigObjectFromText(text: string): Record<string, unknown> | unde
 }
 
 function writeConfigObject(configPath: string, config: Record<string, unknown>): void {
-  const tmpPath = `${configPath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, configPath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 /**
@@ -1018,6 +1019,7 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "graph_extraction",
   "memory_consolidation",
   "lesson_quality_gate",
+  "metadata_enhance",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {

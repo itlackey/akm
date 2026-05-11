@@ -42,8 +42,9 @@ import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
-import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
+import { walkMarkdownFiles } from "./walker";
 
 /**
  * Frontmatter keys this pass cares about. Constants so a future rename only
@@ -134,42 +135,37 @@ export async function runMemoryInferencePass(
 
       // Incremental cache: skip LLM call when body hash is unchanged and
       // --re-enrich was not requested. The cache ref is the absolute file path.
-      const bodyHash = computeBodyHash(record.body);
-      let derived: DerivedMemoryDraft | undefined;
-
-      if (db && !reEnrich) {
-        const cached = getLlmCacheEntry(db, record.filePath, bodyHash);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached.resultJson) as Record<string, unknown>;
-            // Reconstruct a DerivedMemoryDraft from the cached result.
-            const title = typeof parsed.title === "string" ? parsed.title : "";
-            const description = typeof parsed.description === "string" ? parsed.description : "";
-            const content = typeof parsed.content === "string" ? parsed.content : "";
-            const tags = Array.isArray(parsed.tags)
-              ? parsed.tags.filter((t): t is string => typeof t === "string")
-              : [];
-            const searchHints = Array.isArray(parsed.searchHints)
-              ? parsed.searchHints.filter((h): h is string => typeof h === "string")
-              : [];
-            if (title && description && content && tags.length > 0 && searchHints.length > 0) {
-              derived = { title, description, tags, searchHints, content };
-            }
-          } catch {
-            // Cache entry corrupt — fall through to LLM call.
-          }
+      const validate = (raw: unknown): DerivedMemoryDraft | undefined => {
+        if (!raw || typeof raw !== "object") return undefined;
+        const parsed = raw as Record<string, unknown>;
+        const title = typeof parsed.title === "string" ? parsed.title : "";
+        const description = typeof parsed.description === "string" ? parsed.description : "";
+        const content = typeof parsed.content === "string" ? parsed.content : "";
+        const tags = Array.isArray(parsed.tags) ? parsed.tags.filter((t): t is string => typeof t === "string") : [];
+        const searchHints = Array.isArray(parsed.searchHints)
+          ? parsed.searchHints.filter((h): h is string => typeof h === "string")
+          : [];
+        if (title && description && content && tags.length > 0 && searchHints.length > 0) {
+          return { title, description, tags, searchHints, content };
         }
-      }
+        return undefined;
+      };
 
-      if (!derived) {
-        derived = await compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
-          console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-        });
-        // Persist successful LLM result to cache.
-        if (derived && db) {
-          upsertLlmCacheEntry(db, record.filePath, bodyHash, JSON.stringify(derived));
-        }
-      }
+      const derived = db
+        ? await withLlmCache<DerivedMemoryDraft>(
+            db,
+            record.filePath,
+            record.body,
+            reEnrich ?? false,
+            () =>
+              compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+                console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+              }),
+            validate,
+          )
+        : await compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+            console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+          });
 
       if (!derived) {
         return { skipped: true } as const;
@@ -249,23 +245,6 @@ export function isPendingMemory(frontmatter: Record<string, unknown>): boolean {
   if (frontmatter[FM_INFERRED] === true) return false;
   if (frontmatter[FM_INFERENCE_PROCESSED] === true) return false;
   return true;
-}
-
-function* walkMarkdownFiles(root: string): Generator<string> {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkMarkdownFiles(full);
-    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
-      yield full;
-    }
-  }
 }
 
 function toMemoryName(memoriesDir: string, filePath: string): string | undefined {

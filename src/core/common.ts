@@ -30,6 +30,16 @@ export function isAssetType(type: string): type is AkmAssetType {
 // ── Utilities ───────────────────────────────────────────────────────────────
 
 /**
+ * Write content to a file atomically via a temp file + rename.
+ * Prevents partial-write corruption on crash.
+ */
+export function writeFileAtomic(target: string, content: string): void {
+  const tmp = `${target}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
+  fs.writeFileSync(tmp, content, "utf8");
+  fs.renameSync(tmp, target);
+}
+
+/**
  * Resolve the stash directory using a three-level fallback chain:
  *   1. AKM_STASH_DIR environment variable (override for CI/scripts)
  *   2. stashDir field in config.json

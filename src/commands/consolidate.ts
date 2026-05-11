@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
@@ -808,7 +809,6 @@ async function generateMergedContent(
 async function promptConfirm(message: string): Promise<boolean> {
   process.stdout.write(message);
   return new Promise((resolve) => {
-    const readline = require("node:readline");
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.once("line", (line: string) => {
       rl.close();

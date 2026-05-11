@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileAtomic } from "../core/common";
 import { getConfigDir } from "../core/config";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
@@ -123,18 +124,7 @@ export function writeLockfile(entries: LockfileEntry[]): void {
   const lockfilePath = getLockfilePath();
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${lockfilePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, lockfilePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(lockfilePath, `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {

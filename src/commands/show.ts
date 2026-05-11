@@ -347,7 +347,7 @@ export async function showLocal(input: {
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
   };
 
-  const activeRun = getActiveWorkflowRun(getCurrentWorkflowScopeKey());
+  const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
   if (activeRun) {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
   }

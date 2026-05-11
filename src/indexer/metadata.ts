@@ -5,7 +5,7 @@ import {
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
 } from "../core/asset-spec";
-import { isAssetType } from "../core/common";
+import { isAssetType, writeFileAtomic } from "../core/common";
 import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import type { TocHeading } from "../core/markdown";
 import { isVerbose, warn } from "../core/warn";
@@ -204,18 +204,7 @@ export function loadStashFile(dirPath: string, options?: LegacyStashLoadOptions)
 
 export function writeStashFile(dirPath: string, stash: StashFile): void {
   const filePath = stashFilePath(dirPath);
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmpPath, `${JSON.stringify(stash, null, 2)}\n`, "utf8");
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
+  writeFileAtomic(filePath, `${JSON.stringify(stash, null, 2)}\n`);
 }
 
 /**

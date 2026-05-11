@@ -1,0 +1,251 @@
+import fs from "node:fs";
+import path from "node:path";
+import type { AssetLinter, LintContext, LintIssue } from "./types";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function checkUnquotedColon(frontmatterText: string | null): string | null {
+  if (!frontmatterText) return null;
+  for (const line of frontmatterText.split(/\r?\n/)) {
+    const match = line.match(/^description:\s*(.*)/);
+    if (!match) continue;
+    const value = match[1].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      return null;
+    }
+    if (value.includes(":")) {
+      return `description value contains unquoted colon: ${value}`;
+    }
+  }
+  return null;
+}
+
+function fixUnquotedColon(raw: string): string {
+  return raw.replace(/^(description:\s*)(.*)/m, (_match, prefix, value) => {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return _match;
+    }
+    const escaped = trimmed.replace(/"/g, '\\"');
+    return `${prefix}"${escaped}"`;
+  });
+}
+
+function checkMissingUpdated(data: Record<string, unknown>, frontmatterText: string | null): boolean {
+  return frontmatterText !== null && !("updated" in data);
+}
+
+function fixMissingUpdated(raw: string, mtime: Date): string {
+  const dateStr = formatDate(mtime);
+  return raw.replace(/^(---\n[\s\S]*?)\n---/m, `$1\nupdated: ${dateStr}\n---`);
+}
+
+// ── stale-path helpers ────────────────────────────────────────────────────────
+
+function checkStalePath(body: string): string | null {
+  const pathRe = /\/home\/[^\s"'`)\]>,]+/g;
+  let match: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
+  while ((match = pathRe.exec(body)) !== null) {
+    const candidate = match[0];
+    if (!fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+// ── missing-ref helpers ───────────────────────────────────────────────────────
+
+const REF_RE =
+  /(?:^|[\s`"'(])((agent|command|knowledge|memory|script|skill|workflow|lesson|task|wiki|vault):[^\s"'`)\]>,\n]+)/gm;
+
+/** Map from ref type to relative path pattern within stashRoot. Returns null to skip. */
+function refToRelPath(refType: string, refName: string): string | null {
+  switch (refType) {
+    case "agent":
+      return path.join("agents", `${refName}.md`);
+    case "command":
+      return path.join("commands", `${refName}.md`);
+    case "knowledge":
+      return path.join("knowledge", `${refName}.md`);
+    case "memory":
+      return path.join("memories", `${refName}.md`);
+    case "script":
+      return null; // scripts live in nested dirs — skip
+    case "skill":
+      return path.join("skills", refName, "SKILL.md");
+    case "workflow":
+      return path.join("workflows", `${refName}.md`);
+    case "lesson":
+      return path.join("lessons", `${refName}.md`);
+    case "task":
+      return path.join("tasks", `${refName}.md`);
+    case "wiki":
+      return path.join("wikis", `${refName}.md`);
+    case "vault":
+      return path.join("vaults", `${refName}.md`);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
+ * body that does not resolve to a real file under stashRoot.
+ */
+function checkMissingRefs(body: string, stashRoot: string): Array<{ ref: string; resolvedRelPath: string }> {
+  const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
+  let match: RegExpExecArray | null;
+  const re = new RegExp(REF_RE.source, REF_RE.flags);
+
+  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
+  while ((match = re.exec(body)) !== null) {
+    const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
+
+    // Strip leading "local//" prefix if present
+    let ref = fullRef;
+    if (ref.startsWith("local//")) {
+      ref = ref.slice("local//".length);
+    } else if (fullRef.includes("//")) {
+      // Has a remote origin prefix (e.g. "npm:", "github:", "owner/repo//") — skip
+      continue;
+    }
+
+    // Skip refs that start with obvious remote prefixes
+    const colonIdx = ref.indexOf(":");
+    if (colonIdx === -1) continue;
+    const refType = ref.slice(0, colonIdx);
+    const refName = ref.slice(colonIdx + 1);
+
+    // Guard against empty names or names that look like paths/URLs
+    if (!refName || refName.startsWith("/") || refName.startsWith("~") || refName.startsWith("http")) {
+      continue;
+    }
+
+    const relPath = refToRelPath(refType, refName);
+    if (relPath === null) continue; // type is skipped
+
+    const absPath = path.join(stashRoot, relPath);
+
+    // For memory, also accept the .derived.md variant
+    if (refType === "memory" && !fs.existsSync(absPath)) {
+      const derivedPath = path.join(stashRoot, "memories", `${refName}.derived.md`);
+      if (fs.existsSync(derivedPath)) continue;
+    }
+
+    if (!fs.existsSync(absPath)) {
+      missing.push({ ref: fullRef, resolvedRelPath: relPath });
+    }
+  }
+
+  return missing;
+}
+
+// ── BaseLinter ────────────────────────────────────────────────────────────────
+
+/**
+ * Abstract base class providing the two cross-type checks shared by all asset
+ * linters: `unquoted-colon` and `missing-updated`.
+ *
+ * Subclasses call `runBaseChecks(ctx)` and append any type-specific issues.
+ * File mutations triggered by base checks are flushed to disk inside this
+ * method; subclasses must re-read `ctx.raw` if they need the post-fix content
+ * (in practice the base class updates `ctx.raw` in place when `fix` is true).
+ */
+export abstract class BaseLinter implements AssetLinter {
+  abstract readonly types: readonly string[];
+  abstract lint(ctx: LintContext): LintIssue[];
+
+  protected runBaseChecks(ctx: LintContext): LintIssue[] {
+    const issues: LintIssue[] = [];
+    let currentRaw = ctx.raw;
+    let modified = false;
+
+    // ── 1. unquoted-colon ──────────────────────────────────────────────────
+    const unquotedColonDetail = checkUnquotedColon(ctx.frontmatter);
+    if (unquotedColonDetail) {
+      if (ctx.fix) {
+        currentRaw = fixUnquotedColon(currentRaw);
+        modified = true;
+        issues.push({
+          file: ctx.relPath,
+          issue: "unquoted-colon",
+          detail: unquotedColonDetail,
+          fixed: true,
+        });
+      } else {
+        issues.push({
+          file: ctx.relPath,
+          issue: "unquoted-colon",
+          detail: unquotedColonDetail,
+          fixed: false,
+        });
+      }
+    }
+
+    // ── 2. missing-updated ─────────────────────────────────────────────────
+    if (checkMissingUpdated(ctx.data, ctx.frontmatter)) {
+      if (ctx.fix) {
+        let mtime: Date;
+        try {
+          mtime = fs.statSync(ctx.filePath).mtime;
+        } catch {
+          mtime = new Date();
+        }
+        currentRaw = fixMissingUpdated(currentRaw, mtime);
+        modified = true;
+        issues.push({
+          file: ctx.relPath,
+          issue: "missing-updated",
+          detail: `stamped updated: ${formatDate(mtime)}`,
+          fixed: true,
+        });
+      } else {
+        issues.push({
+          file: ctx.relPath,
+          issue: "missing-updated",
+          detail: "no updated field in frontmatter",
+          fixed: false,
+        });
+      }
+    }
+
+    if (modified) {
+      fs.writeFileSync(ctx.filePath, currentRaw, "utf8");
+      // Propagate the mutated raw back so subclasses can re-parse if needed
+      ctx.raw = currentRaw;
+    }
+
+    // ── 3. stale-path ──────────────────────────────────────────────────────
+    const stalePathMatch = checkStalePath(ctx.body);
+    if (stalePathMatch) {
+      issues.push({
+        file: ctx.relPath,
+        issue: "stale-path",
+        detail: `nonexistent path: ${stalePathMatch}`,
+        fixed: false,
+      });
+    }
+
+    // ── 4. missing-ref ─────────────────────────────────────────────────────
+    const missingRefs = checkMissingRefs(ctx.body, ctx.stashRoot);
+    for (const { ref, resolvedRelPath } of missingRefs) {
+      issues.push({
+        file: ctx.relPath,
+        issue: "missing-ref",
+        detail: `missing ref: ${ref} (resolved to ${resolvedRelPath})`,
+        fixed: false,
+      });
+    }
+
+    return issues;
+  }
+}

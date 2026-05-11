@@ -1021,6 +1021,7 @@ async function enhanceDirsWithLlm(
         db,
         entryKeys,
         reEnrich,
+        config,
       );
 
       // Re-upsert the enhanced entries in a single transaction so a crash
@@ -1355,6 +1356,7 @@ async function enhanceStashWithLlm(
   db?: Database,
   entryKeys?: string[],
   reEnrich?: boolean,
+  akmConfig?: AkmConfig,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
   const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
@@ -1406,7 +1408,7 @@ async function enhanceStashWithLlm(
           }
         }
 
-        const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
+        const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal, akmConfig);
         const updated = { ...entry };
         if (improvements.description) updated.description = improvements.description;
         if (improvements.searchHints?.length) updated.searchHints = improvements.searchHints;

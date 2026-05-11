@@ -6,22 +6,30 @@
  * transport client in `client.ts`.
  */
 
-import type { LlmConnectionConfig } from "../core/config";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import type { StashEntry } from "../indexer/metadata";
 import { chatCompletion, parseJsonResponse } from "./client";
+import { tryLlmFeature } from "./feature-gate";
 
 const SYSTEM_PROMPT = `You are a metadata generator for a developer asset registry. Given a script/skill/command/agent entry, generate improved metadata. Respond with ONLY valid JSON, no markdown fencing.`;
+
+export type EnhancedMetadata = { description?: string; searchHints?: string[]; tags?: string[] };
 
 /**
  * Use an LLM to enhance a stash entry's metadata: improve description,
  * generate searchHints, and suggest tags.
+ *
+ * Routes through `tryLlmFeature("metadata_enhance", ...)` so the feature gate
+ * is honoured uniformly. Returns `{}` when the gate is disabled or on error —
+ * the caller already handles missing fields gracefully.
  */
 export async function enhanceMetadata(
   config: LlmConnectionConfig,
   entry: StashEntry,
   fileContent?: string,
   signal?: AbortSignal,
-): Promise<{ description?: string; searchHints?: string[]; tags?: string[] }> {
+  akmConfig?: AkmConfig,
+): Promise<EnhancedMetadata> {
   const contextParts = [`Name: ${entry.name}`, `Type: ${entry.type}`];
   if (entry.description) contextParts.push(`Current description: ${entry.description}`);
   if (entry.tags?.length) contextParts.push(`Current tags: ${entry.tags.join(", ")}`);
@@ -40,31 +48,39 @@ Generate improved metadata for this ${entry.type}. Return JSON with these fields
 
 Return ONLY the JSON object, no explanation.`;
 
-  const raw = await chatCompletion(
-    config,
-    [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    { signal },
+  return tryLlmFeature(
+    "metadata_enhance",
+    akmConfig,
+    async () => {
+      const raw = await chatCompletion(
+        config,
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        { signal },
+      );
+
+      const parsed = parseJsonResponse<Record<string, unknown>>(raw);
+      if (!parsed) return {};
+
+      const result: EnhancedMetadata = {};
+
+      if (typeof parsed.description === "string" && parsed.description) {
+        result.description = parsed.description;
+      }
+      if (Array.isArray(parsed.searchHints)) {
+        result.searchHints = parsed.searchHints
+          .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          .slice(0, 8);
+      }
+      if (Array.isArray(parsed.tags)) {
+        result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
+      }
+
+      return result;
+    },
+    {},
+    { timeoutMs: config.timeoutMs },
   );
-
-  const parsed = parseJsonResponse<Record<string, unknown>>(raw);
-  if (!parsed) return {};
-
-  const result: { description?: string; searchHints?: string[]; tags?: string[] } = {};
-
-  if (typeof parsed.description === "string" && parsed.description) {
-    result.description = parsed.description;
-  }
-  if (Array.isArray(parsed.searchHints)) {
-    result.searchHints = parsed.searchHints
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .slice(0, 8);
-  }
-  if (Array.isArray(parsed.tags)) {
-    result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
-  }
-
-  return result;
 }

@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
+import { writeFileAtomic } from "../core/common";
 
 /** Matches a KEY=value assignment line, capturing only the key. */
 const ASSIGN_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
@@ -306,24 +307,4 @@ function validateKeyName(key: string): void {
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function writeFileAtomic(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  try {
-    fs.writeFileSync(tmp, content, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(tmp, filePath);
-    try {
-      fs.chmodSync(filePath, 0o600);
-    } catch {
-      /* best-effort on platforms without chmod */
-    }
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      /* ignore cleanup failure */
-    }
-    throw err;
-  }
 }
