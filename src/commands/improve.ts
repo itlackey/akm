@@ -358,12 +358,20 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
     const postCleanupRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
 
+    // Gap 6: only surface feedback signals from the last 30 days so that
+    // ancient one-off feedback events don't permanently lock an asset into
+    // every improve run. Assets with only stale signals fall through to the
+    // high-retrieval path (P0-A) or are skipped until new signals arrive.
+    const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
+    const feedbackSinceCutoff = new Date(Date.now() - FEEDBACK_SIGNAL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
     const signalFiltered = postCleanupRefs.filter((candidate) => {
       const { events } = readEvents({ type: "feedback", ref: candidate.ref });
       return events.some(
         (e) =>
-          (e.metadata !== undefined && typeof e.metadata.signal === "string") ||
-          (e.metadata !== undefined && typeof e.metadata.note === "string"),
+          (e.ts ?? "") >= feedbackSinceCutoff &&
+          ((e.metadata !== undefined && typeof e.metadata.signal === "string") ||
+            (e.metadata !== undefined && typeof e.metadata.note === "string")),
       );
     });
 
@@ -455,12 +463,27 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }> = [];
     const repairedRefs = new Set<string>();
 
+    // Gap 3: cooldown constant for schema repair — re-running on the same
+    // asset every improve cycle without any change in the asset state is pure
+    // churn. 7 days matches the reflect cooldown default.
+    const SCHEMA_REPAIR_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
     if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
       const baseConfigForRepair = options.config ?? loadConfig();
       const llmCfg = baseConfigForRepair.llm;
       if (llmCfg) {
         for (const failure of validationFailures) {
           if (Date.now() - startMs >= budgetMs) break;
+
+          // Gap 3 cooldown: skip repair if we already ran it recently.
+          const recentRepairs = readEvents({ type: "schema_repair_invoked", ref: failure.ref });
+          const lastRepair = recentRepairs.events
+            .filter((e) => e.metadata?.outcome === "written")
+            .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
+          if (lastRepair?.ts && Date.now() - new Date(lastRepair.ts).getTime() < SCHEMA_REPAIR_COOLDOWN_MS) {
+            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
+            continue;
+          }
 
           let filePath = findAssetFilePath(failure.ref, options.stashDir);
           if (!filePath) {
@@ -531,9 +554,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             const newContent = `---\n${fmStr}\n---\n${fm.content}`;
             fs.writeFileSync(filePath, newContent, "utf8");
             console.error(`[improve] schema-repair written: ${failure.ref}`);
+            appendEvent({
+              eventType: "schema_repair_invoked",
+              ref: failure.ref,
+              metadata: { outcome: "written", reason: failure.reason },
+            });
             schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "written" });
             repairedRefs.add(failure.ref);
           } catch (e) {
+            appendEvent({
+              eventType: "schema_repair_invoked",
+              ref: failure.ref,
+              metadata: { outcome: "error", reason: failure.reason, error: String(e) },
+            });
             schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "error", error: String(e) });
           }
         }
@@ -690,12 +723,49 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       : baseConfig;
 
-    const consolidation = await akmConsolidate({
-      ...options.consolidateOptions,
-      config: consolidationConfig,
-      stashDir: options.stashDir,
-      autoTriggered: volumeTriggered,
-    });
+    // Gap 4: skip consolidation if it ran recently (14-day cooldown) to prevent
+    // the same memory cluster being churned through consolidation on every run.
+    const CONSOLIDATE_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+    const recentConsolidations = readEvents({ type: "consolidate_completed" });
+    const lastConsolidation = recentConsolidations.events
+      .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
+      .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
+    const consolidationOnCooldown =
+      !volumeTriggered &&
+      lastConsolidation?.ts &&
+      Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
+
+    let consolidation: ConsolidateResult = {
+      ok: true,
+      shape: "consolidate-result",
+      dryRun: false,
+      previewOnly: false,
+      target: "",
+      processed: 0,
+      merged: 0,
+      deleted: 0,
+      promoted: [],
+      warnings: [],
+      durationMs: 0,
+    };
+    if (!consolidationOnCooldown) {
+      consolidation = await akmConsolidate({
+        ...options.consolidateOptions,
+        config: consolidationConfig,
+        stashDir: options.stashDir,
+        autoTriggered: volumeTriggered,
+      });
+      if (consolidation.processed > 0) {
+        appendEvent({
+          eventType: "consolidate_completed",
+          ref: "memory:_consolidation",
+          metadata: { processed: consolidation.processed, merged: consolidation.merged },
+        });
+      }
+    } else {
+      const daysAgo = Math.round((Date.now() - new Date(lastConsolidation!.ts!).getTime()) / 86400000);
+      console.error(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
+    }
 
     return {
       schemaVersion: 1,
