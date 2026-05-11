@@ -736,6 +736,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
 
     let consolidation: ConsolidateResult = {
+      schemaVersion: 1,
       ok: true,
       shape: "consolidate-result",
       dryRun: false,
