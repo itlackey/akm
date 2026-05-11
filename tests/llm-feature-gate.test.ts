@@ -139,12 +139,11 @@ describe("tryLlmFeature", () => {
   });
 });
 
-// ── featureGateTimeoutMs tests ──────────────────────────────────────────
+// ── timeoutMs override tests ──────────────────────────────────────────
 
-test("featureGateTimeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200 ms fn)", async () => {
-  // When featureGateTimeoutMs is smaller than the fn's delay, the wrapper
-  // must time out and return the fallback — proving it *did* take effect
-  // rather than letting the 30-second DEFAULT_TIMEOUT_MS run.
+test("timeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200 ms fn)", async () => {
+  // When timeoutMs is smaller than the fn's delay, the wrapper must time out
+  // and return the fallback — proving the per-call override works.
   const events: { reason: string; error?: Error }[] = [];
   const result = await tryLlmFeature(
     "memory_inference",
@@ -152,7 +151,7 @@ test("featureGateTimeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200
     () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
     "fallback-from-gate-timeout",
     {
-      featureGateTimeoutMs: 25,
+      timeoutMs: 25,
       onFallback: (e) => events.push({ reason: e.reason, error: e.error }),
     },
   );
@@ -162,10 +161,10 @@ test("featureGateTimeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200
   expect(events[0].error).toBeInstanceOf(LlmFeatureTimeoutError);
 });
 
-test("when featureGateTimeoutMs is absent, DEFAULT_TIMEOUT_MS of 30 s is used (backwards compat)", async () => {
+test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls succeed)", async () => {
   // A fn that resolves quickly (10 ms) should succeed without timing out
-  // when no featureGateTimeoutMs is set, confirming the default is still
-  // 30 s and does not prematurely expire fast calls.
+  // when no timeoutMs is set, confirming the 600 s default does not
+  // prematurely expire fast calls.
   const events: { reason: string }[] = [];
   const result = await tryLlmFeature(
     "graph_extraction",

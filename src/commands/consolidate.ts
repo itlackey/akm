@@ -384,12 +384,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     const raw = await tryLlmFeature(
       "memory_consolidation",
       config,
-      // maxTokens: 2048 — plan output is a JSON array of ops; 2048 tokens is
-      // ample for 20 memories and avoids the silent truncation that caused
-      // ~50% of chunks to fail with the old 512 default.
-      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT, maxTokens: 2048 }),
+      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT }),
       { ok: false as const, error: `chunk ${chunkIdx + 1} failed` },
-      { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
     );
 
     if (!raw.ok) {
@@ -714,15 +710,10 @@ async function generateMergedContent(
     secBody,
   ].join("\n");
 
-  const result = await tryLlmFeature(
-    "memory_consolidation",
-    config,
-    // maxTokens: 4096 — merge output is a full markdown file with YAML
-    // frontmatter; it can easily exceed 1000 tokens for content-rich memories.
-    () => callAi(config, prompt, { maxTokens: 4096 }),
-    { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
-    { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
-  );
+  const result = await tryLlmFeature("memory_consolidation", config, () => callAi(config, prompt), {
+    ok: false as const,
+    error: `merge content generation failed for ${primaryRef}`,
+  });
 
   if (!result.ok) {
     warnings.push(result.error ?? `merge content generation failed for ${primaryRef}`);

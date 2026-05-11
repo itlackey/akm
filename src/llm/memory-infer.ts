@@ -78,9 +78,8 @@ export async function compressMemoryToDerivedMemory(
             { role: "user", content: userPrompt },
           ],
           {
-            maxTokens: llmConfig.maxTokens ?? 4096,
             temperature: 0.1,
-            timeoutMs: llmConfig.timeoutMs ?? 120_000,
+            timeoutMs: llmConfig.timeoutMs,
             signal,
           },
         );
@@ -119,8 +118,7 @@ export async function compressMemoryToDerivedMemory(
     },
     undefined,
     {
-      timeoutMs: llmConfig.timeoutMs ?? 120_000,
-      featureGateTimeoutMs: akmConfig?.llm?.featureGateTimeoutMs,
+      timeoutMs: llmConfig.timeoutMs,
       onFallback,
     },
   );

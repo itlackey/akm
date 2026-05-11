@@ -19,13 +19,6 @@ export interface CallAiOptions {
    */
   draftFilePath?: string;
   timeoutMs?: number;
-  /**
-   * Override the LLM max_tokens for this call (HTTP path only). When absent,
-   * `chatCompletion` falls back to `config.llm.maxTokens ?? 4096`.
-   * Pass an explicit value for calls that need structured JSON output with
-   * predictable size (e.g. consolidate planning: 2048, merge: 4096).
-   */
-  maxTokens?: number;
 }
 
 export type CallAiResult = { ok: true; content: string; path: "agent-cli" | "llm-http" } | { ok: false; error: string };
@@ -80,7 +73,6 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
     messages.push({ role: "user", content: prompt });
     try {
       const content = await chatCompletion(config.llm, messages, {
-        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       });
       return { ok: true, content, path: "llm-http" };

@@ -91,7 +91,12 @@ interface ChatCompletionResponse {
 }
 
 export interface ChatCompletionOptions {
-  /** Override the config's max_tokens for this call (used by ingest/lint which need longer outputs). */
+  /**
+   * Override the config's max_tokens for this call. When absent AND
+   * `config.maxTokens` is also absent, the field is omitted from the request
+   * body entirely — the model/API uses its own default limit. Only set this
+   * explicitly when you have a strong reason (e.g. capability probes).
+   */
   maxTokens?: number;
   /** Override the config's temperature for this call. */
   temperature?: number;
@@ -112,6 +117,11 @@ export async function chatCompletion(
     headers.Authorization = `Bearer ${config.apiKey}`;
   }
 
+  // Only include max_tokens when explicitly set. The model/API knows its own
+  // limits; a hardcoded default creates silent truncation failures when the
+  // guess is wrong. Users who need a cap can set llm.maxTokens in config.
+  const resolvedMaxTokens = options?.maxTokens ?? config.maxTokens;
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
@@ -123,10 +133,7 @@ export async function chatCompletion(
           model: config.model,
           messages,
           temperature: options?.temperature ?? config.temperature ?? 0.3,
-          // Default of 4096 is intentionally generous — 512 caused silent
-          // truncation for structured JSON outputs (consolidate, graph extraction).
-          // Lower via config.maxTokens or per-call options.maxTokens when needed.
-          max_tokens: options?.maxTokens ?? config.maxTokens ?? 4096,
+          ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
           ...config.extraParams,
         }),
       },

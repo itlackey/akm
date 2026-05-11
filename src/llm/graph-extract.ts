@@ -229,11 +229,8 @@ export async function extractGraphFromBodies(
             { role: "user", content: userPrompt },
           ],
           {
-            // Allocate more tokens for batch responses: each asset can use up
-            // to 1024 tokens, but we cap to avoid runaway output.
-            maxTokens: Math.min(nonEmptyBodies.length * 1024, 8192),
             temperature: 0.1,
-            timeoutMs: llmConfig.timeoutMs ?? 120_000,
+            timeoutMs: llmConfig.timeoutMs,
             signal,
           },
         );
@@ -251,8 +248,7 @@ export async function extractGraphFromBodies(
     },
     null,
     {
-      timeoutMs: llmConfig.timeoutMs ?? 120_000,
-      featureGateTimeoutMs: akmConfig?.llm?.featureGateTimeoutMs,
+      timeoutMs: llmConfig.timeoutMs,
       onFallback,
     },
   );
@@ -333,10 +329,7 @@ export async function extractGraphFromBody(
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
           ],
-          // 2048 tokens for a single asset: enough headroom for entities and
-          // relations without risking runaway output. Batch calls scale
-          // dynamically via Math.min(count * 512, 8192).
-          { maxTokens: 2048, temperature: 0.1, timeoutMs: llmConfig.timeoutMs ?? 120_000, signal },
+          { temperature: 0.1, timeoutMs: llmConfig.timeoutMs, signal },
         );
         if (!raw) return empty;
         const parsed = parseEmbeddedJsonResponse<{ entities?: unknown; relations?: unknown }>(raw);
@@ -379,8 +372,7 @@ export async function extractGraphFromBody(
     },
     empty,
     {
-      timeoutMs: llmConfig.timeoutMs ?? 120_000,
-      featureGateTimeoutMs: akmConfig?.llm?.featureGateTimeoutMs,
+      timeoutMs: llmConfig.timeoutMs,
       onFallback,
     },
   );

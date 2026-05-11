@@ -29,12 +29,11 @@
 
 ## LLM Defaults
 
-LLM defaults are intentionally generous — do not reduce max_tokens, timeouts, or concurrency defaults without a documented user-facing reason. Local model users need headroom.
+LLM defaults follow a "works correctly for the lowest common denominator" philosophy — a slow local model on a single-threaded server. Do not add per-call tuning knobs without a strong reason.
 
-- `max_tokens` defaults to **4096** in `chatCompletion` (raised from 512). The old 512 default caused ~50% of `akm consolidate` chunks to silently fail with truncated JSON. Only lower this for probe calls (capability detection) where you explicitly know a small output is expected.
-- `DEFAULT_TIMEOUT_MS` in `tryLlmFeature` is **120 000 ms** (2 minutes, raised from 30 s). Local models on consumer hardware routinely take 30–90 s per request. If a call seems to hang, investigate the model server first before reducing the timeout.
-- `concurrency` defaults to **4** for cloud APIs. Set `llm.concurrency: 1` in config.json for local model servers (LM Studio, Ollama) that run one inference at a time — running 4 concurrent requests crashes them with "Model reloaded" / HTTP 500 errors.
-- `featureGateTimeoutMs` is user-overridable in config.json. Document any change to these defaults in both the JSDoc comment and this section.
+- `max_tokens` is **not sent** by default in `chatCompletion`. The model/API already knows its own limits; a hardcoded default creates silent truncation failures. Users who need a cap can set `llm.maxTokens` in config.json. The only exception is `probeLlmCapabilities`, which sends `maxTokens: 64` because it expects a tiny fixed-shape response.
+- `DEFAULT_TIMEOUT_MS` in `tryLlmFeature` is **600 000 ms** (10 minutes). There is a single timeout knob: `llm.timeoutMs` in config.json (forwarded as `opts.timeoutMs`). The removed `featureGateTimeoutMs` field was a band-aid; do not re-add it.
+- `concurrency` defaults to **1** in `concurrentMap`. Cloud users can set `llm.concurrency: 4` in config.json. Local model servers (LM Studio, Ollama) run one inference at a time — the old default of 4 crashed them with "Model reloaded" / HTTP 500 errors.
 
 ## Code Style
 - Prefer external `.md` (or `.xml`) files over long inline strings in TypeScript. Multi-line template literals containing markdown, XML, or prose belong in a standalone file in the same directory as the module that uses them. Import them with `import x from "./x.md" with { type: "text" }` and use `.replace`/`.replaceAll` with `{{PLACEHOLDER}}` tokens at call time. This keeps templates editable without touching TS source and avoids escaping noise inside template literals. See `src/wiki/wiki-templates.ts`, `src/tasks/backends/schtasks-template.xml`, and `scripts/copy-assets.ts` for the established pattern.

@@ -5,7 +5,7 @@
 export async function concurrentMap<T, R>(
   items: T[],
   fn: (item: T, index: number) => Promise<R>,
-  concurrency = 4,
+  concurrency = 1,
 ): Promise<Array<R | undefined>> {
   const results: Array<R | undefined> = new Array(items.length).fill(undefined);
   let nextIndex = 0;

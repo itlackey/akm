@@ -422,7 +422,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     },
     null as string | null,
     {
-      featureGateTimeoutMs: config.llm?.featureGateTimeoutMs,
       onFallback: (evt) => {
         // Log the fallback reason; the caller (raw === null path) handles
         // emitting the distill_invoked event so we don't double-emit here.
