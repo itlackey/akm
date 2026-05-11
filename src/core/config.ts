@@ -66,6 +66,17 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
   maxTokens?: number;
   /** Optional request timeout in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Hard timeout in milliseconds applied by the `tryLlmFeature` wrapper for
+   * every bounded in-tree LLM call (graph extraction, memory inference,
+   * feedback distillation, etc.). Defaults to 30_000 (30 s) when absent.
+   *
+   * For slow local models set this to 60_000 or higher. For batch calls that
+   * process multiple assets per request, set `llm.featureGateTimeoutMs` to
+   * 60000–90000 in config.json to avoid premature timeouts while waiting for
+   * the model to process the larger payload.
+   */
+  featureGateTimeoutMs?: number;
   /** Capability flags learned at setup time (e.g. structured-output support). */
   capabilities?: LlmCapabilities;
   /**
@@ -107,6 +118,11 @@ export interface LlmFeatureFlags {
    * failing with `ConfigError`.
    */
   feedback_distillation?: boolean;
+  /**
+   * Gates `akm consolidate` memory deduplication and promotion. Default: false.
+   * When false (or absent), `akm consolidate` throws a ConfigError.
+   */
+  memory_consolidation?: boolean;
 }
 
 export interface RegistryConfigEntry {
@@ -319,10 +335,31 @@ export interface OutputConfig {
  * v1 contract (#208): boolean opt-out only. Per-pass alternative provider
  * configuration is deliberately out of scope — any non-boolean value for
  * `llm`, or any other key, fails at config load with a `ConfigError`.
+ *
+ * Batch-size knobs (opt-in, default 1 preserves existing single-asset
+ * behaviour):
+ *   - `graphExtractionBatchSize` — how many asset bodies to pack into one
+ *     graph-extraction LLM call. Default: 1 (one call per asset).
+ *   - `memoryInferenceBatchSize` — same for the memory-inference pass.
+ *     Default: 1 (one call per memory).
+ * Set to values > 1 to amortise LLM HTTP round-trips across multiple assets.
  */
 export interface IndexPassConfig {
   /** When `false`, the pass skips its LLM call even if `akm.llm` is set. */
   llm?: boolean;
+  /**
+   * Number of asset bodies to batch into a single graph-extraction LLM call.
+   * Default: 1 (one call per asset — existing behaviour, fully opt-in).
+   * Practical range: 1–10. Higher values reduce HTTP round-trips at the cost
+   * of larger prompts; values above ~10 risk hitting context limits.
+   */
+  graphExtractionBatchSize?: number;
+  /**
+   * Number of memory bodies to batch into a single memory-inference LLM call.
+   * Default: 1 (one call per memory — existing behaviour, fully opt-in).
+   * Practical range: 1–10.
+   */
+  memoryInferenceBatchSize?: number;
 }
 
 /**
@@ -892,6 +929,11 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     if (t === undefined) return undefined;
     result.timeoutMs = t;
   }
+  if ("featureGateTimeoutMs" in obj) {
+    const fgt = parsePositiveInteger("llm.featureGateTimeoutMs", obj.featureGateTimeoutMs);
+    if (fgt === undefined) return undefined;
+    result.featureGateTimeoutMs = fgt;
+  }
   if ("maxTokens" in obj) {
     const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);
     if (m === undefined) return undefined;
@@ -928,6 +970,7 @@ const LOCKED_LLM_FEATURE_KEYS: ReadonlySet<string> = new Set([
   "feedback_distillation",
   "memory_inference",
   "graph_extraction",
+  "memory_consolidation",
 ]);
 
 function parseLlmFeatures(raw: Record<string, unknown>): LlmFeatureFlags {
@@ -1001,9 +1044,9 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
           'Move provider settings to the top-level "llm" block, then set `index.<pass>.llm = false` to opt a single pass out.',
         );
       }
-      if (key !== "llm") {
+      if (key !== "llm" && key !== "graphExtractionBatchSize" && key !== "memoryInferenceBatchSize") {
         throw new ConfigError(
-          `Unknown key \`index.${passName}.${key}\`. Per-pass entries only support \`llm\` (boolean opt-out).`,
+          `Unknown key \`index.${passName}.${key}\`. Per-pass entries support \`llm\` (boolean opt-out), \`graphExtractionBatchSize\`, and \`memoryInferenceBatchSize\`.`,
           "INVALID_CONFIG_FILE",
         );
       }
@@ -1020,6 +1063,14 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
         );
       }
       passConfig.llm = llmFlag;
+    }
+    if ("graphExtractionBatchSize" in passRaw) {
+      const n = parsePositiveInteger(`index.${passName}.graphExtractionBatchSize`, passRaw.graphExtractionBatchSize);
+      if (n !== undefined) passConfig.graphExtractionBatchSize = n;
+    }
+    if ("memoryInferenceBatchSize" in passRaw) {
+      const n = parsePositiveInteger(`index.${passName}.memoryInferenceBatchSize`, passRaw.memoryInferenceBatchSize);
+      if (n !== undefined) passConfig.memoryInferenceBatchSize = n;
     }
     out[passName] = passConfig;
   }

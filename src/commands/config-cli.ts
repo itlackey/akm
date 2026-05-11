@@ -431,14 +431,8 @@ function parseRegistriesValue(value: string): RegistryConfigEntry[] | undefined 
     if (typeof obj.url !== "string" || !obj.url) {
       throw new UsageError(`Invalid value for registries[${i}]: "url" is required`);
     }
-    const result: RegistryConfigEntry = { url: obj.url };
-    if (typeof obj.name === "string" && obj.name) result.name = obj.name;
-    if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
-    if (typeof obj.provider === "string" && obj.provider) result.provider = obj.provider;
-    if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-      result.options = obj.options as Record<string, unknown>;
-    }
-    return result;
+    // Spread the full entry so unknown/future fields round-trip intact.
+    return { ...obj } as unknown as RegistryConfigEntry;
   });
 }
 
@@ -448,28 +442,24 @@ function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig
     endpoint: "http://localhost:11434/v1/embeddings",
     model: "nomic-embed-text",
   });
-  const localModel = typeof parsed.localModel === "string" && parsed.localModel ? parsed.localModel : undefined;
-  const endpoint = typeof parsed.endpoint === "string" ? parsed.endpoint : "";
-  if (!endpoint) {
-    if (!localModel) {
-      throw new UsageError(
-        `Invalid value for embedding: endpoint/model are required for remote embeddings, or provide localModel`,
-      );
-    }
-    const localOnly: EmbeddingConnectionConfig = { endpoint: "", model: "", localModel };
-    if (typeof parsed.provider === "string" && parsed.provider) localOnly.provider = parsed.provider;
-    return localOnly;
+  // Require either a non-empty endpoint (remote) or a localModel (local-only).
+  const hasEndpoint = typeof parsed.endpoint === "string" && parsed.endpoint !== "";
+  const hasLocalModel = typeof parsed.localModel === "string" && parsed.localModel !== "";
+  if (!hasEndpoint && !hasLocalModel) {
+    throw new UsageError(
+      `Invalid value for embedding: "endpoint" is required for remote embeddings, or provide "localModel" for local-only`,
+    );
   }
-  const result: EmbeddingConnectionConfig = {
-    endpoint: asRequiredString(parsed.endpoint, "embedding", "endpoint"),
-    model: asRequiredString(parsed.model, "embedding", "model"),
-  };
-  if (typeof parsed.provider === "string" && parsed.provider) result.provider = parsed.provider;
-  if (parsed.dimension !== undefined)
-    result.dimension = parseUnknownPositiveInteger(parsed.dimension, "embedding.dimension");
-  if (typeof parsed.apiKey === "string" && parsed.apiKey) result.apiKey = parsed.apiKey;
-  if (localModel) result.localModel = localModel;
-  return result;
+  // Validate the types of the required/structural fields that the runtime
+  // depends on, but do not reconstruct the object — pass everything through.
+  if (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string") {
+    throw new UsageError(`Invalid value for embedding: "endpoint" must be a string`);
+  }
+  if (parsed.model !== undefined && typeof parsed.model !== "string") {
+    throw new UsageError(`Invalid value for embedding: "model" must be a string`);
+  }
+  // Spread the full parsed object so unknown/future fields round-trip intact.
+  return { endpoint: "", model: "", ...parsed } as EmbeddingConnectionConfig;
 }
 
 function parseLlmConnectionValue(value: string): LlmConnectionConfig | undefined {
@@ -478,15 +468,17 @@ function parseLlmConnectionValue(value: string): LlmConnectionConfig | undefined
     endpoint: "http://localhost:11434/v1/chat/completions",
     model: "llama3.2",
   });
-  const result: LlmConnectionConfig = {
-    endpoint: asRequiredString(parsed.endpoint, "llm", "endpoint"),
-    model: asRequiredString(parsed.model, "llm", "model"),
-  };
-  if (typeof parsed.provider === "string" && parsed.provider) result.provider = parsed.provider;
-  if (parsed.temperature !== undefined) result.temperature = parseUnknownNumber(parsed.temperature, "llm.temperature");
-  if (parsed.maxTokens !== undefined) result.maxTokens = parseUnknownPositiveInteger(parsed.maxTokens, "llm.maxTokens");
-  if (typeof parsed.apiKey === "string" && parsed.apiKey) result.apiKey = parsed.apiKey;
-  return result;
+  // Both endpoint and model are required structural fields for an LLM connection.
+  if (typeof parsed.endpoint !== "string" || !parsed.endpoint) {
+    throw new UsageError(`Invalid value for llm: "endpoint" is a required string field`);
+  }
+  if (typeof parsed.model !== "string" || !parsed.model) {
+    throw new UsageError(`Invalid value for llm: "model" is a required string field`);
+  }
+  // Spread the full parsed object so unknown/future fields round-trip intact.
+  // The config loader (config.ts) handles warn-and-ignore for unknown sub-keys
+  // at read time, so we do not need to whitelist here.
+  return { ...parsed } as unknown as LlmConnectionConfig;
 }
 
 function parseJsonObject(
@@ -510,30 +502,9 @@ function parseJsonObject(
   return parsed as Record<string, unknown>;
 }
 
-function asRequiredString(value: unknown, key: string, field: string): string {
-  if (typeof value !== "string" || !value) {
-    throw new UsageError(`Invalid value for ${key}: "${field}" is a required string field`);
-  }
-  return value;
-}
-
 function requireNonEmptyString(value: string, key: string): string {
   if (!value) {
     throw new UsageError(`Invalid value for ${key}: expected a non-empty string`);
-  }
-  return value;
-}
-
-function parseUnknownNumber(value: unknown, key: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new UsageError(`Invalid value for ${key}: expected a number`);
-  }
-  return value;
-}
-
-function parseUnknownPositiveInteger(value: unknown, key: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
-    throw new UsageError(`Invalid value for ${key}: expected a positive integer`);
   }
   return value;
 }
@@ -567,14 +538,7 @@ function parseStashesValue(value: string): SourceConfigEntry[] | undefined {
     if (typeof obj.type !== "string" || !obj.type) {
       throw new UsageError(`Invalid value for sources[${i}]: "type" is required`);
     }
-    const result: SourceConfigEntry = { type: obj.type };
-    if (typeof obj.path === "string" && obj.path) result.path = obj.path;
-    if (typeof obj.url === "string" && obj.url) result.url = obj.url;
-    if (typeof obj.name === "string" && obj.name) result.name = obj.name;
-    if (typeof obj.enabled === "boolean") result.enabled = obj.enabled;
-    if (typeof obj.options === "object" && obj.options !== null && !Array.isArray(obj.options)) {
-      result.options = obj.options as Record<string, unknown>;
-    }
-    return result;
+    // Spread the full entry so unknown/future fields round-trip intact.
+    return { ...obj } as unknown as SourceConfigEntry;
   });
 }

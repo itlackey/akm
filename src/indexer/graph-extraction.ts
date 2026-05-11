@@ -32,14 +32,16 @@
  *     reserved for asset writes (CLAUDE.md / spec §10 step 5).
  */
 
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { AkmConfig } from "../core/config";
 import { concurrentMap } from "../core/concurrent";
+import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
+import { extractGraphFromBodies, extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
+import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 import type { SearchSource } from "./search-source";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
@@ -115,11 +117,18 @@ const EMPTY_RESULT: GraphExtractionResult = {
  * If any of the three is missing or `false`, this function short-circuits
  * to an empty no-op result, leaving any existing `graph.json` untouched on
  * disk.
+ *
+ * When `config.index.graph.graphExtractionBatchSize > 1`, eligible files are
+ * chunked into batches and each chunk is processed with a single LLM call via
+ * `extractGraphFromBodies`. Default batch size is 1 (one call per asset —
+ * preserves existing behaviour, fully opt-in).
  */
 export async function runGraphExtractionPass(
   config: AkmConfig,
   sources: SearchSource[],
   signal?: AbortSignal,
+  db?: Database,
+  reEnrich?: boolean,
 ): Promise<GraphExtractionResult> {
   // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
   // explicit `false` disables the pass entirely.
@@ -144,29 +153,159 @@ export async function runGraphExtractionPass(
   let totalEntities = 0;
   let totalRelations = 0;
 
-  const extractionResults = await concurrentMap(
-    eligible,
-    async (candidate) => {
-      if (signal?.aborted) return undefined;
-      const extraction = await extractGraphFromBody(
-        llmConfig,
-        candidate.body,
-        signal,
-        config,
-        (evt) => {
-          console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-        },
-      );
-      if (extraction.entities.length === 0) return undefined;
-      return {
-        absPath: candidate.absPath,
-        type: candidate.type,
-        entities: extraction.entities,
-        relations: extraction.relations,
-      };
-    },
-    4,
-  );
+  // Read the configured batch size. Default of 1 preserves the existing
+  // per-asset behaviour and is fully opt-in.
+  const batchSize = config.index?.graph?.graphExtractionBatchSize ?? 1;
+
+  const onFallback = (evt: { feature: string; reason: string }) => {
+    console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+  };
+
+  type ExtractionRecord =
+    | {
+        absPath: string;
+        type: string;
+        entities: string[];
+        relations: Array<{ from: string; to: string; type?: string }>;
+      }
+    | undefined;
+
+  let extractionResults: Array<ExtractionRecord | undefined>;
+
+  if (batchSize <= 1) {
+    // ── Original per-asset path (with incremental cache) ─────────────────
+    extractionResults = await concurrentMap(
+      eligible,
+      async (candidate) => {
+        if (signal?.aborted) return undefined;
+
+        // Incremental cache: skip LLM call when body hash is unchanged and
+        // --re-enrich was not requested.
+        const bodyHash = computeBodyHash(candidate.body);
+        if (db && !reEnrich) {
+          const cached = getLlmCacheEntry(db, candidate.absPath, bodyHash);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached.resultJson) as {
+                entities?: string[];
+                relations?: Array<{ from: string; to: string; type?: string }>;
+              };
+              const entities = Array.isArray(parsed.entities) ? parsed.entities : [];
+              if (entities.length === 0) return undefined;
+              return {
+                absPath: candidate.absPath,
+                type: candidate.type,
+                entities,
+                relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+              };
+            } catch {
+              // Cache entry corrupt — fall through to LLM call.
+            }
+          }
+        }
+
+        const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+
+        // Persist result to cache (even empty results so we skip on next run).
+        if (db) {
+          upsertLlmCacheEntry(
+            db,
+            candidate.absPath,
+            bodyHash,
+            JSON.stringify({ entities: extraction.entities, relations: extraction.relations }),
+          );
+        }
+
+        if (extraction.entities.length === 0) return undefined;
+        return {
+          absPath: candidate.absPath,
+          type: candidate.type,
+          entities: extraction.entities,
+          relations: extraction.relations,
+        };
+      },
+      4,
+    );
+  } else {
+    // ── Batched path (with incremental cache) ────────────────────────────
+    // Chunk eligible files into groups of `batchSize` and call
+    // `extractGraphFromBodies` once per chunk. Cache hits are resolved
+    // before chunking so they don't consume LLM tokens in the batch call.
+    const rawResults: ExtractionRecord[] = new Array(eligible.length).fill(undefined);
+
+    for (let start = 0; start < eligible.length; start += batchSize) {
+      if (signal?.aborted) break;
+      const chunk = eligible.slice(start, start + batchSize);
+
+      // Pre-resolve cache hits for this chunk; track which positions need LLM.
+      const bodyHashes: string[] = chunk.map((c) => computeBodyHash(c.body));
+      const needsLlm: boolean[] = chunk.map((c, j) => {
+        if (!db || reEnrich) return true;
+        const cached = getLlmCacheEntry(db, c.absPath, bodyHashes[j] ?? "");
+        if (!cached) return true;
+        try {
+          const parsed = JSON.parse(cached.resultJson) as {
+            entities?: string[];
+            relations?: Array<{ from: string; to: string; type?: string }>;
+          };
+          const entities = Array.isArray(parsed.entities) ? parsed.entities : [];
+          rawResults[start + j] =
+            entities.length > 0
+              ? {
+                  absPath: c.absPath,
+                  type: c.type,
+                  entities,
+                  relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+                }
+              : undefined;
+          return false; // cache hit
+        } catch {
+          return true; // corrupt cache entry — re-call LLM
+        }
+      });
+
+      const uncachedChunk = chunk.filter((_, j) => needsLlm[j]);
+      if (uncachedChunk.length === 0) continue;
+
+      const bodies = uncachedChunk.map((c) => c.body);
+
+      // extractGraphFromBodies always returns an array of the same length
+      // as bodies (it falls back per-asset for any missing indices).
+      const batchExtractions = await extractGraphFromBodies(llmConfig, bodies, signal, config, onFallback);
+
+      // Map LLM results back to original positions and write cache entries.
+      let llmIdx = 0;
+      for (let j = 0; j < chunk.length; j++) {
+        if (!needsLlm[j]) continue;
+        const candidate = chunk[j];
+        const extraction = batchExtractions[llmIdx++];
+        if (!candidate || !extraction) continue;
+
+        // Cache the result for future runs.
+        if (db) {
+          upsertLlmCacheEntry(
+            db,
+            candidate.absPath,
+            bodyHashes[j] ?? "",
+            JSON.stringify({ entities: extraction.entities, relations: extraction.relations }),
+          );
+        }
+
+        if (extraction.entities.length === 0) {
+          rawResults[start + j] = undefined;
+        } else {
+          rawResults[start + j] = {
+            absPath: candidate.absPath,
+            type: candidate.type,
+            entities: extraction.entities,
+            relations: extraction.relations,
+          };
+        }
+      }
+    }
+
+    extractionResults = rawResults;
+  }
 
   for (const result of extractionResults) {
     if (!result) continue;

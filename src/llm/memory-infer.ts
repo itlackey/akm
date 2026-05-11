@@ -20,7 +20,7 @@ import { toErrorMessage } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { warn } from "../core/warn";
 import { chatCompletion, parseEmbeddedJsonResponse } from "./client";
-import { tryLlmFeature, type TryLlmFeatureFallbackEvent } from "./feature-gate";
+import { type TryLlmFeatureFallbackEvent, tryLlmFeature } from "./feature-gate";
 
 /** Hard cap on body chars sent to the model — pragmatic and matches `runLlmEnrich`. */
 const MAX_BODY_CHARS = 4000;
@@ -29,8 +29,7 @@ const SYSTEM_PROMPT =
   "You compress a developer memory into one high-signal derived memory for later retrieval. " +
   "Return only valid JSON. No prose outside the JSON object. No markdown fences.";
 
-const USER_PROMPT_PREFIX =
-  `Compress the memory below into one derived memory. Output ONLY JSON:
+const USER_PROMPT_PREFIX = `Compress the memory below into one derived memory. Output ONLY JSON:
 {"title":"string","description":"string","tags":["string"],"searchHints":["string"],"content":"string"}
 Rules: be specific, no vague generalizations, preserve key facts (names/versions/paths/config keys verbatim), merge related points, max 3 sentences body, 3-8 tags, 3-6 searchHints.
 
@@ -121,6 +120,7 @@ export async function compressMemoryToDerivedMemory(
     undefined,
     {
       timeoutMs: llmConfig.timeoutMs ?? 120_000,
+      featureGateTimeoutMs: akmConfig?.llm?.featureGateTimeoutMs,
       onFallback,
     },
   );

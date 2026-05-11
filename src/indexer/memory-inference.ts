@@ -30,17 +30,19 @@
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 
+import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
-import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { concurrentMap } from "../core/concurrent";
+import type { AkmConfig, SourceConfigEntry } from "../core/config";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
+import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 import type { SearchSource } from "./search-source";
 
 /**
@@ -96,6 +98,8 @@ export async function runMemoryInferencePass(
   config: AkmConfig,
   sources: SearchSource[],
   signal?: AbortSignal,
+  db?: Database,
+  reEnrich?: boolean,
 ): Promise<MemoryInferenceResult> {
   const result: MemoryInferenceResult = {
     considered: 0,
@@ -127,15 +131,46 @@ export async function runMemoryInferencePass(
     pending,
     async (record) => {
       if (signal?.aborted) return undefined;
-      const derived = await compressMemoryToDerivedMemory(
-        llmConfig,
-        record.body,
-        signal,
-        config,
-        (evt) => {
+
+      // Incremental cache: skip LLM call when body hash is unchanged and
+      // --re-enrich was not requested. The cache ref is the absolute file path.
+      const bodyHash = computeBodyHash(record.body);
+      let derived: DerivedMemoryDraft | undefined;
+
+      if (db && !reEnrich) {
+        const cached = getLlmCacheEntry(db, record.filePath, bodyHash);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached.resultJson) as Record<string, unknown>;
+            // Reconstruct a DerivedMemoryDraft from the cached result.
+            const title = typeof parsed.title === "string" ? parsed.title : "";
+            const description = typeof parsed.description === "string" ? parsed.description : "";
+            const content = typeof parsed.content === "string" ? parsed.content : "";
+            const tags = Array.isArray(parsed.tags)
+              ? parsed.tags.filter((t): t is string => typeof t === "string")
+              : [];
+            const searchHints = Array.isArray(parsed.searchHints)
+              ? parsed.searchHints.filter((h): h is string => typeof h === "string")
+              : [];
+            if (title && description && content && tags.length > 0 && searchHints.length > 0) {
+              derived = { title, description, tags, searchHints, content };
+            }
+          } catch {
+            // Cache entry corrupt — fall through to LLM call.
+          }
+        }
+      }
+
+      if (!derived) {
+        derived = await compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
           console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
-        },
-      );
+        });
+        // Persist successful LLM result to cache.
+        if (derived && db) {
+          upsertLlmCacheEntry(db, record.filePath, bodyHash, JSON.stringify(derived));
+        }
+      }
+
       if (!derived) {
         return { skipped: true } as const;
       }

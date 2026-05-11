@@ -56,6 +56,17 @@ export interface TryLlmFeatureOptions {
    */
   timeoutMs?: number;
   /**
+   * Per-user configurable timeout in milliseconds sourced from
+   * `llm.featureGateTimeoutMs` in config.json. When provided and greater than
+   * 0, this value takes precedence over `timeoutMs` (and over the built-in
+   * `DEFAULT_TIMEOUT_MS = 30_000`). This lets users tune the gate timeout for
+   * slow local models without patching source.
+   *
+   * For batch calls (multiple assets per request), set
+   * `llm.featureGateTimeoutMs` to 60000–90000 in config.json.
+   */
+  featureGateTimeoutMs?: number;
+  /**
    * Optional warning sink. Receives a structured `{ feature, reason, error }`
    * record on every fallback. Default: the wrapper is silent. Call sites
    * that want to surface a structured `warnings` entry (per spec §14.2)
@@ -75,6 +86,13 @@ export interface TryLlmFeatureFallbackEvent {
   error?: Error;
 }
 
+/**
+ * Default hard timeout for every bounded in-tree LLM call. Override per-user
+ * by setting `llm.featureGateTimeoutMs` in config.json (forwarded via
+ * `TryLlmFeatureOptions.featureGateTimeoutMs`). For batch calls (multiple
+ * assets per request), set `llm.featureGateTimeoutMs` to 60000–90000 in
+ * config.json to avoid premature timeouts on slow local models.
+ */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
@@ -110,7 +128,12 @@ export async function tryLlmFeature<T>(
     return resolveFallback();
   }
 
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // Resolution order: featureGateTimeoutMs (config-sourced) → timeoutMs
+  // (per-call override) → DEFAULT_TIMEOUT_MS (30 s hard floor).
+  const timeoutMs =
+    opts?.featureGateTimeoutMs != null && opts.featureGateTimeoutMs > 0
+      ? opts.featureGateTimeoutMs
+      : (opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
     if (timeoutMs <= 0) {
       return await fn();

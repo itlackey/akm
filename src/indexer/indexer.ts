@@ -2,13 +2,14 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
-import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { concurrentMap } from "../core/concurrent";
+import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { getDbPath } from "../core/paths";
 import { isVerbose, warn, warnVerbose } from "../core/warn";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { takeWorkflowDocument } from "../workflows/document-cache";
 import {
+  clearStaleCacheEntries,
   closeDatabase,
   type DbIndexedEntry,
   deleteEntriesByDir,
@@ -36,6 +37,7 @@ import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
   generateMetadataFlat,
+  isEnrichmentComplete,
   isWorkflowSkipWarning,
   loadStashFile,
   type StashEntry,
@@ -201,7 +203,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // and existing inferred children are left in place.
     if (enrich) {
       try {
-        const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal);
+        const inferenceResult = await runMemoryInferencePass(config, allSourceEntries, signal, db, reEnrich);
         if (inferenceResult.writtenFacts > 0 || inferenceResult.skippedNoFacts > 0) {
           onProgress({
             phase: "llm",
@@ -245,7 +247,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // preserved on disk in that case.
     if (enrich) {
       try {
-        const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal);
+        const graphResult = await runGraphExtractionPass(config, allSourceEntries, signal, db, reEnrich);
         if (graphResult.written) {
           onProgress({
             phase: "llm",
@@ -344,6 +346,15 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
 
     // Recompute utility scores from usage_events after FTS rebuild
     recomputeUtilityScores(db);
+
+    // Purge LLM cache entries for assets that no longer exist in the index.
+    // Runs after the insert transaction so the entries table reflects the
+    // current asset set. Best-effort — a failure here is non-fatal.
+    try {
+      clearStaleCacheEntries(db);
+    } catch {
+      /* ignore */
+    }
 
     // Regenerate each wiki's index.md from its pages' frontmatter. Best-effort
     // — errors are caught inside regenerateAllWikiIndexes and never block the
@@ -957,10 +968,14 @@ async function enhanceDirsWithLlm(
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal.addEventListener("abort", onAbort, { once: true });
-    enrichDeadline.addEventListener("abort", () => {
-      deadlineHit = true;
-      controller.abort();
-    }, { once: true });
+    enrichDeadline.addEventListener(
+      "abort",
+      () => {
+        deadlineHit = true;
+        controller.abort();
+      },
+      { once: true },
+    );
     return controller.signal;
   })();
 
@@ -975,12 +990,29 @@ async function enhanceDirsWithLlm(
       if (enrichSignal.aborted) return undefined;
       // Only enhance generated entries (or all when reEnrich=true);
       // user-provided overrides should not be overwritten.
-      const entriesToEnhance = originalStash.entries.filter(
-        (e) => e.quality === "generated" || (reEnrich && e.quality === "enriched"),
-      );
+      // Skip entries that are already fully enriched (description + tags + searchHints)
+      // unless the caller explicitly requests re-enrichment via reEnrich=true.
+      const entriesToEnhance = originalStash.entries.filter((e) => {
+        if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+        if (!reEnrich && isEnrichmentComplete(e)) {
+          warnVerbose(`[akm] skipping LLM enrichment for "${e.name}" — entry already complete`);
+          return false;
+        }
+        return true;
+      });
       if (entriesToEnhance.length === 0) return undefined;
       const targetStash: StashFile = { entries: entriesToEnhance };
-      const enhanced = await enhanceStashWithLlm(llmConfig, targetStash, files, summary, enrichSignal);
+      const entryKeys = entriesToEnhance.map((e) => `${currentStashDir}:${e.type}:${e.name}`);
+      const enhanced = await enhanceStashWithLlm(
+        llmConfig,
+        targetStash,
+        files,
+        summary,
+        enrichSignal,
+        db,
+        entryKeys,
+        reEnrich,
+      );
 
       // Re-upsert the enhanced entries in a single transaction so a crash
       // cannot leave half the entries updated and the rest stale.
@@ -1305,12 +1337,16 @@ async function enhanceStashWithLlm(
   files: string[],
   summary: LlmEnhancementSummary,
   signal?: AbortSignal,
+  db?: Database,
+  entryKeys?: string[],
+  reEnrich?: boolean,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
+  const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
 
   const results = await concurrentMap(
     stash.entries,
-    async (entry) => {
+    async (entry, idx) => {
       if (signal?.aborted) return entry;
       summary.attempted++;
       try {
@@ -1326,6 +1362,35 @@ async function enhanceStashWithLlm(
           }
         }
 
+        // Incremental cache: skip LLM call when file body is unchanged and
+        // --re-enrich was not requested. The cache key is the entry_key
+        // (stashDir:type:name) which is stable across index runs.
+        const cacheBody = fileContent ?? `${entry.name}\n${entry.description ?? ""}`;
+        const bodyHash = computeBodyHash(cacheBody);
+        const cacheKey = entryKeys?.[idx] ?? `${entry.type}:${entry.name}`;
+
+        if (db && !reEnrich) {
+          const cached = getLlmCacheEntry(db, cacheKey, bodyHash);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached.resultJson) as {
+                description?: string;
+                searchHints?: string[];
+                tags?: string[];
+              };
+              const updated = { ...entry };
+              if (parsed.description) updated.description = parsed.description;
+              if (parsed.searchHints?.length) updated.searchHints = parsed.searchHints;
+              if (parsed.tags?.length) updated.tags = parsed.tags;
+              updated.quality = "enriched";
+              summary.succeeded++;
+              return updated;
+            } catch {
+              // Cache entry corrupt — fall through to LLM call.
+            }
+          }
+        }
+
         const improvements = await enhanceMetadata(llmConfig, entry, fileContent, signal);
         const updated = { ...entry };
         if (improvements.description) updated.description = improvements.description;
@@ -1333,6 +1398,22 @@ async function enhanceStashWithLlm(
         if (improvements.tags?.length) updated.tags = improvements.tags;
         // Mark as enriched so subsequent index runs skip re-enrichment (P2)
         updated.quality = "enriched";
+
+        // Persist to cache so the next run can skip the LLM call when the
+        // file body has not changed.
+        if (db) {
+          upsertLlmCacheEntry(
+            db,
+            cacheKey,
+            bodyHash,
+            JSON.stringify({
+              description: improvements.description,
+              searchHints: improvements.searchHints,
+              tags: improvements.tags,
+            }),
+          );
+        }
+
         summary.succeeded++;
         return updated;
       } catch (err) {

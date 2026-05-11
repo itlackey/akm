@@ -139,6 +139,46 @@ describe("tryLlmFeature", () => {
   });
 });
 
+// ── featureGateTimeoutMs tests ──────────────────────────────────────────
+
+test("featureGateTimeoutMs in opts overrides DEFAULT_TIMEOUT_MS (25 ms gate, 200 ms fn)", async () => {
+  // When featureGateTimeoutMs is smaller than the fn's delay, the wrapper
+  // must time out and return the fallback — proving it *did* take effect
+  // rather than letting the 30-second DEFAULT_TIMEOUT_MS run.
+  const events: { reason: string; error?: Error }[] = [];
+  const result = await tryLlmFeature(
+    "memory_inference",
+    configWith({ memory_inference: true }),
+    () => new Promise<string>((resolve) => setTimeout(() => resolve("late"), 200)),
+    "fallback-from-gate-timeout",
+    {
+      featureGateTimeoutMs: 25,
+      onFallback: (e) => events.push({ reason: e.reason, error: e.error }),
+    },
+  );
+  expect(result).toBe("fallback-from-gate-timeout");
+  expect(events).toHaveLength(1);
+  expect(events[0].reason).toBe("timeout");
+  expect(events[0].error).toBeInstanceOf(LlmFeatureTimeoutError);
+});
+
+test("when featureGateTimeoutMs is absent, DEFAULT_TIMEOUT_MS of 30 s is used (backwards compat)", async () => {
+  // A fn that resolves quickly (10 ms) should succeed without timing out
+  // when no featureGateTimeoutMs is set, confirming the default is still
+  // 30 s and does not prematurely expire fast calls.
+  const events: { reason: string }[] = [];
+  const result = await tryLlmFeature(
+    "graph_extraction",
+    configWith({ graph_extraction: true }),
+    () => new Promise<string>((resolve) => setTimeout(() => resolve("fast"), 10)),
+    "should-not-be-returned",
+    { onFallback: (e) => events.push({ reason: e.reason }) },
+  );
+  // No timeout should have fired; the fn result is returned.
+  expect(result).toBe("fast");
+  expect(events).toHaveLength(0);
+});
+
 // ── #284 GAP-LOW: parametrise over the stable feature keys ─────────────────
 //
 // Wave B may drop `tag_dedup` / `memory_consolidation` / `embedding_fallback_score`

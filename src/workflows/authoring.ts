@@ -4,9 +4,9 @@ import { resolveAssetPathFromName } from "../core/asset-spec";
 import { isWithin, resolveStashDir } from "../core/common";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
-import workflowTemplate from "./workflow-template.md" with { type: "text" };
 import { parseWorkflow } from "./parser";
 import type { WorkflowError } from "./schema";
+import workflowTemplate from "./workflow-template.md" with { type: "text" };
 
 const DEFAULT_WORKFLOW_TEMPLATE = renderWorkflowTemplate({
   title: "Example Workflow",

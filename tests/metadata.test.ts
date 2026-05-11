@@ -9,7 +9,9 @@ import {
   extractTagsFromPath,
   fileNameToDescription,
   generateMetadata,
+  isEnrichmentComplete,
   loadStashFile,
+  type StashEntry,
   type StashFile,
   validateStashEntry,
   writeStashFile,
@@ -500,4 +502,80 @@ test("generateMetadata preserves curated aliases from comment metadata", async (
   expect(stash.entries[0].aliases).toEqual(
     expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
   );
+});
+
+// ── isEnrichmentComplete ────────────────────────────────────────────────────
+
+test("isEnrichmentComplete returns true when description, tags, and searchHints are all populated", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+    searchHints: ["deploy a service to production", "roll out new code"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(true);
+});
+
+test("isEnrichmentComplete returns false when description is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    tags: ["deploy", "production"],
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when description is an empty string", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "   ",
+    tags: ["deploy"],
+    searchHints: ["deploy a service"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when tags array is empty", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: [],
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when tags is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    searchHints: ["deploy a service to production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when searchHints is missing", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
+});
+
+test("isEnrichmentComplete returns false when searchHints array is empty", () => {
+  const entry: StashEntry = {
+    name: "deploy",
+    type: "script",
+    description: "Deploy services to production",
+    tags: ["deploy", "production"],
+    searchHints: [],
+  };
+  expect(isEnrichmentComplete(entry)).toBe(false);
 });

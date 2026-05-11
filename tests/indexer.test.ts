@@ -1353,3 +1353,60 @@ test("incremental reindex clears embeddings when provider fingerprint changes", 
 
   fs.rmSync(stashDir, { recursive: true, force: true });
 });
+
+// ── Skip enrichment for already-complete entries ─────────────────────────────
+
+test("enhanceDirsWithLlm does not call LLM for entries that are already complete when reEnrich=false", async () => {
+  // Set up a stash directory with a script file and a pre-populated .stash.json
+  // that already has description, tags, and searchHints.
+  const stashDir = tmpStash();
+  const scriptDir = path.join(stashDir, "scripts", "deploy");
+  fs.mkdirSync(scriptDir, { recursive: true });
+  const scriptFile = path.join(scriptDir, "deploy.sh");
+  fs.writeFileSync(scriptFile, "#!/usr/bin/env bash\n# Deploy services to production\necho deploy\n");
+
+  // Pre-write a .stash.json with a complete entry (description + tags + searchHints)
+  // so that after mergeLegacyEntry the entry already has all enrichment fields.
+  const prePopulatedStash = {
+    entries: [
+      {
+        name: "deploy.sh",
+        type: "script",
+        quality: "generated",
+        filename: "deploy.sh",
+        description: "Deploy services to production",
+        tags: ["deploy", "production", "ops"],
+        searchHints: ["deploy a service to production", "roll out new code to staging"],
+      },
+    ],
+  };
+  fs.writeFileSync(path.join(scriptDir, ".stash.json"), JSON.stringify(prePopulatedStash));
+
+  // Configure an LLM endpoint so resolveIndexPassLLM would normally return a config.
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: { endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2" },
+  });
+
+  // Track whether any LLM/fetch call was made. The LLM client calls globalThis.fetch
+  // for chat completions; if our skip logic works, fetch should NOT be called.
+  let llmFetchCalled = false;
+  const originalFetch2 = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    // The LLM endpoint uses /chat/completions — flag any call to it.
+    if (url.includes("chat/completions")) {
+      llmFetchCalled = true;
+      throw new Error("LLM should not be called for already-complete entries");
+    }
+    return originalFetch2(input as Parameters<typeof fetch>[0], _init);
+  }) as typeof globalThis.fetch;
+
+  try {
+    await akmIndex({ stashDir, enrich: true, reEnrich: false });
+    expect(llmFetchCalled).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch2;
+  }
+});

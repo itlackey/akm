@@ -30,6 +30,10 @@ let extractor: (body: string) => { entities: string[]; relations: { from: string
 
 mock.module("../src/llm/graph-extract", () => ({
   extractGraphFromBody: async (_config: unknown, body: string) => extractor(body),
+  // Stub the batch API introduced with batching support — each body is processed
+  // independently via the single-body extractor to keep test logic simple.
+  extractGraphFromBodies: async (_config: unknown, bodies: string[]) =>
+    Promise.all(bodies.map((body) => extractor(body))),
 }));
 
 // Import AFTER mock.module so the pass picks up the stub.

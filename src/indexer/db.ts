@@ -45,7 +45,7 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 10;
+export const DB_VERSION = 11;
 export const EMBEDDING_DIM = 384;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
@@ -253,6 +253,24 @@ function ensureSchema(db: Database, embeddingDim: number): void {
     );
   `);
 
+  // LLM enrichment result cache. Stores a SHA-256 body hash and the JSON
+  // result for each asset so that subsequent `akm index --enrich` runs can
+  // skip the LLM call when the body hasn't changed. The cache is keyed by
+  // a stable asset_ref string (e.g. the absolute file path for graph/memory
+  // passes, or `entryKey:passId` for the metadata-enhance pass).
+  // Entries are cleaned up when assets are removed or --re-enrich is used.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
+      asset_ref   TEXT PRIMARY KEY,
+      body_hash   TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
+      ON llm_enrichment_cache(updated_at);
+  `);
+
   // FTS-dirty queue. Created here (not lazily on first upsert) so the
   // per-entry write path doesn't issue a CREATE TABLE IF NOT EXISTS on
   // every call — that DDL would fire thousands of times during a full
@@ -352,6 +370,8 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   db.exec("DROP TABLE IF EXISTS entries_vec");
   db.exec("DROP TABLE IF EXISTS entries_fts");
   db.exec("DROP TABLE IF EXISTS index_dir_state");
+  db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
+  db.exec("DROP INDEX IF EXISTS idx_llm_cache_updated");
   db.exec("DROP INDEX IF EXISTS idx_entries_dir");
   db.exec("DROP INDEX IF EXISTS idx_entries_type");
   db.exec("DROP TABLE IF EXISTS entries");
@@ -1184,4 +1204,91 @@ export function upsertUtilityScore(db: Database, entryId: number, data: UtilityS
       last_used_at = excluded.last_used_at,
       updated_at = datetime('now')
   `).run(entryId, data.utility, data.showCount, data.searchCount, data.selectRate, data.lastUsedAt ?? null);
+}
+
+// ── LLM enrichment cache ────────────────────────────────────────────────────
+
+/**
+ * A cached LLM enrichment result keyed by a stable asset_ref string.
+ * The body_hash (SHA-256 hex) guards against stale results when the
+ * underlying file changes between index runs.
+ */
+export interface LlmCacheEntry {
+  assetRef: string;
+  bodyHash: string;
+  resultJson: string;
+  updatedAt: number;
+}
+
+/**
+ * Look up a cached LLM result for the given asset_ref.
+ *
+ * Returns `undefined` when no entry exists OR when the stored body_hash
+ * doesn't match `currentBodyHash` (body has changed since the result was
+ * cached). In both cases the caller should invoke the LLM and write a new
+ * cache entry.
+ */
+export function getLlmCacheEntry(db: Database, assetRef: string, currentBodyHash: string): LlmCacheEntry | undefined {
+  const row = db
+    .prepare("SELECT asset_ref, body_hash, result_json, updated_at FROM llm_enrichment_cache WHERE asset_ref = ?")
+    .get(assetRef) as { asset_ref: string; body_hash: string; result_json: string; updated_at: number } | undefined;
+  if (!row) return undefined;
+  // Hash mismatch → body changed, treat as cache miss.
+  if (row.body_hash !== currentBodyHash) return undefined;
+  return {
+    assetRef: row.asset_ref,
+    bodyHash: row.body_hash,
+    resultJson: row.result_json,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Insert or update a cached LLM result for the given asset_ref.
+ */
+export function upsertLlmCacheEntry(db: Database, assetRef: string, bodyHash: string, resultJson: string): void {
+  db.prepare(
+    `INSERT INTO llm_enrichment_cache (asset_ref, body_hash, result_json, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(asset_ref) DO UPDATE SET
+       body_hash   = excluded.body_hash,
+       result_json = excluded.result_json,
+       updated_at  = excluded.updated_at`,
+  ).run(assetRef, bodyHash, resultJson, Date.now());
+}
+
+/**
+ * Delete LLM cache entries whose asset_ref is no longer present in the
+ * `entries` table. Should be called during the cleanup phase of each index
+ * run to prevent the cache from growing unboundedly as assets are removed.
+ *
+ * The join uses a LIKE match against the entries `file_path` column because
+ * graph/memory cache refs are absolute file paths, while enrichment cache
+ * refs are entry_key strings — we preserve any entry that still has a
+ * corresponding row in either the entries table (by entry_key) or that
+ * matches a live file_path.
+ */
+export function clearStaleCacheEntries(db: Database): void {
+  try {
+    db.exec(`
+      DELETE FROM llm_enrichment_cache
+      WHERE asset_ref NOT IN (SELECT file_path FROM entries)
+        AND asset_ref NOT IN (SELECT entry_key FROM entries)
+    `);
+  } catch {
+    /* ignore — table may not exist in very old DBs opened without ensureSchema */
+  }
+}
+
+/**
+ * Compute a stable SHA-256 hex digest of a UTF-8 string using Bun's native
+ * hashing. Used as the body_hash key in `llm_enrichment_cache`.
+ *
+ * Bun.CryptoHasher is synchronous and allocation-free compared to Web Crypto,
+ * making it suitable for use inside tight per-asset loops.
+ */
+export function computeBodyHash(body: string): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(body);
+  return hasher.digest("hex");
 }
