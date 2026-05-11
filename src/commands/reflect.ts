@@ -101,7 +101,7 @@ function readRecentFeedback(ref?: string): string[] {
     for (const event of result.events.slice(-limit)) {
       const md = (event.metadata ?? {}) as Record<string, unknown>;
       const signal = typeof md.signal === "string" ? md.signal : "?";
-      const note = typeof md.note === "string" ? md.note : typeof md.reason === "string" ? md.reason : "";
+      const note = typeof md.reason === "string" ? md.reason : typeof md.note === "string" ? md.note : "";
       const details = note ? `[${signal}] ${note}` : `[${signal}]`;
       lines.push(!ref && event.ref ? `${event.ref} ${details}` : details);
     }

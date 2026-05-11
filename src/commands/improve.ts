@@ -19,6 +19,7 @@ import {
   type MemoryPruneCandidate,
 } from "../core/memory-improve";
 import { listProposals } from "../core/proposals";
+import { warn } from "../core/warn";
 import {
   closeDatabase,
   getAllEntries,
@@ -29,7 +30,7 @@ import {
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
-import { chatCompletion } from "../llm/client";
+import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
@@ -378,7 +379,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         }
       ).cnt;
       if (showEventCount === 0) {
-        console.error(
+        warn(
           "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
         );
       }
@@ -482,40 +483,46 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             const raw = fs.readFileSync(filePath, "utf8");
             const fm = parseFrontmatter(raw);
 
-            // Only handle "missing description" via LLM — skip unknown reasons.
-            if (!failure.reason.includes("missing description")) {
+            // Determine which fields need to be generated.
+            const missingFields: string[] = [];
+            if (!fm.data.description) missingFields.push("description");
+            if (isLessonCandidate(failure.ref) && !fm.data.when_to_use) missingFields.push("when_to_use");
+
+            if (missingFields.length === 0) {
               schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
               continue;
             }
 
-            console.error(`[improve] schema-repair ${failure.ref} (missing description)`);
+            const fieldList = missingFields.join(" and ");
+            console.error(`[improve] schema-repair ${failure.ref} (${fieldList})`);
 
             const bodyPreview = (fm.content ?? raw).slice(0, 2000);
             const llmResponse = await chatCompletion(llmCfg, [
               {
                 role: "system",
-                content:
-                  "You generate concise asset descriptions. Respond with exactly one sentence — no preamble, no quotes, no period at the end unless natural. The sentence describes what this asset is and what it covers.",
+                content: `You generate concise asset frontmatter fields. Respond with a JSON object containing only the missing fields. No prose, no markdown fences.`,
               },
               {
                 role: "user",
-                content: `Write a one-sentence description for this ${parseAssetRef(failure.ref).type} asset:\n\n${bodyPreview}`,
+                content: `Generate the missing frontmatter fields (${fieldList}) for this ${parseAssetRef(failure.ref).type} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}\n\n${bodyPreview}`,
               },
             ]);
 
-            const description = llmResponse.trim().replace(/^["']|["']$/g, "");
-            if (!description) {
+            const parsed = parseEmbeddedJsonResponse<Record<string, string>>(llmResponse.trim());
+            if (!parsed) {
               schemaRepairs.push({
                 ref: failure.ref,
                 reason: failure.reason,
                 outcome: "error",
-                error: "LLM returned empty description",
+                error: "LLM returned unparseable JSON for schema repair",
               });
               continue;
             }
 
-            // Patch description into frontmatter and rewrite the file.
-            const newFm = { ...fm.data, description };
+            // Patch the generated fields into frontmatter and rewrite the file.
+            const newFm = { ...fm.data };
+            if (parsed.description) newFm.description = parsed.description;
+            if (parsed.when_to_use) newFm.when_to_use = parsed.when_to_use;
             const fmStr = yamlStringify(newFm).trimEnd();
             const newContent = `---\n${fmStr}\n---\n${fm.content}`;
             fs.writeFileSync(filePath, newContent, "utf8");
@@ -603,16 +610,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const volumeTriggered =
       typeof memorySummary?.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
     const consolidationConfig: AkmConfig = volumeTriggered
-      ? ({
+      ? {
           ...baseConfig,
-          llm: {
-            ...baseConfig.llm,
-            features: {
-              ...baseConfig.llm?.features,
-              memory_consolidation: true,
-            },
-          },
-        } as AkmConfig)
+          ...(baseConfig.llm
+            ? {
+                llm: {
+                  ...baseConfig.llm,
+                  features: { ...baseConfig.llm.features, memory_consolidation: true },
+                },
+              }
+            : {}),
+        }
       : baseConfig;
 
     const consolidation = await akmConsolidate({

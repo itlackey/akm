@@ -288,13 +288,17 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
     // don't get the impression akm is broken. Verbose mode keeps the
     // per-spec output instead of (not in addition to) the summary.
     if (!isVerbose()) {
-      const skippedWorkflowCount = warnings.filter(isWorkflowSkipWarning).length;
+      const workflowSkipWarnings = warnings.filter(isWorkflowSkipWarning);
+      const skippedWorkflowCount = workflowSkipWarnings.length;
       if (skippedWorkflowCount > 0) {
         const noun = skippedWorkflowCount === 1 ? "workflow spec" : "workflow specs";
         warn(
           `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
             "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
         );
+        for (const w of workflowSkipWarnings) {
+          warn(w);
+        }
       }
     }
 
@@ -738,7 +742,10 @@ async function indexEntries(
       if (stash) {
         for (const entry of stash.entries) {
           const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
-          if (!entryPath) continue; // skip unresolvable entries
+          if (!entryPath) {
+            warn(`Skipping entry with no resolvable path in ${dirPath}`);
+            continue;
+          }
           if (!shouldIndexStashFile(currentStashDir, entryPath)) continue;
 
           // Skip if a higher-priority stash root already indexed this asset
@@ -786,7 +793,7 @@ async function indexEntries(
         reason: persistedReason,
       });
       if (persistedRows === 0) {
-        warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
       }
     }
   });
@@ -1366,7 +1373,7 @@ async function enhanceStashWithLlm(
           try {
             fileContent = fs.readFileSync(entryFile, "utf8");
           } catch {
-            /* ignore unreadable files */
+            warn(`Could not read file for LLM enrichment: ${entry.filename ?? entry.name}`);
           }
         }
 
@@ -1394,7 +1401,7 @@ async function enhanceStashWithLlm(
               summary.succeeded++;
               return updated;
             } catch {
-              // Cache entry corrupt — fall through to LLM call.
+              warn(`LLM enrichment cache entry corrupt for ${entry.name}; re-running enrichment`);
             }
           }
         }
@@ -1666,14 +1673,17 @@ export function recomputeUtilityScores(db: Database): void {
   }
 
   // Batch-load existing utility scores
-  const existingScores = new Map<number, number>();
-  const scoreRows = db.prepare("SELECT entry_id, utility FROM utility_scores").all() as Array<{
+  const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
+  const scoreRows = db.prepare("SELECT entry_id, utility, last_used_at FROM utility_scores").all() as Array<{
     entry_id: number;
     utility: number;
+    last_used_at: string | null;
   }>;
   for (const row of scoreRows) {
-    existingScores.set(row.entry_id, row.utility);
+    existingScores.set(row.entry_id, { utility: row.utility, lastUsedAt: row.last_used_at ?? undefined });
   }
+
+  const now = new Date().toISOString();
 
   for (const row of usageRows) {
     const selectRate = row.search_count > 0 ? Math.min(1, row.show_count / row.search_count) : 0;
@@ -1681,15 +1691,17 @@ export function recomputeUtilityScores(db: Database): void {
     const feedbackRate =
       feedbackTotal > 0 ? Math.max(0, row.positive_feedback_count - row.negative_feedback_count) / feedbackTotal : 0;
     const effectiveRate = Math.max(selectRate, feedbackRate);
-    const prevUtility = existingScores.get(row.entry_id) ?? 0;
+    const existing = existingScores.get(row.entry_id);
+    const prevUtility = existing?.utility ?? 0;
     const utility = prevUtility * emaDecay + effectiveRate * emaNew;
+    const lastUsedAt = effectiveRate > 0.5 ? now : (existing?.lastUsedAt ?? undefined);
 
     upsertUtilityScore(db, row.entry_id, {
       utility,
       showCount: row.show_count,
       searchCount: row.search_count,
       selectRate,
-      lastUsedAt: row.last_used_at ?? undefined,
+      lastUsedAt,
     });
   }
 

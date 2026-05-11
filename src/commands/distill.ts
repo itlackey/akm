@@ -322,10 +322,11 @@ async function runLessonQualityJudge(
   if (!config.llm) {
     return { pass: true, score: -1, reason: "no LLM configured — passing through" };
   }
+  const judgeLlmConfig = config.llm.judgeModel ? { ...config.llm, model: config.llm.judgeModel } : config.llm;
   const JUDGE_TIMEOUT_MS = 8_000;
   try {
     const raw = await Promise.race([
-      chat(config.llm, [
+      chat(judgeLlmConfig, [
         { role: "system", content: "Return only valid JSON. No prose." },
         { role: "user", content: buildJudgePrompt(lessonContent, sourceContent) },
       ]),
@@ -413,6 +414,39 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
         });
 
   if (promotion?.promote && promotion.content && (targetKind === "knowledge" || targetKind === "auto")) {
+    // Apply quality gate to fast-path knowledge promotion (Risk 4 fix).
+    if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
+      const judgeResult = await runLessonQualityJudge(config, promotion.content, assetContent ?? "", chat);
+      if (!judgeResult.pass) {
+        const rejectDir = path.join(stash, ".akm", "distill-rejected");
+        fs.mkdirSync(rejectDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.writeFileSync(
+          path.join(rejectDir, `${ts}-${promotion.knowledgeRef}.md`),
+          `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${promotion.content}`,
+          "utf8",
+        );
+        appendEvent({
+          eventType: "distill_invoked",
+          ref: inputRef,
+          metadata: {
+            outcome: "quality_rejected",
+            lessonRef: promotion.knowledgeRef,
+            score: judgeResult.score,
+            reason: judgeResult.reason,
+          },
+        });
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "quality_rejected",
+          inputRef,
+          lessonRef: promotion.knowledgeRef,
+          score: judgeResult.score,
+          reason: judgeResult.reason,
+        };
+      }
+    }
     const knowledgeParsed = parseFrontmatter(promotion.content);
     const proposal = createProposal(
       stash,

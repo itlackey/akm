@@ -90,6 +90,12 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
    * thinking on Ollama qwen3/qwen3.5 models.
    */
   extraParams?: Record<string, unknown>;
+  /**
+   * Optional model name override for the LLM-as-judge quality gate (P2-B).
+   * When set, the judge call uses this model instead of `llm.model`, enabling
+   * cheaper/faster model routing (e.g. "haiku" while distillation uses "sonnet").
+   */
+  judgeModel?: string;
 }
 
 export interface LlmFeatureFlags {
@@ -689,6 +695,14 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     if (Object.keys(feedbackConfig).length > 0) config.feedback = feedbackConfig;
   }
 
+  if (
+    typeof raw.archiveRetentionDays === "number" &&
+    Number.isFinite(raw.archiveRetentionDays) &&
+    raw.archiveRetentionDays >= 0
+  ) {
+    config.archiveRetentionDays = raw.archiveRetentionDays;
+  }
+
   return config;
 }
 
@@ -980,6 +994,9 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
   if (typeof obj.features === "object" && obj.features !== null && !Array.isArray(obj.features)) {
     const features = parseLlmFeatures(obj.features as Record<string, unknown>);
     if (Object.keys(features).length > 0) result.features = features;
+  }
+  if (typeof obj.judgeModel === "string" && obj.judgeModel.trim()) {
+    result.judgeModel = obj.judgeModel.trim();
   }
   if (typeof obj.extraParams === "object" && obj.extraParams !== null && !Array.isArray(obj.extraParams)) {
     result.extraParams = obj.extraParams as Record<string, unknown>;
