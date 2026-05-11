@@ -1917,7 +1917,8 @@ export async function runSetupFromConfig(opts: {
     if (!incoming.llm.model?.trim()) throw new Error("llm.model is required when llm is provided");
   }
   if (incoming.embedding) {
-    if (!incoming.embedding.endpoint?.trim()) throw new Error("embedding.endpoint is required when embedding is provided");
+    if (!incoming.embedding.endpoint?.trim())
+      throw new Error("embedding.endpoint is required when embedding is provided");
     if (!incoming.embedding.model?.trim()) throw new Error("embedding.model is required when embedding is provided");
   }
 

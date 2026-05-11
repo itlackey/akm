@@ -8,7 +8,7 @@
  * `EMBEDDED_HINTS_FULL` (`--detail full`, ~250 lines).
  */
 
-import EMBEDDED_HINTS from "./cli-hints-short.md" with { type: "text" };
 import EMBEDDED_HINTS_FULL from "./cli-hints-full.md" with { type: "text" };
+import EMBEDDED_HINTS from "./cli-hints-short.md" with { type: "text" };
 
 export { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL };

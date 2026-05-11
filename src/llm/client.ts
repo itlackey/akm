@@ -10,11 +10,23 @@
 
 import { fetchWithTimeout } from "../core/common";
 import type { LlmConnectionConfig } from "../core/config";
-import { escapeJsonStringControls, parseEmbeddedJsonResponse, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import {
+  escapeJsonStringControls,
+  parseEmbeddedJsonResponse,
+  parseJsonResponse,
+  stripCodeFences,
+  stripThinkBlocks,
+} from "../core/parse";
 
 // Re-export shared parse utilities so existing importers of `client.ts` continue
 // to resolve `parseJsonResponse` and `parseEmbeddedJsonResponse` from this module.
-export { escapeJsonStringControls, parseEmbeddedJsonResponse, parseJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+export {
+  escapeJsonStringControls,
+  parseEmbeddedJsonResponse,
+  parseJsonResponse,
+  stripCodeFences,
+  stripThinkBlocks,
+} from "../core/parse";
 
 /** Maximum length of an LLM error response body included in thrown errors. */
 const ERROR_BODY_MAX_LEN = 200;
@@ -137,11 +149,7 @@ export async function chatCompletion(
     const safeBody = redactErrorBody(rawBody);
     const status = response.status;
     if (status === 429) {
-      throw new LlmCallError(
-        `LLM request rate limited (429) ${config.endpoint}: ${safeBody}`,
-        "rate_limited",
-        status,
-      );
+      throw new LlmCallError(`LLM request rate limited (429) ${config.endpoint}: ${safeBody}`, "rate_limited", status);
     }
     if (status >= 500) {
       throw new LlmCallError(
@@ -150,11 +158,7 @@ export async function chatCompletion(
         status,
       );
     }
-    throw new LlmCallError(
-      `LLM request failed (${status}) ${config.endpoint}: ${safeBody}`,
-      "provider_error",
-      status,
-    );
+    throw new LlmCallError(`LLM request failed (${status}) ${config.endpoint}: ${safeBody}`, "provider_error", status);
   }
 
   const json = (await response.json()) as ChatCompletionResponse;

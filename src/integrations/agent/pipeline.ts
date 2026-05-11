@@ -40,9 +40,7 @@ export interface ProposalPipelineResult {
  * directly. When no draft path is provided the agent is spawned in captured
  * mode and output is read from stdout.
  */
-export async function runProposalAgentPipeline(
-  opts: ProposalPipelineOptions,
-): Promise<ProposalPipelineResult> {
+export async function runProposalAgentPipeline(opts: ProposalPipelineOptions): Promise<ProposalPipelineResult> {
   if (opts.profile.sdkMode) {
     const result = await runAgentSdk(
       opts.profile,

@@ -1,0 +1,742 @@
+import fs from "node:fs";
+import path from "node:path";
+import { parseAssetRef } from "../core/asset-ref";
+import { resolveStashDir } from "../core/common";
+import type { AkmConfig } from "../core/config";
+import { loadConfig } from "../core/config";
+import { ConfigError } from "../core/errors";
+import { parseFrontmatter } from "../core/frontmatter";
+import { parseEmbeddedJsonResponse } from "../core/parse";
+import { createProposal, listProposals } from "../core/proposals";
+import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
+import type { DbIndexedEntry } from "../indexer/db";
+import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
+import { callAi } from "../llm/call-ai";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+export interface ConsolidateMergeOp {
+  op: "merge";
+  primary: string;
+  secondaries: string[];
+  mergeStrategy: string;
+}
+
+export interface ConsolidateDeleteOp {
+  op: "delete";
+  ref: string;
+  reason: string;
+}
+
+export interface ConsolidatePromoteOp {
+  op: "promote";
+  ref: string;
+  knowledgeRef: string;
+  reason: string;
+}
+
+export type ConsolidateOperation = ConsolidateMergeOp | ConsolidateDeleteOp | ConsolidatePromoteOp;
+
+export interface ConsolidateResult {
+  ok: boolean;
+  shape: "consolidate-result";
+  dryRun: boolean;
+  previewOnly: boolean;
+  source: string;
+  processed: number;
+  merged: number;
+  deleted: number;
+  promoted: string[];
+  planned?: ConsolidateOperation[];
+  warnings: string[];
+  durationMs: number;
+}
+
+export interface AkmConsolidateOptions {
+  source?: string;
+  dryRun?: boolean;
+  previewWithAi?: boolean;
+  execute?: boolean;
+  yes?: boolean;
+  stashDir?: string;
+  config?: AkmConfig;
+}
+
+// ── Prompts ─────────────────────────────────────────────────────────────────
+
+const CONSOLIDATE_SYSTEM_PROMPT = `You are the akm consolidate assistant analyzing memory assets.
+
+Rules:
+1. MERGE: Two or more memories are substantially duplicated or closely related → propose merging. Return the primary ref to keep and secondary refs to delete. Do NOT include mergedContent — the merge will be executed in a separate step.
+2. DELETE: Memory is clearly outdated, contradicted, or redundant → propose deletion.
+3. PROMOTE: Memory expresses a stable, reusable fact suitable as a \`knowledge:\` asset → propose promotion. Do NOT delete the source memory.
+4. KEEP: Memory is unique and current → omit from output.
+
+Return ONLY JSON (no prose, no code fences):
+{
+  "operations": [
+    { "op": "merge", "primary": "memory:<name>", "secondaries": ["memory:<name>", ...], "mergeStrategy": "synthesize" },
+    { "op": "delete", "ref": "memory:<name>", "reason": "<brief reason>" },
+    { "op": "promote", "ref": "memory:<name>", "knowledgeRef": "knowledge:<suggested-slug>", "reason": "<brief reason>" }
+  ],
+  "warnings": ["<optional concerns>"]
+}`;
+
+// ── Memory loading ───────────────────────────────────────────────────────────
+
+interface MemoryEntry {
+  name: string;
+  filePath: string;
+  description: string;
+  tags: string[];
+  stashDir: string;
+}
+
+function loadMemoriesFromDb(sourceFilterPath?: string): MemoryEntry[] {
+  let db: ReturnType<typeof openExistingDatabase> | undefined;
+  try {
+    db = openExistingDatabase();
+    const entries: DbIndexedEntry[] = getAllEntries(db, "memory");
+    return entries
+      .filter((e) => {
+        if (!sourceFilterPath) return true;
+        return path.resolve(e.stashDir) === path.resolve(sourceFilterPath);
+      })
+      .map((e) => ({
+        name: e.entry.name,
+        filePath: e.filePath,
+        description: e.entry.description ?? "",
+        tags: e.entry.tags ?? [],
+        stashDir: e.stashDir,
+      }));
+  } catch {
+    return [];
+  } finally {
+    if (db) closeDatabase(db);
+  }
+}
+
+function loadMemoriesFromFs(memoriesDir: string, stashDir: string): MemoryEntry[] {
+  if (!fs.existsSync(memoriesDir)) return [];
+  const entries: MemoryEntry[] = [];
+  for (const fname of fs.readdirSync(memoriesDir)) {
+    if (!fname.endsWith(".md")) continue;
+    const filePath = path.join(memoriesDir, fname);
+    const name = fname.replace(/\.md$/, "");
+    entries.push({ name, filePath, description: "", tags: [], stashDir });
+  }
+  return entries;
+}
+
+// ── Chunk helpers ────────────────────────────────────────────────────────────
+
+function buildChunkPrompt(
+  sourceName: string,
+  memories: MemoryEntry[],
+  chunkIndex: number,
+  totalChunks: number,
+  bodyTruncation: number,
+): string {
+  const start = memories[0] ? `memory:${memories[0].name}` : "";
+  const end = memories[memories.length - 1] ? `memory:${memories[memories.length - 1].name}` : "";
+  const lines: string[] = [
+    `Source: ${sourceName}`,
+    `Chunk ${chunkIndex + 1} of ${totalChunks}, memories ${start}–${end}:`,
+    "",
+  ];
+  for (let i = 0; i < memories.length; i++) {
+    const m = memories[i];
+    lines.push(`[${i + 1}] memory:${m.name}`);
+    lines.push(`Description: ${m.description || "(none)"}`);
+    lines.push(`Tags: ${m.tags.length > 0 ? m.tags.join(", ") : "(none)"}`);
+    lines.push("---");
+    let body = "";
+    try {
+      body = fs.readFileSync(m.filePath, "utf8");
+    } catch {
+      body = "(unreadable)";
+    }
+    lines.push(body.slice(0, bodyTruncation));
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+// ── Plan parsing / merging ───────────────────────────────────────────────────
+
+interface RawChunkPlan {
+  operations?: unknown[];
+  warnings?: unknown[];
+}
+
+function isValidOp(op: unknown): op is ConsolidateOperation {
+  if (typeof op !== "object" || op === null) return false;
+  const o = op as Record<string, unknown>;
+  if (o.op === "merge") {
+    return typeof o.primary === "string" && Array.isArray(o.secondaries);
+  }
+  if (o.op === "delete") {
+    return typeof o.ref === "string";
+  }
+  if (o.op === "promote") {
+    return typeof o.ref === "string" && typeof o.knowledgeRef === "string";
+  }
+  return false;
+}
+
+function mergePlans(chunks: ConsolidateOperation[][]): { ops: ConsolidateOperation[]; warnings: string[] } {
+  const mergeOps = new Map<string, ConsolidateMergeOp>();
+  const deleteOps = new Map<string, ConsolidateDeleteOp>();
+  const promoteOps = new Map<string, ConsolidatePromoteOp>();
+  const warnings: string[] = [];
+
+  for (const chunk of chunks) {
+    for (const op of chunk) {
+      if (op.op === "merge") {
+        // merge wins over delete
+        if (deleteOps.has(op.primary)) {
+          deleteOps.delete(op.primary);
+        }
+        for (const sec of op.secondaries) {
+          if (deleteOps.has(sec)) deleteOps.delete(sec);
+        }
+        mergeOps.set(op.primary, op);
+      } else if (op.op === "delete") {
+        if (!mergeOps.has(op.ref)) {
+          deleteOps.set(op.ref, op);
+        }
+      } else if (op.op === "promote") {
+        const existingMerge = mergeOps.get(op.ref);
+        if (existingMerge) {
+          warnings.push(`Conflict: promote and merge both target ${op.ref}; preferring merge.`);
+        } else {
+          promoteOps.set(op.ref, op);
+        }
+      }
+    }
+  }
+
+  const ops: ConsolidateOperation[] = [...mergeOps.values(), ...deleteOps.values(), ...promoteOps.values()];
+  return { ops, warnings };
+}
+
+// ── Journal helpers ──────────────────────────────────────────────────────────
+
+interface ConsolidateJournal {
+  startedAt: string;
+  operations: ConsolidateOperation[];
+  completed: string[];
+}
+
+function getJournalPath(stashDir: string): string {
+  return path.join(stashDir, ".akm", "consolidate-journal.json");
+}
+
+function getBackupDir(stashDir: string, timestamp: string): string {
+  return path.join(stashDir, ".akm", "consolidate-backup", timestamp);
+}
+
+function checkForIncompleteJournal(stashDir: string): void {
+  const journalPath = getJournalPath(stashDir);
+  if (!fs.existsSync(journalPath)) return;
+  let journal: ConsolidateJournal;
+  try {
+    journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ConsolidateJournal;
+  } catch {
+    return;
+  }
+  if (journal.completed.length < journal.operations.length) {
+    throw new ConfigError(
+      "Incomplete consolidation run detected. Run akm consolidate --clean to remove the journal and backup, or --resume to retry (not yet implemented). Aborting.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+}
+
+function writeJournal(stashDir: string, ops: ConsolidateOperation[]): void {
+  const journalPath = getJournalPath(stashDir);
+  fs.mkdirSync(path.dirname(journalPath), { recursive: true });
+  const journal: ConsolidateJournal = {
+    startedAt: new Date().toISOString(),
+    operations: ops,
+    completed: [],
+  };
+  fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), "utf8");
+}
+
+function markJournalCompleted(stashDir: string, opRef: string): void {
+  const journalPath = getJournalPath(stashDir);
+  if (!fs.existsSync(journalPath)) return;
+  try {
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ConsolidateJournal;
+    journal.completed.push(opRef);
+    fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), "utf8");
+  } catch {
+    // best-effort
+  }
+}
+
+function cleanupJournal(stashDir: string, timestamp: string): void {
+  const journalPath = getJournalPath(stashDir);
+  try {
+    fs.unlinkSync(journalPath);
+  } catch {
+    // ignore
+  }
+  const backupDir = getBackupDir(stashDir, timestamp);
+  try {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
+function backupFile(filePath: string, backupDir: string, name: string): void {
+  try {
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(filePath, path.join(backupDir, `${name}.md`));
+  } catch {
+    // best-effort
+  }
+}
+
+// ── Main entry point ─────────────────────────────────────────────────────────
+
+export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<ConsolidateResult> {
+  const startMs = Date.now();
+  const config = opts.config ?? loadConfig();
+  const stashDir = opts.stashDir ?? resolveStashDir();
+
+  if (!isLlmFeatureEnabled(config, "memory_consolidation")) {
+    throw new ConfigError(
+      "The memory_consolidation feature is disabled. Set `llm.features.memory_consolidation: true` in your config.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
+  checkForIncompleteJournal(stashDir);
+
+  const warnings: string[] = [];
+
+  // -- Dry run: no AI, just list what's there --------------------------------
+  if (opts.dryRun) {
+    const memories = loadMemoriesForSource(opts.source, stashDir, warnings);
+    return {
+      ok: true,
+      shape: "consolidate-result",
+      dryRun: true,
+      previewOnly: false,
+      source: opts.source ?? stashDir,
+      processed: memories.length,
+      merged: 0,
+      deleted: 0,
+      promoted: [],
+      planned: [],
+      warnings,
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  const memories = loadMemoriesForSource(opts.source, stashDir, warnings);
+
+  if (memories.length === 0) {
+    return {
+      ok: true,
+      shape: "consolidate-result",
+      dryRun: false,
+      previewOnly: false,
+      source: opts.source ?? stashDir,
+      processed: 0,
+      merged: 0,
+      deleted: 0,
+      promoted: [],
+      warnings,
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  const isAgentPath = !!config.agent;
+  const isHttpPath = !isAgentPath && !!config.llm;
+
+  const bodyTruncation = isAgentPath ? 1000 : 300;
+  const baseChunkSize = isAgentPath ? 30 : 12;
+
+  // Warn if HTTP chunk size would exceed ~6000 estimated tokens
+  const estimatedTokens = Math.ceil(baseChunkSize * 200 + 400);
+  let chunkSize = baseChunkSize;
+  if (!isAgentPath && estimatedTokens > 6000) {
+    chunkSize = Math.floor((6000 - 400) / 200);
+    warnings.push(`Chunk size reduced from ${baseChunkSize} to ${chunkSize} to stay within ~6000 estimated tokens.`);
+  }
+
+  // -- Phase A: plan generation -----------------------------------------------
+  const sourceName = opts.source ?? stashDir;
+  const chunks: MemoryEntry[][] = [];
+  for (let i = 0; i < memories.length; i += chunkSize) {
+    chunks.push(memories.slice(i, i + chunkSize));
+  }
+
+  const chunkOpsArrays: ConsolidateOperation[][] = [];
+
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    const chunk = chunks[chunkIdx];
+    const userPrompt = buildChunkPrompt(sourceName, chunk, chunkIdx, chunks.length, bodyTruncation);
+
+    const raw = await tryLlmFeature(
+      "memory_consolidation",
+      config,
+      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT }),
+      { ok: false as const, error: `chunk ${chunkIdx + 1} failed` },
+      { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
+    );
+
+    if (!raw.ok) {
+      warnings.push(raw.error ?? `chunk ${chunkIdx + 1} failed`);
+      continue;
+    }
+
+    const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
+    if (!parsed || !Array.isArray(parsed.operations)) {
+      warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.`);
+      continue;
+    }
+
+    const ops: ConsolidateOperation[] = [];
+    for (const op of parsed.operations) {
+      if (isValidOp(op)) {
+        ops.push(op);
+      } else {
+        warnings.push(`Chunk ${chunkIdx + 1}: skipping invalid operation: ${JSON.stringify(op)}`);
+      }
+    }
+    if (Array.isArray(parsed.warnings)) {
+      for (const w of parsed.warnings) {
+        if (typeof w === "string") warnings.push(w);
+      }
+    }
+
+    chunkOpsArrays.push(ops);
+  }
+
+  const { ops: allOps, warnings: mergeWarnings } = mergePlans(chunkOpsArrays);
+  warnings.push(...mergeWarnings);
+
+  // -- Preview-only paths -------------------------------------------------------
+  const isPreviewOnly = opts.previewWithAi || (isHttpPath && !opts.execute);
+
+  if (isPreviewOnly) {
+    if (isHttpPath && !opts.execute) {
+      console.log("HTTP path: use --execute to apply these operations. Review the plan above carefully.");
+    }
+    return {
+      ok: true,
+      shape: "consolidate-result",
+      dryRun: false,
+      previewOnly: true,
+      source: sourceName,
+      processed: memories.length,
+      merged: 0,
+      deleted: 0,
+      promoted: [],
+      planned: allOps,
+      warnings,
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  // -- HTTP path confirmation ------------------------------------------------
+  if (isHttpPath && opts.execute && !opts.yes) {
+    const n = allOps.length;
+    const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
+    if (!answer) {
+      return {
+        ok: true,
+        shape: "consolidate-result",
+        dryRun: false,
+        previewOnly: true,
+        source: sourceName,
+        processed: memories.length,
+        merged: 0,
+        deleted: 0,
+        promoted: [],
+        planned: allOps,
+        warnings: [...warnings, "Aborted by user."],
+        durationMs: Date.now() - startMs,
+      };
+    }
+  }
+
+  if (isHttpPath && opts.execute && opts.yes) {
+    warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
+  }
+
+  // -- Phase B + writes -------------------------------------------------------
+  const target = resolveWriteTarget(config);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupDir = getBackupDir(stashDir, timestamp);
+
+  // Write journal before any mutations
+  writeJournal(stashDir, allOps);
+
+  let merged = 0;
+  let deleted = 0;
+  const promoted: string[] = [];
+
+  // Build a lookup map: ref → MemoryEntry
+  const memoryByRef = new Map<string, MemoryEntry>();
+  for (const m of memories) {
+    memoryByRef.set(`memory:${m.name}`, m);
+  }
+
+  for (const op of allOps) {
+    if (op.op === "merge") {
+      const primaryEntry = memoryByRef.get(op.primary);
+      if (!primaryEntry) {
+        warnings.push(`Merge: primary ${op.primary} not found in loaded memories — skipping.`);
+        continue;
+      }
+
+      // Phase B: generate merged content
+      const secondaryBodies: string[] = [];
+      for (const secRef of op.secondaries) {
+        const secEntry = memoryByRef.get(secRef);
+        if (!secEntry) {
+          warnings.push(`Merge: secondary ${secRef} not found — skipping merge op.`);
+          continue;
+        }
+        secondaryBodies.push(secRef);
+      }
+
+      if (secondaryBodies.length === 0) continue;
+
+      let primaryBody = "";
+      try {
+        primaryBody = fs.readFileSync(primaryEntry.filePath, "utf8");
+      } catch {
+        warnings.push(`Merge: could not read primary ${op.primary} — skipping.`);
+        continue;
+      }
+
+      const mergedContent = await generateMergedContent(
+        config,
+        op.primary,
+        primaryBody,
+        op.secondaries,
+        memoryByRef,
+        warnings,
+      );
+
+      if (mergedContent === null) continue;
+
+      // Validate frontmatter of merged content
+      try {
+        parseFrontmatter(mergedContent);
+      } catch {
+        warnings.push(`Merge: merged content for ${op.primary} has invalid frontmatter — skipping.`);
+        continue;
+      }
+
+      // Backup secondaries before deleting
+      for (const secRef of op.secondaries) {
+        const secEntry = memoryByRef.get(secRef);
+        if (secEntry && fs.existsSync(secEntry.filePath)) {
+          backupFile(secEntry.filePath, backupDir, secEntry.name);
+        }
+      }
+
+      // Write merged primary
+      try {
+        const parsedPrimary = parseAssetRef(op.primary);
+        await writeAssetToSource(target.source, target.config, parsedPrimary, mergedContent);
+      } catch (e) {
+        warnings.push(`Merge: write failed for ${op.primary}: ${String(e)}`);
+        continue;
+      }
+
+      // Delete secondaries
+      for (const secRef of op.secondaries) {
+        const secEntry = memoryByRef.get(secRef);
+        if (!secEntry) continue;
+        try {
+          const parsedSec = parseAssetRef(secRef);
+          await deleteAssetFromSource(target.source, target.config, parsedSec);
+          markJournalCompleted(stashDir, secRef);
+        } catch (e) {
+          warnings.push(`Merge: delete failed for ${secRef}: ${String(e)}`);
+        }
+      }
+
+      markJournalCompleted(stashDir, op.primary);
+      merged++;
+    } else if (op.op === "delete") {
+      const entry = memoryByRef.get(op.ref);
+      if (!entry) {
+        warnings.push(`Delete: ${op.ref} not found in loaded memories — skipping.`);
+        continue;
+      }
+
+      if (fs.existsSync(entry.filePath)) {
+        backupFile(entry.filePath, backupDir, entry.name);
+      }
+
+      try {
+        const parsedRef = parseAssetRef(op.ref);
+        await deleteAssetFromSource(target.source, target.config, parsedRef);
+        markJournalCompleted(stashDir, op.ref);
+        deleted++;
+      } catch (e) {
+        warnings.push(`Delete: failed for ${op.ref}: ${String(e)}`);
+      }
+    } else if (op.op === "promote") {
+      const entry = memoryByRef.get(op.ref);
+      if (!entry) {
+        warnings.push(`Promote: ${op.ref} not found in loaded memories — skipping.`);
+        continue;
+      }
+
+      let knowledgeRef = op.knowledgeRef;
+      try {
+        parseAssetRef(knowledgeRef);
+      } catch {
+        const slug = op.knowledgeRef
+          .replace(/^knowledge:/, "")
+          .replace(/[^a-z0-9-]/gi, "-")
+          .toLowerCase();
+        knowledgeRef = `knowledge:${slug}`;
+        warnings.push(`Normalized invalid ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
+      }
+
+      // Idempotency: check pending proposals
+      const existingProposals = listProposals(stashDir, { ref: knowledgeRef });
+      if (existingProposals.some((p) => p.status === "pending")) {
+        warnings.push(`Skipping promote: pending proposal already exists for ${knowledgeRef}`);
+        continue;
+      }
+
+      // Idempotency: check if knowledge asset already exists
+      const parsedKnowledgeRef = parseAssetRef(knowledgeRef);
+      const destPath = path.join(target.source.path, "knowledge", `${parsedKnowledgeRef.name}.md`);
+      if (fs.existsSync(destPath)) {
+        warnings.push(`Skipping promote: ${knowledgeRef} already exists in source`);
+        continue;
+      }
+
+      let memoryContent = "";
+      try {
+        memoryContent = fs.readFileSync(entry.filePath, "utf8");
+      } catch (e) {
+        warnings.push(`Promote: could not read ${op.ref}: ${String(e)}`);
+        continue;
+      }
+
+      try {
+        const proposal = createProposal(stashDir, {
+          ref: knowledgeRef,
+          source: "consolidate",
+          payload: { content: memoryContent },
+        });
+        promoted.push(proposal.id);
+        markJournalCompleted(stashDir, op.ref);
+      } catch (e) {
+        warnings.push(`Promote: createProposal failed for ${op.ref}: ${String(e)}`);
+      }
+    }
+  }
+
+  cleanupJournal(stashDir, timestamp);
+
+  return {
+    ok: true,
+    shape: "consolidate-result",
+    dryRun: false,
+    previewOnly: false,
+    source: sourceName,
+    processed: memories.length,
+    merged,
+    deleted,
+    promoted,
+    warnings,
+    durationMs: Date.now() - startMs,
+  };
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function loadMemoriesForSource(source: string | undefined, stashDir: string, warnings: string[]): MemoryEntry[] {
+  let memories = loadMemoriesFromDb(source ? resolveSourcePath(source) : undefined);
+  if (memories.length === 0) {
+    // DB fallback: walk filesystem
+    const memoriesDir = path.join(source ?? stashDir, "memories");
+    memories = loadMemoriesFromFs(memoriesDir, source ?? stashDir);
+    if (memories.length > 0) {
+      warnings.push("DB not found or empty — loaded memories directly from filesystem.");
+    }
+  }
+  return memories;
+}
+
+function resolveSourcePath(sourceName: string): string {
+  // If it looks like an absolute path, use directly
+  if (path.isAbsolute(sourceName)) return sourceName;
+  return sourceName;
+}
+
+async function generateMergedContent(
+  config: AkmConfig,
+  primaryRef: string,
+  primaryBody: string,
+  secondaryRefs: string[],
+  memoryByRef: Map<string, MemoryEntry>,
+  warnings: string[],
+): Promise<string | null> {
+  // Only handle single-secondary merges per design (one call per merge op)
+  const secRef = secondaryRefs[0];
+  const secEntry = memoryByRef.get(secRef);
+  if (!secEntry) return null;
+
+  let secBody = "";
+  try {
+    secBody = fs.readFileSync(secEntry.filePath, "utf8");
+  } catch {
+    warnings.push(`Merge: could not read secondary ${secRef} — skipping.`);
+    return null;
+  }
+
+  const prompt = [
+    "Merge these two memory assets into one. Output ONLY the merged markdown (with YAML frontmatter). Do not explain, do not use code fences.",
+    "",
+    `=== Primary memory (${primaryRef}) ===`,
+    primaryBody,
+    "",
+    `=== Secondary memory (${secRef}) ===`,
+    secBody,
+  ].join("\n");
+
+  const result = await tryLlmFeature(
+    "memory_consolidation",
+    config,
+    () => callAi(config, prompt),
+    { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
+    { featureGateTimeoutMs: config.llm?.featureGateTimeoutMs },
+  );
+
+  if (!result.ok) {
+    warnings.push(result.error ?? `merge content generation failed for ${primaryRef}`);
+    return null;
+  }
+
+  return result.content;
+}
+
+async function promptConfirm(message: string): Promise<boolean> {
+  process.stdout.write(message);
+  return new Promise((resolve) => {
+    const readline = require("readline");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.once("line", (line: string) => {
+      rl.close();
+      resolve(line.trim().toLowerCase() === "y");
+    });
+  });
+}

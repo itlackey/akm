@@ -114,6 +114,15 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "tasks-sync":
     case "tasks-doctor":
       return result;
+    // Output shape registration for `akm consolidate`. The result is already
+    // fully shaped at the command boundary; pass through as-is.
+    case "consolidate":
+      return result;
+    // Output shape registration for `akm agent <profile>`. The result carries
+    // structured agent-run fields; the text renderer uses the interactive/
+    // captured distinction to decide what to print.
+    case "agent-result":
+      return result;
     default:
       // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
       // fallback. A missing case here is a registration bug — fail loudly so

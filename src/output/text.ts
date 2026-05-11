@@ -221,6 +221,16 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "improve": {
       return formatImprovePlain(r);
     }
+    case "consolidate": {
+      return formatConsolidatePlain(r);
+    }
+    // Output shape registration for `akm agent <profile>` (#agent-dispatch).
+    // In interactive mode stdout/stderr are empty (they went to the TTY), so
+    // we print only the profile name and exit status. In captured mode we
+    // emit stdout first, then stderr, then the exit code summary.
+    case "agent-result": {
+      return formatAgentResultPlain(r);
+    }
     case "info":
       return formatInfoPlain(r);
     case "config":
@@ -543,6 +553,40 @@ export function formatDistillPlain(r: Record<string, unknown>): string {
   // skipped
   const message = typeof r.message === "string" ? r.message : "feature disabled or LLM unavailable";
   return `Distill skipped for ${inputRef}: ${message}`;
+}
+
+export function formatConsolidatePlain(r: Record<string, unknown>): string {
+  const processed = typeof r.processed === "number" ? r.processed : 0;
+  const merged = typeof r.merged === "number" ? r.merged : 0;
+  const deleted = typeof r.deleted === "number" ? r.deleted : 0;
+  const promoted = Array.isArray(r.promoted) ? r.promoted.length : 0;
+  const warnings = Array.isArray(r.warnings) ? (r.warnings as string[]) : [];
+  const lines: string[] = [];
+
+  if (r.dryRun === true) {
+    lines.push(`[consolidate] dry-run: ${processed} memories found, no AI call`);
+  } else if (r.previewOnly === true) {
+    lines.push(`[consolidate] preview: processed=${processed}`);
+    const planned = Array.isArray(r.planned) ? (r.planned as Array<Record<string, unknown>>) : [];
+    for (const op of planned) {
+      if (op.op === "merge") {
+        lines.push(
+          `  merge: ${String(op.primary)} ← ${String(Array.isArray(op.secondaries) ? (op.secondaries as string[]).join(", ") : "")}`,
+        );
+      } else if (op.op === "delete") {
+        lines.push(`  delete: ${String(op.ref)} (${String(op.reason ?? "")})`);
+      } else if (op.op === "promote") {
+        lines.push(`  promote: ${String(op.ref)} → ${String(op.knowledgeRef)}`);
+      }
+    }
+  } else {
+    lines.push(`[consolidate] processed=${processed} merged=${merged} deleted=${deleted} promoted=${promoted}`);
+  }
+
+  for (const w of warnings) {
+    lines.push(`  warning: ${w}`);
+  }
+  return lines.join("\n");
 }
 
 export function formatImprovePlain(r: Record<string, unknown>): string {
@@ -1132,4 +1176,33 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
   lines.push("To search further: akm search '<query>'");
 
   return lines.join("\n");
+}
+
+/**
+ * Render the result of `akm agent <profile>`.
+ *
+ * Interactive mode: stdout and stderr are empty (output went to the TTY).
+ * Print only the profile name and exit code so the caller knows the agent
+ * finished.
+ *
+ * Captured mode: emit stdout (if non-empty), then stderr (if non-empty),
+ * then the profile/exit-code summary line.
+ */
+export function formatAgentResultPlain(r: Record<string, unknown>): string {
+  const profile = String(r.profileName ?? "agent");
+  const exitCode = r.exitCode !== undefined && r.exitCode !== null ? Number(r.exitCode) : 0;
+  const stdout = typeof r.stdout === "string" ? r.stdout : "";
+  const stderr = typeof r.stderr === "string" ? r.stderr : "";
+
+  // Interactive mode: both streams are empty.
+  if (!stdout && !stderr) {
+    return `[${profile}] agent exited with code ${exitCode}`;
+  }
+
+  // Captured mode: stream content + summary.
+  const parts: string[] = [];
+  if (stdout) parts.push(stdout.trimEnd());
+  if (stderr) parts.push(stderr.trimEnd());
+  parts.push(`[${profile}] agent exited with code ${exitCode}`);
+  return parts.join("\n");
 }

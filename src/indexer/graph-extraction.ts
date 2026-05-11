@@ -39,7 +39,12 @@ import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { extractGraphFromBodies, extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
+import {
+  deduplicateGraph,
+  extractGraphFromBodies,
+  extractGraphFromBody,
+  type GraphRelation,
+} from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 import type { SearchSource } from "./search-source";
@@ -76,6 +81,10 @@ export interface GraphFile {
   stashRoot: string;
   /** Per-file extraction results. */
   files: GraphFileNode[];
+  /** Deduplicated entity list across all files (schema v2+). Canonical casing, first-seen order. */
+  entities?: string[];
+  /** Deduplicated relation list across all files (schema v2+). Dangling relations excluded. */
+  relations?: GraphRelation[];
 }
 
 /** Telemetry — useful for tests and progress events. */
@@ -326,6 +335,12 @@ export async function runGraphExtractionPass(
     totalRelations += result.relations.length;
   }
 
+  const assetRefs = extractionResults.filter(Boolean).map((r) => r!.absPath);
+  const deduped = deduplicateGraph(
+    extractionResults.filter(Boolean).map((r) => ({ entities: r!.entities, relations: r!.relations })),
+    assetRefs,
+  );
+
   if (nodes.length === 0) {
     warn("graph extraction: all extractions failed or returned no entities; leaving existing graph.json untouched.");
     return {
@@ -342,6 +357,8 @@ export async function runGraphExtractionPass(
     generatedAt: new Date().toISOString(),
     stashRoot: primary.path,
     files: nodes,
+    entities: deduped.entities,
+    relations: deduped.relations,
   };
 
   const written = writeGraphFile(primary.path, graph);

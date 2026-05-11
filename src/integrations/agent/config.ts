@@ -39,8 +39,17 @@ const KNOWN_AGENT_KEYS = new Set(["default", "timeoutMs", "profiles"]);
 
 /** Keys recognised on a profile entry. */
 const KNOWN_PROFILE_KEYS = new Set([
-  "bin", "args", "stdio", "env", "envPassthrough", "timeoutMs", "parseOutput",
-  "sdkMode", "model", "endpoint", "apiKey",
+  "bin",
+  "args",
+  "stdio",
+  "env",
+  "envPassthrough",
+  "timeoutMs",
+  "parseOutput",
+  "sdkMode",
+  "model",
+  "endpoint",
+  "apiKey",
 ]);
 
 /**

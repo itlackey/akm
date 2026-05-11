@@ -42,6 +42,7 @@ export {
 } from "./profiles";
 export type { AgentProposalPayload, ProposePromptInput, ReflectPromptInput } from "./prompts";
 export { buildProposePrompt, buildReflectPrompt, parseAgentProposalPayload, stripJsonFences } from "./prompts";
+export { runAgentSdk } from "./sdk-runner";
 export type {
   AgentFailureReason,
   AgentRunResult,
@@ -50,4 +51,3 @@ export type {
   SpawnFn,
 } from "./spawn";
 export { runAgent } from "./spawn";
-export { runAgentSdk } from "./sdk-runner";

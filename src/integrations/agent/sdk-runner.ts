@@ -5,22 +5,17 @@
  */
 
 import type { LlmConnectionConfig } from "../../core/config";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "./spawn";
 import type { AgentProfile } from "./profiles";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "./spawn";
 
 // Singleton server — started once per process, reused across calls
 let _server: { client: any; server: { close(): void } } | null = null;
 
-async function getOrStartServer(
-  profile: AgentProfile,
-  llmConfig?: LlmConnectionConfig,
-): Promise<{ client: any }> {
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<{ client: any }> {
   if (_server) return _server;
 
   const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
-    throw new Error(
-      "OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.",
-    );
+    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
   });
 
   // Resolve endpoint and model: profile fields take precedence over config.llm
@@ -47,12 +42,14 @@ async function getOrStartServer(
     }
   }
 
-  _server = await createOpencode(
-    Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {},
-  );
+  _server = await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {});
 
   process.once("exit", () => {
-    try { _server?.server.close(); } catch { /* ignore */ }
+    try {
+      _server?.server.close();
+    } catch {
+      /* ignore */
+    }
     _server = null;
   });
 

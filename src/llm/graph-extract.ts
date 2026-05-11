@@ -382,3 +382,72 @@ export async function extractGraphFromBody(
     },
   );
 }
+
+/**
+ * Merge an array of per-asset {@link GraphExtraction} results into a single
+ * deduplicated graph.
+ *
+ * ### Entity deduplication
+ * Entities are compared case-insensitively. The canonical form (first-seen
+ * casing) is preserved in the output.
+ *
+ * ### Relation deduplication
+ * Relations are keyed on `(from, to, type)` (all lowercased). Only the
+ * first-seen occurrence is kept (canonical endpoint casing). After entity
+ * deduplication, **dangling relations** — those whose `from` or `to` is not
+ * in the deduplicated entity set — are dropped.
+ */
+export function deduplicateGraph(
+  extractions: GraphExtraction[],
+  assetRefs?: string[],
+): GraphExtraction & { entitySources: Map<string, string[]>; relationSources: Map<string, string[]> } {
+  const entityCanonical = new Map<string, string>();
+  const entitySources = new Map<string, string[]>();
+
+  for (let i = 0; i < extractions.length; i++) {
+    const ref = assetRefs?.[i] ?? "unknown";
+    for (const raw of extractions[i].entities) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const normalized = trimmed.toLowerCase();
+      if (!entityCanonical.has(normalized)) {
+        entityCanonical.set(normalized, trimmed);
+        entitySources.set(normalized, [ref]);
+      } else {
+        const srcs = entitySources.get(normalized);
+        if (srcs && !srcs.includes(ref)) srcs.push(ref);
+      }
+    }
+  }
+
+  const entities: string[] = Array.from(entityCanonical.values());
+  const entityNormSet = new Set(entityCanonical.keys());
+  const relSeenKey = new Map<string, string[]>();
+  const relations: GraphRelation[] = [];
+
+  for (let i = 0; i < extractions.length; i++) {
+    const ref = assetRefs?.[i] ?? "unknown";
+    for (const rel of extractions[i].relations) {
+      const fromNorm = rel.from.trim().toLowerCase();
+      const toNorm = rel.to.trim().toLowerCase();
+      const typeNorm = rel.type?.trim().toLowerCase() ?? "";
+      if (!entityNormSet.has(fromNorm) || !entityNormSet.has(toNorm)) continue;
+      const key = `${fromNorm}\0${toNorm}\0${typeNorm}`;
+      if (!relSeenKey.has(key)) {
+        relSeenKey.set(key, [ref]);
+        const canonical: GraphRelation = {
+          from: entityCanonical.get(fromNorm) ?? rel.from,
+          to: entityCanonical.get(toNorm) ?? rel.to,
+        };
+        if (rel.type?.trim()) canonical.type = rel.type.trim();
+        relations.push(canonical);
+      } else {
+        const srcs = relSeenKey.get(key);
+        if (srcs && !srcs.includes(ref)) srcs.push(ref);
+      }
+    }
+  }
+
+  const relationSources = new Map<string, string[]>(relSeenKey);
+  return { entities, relations, entitySources, relationSources };
+}

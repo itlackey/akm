@@ -4,8 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
+import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
+import { akmConsolidate } from "./commands/consolidate";
 import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmHistory } from "./commands/history";
@@ -2898,6 +2900,113 @@ function parseProposalStatus(raw: string | undefined): "pending" | "accepted" | 
   );
 }
 
+const agentCommand = defineCommand({
+  meta: {
+    name: "agent",
+    description:
+      "Dispatch an agent by named profile, optionally injecting a prompt from inline text, a stash command: asset, or a stash workflow: asset",
+  },
+  args: {
+    profile: {
+      type: "positional",
+      description: "Agent profile name (from config.agent.profiles or a built-in)",
+      required: false,
+    },
+    prompt: { type: "string", description: "Inline prompt text to pass to the agent" },
+    command: { type: "string", description: "Load the body of a command: asset from the index and use as the prompt" },
+    workflow: {
+      type: "string",
+      description: "Load the body of a workflow: asset from the index and use as the prompt",
+    },
+    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      if (!args.profile) {
+        throw new UsageError(
+          "Usage: akm agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]",
+          "MISSING_REQUIRED_ARGUMENT",
+          "Provide the agent profile name. Available profiles are listed in config.agent.profiles.",
+        );
+      }
+
+      // Collect extra positional args (forwarded to the agent and used as
+      // template placeholders when a command/workflow ref is specified).
+      const extraArgs = Array.isArray(args._) ? (args._ as string[]).filter((a) => a !== args.profile) : [];
+
+      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
+      const timeoutMs =
+        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+
+      const config = loadConfig();
+      const { parseAgentConfig } = await import("./integrations/agent/config.js");
+      const agentConfig = parseAgentConfig(config.agent);
+
+      const result = await akmAgentDispatch({
+        profileName: String(args.profile),
+        prompt: typeof args.prompt === "string" ? args.prompt : undefined,
+        commandRef: typeof args.command === "string" && args.command.trim() ? args.command.trim() : undefined,
+        workflowRef: typeof args.workflow === "string" && args.workflow.trim() ? args.workflow.trim() : undefined,
+        args: extraArgs.length > 0 ? extraArgs : undefined,
+        agentConfig,
+        llmConfig: config.llm,
+        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+      });
+
+      output("agent-result", result);
+
+      if (!result.ok) {
+        process.exit(EXIT_GENERAL);
+      }
+    });
+  },
+});
+
+const consolidateCommand = defineCommand({
+  meta: {
+    name: "consolidate",
+    description: "Analyze memory assets for duplication, staleness, and promotion candidates",
+  },
+  args: {
+    source: {
+      type: "string",
+      description: "Limit to memories from a named source (default: primary writable stash)",
+    },
+    "dry-run": {
+      type: "boolean",
+      description: "No AI call; just list which memories exist and exit",
+      default: false,
+    },
+    "preview-with-ai": {
+      type: "boolean",
+      description: "Run plan generation only, no writes; prints the plan and exits",
+      default: false,
+    },
+    execute: {
+      type: "boolean",
+      description: "Required on the HTTP path to actually apply operations",
+      default: false,
+    },
+    yes: {
+      type: "boolean",
+      description: "Skip confirmation prompts",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    await runWithJsonErrors(async () => {
+      const result = await akmConsolidate({
+        source: typeof args.source === "string" && args.source.trim() ? args.source.trim() : undefined,
+        dryRun: getHyphenatedBoolean(args, "dry-run"),
+        previewWithAi: getHyphenatedBoolean(args, "preview-with-ai"),
+        execute: args.execute === true,
+        yes: args.yes === true,
+      });
+      output("consolidate", result);
+    });
+  },
+});
+
 const improveCommand = defineCommand({
   meta: {
     name: "improve",
@@ -3231,6 +3340,8 @@ const main = defineCommand({
     feedback: feedbackCommand,
     history: historyCommand,
     events: eventsCommand,
+    agent: agentCommand,
+    consolidate: consolidateCommand,
     improve: improveCommand,
     propose: proposeCommand,
     proposals: proposalsCommand,

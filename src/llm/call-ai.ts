@@ -21,9 +21,7 @@ export interface CallAiOptions {
   timeoutMs?: number;
 }
 
-export type CallAiResult =
-  | { ok: true; content: string; path: "agent-cli" | "llm-http" }
-  | { ok: false; error: string };
+export type CallAiResult = { ok: true; content: string; path: "agent-cli" | "llm-http" } | { ok: false; error: string };
 
 /**
  * Unified AI call: prefers `config.agent` (agent CLI), falls back to
@@ -33,19 +31,14 @@ export type CallAiResult =
  * NOT for use by background indexer passes — those call `chatCompletion`
  * directly.
  */
-export async function callAi(
-  config: AkmConfig,
-  prompt: string,
-  opts: CallAiOptions = {},
-): Promise<CallAiResult> {
+export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOptions = {}): Promise<CallAiResult> {
   if (config.agent) {
     try {
       const defaultName = config.agent.default;
       if (!defaultName) {
         return {
           ok: false,
-          error:
-            "No default agent profile configured. Set `agent.default` in config.json or run `akm setup`.",
+          error: "No default agent profile configured. Set `agent.default` in config.json or run `akm setup`.",
         };
       }
       const profile = resolveAgentProfile(defaultName, config.agent.profiles?.[defaultName]);
@@ -88,7 +81,6 @@ export async function callAi(
 
   return {
     ok: false,
-    error:
-      "No AI connection configured. Run `akm setup` or set `agent` or `llm` in your config.",
+    error: "No AI connection configured. Run `akm setup` or set `agent` or `llm` in your config.",
   };
 }

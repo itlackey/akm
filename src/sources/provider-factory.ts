@@ -10,8 +10,8 @@
  * map.
  */
 
-import { getSources } from "../core/config";
 import type { AkmConfig } from "../core/config";
+import { getSources } from "../core/config";
 import { createProviderRegistry } from "../registry/create-provider-registry";
 import type { SourceProvider, SourceProviderFactory } from "./provider";
 
