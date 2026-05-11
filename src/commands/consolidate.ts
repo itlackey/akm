@@ -3,7 +3,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
@@ -354,7 +354,7 @@ function archiveMemory(
   } catch {
     if (warnings) warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
   }
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const ts = timestampForFilename();
   const safeName = path.basename(filePath, ".md");
   const archivePath = path.join(archiveDir, `${ts}-${opIndex}-${safeName}.md`);
   try {
@@ -532,7 +532,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   // -- Phase B + writes -------------------------------------------------------
   const target = resolveWriteTarget(config);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const timestamp = timestampForFilename();
   const backupDir = getBackupDir(stashDir, timestamp);
 
   // Write journal before any mutations

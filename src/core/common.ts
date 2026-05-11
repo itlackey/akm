@@ -369,3 +369,23 @@ function parseRetryAfter(response: Response): number | undefined {
 export function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// ── Date / timestamp utilities ───────────────────────────────────────────────
+
+/**
+ * Return today's date in ISO-8601 format (`YYYY-MM-DD`).
+ * Consolidates the `new Date().toISOString().slice(0, 10)` pattern that
+ * appears at multiple call sites.
+ */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Return a filesystem-safe timestamp string derived from the current instant.
+ * Colons and dots are replaced with hyphens so the result is safe as a
+ * filename component on all platforms (e.g. `2024-01-15T10-30-00-000Z`).
+ */
+export function timestampForFilename(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
