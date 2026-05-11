@@ -1,0 +1,325 @@
+# akm improve — Workflow Reference
+
+`akm improve` is the scheduled self-improvement loop that walks every asset in the stash (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, and then runs memory consolidation across the entire corpus. It is the primary mechanism for turning accumulated feedback signals into queued proposals that humans (or automation) can accept.
+
+## Command surface
+
+| Option | Type | Purpose |
+|---|---|---|
+| `--scope` | `string` | Restrict the run to a single ref (`type:name`), an asset type (`lesson`), or omit for all assets. |
+| `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
+| `--dry-run` | `boolean` | Compute the plan and memory cleanup analysis; emit no events, acquire no lock, write nothing. |
+| `--target` | `string` | Passed through to `akmConsolidate` as the write-target source override. |
+| `--auto-accept` | `"safe"` | Passed to `akmConsolidate`; skips interactive confirmation on the HTTP consolidation path. |
+| `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
+| `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
+
+Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`) replace production defaults in tests.
+
+## High-level flow
+
+```mermaid
+flowchart TD
+    A([akm improve invoked]) --> B[resolveImproveScope\nscope mode: all / type / ref]
+    B --> C[collectEligibleRefs\nquery SQLite index, filter to stashDir]
+    C --> CLEANUP_ANALYZE{memoryCleanup eligible?}
+    CLEANUP_ANALYZE -- yes --> ANALYZE[analyzeMemoryCleanup\nscans .derived memories\nPRE-COMPUTED before dryRun check]
+    CLEANUP_ANALYZE -- no --> D
+    ANALYZE --> D{dryRun?}
+    D -- yes --> DRY[Return dry-run result\nno lock, no events, no writes\nincludes memoryCleanupPlan analysis]
+    D -- no --> E[Lock acquisition\n.akm/improve.lock]
+
+    E --> E1{lock file exists?}
+    E1 -- no --> E3
+    E1 -- yes --> E2{process still alive?}
+    E2 -- yes --> ERR([throw ConfigError: already running])
+    E2 -- no / stale --> E3[remove stale lock\nwrite new lock JSON with pid + startedAt]
+
+    E3 --> F[appendEvent: improve_invoked]
+    F --> G[ensureIndex primaryStashDir]
+    G --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
+    J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
+
+    K --> L[Signal filter\nkeep only refs with feedback events\nhaving metadata.signal or metadata.note]
+    L --> M[buildUtilityMap\nlook up utility scores from SQLite]
+    M --> N[Sort by utility score DESC\napply --limit if set]
+    N --> J2{anything archived or transitioned?}
+    J2 -- yes --> J3[push memory-prune actions\nreindexFn: rebuild SQLite index]
+    J2 -- no --> O
+    J3 --> O[Pre-run validation sweep\ncheck file exists + lesson description]
+    O --> P{validationFailures?}
+    P -- yes --> P1[Log failures; add to validationFailures set\ncontinue with valid refs only]
+    P -- no --> Q
+
+    P1 --> Q
+
+    subgraph ASSET_LOOP["Per-asset loop"]
+        Q --> S{ref in validationFailures?}
+        S -- yes --> SKIP([skip, next asset])
+        S -- no --> R{budget exhausted?}
+        R -- yes --> BUDGET([push error action\nbreak loop])
+        R -- no --> REFLECT
+
+        subgraph REFLECT["reflectFn subprocess"]
+            REFLECT_A[appendEvent: reflect_invoked] --> REFLECT_B[lookup ref in FTS index\nread asset file content]
+            REFLECT_B --> REFLECT_C[readRecentFeedback\nbuildSchemaHints for lessons]
+            REFLECT_C --> REFLECT_D[buildReflectPrompt]
+            REFLECT_D --> REFLECT_E{profile.sdkMode?}
+            REFLECT_E -- yes --> REFLECT_SDK[runAgentSdk\nin-process SDK call]
+            REFLECT_E -- no --> REFLECT_SPAWN[runAgent\nspawn agent CLI binary\ncaptured stdout]
+            REFLECT_SDK --> REFLECT_F
+            REFLECT_SPAWN --> REFLECT_F[parseAgentProposalPayload\nextract JSON from stdout]
+            REFLECT_F --> REFLECT_G[createProposal\nstash/.akm/proposals/UUID/proposal.json\nsource: reflect]
+            REFLECT_G --> REFLECT_H([return AkmReflectResult\nok or failure envelope])
+        end
+
+        REFLECT_H --> T{lesson or distillable memory?}
+        T -- no --> NEXT_ASSET
+        T -- yes --> DEDUP{pending proposal\nalready exists for lessonRef?}
+        DEDUP -- yes --> SKIP_DISTILL[push distill-skipped action]
+        DEDUP -- no --> DISTILL
+
+        subgraph DISTILL["distillFn subprocess"]
+            DISTILL_A[lookup ref file path] --> DISTILL_B[readEvents: feedback for ref\napply excludeFeedbackFromRefs filter]
+            DISTILL_B --> DISTILL_C{proposalKind == auto\nAND promotion heuristic passes?}
+            DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge:ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
+            DISTILL_C -- no --> DISTILL_D[tryLlmFeature: feedback_distillation\n30 s hard timeout\nnull on gate-disabled or error]
+            DISTILL_D --> DISTILL_E{raw == null?}
+            DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=skipped\nreturn skipped result]
+            DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
+            DISTILL_F --> DISTILL_G{findings?}
+            DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
+            DISTILL_G -- no --> DISTILL_H[createProposal lesson:slug-lesson\nor knowledge:slug\nsource: distill\nappendEvent: outcome=queued]
+            DISTILL_PROMOTE --> DISTILL_RETURN
+            DISTILL_SKIP --> DISTILL_RETURN
+            DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
+        end
+
+        SKIP_DISTILL --> NEXT_ASSET
+        DISTILL_RETURN --> NEXT_ASSET([completedCount++\nlog progress])
+    end
+
+    NEXT_ASSET --> S
+
+    BUDGET --> CONSOLIDATE
+    SKIP --> S
+    NEXT_ASSET -->|all assets done| CONSOLIDATE
+
+    subgraph CONSOLIDATE_SUB["akmConsolidate subprocess"]
+        CON_A{llm.features.memory_consolidation\nenabled?} -- no --> CON_NOOP([return empty result])
+        CON_A -- yes --> CON_B[checkForIncompleteJournal\nabort if prior run incomplete]
+        CON_B --> CON_C[loadMemoriesForSource\nSQLite DB or filesystem fallback\nexclude .derived names]
+        CON_C --> CON_D{memories == 0?} -- yes --> CON_NOOP
+        CON_D -- no --> CON_E
+
+        subgraph PHASE_A["Phase A — Plan generation (chunked)"]
+            CON_E[split into 20-memory chunks\n500-char body truncation] --> CON_F[For each chunk:\ncallAi with CONSOLIDATE_SYSTEM_PROMPT]
+            CON_F --> CON_G[parseEmbeddedJsonResponse\nvalidate ops: merge / delete / promote]
+            CON_G --> CON_H{2+ consecutive failures?} -- yes --> CON_ABORT[push warning, break]
+            CON_H -- no --> CON_F
+        end
+
+        CON_ABORT --> CON_MERGE
+        CON_G --> CON_MERGE[mergePlans: deduplicate ops\nmerge wins over delete]
+        CON_MERGE --> CON_DRY{dryRun?} -- yes --> CON_DRYRESULT([return planned ops, no writes])
+        CON_DRY -- no --> CON_HTTP{HTTP path AND no autoAccept?}
+        CON_HTTP -- yes --> CON_CONFIRM[promptConfirm: apply N ops?]
+        CON_CONFIRM --> CON_CONFIRMED{user answered y?} -- no --> CON_ABORT2([return previewOnly result])
+        CON_CONFIRMED -- yes --> PHASE_B
+        CON_HTTP -- no --> PHASE_B
+
+        subgraph PHASE_B["Phase B — Write operations"]
+            PHASE_B_A[writeJournal .akm/consolidate-journal.json] --> PHASE_B_B[For each op:]
+            PHASE_B_B --> PHASE_B_MERGE{op == merge?}
+            PHASE_B_MERGE -- yes --> PHASE_B_M1[generateMergedContent\n2nd callAi for synthesis]
+            PHASE_B_M1 --> PHASE_B_M2[backupFile secondaries\nwriteAssetToSource primary\ndeleteAssetFromSource secondaries\nmarkJournalCompleted]
+            PHASE_B_MERGE -- no --> PHASE_B_DEL{op == delete?}
+            PHASE_B_DEL -- yes --> PHASE_B_D1[backupFile\ndeleteAssetFromSource\nmarkJournalCompleted]
+            PHASE_B_DEL -- no --> PHASE_B_PRO{op == promote?}
+            PHASE_B_PRO -- yes --> PHASE_B_P1[idempotency check:\nlistProposals + fs.existsSync\ncreatePropsal source: consolidate\nmarkJournalCompleted]
+        end
+
+        PHASE_B_M2 --> CON_DONE
+        PHASE_B_D1 --> CON_DONE
+        PHASE_B_P1 --> CON_DONE[cleanupJournal\nreturn ConsolidateResult]
+    end
+
+    CONSOLIDATE --> CON_A
+    CON_NOOP --> FINAL
+    CON_DONE --> FINAL
+    CON_DRYRESULT --> FINAL
+    CON_ABORT2 --> FINAL
+
+    FINAL[Assemble AkmImproveResult\nschemaVersion: 1] --> UNLOCK[fs.unlinkSync improve.lock\nfinally block]
+    UNLOCK --> RETURN([return AkmImproveResult])
+```
+
+## Subprocess detail
+
+### reflect (akmReflect)
+
+`akmReflect` is the agent-invocation subprocess. It always emits a `reflect_invoked` event at entry, regardless of success or failure.
+
+**Internal steps:**
+
+1. Emit `reflect_invoked` event via `appendEvent`.
+2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal.
+3. Resolve the agent profile from config (`agent.default` or the `--profile` override).
+4. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
+5. Spawn the agent via `runProposalAgentPipeline`:
+   - When `profile.sdkMode === true`: routes to `runAgentSdk` (in-process Claude SDK, no binary spawn).
+   - Otherwise: calls `runAgent` with `stdio: "captured"` — agent binary is spawned as a subprocess, stdout is captured.
+   - The test seam (`options.runAgentOptions.spawn`) bypasses `runProposalAgentPipeline` entirely and calls `runAgent` directly.
+6. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
+7. Write the proposal: `createProposal(stash, { ref, source: "reflect", payload: { content, frontmatter } })`.
+
+**What it writes:** one `proposal.json` file at `<stashRoot>/.akm/proposals/<UUID>/proposal.json`. It never writes asset files directly.
+
+**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt constrains the agent to schema/structural improvements only. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after.
+
+### distill (akmDistill)
+
+`akmDistill` is the bounded in-tree LLM subprocess. It never calls `runAgent`; it issues a direct HTTP chat completion through the configured LLM endpoint. It always emits exactly one `distill_invoked` event.
+
+**Internal steps:**
+
+1. Validate the input ref shape (`parseAssetRef`).
+2. Best-effort load asset content via `lookupFn` (defaults to indexer `lookup`).
+3. Read feedback events via `readEvents({ ref, type: "feedback" })`. Apply `excludeFeedbackFromRefs` filtering before the LLM sees the events.
+4. Memory promotion fast path: when `proposalKind` is `"auto"` or `"knowledge"` and `assessMemoryKnowledgePromotionCandidate` returns `promote: true`, create a `knowledge:` proposal immediately without an LLM call.
+5. LLM call: `tryLlmFeature("feedback_distillation", config, () => chat(config.llm, messages), null)`.
+   - Feature gate: disabled if `llm.features.feedback_distillation` is `false` or absent.
+   - Hard timeout: 30 seconds enforced by `tryLlmFeature`.
+   - Returns `null` on gate-disabled, timeout, or error — treated as a graceful skip (exit 0, no proposal).
+6. Strip markdown fences and `<think>` blocks from the raw LLM output.
+7. Validate: `lintLessonContent` for lesson proposals; `validateKnowledgeContent` for knowledge proposals. Failure emits `distill_invoked` with `outcome: "validation_failed"` and throws `UsageError`.
+8. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
+9. Emit `distill_invoked` event with `outcome: "queued"`.
+
+**Lesson-ref derivation rule:** `lesson:<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skill:deploy` → `lesson:skill-deploy-lesson`.
+
+**What it writes:** one `proposal.json` at `<stashRoot>/.akm/proposals/<UUID>/proposal.json`. Never writes asset files directly.
+
+### consolidate (akmConsolidate)
+
+`akmConsolidate` runs after the per-asset loop completes, regardless of how many assets were processed.
+
+**Gate:** returns immediately (no-op result) if `llm.features.memory_consolidation` is not enabled.
+
+**Phase A — Plan generation:**
+
+1. Check for an incomplete prior journal at `.akm/consolidate-journal.json`; abort if found.
+2. Load non-`.derived` memory assets from the SQLite index (filesystem fallback if DB unavailable).
+3. Chunk memories into groups of 20 (500-char body truncation). For each chunk, call `callAi` with `CONSOLIDATE_SYSTEM_PROMPT` requesting a JSON plan of `merge` / `delete` / `promote` operations.
+4. `parseEmbeddedJsonResponse` extracts and validates each op. After 2+ consecutive chunk failures the loop aborts early.
+5. `mergePlans` deduplicates across chunks: merge ops win over delete ops for the same ref; promote ops blocked by a concurrent merge op are dropped with a warning.
+
+**Phase B — Write operations:**
+
+1. Write journal to `.akm/consolidate-journal.json` before any mutations (crash recovery).
+2. For each `merge` op: generate merged content via a second `callAi` call, backup secondaries, write merged primary via `writeAssetToSource`, delete secondaries via `deleteAssetFromSource`, mark journal completed.
+3. For each `delete` op: backup file, delete via `deleteAssetFromSource`, mark journal completed.
+4. For each `promote` op: idempotency check (pending proposals and existing file); `createProposal` with `source: "consolidate"`; mark journal completed.
+5. Clean up the journal and timestamp-keyed backup directory on success.
+
+**HTTP path confirmation:** when running on the HTTP path (no agent config) and `autoAccept` is not set, the user is prompted interactively before Phase B executes.
+
+**What it writes:**
+- `.akm/consolidate-journal.json` — operation log for crash recovery.
+- `.akm/consolidate-backup/<timestamp>/<name>.md` — backup copies of files before delete/merge.
+- Modified or deleted memory asset files via `writeAssetToSource` / `deleteAssetFromSource`.
+- `<stashRoot>/.akm/proposals/<UUID>/proposal.json` for each `promote` op.
+
+### Proposal queue
+
+`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It is also used by the memory consolidation promote path in akmConsolidate.
+
+**Filesystem layout:**
+
+```
+<stashRoot>/
+  .akm/
+    proposals/
+      <UUID>/
+        proposal.json        ← pending proposal
+      archive/
+        <UUID>/
+          proposal.json      ← accepted or rejected proposal
+    improve.lock             ← PID + startedAt; removed in finally block
+    consolidate-journal.json ← written before Phase B, removed after
+    consolidate-backup/
+      <ISO-timestamp>/
+        <memory-name>.md     ← backup before delete/merge
+    memory-cleanup/          ← belief-state transition log (from applyMemoryCleanup)
+```
+
+**`proposal.json` shape:**
+
+```json
+{
+  "id": "<UUID>",
+  "ref": "lesson:skill-deploy-lesson",
+  "status": "pending",
+  "source": "reflect",
+  "sourceRun": "reflect-1715000000000",
+  "createdAt": "2026-05-11T00:00:00.000Z",
+  "updatedAt": "2026-05-11T00:00:00.000Z",
+  "payload": {
+    "content": "---\ndescription: ...\n---\n\nbody",
+    "frontmatter": { "description": "..." }
+  }
+}
+```
+
+Two proposals can share the same `ref` — the UUID directory name prevents filesystem collisions. The dedup guard in `akmImprove` (checking `listProposals(stashDir, { ref: lessonRef })`) skips `akmDistill` when a pending proposal already exists for the derived lesson ref.
+
+## Feature flags and configuration
+
+| Feature flag (`llm.features.*`) | Controls |
+|---|---|
+| `feedback_distillation` | Whether `akmDistill` issues an LLM call. Disabled → outcome `"skipped"`, no proposal, exit 0. Enforced by `tryLlmFeature` with a 30 s hard timeout. |
+| `memory_consolidation` | Whether `akmConsolidate` runs Phase A or B at all. Disabled → immediate no-op return with `processed: 0`. Also gates the `generateMergedContent` call inside Phase B via a second `tryLlmFeature` call. |
+
+Agent path vs. HTTP path in consolidate is determined at runtime: `isAgentPath = !!config.agent`, `isHttpPath = !isAgentPath && !!config.llm`. The HTTP path adds a quality warning and, without `--auto-accept`, requires interactive confirmation.
+
+## Output shape
+
+`AkmImproveResult` (always `schemaVersion: 1`, `ok: true`):
+
+| Field | Type | Description |
+|---|---|---|
+| `scope` | `{ mode, value? }` | Resolved scope (`all`, `type`, or `ref`). |
+| `dryRun` | `boolean` | Whether this was a dry run. |
+| `guidance` | `string?` | Human-readable note about memory cleanup when memories are in scope. |
+| `memorySummary` | `{ eligible, derived }` | Count of memory assets in scope and count of `.derived` ones. |
+| `memoryCleanup` | `ImproveMemoryCleanupResult?` | Analysis (always present when eligible > 0) merged with apply results on a live run. Includes `archived`, `transitionLogPath`, `transitionLogEntries`, and `warnings`. |
+| `plannedRefs` | `ImproveEligibleRef[]` | The post-filter, post-cleanup, utility-sorted refs that were (or would be) processed. |
+| `actions` | `ImproveActionResult[]?` | Per-asset action record: mode (`reflect`, `distill`, `distill-skipped`, `memory-prune`, `error`) and the subprocess result. Absent on dry-run. |
+| `validationFailures` | `Array<{ ref, reason }>?` | Refs skipped due to pre-run validation failures (missing file, missing description). |
+| `consolidation` | `ConsolidateResult?` | Result from `akmConsolidate`; omitted when `processed === 0` and no warnings. |
+
+## Reviewed
+
+Reviewed against `src/commands/improve.ts` (full `akmImprove` function), `src/commands/reflect.ts` (lines 1–50), and `src/commands/distill.ts` (lines 1–50).
+
+**Checked:**
+- Diagram branch ordering for lock vs. scope resolution
+- Diagram branch ordering for dry-run early-return
+- Validation sweep placement relative to the limit filter
+- Consolidation placement relative to the per-asset loop
+- Per-asset loop branch ordering (validation skip vs. budget check)
+- Memory cleanup step sequencing (analyzeMemoryCleanup, applyMemoryCleanup, reindexFn)
+- Feature flag gating for consolidation (`llm.features.memory_consolidation`)
+- Dry-run early-return node completeness
+- Budget-exhausted break path
+- Mermaid syntax and subgraph labels
+
+**Fixed:**
+
+1. **`analyzeMemoryCleanup` placement (critical accuracy bug):** The original diagram showed `analyzeMemoryCleanup` happening after lock acquisition (`E3 → F → G → H{memoryCleanup eligible?} → I`). In the actual code (`improve.ts` lines 251–253), `memoryCleanupPlan` is computed unconditionally before the `dryRun` check (line 259) and before lock acquisition (line 272). Moved `analyzeMemoryCleanup` to before the `dryRun?` diamond, and updated the DRY node to note it includes the pre-computed analysis.
+
+2. **Per-asset loop branch order (critical accuracy bug):** The original diagram checked `R{budget exhausted?}` before `S{ref in validationFailures?}`. In the code (lines 394–407), the validation skip (`validationFailureRefs.has(planned.ref)`) is evaluated first (`continue` on line 395), and the budget check happens second (line 396). Swapped the order so `S{ref in validationFailures?}` is the first branch in the loop, followed by `R{budget exhausted?}`. Updated all loop-back edges accordingly.
+
+3. **`reindexFn` timing (accuracy bug):** The original diagram placed `J3[reindexFn]` before `K[filterRemovedPlannedRefs]`. In the code, `filterRemovedPlannedRefs` (line 336) and the signal filter/sort/limit steps (lines 338–349) all run before the reindex block (lines 351–368). Moved `reindexFn` and `push memory-prune actions` to after the sort/limit step and before the validation sweep, matching the actual code order.
+
+**No changes made to:** subprocess detail prose (reflect, distill, consolidate), feature flag table, output shape table, proposal queue section, or filesystem layout — these were accurate.
