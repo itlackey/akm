@@ -33,6 +33,7 @@ export interface AkmAgentDispatchOptions {
 }
 
 export interface AkmAgentDispatchResult {
+  schemaVersion: 1;
   ok: boolean;
   shape: "agent-result";
   profileName: string;
@@ -136,6 +137,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
   }
 
   return {
+    schemaVersion: 1 as const,
     ok: result.ok,
     shape: "agent-result",
     profileName: profile.name,

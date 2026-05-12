@@ -41,6 +41,7 @@ export interface ConsolidatePromoteOp {
 export type ConsolidateOperation = ConsolidateMergeOp | ConsolidateDeleteOp | ConsolidatePromoteOp;
 
 export interface ConsolidateResult {
+  schemaVersion: 1;
   ok: boolean;
   shape: "consolidate-result";
   dryRun: boolean;
@@ -373,6 +374,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   if (!isLlmFeatureEnabled(config, "memory_consolidation")) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result" as const,
       dryRun: opts.dryRun ?? false,
@@ -395,6 +397,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   if (memories.length === 0) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result",
       dryRun: opts.dryRun ?? false,
@@ -490,6 +493,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // -- Dry-run: show AI plan without executing any writes --------------------
   if (opts.dryRun) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result",
       dryRun: true,
@@ -513,6 +517,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
       if (!answer) {
         return {
+          schemaVersion: 1 as const,
           ok: true,
           shape: "consolidate-result",
           dryRun: false,
@@ -727,6 +732,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   return {
+    schemaVersion: 1 as const,
     ok: true,
     shape: "consolidate-result",
     dryRun: false,
