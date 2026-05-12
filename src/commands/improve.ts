@@ -567,7 +567,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       try {
         const filePath = findAssetFilePath(candidate.ref, options.stashDir);
         if (!filePath) {
-          validationFailures.push({ ref: candidate.ref, reason: "not found in index" });
+          validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
           continue;
         }
         if (isLessonCandidate(candidate.ref)) {
@@ -1075,6 +1075,10 @@ function findAssetFilePath(ref: string, stashDir?: string): string | null {
         path.join(source.path, parsed.type, `${parsed.name}.md`),
         path.join(source.path, typeDir, parsed.name),
         path.join(source.path, parsed.type, parsed.name),
+        // Cross-type paths: refs like knowledge:skills/foo/bar whose files live
+        // under skills/ in the stash root, not under knowledge/skills/foo/bar.
+        path.join(source.path, `${parsed.name}.md`),
+        path.join(source.path, parsed.name),
       ];
       for (const candidate of candidates) {
         if (!fs.existsSync(candidate)) continue;
