@@ -133,6 +133,8 @@ export function loadFixtureStash(name: string, options: LoadFixtureStashOptions 
         AKM_STASH_DIR: stashDir,
         XDG_CACHE_HOME: cacheHome,
         XDG_CONFIG_HOME: configHome,
+        XDG_DATA_HOME: path.join(tmpRoot, "data"),
+        XDG_STATE_HOME: path.join(tmpRoot, "state"),
       },
       stdout: "pipe",
       stderr: "pipe",

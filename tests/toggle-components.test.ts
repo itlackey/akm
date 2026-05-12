@@ -32,12 +32,16 @@ describe("component toggles", () => {
   test("akm disable skills.sh marks skills.sh registry as disabled", () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
+    const xdgData = makeTempDir("akm-toggle-data-");
+    const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
     const result = runCli(["disable", "skills.sh", "--format=json"], {
       ...process.env,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: stashDir,
     });
 
@@ -58,12 +62,16 @@ describe("component toggles", () => {
   test("akm enable <unsupported-target> exits with usage error", () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
+    const xdgData = makeTempDir("akm-toggle-data-");
+    const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
     const result = runCli(["enable", "context-hub", "--format=json"], {
       ...process.env,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: stashDir,
     });
 
@@ -75,12 +83,16 @@ describe("component toggles", () => {
   test("akm disable <unsupported-target> exits with usage error", () => {
     const xdgConfig = makeTempDir("akm-toggle-config-");
     const xdgCache = makeTempDir("akm-toggle-cache-");
+    const xdgData = makeTempDir("akm-toggle-data-");
+    const xdgState = makeTempDir("akm-toggle-state-");
     const stashDir = makeTempDir("akm-toggle-stash-");
 
     const result = runCli(["disable", "context-hub", "--format=json"], {
       ...process.env,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: stashDir,
     });
 

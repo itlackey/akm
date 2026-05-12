@@ -31,6 +31,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -134,6 +136,8 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-reflect-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-reflect-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-reflect-data-");
+  process.env.XDG_STATE_HOME = makeTempDir("akm-reflect-state-");
 });
 
 afterEach(() => {
@@ -143,6 +147,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -28,11 +28,15 @@ function writeConfig(configDir: string, config: Record<string, unknown>): void {
 interface CliEnvDirs {
   xdgCache: string;
   xdgConfig: string;
+  xdgData?: string;
+  xdgState?: string;
 }
 
 function runCli(stashDir: string, args: string[], config?: Record<string, unknown>, envDirs?: CliEnvDirs): string {
   const xdgCache = envDirs?.xdgCache ?? makeTempDir("akm-output-cache-");
   const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-output-config-");
+  const xdgData = envDirs?.xdgData ?? makeTempDir("akm-output-data-");
+  const xdgState = envDirs?.xdgState ?? makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
@@ -42,6 +46,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   expect(result.status).toBe(0);
@@ -51,6 +57,8 @@ function runCli(stashDir: string, args: string[], config?: Record<string, unknow
 async function runCliAsync(stashDir: string, args: string[], config?: Record<string, unknown>): Promise<string> {
   const xdgCache = makeTempDir("akm-output-cache-");
   const xdgConfig = makeTempDir("akm-output-config-");
+  const xdgData = makeTempDir("akm-output-data-");
+  const xdgState = makeTempDir("akm-output-state-");
   if (config) writeConfig(xdgConfig, config);
 
   const child = spawn("bun", [CLI, ...args], {
@@ -60,6 +68,8 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
       AKM_STASH_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
 

@@ -36,6 +36,8 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 function runCli(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
   const xdgCache = makeTempDir("akm-import-cache-");
+  const xdgData = makeTempDir("akm-import-data-");
+  const xdgState = makeTempDir("akm-import-state-");
   const result = spawnSync("bun", [CLI, ...args], {
     encoding: "utf8",
     timeout: 30_000,
@@ -45,6 +47,8 @@ function runCli(args: string[], options: { stashDir?: string; configDir: string;
       AKM_STASH_DIR: stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   return { stashDir, result };
@@ -53,6 +57,8 @@ function runCli(args: string[], options: { stashDir?: string; configDir: string;
 async function runCliAsync(args: string[], options: { stashDir?: string; configDir: string; input?: string }) {
   const stashDir = options.stashDir ?? makeTempDir("akm-import-stash-");
   const xdgCache = makeTempDir("akm-import-cache-");
+  const xdgData = makeTempDir("akm-import-data-");
+  const xdgState = makeTempDir("akm-import-state-");
   const child = spawn("bun", [CLI, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
@@ -60,6 +66,8 @@ async function runCliAsync(args: string[], options: { stashDir?: string; configD
       AKM_STASH_DIR: stashDir,
       AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
       XDG_CACHE_HOME: xdgCache,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
     },
   });
   let stdout = "";

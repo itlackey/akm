@@ -159,7 +159,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     const proposalEntries: HistoryEntry[] = [];
 
     if (options.includeProposals === true) {
-      sources.push("events.jsonl");
+      sources.push("state.db");
 
       // Convert sinceNormalized ("YYYY-MM-DD HH:MM:SS") to ISO for readEvents
       // which uses `ts >= since` where `ts` is ISO-8601.

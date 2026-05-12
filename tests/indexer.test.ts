@@ -20,12 +20,16 @@ import * as embedderModule from "../src/llm/embedder";
 
 let testConfigDir = "";
 let testCacheDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let embedBatchImpl:
   | ((texts: string[], embeddingConfig?: EmbeddingConnectionConfig) => Promise<Float32Array[]>)
   | undefined;
 const actualEmbedBatch = embedderModule.embedBatch;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 const originalAkmVerbose = process.env.AKM_VERBOSE;
 const originalFetch = globalThis.fetch;
@@ -40,8 +44,12 @@ mock.module("../src/llm/embedder.js", () => ({
 beforeEach(() => {
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-config-"));
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-cache-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-idx-state-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -77,6 +85,16 @@ afterEach(() => {
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -95,6 +113,14 @@ afterEach(() => {
   if (testCacheDir) {
     fs.rmSync(testCacheDir, { recursive: true, force: true });
     testCacheDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 

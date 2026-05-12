@@ -18,6 +18,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -52,6 +54,8 @@ function parseJsonOutput(result: { stdout: string; stderr: string }): Record<str
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-history-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-history-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-history-data-");
+  process.env.XDG_STATE_HOME = makeTempDir("akm-history-state-");
 });
 
 afterEach(() => {
@@ -61,6 +65,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -259,17 +267,17 @@ describe("akmHistory --include-proposals", () => {
     }
   });
 
-  test("sources field includes events.jsonl when includeProposals is true", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-events-"), "events.jsonl");
+  test("sources field includes state.db when includeProposals is true", async () => {
+    const dbFile = path.join(makeTempDir("akm-history-events-"), "events.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { filePath: dbFile },
       });
-      expect(result.sources).toEqual(["usage_events", "events.jsonl"]);
+      expect(result.sources).toEqual(["usage_events", "state.db"]);
     } finally {
       closeDatabase(db);
     }
@@ -444,24 +452,22 @@ describe("akmHistory --include-proposals", () => {
     const stashDir = makeTempDir("akm-history-cli-proposals-");
     process.env.AKM_STASH_DIR = stashDir;
     const cacheDir = makeTempDir("akm-history-cli-cache-");
+    const dataDir = makeTempDir("akm-history-cli-data-");
+    const stateDir = makeTempDir("akm-history-cli-state-");
     process.env.XDG_CACHE_HOME = cacheDir;
+    process.env.XDG_DATA_HOME = dataDir;
+    process.env.XDG_STATE_HOME = stateDir;
     saveConfig({ semanticSearchMode: "off" });
 
     writeFile(path.join(stashDir, "memories", "alpha.md"), "---\ndescription: alpha memory\n---\nAlpha.\n");
     await akmIndex({ stashDir, full: true });
 
-    // We can't easily run a full accept without a real proposal, so instead
-    // write a promoted event directly to events.jsonl to verify the CLI flag.
-    const eventsFile = path.join(cacheDir, "akm", "events.jsonl");
-    fs.mkdirSync(path.dirname(eventsFile), { recursive: true });
-    const promoted = {
-      schemaVersion: 1,
-      ts: new Date().toISOString(),
+    // Write a promoted event to state.db (events now live in SQLite, not events.jsonl).
+    appendEvent({
       eventType: "promoted",
       ref: "memory:alpha",
       metadata: { proposalId: "p-cli-test", source: "reflect", assetPath: "memories/alpha.md" },
-    };
-    fs.appendFileSync(eventsFile, `${JSON.stringify(promoted)}\n`);
+    });
 
     const result = runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=json"]);
     expect(result.status).toBe(0);
@@ -472,14 +478,14 @@ describe("akmHistory --include-proposals", () => {
     const promotedEntry = entries.find((e) => e.eventType === "promoted");
     expect(promotedEntry).toBeDefined();
     expect(promotedEntry?.ref).toBe("memory:alpha");
-    // Sources should include events.jsonl.
+    // Sources should include state.db (Phase 3: events moved from events.jsonl to state.db).
     expect(Array.isArray(parsed.sources)).toBe(true);
-    expect((parsed.sources as string[]).includes("events.jsonl")).toBe(true);
+    expect((parsed.sources as string[]).includes("state.db")).toBe(true);
 
     // Verify text output also shows the proposal event.
     const text = runCli(["history", "--include-proposals", "--ref", "memory:alpha", "--format=text"]);
     expect(text.status).toBe(0);
     expect(text.stdout).toContain("[promoted]");
-    expect(text.stdout).toContain("events.jsonl");
+    expect(text.stdout).toContain("state.db");
   });
 });

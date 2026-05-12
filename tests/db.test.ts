@@ -52,8 +52,12 @@ const savedEnv: Record<string, string | undefined> = {};
 beforeEach(() => {
   savedEnv.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME;
   savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
+  savedEnv.XDG_DATA_HOME = process.env.XDG_DATA_HOME;
+  savedEnv.XDG_STATE_HOME = process.env.XDG_STATE_HOME;
   process.env.XDG_CACHE_HOME = tmpDir("cache");
   process.env.XDG_CONFIG_HOME = tmpDir("config");
+  process.env.XDG_DATA_HOME = tmpDir("data");
+  process.env.XDG_STATE_HOME = tmpDir("state");
 });
 
 afterEach(() => {

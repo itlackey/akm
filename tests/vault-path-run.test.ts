@@ -20,6 +20,8 @@ afterAll(() => {
 
 const xdgCache = makeTempDir("akm-vpr-cache-");
 const xdgConfig = makeTempDir("akm-vpr-config-");
+const xdgData = makeTempDir("akm-vpr-data-");
+const xdgState = makeTempDir("akm-vpr-state-");
 const isolatedHome = makeTempDir("akm-vpr-home-");
 
 const repoRoot = path.resolve(import.meta.dir, "..");
@@ -38,6 +40,8 @@ function runCli(
       HOME: isolatedHome,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
+      XDG_DATA_HOME: xdgData,
+      XDG_STATE_HOME: xdgState,
       AKM_STASH_DIR: undefined,
       ...extraEnv,
     },

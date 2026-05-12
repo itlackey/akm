@@ -38,21 +38,31 @@ import { buildSearchText } from "../src/indexer/search-fields";
 let stashDir = "";
 let originalXdgCacheHome: string | undefined;
 let originalXdgConfigHome: string | undefined;
+let originalXdgDataHome: string | undefined;
+let originalXdgStateHome: string | undefined;
 let originalAkmStashDir: string | undefined;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeAll(() => {
   originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalXdgDataHome = process.env.XDG_DATA_HOME;
+  originalXdgStateHome = process.env.XDG_STATE_HOME;
   originalAkmStashDir = process.env.AKM_STASH_DIR;
 
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-cache-"));
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-config-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-state-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-rank-stash-"));
 
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 
   resetConfigCache();
@@ -70,10 +80,14 @@ afterAll(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
   resetConfigCache();
-  for (const dir of [testCacheDir, testConfigDir, stashDir]) {
+  for (const dir of [testCacheDir, testConfigDir, testDataDir, testStateDir, stashDir]) {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });

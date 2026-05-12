@@ -20,6 +20,7 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -48,6 +49,7 @@ function makeConfig(stashDir: string): AkmConfig {
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-proposals-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-proposals-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-proposals-data-");
 });
 
 afterEach(() => {
@@ -55,6 +57,8 @@ afterEach(() => {
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
   if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
   for (const dir of tempDirs.splice(0)) {

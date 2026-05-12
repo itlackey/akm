@@ -54,12 +54,16 @@ function createMockEmbeddingServer(embedding: number[] = [1, 0, 0, 0]): {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 let stashDir = "";
 
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = createTmpDir("akm-parity-cache-");
   process.env.XDG_CONFIG_HOME = createTmpDir("akm-parity-config-");
+  process.env.XDG_DATA_HOME = createTmpDir("akm-parity-data-");
+  process.env.XDG_STATE_HOME = createTmpDir("akm-parity-state-");
   stashDir = createTmpDir("akm-parity-stash-");
   for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
@@ -75,6 +79,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdgDataHome;
+  if (originalXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalStashDir;
 });
@@ -159,7 +167,7 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
       await lookup(parseAssetRef("skill:embed-skill"));
       await akmShowUnified({ ref: "skill:embed-skill" });
 
-      const db = openDatabase(path.join(process.env.XDG_CACHE_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(process.env.XDG_DATA_HOME as string, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");

@@ -22,20 +22,28 @@ afterAll(() => {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 let stashDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-registry-cache-");
   testConfigDir = createTmpDir("akm-registry-config-");
+  testDataDir = createTmpDir("akm-registry-data-");
+  testStateDir = createTmpDir("akm-registry-state-");
   stashDir = createTmpDir("akm-registry-stash-");
   for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
 });
 
@@ -50,6 +58,16 @@ afterEach(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -62,6 +80,14 @@ afterEach(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 

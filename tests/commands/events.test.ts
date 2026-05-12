@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmEventsList, akmEventsTail } from "../../src/commands/events";
 import { saveConfig } from "../../src/core/config";
-import { appendEvent, getEventsPath, readEvents, tailEvents } from "../../src/core/events";
+import { appendEvent, readEvents, tailEvents } from "../../src/core/events";
 
 const CLI = path.join(__dirname, "..", "..", "src", "cli.ts");
 
@@ -14,6 +14,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -43,6 +45,8 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-events-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-events-config-");
+  process.env.XDG_DATA_HOME = makeTempDir("akm-events-data-");
+  process.env.XDG_STATE_HOME = makeTempDir("akm-events-state-");
 });
 
 afterEach(() => {
@@ -52,13 +56,17 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 describe("appendEvent / readEvents", () => {
-  test("appends events as newline-delimited JSON", () => {
+  test("appends events readable via readEvents (state.db backend)", () => {
     const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
     let now = 1_700_000_000_000;
     const ctx = { filePath, now: () => now };
@@ -67,17 +75,17 @@ describe("appendEvent / readEvents", () => {
     now += 1000;
     appendEvent({ eventType: "feedback", ref: "memory:alpha", metadata: { signal: "positive" } }, ctx);
 
-    const content = fs.readFileSync(filePath, "utf8");
-    const lines = content.trim().split("\n");
-    expect(lines).toHaveLength(2);
-    const first = JSON.parse(lines[0] as string);
-    expect(first.eventType).toBe("remember");
-    expect(first.ref).toBe("memory:alpha");
-    expect(first.schemaVersion).toBe(1);
-    expect(typeof first.ts).toBe("string");
+    // Events are now stored in state.db — read back via readEvents().
+    const result = readEvents({}, ctx);
+    expect(result.events).toHaveLength(2);
+    const first = result.events[0];
+    expect(first?.eventType).toBe("remember");
+    expect(first?.ref).toBe("memory:alpha");
+    expect(first?.schemaVersion).toBe(1);
+    expect(typeof first?.ts).toBe("string");
   });
 
-  test("readEvents returns parsed envelopes with monotonic byte offsets", () => {
+  test("readEvents returns parsed envelopes with monotonic rowid cursors", () => {
     const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
     const ctx = { filePath };
     appendEvent({ eventType: "add", metadata: { target: "user/repo" } }, ctx);
@@ -87,9 +95,10 @@ describe("appendEvent / readEvents", () => {
     expect(result.events).toHaveLength(2);
     expect(result.events[0]?.eventType).toBe("add");
     expect(result.events[1]?.eventType).toBe("remove");
-    // ids are byte offsets; second must be larger than first
+    // ids are monotonic SQLite rowids; second must be larger than first
     expect((result.events[1]?.id ?? 0) > (result.events[0]?.id ?? 0)).toBe(true);
-    expect(result.nextOffset).toBe(fs.statSync(filePath).size);
+    // nextOffset is the max rowid seen — always >= the last event's id
+    expect(result.nextOffset).toBeGreaterThanOrEqual(result.events[1]?.id ?? 0);
   });
 
   test("--since (byte offset) is durable across processes", () => {
@@ -116,18 +125,24 @@ describe("appendEvent / readEvents", () => {
     // then a SECOND `bun src/cli.ts events list` invocation reads the cursor
     // from the file and must emit only the post-cursor events with no
     // duplicates and no losses.
+    const dataDir = makeTempDir("akm-events-xproc-data-");
     const cacheDir = makeTempDir("akm-events-xproc-cache-");
     const configDir = makeTempDir("akm-events-xproc-config-");
+    const stateDir = makeTempDir("akm-events-xproc-statedir-");
     const cursorFile = path.join(makeTempDir("akm-events-xproc-state-"), "cursor.txt");
-    // Drive both processes through the same XDG_CACHE_HOME so they share
-    // the same events.jsonl path (see env-isolation note in core/events.ts).
+    // Drive both processes through the same XDG_DATA_HOME so they share
+    // the same state.db path (events now live in state.db, not events.jsonl).
     const childEnv = {
       ...process.env,
+      XDG_DATA_HOME: dataDir,
       XDG_CACHE_HOME: cacheDir,
       XDG_CONFIG_HOME: configDir,
+      XDG_STATE_HOME: stateDir,
     };
-    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
-    const ctx = { filePath: eventsPath };
+    // The dbPath for the writer must match what the CLI child process resolves.
+    // The CLI resolves state.db as <XDG_DATA_HOME>/akm/state.db.
+    const dbPath = path.join(dataDir, "akm", "state.db");
+    const ctx = { dbPath };
 
     // 1. Producer writes events 0..2 (the "first batch").
     appendEvent({ eventType: "remember", ref: "memory:e0" }, ctx);
@@ -202,13 +217,14 @@ describe("appendEvent / readEvents", () => {
     expect(filtered.events[0]?.ref).toBe("memory:a");
   });
 
-  test("malformed lines are skipped, valid ones still parse", () => {
+  test("all valid appends are readable (SQLite enforces schema integrity)", () => {
     const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
     const ctx = { filePath };
     appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
-    fs.appendFileSync(filePath, "this is not json\n");
     appendEvent({ eventType: "remember", ref: "memory:b" }, ctx);
 
+    // Unlike JSONL, SQLite guarantees no malformed rows can be inserted.
+    // Both events must be present and in insertion order.
     const result = readEvents({}, ctx);
     expect(result.events.map((e) => e.ref)).toEqual(["memory:a", "memory:b"]);
   });
@@ -271,7 +287,7 @@ describe("tailEvents", () => {
 });
 
 describe("akm CLI mutation events", () => {
-  test("remember, feedback, and add each emit an event to events.jsonl", async () => {
+  test("remember, feedback, and add each emit an event to state.db", async () => {
     const stashDir = makeTempDir("akm-events-stash-");
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
@@ -294,11 +310,11 @@ describe("akm CLI mutation events", () => {
     const add = runCli(["add", localSource, "--format=json"]);
     expect(add.status).toBe(0);
 
-    // Confirm events.jsonl contains all three event types in order.
-    const eventsPath = getEventsPath();
-    expect(fs.existsSync(eventsPath)).toBe(true);
-    const lines = fs.readFileSync(eventsPath, "utf8").trim().split("\n");
-    const types = lines.map((line) => (JSON.parse(line) as { eventType: string }).eventType);
+    // Confirm events are in state.db by querying through the CLI.
+    const list = runCli(["events", "list", "--format=json"]);
+    expect(list.status).toBe(0);
+    const parsed = JSON.parse(list.stdout) as { events: Array<{ eventType: string }> };
+    const types = parsed.events.map((e) => e.eventType);
     expect(types).toContain("remember");
     expect(types).toContain("feedback");
     expect(types).toContain("add");
@@ -370,10 +386,12 @@ describe("akm events tail (streaming trailer)", () => {
   // trailer line so callers can resume from `nextOffset`.
 
   test("--format jsonl writes a discriminated trailer row to stdout", () => {
+    const dataDir = makeTempDir("akm-events-trailer-jsonl-data-");
     const cacheDir = makeTempDir("akm-events-trailer-jsonl-cache-");
     const configDir = makeTempDir("akm-events-trailer-jsonl-config-");
-    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
-    const ctx = { filePath: eventsPath };
+    // Write events into the same state.db the CLI child will read from.
+    const dbPath = path.join(dataDir, "akm", "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:t1" }, ctx);
     appendEvent({ eventType: "remember", ref: "memory:t2" }, ctx);
 
@@ -394,7 +412,13 @@ describe("akm events tail (streaming trailer)", () => {
       {
         encoding: "utf8",
         timeout: 30_000,
-        env: { ...process.env, XDG_CACHE_HOME: cacheDir, XDG_CONFIG_HOME: configDir },
+        env: {
+          ...process.env,
+          XDG_DATA_HOME: dataDir,
+          XDG_CACHE_HOME: cacheDir,
+          XDG_CONFIG_HOME: configDir,
+          XDG_STATE_HOME: makeTempDir("akm-events-trailer-jsonl-state-"),
+        },
       },
     );
     expect(child.status).toBe(0);
@@ -409,10 +433,12 @@ describe("akm events tail (streaming trailer)", () => {
   });
 
   test("--format text writes a trailer line to stderr (stdout stays pristine)", () => {
+    const dataDir = makeTempDir("akm-events-trailer-text-data-");
     const cacheDir = makeTempDir("akm-events-trailer-text-cache-");
     const configDir = makeTempDir("akm-events-trailer-text-config-");
-    const eventsPath = path.join(cacheDir, "akm", "events.jsonl");
-    const ctx = { filePath: eventsPath };
+    // Write events into the same state.db the CLI child will read from.
+    const dbPath = path.join(dataDir, "akm", "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:tx1" }, ctx);
 
     const child = spawnSync(
@@ -421,7 +447,13 @@ describe("akm events tail (streaming trailer)", () => {
       {
         encoding: "utf8",
         timeout: 30_000,
-        env: { ...process.env, XDG_CACHE_HOME: cacheDir, XDG_CONFIG_HOME: configDir },
+        env: {
+          ...process.env,
+          XDG_DATA_HOME: dataDir,
+          XDG_CACHE_HOME: cacheDir,
+          XDG_CONFIG_HOME: configDir,
+          XDG_STATE_HOME: makeTempDir("akm-events-trailer-text-state-"),
+        },
       },
     );
     expect(child.status).toBe(0);

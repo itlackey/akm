@@ -135,6 +135,8 @@ describe("parseScopeFilterFlags", () => {
         AKM_STASH_DIR: tmpStash(),
         AKM_CONFIG_DIR: path.join(createTmpDir("akm-scope-config-"), "akm"),
         XDG_CACHE_HOME: createTmpDir("akm-scope-cache-"),
+        XDG_DATA_HOME: createTmpDir("akm-scope-data-"),
+        XDG_STATE_HOME: createTmpDir("akm-scope-state-"),
       },
     });
     expect(result.status).toBe(2); // EXIT_USAGE
@@ -328,6 +330,8 @@ describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
     const stashDir = tmpStash();
     const configDir = createTmpDir("akm-scope-config-");
     const xdgCache = createTmpDir("akm-scope-cache-");
+    const xdgData = createTmpDir("akm-scope-data-");
+    const xdgState = createTmpDir("akm-scope-state-");
 
     const result = spawnSync(
       "bun",
@@ -352,6 +356,8 @@ describe("akm remember --user / --agent / --run / --channel (CLI)", () => {
           AKM_STASH_DIR: stashDir,
           AKM_CONFIG_DIR: path.join(configDir, "akm"),
           XDG_CACHE_HOME: xdgCache,
+          XDG_DATA_HOME: xdgData,
+          XDG_STATE_HOME: xdgState,
         },
       },
     );

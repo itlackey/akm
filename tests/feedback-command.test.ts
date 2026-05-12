@@ -16,6 +16,8 @@ const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 function makeTempDir(prefix: string): string {
@@ -64,6 +66,10 @@ afterEach(() => {
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedEnv.XDG_CONFIG_HOME;
+  if (savedEnv.XDG_DATA_HOME === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
+  if (savedEnv.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = savedEnv.XDG_STATE_HOME;
 
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -75,6 +81,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -125,6 +133,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "commands", "complete-github-issue.md"),
@@ -146,6 +156,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(path.join(stashDir, "memories", "known.md"), "---\ndescription: known memory\n---\nKnown.\n");
     await buildIndex(stashDir);
@@ -163,6 +175,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "deployment-notes.md"),
@@ -201,6 +215,8 @@ describe("akm feedback", () => {
     const stashDir = makeTempDir("akm-feedback-stash-");
     process.env.XDG_CACHE_HOME = makeTempDir("akm-feedback-cache-");
     process.env.XDG_CONFIG_HOME = makeTempDir("akm-feedback-config-");
+    process.env.XDG_DATA_HOME = makeTempDir("akm-feedback-data-");
+    process.env.XDG_STATE_HOME = makeTempDir("akm-feedback-state-");
 
     writeFile(
       path.join(stashDir, "memories", "alpha.md"),

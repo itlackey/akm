@@ -8,7 +8,8 @@
  *   (c) --re-enrich bypasses the cache even when the body is unchanged.
  *   (d) clearStaleCacheEntries removes entries for assets no longer in the index.
  *
- * The LLM modules are mocked via `mock.module` — no real network calls occur.
+ * Graph extraction is controlled via a local Bun HTTP server — no module mocking,
+ * no global state pollution between test files.
  */
 
 import type { Database } from "bun:sqlite";
@@ -20,27 +21,33 @@ import path from "node:path";
 import type { AkmConfig } from "../src/core/config";
 import type { SearchSource } from "../src/indexer/search-source";
 
-// ── LLM stubs ────────────────────────────────────────────────────────────────
+// ── Local LLM server (graph extraction) ──────────────────────────────────────
+// A real HTTP server on a random port stands in for the LLM endpoint.
+// This avoids mock.module("../src/llm/client") which leaks into other test
+// files (e.g. tests/llm.test.ts) when Bun shares workers across files.
 
-// Graph extraction stub — controlled per-test via `graphExtractor`.
 let graphExtractCallCount = 0;
 let graphExtractor: (body: string) => { entities: string[]; relations: { from: string; to: string; type?: string }[] } =
   () => ({ entities: [], relations: [] });
 
-mock.module("../src/llm/graph-extract", () => ({
-  extractGraphFromBody: async (_config: unknown, body: string) => {
+const llmServer = Bun.serve({
+  port: 0, // OS picks an available port
+  fetch(_req) {
     graphExtractCallCount++;
-    return graphExtractor(body);
+    const result = graphExtractor("");
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(result) } }],
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
   },
-  extractGraphFromBodies: async (_config: unknown, bodies: string[]) => {
-    return bodies.map((body) => {
-      graphExtractCallCount++;
-      return graphExtractor(body);
-    });
-  },
-}));
+});
 
-// Memory inference stub — controlled per-test via `memoryCompressor`.
+// ── Memory inference stub ─────────────────────────────────────────────────────
+// memory-infer is not tested by any other file in the suite, so mock.module
+// here is safe and does not leak.
+
 let memoryCompressCallCount = 0;
 let memoryCompressor: (body: string) =>
   | {
@@ -71,13 +78,16 @@ let tmpStash = "";
 let tmpDbPath = "";
 let db: Database;
 
-const SAMPLE_LLM = {
-  endpoint: "http://localhost:11434/v1/chat/completions",
-  model: "llama3.2",
-};
-
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
-  return { semanticSearchMode: "auto", llm: { ...SAMPLE_LLM }, ...overrides };
+  return {
+    semanticSearchMode: "auto",
+    llm: {
+      endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
+      model: "test-model",
+      features: { graph_extraction: true },
+    },
+    ...overrides,
+  };
 }
 
 function sources(): SearchSource[] {
@@ -129,10 +139,8 @@ afterEach(() => {
   }
 });
 
-// Restore all mock.module overrides so they don't leak into other test files
-// when Bun runs multiple files in the same worker process.
 afterAll(() => {
-  mock.restore();
+  llmServer.stop(true);
 });
 
 // ── computeBodyHash ───────────────────────────────────────────────────────────

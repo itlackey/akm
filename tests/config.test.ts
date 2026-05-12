@@ -28,17 +28,25 @@ function writeRawConfig(configPath: string, content: string): void {
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalHome = process.env.HOME;
 const originalStashDir = process.env.AKM_STASH_DIR;
 const originalCwd = process.cwd();
 let testConfigHome = "";
 let testCacheHome = "";
+let testDataHome = "";
+let testStateHome = "";
 
 beforeEach(() => {
   testConfigHome = makeTmpDir();
   testCacheHome = makeTmpDir();
+  testDataHome = makeTmpDir();
+  testStateHome = makeTmpDir();
   process.env.XDG_CONFIG_HOME = testConfigHome;
   process.env.XDG_CACHE_HOME = testCacheHome;
+  process.env.XDG_DATA_HOME = testDataHome;
+  process.env.XDG_STATE_HOME = testStateHome;
   process.chdir(originalCwd);
   resetConfigCache();
 });
@@ -54,6 +62,18 @@ afterEach(() => {
     delete process.env.XDG_CACHE_HOME;
   } else {
     process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  }
+
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
   }
 
   if (originalHome === undefined) {
