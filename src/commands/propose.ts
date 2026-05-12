@@ -22,13 +22,12 @@ import {
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
-  parseAgentConfig,
   type RunAgentOptions,
-  requireAgentProfile,
   runAgent,
 } from "../integrations/agent";
 import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { baseFailureFields, enoentHintMessage, isEnoentFailure, resolveAgentProfile } from "./agent-support";
 
 export interface AkmProposeOptions {
   type: string;
@@ -66,34 +65,16 @@ export interface AkmProposeSuccess {
 
 export type AkmProposeResult = AkmProposeSuccess | AkmProposeFailure;
 
-function loadAgentConfigFromDisk(): AgentConfig | undefined {
-  const config = loadConfig();
-  return parseAgentConfig(config.agent);
-}
-
-function resolveProfile(options: AkmProposeOptions): AgentProfile {
-  if (options.agentProfile) return options.agentProfile;
-  const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-  return requireAgentProfile(agent, options.profile);
-}
-
 function failureEnvelope(
   result: AgentRunResult,
   type: string,
   name: string,
   fallbackReason: AgentFailureReason = "non_zero_exit",
 ): AkmProposeFailure {
-  const reason = result.reason ?? fallbackReason;
   return {
-    schemaVersion: 1,
-    ok: false,
-    reason,
-    error: result.error ?? `agent failure (${reason})`,
+    ...baseFailureFields(result, fallbackReason),
     type,
     name,
-    exitCode: result.exitCode,
-    ...(result.stdout ? { stdout: result.stdout } : {}),
-    ...(result.stderr ? { stderr: result.stderr } : {}),
   };
 }
 
@@ -131,7 +112,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 2. Resolve profile.
   let profile: AgentProfile;
   try {
-    profile = resolveProfile(options);
+    profile = resolveAgentProfile(options);
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
@@ -193,14 +174,8 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
 
   if (!result.ok) {
     // B3: ENOENT / not-found gives an actionable hint.
-    if (
-      result.reason === "spawn_failed" &&
-      (result.error?.includes("ENOENT") || result.error?.toLowerCase().includes("not found"))
-    ) {
-      return {
-        ...failureEnvelope(result, options.type, options.name),
-        error: `The agent binary '${profile.bin}' was not found on PATH. Run \`akm setup\` to configure an agent CLI, or install ${profile.bin} and retry.`,
-      };
+    if (isEnoentFailure(result)) {
+      return { ...failureEnvelope(result, options.type, options.name), error: enoentHintMessage(profile.bin) };
     }
     return failureEnvelope(result, options.type, options.name);
   }
