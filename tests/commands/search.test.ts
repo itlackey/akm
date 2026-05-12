@@ -271,7 +271,7 @@ describe("Database search path (FTS scoring)", () => {
       const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
       expect(localHits.length).toBeGreaterThanOrEqual(1);
 
-      const db = openDatabase(path.join(testCacheDir, "akm", "index.db"), { embeddingDim: 4 });
+      const db = openDatabase(path.join(testDataDir, "akm", "index.db"), { embeddingDim: 4 });
       try {
         expect(getMeta(db, "embeddingDim")).toBe("4");
         expect(getMeta(db, "hasEmbeddings")).toBe("1");
