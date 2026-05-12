@@ -14,7 +14,7 @@
  *        • workflow → `startWorkflowRun(ref, params)`
  *        • prompt   → `runAgent(profile, prompt, { stdio: "captured" })`
  *   5. Capture stdout / stderr to `<cacheDir>/tasks/logs/<id>/<ts>.log`.
- *   6. Append a JSONL row to `<cacheDir>/tasks/history/<id>.jsonl`.
+ *   6. Write a history row to state.db task_history table.
  *
  * Returns a structured result so the CLI handler can shape it for `output()`
  * and so tests can assert against it without scraping stdout.
@@ -63,8 +63,6 @@ export interface RunTaskOptions {
   now?: () => Date;
   /** Override log dir (tests). */
   logDir?: string;
-  /** Override history dir (tests). */
-  historyDir?: string;
   /** Extra args/env to pass through to runAgent (tests). */
   agentOptions?: Partial<RunAgentOptions>;
 }
@@ -347,7 +345,6 @@ function appendHistory(result: TaskRunResult): void {
 export interface ReadHistoryOptions {
   id?: string;
   limit?: number;
-  historyDir?: string;
 }
 
 export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult[] {

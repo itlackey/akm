@@ -29,22 +29,25 @@ type FakeRunAgent = (...args: unknown[]) => Promise<AgentRunResult>;
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-tasks-runner-"));
 const stashDir = path.join(tmpRoot, "stash");
 const cacheDir = path.join(tmpRoot, "cache");
+const dataDir = path.join(tmpRoot, "data");
 const logDir = path.join(cacheDir, "tasks", "logs");
-const historyDir = path.join(cacheDir, "tasks", "history");
 const tasksDir = path.join(stashDir, "tasks");
 const configDir = path.join(tmpRoot, "cfg");
 
-const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_STASH_DIR"];
+const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_STASH_DIR", "AKM_DATA_DIR"];
 const PRESERVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   for (const key of TRACKED_ENV_KEYS) PRESERVED_ENV[key] = process.env[key];
   fs.rmSync(stashDir, { recursive: true, force: true });
   fs.rmSync(cacheDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(configDir, { recursive: true, force: true });
   fs.mkdirSync(tasksDir, { recursive: true });
   // Workflows directory needs to exist so resolveAssetPath can stat the type root.
   fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
+  // Point state.db to an isolated data dir so tests don't share history.
+  process.env.AKM_DATA_DIR = dataDir;
 });
 
 afterEach(() => {
@@ -66,7 +69,7 @@ function writeTask(id: string, body: string): void {
 }
 
 describe("runTask — workflow target", () => {
-  test("dispatches to startWorkflowRun and writes log + history JSONL", async () => {
+  test("dispatches to startWorkflowRun and writes log + history to state.db", async () => {
     writeTask("wf", ["---", 'schedule: "@daily"', "workflow: workflow:noop", "---", "", "# Task: noop", ""].join("\n"));
     const calls: Array<{ ref: string; params: Record<string, unknown> }> = [];
     const fakeWf: FakeWorkflowRunner = async (ref, params = {}) => {
@@ -90,7 +93,6 @@ describe("runTask — workflow target", () => {
     const result = await runTask("wf", {
       stashDir,
       logDir,
-      historyDir,
       startWorkflowRunImpl: fakeWf as never,
       now: () => new Date("2025-01-01T00:00:00Z"),
     });
@@ -103,7 +105,7 @@ describe("runTask — workflow target", () => {
     const logExists = fs.existsSync(result.log);
     expect(logExists).toBe(true);
 
-    const rows = readTaskHistory({ id: "wf", historyDir });
+    const rows = readTaskHistory({ id: "wf" });
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe("wf");
     expect(rows[0].status).toBe("completed");
@@ -136,7 +138,6 @@ describe("runTask — prompt target", () => {
     const result = await runTask("prompt", {
       stashDir,
       logDir,
-      historyDir,
       runAgentImpl: fakeRunAgent,
       now: () => new Date("2025-01-01T00:00:00Z"),
     });
@@ -145,7 +146,7 @@ describe("runTask — prompt target", () => {
     expect(result.target).toEqual({ kind: "prompt", profile: "opencode" });
     expect(fs.readFileSync(result.log, "utf8")).toContain("agent received: say hello");
 
-    const rows = readTaskHistory({ id: "prompt", historyDir });
+    const rows = readTaskHistory({ id: "prompt" });
     expect(rows).toHaveLength(1);
     expect(rows[0].target).toEqual({ kind: "prompt", profile: "opencode" });
   });
@@ -175,7 +176,6 @@ describe("runTask — prompt target", () => {
     const result = await runTask("fail", {
       stashDir,
       logDir,
-      historyDir,
       runAgentImpl: fakeRunAgent,
       now: () => new Date("2025-01-01T00:00:00Z"),
     });
@@ -199,7 +199,6 @@ describe("runTask — disabled tasks no-op", () => {
     const result = await runTask("off", {
       stashDir,
       logDir,
-      historyDir,
       startWorkflowRunImpl: fakeWf as never,
       now: () => new Date("2025-01-01T00:00:00Z"),
     });

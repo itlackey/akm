@@ -67,9 +67,9 @@ afterEach(() => {
 
 describe("appendEvent / readEvents", () => {
   test("appends events readable via readEvents (state.db backend)", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
     let now = 1_700_000_000_000;
-    const ctx = { filePath, now: () => now };
+    const ctx = { dbPath, now: () => now };
 
     appendEvent({ eventType: "remember", ref: "memory:alpha", metadata: { tagCount: 2 } }, ctx);
     now += 1000;
@@ -86,8 +86,8 @@ describe("appendEvent / readEvents", () => {
   });
 
   test("readEvents returns parsed envelopes with monotonic rowid cursors", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "add", metadata: { target: "user/repo" } }, ctx);
     appendEvent({ eventType: "remove", metadata: { target: "user/repo" } }, ctx);
 
@@ -102,8 +102,8 @@ describe("appendEvent / readEvents", () => {
   });
 
   test("--since (byte offset) is durable across processes", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
     const cursor = readEvents({}, ctx).nextOffset;
     // Simulate "another process" appending more events
@@ -184,16 +184,16 @@ describe("appendEvent / readEvents", () => {
   });
 
   test("`akm events list --since @offset:` rejects malformed byte cursors", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     expect(() => akmEventsList({ since: "@offset:not-a-number", ctx })).toThrow(/Invalid --since byte offset/);
     expect(() => akmEventsList({ since: "@offset:-3", ctx })).toThrow(/Invalid --since/);
   });
 
   test("--since (timestamp) filter is monotonic across processes", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
     let now = 1_700_000_000_000;
-    const ctx = { filePath, now: () => now };
+    const ctx = { dbPath, now: () => now };
     appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
     const cutoff = new Date(now + 500).toISOString();
     now += 1000;
@@ -205,8 +205,8 @@ describe("appendEvent / readEvents", () => {
   });
 
   test("--type and --ref filters work in combination", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
     appendEvent({ eventType: "feedback", ref: "memory:a", metadata: { signal: "positive" } }, ctx);
     appendEvent({ eventType: "feedback", ref: "memory:b", metadata: { signal: "negative" } }, ctx);
@@ -218,8 +218,8 @@ describe("appendEvent / readEvents", () => {
   });
 
   test("all valid appends are readable (SQLite enforces schema integrity)", () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:a" }, ctx);
     appendEvent({ eventType: "remember", ref: "memory:b" }, ctx);
 
@@ -232,8 +232,8 @@ describe("appendEvent / readEvents", () => {
 
 describe("tailEvents", () => {
   test("emits historical events, then follows new appends until maxEvents", async () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     appendEvent({ eventType: "remember", ref: "memory:1" }, ctx);
 
     const tailPromise = tailEvents({ intervalMs: 25, maxEvents: 3, maxDurationMs: 2_000 }, ctx);
@@ -249,8 +249,8 @@ describe("tailEvents", () => {
   });
 
   test("tail keeps up with a concurrent writer without losing events", async () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     const TOTAL = 50;
 
     // Writer: append TOTAL events with small jitter so the tail polling
@@ -277,8 +277,8 @@ describe("tailEvents", () => {
   });
 
   test("tail terminates on AbortSignal", async () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
-    const ctx = { filePath };
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
+    const ctx = { dbPath };
     const ac = new AbortController();
     setTimeout(() => ac.abort(), 80);
     const result = await tailEvents({ intervalMs: 20, signal: ac.signal, maxDurationMs: 1_000 }, ctx);
@@ -325,7 +325,7 @@ describe("akm CLI mutation events", () => {
     process.env.AKM_STASH_DIR = stashDir;
     saveConfig({ semanticSearchMode: "off" });
 
-    // Create a remember event via the CLI so events.jsonl exists.
+    // Create a remember event via the CLI so state.db gets populated.
     const remember = runCli(["remember", "another event captured", "--name", "beta", "--format=json"]);
     expect(remember.status).toBe(0);
 
@@ -359,9 +359,9 @@ describe("akm CLI mutation events", () => {
 
 describe("akmEventsTail", () => {
   test("--since timestamp emits only events at or after the cutoff", async () => {
-    const filePath = path.join(makeTempDir("akm-events-"), "events.jsonl");
+    const dbPath = path.join(makeTempDir("akm-events-"), "state.db");
     let now = 1_700_000_000_000;
-    const ctx = { filePath, now: () => now };
+    const ctx = { dbPath, now: () => now };
 
     appendEvent({ eventType: "remember", ref: "memory:before" }, ctx);
     const cutoff = new Date(now + 500).toISOString();

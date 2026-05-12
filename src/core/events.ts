@@ -92,16 +92,6 @@ export interface EventsContext {
    * This is the primary test seam for isolating events to a tmpdir.
    */
   dbPath?: string;
-  /**
-   * @deprecated Use `dbPath` instead.
-   *
-   * Previously overrode the events.jsonl path. When provided without
-   * `dbPath`, a sibling `.db` file is derived at the same location (with
-   * `.jsonl` replaced by `.db`). Kept for backward compatibility with
-   * existing callers that inject a tmpdir path — those calls continue to
-   * write/read from an isolated SQLite file.
-   */
-  filePath?: string;
 }
 
 /**
@@ -117,18 +107,11 @@ export function getEventsPath(): string {
 
 /**
  * Resolve the state.db path from context:
- *   1. `ctx.dbPath`   — explicit override (new test seam)
- *   2. `ctx.filePath` — legacy override; derive db path alongside the jsonl file
- *   3. default        — `<dataDir>/state.db`
+ *   1. `ctx.dbPath` — explicit override (test seam)
+ *   2. default      — `<dataDir>/state.db`
  */
 function resolveDbPath(ctx?: EventsContext): string {
   if (ctx?.dbPath) return ctx.dbPath;
-  if (ctx?.filePath) {
-    // Derive a sibling SQLite file next to the legacy JSONL path so callers
-    // that relied on filePath for isolation still get an isolated database.
-    const base = ctx.filePath.endsWith(".jsonl") ? `${ctx.filePath.slice(0, -6)}.db` : `${ctx.filePath}.db`;
-    return base;
-  }
   return path.join(getDataDir(), "state.db");
 }
 
