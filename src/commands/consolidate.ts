@@ -10,6 +10,7 @@ import { ConfigError } from "../core/errors";
 import { parseFrontmatter } from "../core/frontmatter";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { createProposal, listProposals } from "../core/proposals";
+import { warn } from "../core/warn";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
@@ -497,6 +498,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     chunks.push(memories.slice(i, i + chunkSize));
   }
 
+  warn(`[consolidate] ${memories.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}`);
+
   const chunkOpsArrays: ConsolidateOperation[][] = [];
   let consecutiveFailures = 0;
 
@@ -512,6 +515,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     }
 
     const chunk = chunks[chunkIdx];
+    warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
     const userPrompt = buildChunkPrompt(sourceName, chunk, chunkIdx, chunks.length, bodyTruncation);
 
     const raw = await tryLlmFeature(
@@ -540,7 +544,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
     if (process.env.AKM_DEBUG_LLM) {
       const preview = (raw.content ?? "").slice(0, 500);
-      console.error(`[akm:consolidate] chunk ${chunkIdx + 1} raw response (first 500 chars): ${preview}`);
+      warn(`[akm:consolidate] chunk ${chunkIdx + 1} raw response (first 500 chars): ${preview}`);
     }
 
     const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
@@ -595,6 +599,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     };
   }
 
+  warn(`[consolidate] plan: ${allOps.length} operation(s)`);
+
   // -- HTTP path: warn about quality and confirm unless auto-accepted --------
   if (isHttpPath) {
     warnings.push("Running on HTTP path — plan generated from truncated memory excerpts; quality may vary.");
@@ -641,6 +647,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   for (let opIndex = 0; opIndex < allOps.length; opIndex++) {
     const op = allOps[opIndex];
+    warn(`[consolidate] ${opIndex + 1}/${allOps.length} ${op.op} ${op.op === "merge" ? op.primary : op.ref}`);
     if (op.op === "merge") {
       const primaryEntry = memoryByRef.get(op.primary);
       if (!primaryEntry) {
@@ -909,16 +916,27 @@ async function generateMergedContent(
 }
 
 async function promptConfirm(message: string): Promise<boolean> {
+  // Non-TTY stdin (pipe, /dev/null, task runner) → skip confirmation, treat as "no".
+  if (!process.stdin.isTTY) {
+    warn(`[consolidate] stdin is not a TTY — skipping confirmation (treating as N)`);
+    return false;
+  }
   process.stdout.write(message);
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.once("line", (line: string) => {
+    let settled = false;
+    const done = (answer: boolean) => {
+      if (settled) return;
+      settled = true;
       rl.close();
       // Unref stdin so the event loop is not held open after the readline
       // interface closes. Without this, process.stdin remains in "resumed"
       // state and the process hangs after akmImprove() returns.
       process.stdin.unref();
-      resolve(line.trim().toLowerCase() === "y");
-    });
+      resolve(answer);
+    };
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.once("line", (line: string) => done(line.trim().toLowerCase() === "y"));
+    // stdin closed/EOF before a line arrived → treat as "no"
+    rl.once("close", () => done(false));
   });
 }
