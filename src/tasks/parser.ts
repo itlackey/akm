@@ -63,15 +63,17 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
 
   const hasWorkflow = "workflow" in data && data.workflow !== "";
   const hasPrompt = "prompt" in data && data.prompt !== "";
-  if (hasWorkflow && hasPrompt) {
+  const hasCommand = "command" in data && data.command !== "" && data.command !== null && data.command !== undefined;
+  const targetCount = [hasWorkflow, hasPrompt, hasCommand].filter(Boolean).length;
+  if (targetCount > 1) {
     throw new UsageError(
-      `Task "${id}" sets both \`workflow\` and \`prompt\`; pick exactly one. File: ${filePath}`,
+      `Task "${id}" sets more than one of \`workflow\`, \`prompt\`, \`command\`; pick exactly one. File: ${filePath}`,
       "INVALID_FLAG_VALUE",
     );
   }
-  if (!hasWorkflow && !hasPrompt) {
+  if (targetCount === 0) {
     throw new UsageError(
-      `Task "${id}" must set either \`workflow\` or \`prompt\` in frontmatter. File: ${filePath}`,
+      `Task "${id}" must set one of \`workflow\`, \`prompt\`, or \`command\` in frontmatter. File: ${filePath}`,
       "MISSING_REQUIRED_ARGUMENT",
     );
   }
@@ -87,6 +89,9 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
       ref,
       params: readParams(data.params, filePath),
     };
+  } else if (hasCommand) {
+    const cmd = readCommand(data.command, filePath, id);
+    target = { kind: "command", cmd };
   } else {
     const promptRaw = readString(data.prompt, "prompt", filePath);
     if (!promptRaw) {
@@ -105,7 +110,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
   let timeoutMs: number | null | undefined;
   if ("timeoutMs" in data) {
     const raw = data.timeoutMs;
-    if (raw === null || raw === 0 || (typeof raw === "number" && raw < 0)) {
+    if (raw === null || raw === "null" || raw === 0 || (typeof raw === "number" && raw < 0)) {
       timeoutMs = null;
     } else if (typeof raw === "number" && raw > 0) {
       timeoutMs = raw;
@@ -188,6 +193,27 @@ function readStringArray(value: unknown): string[] | undefined {
     return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
   }
   return undefined;
+}
+
+function readCommand(value: unknown, filePath: string, id: string): string[] {
+  if (Array.isArray(value)) {
+    const parts = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+    if (parts.length === 0) {
+      throw new UsageError(`Task "${id}" has empty \`command\` array. File: ${filePath}`, "INVALID_FLAG_VALUE");
+    }
+    return parts;
+  }
+  if (typeof value === "string") {
+    const parts = value.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+      throw new UsageError(`Task "${id}" has empty \`command\`. File: ${filePath}`, "INVALID_FLAG_VALUE");
+    }
+    return parts;
+  }
+  throw new UsageError(
+    `Frontmatter key "command" must be a string or array of strings. File: ${filePath}`,
+    "INVALID_FLAG_VALUE",
+  );
 }
 
 function readParams(value: unknown, filePath: string): Record<string, unknown> {

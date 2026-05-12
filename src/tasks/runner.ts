@@ -88,6 +88,12 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
 
   if (!task.enabled) {
     const finishedAt = now();
+    const disabledTarget: TaskRunResult["target"] =
+      task.target.kind === "workflow"
+        ? { kind: "workflow", ref: task.target.ref }
+        : task.target.kind === "command"
+          ? { kind: "prompt", profile: undefined }
+          : { kind: "prompt", profile: task.target.profile };
     const result: TaskRunResult = {
       id,
       status: "disabled",
@@ -95,10 +101,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       finishedAt: finishedAt.toISOString(),
       durationMs: finishedAt.getTime() - startedAt.getTime(),
       log: logPath,
-      target:
-        task.target.kind === "workflow"
-          ? { kind: "workflow", ref: task.target.ref }
-          : { kind: "prompt", profile: task.target.profile },
+      target: disabledTarget,
     };
     fs.writeFileSync(logPath, `[akm tasks] task "${id}" is disabled — skipping run.\n`);
     appendHistory(result);
@@ -115,6 +118,10 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     });
   }
 
+  if (task.target.kind === "command") {
+    return await runCommandTask({ task, logPath, startedAt, now });
+  }
+
   // Resolve config once here so runPromptTask does not call loadConfig()
   // on every dispatch in a batch run (Fix C6).
   const config = loadConfig();
@@ -129,6 +136,92 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     agentConfig: config.agent,
     agentTimeoutMs: config.agent?.timeoutMs ?? undefined,
   });
+}
+
+// ── command target ──────────────────────────────────────────────────────────
+
+async function runCommandTask(input: {
+  task: TaskDocument;
+  logPath: string;
+  startedAt: Date;
+  now: () => Date;
+}): Promise<TaskRunResult> {
+  const { task, logPath, startedAt, now } = input;
+  if (task.target.kind !== "command") throw new Error("invariant: command target");
+  const { cmd } = task.target;
+
+  const timeoutMs: number | null = task.timeoutMs !== undefined ? task.timeoutMs : null;
+
+  const logLines: string[] = [`[akm tasks] task=${task.id} kind=command cmd=${cmd.join(" ")}`];
+
+  let stdout = "";
+  let stderr = "";
+  let exitCode: number | null = null;
+
+  try {
+    const proc = Bun.spawn(cmd, {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    if (timeoutMs !== null) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          proc.kill("SIGTERM");
+        } catch {
+          /* ignore */
+        }
+      }, timeoutMs);
+    }
+
+    const [stdoutBuf, stderrBuf] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    await proc.exited;
+    if (timer !== undefined) clearTimeout(timer);
+
+    stdout = stdoutBuf;
+    stderr = stderrBuf;
+    exitCode = proc.exitCode ?? (timedOut ? 143 : 1);
+
+    if (timedOut) {
+      logLines.push(`timed_out=true timeout_ms=${timeoutMs}`);
+    }
+    logLines.push(`exit_code=${exitCode}`);
+    if (stdout) {
+      logLines.push("--- stdout ---");
+      logLines.push(stdout);
+    }
+    if (stderr) {
+      logLines.push("--- stderr ---");
+      logLines.push(stderr);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logLines.push(`spawn_error=${msg}`);
+    exitCode = 1;
+  }
+
+  fs.writeFileSync(logPath, `${logLines.join("\n")}\n`);
+  const finishedAt = now();
+  const status: TaskRunStatus = exitCode === 0 ? "completed" : "failed";
+  const result: TaskRunResult = {
+    id: task.id,
+    status,
+    startedAt: startedAt.toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    durationMs: finishedAt.getTime() - startedAt.getTime(),
+    log: logPath,
+    target: { kind: "prompt", profile: undefined },
+    detail: { exitCode },
+  };
+  appendHistory(result);
+  return result;
 }
 
 // ── workflow target ─────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@ import { createProposal, listProposals } from "../core/proposals";
 import { deleteAssetFromSource, resolveWriteTarget, writeAssetToSource } from "../core/write-source";
 import type { DbIndexedEntry } from "../indexer/db";
 import { closeDatabase, getAllEntries, openExistingDatabase } from "../indexer/db";
-import { callAi } from "../llm/call-ai";
+import { chatCompletion } from "../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -471,8 +471,10 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     };
   }
 
-  const isAgentPath = !!config.agent;
-  const isHttpPath = !isAgentPath && !!config.llm;
+  // Consolidation always uses the HTTP LLM client directly — never the agent
+  // CLI. The agent CLI is for interactive agent sessions (reflect, propose);
+  // structured JSON generation works better and faster via HTTP.
+  const isHttpPath = !!config.llm;
 
   // Chunk sizing: derive a safe chunk size from the configured model context
   // window (config.llm.contextLength) so that the full prompt (system prompt +
@@ -515,7 +517,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     const raw = await tryLlmFeature(
       "memory_consolidation",
       config,
-      () => callAi(config, userPrompt, { systemPrompt: CONSOLIDATE_SYSTEM_PROMPT }),
+      async () => {
+        if (!config.llm) return { ok: false as const, error: "No LLM configured for consolidation" };
+        try {
+          const content = await chatCompletion(config.llm, [
+            { role: "system", content: CONSOLIDATE_SYSTEM_PROMPT },
+            { role: "user", content: userPrompt },
+          ]);
+          return { ok: true as const, content };
+        } catch (e) {
+          return { ok: false as const, error: String(e) };
+        }
+      },
       { ok: false as const, error: `chunk ${chunkIdx + 1} failed` },
     );
 
@@ -872,10 +885,20 @@ async function generateMergedContent(
     secBody,
   ].join("\n");
 
-  const result = await tryLlmFeature("memory_consolidation", config, () => callAi(config, prompt), {
-    ok: false as const,
-    error: `merge content generation failed for ${primaryRef}`,
-  });
+  const result = await tryLlmFeature(
+    "memory_consolidation",
+    config,
+    async () => {
+      if (!config.llm) return { ok: false as const, error: "No LLM configured for consolidation" };
+      try {
+        const content = await chatCompletion(config.llm, [{ role: "user", content: prompt }]);
+        return { ok: true as const, content };
+      } catch (e) {
+        return { ok: false as const, error: String(e) };
+      }
+    },
+    { ok: false as const, error: `merge content generation failed for ${primaryRef}` },
+  );
 
   if (!result.ok) {
     warnings.push(result.error ?? `merge content generation failed for ${primaryRef}`);

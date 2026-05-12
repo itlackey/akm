@@ -4,6 +4,7 @@
  *   • a workflow target  — invoked via `startWorkflowRun()`
  *   • a prompt target    — invoked via `runAgent()` against the configured
  *                          agent harness (e.g. `opencode run`)
+ *   • a command target   — invoked directly via `Bun.spawn()`, no AI agent
  *
  * Tasks are stored as markdown files at `<stash>/tasks/<id>.md`. The
  * frontmatter holds the schedule and target; for inline-prompt tasks the
@@ -33,7 +34,13 @@ export interface TaskPromptTarget {
   profile?: string;
 }
 
-export type TaskTarget = TaskWorkflowTarget | TaskPromptTarget;
+export interface TaskCommandTarget {
+  kind: "command";
+  /** Pre-split argv — first element is the executable. */
+  cmd: string[];
+}
+
+export type TaskTarget = TaskWorkflowTarget | TaskPromptTarget | TaskCommandTarget;
 
 export interface TaskDocument {
   schemaVersion: typeof TASK_SCHEMA_VERSION;
