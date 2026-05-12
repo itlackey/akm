@@ -23,9 +23,9 @@ describe("v1 spec §11 — proposal queue", () => {
   const spec = readDoc(SPEC_PATH);
   const section = extractSection(spec, "## 11. Proposal queue");
 
-  test("§11 exists and is marked Planned for v1", () => {
+  test("§11 exists and is marked shipped", () => {
     expect(section).not.toBe("");
-    expect(section).toContain("Planned for v1");
+    expect(section).toContain("(shipped)");
   });
 
   test("§11.1 names the per-id proposal directory layout as the durable store", () => {

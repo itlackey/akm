@@ -227,7 +227,7 @@ export function setKey(vaultPath: string, key: string, value: string, comment?: 
 
   let out = lines.join("\n");
   if (!out.endsWith("\n")) out += "\n";
-  writeFileAtomic(vaultPath, out);
+  writeFileAtomic(vaultPath, out, 0o600);
 }
 
 /** Remove a key from the vault file. Returns true if the key was present. */

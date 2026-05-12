@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { saveConfig } from "../src/core/config";
+import { getDbPath } from "../src/core/paths";
 import {
   closeDatabase,
   openDatabase,
+  openExistingDatabase,
   rebuildFts,
   searchFts,
   setMeta,
@@ -180,8 +182,18 @@ describe("Parallel search: result parity", () => {
 
     await buildTestIndex(stashDir, {});
 
-    // Run the same query twice and verify identical results
+    // Run the same query twice and verify identical results.
+    // Reset utility scores between calls so that the score-bump side-effect of
+    // logSearchEvent() does not make the second call return different scores.
     const result1 = await akmSearch({ query: "deploy", source: "local" });
+    {
+      const db = openExistingDatabase(getDbPath());
+      try {
+        db.exec("DELETE FROM utility_scores");
+      } finally {
+        closeDatabase(db);
+      }
+    }
     const result2 = await akmSearch({ query: "deploy", source: "local" });
     const localHits1 = result1.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const localHits2 = result2.hits.filter((h): h is SourceSearchHit => h.type !== "registry");

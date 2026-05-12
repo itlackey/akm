@@ -458,6 +458,12 @@ function parseEmbeddingConnectionValue(value: string): EmbeddingConnectionConfig
   if (parsed.model !== undefined && typeof parsed.model !== "string") {
     throw new UsageError(`Invalid value for embedding: "model" must be a string`);
   }
+  if (parsed.dimension !== undefined && !Number.isInteger(parsed.dimension)) {
+    throw new UsageError(
+      `embedding.dimension: expected a positive integer, got ${parsed.dimension}`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   // Spread the full parsed object so unknown/future fields round-trip intact.
   return { endpoint: "", model: "", ...parsed } as EmbeddingConnectionConfig;
 }

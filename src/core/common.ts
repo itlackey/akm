@@ -48,11 +48,13 @@ export function isAssetType(type: string): type is AkmAssetType {
 /**
  * Write content to a file atomically via a temp file + rename.
  * Prevents partial-write corruption on crash.
+ * An optional `mode` (e.g. 0o600) is applied with `chmod` after the rename.
  */
-export function writeFileAtomic(target: string, content: string): void {
+export function writeFileAtomic(target: string, content: string, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
   fs.writeFileSync(tmp, content, "utf8");
   fs.renameSync(tmp, target);
+  if (mode !== undefined) fs.chmodSync(target, mode);
 }
 
 /**

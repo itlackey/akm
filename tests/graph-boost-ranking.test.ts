@@ -28,7 +28,7 @@ import path from "node:path";
 import { akmSearch } from "../src/commands/search";
 import { resetConfigCache, saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
-import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import { closeDatabase, openDatabase, openExistingDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, getGraphFilePath } from "../src/indexer/graph-extraction";
 import type { StashEntry } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
@@ -285,6 +285,17 @@ describe("graph boost — search-time integration (#207)", () => {
     const without = await searchHits("database");
     expect(without.length).toBeGreaterThan(0);
 
+    // Reset utility scores bumped by the first search's logSearchEvent() call
+    // so the second run sees the same baseline scores and produces identical
+    // hits and scores.
+    {
+      const db = openExistingDatabase(getDbPath());
+      try {
+        db.exec("DELETE FROM utility_scores");
+      } finally {
+        closeDatabase(db);
+      }
+    }
     // Re-run the same query while the file is uninstalled — must be
     // byte-identical (same hits, same scores) within the deterministic
     // tiebreaker.

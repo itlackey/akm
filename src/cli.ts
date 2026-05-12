@@ -169,7 +169,7 @@ const setupCommand = defineCommand({
   meta: {
     name: "setup",
     description:
-      "Interactive configuration wizard. Step 1: configure a small model connection (for indexing/enrichment). Step 2: configure an agent connection (CLI agent, embedded SDK, or none). Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
+      "Interactive configuration wizard. Configures embeddings/LLM connections (for indexing/enrichment), agent profiles (CLI agent, embedded SDK, or none), sources, and registries. Shows which features are enabled at the end. Use --config <json> or --yes for non-interactive/scripting mode.",
   },
   args: {
     config: {

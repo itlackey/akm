@@ -275,6 +275,8 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
 
   // Workflow validation noise gate (issue #273): suppress per-spec stderr lines
   // at default verbosity and emit a single summary instead.
+  // In verbose mode the per-spec lines are already printed by
+  // buildMetadataSkipWarning at generation time — no second pass needed here.
   if (!isVerbose()) {
     const workflowSkipWarnings = warnings.filter(isWorkflowSkipWarning);
     const skippedWorkflowCount = workflowSkipWarnings.length;
@@ -284,9 +286,6 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
         `${skippedWorkflowCount} ${noun} skipped due to validation errors; ` +
           "rerun with --verbose (or AKM_VERBOSE=1) to see details.",
       );
-      for (const w of workflowSkipWarnings) {
-        warn(w);
-      }
     }
   }
 

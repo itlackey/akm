@@ -184,15 +184,16 @@ describe("akm feedback", () => {
       ok: true,
       ref: "memory:deployment-notes",
       signal: "positive",
-      note: "saved me 30 minutes",
+      reason: "saved me 30 minutes",
+      tags: [],
     });
 
-    // Read events.jsonl directly and verify the note was persisted in metadata.
+    // Read events.jsonl directly and verify the reason was persisted in metadata.
     const { readEvents } = await import("../src/core/events");
     const { events } = readEvents({ type: "feedback", ref: "memory:deployment-notes" });
     expect(events.length).toBeGreaterThan(0);
     const md = (events.at(-1)?.metadata ?? {}) as Record<string, unknown>;
-    expect(md.note).toBe("saved me 30 minutes");
+    expect(md.reason).toBe("saved me 30 minutes");
     expect(md.signal).toBe("positive");
   });
 

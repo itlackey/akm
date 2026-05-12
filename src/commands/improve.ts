@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
+import { TYPE_DIRS } from "../core/asset-spec";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError } from "../core/errors";
@@ -407,7 +408,16 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       if (dbForRetrieval) closeDatabase(dbForRetrieval);
     }
 
-    const mergedRefs = [...signalFiltered, ...highRetrievalRefs];
+    // If the user explicitly scoped to a single ref, always act on it —
+    // skip the signal/retrieval filter entirely. The filter exists to avoid
+    // noisy "improve everything" runs; it should not gate an intentional
+    // per-ref invocation where the user's explicit choice is the signal.
+    //
+    // For type/all scope with no signals yet (fresh environment), fall back
+    // to all postCleanupRefs so that the first improve run is not a no-op.
+    const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+    const mergedRefs =
+      scope.mode === "ref" || signalAndRetrievalRefs.length === 0 ? postCleanupRefs : signalAndRetrievalRefs;
 
     const utilityMap = buildUtilityMap(mergedRefs);
     const sorted = [...mergedRefs].sort((a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0));
@@ -765,13 +775,17 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
 function findAssetFilePath(ref: string, stashDir?: string): string | null {
   try {
     const parsed = parseAssetRef(ref);
+    // Use the canonical type directory name from the asset spec registry
+    // (e.g. "memories" for type "memory") rather than naive type + "s"
+    // pluralization, which produces incorrect names like "memorys".
+    const typeDir = TYPE_DIRS[parsed.type] ?? `${parsed.type}s`;
     const sources = resolveSourceEntries(stashDir);
     for (const source of sources) {
       const candidates = [
-        path.join(source.path, `${parsed.type}s`, `${parsed.name}.md`),
-        path.join(source.path, `${parsed.type}`, `${parsed.name}.md`),
-        path.join(source.path, `${parsed.type}s`, parsed.name),
-        path.join(source.path, `${parsed.type}`, parsed.name),
+        path.join(source.path, typeDir, `${parsed.name}.md`),
+        path.join(source.path, parsed.type, `${parsed.name}.md`),
+        path.join(source.path, typeDir, parsed.name),
+        path.join(source.path, parsed.type, parsed.name),
       ];
       for (const candidate of candidates) {
         if (fs.existsSync(candidate)) return candidate;

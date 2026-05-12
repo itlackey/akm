@@ -19,9 +19,11 @@ export type EnhancedMetadata = { description?: string; searchHints?: string[]; t
  * Use an LLM to enhance a stash entry's metadata: improve description,
  * generate searchHints, and suggest tags.
  *
- * Routes through `tryLlmFeature("metadata_enhance", ...)` so the feature gate
- * is honoured uniformly. Returns `{}` when the gate is disabled or on error —
- * the caller already handles missing fields gracefully.
+ * When `akmConfig` is provided, routes through
+ * `tryLlmFeature("metadata_enhance", ...)` so the feature gate is honoured and
+ * errors are swallowed to `{}`. When `akmConfig` is `undefined` the gate is
+ * bypassed entirely — the LLM call runs unconditionally and errors propagate to
+ * the caller (pre-gate behaviour, used by direct callers such as tests).
  */
 export async function enhanceMetadata(
   config: LlmConnectionConfig,
@@ -48,39 +50,43 @@ Generate improved metadata for this ${entry.type}. Return JSON with these fields
 
 Return ONLY the JSON object, no explanation.`;
 
-  return tryLlmFeature(
-    "metadata_enhance",
-    akmConfig,
-    async () => {
-      const raw = await chatCompletion(
-        config,
-        [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        { signal },
-      );
+  const runLlm = async (): Promise<EnhancedMetadata> => {
+    const raw = await chatCompletion(
+      config,
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      { signal },
+    );
 
-      const parsed = parseJsonResponse<Record<string, unknown>>(raw);
-      if (!parsed) return {};
+    const parsed = parseJsonResponse<Record<string, unknown>>(raw);
+    if (!parsed) return {};
 
-      const result: EnhancedMetadata = {};
+    const result: EnhancedMetadata = {};
 
-      if (typeof parsed.description === "string" && parsed.description) {
-        result.description = parsed.description;
-      }
-      if (Array.isArray(parsed.searchHints)) {
-        result.searchHints = parsed.searchHints
-          .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-          .slice(0, 8);
-      }
-      if (Array.isArray(parsed.tags)) {
-        result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
-      }
+    if (typeof parsed.description === "string" && parsed.description) {
+      result.description = parsed.description;
+    }
+    if (Array.isArray(parsed.searchHints)) {
+      result.searchHints = parsed.searchHints
+        .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        .slice(0, 8);
+    }
+    if (Array.isArray(parsed.tags)) {
+      result.tags = parsed.tags.filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 10);
+    }
 
-      return result;
-    },
-    {},
-    { timeoutMs: config.timeoutMs },
-  );
+    return result;
+  };
+
+  // When no akmConfig is provided, bypass the feature gate entirely: run the
+  // LLM call directly and let errors propagate to the caller (pre-gate
+  // behaviour). When akmConfig is present, honour the feature flag and swallow
+  // errors to {} via tryLlmFeature.
+  if (akmConfig === undefined) {
+    return runLlm();
+  }
+
+  return tryLlmFeature("metadata_enhance", akmConfig, runLlm, {}, { timeoutMs: config.timeoutMs });
 }

@@ -11,9 +11,9 @@ describe("v1 spec §12 — agent CLI integration", () => {
   const spec = readDoc(SPEC_PATH);
   const section = extractSection(spec, "## 12. Agent CLI integration");
 
-  test("§12 exists and is marked Planned for v1", () => {
+  test("§12 exists and is marked shipped", () => {
     expect(section).not.toBe("");
-    expect(section).toContain("Planned for v1");
+    expect(section).toContain("(shipped)");
   });
 
   test("§12.1 lists every built-in profile", () => {

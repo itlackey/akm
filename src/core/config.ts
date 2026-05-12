@@ -657,6 +657,13 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
     config.stashInheritance = raw.stashInheritance;
   }
 
+  if (Array.isArray((raw as Record<string, unknown>).stashes)) {
+    throw new ConfigError(
+      "The legacy `stashes[]` config key is no longer supported. Rename it to `sources`.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   const sources = parseSourcesConfig(raw.sources);
   if (sources) {
     config.sources = sources;
