@@ -34,6 +34,7 @@ import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
+import { runSchemaRepairPass } from "./schema-repair";
 
 export interface AkmImproveOptions {
   scope?: string;
@@ -454,122 +455,29 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       console.error(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
       for (const f of validationFailures) console.error(`  ${f.ref}: ${f.reason}`);
     }
-    // Schema repair pass: attempt to fix validation failures via agent before skipping.
-    const schemaRepairs: Array<{
+    // Schema repair pass: attempt to fix validation failures via LLM before skipping.
+    let schemaRepairs: Array<{
       ref: string;
       reason: string;
       outcome: "written" | "skipped" | "error";
       error?: string;
     }> = [];
-    const repairedRefs = new Set<string>();
-
-    // Gap 3: cooldown constant for schema repair — re-running on the same
-    // asset every improve cycle without any change in the asset state is pure
-    // churn. 7 days matches the reflect cooldown default.
-    const SCHEMA_REPAIR_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+    let repairedRefs = new Set<string>();
 
     if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
       const baseConfigForRepair = options.config ?? loadConfig();
       const llmCfg = baseConfigForRepair.llm;
       if (llmCfg) {
-        for (const failure of validationFailures) {
-          if (Date.now() - startMs >= budgetMs) break;
-
-          // Gap 3 cooldown: skip repair if we already ran it recently.
-          const recentRepairs = readEvents({ type: "schema_repair_invoked", ref: failure.ref });
-          const lastRepair = recentRepairs.events
-            .filter((e) => e.metadata?.outcome === "written")
-            .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-          if (lastRepair?.ts && Date.now() - new Date(lastRepair.ts).getTime() < SCHEMA_REPAIR_COOLDOWN_MS) {
-            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-            continue;
-          }
-
-          let filePath = findAssetFilePath(failure.ref, options.stashDir);
-          if (!filePath) {
-            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-            continue;
-          }
-          // Skill assets are stored as directories — resolve to the markdown file inside.
-          try {
-            if (fs.statSync(filePath).isDirectory()) {
-              const candidates = ["SKILL.md", "index.md", "README.md"];
-              const found = candidates.map((f) => path.join(filePath as string, f)).find((p) => fs.existsSync(p));
-              if (!found) {
-                schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-                continue;
-              }
-              filePath = found;
-            }
-          } catch {
-            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-            continue;
-          }
-
-          try {
-            const raw = fs.readFileSync(filePath, "utf8");
-            const fm = parseFrontmatter(raw);
-
-            // Determine which fields need to be generated.
-            const missingFields: string[] = [];
-            if (!fm.data.description) missingFields.push("description");
-            if (isLessonCandidate(failure.ref) && !fm.data.when_to_use) missingFields.push("when_to_use");
-
-            if (missingFields.length === 0) {
-              schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-              continue;
-            }
-
-            const fieldList = missingFields.join(" and ");
-            console.error(`[improve] schema-repair ${failure.ref} (${fieldList})`);
-
-            const bodyPreview = (fm.content ?? raw).slice(0, 2000);
-            const llmResponse = await chatCompletion(llmCfg, [
-              {
-                role: "system",
-                content: `You generate concise asset frontmatter fields. Respond with a JSON object containing only the missing fields. No prose, no markdown fences.`,
-              },
-              {
-                role: "user",
-                content: `Generate the missing frontmatter fields (${fieldList}) for this ${parseAssetRef(failure.ref).type} asset. Return ONLY valid JSON like {"description": "...", "when_to_use": "..."}\n\n${bodyPreview}`,
-              },
-            ]);
-
-            const parsed = parseEmbeddedJsonResponse<Record<string, string>>(llmResponse.trim());
-            if (!parsed) {
-              schemaRepairs.push({
-                ref: failure.ref,
-                reason: failure.reason,
-                outcome: "error",
-                error: "LLM returned unparseable JSON for schema repair",
-              });
-              continue;
-            }
-
-            // Patch the generated fields into frontmatter and rewrite the file.
-            const newFm = { ...fm.data };
-            if (parsed.description) newFm.description = parsed.description;
-            if (parsed.when_to_use) newFm.when_to_use = parsed.when_to_use;
-            const fmStr = yamlStringify(newFm).trimEnd();
-            const newContent = `---\n${fmStr}\n---\n${fm.content}`;
-            fs.writeFileSync(filePath, newContent, "utf8");
-            console.error(`[improve] schema-repair written: ${failure.ref}`);
-            appendEvent({
-              eventType: "schema_repair_invoked",
-              ref: failure.ref,
-              metadata: { outcome: "written", reason: failure.reason },
-            });
-            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "written" });
-            repairedRefs.add(failure.ref);
-          } catch (e) {
-            appendEvent({
-              eventType: "schema_repair_invoked",
-              ref: failure.ref,
-              metadata: { outcome: "error", reason: failure.reason, error: String(e) },
-            });
-            schemaRepairs.push({ ref: failure.ref, reason: failure.reason, outcome: "error", error: String(e) });
-          }
-        }
+        const result = await runSchemaRepairPass(validationFailures, {
+          startMs,
+          budgetMs,
+          llmConfig: llmCfg,
+          stashDir: options.stashDir,
+          findFilePath: findAssetFilePath,
+          isLessonCandidateFn: isLessonCandidate,
+        });
+        schemaRepairs = result.repairs;
+        repairedRefs = result.repairedRefs;
       }
     }
 
