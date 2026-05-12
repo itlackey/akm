@@ -84,23 +84,3 @@ export const defaultRendererRegistry: RendererRegistry = {
     return ACTION_BUILDERS[type];
   },
 };
-
-/**
- * Build a registry from explicit maps. Useful for tests that need to assert
- * rendering behavior without touching the global singletons.
- */
-export function createRendererRegistry(maps: {
-  renderers?: Record<string, string>;
-  actionBuilders?: Record<string, (ref: string) => string>;
-}): RendererRegistry {
-  const renderers = maps.renderers ?? {};
-  const actionBuilders = maps.actionBuilders ?? {};
-  return {
-    rendererNameFor(type) {
-      return renderers[type];
-    },
-    actionBuilderFor(type) {
-      return actionBuilders[type];
-    },
-  };
-}

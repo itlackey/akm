@@ -1184,18 +1184,6 @@ export function extractDescriptionFromComments(filePath: string): string | null 
   return null;
 }
 
-export function extractFrontmatterDescription(filePath: string): string | null {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-
-  const parsed = parseFrontmatter(content);
-  return toStringOrUndefined(parsed.data.description) ?? null;
-}
-
 export function extractPackageMetadata(
   dirPath: string,
 ): { name?: string; description?: string; keywords?: string[] } | null {

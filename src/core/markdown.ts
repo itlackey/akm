@@ -104,3 +104,21 @@ export function formatToc(toc: KnowledgeToc): string {
   parts.push(`\n${toc.totalLines} lines total`);
   return parts.join("\n");
 }
+
+// ── Fence stripping ──────────────────────────────────────────────────────────
+
+/**
+ * Best-effort fence stripping. Strips `<think>` reasoning blocks emitted by
+ * local LLMs (e.g. Qwen3) before the content, which otherwise breaks YAML
+ * frontmatter detection. Only strips outer triple-fence pairs — leaves inner
+ * code blocks intact.
+ */
+export function stripMarkdownFences(raw: string): string {
+  const stripped = raw
+    .trim()
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .trim();
+  const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
+  if (fence) return fence[1].trim();
+  return stripped;
+}

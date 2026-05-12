@@ -15,7 +15,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { getConfigPath, loadConfig, resetConfigCache } from "../src/core/config";
+import { loadConfig, resetConfigCache } from "../src/core/config";
+import { getConfigPath } from "../src/core/paths";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalHome = process.env.HOME;
