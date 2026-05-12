@@ -6,19 +6,21 @@ This document is the authoritative reference for every location on disk where ak
 
 All paths below use these resolved base directories:
 
-| Variable | Default (Linux/macOS) | Override |
-|---|---|---|
-| `$CACHE` | `~/.cache/akm` | `$AKM_CACHE_DIR` env var |
-| `$CONFIG` | `~/.config/akm` | `$AKM_CONFIG_DIR` env var |
-| `$STASH` | `~/akm` | `$AKM_STASH_DIR` env var |
+| Variable | Default (Linux/macOS) | Default (Windows) | Override |
+|---|---|---|---|
+| `$CONFIG` | `~/.config/akm` | `%APPDATA%\akm` | `AKM_CONFIG_DIR` |
+| `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `AKM_CACHE_DIR` |
+| `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `AKM_DATA_DIR` |
+| `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR` |
+| `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_STASH_DIR` |
 
-On Windows: `$CACHE` → `%LOCALAPPDATA%\akm`, `$CONFIG` → `%APPDATA%\akm`.
+> **Storage reorganization (v0.9+):** akm now uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `bun scripts/migrate-storage.ts` to migrate existing installations.
 
 ---
 
 ## SQLite Databases
 
-### `$CACHE/index.db` — Main Search Index
+### `$DATA/index.db` — Main Search Index
 
 Schema version `DB_VERSION = 11`. WAL mode, `busy_timeout = 5000 ms`, foreign keys ON. Optionally loads the `sqlite-vec` extension for fast ANN (approximate nearest-neighbour) vector search.
 
@@ -162,9 +164,21 @@ Queried defensively by `getZeroResultSearches()` but not created by current sche
 | `result_count` | INTEGER |
 | `ts` | INTEGER (Unix ms) |
 
+#### Table: `registry_index_cache`
+
+Registry index cache: `registry_url` PK, `fetched_at`, `etag`, `last_modified`, `index_json`. TTL enforced by `getRegistryIndexCache()`. Replaces flat JSON files in `$CACHE/registry-index/`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `slug` | TEXT PRIMARY KEY | Same slug as former filename; registry URL with non-alphanumeric → `-`, max 120 chars |
+| `body_json` | TEXT NOT NULL | Raw registry index JSON |
+| `fetched_at` | TEXT NOT NULL | ISO-8601 |
+| `fresh_until` | TEXT NOT NULL | ISO-8601; used for TTL check |
+| `stale_until` | TEXT NOT NULL | ISO-8601; used for stale-fallback |
+
 ---
 
-### `$CACHE/workflow.db` — Workflow Run State
+### `$DATA/workflow.db` — Workflow Run State
 
 WAL mode, foreign keys ON. No automatic cleanup — runs persist indefinitely.
 
@@ -205,18 +219,84 @@ Primary key: `(run_id, step_id)`.
 
 ---
 
+### `$DATA/state.db` — Migration-safe Durable State Database
+
+WAL mode, foreign keys ON. Schema uses Flyway-pattern migrations — never drops durable rows. Created on first event write.
+
+#### Table: `schema_migrations`
+
+Tracks applied migration IDs.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Migration identifier |
+| `applied_at` | TEXT NOT NULL | ISO-8601 |
+
+#### Table: `events`
+
+Replaces `events.jsonl`. Indexed on `event_type`, `ref`, `ts`. Monotonic rowid replaces byte-offset cursor.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | Monotonic cursor (replaces JSONL byte offset) |
+| `schema_version` | INTEGER NOT NULL DEFAULT 1 | |
+| `ts` | TEXT NOT NULL | ISO-8601 |
+| `event_type` | TEXT NOT NULL | See event type catalog below |
+| `ref` | TEXT | Asset ref or NULL |
+| `metadata` | TEXT | JSON blob or NULL |
+| `created_at` | TEXT NOT NULL DEFAULT (datetime('now')) | |
+
+Indexes: `idx_events_type` on `event_type`, `idx_events_ref` on `ref`, `idx_events_ts` on `ts`.
+
+#### Table: `proposals`
+
+Replaces per-uuid JSON directories under `$STASH/.akm/proposals/`. Indexed on `stash_dir+status`, `ref+status`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | UUID v4 |
+| `ref` | TEXT NOT NULL | Asset ref |
+| `stash_dir` | TEXT NOT NULL | Stash root directory |
+| `status` | TEXT NOT NULL | `pending`, `accepted`, `rejected` |
+| `source` | TEXT | Origin (e.g. `reflect`) |
+| `payload_json` | TEXT NOT NULL | Full proposal payload JSON |
+| `created_at` | TEXT NOT NULL | ISO-8601 |
+| `updated_at` | TEXT NOT NULL | ISO-8601 |
+
+Indexes: `idx_proposals_stash_status` on `(stash_dir, status)`, `idx_proposals_ref_status` on `(ref, status)`.
+
+#### Table: `task_history`
+
+Replaces per-task JSONL files. Indexed on `task_id`, `started_at`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
+| `task_id` | TEXT NOT NULL | Task identifier |
+| `status` | TEXT NOT NULL | |
+| `started_at` | TEXT NOT NULL | ISO-8601 |
+| `finished_at` | TEXT | ISO-8601; NULL while running |
+| `duration_ms` | INTEGER | |
+| `log` | TEXT | |
+| `target` | TEXT | |
+| `detail` | TEXT | JSON blob for extra fields |
+
+Indexes: `idx_task_history_task` on `task_id`, `idx_task_history_started` on `started_at`.
+
+---
+
 ## JSONL Event Streams
 
-### `$CACHE/events.jsonl` — Append-only Audit Log
+### `$CACHE/events.jsonl` — **Replaced by `events` table in `$DATA/state.db`**
 
-Written with `fs.appendFileSync` + `O_APPEND`. Atomic for payloads under PIPE_BUF (~4 KiB on Linux). Safe for concurrent writers. Grows indefinitely — **no automatic cleanup**.
+The JSONL file at `$CACHE/events.jsonl` is no longer written by akm. Existing files can be migrated using `scripts/migrate-storage.ts`.
 
-**Wire format (one object per line):**
+**Wire format (one object per line, historical reference):**
 ```json
 {"schemaVersion":1,"ts":"2026-05-11T01:37:00.000Z","eventType":"<verb>","ref":"<type:name>","metadata":{}}
 ```
 
-> `id` is the byte offset of the line — assigned at read time via `readEvents()`, not stored on disk.
+> `id` was the byte offset of the line — assigned at read time via `readEvents()`, not stored on disk. In the new `events` table, the monotonic `INTEGER PRIMARY KEY` replaces the byte-offset cursor.
 
 **Full event type catalog:**
 
@@ -234,16 +314,19 @@ Written with `fs.appendFileSync` + `O_APPEND`. Atomic for payloads under PIPE_BU
 | `reflect_invoked` | `akm reflect` | `task`, `profile` |
 | `propose_invoked` | `akm propose` | `type`, `name`, `task`, `profile` |
 | `distill_invoked` | `akm distill` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
-| `search` | `akm search` | `query`, `hitCount`, `resultRefs[]` |
+| `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `show` | `akm show` | `type`, `name` |
+| `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
 | `improve_invoked` | `akm improve` | `scope`, `dryRun`, `assetCount` |
+| `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
 | `consolidate_completed` | `akm improve` (post-consolidation) | `processed`, `merged` |
 | `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (written\|error), `reason`, `error?` |
+| `reflect_completed` | `akm reflect` (after proposal created) | `proposalId`, `source` |
 | `workflow_started` | workflow engine | `runId` |
 | `workflow_step_completed` | workflow engine | `runId`, `stepId` |
 | `workflow_finished` | workflow engine | `runId` |
 
-**Read API:** `readEvents(options)` — filter by `since`, `sinceOffset` (byte cursor), `type`, `ref`, `includeTags`, `excludeTags`. Returns `{ events, nextOffset }`. `tailEvents()` provides a polling loop.
+**Read API:** `readEvents(options)` — filter by `since`, `sinceOffset` (row id cursor), `type`, `ref`, `includeTags`, `excludeTags`. Returns `{ events, nextOffset }`. `tailEvents()` provides a polling loop.
 
 **Consumers and purpose:**
 
@@ -262,7 +345,9 @@ Written with `fs.appendFileSync` + `O_APPEND`. Atomic for payloads under PIPE_BU
 
 ---
 
-### `$CACHE/tasks/history/<task-id>.jsonl` — Task Run History
+### `$STATE/tasks/history/<task-id>.jsonl` — Task Run History
+
+New records written to `$STATE/tasks/history/` AND to `task_history` table in `state.db`. Legacy files remain at `$CACHE/tasks/history/` and are read as fallback.
 
 One line per execution: `{ id, status, startedAt, finishedAt, durationMs, log, target, detail? }`. No cleanup.
 
@@ -278,10 +363,11 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 |---|---|---|
 | `$CONFIG/config.json` | User config (stash dirs, sources, LLM endpoints, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
 | `<cwd>/.akm/config.json` | Project-scoped config overrides. Walked up to filesystem root; all ancestors merged. | Manual |
-| `$CACHE/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json` before each write. `config.latest.json` symlink always points to the newest backup. | Accumulate forever |
-| `$CONFIG/akm.lock` | Installed stash entries: `{ id, source, ref, resolvedVersion, resolvedRevision, integrity }`. Written atomically. | Managed by `akm add/remove` |
+| `$DATA/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json` before each write. `config.latest.json` symlink always points to the newest backup. | Accumulate forever |
+| `$CONFIG/akm.lock` | Installed stash entries: `{ id, source, ref, resolvedVersion, resolvedRevision, integrity }`. Written atomically. Now reads from `$DATA/akm.lock` first (migration fallback from CONFIG). | Managed by `akm add/remove` |
+| `$DATA/akm.lock` | Installed stash lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm add/remove` |
 | `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
-| `$CACHE/registry-index/<slug>.json` | Cached remote registry index (v2/v3 schema). Fresh 1h; stale fallback 7d. Slug = registry URL with non-alphanumeric → `-`, max 120 chars. | TTL |
+| `$CACHE/registry-index/<slug>.json` | @deprecated — data now stored in `registry_index_cache` table in `$DATA/index.db`. Cached remote registry index (v2/v3 schema). Fresh 1h; stale fallback 7d. | TTL |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
 | `$STASH/.akm/graph.json` | Knowledge graph artifact: `{ schemaVersion, generatedAt, nodes, edges }` extracted from memory + knowledge assets via LLM. Written atomically. | Rebuilt each index run |
@@ -340,7 +426,7 @@ Each `$STASH/wikis/<wikiName>/` contains:
 
 | Path | Format | Purpose |
 |---|---|---|
-| `$CONFIG/akm.lock.lck` | Plain text (PID) | Advisory write-lock for `akm.lock` mutations. Created with `O_EXCL`; stale locks (dead PIDs) auto-reclaimed. Best-effort: 3 retries × 100ms. |
+| `$DATA/akm.lock.lck` | Plain text (PID) | Advisory write-lock for `akm.lock` mutations. Created with `O_EXCL`; stale locks (dead PIDs) auto-reclaimed. Best-effort: 3 retries × 100ms. |
 | `$STASH/.akm/improve.lock` | JSON `{ pid, startedAt }` | Prevents concurrent `akm improve` runs on the same stash. Stale locks auto-reclaimed by PID liveness check. |
 
 ---
@@ -408,7 +494,7 @@ akm search / akm show
 
 akm feedback
   → insertUsageEvent()       → usage_events (signal column)
-  → appendEvent()            → events.jsonl (for improve/distill/reflect pipeline)
+  → appendEvent()            → events table in state.db (for improve/distill/reflect pipeline)
 
 akm index  (recomputeUtilityScores)
   → reads usage_events aggregates per entry
@@ -424,7 +510,7 @@ akm search  (ranking phase)
   → score        *= min(1 + utility × recencyFactor × 0.5, 1.5)
 ```
 
-**Dual-write rationale:** `usage_events` (SQLite) powers fast SQL aggregation for the EMA recompute during indexing. `events.jsonl` powers text-filtered reads (by ref, type, tags, since-cutoff) used by the improve/distill/reflect pipeline without requiring the index DB to be open.
+**Dual-write rationale:** `usage_events` (SQLite in `$DATA/index.db`) powers fast SQL aggregation for the EMA recompute during indexing. `events` table in `$DATA/state.db` powers text-filtered reads (by ref, type, tags, since-cutoff) used by the improve/distill/reflect pipeline without requiring the index DB to be open.
 
 ---
 
@@ -432,44 +518,45 @@ akm search  (ranking phase)
 
 | # | Path | Format | Purpose |
 |---|---|---|---|
-| 1 | `$CACHE/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, usage events, LLM cache |
-| 2 | `$CACHE/workflow.db` | SQLite 3 (WAL) | Workflow run state and per-step status |
-| 3 | `$CACHE/events.jsonl` | JSONL (append-only) | Audit event log for all mutating CLI operations |
-| 4 | `$CACHE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history |
+| 1 | `$DATA/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, usage events, LLM cache, registry index cache |
+| 2 | `$DATA/workflow.db` | SQLite 3 (WAL) | Workflow run state and per-step status |
+| 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event log, proposals, task history (migration-safe) |
+| 4 | `$STATE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history (legacy fallback; new writes also go to state.db) |
 | 5 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 6 | `$CONFIG/config.json` | JSONC | User configuration |
 | 7 | `<cwd>/.akm/config.json` | JSONC | Project-scoped config overrides |
-| 8 | `$CACHE/config-backups/config-<ts>.json` | JSON | Config pre-save backups |
-| 9 | `$CONFIG/akm.lock` | JSON | Installed stash lockfile |
-| 10 | `$CONFIG/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
-| 11 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
-| 12 | `$CACHE/registry-index/<slug>.json` | JSON | Remote registry index cache |
-| 13 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
-| 14 | `$STASH/.akm/consolidate-journal.json` | JSON | Consolidation write-ahead journal |
-| 15 | `$STASH/.akm/graph.json` | JSON | Knowledge graph artifact |
-| 16 | `$STASH/.akm/proposals/<uuid>/proposal.json` | JSON | Pending proposals |
-| 17 | `$STASH/.akm/proposals/archive/<uuid>/proposal.json` | JSON | Archived proposals |
-| 18 | `$STASH/.akm/archive/<ts>-<i>-<name>.md` | FM+Markdown | Soft-invalidated memories (90d TTL) |
-| 19 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Pre-merge file backups |
-| 20 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Markdown | Belief-state archived memories |
-| 21 | `$STASH/.akm/distill-rejected/<ts>-<ref>.md` | FM+Markdown | Quality-gate rejected lessons |
-| 22 | `$STASH/.akm/improve.lock` | JSON | Improve run mutex |
-| 23 | `$STASH/{skills,commands,agents,...}/` | FM+Markdown | Asset files (working stash) |
-| 24 | `$STASH/wikis/<name>/` | Markdown | Wiki content |
-| 25 | `<dir>/.stash.json` | JSON | Legacy metadata (read-only) |
-| 26 | `$STASH/memories/MEMORY.md` | Markdown | Memory index (user-maintained, read-only for akm) |
-| 27 | `$CACHE/registry/<src>/<id>/<ver>/` | Binary+FS | Downloaded stash package cache |
-| 28 | `$CACHE/registry/<src>/<id>/repo/` | Git tree | Git source mirror cache |
-| 29 | `$CACHE/registry-index/website-<hash>/` | JSON+MD | Website mirror cache |
-| 30 | `$CACHE/registry-build/` | JSON+FS | Registry build workspace |
-| 31 | `$CACHE/tasks/logs/<id>/` | Plain text | Task run stdout/stderr |
-| 32 | `$CACHE/bin/rg` | Binary | Auto-downloaded ripgrep |
-| 33 | `~/Library/LaunchAgents/com.akm.task.<id>.plist` | XML | macOS scheduled task (launchd) |
-| 34 | User crontab | Cron text | Linux scheduled tasks |
-| 35 | Windows Task Scheduler `\akm\<id>` | XML | Windows scheduled tasks |
-| 36 | `~/.claude/projects/**/*.jsonl` | JSONL | Claude Code session logs (read-only input) |
-| 37 | `~/.local/share/opencode/` | JSONL | OpenCode session logs (read-only input) |
+| 8 | `$DATA/config-backups/config-<ts>.json` | JSON | Config pre-save backups |
+| 9 | `$DATA/akm.lock` | JSON | Installed stash lockfile (moved from $CONFIG) |
+| 10 | `$CONFIG/akm.lock` | JSON | Installed stash lockfile (legacy location; reads $DATA/akm.lock first) |
+| 11 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
+| 12 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
+| 13 | `$CACHE/registry-index/<slug>.json` | JSON | @deprecated — Remote registry index cache (replaced by registry_index_cache in index.db) |
+| 14 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
+| 15 | `$STASH/.akm/consolidate-journal.json` | JSON | Consolidation write-ahead journal |
+| 16 | `$STASH/.akm/graph.json` | JSON | Knowledge graph artifact |
+| 17 | `$STASH/.akm/proposals/<uuid>/proposal.json` | JSON | Pending proposals |
+| 18 | `$STASH/.akm/proposals/archive/<uuid>/proposal.json` | JSON | Archived proposals |
+| 19 | `$STASH/.akm/archive/<ts>-<i>-<name>.md` | FM+Markdown | Soft-invalidated memories (90d TTL) |
+| 20 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Markdown | Pre-merge file backups |
+| 21 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Markdown | Belief-state archived memories |
+| 22 | `$STASH/.akm/distill-rejected/<ts>-<ref>.md` | FM+Markdown | Quality-gate rejected lessons |
+| 23 | `$STASH/.akm/improve.lock` | JSON | Improve run mutex |
+| 24 | `$STASH/{skills,commands,agents,...}/` | FM+Markdown | Asset files (working stash) |
+| 25 | `$STASH/wikis/<name>/` | Markdown | Wiki content |
+| 26 | `<dir>/.stash.json` | JSON | Legacy metadata (read-only) |
+| 27 | `$STASH/memories/MEMORY.md` | Markdown | Memory index (user-maintained, read-only for akm) |
+| 28 | `$CACHE/registry/<src>/<id>/<ver>/` | Binary+FS | Downloaded stash package cache |
+| 29 | `$CACHE/registry/<src>/<id>/repo/` | Git tree | Git source mirror cache |
+| 30 | `$CACHE/registry-index/website-<hash>/` | JSON+MD | Website mirror cache |
+| 31 | `$CACHE/registry-build/` | JSON+FS | Registry build workspace |
+| 32 | `$CACHE/tasks/logs/<id>/` | Plain text | Task run stdout/stderr |
+| 33 | `$CACHE/bin/rg` | Binary | Auto-downloaded ripgrep |
+| 34 | `~/Library/LaunchAgents/com.akm.task.<id>.plist` | XML | macOS scheduled task (launchd) |
+| 35 | User crontab | Cron text | Linux scheduled tasks |
+| 36 | Windows Task Scheduler `\akm\<id>` | XML | Windows scheduled tasks |
+| 37 | `~/.claude/projects/**/*.jsonl` | JSONL | Claude Code session logs (read-only input) |
+| 38 | `~/.local/share/opencode/` | JSONL | OpenCode session logs (read-only input) |
 
 ---
 
-Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDbPath`, `getWorkflowDbPath`, `getEventsPath`, `getSemanticStatusPath`).
+Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getStateDir`, `getDbPath`, `getWorkflowDbPath`, `getStateDbPath`, `getEventsPath`, `getSemanticStatusPath`).
