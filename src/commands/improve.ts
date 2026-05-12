@@ -32,7 +32,7 @@ import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
-import { type AkmDistillResult, akmDistill } from "./distill";
+import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 
 export interface AkmImproveOptions {
@@ -639,13 +639,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
         if (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir)) {
           const parsedPlannedRef = parseAssetRef(planned.ref);
-
-          const slug = `${parsedPlannedRef.type}-${parsedPlannedRef.name}`.toLowerCase();
-          const safe = slug
-            .replace(/[^a-z0-9-]+/g, "-")
-            .replace(/-+/g, "-")
-            .replace(/^-|-$/g, "");
-          const lessonRef = `lesson:${safe}-lesson`;
+          const lessonRef = deriveLessonRef(planned.ref);
           const dedupeStashDir = primaryStashDir ?? options.stashDir;
           if (dedupeStashDir) {
             const existingProposals = listProposals(dedupeStashDir, { ref: lessonRef });
