@@ -471,6 +471,95 @@ integrations where no CLI wrapper is available. A minimal SDK-mode config:
 If `endpoint` and `apiKey` are omitted, the profile inherits them from the
 top-level `llm` block.
 
+### `agent.processes` — per-process profile and timeout overrides
+
+`agent.processes` lets you route specific akm commands to different agent
+profiles and timeout budgets without changing the global default. Only processes
+that spawn an agent CLI are affected.
+
+```typescript
+// TypeScript type (simplified)
+type ProcessEntry = string | { profile?: string; timeoutMs?: number | null };
+
+interface AgentConfig {
+  default?: string;
+  timeoutMs?: number;
+  profiles?: Record<string, AgentProfileConfig>;
+  processes?: Record<string, ProcessEntry>;  // per-process overrides
+}
+```
+
+**Supported process keys:**
+
+| Process key | Command / code path | Notes |
+| --- | --- | --- |
+| `"reflect"` | `akm reflect` / `akm improve` → reflect loop | `improve` forwards `agentProcess: "reflect"` |
+| `"propose"` | `akm propose` | Fresh asset authoring via agent |
+| `"task"` | `akm tasks run` (prompt targets) | Per-task `target.profile` still wins; `processes.task` provides a fallback |
+
+> `distill`, `consolidate`, `memory-inference`, and `graph-extraction` use the
+> LLM HTTP client directly — they do **not** spawn agent CLIs. Setting
+> `processes.distill` (for example) has no effect on those code paths.
+
+**String shorthand** — the value is used as the profile name:
+
+```jsonc
+{
+  "agent": {
+    "default": "claude",
+    "processes": {
+      "reflect": "opencode"   // use the opencode profile for akm reflect
+    }
+  }
+}
+```
+
+**Object form** — supply `profile` and/or `timeoutMs`:
+
+```jsonc
+{
+  "agent": {
+    "default": "claude",
+    "timeoutMs": 120000,
+    "profiles": {
+      "codecs": { "bin": "codecs", "args": ["--headless"], "stdio": "captured" },
+      "claude-code": { "bin": "claude", "args": [], "stdio": "interactive" }
+    },
+    "processes": {
+      "reflect": {
+        "profile": "codecs",
+        "timeoutMs": 90000
+      },
+      "propose": {
+        "profile": "claude-code",
+        "timeoutMs": 300000
+      },
+      "task": {
+        "timeoutMs": null
+      }
+    }
+  }
+}
+```
+
+**Timeout resolution chain** for a named process:
+
+1. `agent.processes[name].timeoutMs` — `null` means unlimited (no kill timer).
+2. `agent.profiles[resolvedProfileName].timeoutMs` — profile-level override.
+3. `agent.timeoutMs` — global agent timeout.
+4. Built-in default (`DEFAULT_AGENT_TIMEOUT_MS`, currently 60 000 ms).
+
+**Profile resolution chain** for a named process:
+
+1. `agent.processes[name]` — if a string, that is the profile name; if an
+   object, `profile` is the name.
+2. Falls back to `agent.default` when the process entry omits `profile`.
+3. Throws `ConfigError` when neither is set (same as the existing no-default
+   behaviour).
+
+If the process key is absent from `processes`, existing resolution behaviour
+is unchanged.
+
 ## `llm.features.*` map
 
 **Status: Available since 0.7.0.**

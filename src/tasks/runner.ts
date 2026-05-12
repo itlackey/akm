@@ -29,6 +29,7 @@ import { NotFoundError } from "../core/errors";
 import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
+import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunDetail } from "../workflows/runs";
 import { startWorkflowRun } from "../workflows/runs";
@@ -238,14 +239,32 @@ async function runPromptTask(input: {
   // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
   // that invoke runPromptTask directly without threading config.
   const agentCfg = input.agentConfig !== undefined ? input.agentConfig : loadConfig().agent;
+
+  // Resolve the profile for this task. When the task doc specifies a profile,
+  // use it directly. Otherwise fall back to the per-process config for "task"
+  // (agent.processes["task"]), which itself falls back to agent.default.
+  let profile: ReturnType<typeof requireAgentProfile>;
+  let processTimeoutMs: number | undefined;
+  if (task.target.profile) {
+    // Task doc explicitly names a profile — honour it directly.
+    profile = requireAgentProfile(agentCfg, task.target.profile);
+  } else {
+    // No per-task profile: use process config for "task" as a fallback.
+    const resolved = resolveProcessAgentProfile("task", agentCfg);
+    profile = resolved.profile;
+    processTimeoutMs = resolved.timeoutMs;
+  }
+
   // Task-level timeoutMs (including null = disabled) wins over global config.
+  // Resolution: task.timeoutMs → process entry timeoutMs → input.agentTimeoutMs → agentCfg.timeoutMs.
   const agentTimeoutMs =
     task.timeoutMs !== undefined
       ? task.timeoutMs
-      : input.agentTimeoutMs !== undefined
-        ? input.agentTimeoutMs
-        : agentCfg?.timeoutMs;
-  const profile = requireAgentProfile(agentCfg, task.target.profile);
+      : processTimeoutMs !== undefined
+        ? processTimeoutMs
+        : input.agentTimeoutMs !== undefined
+          ? input.agentTimeoutMs
+          : agentCfg?.timeoutMs;
   const promptText = await resolvePromptText(task, stashDir);
 
   const result = await runAgentImpl(profile, promptText, {

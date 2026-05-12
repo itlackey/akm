@@ -1458,6 +1458,12 @@ function mergeAgentConfig(base: AgentConfig, override: AgentConfig): AgentConfig
     }
     merged.profiles = profiles;
   }
+  // Shallow merge per-key: later layer wins per process name (same as profiles).
+  const baseProcesses = base.processes;
+  const overrideProcesses = override.processes;
+  if (baseProcesses || overrideProcesses) {
+    merged.processes = { ...(baseProcesses ?? {}), ...(overrideProcesses ?? {}) };
+  }
   return merged;
 }
 

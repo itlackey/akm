@@ -65,6 +65,13 @@ export interface AkmImproveOptions {
   reflectCooldownDays?: number;
   /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. */
   distillCooldownDays?: number;
+  /**
+   * Named process key forwarded to `akmReflect` so the improve loop picks up
+   * per-process agent config (e.g. `agent.processes["reflect"]`).
+   * Defaults to `"reflect"`. Set to another process name to route improve's
+   * reflect calls through a different profile.
+   */
+  agentProcess?: string;
 }
 
 export interface ImproveEligibleRef {
@@ -770,6 +777,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           task: options.task,
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
           ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
+          agentProcess: options.agentProcess ?? "reflect",
         });
         actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
         if (!reflectResult.ok) {

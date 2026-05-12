@@ -24,9 +24,16 @@ import {
   type RunAgentOptions,
   runAgent,
 } from "../integrations/agent";
+import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
-import { baseFailureFields, enoentHintMessage, isEnoentFailure, resolveAgentProfile } from "./agent-support";
+import {
+  baseFailureFields,
+  enoentHintMessage,
+  isEnoentFailure,
+  loadAgentConfigFromDisk,
+  resolveAgentProfile,
+} from "./agent-support";
 
 export interface AkmProposeOptions {
   type: string;
@@ -39,6 +46,12 @@ export interface AkmProposeOptions {
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   agentConfig?: AgentConfig;
   ctx?: ProposalsContext;
+  /**
+   * Named process to use for per-process agent config lookup. Defaults to
+   * `"propose"`. When an explicit `--profile` flag is given, the process
+   * lookup is skipped and the flag value wins.
+   */
+  agentProcess?: string;
 }
 
 export interface AkmProposeFailure {
@@ -109,9 +122,29 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   });
 
   // 2. Resolve profile.
+  // When an explicit --profile flag is given, honour it directly (existing
+  // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
+  // agent config (agent.processes["propose"]) is picked up automatically.
   let profile: AgentProfile;
+  let resolvedTimeoutMs: number | undefined = options.timeoutMs;
   try {
-    profile = resolveAgentProfile(options);
+    if (options.agentProfile) {
+      // Test seam: injected profile bypasses all config.
+      profile = options.agentProfile;
+    } else if (options.profile) {
+      // Explicit --profile flag wins over process config.
+      profile = resolveAgentProfile(options);
+    } else {
+      // Use per-process config resolution (falls back to agent.default).
+      const agent = options.agentConfig ?? loadAgentConfigFromDisk();
+      const processName = options.agentProcess ?? "propose";
+      const resolved = resolveProcessAgentProfile(processName, agent);
+      profile = resolved.profile;
+      // Only apply process-resolved timeoutMs when caller didn't supply one.
+      if (resolvedTimeoutMs === undefined) {
+        resolvedTimeoutMs = resolved.timeoutMs;
+      }
+    }
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
@@ -148,7 +181,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     const runOptions: RunAgentOptions = {
       stdio: "captured",
       parseOutput: "text",
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
       ...(options.runAgentOptions ?? {}),
     };
     result = await runAgent(profile, prompt, runOptions);
@@ -158,7 +191,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       profile,
       prompt,
       draftFilePath: resolvedDraftPath,
-      timeoutMs: options.timeoutMs,
+      timeoutMs: resolvedTimeoutMs,
     });
     result = {
       ok: pipelineResult.ok,

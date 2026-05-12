@@ -35,7 +35,7 @@ import {
 } from "./profiles";
 
 /** Keys recognised at the top level of an `agent` config block. */
-const KNOWN_AGENT_KEYS = new Set(["default", "timeoutMs", "profiles"]);
+const KNOWN_AGENT_KEYS = new Set(["default", "timeoutMs", "profiles", "processes"]);
 
 /** Keys recognised on a profile entry. */
 const KNOWN_PROFILE_KEYS = new Set([
@@ -80,11 +80,37 @@ export interface AgentProfileConfig {
   apiKey?: string;
 }
 
+/**
+ * A per-process agent configuration entry. Either a profile name string
+ * (shorthand) or an object with optional `profile` and `timeoutMs` fields.
+ *
+ * - String: `"reflect"` → use profile named `"reflect"` (or fall back to default).
+ * - Object: `{ profile: "codecs", timeoutMs: 120000 }` — explicit profile + timeout.
+ * - `timeoutMs: null` disables the timeout for that process (unlimited).
+ */
+export type ProcessEntry = string | { profile?: string; timeoutMs?: number | null };
+
+/** Keys recognised on a `processes[<name>]` object entry. */
+const KNOWN_PROCESS_ENTRY_KEYS = new Set(["profile", "timeoutMs"]);
+
 /** Persisted form of the `agent` block. */
 export interface AgentConfig {
   default?: string;
   timeoutMs?: number;
   profiles?: Record<string, AgentProfileConfig>;
+  /**
+   * Per-process profile and timeout overrides. Keys are process names
+   * (e.g. `"reflect"`, `"propose"`, `"task"`); values are either a profile
+   * name string or an object with optional `profile` and `timeoutMs` fields.
+   *
+   * Resolution order for a named process:
+   * 1. `processes[name].profile` — falls back to `agent.default` when absent.
+   * 2. `timeoutMs`: `processes[name].timeoutMs` (null = unlimited) →
+   *    profile.timeoutMs → agent.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS.
+   *
+   * Processes not listed in this map fall back to existing default behaviour.
+   */
+  processes?: Record<string, ProcessEntry>;
 }
 
 /**
@@ -139,6 +165,11 @@ export function parseAgentConfig(value: unknown): AgentConfig | undefined {
     if (profiles) out.profiles = profiles;
   }
 
+  if ("processes" in raw) {
+    const processes = parseProcessesMap(raw.processes);
+    if (processes) out.processes = processes;
+  }
+
   return out;
 }
 
@@ -153,6 +184,137 @@ function parseAgentProfilesMap(value: unknown): Record<string, AgentProfileConfi
     if (parsed) out[name] = parsed;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Parse one entry in `agent.processes`. Accepts a string (profile name) or an
+ * object with optional `profile` and `timeoutMs` fields. Returns `undefined`
+ * and emits a warning for entries that are neither valid strings nor valid
+ * objects (warn-and-ignore).
+ */
+export function parseProcessEntry(value: unknown, name: string): ProcessEntry | undefined {
+  if (typeof value === "string") {
+    if (!value.trim()) {
+      warn(`[akm] Ignoring agent.processes."${name}": string value must be non-empty (a profile name).`);
+      return undefined;
+    }
+    return value.trim();
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    warn(
+      `[akm] Ignoring agent.processes."${name}": expected a string (profile name) or an object with optional "profile" and "timeoutMs".`,
+    );
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+
+  // Warn on unknown keys (warn-and-ignore contract).
+  for (const key of Object.keys(raw)) {
+    if (!KNOWN_PROCESS_ENTRY_KEYS.has(key)) {
+      warn(`[akm] Ignoring unknown agent.processes."${name}" key: "${key}"`);
+    }
+  }
+
+  const out: { profile?: string; timeoutMs?: number | null } = {};
+
+  if ("profile" in raw) {
+    if (typeof raw.profile === "string" && raw.profile.trim()) {
+      out.profile = raw.profile.trim();
+    } else if (raw.profile !== undefined) {
+      warn(`[akm] Ignoring agent.processes."${name}".profile: expected a non-empty string.`);
+    }
+  }
+
+  if ("timeoutMs" in raw) {
+    if (raw.timeoutMs === null) {
+      // null = unlimited — explicit, valid.
+      out.timeoutMs = null;
+    } else if (
+      typeof raw.timeoutMs === "number" &&
+      Number.isFinite(raw.timeoutMs) &&
+      Number.isInteger(raw.timeoutMs) &&
+      raw.timeoutMs > 0
+    ) {
+      out.timeoutMs = raw.timeoutMs;
+    } else {
+      warn(
+        `[akm] Ignoring agent.processes."${name}".timeoutMs: expected a positive integer (milliseconds) or null (unlimited).`,
+      );
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Parse the `agent.processes` map. Returns `undefined` when the value is not
+ * a valid object; per-entry validation errors are warn-and-ignored (per spec §9.2).
+ */
+export function parseProcessesMap(value: unknown): Record<string, ProcessEntry> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    warn("[akm] Ignoring agent.processes: expected an object.");
+    return undefined;
+  }
+  const out: Record<string, ProcessEntry> = {};
+  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+    const parsed = parseProcessEntry(raw, name);
+    if (parsed !== undefined) out[name] = parsed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Resolve the agent profile and effective timeout for a named process.
+ *
+ * Resolution order:
+ * 1. `config.processes[processName]` — if a string, that is the profile name;
+ *    if an object, extract `profile` (and optionally `timeoutMs`).
+ * 2. Profile name falls back to `config.default` when not specified in the
+ *    process entry.
+ * 3. `timeoutMs` falls back: `process.timeoutMs` (null = unlimited) →
+ *    profile.timeoutMs → agent.timeoutMs → DEFAULT_AGENT_TIMEOUT_MS.
+ *
+ * Returns `{ profile, timeoutMs }` where `timeoutMs` is `undefined` when the
+ * resolved timeout is `null` (unlimited) or when no timeout is set at any
+ * layer (callers treat `undefined` as the DEFAULT_AGENT_TIMEOUT_MS default).
+ *
+ * Throws {@link ConfigError} (via {@link requireAgentProfile}) when the agent
+ * block is missing or the resolved profile cannot be used.
+ */
+export function resolveProcessAgentProfile(
+  processName: string,
+  agentConfig: AgentConfig | undefined,
+): { profile: AgentProfile; timeoutMs: number | undefined } {
+  let profileName: string | undefined;
+  let processTimeoutMs: number | null | undefined; // null = unlimited from config
+
+  const processEntry = agentConfig?.processes?.[processName];
+  if (processEntry !== undefined) {
+    if (typeof processEntry === "string") {
+      profileName = processEntry;
+    } else {
+      profileName = processEntry.profile;
+      processTimeoutMs = processEntry.timeoutMs;
+    }
+  }
+
+  // Profile name falls back to agent.default when not set in the process entry.
+  const resolvedProfile = requireAgentProfile(agentConfig, profileName);
+
+  // Timeout resolution: process entry → profile → agent-level → undefined (caller applies DEFAULT).
+  let resolvedTimeoutMs: number | undefined;
+  if (processTimeoutMs === null) {
+    // null = explicit "unlimited" — surface as undefined so callers omit the timer.
+    resolvedTimeoutMs = undefined;
+  } else if (processTimeoutMs !== undefined) {
+    resolvedTimeoutMs = processTimeoutMs;
+  } else if (resolvedProfile.timeoutMs !== undefined) {
+    resolvedTimeoutMs = resolvedProfile.timeoutMs;
+  } else if (agentConfig?.timeoutMs !== undefined) {
+    resolvedTimeoutMs = agentConfig.timeoutMs;
+  }
+
+  return { profile: resolvedProfile, timeoutMs: resolvedTimeoutMs };
 }
 
 function parseAgentProfileConfig(name: string, value: unknown): AgentProfileConfig | undefined {

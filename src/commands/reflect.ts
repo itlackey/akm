@@ -36,9 +36,16 @@ import {
   type RunAgentOptions,
   runAgent,
 } from "../integrations/agent";
+import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
-import { baseFailureFields, enoentHintMessage, isEnoentFailure, resolveAgentProfile } from "./agent-support";
+import {
+  baseFailureFields,
+  enoentHintMessage,
+  isEnoentFailure,
+  loadAgentConfigFromDisk,
+  resolveAgentProfile,
+} from "./agent-support";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -65,6 +72,12 @@ export interface AkmReflectOptions {
    * mistakes across assets.
    */
   avoidPatterns?: string[];
+  /**
+   * Named process to use for per-process agent config lookup. Defaults to
+   * `"reflect"`. When an explicit `--profile` flag is given, the process
+   * lookup is skipped and the flag value wins.
+   */
+  agentProcess?: string;
 }
 
 export interface AkmReflectFailure {
@@ -182,9 +195,30 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // 3. Resolve agent profile. ConfigError surfaces as a thrown error so the
   // CLI dispatcher renders the standard envelope.
+  //
+  // When an explicit --profile flag is given, honour it directly (existing
+  // behaviour). Otherwise use resolveProcessAgentProfile so that per-process
+  // agent config (agent.processes["reflect"]) is picked up automatically.
   let profile: AgentProfile;
+  let resolvedTimeoutMs: number | undefined = options.timeoutMs;
   try {
-    profile = resolveAgentProfile(options);
+    if (options.agentProfile) {
+      // Test seam: injected profile bypasses all config.
+      profile = options.agentProfile;
+    } else if (options.profile) {
+      // Explicit --profile flag wins over process config.
+      profile = resolveAgentProfile(options);
+    } else {
+      // Use per-process config resolution (falls back to agent.default).
+      const agent = options.agentConfig ?? loadAgentConfigFromDisk();
+      const processName = options.agentProcess ?? "reflect";
+      const resolved = resolveProcessAgentProfile(processName, agent);
+      profile = resolved.profile;
+      // Only apply process-resolved timeoutMs when caller didn't supply one.
+      if (resolvedTimeoutMs === undefined) {
+        resolvedTimeoutMs = resolved.timeoutMs;
+      }
+    }
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
@@ -216,7 +250,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     const runOptions: RunAgentOptions = {
       stdio: "captured",
       parseOutput: "text",
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
       ...(options.runAgentOptions ?? {}),
     };
     result = await runAgent(profile, prompt, runOptions);
@@ -227,7 +261,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       prompt,
       // reflect always uses captured stdout (no draft file path).
       draftFilePath: undefined,
-      timeoutMs: options.timeoutMs,
+      timeoutMs: resolvedTimeoutMs,
     });
     result = {
       ok: pipelineResult.ok,
