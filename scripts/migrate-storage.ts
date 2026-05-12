@@ -142,12 +142,22 @@ function countFilesRecursive(dir: string): number {
 // ── Dry-run summary ──────────────────────────────────────────────────────────
 
 function printDryRunSummary(): void {
-  console.log("\nakm storage migration — DRY RUN SUMMARY");
-  console.log("=========================================");
+  console.log("\nakm storage migration — v0.8 → v0.9 — DRY RUN SUMMARY");
+  console.log("=======================================================");
   console.log(`  $CACHE  = ${cacheDir}`);
   console.log(`  $CONFIG = ${configDir}`);
   console.log(`  $DATA   = ${dataDir}`);
   console.log(`  $STATE  = ${stateDir}`);
+  console.log();
+  console.log("  Steps:");
+  console.log("    1. index.db          $CACHE → $DATA (copy)");
+  console.log("    2. workflow.db        $CACHE → $DATA (copy)");
+  console.log("    3. events.jsonl       $CACHE → state.db events table (import)");
+  console.log("    4. tasks/history/     $CACHE → $STATE (file copy)");
+  console.log("    5. akm.lock           $CONFIG → $DATA (copy)");
+  console.log("    6. config-backups/    $CACHE → $DATA (recursive copy)");
+  console.log("    7. task history JSONL $CACHE/tasks/history/*.jsonl → state.db task_history (import)");
+  console.log("    8. registry-index/    note: old $CACHE/registry-index/*.json files are ignored in v0.9");
   console.log();
 
   const steps: Array<{ src: string; dest: string; note?: string }> = [
@@ -174,20 +184,41 @@ function printDryRunSummary(): void {
     {
       src: path.join(configDir, "akm.lock"),
       dest: path.join(dataDir, "akm.lock"),
-      note: "copy only — source left in place; akm reads from $DATA going forward",
+      note: "copy only — source left in place; akm reads ONLY from $DATA/akm.lock going forward. " +
+        "If not migrated, akm starts with an empty lockfile and 'akm add' will rebuild it.",
     },
     {
       src: path.join(cacheDir, "config-backups"),
       dest: path.join(dataDir, "config-backups"),
       note: "recursive copy — sources left in place",
     },
+    {
+      src: path.join(cacheDir, "tasks", "history") + "/*.jsonl",
+      dest: stateDbPath + " (task_history table)",
+      note: "JSONL lines parsed as TaskRunResult and upserted into state.db — sources left in place. " +
+        "runner.ts no longer reads JSONL fallback; history in old files is inaccessible without this step.",
+    },
+    {
+      src: path.join(cacheDir, "registry-index", "*.json"),
+      dest: "(none — regenerable)",
+      note: "Old $CACHE/registry-index/*.json files are ignored in v0.9. " +
+        "Registry index cache will be rebuilt on next 'akm registry search'. " +
+        "You may delete these files after migration.",
+    },
   ];
 
-  for (const s of steps) {
-    const srcExists = fs.existsSync(s.src);
-    const destExists = fs.existsSync(s.dest);
-    const status = !srcExists ? "skip (source not found)" : destExists ? "skip (dest already exists)" : "would copy";
-    console.log(`  → ${path.basename(s.src)}`);
+  for (const [i, s] of steps.entries()) {
+    const srcBase = s.src.replace(/\/\*\.jsonl$/, "");
+    const srcExists = fs.existsSync(srcBase);
+    const destExists = s.dest.includes("state.db") || s.dest.includes("(none")
+      ? false
+      : fs.existsSync(s.dest);
+    const status = !srcExists
+      ? "skip (source not found)"
+      : destExists
+        ? "skip (dest already exists)"
+        : "would migrate";
+    console.log(`  Step ${i + 1}: ${path.basename(s.src)}`);
     console.log(`      src : ${s.src}`);
     console.log(`      dest: ${s.dest}`);
     console.log(`      note: ${s.note}`);
@@ -338,7 +369,9 @@ function migrateLockfile(): void {
     record(
       "akm.lock",
       "success",
-      `copied to ${dest} — source left at ${src}; akm will read from $DATA/akm.lock once new code is deployed`,
+      `copied to ${dest} — source left at ${src}.\n` +
+        `      IMPORTANT: akm now reads ONLY from $DATA/akm.lock. If this step is skipped,\n` +
+        `      akm will start with an empty lockfile and 'akm add' will rebuild it from scratch.`,
     );
   } else {
     record("akm.lock", "failed", `size mismatch after copy: ${src} → ${dest}`);
@@ -383,6 +416,131 @@ function migrateConfigBackups(): void {
   }
 }
 
+// Step 7: Parse JSONL task history files and upsert into state.db task_history table.
+async function migrateTaskHistoryToDb(): Promise<void> {
+  const src = path.join(cacheDir, "tasks", "history");
+
+  if (!fs.existsSync(src)) {
+    record("tasks/history/ → state.db", "skipped", "source directory not found");
+    return;
+  }
+
+  const files = fs.readdirSync(src).filter((f) => f.endsWith(".jsonl"));
+
+  if (files.length === 0) {
+    record("tasks/history/ → state.db", "skipped", "no *.jsonl files found in source directory");
+    return;
+  }
+
+  try {
+    ensureDir(dataDir);
+
+    const { openStateDatabase, upsertTaskHistory } = await import("../src/core/state-db.ts");
+    const db = openStateDatabase(stateDbPath);
+
+    let imported = 0;
+    let failed = 0;
+
+    try {
+      for (const file of files) {
+        const filePath = path.join(src, file);
+        const text = fs.readFileSync(filePath, "utf8");
+        const lines = text.split("\n").filter((l) => l.trim().length > 0);
+
+        for (const line of lines) {
+          try {
+            // Each line is a TaskRunResult:
+            //   { id, status, startedAt, finishedAt, durationMs, log, target, detail? }
+            const row = JSON.parse(line) as {
+              id: string;
+              status: string;
+              startedAt: string;
+              finishedAt: string;
+              durationMs: number;
+              log: string;
+              target: { kind: string; ref?: string; profile?: string };
+              detail?: Record<string, unknown>;
+            };
+
+            const meta: Record<string, unknown> = { durationMs: row.durationMs };
+            if (row.detail !== undefined) meta.detail = row.detail;
+            if (row.target?.kind === "prompt" && row.target.profile !== undefined) {
+              meta.profile = row.target.profile;
+            }
+
+            upsertTaskHistory(db, {
+              task_id: row.id,
+              status: row.status,
+              started_at: row.startedAt,
+              completed_at: row.status !== "failed" ? row.finishedAt : null,
+              failed_at: row.status === "failed" ? row.finishedAt : null,
+              log_path: row.log || null,
+              target_kind: row.target?.kind ?? null,
+              target_ref: row.target?.kind === "workflow" ? (row.target.ref ?? null) : null,
+              metadata_json: JSON.stringify(meta),
+            });
+            imported++;
+          } catch {
+            failed++;
+          }
+        }
+      }
+    } finally {
+      db.close();
+    }
+
+    if (failed === 0) {
+      record(
+        "tasks/history/ → state.db",
+        "success",
+        `imported ${imported} task history row(s) from ${files.length} JSONL file(s) into state.db — sources left in place (delete manually when ready)`,
+      );
+    } else {
+      record(
+        "tasks/history/ → state.db",
+        "failed",
+        `imported ${imported} row(s); ${failed} line(s) could not be parsed`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    record("tasks/history/ → state.db", "failed", msg);
+  }
+}
+
+// Step 8: Note registry index cache files (regenerable — no copy needed).
+function noteRegistryIndexCache(): void {
+  const src = path.join(cacheDir, "registry-index");
+
+  if (!fs.existsSync(src)) {
+    record("registry-index/ (note)", "skipped", "no old $CACHE/registry-index/ directory found");
+    return;
+  }
+
+  // Count legacy JSON files (exclude website mirror dirs which use a different naming scheme).
+  const legacyFiles = fs.readdirSync(src).filter((f) => f.endsWith(".json") && !f.startsWith("website-"));
+
+  if (legacyFiles.length === 0) {
+    record("registry-index/ (note)", "skipped", "no old *.json cache files found");
+    return;
+  }
+
+  console.log(
+    `\n  Note: found ${legacyFiles.length} old registry-index JSON file(s) in ${src}.` +
+      `\n        These are ignored in v0.9 — data is now stored in the registry_index_cache` +
+      `\n        table in $DATA/index.db and will be rebuilt on next 'akm registry search'.` +
+      `\n        You may safely delete these files after migration:\n` +
+      legacyFiles.map((f) => `          ${path.join(src, f)}`).join("\n"),
+  );
+
+  record(
+    "registry-index/ (note)",
+    "success",
+    `${legacyFiles.length} old file(s) noted at ${src} — registry index cache will be rebuilt on next ` +
+      `'akm registry search'. Safe to delete: ${src}/*.json`,
+  );
+}
+
 // ── Final summary ─────────────────────────────────────────────────────────────
 
 function printSummary(): void {
@@ -404,7 +562,7 @@ function printSummary(): void {
   if (skipped.length > 0) {
     console.log(`\nSkipped (${skipped.length}):`);
     for (const r of skipped) {
-      console.log(`  ✓ ${r.name} — ${r.detail}`);
+      console.log(`  - ${r.name} — ${r.detail}`);
     }
   }
 
@@ -422,14 +580,15 @@ function printSummary(): void {
 
   if (successes.length > 0) {
     console.log(`
-Note: source files have been left in place. Once you have verified the new
-locations are working correctly, you can delete the originals:
+Old files at the original locations are safe to delete manually:
   ${path.join(cacheDir, "index.db")}
   ${path.join(cacheDir, "workflow.db")}
   ${path.join(cacheDir, "events.jsonl")}
   ${path.join(cacheDir, "tasks", "history")}
   ${path.join(cacheDir, "config-backups")}
   ${path.join(configDir, "akm.lock")}
+
+Run 'akm' to verify everything works before deleting.
 `);
   }
 }
@@ -453,12 +612,14 @@ async function main(): Promise<void> {
   console.log("\nRunning migration steps...\n");
 
   // Steps run independently — each is wrapped in its own error handling.
-  migrateDb("index.db");
-  migrateDb("workflow.db");
-  await migrateEventsJsonl();
-  migrateTaskHistory();
-  migrateLockfile();
-  migrateConfigBackups();
+  migrateDb("index.db");                   // Step 1
+  migrateDb("workflow.db");                // Step 2
+  await migrateEventsJsonl();              // Step 3
+  migrateTaskHistory();                    // Step 4
+  migrateLockfile();                       // Step 5
+  migrateConfigBackups();                  // Step 6
+  await migrateTaskHistoryToDb();          // Step 7
+  noteRegistryIndexCache();                // Step 8
 
   printSummary();
 }
