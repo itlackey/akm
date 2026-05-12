@@ -77,7 +77,7 @@ const stubDistill = async ({ ref }: { ref?: string }): Promise<AkmDistillResult>
 });
 
 /** A consolidation stub that resolves immediately (simulates fast/no-op consolidation). */
-function makeStubConsolidate(result?: Partial<ConsolidateResult>) {
+function _makeStubConsolidate(result?: Partial<ConsolidateResult>) {
   return async (): Promise<ConsolidateResult> => ({
     schemaVersion: 1,
     ok: true,
