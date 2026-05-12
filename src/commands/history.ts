@@ -18,6 +18,7 @@ import type { Database } from "bun:sqlite";
 import { parseAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import { type EventsContext, readEvents } from "../core/events";
+import { isoToSqlite, parseSinceToIso } from "../core/time";
 import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import type { UsageEventRow } from "../indexer/usage-events";
 
@@ -70,38 +71,6 @@ export interface HistoryOptions {
 const PROPOSAL_EVENT_TYPES = new Set(["promoted", "rejected"]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function normalizeSince(since: string): string {
-  // Accept "YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SSZ", epoch ms, or anything Date can parse.
-  const trimmed = since.trim();
-  if (!trimmed) {
-    throw new UsageError("--since cannot be empty.", "INVALID_FLAG_VALUE");
-  }
-  // Pure-digit input → epoch milliseconds
-  if (/^\d+$/.test(trimmed)) {
-    const ms = Number.parseInt(trimmed, 10);
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) {
-      throw new UsageError(`Invalid --since value: ${since}`, "INVALID_FLAG_VALUE");
-    }
-    return d
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, "");
-  }
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new UsageError(
-      `Invalid --since value: ${since}. Expected ISO timestamp (e.g. 2026-04-01T00:00:00Z) or epoch ms.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  // Match the "YYYY-MM-DD HH:MM:SS" format SQLite's datetime('now') stores.
-  return parsed
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d+Z$/, "");
-}
 
 function parseMetadata(raw: string | null): unknown {
   if (!raw) return null;
@@ -162,7 +131,7 @@ export async function akmHistory(options: HistoryOptions = {}): Promise<HistoryR
     normalizedRef = trimmed;
   }
 
-  const sinceNormalized = options.since !== undefined ? normalizeSince(options.since) : undefined;
+  const sinceNormalized = options.since !== undefined ? isoToSqlite(parseSinceToIso(options.since)) : undefined;
 
   const db = options.db ?? openExistingDatabase();
   const ownsDb = options.db === undefined;

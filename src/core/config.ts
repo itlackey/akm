@@ -3,9 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
-import { filterNonEmptyStrings, writeFileAtomic } from "./common";
+import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
-import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
+import { getCacheDir, getConfigPath } from "./paths";
 import { warn } from "./warn";
 
 export type { AgentConfig } from "../integrations/agent/config";
@@ -463,14 +463,6 @@ function clearAllCaches(): void {
   cachedUserConfig = undefined;
 }
 
-export function getConfigDir(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): string {
-  return _getConfigDir(env, platform);
-}
-
-export function getConfigPath(): string {
-  return _getConfigPath();
-}
-
 // ── Load / Save / Update ────────────────────────────────────────────────────
 
 const PROJECT_CONFIG_RELATIVE_PATH = path.join(".akm", "config.json");
@@ -801,15 +793,6 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
     return out as T;
   }
   return value;
-}
-
-function _readConfigObject(configPath: string): Record<string, unknown> | undefined {
-  try {
-    const text = fs.readFileSync(configPath, "utf8");
-    return parseConfigObjectFromText(text);
-  } catch {
-    return undefined;
-  }
 }
 
 function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
@@ -1175,10 +1158,6 @@ function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefin
   return entry;
 }
 
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
-}
-
 /**
  * Validate a legacy lockfile/installed-entry source string.
  *
@@ -1278,7 +1257,7 @@ function parseSourceConfigEntry(value: unknown): SourceConfigEntry | undefined {
     throw new ConfigError(
       `openviking is not supported in akm v1. API-backed sources will return as a\nseparate QuerySource tier post-v1. Remove the source named "${name}" from your config file\nor downgrade to 0.6.x. See docs/migration/v1.md.`,
       "INVALID_CONFIG_FILE",
-      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${_getConfigPath()} to remove the openviking entry.`,
+      `Run \`akm remove ${name}\` then re-run, or edit your config file directly at ${getConfigPath()} to remove the openviking entry.`,
     );
   }
 
