@@ -26,6 +26,7 @@ import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { lintLessonContent } from "../core/lesson-lint";
+import { stripMarkdownFences } from "../core/markdown";
 import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup } from "../indexer/indexer";
 import {
@@ -33,13 +34,12 @@ import {
   type AgentFailureReason,
   type AgentProfile,
   type AgentRunResult,
-  parseAgentConfig,
   type RunAgentOptions,
-  requireAgentProfile,
   runAgent,
 } from "../integrations/agent";
 import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { baseFailureFields, enoentHintMessage, isEnoentFailure, resolveAgentProfile } from "./agent-support";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -125,31 +125,14 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
 
 function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined) {
   if (!ref) return undefined;
-  const trimmed = stripMarkdownFence(stdout).trim();
+  const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
   if (!looksLikeAssetContent(trimmed)) return undefined;
   return { ref, content: trimmed };
 }
 
-function stripMarkdownFence(stdout: string): string {
-  const trimmed = stdout.trim();
-  const match = trimmed.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
-  return match?.[1] ?? trimmed;
-}
-
 function looksLikeAssetContent(value: string): boolean {
   return value.startsWith("#") || value.startsWith("---");
-}
-
-function loadAgentConfigFromDisk(): AgentConfig | undefined {
-  const config = loadConfig();
-  return parseAgentConfig(config.agent);
-}
-
-function resolveProfile(options: AkmReflectOptions): AgentProfile {
-  if (options.agentProfile) return options.agentProfile;
-  const agent = options.agentConfig ?? loadAgentConfigFromDisk();
-  return requireAgentProfile(agent, options.profile);
 }
 
 function failureEnvelope(
@@ -157,16 +140,9 @@ function failureEnvelope(
   ref: string | undefined,
   fallbackReason: AgentFailureReason = "non_zero_exit",
 ): AkmReflectFailure {
-  const reason = result.reason ?? fallbackReason;
   return {
-    schemaVersion: 1,
-    ok: false,
-    reason,
-    error: result.error ?? `agent failure (${reason})`,
+    ...baseFailureFields(result, fallbackReason),
     ...(ref ? { ref } : {}),
-    exitCode: result.exitCode,
-    ...(result.stdout ? { stdout: result.stdout } : {}),
-    ...(result.stderr ? { stderr: result.stderr } : {}),
   };
 }
 
@@ -203,7 +179,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // CLI dispatcher renders the standard envelope.
   let profile: AgentProfile;
   try {
-    profile = resolveProfile(options);
+    profile = resolveAgentProfile(options);
   } catch (err) {
     if (err instanceof ConfigError || err instanceof UsageError) throw err;
     throw err;
@@ -260,14 +236,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   if (!result.ok) {
     // B3: ENOENT / not-found gives an actionable hint.
-    if (
-      result.reason === "spawn_failed" &&
-      (result.error?.includes("ENOENT") || result.error?.toLowerCase().includes("not found"))
-    ) {
-      return {
-        ...failureEnvelope(result, options.ref),
-        error: `The agent binary '${profile.bin}' was not found on PATH. Run \`akm setup\` to configure an agent CLI, or install ${profile.bin} and retry.`,
-      };
+    if (isEnoentFailure(result)) {
+      return { ...failureEnvelope(result, options.ref), error: enoentHintMessage(profile.bin) };
     }
     return failureEnvelope(result, options.ref);
   }

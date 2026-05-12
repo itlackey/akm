@@ -1,0 +1,91 @@
+/**
+ * IndexRunContext — shared state threaded through every phase of `akmIndex()`.
+ *
+ * Extracted from `src/indexer/indexer.ts` so each named phase function
+ * (`runSourceCachePhase`, `runMemoryInferencePhase`, …) can receive a single
+ * typed argument rather than a long positional parameter list. The context is
+ * assembled once at the top of `akmIndex()` and passed to each phase in
+ * sequence.
+ */
+
+import type { Database } from "bun:sqlite";
+import type { AkmConfig } from "../core/config";
+import type { SearchSource } from "./search-source";
+import type { SemanticSearchReason } from "./semantic-status";
+
+/** Timing accumulator written by each phase. All values are in milliseconds. */
+export interface IndexTiming {
+  t0: number;
+  tWalkStart: number;
+  tWalkEnd: number;
+  tLlmEnd: number;
+  tFtsEnd: number;
+  tEmbedEnd: number;
+}
+
+/** Progress event emitted during indexing. Mirrors IndexProgressEvent in indexer.ts. */
+export interface IndexPhaseEvent {
+  phase: "summary" | "scan" | "llm" | "fts" | "embeddings" | "verify";
+  message: string;
+  processed?: number;
+  total?: number;
+}
+
+/** Shared state passed to every phase of the index run. */
+export interface IndexRunContext {
+  /** Open SQLite database for the current index run. */
+  db: Database;
+  /** Resolved AKM configuration. */
+  config: AkmConfig;
+  /** All resolved stash source entries (primary + additional). */
+  sources: SearchSource[];
+  /** All source directory paths (derived from `sources`). */
+  sourceDirs: string[];
+  /** Whether to perform a full rebuild (true) or incremental update (false). */
+  full: boolean;
+  /** Whether LLM enrichment passes are enabled. */
+  enrich: boolean;
+  /** Whether to re-enrich already-enriched entries. */
+  reEnrich: boolean;
+  /** Primary stash directory. */
+  stashDir: string;
+  /** Progress emitter (always defined; may be a no-op). */
+  onProgress: (event: IndexPhaseEvent) => void;
+  /** Abort signal (may be undefined when no cancellation is needed). */
+  signal: AbortSignal | undefined;
+  /** Timing accumulator — phases fill this in as they complete. */
+  timing: IndexTiming;
+  /** Whether this run is incremental (false = full rebuild). */
+  isIncremental: boolean;
+  /** The epoch timestamp for the previous successful build (0 for full). */
+  builtAtMs: number;
+  /** Whether sources were removed since the last run (triggers orphan cleanup). */
+  hadRemovedSources: boolean;
+
+  // ── Inter-phase result accumulation ─────────────────────────────────────────
+  // These fields are written by phases and read by later phases or the
+  // final summary assembly. They start as undefined / empty until their
+  // producing phase completes.
+
+  /** Directories scanned during the walk phase. */
+  scannedDirs: number;
+  /** Directories skipped during the walk phase. */
+  skippedDirs: number;
+  /** Total generated metadata entries during the walk phase. */
+  generatedCount: number;
+  /** Walk-phase warnings (e.g. malformed workflow specs). */
+  walkWarnings: string[];
+  /** Directories that need LLM enrichment after the walk phase. */
+  dirsNeedingLlm: Array<{
+    dirPath: string;
+    files: string[];
+    currentStashDir: string;
+    stash: import("./metadata").StashFile;
+  }>;
+  /** Result from the embedding phase. */
+  embeddingResult: {
+    success: boolean;
+    reason?: SemanticSearchReason;
+    message?: string;
+  } | null;
+}

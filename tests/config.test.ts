@@ -4,8 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_CONFIG,
-  getConfigDir,
-  getConfigPath,
   loadConfig,
   loadUserConfig,
   resetConfigCache,
@@ -13,7 +11,7 @@ import {
   updateConfig,
 } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
-import { getCacheDir } from "../src/core/paths";
+import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "akm-config-test-"));
