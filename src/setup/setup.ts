@@ -20,8 +20,8 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
-import { DEFAULT_CONFIG, getConfigPath, getSources, loadUserConfig, saveConfig } from "../core/config";
-import { getDefaultStashDir } from "../core/paths";
+import { DEFAULT_CONFIG, getSources, loadUserConfig, saveConfig } from "../core/config";
+import { getConfigPath, getDefaultStashDir } from "../core/paths";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
 import {

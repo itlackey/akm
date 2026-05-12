@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config";
-import { getConfigPath, loadUserConfig, resetConfigCache } from "../src/core/config";
+import { loadUserConfig, resetConfigCache } from "../src/core/config";
 import { ConfigError } from "../src/core/errors";
+import { getConfigPath } from "../src/core/paths";
 import { resolveIndexPassLLM } from "../src/llm/index-passes";
 
 // Tests for #208 — unified `akm.llm` config across all index-time passes.
