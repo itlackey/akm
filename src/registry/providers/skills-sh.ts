@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fetchWithRetry, writeFileAtomic } from "../../core/common";
+import { fetchWithRetry } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
-import { getRegistryIndexCacheDir } from "../../core/paths";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -21,9 +18,6 @@ import type {
 
 /** Per-query cache TTL in milliseconds (15 minutes). */
 const QUERY_CACHE_TTL_MS = 15 * 60 * 1000;
-
-/** Maximum age before query cache is considered stale but still usable (1 day). */
-const QUERY_CACHE_STALE_MS = 24 * 60 * 60 * 1000;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -147,24 +141,7 @@ class SkillsShProvider implements RegistryProvider {
       }
     }
 
-    // ── Step 2: Fall back to file-based cache (read-only, deprecated) ─────
-    const cachePath = this.queryCachePath(query, limit);
-    const fileCached = this.readQueryCache(cachePath);
-
-    if (fileCached && !isExpired(fileCached.mtime, QUERY_CACHE_TTL_MS)) {
-      // Promote to DB cache
-      if (db) {
-        try {
-          upsertRegistryIndexCache(db, dbCacheKey, JSON.stringify(fileCached.entries));
-        } catch {
-          /* best-effort */
-        }
-        closeDatabase(db);
-      }
-      return fileCached.entries;
-    }
-
-    // ── Step 3: Fetch from API ─────────────────────────────────────────────
+    // ── Step 2: Fetch from API ─────────────────────────────────────────────
     const baseUrl = this.config.url.replace(/\/+$/, "");
     const url = `${baseUrl}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
 
@@ -186,7 +163,6 @@ class SkillsShProvider implements RegistryProvider {
         }
         closeDatabase(db);
       }
-      // @deprecated: file cache write removed; file cache is read-only fallback
       return entries;
     } catch (err) {
       if (db) {
@@ -207,10 +183,6 @@ class SkillsShProvider implements RegistryProvider {
         } catch {
           /* ignore */
         }
-      }
-      // Fall back to stale file cache
-      if (fileCached && !isExpired(fileCached.mtime, QUERY_CACHE_STALE_MS)) {
-        return fileCached.entries;
       }
       throw err;
     }
@@ -285,46 +257,6 @@ class SkillsShProvider implements RegistryProvider {
     const hash = hasher.digest("hex");
     return `skills-sh:${hash}`;
   }
-
-  // ── File-based per-query cache (deprecated — read fallback only) ────────
-
-  /** @deprecated Use DB cache via queryDbCacheKey() instead. */
-  private queryCachePath(query: string, limit: number): string {
-    const cacheDir = getRegistryIndexCacheDir();
-    const hasher = new Bun.CryptoHasher("md5");
-    hasher.update(this.config.url);
-    hasher.update("\0");
-    hasher.update(query.trim().toLowerCase());
-    hasher.update("\0");
-    hasher.update(String(limit));
-    const hash = hasher.digest("hex");
-    return path.join(cacheDir, `skills-sh-search-${hash}.json`);
-  }
-
-  /** @deprecated Use DB cache instead. */
-  private readQueryCache(cachePath: string): { entries: SkillsShEntry[]; mtime: number } | null {
-    try {
-      const stat = fs.statSync(cachePath);
-      const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-      if (!Array.isArray(raw)) return null;
-      const entries = raw.filter(isValidSkillsEntry);
-      return { entries, mtime: stat.mtimeMs };
-    } catch {
-      return null;
-    }
-  }
-
-  /** @deprecated Use DB cache instead. */
-  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: kept for migration script reference
-  private writeQueryCache(cachePath: string, entries: SkillsShEntry[]): void {
-    try {
-      const dir = path.dirname(cachePath);
-      fs.mkdirSync(dir, { recursive: true });
-      writeFileAtomic(cachePath, JSON.stringify(entries));
-    } catch {
-      // Best-effort caching
-    }
-  }
 }
 
 // ── Self-register ───────────────────────────────────────────────────────────
@@ -349,10 +281,4 @@ function isValidSkillsEntry(entry: unknown): entry is SkillsShEntry {
     typeof obj.installs === "number" &&
     typeof obj.source === "string"
   );
-}
-
-// ── Utilities ───────────────────────────────────────────────────────────────
-
-function isExpired(mtimeMs: number, ttlMs: number): boolean {
-  return Date.now() - mtimeMs > ttlMs;
 }

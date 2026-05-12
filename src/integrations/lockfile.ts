@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { getConfigDir, getDataDir } from "../core/paths";
+import { getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
@@ -35,23 +35,8 @@ export interface LockfileEntry {
 
 const LOCKFILE_NAME = "akm.lock";
 
-/**
- * Returns the path to the akm.lock file.
- *
- * Primary location is `$DATA/akm.lock` (getDataDir()). If that file does not
- * exist but the legacy `$CONFIG/akm.lock` does, the config-dir path is
- * returned as a migration fallback so existing installations continue to work
- * until the lock is next written (at which point it will be written to $DATA).
- */
 function getLockfilePath(): string {
-  const dataPath = path.join(getDataDir(), LOCKFILE_NAME);
-  if (!fs.existsSync(dataPath)) {
-    const configPath = path.join(getConfigDir(), LOCKFILE_NAME);
-    if (fs.existsSync(configPath)) {
-      return configPath;
-    }
-  }
-  return dataPath;
+  return path.join(getDataDir(), LOCKFILE_NAME);
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────

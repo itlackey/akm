@@ -26,7 +26,7 @@ import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
 import { NotFoundError } from "../core/errors";
-import { getTaskHistoryDir, getTaskHistoryStateDir, getTaskLogDir } from "../core/paths";
+import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveAssetPath } from "../sources/resolve";
@@ -75,7 +75,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   const startWorkflowRunImpl = options.startWorkflowRunImpl ?? startWorkflowRun;
   const now = options.now ?? (() => new Date());
   const logDir = options.logDir ?? getTaskLogDir();
-  const historyDir = options.historyDir ?? getTaskHistoryStateDir();
 
   const filePath = await resolveAssetPath(stashDir, "task", id);
   const markdown = fs.readFileSync(filePath, "utf8");
@@ -86,7 +85,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   const tsSlug = startedIso.replace(/[:.]/g, "-");
   const taskLogDir = path.join(logDir, id);
   fs.mkdirSync(taskLogDir, { recursive: true });
-  fs.mkdirSync(historyDir, { recursive: true });
   const logPath = path.join(taskLogDir, `${tsSlug}.log`);
 
   if (!task.enabled) {
@@ -104,7 +102,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
           : { kind: "prompt", profile: task.target.profile },
     };
     fs.writeFileSync(logPath, `[akm tasks] task "${id}" is disabled — skipping run.\n`);
-    appendHistory(historyDir, id, result);
+    appendHistory(result);
     return result;
   }
 
@@ -112,7 +110,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     return await runWorkflowTask({
       task,
       logPath,
-      historyDir,
       startedAt,
       now,
       startWorkflowRunImpl,
@@ -126,7 +123,6 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     task,
     stashDir,
     logPath,
-    historyDir,
     startedAt,
     now,
     runAgentImpl,
@@ -141,12 +137,11 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
 async function runWorkflowTask(input: {
   task: TaskDocument;
   logPath: string;
-  historyDir: string;
   startedAt: Date;
   now: () => Date;
   startWorkflowRunImpl: typeof startWorkflowRun;
 }): Promise<TaskRunResult> {
-  const { task, logPath, historyDir, startedAt, now, startWorkflowRunImpl } = input;
+  const { task, logPath, startedAt, now, startWorkflowRunImpl } = input;
   if (task.target.kind !== "workflow") throw new Error("invariant: workflow target");
   const ref = parseAssetRef(task.target.ref);
   if (ref.type !== "workflow") {
@@ -182,7 +177,7 @@ async function runWorkflowTask(input: {
       ...(error ? { error: error.message } : {}),
     },
   };
-  appendHistory(historyDir, task.id, result);
+  appendHistory(result);
   // Don't re-throw on workflow failure: the OS scheduler reads exit codes,
   // not exceptions, and the CLI maps `status: "failed"` to a non-zero exit
   // via exitCodeForStatus(). Throwing here would route through the generic
@@ -229,7 +224,6 @@ async function runPromptTask(input: {
   task: TaskDocument;
   stashDir: string;
   logPath: string;
-  historyDir: string;
   startedAt: Date;
   now: () => Date;
   runAgentImpl: (...args: Parameters<typeof runAgent>) => Promise<AgentRunResult>;
@@ -239,7 +233,7 @@ async function runPromptTask(input: {
   /** Pre-resolved agent timeout (ms) from the calling context. */
   agentTimeoutMs?: number;
 }): Promise<TaskRunResult> {
-  const { task, stashDir, logPath, historyDir, startedAt, now, runAgentImpl, agentOptions } = input;
+  const { task, stashDir, logPath, startedAt, now, runAgentImpl, agentOptions } = input;
   if (task.target.kind !== "prompt") throw new Error("invariant: prompt target");
 
   // Use pre-resolved agent config when available to avoid redundant loadConfig()
@@ -274,7 +268,7 @@ async function runPromptTask(input: {
       ? { exitCode: result.exitCode }
       : { reason: result.reason, error: result.error, exitCode: result.exitCode },
   };
-  appendHistory(historyDir, task.id, out);
+  appendHistory(out);
   return out;
 }
 
@@ -318,12 +312,7 @@ function renderPromptLog(input: { task: TaskDocument; profileName: string; resul
 
 // ── history ─────────────────────────────────────────────────────────────────
 
-function appendHistory(historyDir: string, id: string, result: TaskRunResult): void {
-  const file = path.join(historyDir, `${id}.jsonl`);
-  fs.mkdirSync(historyDir, { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify(result)}\n`);
-
-  // Also write to state.db task_history table (additive — JSONL is kept as fallback).
+function appendHistory(result: TaskRunResult): void {
   try {
     const db = openStateDatabase();
     try {
@@ -362,62 +351,23 @@ export interface ReadHistoryOptions {
 }
 
 export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult[] {
-  // Step 1: Try reading from state.db task_history table.
-  let dbRows: TaskRunResult[] = [];
+  const db = openStateDatabase();
   try {
-    const db = openStateDatabase();
-    try {
-      if (options.id) {
-        const row = getTaskHistory(db, options.id);
-        if (row) {
-          dbRows = [taskHistoryRowToResult(row)];
-        }
-      } else {
-        const rows = queryTaskHistory(db, {});
-        dbRows = rows.map(taskHistoryRowToResult);
-      }
-    } finally {
-      db.close();
+    let rows: TaskRunResult[];
+    if (options.id) {
+      const row = getTaskHistory(db, options.id);
+      rows = row ? [taskHistoryRowToResult(row)] : [];
+    } else {
+      rows = queryTaskHistory(db, {}).map(taskHistoryRowToResult);
     }
-  } catch {
-    // state.db unavailable — fall through to JSONL
-  }
-
-  // Step 2: Read JSONL files from both state dir and legacy cache dir as fallback.
-  const jsonlRows: TaskRunResult[] = [];
-  const dirsToTry = options.historyDir ? [options.historyDir] : [getTaskHistoryStateDir(), getTaskHistoryDir()];
-
-  for (const dir of dirsToTry) {
-    if (!fs.existsSync(dir)) continue;
-    const files = options.id
-      ? [path.join(dir, `${options.id}.jsonl`)].filter((f) => fs.existsSync(f))
-      : fs
-          .readdirSync(dir)
-          .filter((f) => f.endsWith(".jsonl"))
-          .map((f) => path.join(dir, f));
-    for (const file of files) {
-      const text = fs.readFileSync(file, "utf8");
-      for (const line of text.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try {
-          jsonlRows.push(JSON.parse(line) as TaskRunResult);
-        } catch {
-          // skip malformed lines
-        }
-      }
+    rows.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+    if (options.limit !== undefined && options.limit >= 0) {
+      return rows.slice(0, options.limit);
     }
+    return rows;
+  } finally {
+    db.close();
   }
-
-  // Step 3: Merge — prefer DB rows; supplement with JSONL rows not in DB (by startedAt).
-  const dbStartedAts = new Set(dbRows.map((r) => r.startedAt));
-  const onlyInJsonl = jsonlRows.filter((r) => !dbStartedAts.has(r.startedAt));
-  const merged = [...dbRows, ...onlyInJsonl];
-
-  merged.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
-  if (options.limit !== undefined && options.limit >= 0) {
-    return merged.slice(0, options.limit);
-  }
-  return merged;
 }
 
 /**

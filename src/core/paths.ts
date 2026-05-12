@@ -174,18 +174,8 @@ export function getDbPath(): string {
   return path.join(getDataDir(), "index.db");
 }
 
-/** @deprecated use getDbPath() — index.db has moved to $DATA */
-export function getDbPathFromCache(): string {
-  return path.join(getCacheDir(), "index.db");
-}
-
 export function getWorkflowDbPath(): string {
   return path.join(getDataDir(), "workflow.db");
-}
-
-/** @deprecated use getWorkflowDbPath() — workflow.db has moved to $DATA */
-export function getWorkflowDbPathFromCache(): string {
-  return path.join(getCacheDir(), "workflow.db");
 }
 
 /** Path to the state.db file in $DATA. */
