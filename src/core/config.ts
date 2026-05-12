@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AgentConfig, parseAgentConfig } from "../integrations/agent/config";
 import type { InstalledStashEntry, KitSource } from "../registry/types";
-import { filterNonEmptyStrings, writeFileAtomic } from "./common";
+import { asNonEmptyString, filterNonEmptyStrings, writeFileAtomic } from "./common";
 import { ConfigError } from "./errors";
 import { getConfigDir as _getConfigDir, getConfigPath as _getConfigPath, getCacheDir } from "./paths";
 import { warn } from "./warn";
@@ -1164,10 +1164,6 @@ function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefin
   const wikiName = asNonEmptyString(obj.wikiName);
   if (wikiName) entry.wikiName = wikiName;
   return entry;
-}
-
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
 }
 
 /**
