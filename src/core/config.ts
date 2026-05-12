@@ -803,15 +803,6 @@ function expandEnvVars<T>(value: T, fieldName?: string): T {
   return value;
 }
 
-function _readConfigObject(configPath: string): Record<string, unknown> | undefined {
-  try {
-    const text = fs.readFileSync(configPath, "utf8");
-    return parseConfigObjectFromText(text);
-  } catch {
-    return undefined;
-  }
-}
-
 function parseConfigObjectFromText(text: string): Record<string, unknown> | undefined {
   try {
     const raw = JSON.parse(stripJsonComments(text));
