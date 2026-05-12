@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { stringify as yamlStringify } from "yaml";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
@@ -30,7 +29,6 @@ import {
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
-import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
 import { type AkmReflectResult, akmReflect } from "./reflect";
