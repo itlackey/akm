@@ -114,8 +114,10 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "tasks-sync":
     case "tasks-doctor":
       return result;
-    // Output shape registration for `akm consolidate`. The result is already
-    // fully shaped at the command boundary; pass through as-is.
+    // Output shape registration for `akm lint`, `akm setup`, and `akm consolidate`.
+    // Each result is already fully shaped at the command boundary; pass through as-is.
+    case "lint":
+    case "setup":
     case "consolidate":
       return result;
     // Output shape registration for `akm agent <profile>`. The result carries

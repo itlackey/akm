@@ -788,6 +788,14 @@ const configCommand = defineCommand({
         });
       },
     }),
+    show: defineCommand({
+      meta: { name: "show", description: "Alias for `akm config list` — list current configuration" },
+      run() {
+        return runWithJsonErrors(() => {
+          output("config", listConfig(loadConfig()));
+        });
+      },
+    }),
     get: defineCommand({
       meta: { name: "get", description: "Get a configuration value by key" },
       args: {
@@ -1302,9 +1310,16 @@ const workflowNextCommand = defineCommand({
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref", required: true },
     params: { type: "string", description: "Workflow parameters as a JSON object (only for auto-started runs)" },
+    "dry-run": { type: "boolean", description: "Not supported — rejected with an error", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (getHyphenatedBoolean(args, "dry-run")) {
+        throw new UsageError(
+          "`akm workflow next` does not support --dry-run. Remove the flag to start or resume a run.",
+          "INVALID_FLAG_VALUE",
+        );
+      }
       const parsedParams = args.params ? parseWorkflowJsonObject(args.params, "--params") : undefined;
       // If the target looks like a UUID-style run id (no `:` and matches the
       // run-id shape), short-circuit with a structured WORKFLOW_NOT_FOUND
@@ -3241,7 +3256,7 @@ const main = defineCommand({
   },
 });
 
-const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "get", "set", "unset"]);
+const CONFIG_SUBCOMMAND_SET = new Set(["path", "list", "show", "get", "set", "unset"]);
 const VAULT_SUBCOMMAND_SET = new Set(["list", "path", "run", "create", "set", "unset"]);
 const WIKI_SUBCOMMAND_SET = new Set([
   "create",
