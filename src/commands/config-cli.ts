@@ -61,6 +61,8 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
       return { llm: mergeLlmLike(undefined, { model: requireNonEmptyString(value, key) }) };
     case "llm.apiKey":
       return { llm: mergeLlmLike(undefined, { apiKey: requireNonEmptyString(value, key) }) };
+    case "llm.contextLength":
+      return { llm: mergeLlmLike(undefined, { contextLength: parsePositiveInteger(value, key) }) };
     case "registries":
       return { registries: parseRegistriesValue(value) };
     case "sources":
@@ -119,6 +121,8 @@ export function getConfigValue(config: AkmConfig, key: string): unknown {
       return config.llm?.model ?? null;
     case "llm.apiKey":
       return config.llm?.apiKey ?? null;
+    case "llm.contextLength":
+      return config.llm?.contextLength ?? null;
     case "registries":
       return config.registries ?? DEFAULT_CONFIG.registries ?? [];
     case "sources":
@@ -200,6 +204,8 @@ export function setConfigValue(config: AkmConfig, key: string, rawValue: string)
       return { ...config, llm: mergeLlmLike(config.llm, { model: requireNonEmptyString(rawValue, key) }) };
     case "llm.apiKey":
       return { ...config, llm: mergeLlmLike(config.llm, { apiKey: requireNonEmptyString(rawValue, key) }) };
+    case "llm.contextLength":
+      return { ...config, llm: mergeLlmLike(config.llm, { contextLength: parsePositiveInteger(rawValue, key) }) };
     case "defaultWriteTarget": {
       const name = requireNonEmptyString(rawValue, key);
       const knownNames = getSources(config)
@@ -255,6 +261,11 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
       if (!config.llm) return config;
       const { apiKey: _b, ...restLlm } = config.llm;
       return { ...config, llm: restLlm as LlmConnectionConfig };
+    }
+    case "llm.contextLength": {
+      if (!config.llm) return config;
+      const { contextLength: _lctx, ...restLlm2 } = config.llm;
+      return { ...config, llm: restLlm2 as LlmConnectionConfig };
     }
     case "registries":
       return { ...config, registries: undefined };

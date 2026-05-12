@@ -139,6 +139,65 @@ function loadMemoriesFromFs(memoriesDir: string, stashDir: string): MemoryEntry[
   return entries;
 }
 
+// ── Chunk sizing ─────────────────────────────────────────────────────────────
+
+/**
+ * Conservative chars-per-token estimate used when computing prompt budgets.
+ * English text averages roughly 4 chars/token for most LLM tokenizers. We use
+ * 3 to stay conservative (shorter tokens = more tokens per char).
+ */
+const CHARS_PER_TOKEN = 3;
+
+/**
+ * Overhead budget reserved for the system prompt, chunk header lines, and per-
+ * memory metadata lines (name, description, tags, separator). Measured at
+ * roughly 600 chars for the system prompt + ~100 chars of header + ~50 chars
+ * per memory × chunk size.  We round up to 2 000 tokens to leave room for the
+ * model's own output.
+ */
+const PROMPT_OVERHEAD_TOKENS = 2_000;
+
+/**
+ * Default effective token budget used when `config.llm.contextLength` is not
+ * set. This is intentionally conservative (4 096) rather than being set to
+ * the model's actual context window, because:
+ *
+ *   - When the agent path is used (config.agent), the agent CLI (e.g. opencode)
+ *     prepends its own large system prompt + conversation history before
+ *     forwarding to the model. That overhead easily consumes 30K+ tokens on
+ *     a model with a 16K context window, leaving very little room for
+ *     chunk content.
+ *   - When the HTTP path is used (config.llm), only the akm system prompt and
+ *     user prompt are sent, so the budget can be set to the model's actual
+ *     context length via config.llm.contextLength.
+ *
+ * Set config.llm.contextLength in your config file to the model's actual
+ * context window to allow larger chunks on the HTTP path.
+ */
+export const DEFAULT_CONTEXT_LENGTH_TOKENS = 4_096;
+
+/**
+ * Given the model's context window and the per-memory body truncation limit,
+ * return the maximum number of memories that can safely fit in one chunk
+ * without the prompt overflowing the context window.
+ *
+ * The formula is:
+ *   usableTokens = contextLength - PROMPT_OVERHEAD_TOKENS
+ *   tokensPerMemory = ceil(bodyTruncation / CHARS_PER_TOKEN)
+ *   chunkSize = floor(usableTokens / tokensPerMemory)
+ *
+ * Result is clamped between 1 and 50 to avoid degenerate values.
+ *
+ * @param contextLength - Model context window in tokens.
+ * @param bodyTruncation - Max chars per memory body included in the prompt.
+ */
+export function computeSafeChunkSize(contextLength: number, bodyTruncation: number): number {
+  const usableTokens = Math.max(contextLength - PROMPT_OVERHEAD_TOKENS, 0);
+  const tokensPerMemory = Math.max(Math.ceil(bodyTruncation / CHARS_PER_TOKEN), 1);
+  const raw = Math.floor(usableTokens / tokensPerMemory);
+  return Math.max(1, Math.min(50, raw));
+}
+
 // ── Chunk helpers ────────────────────────────────────────────────────────────
 
 export function buildChunkPrompt(
@@ -415,14 +474,19 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const isAgentPath = !!config.agent;
   const isHttpPath = !isAgentPath && !!config.llm;
 
-  // Chunk sizing: 20 memories per chunk with 500-char body truncation works
-  // well across both agent-CLI and HTTP paths without overflowing local model
-  // context windows (≈10k–12k chars per chunk for typical memories).
-  // Both values are intentionally generous — reducing them causes silent
-  // failures when memories are large. Override via future config fields if
-  // needed.
+  // Chunk sizing: derive a safe chunk size from the configured model context
+  // window (config.llm.contextLength) so that the full prompt (system prompt +
+  // chunk user prompt) never exceeds the model's n_ctx limit.  When no context
+  // length is configured we fall back to DEFAULT_CONTEXT_LENGTH_TOKENS (8 000)
+  // which is conservative enough for most 8K–16K local models.
+  //
+  // bodyTruncation caps the body excerpt included per memory in the prompt.
+  // Reducing it further than 500 chars degrades consolidation quality, so we
+  // keep it fixed and let computeSafeChunkSize vary the number of memories
+  // per chunk instead.
   const bodyTruncation = 500;
-  const chunkSize = 20;
+  const modelContextLength = config.llm?.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS;
+  const chunkSize = computeSafeChunkSize(modelContextLength, bodyTruncation);
 
   // -- Phase A: plan generation -----------------------------------------------
   const sourceName = opts.target ?? stashDir;
@@ -827,6 +891,10 @@ async function promptConfirm(message: string): Promise<boolean> {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.once("line", (line: string) => {
       rl.close();
+      // Unref stdin so the event loop is not held open after the readline
+      // interface closes. Without this, process.stdin remains in "resumed"
+      // state and the process hangs after akmImprove() returns.
+      process.stdin.unref();
       resolve(line.trim().toLowerCase() === "y");
     });
   });

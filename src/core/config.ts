@@ -91,6 +91,15 @@ export interface LlmConnectionConfig extends BaseConnectionConfig {
    */
   extraParams?: Record<string, unknown>;
   /**
+   * Model context window size in tokens. When set, features that build
+   * LLM prompts (e.g. `akm consolidate`) use this to compute safe chunk
+   * sizes instead of relying on a conservative hard-coded default.
+   * Set this to the value your model was loaded with in LMStudio / Ollama
+   * (e.g. 16384 for a 16K context model). Has no effect on the HTTP request
+   * body itself.
+   */
+  contextLength?: number;
+  /**
    * Optional model name override for the LLM-as-judge quality gate (P2-B).
    * When set, the judge call uses this model instead of `llm.model`, enabling
    * cheaper/faster model routing (e.g. "haiku" while distillation uses "sonnet").
@@ -972,6 +981,10 @@ function parseLlmConfig(value: unknown): LlmConnectionConfig | undefined {
     const m = parsePositiveInteger("llm.maxTokens", obj.maxTokens);
     if (m === undefined) return undefined;
     result.maxTokens = m;
+  }
+  if ("contextLength" in obj) {
+    const ctx = parsePositiveInteger("llm.contextLength", obj.contextLength);
+    if (ctx !== undefined) result.contextLength = ctx;
   }
   if (typeof obj.apiKey === "string" && obj.apiKey) {
     result.apiKey = obj.apiKey;
