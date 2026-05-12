@@ -49,7 +49,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
@@ -421,7 +421,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       if (!judgeResult.pass) {
         const rejectDir = path.join(stash, ".akm", "distill-rejected");
         fs.mkdirSync(rejectDir, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const ts = timestampForFilename();
         fs.writeFileSync(
           path.join(rejectDir, `${ts}-${promotion.knowledgeRef}.md`),
           `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${promotion.content}`,

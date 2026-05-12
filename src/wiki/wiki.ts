@@ -43,7 +43,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { akmSearch } from "../commands/search";
-import { isWithin } from "../core/common";
+import { isWithin, todayIso } from "../core/common";
 import { getSources, loadUserConfig, saveConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
@@ -767,7 +767,7 @@ function withRawFrontmatter(content: string, slug: string): string {
   // don't want to shadow user metadata. The raw location itself is enough to
   // tag the wikiRole for the indexer.
   if (content.startsWith("---")) return content;
-  const date = new Date().toISOString().slice(0, 10);
+  const date = todayIso();
   return `---\nwikiRole: raw\ningestedAt: ${date}\nslug: ${slug}\n---\n\n${content}`;
 }
 
