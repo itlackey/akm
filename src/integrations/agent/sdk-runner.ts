@@ -20,10 +20,29 @@ interface SdkClient {
   };
 }
 
-// Singleton server — started once per process, reused across calls
-let _server: { client: unknown; server: { close(): void } } | null = null;
+/** Typed server instance returned by `createOpencode`. */
+interface SdkServer {
+  client: SdkClient;
+  server: { close(): void };
+}
 
-async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<{ client: unknown }> {
+// Singleton server — started once per process, reused across calls
+let _server: SdkServer | null = null;
+
+/**
+ * Close the singleton OpenCode SDK server and reset the handle.
+ * Primarily for use in tests to ensure clean teardown between test runs.
+ */
+export function closeServer(): void {
+  try {
+    _server?.server.close();
+  } catch {
+    /* ignore */
+  }
+  _server = null;
+}
+
+async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Promise<SdkServer> {
   if (_server) return _server;
 
   const { createOpencode } = await import("@opencode-ai/sdk").catch(() => {
@@ -54,15 +73,10 @@ async function getOrStartServer(profile: AgentProfile, llmConfig?: LlmConnection
     }
   }
 
-  _server = await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {});
+  _server = (await createOpencode(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {})) as SdkServer;
 
   process.once("exit", () => {
-    try {
-      _server?.server.close();
-    } catch {
-      /* ignore */
-    }
-    _server = null;
+    closeServer();
   });
 
   if (!_server) throw new Error("Failed to initialise OpenCode SDK server.");
@@ -79,7 +93,7 @@ export async function runAgentSdk(
 
   let client: SdkClient;
   try {
-    ({ client } = (await getOrStartServer(profile, llmConfig)) as { client: SdkClient });
+    ({ client } = await getOrStartServer(profile, llmConfig));
   } catch (e) {
     return {
       ok: false,

@@ -1346,3 +1346,79 @@ export function bumpUtilityScoresBatch(db: Database, entryIds: number[], reward:
     }
   })();
 }
+
+// ── Indexer-phase helpers (moved from indexer.ts) ────────────────────────────
+
+/**
+ * Return all entries that do not yet have an embedding row.
+ * Used by the embedding phase to determine which entries need vectors generated.
+ */
+export function getAllEntriesForEmbedding(
+  db: Database,
+): Array<{ id: number; searchText: string; entryKey: string; filePath: string }> {
+  return db
+    .prepare(`
+      SELECT e.id, e.search_text AS searchText, e.entry_key AS entryKey, e.file_path AS filePath FROM entries e
+      WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
+    `)
+    .all() as Array<{ id: number; searchText: string; entryKey: string; filePath: string }>;
+}
+
+/**
+ * Upsert a workflow document record for an indexed entry.
+ * Persists the parsed workflow AST as JSON alongside a FNV-1a hash of the
+ * source content for future incremental fast-paths.
+ */
+export function upsertWorkflowDocument(
+  db: Database,
+  entryId: number,
+  doc: import("../workflows/schema").WorkflowDocument,
+  content: Buffer,
+): void {
+  const sourceHash = computeSourceHash(content);
+  db.prepare(
+    `INSERT INTO workflow_documents (entry_id, schema_version, document_json, source_path, source_hash, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(entry_id) DO UPDATE SET
+       schema_version = excluded.schema_version,
+       document_json = excluded.document_json,
+       source_path = excluded.source_path,
+       source_hash = excluded.source_hash,
+       updated_at = excluded.updated_at`,
+  ).run(entryId, doc.schemaVersion, JSON.stringify(doc), doc.source.path, sourceHash, new Date().toISOString());
+}
+
+/**
+ * Compute a cheap FNV-1a hash of a buffer for source-identity tracking.
+ * Not security-sensitive; used as an incremental fast-path skip key.
+ */
+export function computeSourceHash(content: Buffer): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < content.length; i++) {
+    hash ^= content[i];
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+/**
+ * Re-link detached usage_events to their current entry_ids via entry_ref.
+ *
+ * After a full rebuild, entry IDs change. This query matches events to their
+ * new entry rows using the stable `entry_ref` ("type:name") column so usage
+ * history survives a full reindex.
+ */
+export function relinkUsageEvents(db: Database): void {
+  try {
+    db.exec(`
+      UPDATE usage_events SET entry_id = (
+        SELECT e.id FROM entries e
+        WHERE substr(e.entry_key, length(e.entry_key) - length(usage_events.entry_ref)) = ':' || usage_events.entry_ref
+        LIMIT 1
+      )
+      WHERE entry_id IS NULL AND entry_ref IS NOT NULL
+    `);
+  } catch {
+    /* ignore if table doesn't exist yet */
+  }
+}

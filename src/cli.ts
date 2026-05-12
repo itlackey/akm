@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
+import { hasSubcommand, parsePositiveIntFlag } from "./cli/parse-args";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
@@ -14,6 +15,7 @@ import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
 import { akmInit } from "./commands/init";
 import { akmListSources, akmRemove, akmUpdate } from "./commands/installed-stashes";
+import { readKnowledgeInput, writeMarkdownAsset } from "./commands/knowledge";
 import { akmLint } from "./commands/lint";
 import { renderMigrationHelp } from "./commands/migration-help";
 import {
@@ -29,12 +31,13 @@ import {
   buildMemoryFrontmatter,
   parseDuration,
   readMemoryContent,
+  resolveRememberContentArg,
   runAutoHeuristics,
   runLlmEnrich,
 } from "./commands/remember";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./commands/search";
 import { checkForUpdate, performUpgrade } from "./commands/self-update";
-import { akmShowUnified } from "./commands/show";
+import { akmShowUnified, normalizeShowArgv } from "./commands/show";
 import { akmAdd } from "./commands/source-add";
 import { akmClone } from "./commands/source-clone";
 import { addStash } from "./commands/source-manage";
@@ -52,14 +55,13 @@ import {
 } from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "./core/common";
+import { isHttpUrl, resolveStashDir } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
-import { DEFAULT_CONFIG, getConfigPath, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import { DEFAULT_CONFIG, loadConfig, loadUserConfig, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
-import { getCacheDir, getDbPath, getDefaultStashDir } from "./core/paths";
+import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, setVerbose, warn } from "./core/warn";
-import { resolveWriteTarget, writeAssetToSource } from "./core/write-source";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
@@ -81,7 +83,6 @@ import { resolveSourcesForOrigin } from "./registry/origin-resolve";
 import { saveGitStash } from "./sources/providers/git";
 import { resolveAssetPath } from "./sources/resolve";
 import type { KnowledgeView, ShowDetailLevel, SourceKind } from "./sources/types";
-import { fetchWebsiteMarkdownSnapshot } from "./sources/website-ingest";
 import { pkgVersion } from "./version";
 import {
   createWorkflowAsset,
@@ -104,7 +105,6 @@ import {
   startWorkflowRun,
 } from "./workflows/runs";
 
-const MAX_CAPTURED_ASSET_SLUG_LENGTH = 64;
 const SKILLS_SH_NAME = "skills.sh";
 const SKILLS_SH_URL = "https://skills.sh";
 const SKILLS_SH_PROVIDER = "skills-sh";
@@ -341,11 +341,7 @@ const searchCommand = defineCommand({
       // substring-search fallback's query-less branch.
       const query = (args.query ?? "").trim();
       const type = args.type as string | undefined;
-      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-      }
-      const limit = limitRaw;
+      const limit = parsePositiveIntFlag(args.limit ?? undefined);
       const source = parseSearchSource(args.source);
       // Repeatable; citty exposes only the last `--filter` value, so read all
       // occurrences directly from argv (same pattern as `--tag`).
@@ -384,11 +380,8 @@ const curateCommand = defineCommand({
         );
       }
       const type = args.type as string | undefined;
-      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-      }
-      const limit = limitRaw && limitRaw > 0 ? limitRaw : 4;
+      const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
+      const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
       const source = parseSearchSource(args.source ?? "stash");
       const curated = await akmCurate({ query: args.query, type, limit, source });
       output("curate", curated);
@@ -836,7 +829,7 @@ const configCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      if (hasConfigSubcommand(args)) return;
+      if (hasSubcommand(args, CONFIG_SUBCOMMAND_SET)) return;
       if (args.list) {
         output("config", listConfig(loadConfig()));
         return;
@@ -1066,10 +1059,7 @@ const registryCommand = defineCommand({
       },
       async run({ args }) {
         await runWithJsonErrors(async () => {
-          const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-          if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-            throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-          }
+          const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
           const result = await searchRegistry(args.query, { limit: limitRaw, includeAssets: args.assets });
           output("registry-search", result);
         });
@@ -1285,119 +1275,6 @@ const historyCommand = defineCommand({
     });
   },
 });
-
-function normalizeMarkdownAssetName(name: string | undefined, fallback: string): string {
-  const trimmed = (name ?? fallback)
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "")
-    .replace(/\.md$/i, "");
-  if (!trimmed) throw new UsageError("Asset name cannot be empty.");
-  const segments = trimmed.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new UsageError("Asset name must be a relative path without '.' or '..' segments.");
-  }
-  return trimmed;
-}
-
-function slugifyAssetName(value: string, fallbackPrefix: string): string {
-  const slug = value
-    .toLowerCase()
-    .replace(/^[#>\-\s]+/, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, MAX_CAPTURED_ASSET_SLUG_LENGTH);
-  return slug || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function inferAssetName(content: string, fallbackPrefix: string, preferred?: string): string {
-  const firstNonEmptyLine = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  const basis = preferred?.trim() || firstNonEmptyLine || fallbackPrefix;
-  return slugifyAssetName(basis, fallbackPrefix);
-}
-
-function readKnowledgeContent(source: string): { content: string; preferredName?: string } {
-  if (source === "-") {
-    const content = tryReadStdinText();
-    if (!content?.trim()) {
-      throw new UsageError("No stdin content received. Pipe a document into stdin or pass a file path.");
-    }
-    return { content };
-  }
-
-  const resolvedSource = path.resolve(source);
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(resolvedSource);
-  } catch {
-    throw new UsageError(`Knowledge source not found: "${source}". Pass a readable file path or "-" for stdin.`);
-  }
-  if (!stat.isFile()) {
-    throw new UsageError(`Knowledge source must be a file: "${source}".`);
-  }
-  return {
-    content: fs.readFileSync(resolvedSource, "utf8"),
-    preferredName: path.basename(resolvedSource, path.extname(resolvedSource)),
-  };
-}
-
-async function readKnowledgeInput(source: string): Promise<{ content: string; preferredName?: string }> {
-  if (!isHttpUrl(source)) return readKnowledgeContent(source);
-  const snapshot = await fetchWebsiteMarkdownSnapshot(source);
-  return { content: snapshot.content, preferredName: snapshot.preferredName };
-}
-
-async function writeMarkdownAsset(options: {
-  type: "knowledge" | "memory";
-  content: string;
-  name?: string;
-  fallbackPrefix: string;
-  preferredName?: string;
-  force?: boolean;
-  /** Optional explicit `--target` override naming a configured source. */
-  target?: string;
-}): Promise<{ ref: string; path: string; stashDir: string }> {
-  // Resolve write target via the v1 precedence chain (`--target` →
-  // `defaultWriteTarget` → working stash). Per spec §10 step 5, this is the
-  // single dispatch point — `core/write-source.ts` owns all kind-branching.
-  const cfg = loadConfig();
-  const { source, config } = resolveWriteTarget(cfg, options.target);
-
-  const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
-  const normalizedName = normalizeMarkdownAssetName(
-    options.name,
-    inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
-  );
-  // Pre-flight: existence + force semantics. The helper itself overwrites
-  // unconditionally; the CLI surfaces a friendlier UsageError before any
-  // disk activity when --force is absent.
-  const assetPath = resolveAssetPathFromName(options.type, typeRoot, normalizedName);
-  if (!isWithin(assetPath, typeRoot)) {
-    throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
-  }
-  if (fs.existsSync(assetPath) && !options.force) {
-    throw new UsageError(
-      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
-  }
-
-  // Delegate the actual write (and optional git commit/push) to the helper.
-  const result = await writeAssetToSource(
-    source,
-    config,
-    { type: options.type, name: normalizedName },
-    options.content,
-  );
-  return {
-    ref: result.ref,
-    path: result.path,
-    stashDir: source.path,
-  };
-}
 
 const workflowStartCommand = defineCommand({
   meta: {
@@ -1930,63 +1807,6 @@ async function fetchSimilarMemories(
   }
 }
 
-function resolveRememberContentArg(content: string | undefined): string | undefined {
-  if (content === undefined) return undefined;
-
-  const parsedFormat = parseFlagValue(process.argv, "--format");
-  if (
-    parsedFormat !== undefined &&
-    content === parsedFormat &&
-    wasRememberFlagValueConsumedAsContent(content, parsedFormat, "--format")
-  ) {
-    return undefined;
-  }
-
-  const parsedDetail = parseFlagValue(process.argv, "--detail");
-  if (
-    parsedDetail !== undefined &&
-    content === parsedDetail &&
-    wasRememberFlagValueConsumedAsContent(content, parsedDetail, "--detail")
-  ) {
-    return undefined;
-  }
-
-  return content;
-}
-
-function wasRememberFlagValueConsumedAsContent(
-  content: string,
-  flagValue: string,
-  flagName: "--format" | "--detail",
-): boolean {
-  const argv = process.argv.slice(2);
-  const rememberIndex = argv.indexOf("remember");
-  const tokens = rememberIndex >= 0 ? argv.slice(rememberIndex + 1) : argv;
-
-  let flagIndex = -1;
-  let flagConsumesNextToken = false;
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (token === flagName) {
-      flagIndex = i;
-      flagConsumesNextToken = true;
-      break;
-    }
-    if (token === `${flagName}=${flagValue}`) {
-      flagIndex = i;
-      break;
-    }
-  }
-
-  if (flagIndex === -1) return false;
-  if (tokens.slice(0, flagIndex).includes(content)) return false;
-
-  const firstTokenAfterFlag = flagIndex + (flagConsumesNextToken ? 2 : 1);
-  if (tokens.slice(firstTokenAfterFlag).includes(content)) return false;
-
-  return true;
-}
-
 const importKnowledgeCommand = defineCommand({
   meta: {
     name: "import",
@@ -2465,7 +2285,7 @@ const vaultCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (hasVaultSubcommand(args)) return;
+      if (hasSubcommand(args, VAULT_SUBCOMMAND_SET)) return;
       // Default action: list all vaults
       const { listKeys } = await import("./commands/vault.js");
       output("vault-list", { vaults: listVaultsRecursive(listKeys) });
@@ -2719,7 +2539,7 @@ const wikiCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (hasWikiSubcommand(args)) return;
+      if (hasSubcommand(args, WIKI_SUBCOMMAND_SET)) return;
       // Default action: list wikis
       const { listWikis } = await import("./wiki/wiki.js");
       output("wiki-list", { wikis: listWikis(resolveStashDir()) });
@@ -3078,10 +2898,7 @@ const improveCommand = defineCommand({
       const taskArg = typeof args.task === "string" && args.task.trim() ? args.task : undefined;
       const dryRun = getHyphenatedBoolean(args, "dry-run");
       const autoAccept = autoAcceptRaw === "safe" ? ("safe" as const) : undefined;
-      const limitRaw = args.limit ? parseInt(args.limit, 10) : undefined;
-      if (limitRaw !== undefined && Number.isNaN(limitRaw)) {
-        throw new UsageError(`Invalid --limit value: "${args.limit}". Must be a positive integer.`);
-      }
+      const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutRaw = getHyphenatedArg<string>(args, "timeout-ms");
       const timeoutMs = timeoutRaw !== undefined ? parseInt(timeoutRaw, 10) : undefined;
       if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
@@ -3183,11 +3000,6 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "sync",
   "doctor",
 ]);
-
-function hasTasksSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && TASKS_SUBCOMMAND_SET.has(command);
-}
 
 const tasksAddCommand = defineCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
@@ -3312,10 +3124,7 @@ const tasksHistoryCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const limit = args.limit ? Number(args.limit) : undefined;
-      if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
-        throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
-      }
+      const limit = parsePositiveIntFlag(args.limit ?? undefined);
       const result = await akmTasksHistory({ id: args.id, limit });
       output("tasks-history", result);
     });
@@ -3367,7 +3176,7 @@ const tasksCommand = defineCommand({
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
-      if (hasTasksSubcommand(args)) return;
+      if (hasSubcommand(args, TASKS_SUBCOMMAND_SET)) return;
       const result = await akmTasksList();
       output("tasks-list", result);
     });
@@ -3446,8 +3255,6 @@ const WIKI_SUBCOMMAND_SET = new Set([
   "lint",
   "ingest",
 ]);
-const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
-
 // ── Exit codes ──────────────────────────────────────────────────────────────
 const EXIT_GENERAL = 1;
 const EXIT_USAGE = 2;
@@ -3521,98 +3328,6 @@ function extractHint(error: unknown): string | undefined {
     return (error as { hint: () => string | undefined }).hint();
   }
   return undefined;
-}
-
-function hasConfigSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && CONFIG_SUBCOMMAND_SET.has(command);
-}
-
-function hasVaultSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && VAULT_SUBCOMMAND_SET.has(command);
-}
-
-function hasWikiSubcommand(args: Record<string, unknown>): boolean {
-  const command = Array.isArray(args._) ? args._[0] : undefined;
-  return typeof command === "string" && WIKI_SUBCOMMAND_SET.has(command);
-}
-
-/**
- * Normalize argv so positional view-mode arguments after the asset ref
- * are rewritten into internal flags that citty can parse.
- *
- * Converts:
- *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --akmView toc
- *   akm show knowledge:guide.md section Auth → akm show knowledge:guide.md --akmView section --akmHeading Auth
- *   akm show knowledge:guide.md lines 1 50   → akm show knowledge:guide.md --akmView lines --akmStart 1 --akmEnd 50
- *
- * Legacy `--view` is intentionally unsupported.
- * Returns a new array; the input is never modified.
- */
-function normalizeShowArgv(argv: string[]): string[] {
-  // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
-  if (argv[2] !== "show") return argv;
-  if (argv[3] === "proposal") return argv;
-  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
-    throw new UsageError(
-      'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
-    );
-  }
-
-  // Separate global flags from positional/show-specific args
-  const prefix = argv.slice(0, 3); // [bun, script, show]
-  const rest = argv.slice(3);
-
-  const globalFlags: string[] = [];
-  const showArgs: string[] = [];
-
-  for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i];
-    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
-      globalFlags.push(arg);
-      continue;
-    }
-    if (arg === "--format" || arg === "--detail") {
-      globalFlags.push(arg);
-      if (rest[i + 1] !== undefined) {
-        globalFlags.push(rest[i + 1]);
-        i++;
-      }
-      continue;
-    }
-    showArgs.push(arg);
-  }
-
-  // showArgs[0] = ref, showArgs[1] = potential view mode, showArgs[2..] = view params
-  const ref = showArgs[0];
-  const viewMode = showArgs[1];
-
-  if (!ref || !viewMode || !SHOW_VIEW_MODES.has(viewMode)) {
-    return argv;
-  }
-
-  const result = [...prefix, ref, "--akmView", viewMode];
-
-  if (viewMode === "section") {
-    // Next arg is the heading name; pass empty string when missing so the
-    // show handler can produce a clear "section not found" error.
-    const heading = showArgs[2] ?? "";
-    result.push("--akmHeading", heading);
-  } else if (viewMode === "lines") {
-    // Next two args are start and end
-    const start = showArgs[2];
-    const end = showArgs[3];
-    if (start) result.push("--akmStart", start);
-    if (end) result.push("--akmEnd", end);
-  }
-
-  result.push(...globalFlags);
-  return result;
 }
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────

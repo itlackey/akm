@@ -34,7 +34,8 @@ afterEach(() => {
 
 describe("AkmConfig loader — agent block", () => {
   test("loads agent.default + agent.profiles from disk", async () => {
-    const { getConfigPath, loadUserConfig, resetConfigCache } = await import("../../src/core/config");
+    const { loadUserConfig, resetConfigCache } = await import("../../src/core/config");
+    const { getConfigPath } = await import("../../src/core/paths");
     const cfgPath = getConfigPath();
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(

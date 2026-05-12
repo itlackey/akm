@@ -5,6 +5,8 @@
  * the stash open logic and the metadata generator.
  */
 
+import { asNonEmptyString } from "./common";
+
 /**
  * Parse YAML-subset frontmatter from a Markdown (or similar) string.
  *
@@ -166,7 +168,8 @@ export function parseYamlScalar(value: string): unknown {
 
 /**
  * Coerce an unknown value to a trimmed string, or return undefined if empty/non-string.
+ * @deprecated Use `asNonEmptyString` from `core/common` directly.
  */
 export function toStringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
+  return asNonEmptyString(value);
 }
