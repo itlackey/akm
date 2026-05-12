@@ -53,6 +53,113 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
   return null;
 }
 
+// ── DIR_TYPE_MAP — shared lookup table ──────────────────────────────────────
+
+/**
+ * Lookup table mapping directory names to their type classification rule.
+ *
+ * Each entry encodes:
+ *  - `dir`       The directory name to match (ancestor or parent).
+ *  - `type`      The asset type to assign on a hit.
+ *  - `renderer`  The renderer name for the matched type.
+ *  - `test`      A predicate that checks whether the file extension / name
+ *                qualifies for this directory's type.
+ *
+ * The `skills` entry is deliberately absent from this table because the
+ * two matchers treat it differently:
+ *  - `directoryMatcher`      matches only when `fileName === "SKILL.md"`.
+ *  - `parentDirHintMatcher`  matches when `fileName === "SKILL.md"` OR any `.md`.
+ * Both cases are handled inline in `matchDirectoryHint` and
+ * `parentDirHintMatcher` so the SKILL.md special-case stays explicit.
+ */
+interface DirTypeRule {
+  dir: string;
+  type: MatchResult["type"];
+  renderer: string;
+  test: (ext: string, fileName: string) => boolean;
+}
+
+const DIR_TYPE_MAP: DirTypeRule[] = [
+  {
+    dir: "scripts",
+    type: "script",
+    renderer: "script-source",
+    test: (ext) => SCRIPT_EXTENSIONS.has(ext),
+  },
+  {
+    dir: "commands",
+    type: "command",
+    renderer: "command-md",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "agents",
+    type: "agent",
+    renderer: "agent-md",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "knowledge",
+    type: "knowledge",
+    renderer: "knowledge-md",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "workflows",
+    type: "workflow",
+    renderer: "workflow-md",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "memories",
+    type: "memory",
+    renderer: "memory-md",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "vaults",
+    type: "vault",
+    renderer: "vault-env",
+    test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
+  },
+  {
+    dir: "tasks",
+    type: "task",
+    renderer: "task-md",
+    test: (ext) => ext === ".md",
+  },
+];
+
+/**
+ * Shared classification helper used by both directory-based matchers.
+ *
+ * Iterates `DIR_TYPE_MAP` looking for a rule whose `dir` matches `dirName`
+ * and whose `test` predicate passes for the file. The `skills` directory is
+ * handled inline because the two callers use slightly different membership
+ * criteria for it.
+ *
+ * @param dirName     The directory segment to match (ancestor or parent dir).
+ * @param ctx         FileContext for the file being classified.
+ * @param specificity The specificity to embed in the returned MatchResult.
+ * @returns A MatchResult, or `null` when no rule matches.
+ */
+function matchDirectoryHint(dirName: string, ctx: FileContext, specificity: number): MatchResult | null {
+  // SKILL.md special case: handled here so both callers share the logic for
+  // the `skills` directory. `directoryMatcher` only matches the literal
+  // filename; `parentDirHintMatcher` accepts any .md (handled by its caller).
+  if (dirName === "skills" && ctx.fileName === "SKILL.md") {
+    return { type: "skill", specificity, renderer: "skill-md" };
+  }
+
+  for (const rule of DIR_TYPE_MAP) {
+    if (rule.dir === dirName && rule.test(ctx.ext, ctx.fileName)) {
+      return { type: rule.type, specificity, renderer: rule.renderer };
+    }
+  }
+
+  return null;
+}
+
 // ── directoryMatcher (specificity: 10) ──────────────────────────────────────
 
 /**
@@ -64,46 +171,10 @@ export function extensionMatcher(ctx: FileContext): MatchResult | null {
  * while still honoring earlier type roots like `commands/agents/foo.md`.
  */
 export function directoryMatcher(ctx: FileContext): MatchResult | null {
-  const ext = ctx.ext;
-
   for (const dir of ctx.ancestorDirs) {
-    if (dir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
-      return { type: "script", specificity: 10, renderer: "script-source" };
-    }
-
-    if (dir === "skills" && ctx.fileName === "SKILL.md") {
-      return { type: "skill", specificity: 10, renderer: "skill-md" };
-    }
-
-    if (dir === "commands" && ext === ".md") {
-      return { type: "command", specificity: 10, renderer: "command-md" };
-    }
-
-    if (dir === "agents" && ext === ".md") {
-      return { type: "agent", specificity: 10, renderer: "agent-md" };
-    }
-
-    if (dir === "knowledge" && ext === ".md") {
-      return { type: "knowledge", specificity: 10, renderer: "knowledge-md" };
-    }
-
-    if (dir === "workflows" && ext === ".md") {
-      return { type: "workflow", specificity: 10, renderer: "workflow-md" };
-    }
-
-    if (dir === "memories" && ext === ".md") {
-      return { type: "memory", specificity: 10, renderer: "memory-md" };
-    }
-
-    if (dir === "vaults" && (ctx.fileName === ".env" || ctx.fileName.endsWith(".env"))) {
-      return { type: "vault", specificity: 10, renderer: "vault-env" };
-    }
-
-    if (dir === "tasks" && ext === ".md") {
-      return { type: "task", specificity: 10, renderer: "task-md" };
-    }
+    const result = matchDirectoryHint(dir, ctx, 10);
+    if (result) return result;
   }
-
   return null;
 }
 
@@ -118,43 +189,13 @@ export function directoryMatcher(ctx: FileContext): MatchResult | null {
 export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
   const { parentDir, ext, fileName } = ctx;
 
-  if (parentDir === "scripts" && SCRIPT_EXTENSIONS.has(ext)) {
-    return { type: "script", specificity: 15, renderer: "script-source" };
-  }
-
+  // `skills` parent dir accepts any .md (not just SKILL.md) — broader than
+  // the ancestor-based rule to handle `skills/planning.md` layouts.
   if (parentDir === "skills" && (fileName === "SKILL.md" || ext === ".md")) {
     return { type: "skill", specificity: 15, renderer: "skill-md" };
   }
 
-  if (parentDir === "agents" && ext === ".md") {
-    return { type: "agent", specificity: 15, renderer: "agent-md" };
-  }
-
-  if (parentDir === "commands" && ext === ".md") {
-    return { type: "command", specificity: 15, renderer: "command-md" };
-  }
-
-  if (parentDir === "knowledge" && ext === ".md") {
-    return { type: "knowledge", specificity: 15, renderer: "knowledge-md" };
-  }
-
-  if (parentDir === "workflows" && ext === ".md") {
-    return { type: "workflow", specificity: 15, renderer: "workflow-md" };
-  }
-
-  if (parentDir === "memories" && ext === ".md") {
-    return { type: "memory", specificity: 15, renderer: "memory-md" };
-  }
-
-  if (parentDir === "vaults" && (fileName === ".env" || fileName.endsWith(".env"))) {
-    return { type: "vault", specificity: 15, renderer: "vault-env" };
-  }
-
-  if (parentDir === "tasks" && ext === ".md") {
-    return { type: "task", specificity: 15, renderer: "task-md" };
-  }
-
-  return null;
+  return matchDirectoryHint(parentDir, ctx, 15);
 }
 
 // ── smartMdMatcher (specificity: 20 / 18 / 8 / 5) ──────────────────────────
