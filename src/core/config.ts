@@ -1230,7 +1230,7 @@ function parseInstallAuditConfig(value: unknown): InstallAuditConfig | undefined
   if (typeof obj.blockUnlistedRegistries === "boolean") config.blockUnlistedRegistries = obj.blockUnlistedRegistries;
   const rawAllowlist = filterNonEmptyStrings(obj.registryAllowlist) ?? filterNonEmptyStrings(obj.registryWhitelist);
   if (!obj.registryAllowlist && obj.registryWhitelist) {
-    console.warn("[akm] config: `registryWhitelist` is deprecated; rename it to `registryAllowlist`");
+    warn("[akm] config: `registryWhitelist` is deprecated; rename it to `registryAllowlist`");
   }
   if (rawAllowlist) {
     config.registryAllowlist = rawAllowlist;

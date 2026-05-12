@@ -20,7 +20,7 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { listProposals } from "../core/proposals";
-import { warn } from "../core/warn";
+import { error, info, warn } from "../core/warn";
 import {
   closeDatabase,
   getAllEntries,
@@ -580,8 +580,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
     if (validationFailures.length > 0) {
-      console.error(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
-      for (const f of validationFailures) console.error(`  ${f.ref}: ${f.reason}`);
+      info(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
+      for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
     }
     // Schema repair pass: attempt to fix validation failures via LLM before skipping.
     let schemaRepairs: Array<{
@@ -711,9 +711,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref));
     const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
     if (reflectCooledLoop.length > 0) {
-      console.error(
-        `[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`,
-      );
+      info(`[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`);
       for (const r of reflectCooledLoop) {
         actions.push({
           ref: r.ref,
@@ -729,7 +727,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       if (validationFailureRefs.has(planned.ref)) continue;
       if (Date.now() - startMs >= budgetMs) {
         const remaining = loopRefs.length - completedCount;
-        console.error(
+        info(
           `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
         );
         appendEvent({
@@ -767,7 +765,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             ref: planned.ref,
             metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS },
           });
-          console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
+          info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
           continue;
         }
 
@@ -798,7 +796,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 result: { ok: true, reason: "pending proposal exists" },
               });
               completedCount++;
-              console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+              info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
               continue;
             }
           }
@@ -850,7 +848,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         });
       }
       completedCount++;
-      console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+      info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
     }
 
     const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
@@ -906,6 +904,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         config: consolidationConfig,
         stashDir: options.stashDir,
         autoTriggered: volumeTriggered,
+        // Consolidation is a sub-step of improve — the user already opted in by
+        // running improve. Always skip the interactive confirmation here; it only
+        // belongs in the standalone `akm consolidate` CLI path.
+        autoAccept: "safe",
       });
       if (consolidation.processed > 0) {
         appendEvent({
@@ -925,7 +927,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           lastEventTs: lastConsolidation?.ts ?? null,
         },
       });
-      console.error(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
+      info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
     }
 
     // Item 8: URL dead-link detection — weekly (mode=all) runs only, best-effort, no LLM needed.

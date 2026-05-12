@@ -17,6 +17,7 @@ import { parseAssetRef } from "../core/asset-ref";
 import type { LlmConnectionConfig } from "../core/config";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
+import { info } from "../core/warn";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ export async function runSchemaRepairPass(
       }
 
       const fieldList = missingFields.join(" and ");
-      console.error(`[improve] schema-repair ${failure.ref} (${fieldList})`);
+      info(`[improve] schema-repair ${failure.ref} (${fieldList})`);
 
       const bodyPreview = (fm.content ?? raw).slice(0, 2000);
       const llmResponse = await chatCompletion(llmConfig, [
@@ -158,7 +159,7 @@ export async function runSchemaRepairPass(
       const fmStr = yamlStringify(newFm).trimEnd();
       const newContent = `---\n${fmStr}\n---\n${fm.content}`;
       fs.writeFileSync(filePath, newContent, "utf8");
-      console.error(`[improve] schema-repair written: ${failure.ref}`);
+      info(`[improve] schema-repair written: ${failure.ref}`);
       appendEvent({
         eventType: "schema_repair_invoked",
         ref: failure.ref,

@@ -8,6 +8,7 @@
  */
 
 import type { AkmConfig } from "../core/config";
+import { warn } from "../core/warn";
 import { resolveAgentProfile, runAgent } from "../integrations/agent";
 import { chatCompletion } from "./client";
 
@@ -62,7 +63,7 @@ export async function callAi(config: AkmConfig, prompt: string, opts: CallAiOpti
 
   if (config.llm) {
     if (opts.draftFilePath) {
-      console.warn(
+      warn(
         "[akm] No agent CLI configured — falling back to LLM API. " +
           "File-write contract unavailable; expecting JSON in stdout. " +
           "Install an agent CLI and run `akm setup` for full functionality.",

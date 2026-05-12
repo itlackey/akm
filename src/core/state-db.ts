@@ -53,6 +53,7 @@ import path from "node:path";
 import type { EventEnvelope } from "./events";
 import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
+import { error } from "./warn";
 
 // ── Path helper ──────────────────────────────────────────────────────────────
 
@@ -561,7 +562,7 @@ export function insertEvent(
     return result?.id;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`akm: state.db event insert failed (${message})\n`);
+    error(`akm: state.db event insert failed (${message})`);
     return undefined;
   }
 }

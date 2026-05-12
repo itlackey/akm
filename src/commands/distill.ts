@@ -58,6 +58,7 @@ import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
+import { warnVerbose } from "../core/warn";
 import { lookup as indexerLookup } from "../indexer/indexer";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
@@ -598,7 +599,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       onFallback: (evt) => {
         // Log the fallback reason; the caller (raw === null path) handles
         // emitting the distill_invoked event so we don't double-emit here.
-        console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+        warnVerbose(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
       },
     },
   );

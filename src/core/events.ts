@@ -25,6 +25,7 @@
 import path from "node:path";
 import { getDataDir } from "./paths";
 import { insertEvent, openStateDatabase, readStateEvents } from "./state-db";
+import { error } from "./warn";
 
 /**
  * Stable, machine-readable event types. New types may be added freely.
@@ -143,7 +144,7 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
   } catch (err) {
     // Best-effort: events stream failures must not break the mutating verb.
     // Surface once to stderr so operators can diagnose.
-    process.stderr.write(`akm: appendEvent failed: ${String(err)}\n`);
+    error(`akm: appendEvent failed: ${String(err)}`);
   }
 }
 

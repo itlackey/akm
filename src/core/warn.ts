@@ -1,13 +1,21 @@
 /**
- * Module-level quiet/verbose flags for stderr warning gating.
+ * Module-level quiet/verbose flags and optional file sink for stderr output.
  *
  * `quiet` is controlled by the CLI `--quiet`/`-q` flag.
  * `verbose` is controlled by the CLI `--verbose` flag, with `AKM_VERBOSE`
  * (env var) winning regardless: env > flag > default (false).
+ *
+ * Call `setLogFile(path)` to tee all warn/error/info output to a file in
+ * addition to stderr. The file sink is written even when `--quiet` suppresses
+ * console output, so logs remain available for post-run inspection.
  */
+
+import fs from "node:fs";
+import path from "node:path";
 
 let quiet = false;
 let verbose = false;
+let logFilePath: string | undefined;
 
 export function setQuiet(value: boolean): void {
   quiet = value;
@@ -58,12 +66,67 @@ export function isVerbose(): boolean {
 }
 
 /**
+ * Direct all warn/error/info output to `filePath` in addition to stderr.
+ * The directory is created if it does not exist. Pass `undefined` to disable.
+ * The file is written even when `--quiet` suppresses console output.
+ */
+export function setLogFile(filePath: string): void {
+  logFilePath = filePath;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+export function clearLogFile(): void {
+  logFilePath = undefined;
+}
+
+export function getLogFile(): string | undefined {
+  return logFilePath;
+}
+
+function appendToLogFile(level: "INFO" | "WARN" | "ERROR", args: unknown[]): void {
+  if (!logFilePath) return;
+  const ts = new Date().toISOString();
+  const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  try {
+    fs.appendFileSync(logFilePath, `[${ts}] [${level}] ${msg}\n`);
+  } catch {
+    // Never throw from a logging function — log failures are silent.
+  }
+}
+
+/**
+ * Emit an info/progress line to stderr unless --quiet is active.
+ * Always written to the log file if one is active.
+ * Use for progress counters and status lines (replaces console.error used for progress).
+ */
+export function info(...args: unknown[]): void {
+  appendToLogFile("INFO", args);
+  if (!quiet) {
+    console.warn(...args);
+  }
+}
+
+/**
  * Emit a warning to stderr unless --quiet is active.
+ * Always written to the log file if one is active.
  * Drop-in replacement for console.warn() across the codebase.
  */
 export function warn(...args: unknown[]): void {
+  appendToLogFile("WARN", args);
   if (!quiet) {
     console.warn(...args);
+  }
+}
+
+/**
+ * Emit an error to stderr unless --quiet is active.
+ * Always written to the log file if one is active.
+ * Drop-in replacement for console.error() used for diagnostic failures.
+ */
+export function error(...args: unknown[]): void {
+  appendToLogFile("ERROR", args);
+  if (!quiet) {
+    console.error(...args);
   }
 }
 

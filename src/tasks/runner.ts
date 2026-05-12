@@ -28,6 +28,7 @@ import { loadConfig } from "../core/config";
 import { NotFoundError } from "../core/errors";
 import { getTaskLogDir } from "../core/paths";
 import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
+import { error } from "../core/warn";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
 import { resolveAssetPath } from "../sources/resolve";
@@ -451,7 +452,7 @@ function appendHistory(result: TaskRunResult): void {
       db.close();
     }
   } catch (err) {
-    process.stderr.write(`[akm] task history DB write failed: ${String(err)}\n`);
+    error(`[akm] task history DB write failed: ${String(err)}`);
   }
 }
 

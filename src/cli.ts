@@ -61,7 +61,7 @@ import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, s
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
-import { setQuiet, setVerbose, warn } from "./core/warn";
+import { clearLogFile, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
@@ -2993,18 +2993,30 @@ const improveCommand = defineCommand({
         );
       }
 
-      const improveResult = await akmImprove({
-        scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
-        task: taskArg,
-        dryRun,
-        target: targetArg,
-        autoAccept,
-        ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
-        ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
-        consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
-      });
+      const improveLogFile = path.join(
+        getCacheDir(),
+        "logs",
+        "improve",
+        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+      );
+      setLogFile(improveLogFile);
+      let improveResult: Awaited<ReturnType<typeof akmImprove>>;
+      try {
+        improveResult = await akmImprove({
+          scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
+          task: taskArg,
+          dryRun,
+          target: targetArg,
+          autoAccept,
+          ...(limitRaw !== undefined ? { limit: limitRaw } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
+          ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
+          consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
+        });
+      } finally {
+        clearLogFile();
+      }
       output("improve", improveResult);
     });
   },
