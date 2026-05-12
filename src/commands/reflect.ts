@@ -22,7 +22,6 @@
 import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { lintLessonContent } from "../core/lesson-lint";

@@ -186,6 +186,139 @@ export async function akmRemove(input: { target: string; stashDir?: string }): P
   };
 }
 
+// ── akmUpdate helpers ────────────────────────────────────────────────────────
+
+/** Build a standard UpdateResponse summary block from the current config and index run. */
+async function buildUpdateResponse(
+  stashDir: string,
+  target: string | undefined,
+  all: boolean,
+  processed: UpdateResponse["processed"],
+  full = false,
+): Promise<UpdateResponse> {
+  const index = await akmIndex({ stashDir, ...(full ? { full: true } : {}) });
+  const finalConfig = loadConfig();
+  return {
+    schemaVersion: 1,
+    stashDir,
+    target,
+    all,
+    processed,
+    config: {
+      sourceCount: getSources(finalConfig).length,
+      installedKitCount: finalConfig.installed?.length ?? 0,
+    },
+    index: {
+      mode: index.mode,
+      totalEntries: index.totalEntries,
+      directoriesScanned: index.directoriesScanned,
+      directoriesSkipped: index.directoriesSkipped,
+    },
+  };
+}
+
+/** Sync a git-mirrored source and return an UpdateResponse. */
+async function updateGitSource(
+  stashDir: string,
+  target: string,
+  all: boolean,
+  gitSource: ReturnType<typeof getSources>[number],
+): Promise<UpdateResponse> {
+  await syncMirroredRepo(gitSource, { force: true, writable: gitSource.writable === true });
+  return buildUpdateResponse(stashDir, target, all, [], true);
+}
+
+/** Re-crawl a website source and return an UpdateResponse. */
+async function updateWebsiteSource(
+  stashDir: string,
+  target: string,
+  all: boolean,
+  websiteSource: ReturnType<typeof getSources>[number],
+): Promise<UpdateResponse> {
+  // TODO: full incremental re-crawl with delta tracking (#19)
+  await ensureWebsiteMirror(websiteSource, { requireStashDir: true, force: true });
+  return buildUpdateResponse(stashDir, target, all, []);
+}
+
+/** Sync a single installed registry entry and return the processed record. */
+async function updateRegistryEntry(
+  entry: InstalledStashEntry,
+  force: boolean,
+  auditConfig: ReturnType<typeof loadConfig>,
+): Promise<UpdateResponse["processed"][number]> {
+  if (force && shouldCleanupCache(entry)) {
+    cleanupDirectoryBestEffort(entry.cacheDir);
+  }
+  const synced = await syncFromRef(entry.ref, { force });
+
+  // Mirror the post-sync audit hook from akmAdd so `akm update` can't
+  // silently land malicious content during refresh.
+  const registryLabels = deriveRegistryLabels({
+    source: synced.source,
+    ref: synced.ref,
+    artifactUrl: synced.artifactUrl,
+  });
+  enforceRegistryInstallPolicy(registryLabels, auditConfig, entry.ref);
+  const audit = auditInstallCandidate({
+    rootDir: synced.extractedDir,
+    source: synced.source,
+    ref: synced.ref,
+    registryLabels,
+    config: auditConfig,
+  });
+  if (audit.blocked) {
+    throw new Error(formatInstallAuditFailure(synced.ref, audit));
+  }
+
+  const installedEntry: InstalledStashEntry = {
+    id: synced.id,
+    source: synced.source,
+    ref: synced.ref,
+    artifactUrl: synced.artifactUrl,
+    resolvedVersion: synced.resolvedVersion,
+    resolvedRevision: synced.resolvedRevision,
+    stashRoot: synced.contentDir,
+    cacheDir: synced.cacheDir,
+    installedAt: synced.syncedAt,
+    writable: synced.writable ?? entry.writable,
+    ...(entry.wikiName ? { wikiName: entry.wikiName } : {}),
+  };
+  upsertInstalledRegistryEntry(installedEntry);
+  await upsertLockEntry({
+    id: synced.id,
+    source: synced.source,
+    ref: synced.ref,
+    resolvedVersion: synced.resolvedVersion,
+    resolvedRevision: synced.resolvedRevision,
+    integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
+  });
+  if (entry.cacheDir !== synced.cacheDir && shouldCleanupCache(entry)) {
+    cleanupDirectoryBestEffort(entry.cacheDir);
+  }
+
+  const versionChanged = (entry.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
+  const revisionChanged = (entry.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
+
+  return {
+    id: entry.id,
+    source: entry.source,
+    ref: entry.ref,
+    previous: {
+      resolvedVersion: entry.resolvedVersion,
+      resolvedRevision: entry.resolvedRevision,
+      cacheDir: entry.cacheDir,
+    },
+    installed: { ...installedEntry, extractedDir: synced.extractedDir, audit },
+    changed: {
+      version: versionChanged,
+      revision: revisionChanged,
+      any: versionChanged || revisionChanged,
+    },
+  };
+}
+
+// ── akmUpdate dispatcher ─────────────────────────────────────────────────────
+
 export async function akmUpdate(input?: {
   target?: string;
   all?: boolean;
@@ -199,8 +332,8 @@ export async function akmUpdate(input?: {
   const config = loadConfig();
   const installedEntries = config.installed ?? [];
 
-  // Check if the target refers to a website source — those are syncable via
-  // ensureWebsiteMirror and are stored in sources[] not installed[].
+  // Check if the target refers to a git or website source — those are stored
+  // in sources[] not installed[] and need a different update path.
   if (target && !all) {
     const stashes = getSources(config);
     const isUrl = target.startsWith("http://") || target.startsWith("https://");
@@ -220,28 +353,8 @@ export async function akmUpdate(input?: {
       }
       return false;
     });
-    if (gitMatch) {
-      await syncMirroredRepo(gitMatch, { force: true, writable: gitMatch.writable === true });
-      const index = await akmIndex({ stashDir, full: true });
-      const updatedConfig = loadConfig();
-      return {
-        schemaVersion: 1,
-        stashDir,
-        target,
-        all,
-        processed: [],
-        config: {
-          sourceCount: getSources(updatedConfig).length,
-          installedKitCount: updatedConfig.installed?.length ?? 0,
-        },
-        index: {
-          mode: index.mode,
-          totalEntries: index.totalEntries,
-          directoriesScanned: index.directoriesScanned,
-          directoriesSkipped: index.directoriesSkipped,
-        },
-      };
-    }
+    if (gitMatch) return updateGitSource(stashDir, target, all, gitMatch);
+
     const websiteMatch = stashes.find((s) => {
       if (s.type !== "website") return false;
       if (isUrl && s.url === target) return true;
@@ -249,127 +362,17 @@ export async function akmUpdate(input?: {
       if (resolvedPath && s.path && path.resolve(s.path) === resolvedPath) return true;
       return false;
     });
-    if (websiteMatch) {
-      // TODO: full incremental re-crawl with delta tracking (#19)
-      await ensureWebsiteMirror(websiteMatch, { requireStashDir: true, force: true });
-      const index = await akmIndex({ stashDir });
-      const updatedConfig = loadConfig();
-      return {
-        schemaVersion: 1,
-        stashDir,
-        target,
-        all,
-        processed: [],
-        config: {
-          sourceCount: getSources(updatedConfig).length,
-          installedKitCount: updatedConfig.installed?.length ?? 0,
-        },
-        index: {
-          mode: index.mode,
-          totalEntries: index.totalEntries,
-          directoriesScanned: index.directoriesScanned,
-          directoriesSkipped: index.directoriesSkipped,
-        },
-      };
-    }
+    if (websiteMatch) return updateWebsiteSource(stashDir, target, all, websiteMatch);
   }
 
   const selectedEntries = selectTargets(installedEntries, target, all);
-
   const auditConfig = config;
   const processed: UpdateResponse["processed"] = [];
   for (const entry of selectedEntries) {
-    if (force && shouldCleanupCache(entry)) {
-      cleanupDirectoryBestEffort(entry.cacheDir);
-    }
-    const synced = await syncFromRef(entry.ref, { force });
-
-    // Mirror the post-sync audit hook from akmAdd so `akm update` can't
-    // silently land malicious content during refresh.
-    const registryLabels = deriveRegistryLabels({
-      source: synced.source,
-      ref: synced.ref,
-      artifactUrl: synced.artifactUrl,
-    });
-    enforceRegistryInstallPolicy(registryLabels, auditConfig, entry.ref);
-    const audit = auditInstallCandidate({
-      rootDir: synced.extractedDir,
-      source: synced.source,
-      ref: synced.ref,
-      registryLabels,
-      config: auditConfig,
-    });
-    if (audit.blocked) {
-      throw new Error(formatInstallAuditFailure(synced.ref, audit));
-    }
-
-    const installedEntry: InstalledStashEntry = {
-      id: synced.id,
-      source: synced.source,
-      ref: synced.ref,
-      artifactUrl: synced.artifactUrl,
-      resolvedVersion: synced.resolvedVersion,
-      resolvedRevision: synced.resolvedRevision,
-      stashRoot: synced.contentDir,
-      cacheDir: synced.cacheDir,
-      installedAt: synced.syncedAt,
-      writable: synced.writable ?? entry.writable,
-      ...(entry.wikiName ? { wikiName: entry.wikiName } : {}),
-    };
-    upsertInstalledRegistryEntry(installedEntry);
-    await upsertLockEntry({
-      id: synced.id,
-      source: synced.source,
-      ref: synced.ref,
-      resolvedVersion: synced.resolvedVersion,
-      resolvedRevision: synced.resolvedRevision,
-      integrity: synced.integrity ?? (synced.source === "local" ? "local" : undefined),
-    });
-    if (entry.cacheDir !== synced.cacheDir && shouldCleanupCache(entry)) {
-      cleanupDirectoryBestEffort(entry.cacheDir);
-    }
-
-    const versionChanged = (entry.resolvedVersion ?? "") !== (synced.resolvedVersion ?? "");
-    const revisionChanged = (entry.resolvedRevision ?? "") !== (synced.resolvedRevision ?? "");
-
-    processed.push({
-      id: entry.id,
-      source: entry.source,
-      ref: entry.ref,
-      previous: {
-        resolvedVersion: entry.resolvedVersion,
-        resolvedRevision: entry.resolvedRevision,
-        cacheDir: entry.cacheDir,
-      },
-      installed: { ...installedEntry, extractedDir: synced.extractedDir, audit },
-      changed: {
-        version: versionChanged,
-        revision: revisionChanged,
-        any: versionChanged || revisionChanged,
-      },
-    });
+    processed.push(await updateRegistryEntry(entry, force, auditConfig));
   }
 
-  const index = await akmIndex({ stashDir });
-  const finalConfig = loadConfig();
-
-  return {
-    schemaVersion: 1,
-    stashDir,
-    target,
-    all,
-    processed,
-    config: {
-      sourceCount: getSources(finalConfig).length,
-      installedKitCount: finalConfig.installed?.length ?? 0,
-    },
-    index: {
-      mode: index.mode,
-      totalEntries: index.totalEntries,
-      directoriesScanned: index.directoriesScanned,
-      directoriesSkipped: index.directoriesSkipped,
-    },
-  };
+  return buildUpdateResponse(stashDir, target, all, processed);
 }
 
 function selectTargets(

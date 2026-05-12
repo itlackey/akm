@@ -13,7 +13,6 @@
 import { parseAssetRef } from "../core/asset-ref";
 import { TYPE_DIRS } from "../core/asset-spec";
 import { resolveStashDir } from "../core/common";
-import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
