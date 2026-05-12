@@ -229,6 +229,30 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   const parsed = parseAssetRef(ref);
   appendEvent({ eventType: "show", ref, metadata: { type: parsed.type, name: parsed.name } });
 
+  // Detect if this show is a selection from a recent search result.
+  try {
+    const { events: recentSearches } = readEvents({ type: "search" });
+    const cutoffMs = Date.now() - 60_000;
+    const matchingSearch = [...recentSearches].reverse().find((e) => {
+      if (!e.ts || new Date(e.ts).getTime() < cutoffMs) return false;
+      const refs = (e.metadata?.resultRefs as string[] | undefined) ?? [];
+      return refs.includes(ref);
+    });
+    if (matchingSearch) {
+      appendEvent({
+        eventType: "select",
+        ref,
+        metadata: {
+          query: matchingSearch.metadata?.query as string | undefined,
+          searchTs: matchingSearch.ts,
+          rankPosition: ((matchingSearch.metadata?.resultRefs as string[] | undefined) ?? []).indexOf(ref),
+        },
+      });
+    }
+  } catch {
+    /* fire-and-forget — select is best-effort */
+  }
+
   try {
     const db = existingDb ?? openExistingDatabase();
     try {

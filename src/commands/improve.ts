@@ -603,6 +603,14 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         console.error(
           `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
         );
+        appendEvent({
+          eventType: "improve_skipped",
+          ref: planned.ref,
+          metadata: {
+            reason: "budget_exhausted",
+            remaining,
+          },
+        });
         actions.push({
           ref: planned.ref,
           mode: "error",
@@ -645,6 +653,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 },
               });
               completedCount++;
+              appendEvent({
+                eventType: "improve_skipped",
+                ref: planned.ref,
+                metadata: {
+                  reason: "reflect_cooldown",
+                  cooldownDays: effectiveCooldownDays,
+                  lastEventTs: lastReflect?.ts ?? null,
+                },
+              });
               console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (reflect cooldown)`);
               continue;
             }
@@ -700,6 +717,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 result: { ok: true, reason: `distill cooldown (last distilled ${daysAgo}d ago)` },
               });
               completedCount++;
+              appendEvent({
+                eventType: "improve_skipped",
+                ref: planned.ref,
+                metadata: {
+                  reason: "distill_cooldown",
+                  cooldownDays: DISTILL_COOLDOWN_DAYS,
+                  lastEventTs: lastQueuedDistill?.ts ?? null,
+                },
+              });
               console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (distill cooldown)`);
               continue;
             }
@@ -818,6 +844,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     } else {
       const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
+      appendEvent({
+        eventType: "improve_skipped",
+        ref: "memory:_consolidation",
+        metadata: {
+          reason: "consolidation_cooldown",
+          cooldownDays: 14,
+          lastEventTs: lastConsolidation?.ts ?? null,
+        },
+      });
       console.error(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
     }
 

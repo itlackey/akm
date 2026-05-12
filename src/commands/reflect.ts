@@ -283,6 +283,16 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   };
   const proposal = createProposal(stash, createInput, options.ctx);
 
+  appendEvent({
+    eventType: "reflect_completed",
+    ref: proposal.ref,
+    metadata: {
+      proposalId: proposal.id,
+      source: "reflect",
+      agentProfile: profile.name,
+    },
+  });
+
   return {
     schemaVersion: 1,
     ok: true,

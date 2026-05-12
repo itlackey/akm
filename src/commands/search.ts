@@ -121,7 +121,7 @@ export async function akmSearch(input: {
       warnings: localResult?.warnings?.length ? localResult.warnings : undefined,
       timing: { totalMs: Date.now() - t0, rankMs: localResult?.rankMs, embedMs: localResult?.embedMs },
     };
-    logSearchEvent(query, response);
+    logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword");
     return response;
   }
 
@@ -177,7 +177,7 @@ export async function akmSearch(input: {
     warnings: warnings.length ? warnings : undefined,
     timing: { totalMs: Date.now() - t0 },
   };
-  logSearchEvent(query, response);
+  logSearchEvent(query, response, undefined, localResult?.mode ?? "keyword");
   return response;
 }
 
@@ -216,13 +216,18 @@ function resolveEntryIds(
  * Per-entry events are recorded only for stash hits because registry hits
  * have no local entry_id to reference.
  */
-function logSearchEvent(query: string, response: SearchResponse, existingDb?: import("bun:sqlite").Database): void {
+function logSearchEvent(
+  query: string,
+  response: SearchResponse,
+  existingDb?: import("bun:sqlite").Database,
+  mode: "semantic" | "keyword" = "keyword",
+): void {
   // Emit a structured event to events.jsonl so workflow-trace consumers
   // detect akm search invocations without relying on stdout scraping.
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
   appendEvent({
     eventType: "search",
-    metadata: { query, hitCount: stashHits.length, resultRefs: stashHits.map((h) => h.ref) },
+    metadata: { query, hitCount: stashHits.length, resultRefs: stashHits.map((h) => h.ref), mode },
   });
 
   try {
@@ -255,6 +260,7 @@ function logSearchEvent(query: string, response: SearchResponse, existingDb?: im
           stashHitCount,
           registryHitCount,
           resolvedCount: resolved.length,
+          mode,
         }),
       });
     } finally {

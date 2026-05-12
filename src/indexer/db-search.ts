@@ -100,6 +100,8 @@ export async function searchLocal(input: {
   warnings?: string[];
   embedMs?: number;
   rankMs?: number;
+  /** Whether embedding-based ranking was used (`'semantic'`) or keyword-only (`'keyword'`). */
+  mode: "semantic" | "keyword";
 }> {
   const { query, searchType, limit, stashDir, sources, config } = input;
   const filters = input.filters;
@@ -137,6 +139,7 @@ export async function searchLocal(input: {
       hits: [],
       tip: "No search index available. Run 'akm index' to build one.",
       warnings: warnings.length > 0 ? warnings : undefined,
+      mode: "keyword",
     };
   }
 
@@ -148,6 +151,7 @@ export async function searchLocal(input: {
         hits: [],
         tip: "Index is empty. Run 'akm index' to populate it.",
         warnings: warnings.length > 0 ? warnings : undefined,
+        mode: "keyword",
       };
     }
 
@@ -174,6 +178,7 @@ export async function searchLocal(input: {
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
+      mode: embedMs !== undefined && embedMs > 0 ? "semantic" : "keyword",
     };
   } finally {
     closeDatabase(db);

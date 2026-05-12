@@ -232,22 +232,32 @@ afterEach(() => {
 describe("Scenario: Full lifecycle (index → search → show)", () => {
   let stashDir: string;
   let scenarioCacheDir: string;
+  let scenarioDataDir: string;
+  let scenarioStateDir: string;
 
   beforeAll(async () => {
     stashDir = copyFixturesToTmp();
     scenarioCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-s1-"));
+    scenarioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-s1-"));
+    scenarioStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-s1-"));
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   beforeEach(() => {
     process.env.AKM_STASH_DIR = stashDir;
     process.env.XDG_CACHE_HOME = scenarioCacheDir;
+    process.env.XDG_DATA_HOME = scenarioDataDir;
+    process.env.XDG_STATE_HOME = scenarioStateDir;
   });
 
   afterAll(() => {
     fs.rmSync(stashDir, { recursive: true, force: true });
     fs.rmSync(scenarioCacheDir, { recursive: true, force: true });
+    fs.rmSync(scenarioDataDir, { recursive: true, force: true });
+    fs.rmSync(scenarioStateDir, { recursive: true, force: true });
   });
 
   test("search works without index (substring fallback)", async () => {
