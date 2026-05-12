@@ -461,9 +461,18 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       continue;
     }
 
+    if (process.env.AKM_DEBUG_LLM) {
+      const preview = (raw.content ?? "").slice(0, 500);
+      console.error(`[akm:consolidate] chunk ${chunkIdx + 1} raw response (first 500 chars): ${preview}`);
+    }
+
     const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(raw.content);
     if (!parsed || !Array.isArray(parsed.operations)) {
-      warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.`);
+      const hint =
+        raw.content !== undefined && raw.content.trim() === ""
+          ? " (empty response — if using a thinking model, disable thinking mode)"
+          : "";
+      warnings.push(`Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`);
       consecutiveFailures++;
       continue;
     }

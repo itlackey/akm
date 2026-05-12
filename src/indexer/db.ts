@@ -1402,24 +1402,28 @@ export function computeSourceHash(content: Buffer): string {
 }
 
 /**
- * Return distinct zero-result search queries from the `search_events` table
+ * Return distinct zero-result search queries from the `usage_events` table
  * within the given lookback window.
  *
- * The `search_events` table is separate from `usage_events` and may not exist
- * in older databases — all errors are caught and an empty array is returned so
- * callers never need to guard against DB schema differences.
+ * Reads from `usage_events` (event_type = 'search') where the metadata JSON
+ * blob contains `resultCount = 0`. The `search_events` table never existed;
+ * all errors are caught and an empty array is returned so callers never need
+ * to guard against DB schema differences.
  */
 export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
-  const since = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
   try {
     const rows = db
       .prepare(
-        `SELECT DISTINCT query FROM search_events
-         WHERE ts >= ? AND result_count = 0
-         ORDER BY ts DESC LIMIT 20`,
+        `SELECT DISTINCT json_extract(metadata, '$.query') AS query
+         FROM usage_events
+         WHERE event_type = 'search'
+           AND created_at >= ?
+           AND json_extract(metadata, '$.resultCount') = 0
+         ORDER BY created_at DESC LIMIT 20`,
       )
-      .all(since) as { query: string }[];
-    return rows.map((r) => r.query);
+      .all(since) as { query: string | null }[];
+    return rows.map((r) => r.query).filter((q): q is string => q !== null);
   } catch {
     return []; // table may not exist in older DBs
   }

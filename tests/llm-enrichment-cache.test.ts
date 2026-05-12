@@ -38,6 +38,9 @@ mock.module("../src/llm/graph-extract", () => ({
       return graphExtractor(body);
     });
   },
+  // Pass-through: graph-extraction.ts imports deduplicateGraph from this module.
+  // The mock must re-export it so destructured imports don't throw.
+  deduplicateGraph: (extractions: unknown[]) => extractions[0] ?? { entities: [], relations: [] },
 }));
 
 // Memory inference stub — controlled per-test via `memoryCompressor`.

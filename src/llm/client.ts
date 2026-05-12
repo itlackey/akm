@@ -81,7 +81,12 @@ export interface ChatMessage {
 }
 
 interface ChatCompletionResponse {
-  choices: Array<{ message: { content: string } }>;
+  choices: Array<{
+    message: {
+      content: string;
+      reasoning_content?: string; // thinking models route output here
+    };
+  }>;
 }
 
 export interface ChatCompletionOptions {
@@ -166,7 +171,9 @@ export async function chatCompletion(
   }
 
   const json = (await response.json()) as ChatCompletionResponse;
-  return json.choices?.[0]?.message?.content?.trim() ?? "";
+  const content = (json.choices?.[0]?.message?.content ?? "").trim();
+  const reasoning = (json.choices?.[0]?.message?.reasoning_content ?? "").trim();
+  return content || reasoning;
 }
 
 /**
