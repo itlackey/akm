@@ -260,6 +260,53 @@ export function getProposal(stashDir: string, id: string): Proposal {
 }
 
 /**
+ * Resolve a proposal by full UUID, UUID prefix, or asset ref.
+ *
+ * Resolution order:
+ *   1. Exact UUID match (existing behaviour).
+ *   2. Asset ref (contains `:`) — finds the most-recent pending proposal for
+ *      that ref; falls back to archived if nothing is pending.
+ *   3. UUID prefix — matches any live proposal directory whose name starts
+ *      with the given string; throws if ambiguous.
+ */
+export function resolveProposalId(stashDir: string, idOrRef: string): Proposal {
+  // 1. Exact UUID.
+  try {
+    return getProposal(stashDir, idOrRef);
+  } catch (e) {
+    if (!(e instanceof NotFoundError)) throw e;
+  }
+
+  // 2. Asset ref (e.g. "skill:akm-dream").
+  if (idOrRef.includes(":")) {
+    const pending = listProposals(stashDir, { ref: idOrRef });
+    if (pending.length > 0) {
+      return pending.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+    }
+    const archived = listProposals(stashDir, { ref: idOrRef, includeArchive: true });
+    if (archived.length > 0) {
+      return archived.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+    }
+    throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "FILE_NOT_FOUND");
+  }
+
+  // 3. UUID prefix.
+  const liveDir = getProposalsRoot(stashDir, false);
+  let prefixMatches: string[] = [];
+  try {
+    prefixMatches = fs.readdirSync(liveDir).filter((name) => name.startsWith(idOrRef));
+  } catch {
+    /* live dir may not exist yet */
+  }
+  if (prefixMatches.length === 1) return getProposal(stashDir, prefixMatches[0]);
+  if (prefixMatches.length > 1) {
+    throw new UsageError(`Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`, "INVALID_FLAG_VALUE");
+  }
+
+  throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "FILE_NOT_FOUND");
+}
+
+/**
  * Whether a proposal currently lives in the archive (used by callers that
  * need to know whether to look in the archive root for files / paths).
  */

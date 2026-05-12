@@ -24,6 +24,7 @@ import {
   type Proposal,
   type ProposalsContext,
   promoteProposal,
+  resolveProposalId,
   validateProposal,
 } from "../core/proposals";
 
@@ -110,7 +111,8 @@ export interface ProposalAcceptResult {
 export async function akmProposalAccept(options: ProposalAcceptOptions): Promise<ProposalAcceptResult> {
   const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
-  const result = await promoteProposal(stash, config, options.id, { target: options.target }, options.ctx);
+  const resolvedId = resolveProposalId(stash, options.id).id;
+  const result = await promoteProposal(stash, config, resolvedId, { target: options.target }, options.ctx);
 
   // Emit `promoted` to the events stream so observers (audit, dashboards,
   // sync) see the accept happen. Only emit on the happy path — promotion
@@ -157,14 +159,14 @@ export interface ProposalRejectResult {
 
 export function akmProposalReject(options: ProposalRejectOptions): ProposalRejectResult {
   const stash = resolveStash(options.stashDir);
-  const existing = getProposal(stash, options.id);
+  const existing = resolveProposalId(stash, options.id);
   if (existing.status !== "pending") {
     throw new UsageError(
-      `Proposal ${options.id} is not pending (current status: ${existing.status}). Only pending proposals can be rejected.`,
+      `Proposal ${existing.id} is not pending (current status: ${existing.status}). Only pending proposals can be rejected.`,
       "INVALID_FLAG_VALUE",
     );
   }
-  const updated = archiveProposal(stash, options.id, "rejected", options.reason, options.ctx);
+  const updated = archiveProposal(stash, existing.id, "rejected", options.reason, options.ctx);
 
   appendEvent({
     eventType: "rejected",
@@ -208,8 +210,8 @@ export interface ProposalDiffResult {
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
   const stash = resolveStash(options.stashDir);
   const config = options.config ?? loadConfig();
-  const proposal = getProposal(stash, options.id);
-  const diff = diffProposal(stash, config, options.id, { target: options.target });
+  const proposal = resolveProposalId(stash, options.id);
+  const diff = diffProposal(stash, config, proposal.id, { target: options.target });
   return {
     schemaVersion: 1,
     id: proposal.id,

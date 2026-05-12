@@ -2748,7 +2748,11 @@ const proposalsCommand = defineCommand({
 const acceptCommand = defineCommand({
   meta: { name: "accept", description: "Accept a proposal and promote it into the stash" },
   args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
     target: { type: "string", description: "Override the write target by source name" },
   },
   async run({ args }) {
@@ -2762,7 +2766,11 @@ const acceptCommand = defineCommand({
 const rejectCommand = defineCommand({
   meta: { name: "reject", description: "Reject a proposal and record the reason" },
   args: {
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
     reason: { type: "string", description: "Reason for rejection (required)" },
   },
   run({ args }) {
@@ -2777,17 +2785,17 @@ const rejectCommand = defineCommand({
 });
 
 const diffCommand = defineCommand({
-  meta: { name: "diff", description: "Show the diff for a proposal" },
+  meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
   args: {
-    subject: { type: "positional", description: "Only supported value: proposal", required: true },
-    id: { type: "positional", description: "Proposal id (uuid)", required: true },
+    id: {
+      type: "positional",
+      description: "Proposal id (uuid / prefix) or asset ref (e.g. skill:akm-dream)",
+      required: true,
+    },
     target: { type: "string", description: "Override the write target by source name" },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      if (args.subject !== "proposal") {
-        throw new UsageError("Usage: akm diff proposal <id>", "INVALID_FLAG_VALUE");
-      }
       const result = akmProposalDiff({ id: args.id, target: args.target });
       output("proposal-diff", result);
     });

@@ -147,7 +147,7 @@ describe("akm accept / reject / diff proposal (CLI)", () => {
   test("diff proposal shows a unified diff", () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
-    const result = runCli(["diff", "proposal", created.id, "--format=json"], { stashDir: stash });
+    const result = runCli(["diff", created.id, "--format=json"], { stashDir: stash });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.id).toBe(created.id);
