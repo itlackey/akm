@@ -595,11 +595,100 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
+    // ── Cooldown pre-filter ───────────────────────────────────────────────────
+    // Read all cooldown-relevant events in 4 bulk queries and materialise two
+    // Sets that the loop checks with O(1) Set.has() instead of N per-ref
+    // readEvents() + listProposals() calls. This eliminates the N×3 DB/FS
+    // round trips that caused per-asset "reflect cooldown" noise for every
+    // asset in the stash.
+    //
+    // SM-2 tier for reflect uses promoted/rejected events (recorded by
+    // `akm proposal accept/reject`) rather than the per-ref listProposals()
+    // filesystem scan, giving identical tier logic without touching the disk.
+    const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
+    const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+
+    const reflectCooledRefs = new Set<string>();
+    const distillCooledRefs = new Set<string>();
+
+    if (REFLECT_COOLDOWN_DAYS > 0 || DISTILL_COOLDOWN_DAYS > 0) {
+      const bulkWindowMs = Math.max(REFLECT_COOLDOWN_DAYS, DISTILL_COOLDOWN_DAYS, 14) * 24 * 60 * 60 * 1000;
+      const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
+
+      const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
+      const bulkDistills = readEvents({ type: "distill_invoked", since: bulkSince }).events;
+      const bulkPromoted = readEvents({ type: "promoted", since: bulkSince }).events;
+      const bulkRejected = readEvents({ type: "rejected", since: bulkSince }).events;
+
+      // Latest promoted/rejected ts per ref (for SM-2 tier computation).
+      const promotedTs = new Map<string, string>();
+      for (const e of bulkPromoted) {
+        if (e.ref && (e.ts ?? "") > (promotedTs.get(e.ref) ?? "")) promotedTs.set(e.ref, e.ts ?? "");
+      }
+      const rejectedTs = new Map<string, string>();
+      for (const e of bulkRejected) {
+        if (e.ref && (e.ts ?? "") > (rejectedTs.get(e.ref) ?? "")) rejectedTs.set(e.ref, e.ts ?? "");
+      }
+
+      if (REFLECT_COOLDOWN_DAYS > 0) {
+        // Group reflect events by ref, find most recent per ref.
+        const latestReflect = new Map<string, string>(); // ref → ts
+        for (const e of bulkReflects) {
+          if (e.ref && (e.ts ?? "") > (latestReflect.get(e.ref) ?? "")) latestReflect.set(e.ref, e.ts ?? "");
+        }
+        for (const [ref, lastTs] of latestReflect) {
+          if (!lastTs) continue;
+          // SM-2 tier: promoted/rejected event that occurred AFTER the last reflect run.
+          const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
+          const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
+          let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
+          if (hasAccepted) effectiveCooldownDays = Math.max(REFLECT_COOLDOWN_DAYS, 14);
+          else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
+          if (Date.now() - new Date(lastTs).getTime() < effectiveCooldownDays * 24 * 60 * 60 * 1000) {
+            reflectCooledRefs.add(ref);
+          }
+        }
+      }
+
+      if (DISTILL_COOLDOWN_DAYS > 0) {
+        const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+        const latestQueuedDistill = new Map<string, string>(); // ref → ts
+        for (const e of bulkDistills) {
+          if (e.ref && e.metadata?.outcome === "queued" && (e.ts ?? "") > (latestQueuedDistill.get(e.ref) ?? "")) {
+            latestQueuedDistill.set(e.ref, e.ts ?? "");
+          }
+        }
+        for (const [ref, lastTs] of latestQueuedDistill) {
+          if (lastTs && Date.now() - new Date(lastTs).getTime() < distillCooldownMs) {
+            distillCooledRefs.add(ref);
+          }
+        }
+      }
+    }
+
+    // Separate reflect-cooled assets from the active loop — emit a single
+    // summary line instead of one console.error per skipped asset.
+    const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref));
+    const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
+    if (reflectCooledLoop.length > 0) {
+      console.error(
+        `[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`,
+      );
+      for (const r of reflectCooledLoop) {
+        actions.push({
+          ref: r.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
+        });
+        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
+      }
+    }
+
     let completedCount = 0;
-    for (const planned of actionableRefs) {
+    for (const planned of loopRefs) {
       if (validationFailureRefs.has(planned.ref)) continue;
       if (Date.now() - startMs >= budgetMs) {
-        const remaining = actionableRefs.length - completedCount;
+        const remaining = loopRefs.length - completedCount;
         console.error(
           `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
         );
@@ -619,53 +708,27 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         break;
       }
       try {
-        // Reflect cooldown — Event-sourced Idempotency Guard with Spaced Cooldown (SM-2 derived).
-        // Three-tier multiplier based on last proposal outcome:
-        //   approved proposal → 14d (ease × 2.0: "easily recalled" in SM-2 terms)
-        //   neutral (no outcome recorded) → base window (default 7d)
-        //   lapsed (rejected/error) → 3d (SM-2 lapse interval: accelerated re-review)
-        const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
-        if (REFLECT_COOLDOWN_DAYS > 0) {
-          const recentReflects = readEvents({ type: "reflect_invoked", ref: planned.ref });
-          const lastReflect = recentReflects.events.sort(
-            (a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime(),
-          )[0];
-          if (lastReflect?.ts) {
-            // Determine cooldown tier from the proposal outcome of the last reflect run.
-            const stashForProposals = primaryStashDir ?? options.stashDir;
-            let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
-            if (stashForProposals) {
-              const proposalsForRef = listProposals(stashForProposals, { ref: planned.ref });
-              const hasAccepted = proposalsForRef.some((p) => p.status === "accepted");
-              const hasRejected = proposalsForRef.some((p) => p.status === "rejected");
-              if (hasAccepted) effectiveCooldownDays = Math.max(REFLECT_COOLDOWN_DAYS, 14);
-              else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
-            }
-            const cooldownMs = effectiveCooldownDays * 24 * 60 * 60 * 1000;
-            if (Date.now() - new Date(lastReflect.ts).getTime() < cooldownMs) {
-              const daysAgo = Math.round((Date.now() - new Date(lastReflect.ts).getTime()) / 86400000);
-              actions.push({
-                ref: planned.ref,
-                mode: "distill-skipped",
-                result: {
-                  ok: true,
-                  reason: `reflect cooldown (last reflected ${daysAgo}d ago, effective window ${effectiveCooldownDays}d)`,
-                },
-              });
-              completedCount++;
-              appendEvent({
-                eventType: "improve_skipped",
-                ref: planned.ref,
-                metadata: {
-                  reason: "reflect_cooldown",
-                  cooldownDays: effectiveCooldownDays,
-                  lastEventTs: lastReflect?.ts ?? null,
-                },
-              });
-              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (reflect cooldown)`);
-              continue;
-            }
-          }
+        // Distill cooldown pre-check: skip both reflect AND distill for assets
+        // that would go through the distill path but are already on cooldown.
+        // Moving this before reflectFn avoids an unnecessary LLM call.
+        if (
+          DISTILL_COOLDOWN_DAYS > 0 &&
+          distillCooledRefs.has(planned.ref) &&
+          (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir))
+        ) {
+          actions.push({
+            ref: planned.ref,
+            mode: "distill-skipped",
+            result: { ok: true, reason: "distill cooldown" },
+          });
+          completedCount++;
+          appendEvent({
+            eventType: "improve_skipped",
+            ref: planned.ref,
+            metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS },
+          });
+          console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
+          continue;
         }
 
         if (recentErrors.length > 0) crossStepErrorsInjected++;
@@ -694,39 +757,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
                 result: { ok: true, reason: "pending proposal exists" },
               });
               completedCount++;
-              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref}`);
-              continue;
-            }
-          }
-
-          // Distill cooldown: skip if a distill_invoked event with outcome "queued" exists for this
-          // ref within the cooldown window (covers recently-accepted proposals whose queue entry has
-          // moved to the archive and is no longer "pending").
-          const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
-          if (DISTILL_COOLDOWN_DAYS > 0) {
-            const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-            const recentDistills = readEvents({ type: "distill_invoked", ref: planned.ref });
-            const lastQueuedDistill = recentDistills.events
-              .filter((e) => e.metadata?.outcome === "queued")
-              .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-            if (lastQueuedDistill?.ts && Date.now() - new Date(lastQueuedDistill.ts).getTime() < distillCooldownMs) {
-              const daysAgo = Math.round((Date.now() - new Date(lastQueuedDistill.ts).getTime()) / 86400000);
-              actions.push({
-                ref: planned.ref,
-                mode: "distill-skipped",
-                result: { ok: true, reason: `distill cooldown (last distilled ${daysAgo}d ago)` },
-              });
-              completedCount++;
-              appendEvent({
-                eventType: "improve_skipped",
-                ref: planned.ref,
-                metadata: {
-                  reason: "distill_cooldown",
-                  cooldownDays: DISTILL_COOLDOWN_DAYS,
-                  lastEventTs: lastQueuedDistill?.ts ?? null,
-                },
-              });
-              console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref} (distill cooldown)`);
+              console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
               continue;
             }
           }
@@ -778,7 +809,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         });
       }
       completedCount++;
-      console.error(`[improve] ${completedCount}/${actionableRefs.length} ${planned.ref}`);
+      console.error(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
     }
 
     const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
