@@ -3,6 +3,7 @@ import path from "node:path";
 import { fetchWithRetry, writeFileAtomic } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
+import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type {
@@ -120,15 +121,50 @@ class SkillsShProvider implements RegistryProvider {
   }
 
   private async fetchSkills(query: string, limit: number): Promise<SkillsShEntry[]> {
-    // Check per-query cache first
-    const cachePath = this.queryCachePath(query, limit);
-    const cached = this.readQueryCache(cachePath);
+    // Build a stable DB cache key for this query
+    const dbCacheKey = this.queryDbCacheKey(query, limit);
 
-    if (cached && !isExpired(cached.mtime, QUERY_CACHE_TTL_MS)) {
-      return cached.entries;
+    // ── Step 1: Try DB cache (index.db) ───────────────────────────────────
+    let db: ReturnType<typeof openDatabase> | undefined;
+    let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
+    try {
+      db = openDatabase();
+      dbCacheResult = getRegistryIndexCache(db, dbCacheKey, QUERY_CACHE_TTL_MS);
+    } catch {
+      // index.db not available yet (pre-migration install or test env) — fall through
     }
 
-    // Fetch from API
+    if (dbCacheResult) {
+      try {
+        const parsed = JSON.parse(dbCacheResult.indexJson) as unknown;
+        if (Array.isArray(parsed)) {
+          const entries = (parsed as unknown[]).filter(isValidSkillsEntry);
+          if (db) closeDatabase(db);
+          return entries;
+        }
+      } catch {
+        /* corrupt DB entry — fall through */
+      }
+    }
+
+    // ── Step 2: Fall back to file-based cache (read-only, deprecated) ─────
+    const cachePath = this.queryCachePath(query, limit);
+    const fileCached = this.readQueryCache(cachePath);
+
+    if (fileCached && !isExpired(fileCached.mtime, QUERY_CACHE_TTL_MS)) {
+      // Promote to DB cache
+      if (db) {
+        try {
+          upsertRegistryIndexCache(db, dbCacheKey, JSON.stringify(fileCached.entries));
+        } catch {
+          /* best-effort */
+        }
+        closeDatabase(db);
+      }
+      return fileCached.entries;
+    }
+
+    // ── Step 3: Fetch from API ─────────────────────────────────────────────
     const baseUrl = this.config.url.replace(/\/+$/, "");
     const url = `${baseUrl}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`;
 
@@ -140,12 +176,41 @@ class SkillsShProvider implements RegistryProvider {
 
       const data = (await response.json()) as unknown;
       const entries = parseSkillsResponse(data);
-      this.writeQueryCache(cachePath, entries);
+
+      // Write to DB cache (primary)
+      if (db) {
+        try {
+          upsertRegistryIndexCache(db, dbCacheKey, JSON.stringify(entries));
+        } catch {
+          /* best-effort */
+        }
+        closeDatabase(db);
+      }
+      // @deprecated: file cache write removed; file cache is read-only fallback
       return entries;
     } catch (err) {
-      // Fall back to stale cache if available
-      if (cached && !isExpired(cached.mtime, QUERY_CACHE_STALE_MS)) {
-        return cached.entries;
+      if (db) {
+        try {
+          closeDatabase(db);
+        } catch {
+          /* ignore */
+        }
+      }
+      // Fetch failed — use stale DB cache if available
+      if (dbCacheResult) {
+        try {
+          const parsed = JSON.parse(dbCacheResult.indexJson) as unknown;
+          if (Array.isArray(parsed)) {
+            const entries = (parsed as unknown[]).filter(isValidSkillsEntry);
+            if (entries.length > 0) return entries;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      // Fall back to stale file cache
+      if (fileCached && !isExpired(fileCached.mtime, QUERY_CACHE_STALE_MS)) {
+        return fileCached.entries;
       }
       throw err;
     }
@@ -208,8 +273,22 @@ class SkillsShProvider implements RegistryProvider {
     return hits.length > 0 ? hits : undefined;
   }
 
-  // ── Per-query cache ─────────────────────────────────────────────────────
+  // ── DB cache key ────────────────────────────────────────────────────────
 
+  private queryDbCacheKey(query: string, limit: number): string {
+    const hasher = new Bun.CryptoHasher("md5");
+    hasher.update(this.config.url);
+    hasher.update("\0");
+    hasher.update(query.trim().toLowerCase());
+    hasher.update("\0");
+    hasher.update(String(limit));
+    const hash = hasher.digest("hex");
+    return `skills-sh:${hash}`;
+  }
+
+  // ── File-based per-query cache (deprecated — read fallback only) ────────
+
+  /** @deprecated Use DB cache via queryDbCacheKey() instead. */
   private queryCachePath(query: string, limit: number): string {
     const cacheDir = getRegistryIndexCacheDir();
     const hasher = new Bun.CryptoHasher("md5");
@@ -222,6 +301,7 @@ class SkillsShProvider implements RegistryProvider {
     return path.join(cacheDir, `skills-sh-search-${hash}.json`);
   }
 
+  /** @deprecated Use DB cache instead. */
   private readQueryCache(cachePath: string): { entries: SkillsShEntry[]; mtime: number } | null {
     try {
       const stat = fs.statSync(cachePath);
@@ -234,6 +314,8 @@ class SkillsShProvider implements RegistryProvider {
     }
   }
 
+  /** @deprecated Use DB cache instead. */
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: kept for migration script reference
   private writeQueryCache(cachePath: string, entries: SkillsShEntry[]): void {
     try {
       const dir = path.dirname(cachePath);
