@@ -707,8 +707,10 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
 
     // Separate reflect-cooled assets from the active loop — emit a single
-    // summary line instead of one console.error per skipped asset.
-    const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref));
+    // summary line instead of one info() per skipped asset.
+    // Also exclude validation failures upfront so the loop counter reflects
+    // only assets that will actually be processed.
+    const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref) && !validationFailureRefs.has(r.ref));
     const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
     if (reflectCooledLoop.length > 0) {
       info(`[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`);
@@ -721,10 +723,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
       }
     }
+    if (validationFailureRefs.size > 0) {
+      info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
+    }
 
     let completedCount = 0;
     for (const planned of loopRefs) {
-      if (validationFailureRefs.has(planned.ref)) continue;
       if (Date.now() - startMs >= budgetMs) {
         const remaining = loopRefs.length - completedCount;
         info(
