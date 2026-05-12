@@ -295,16 +295,55 @@ const MIGRATIONS: Migration[] = [
     `,
   },
 
-  // ── Future migrations go here ────────────────────────────────────────────
-  // Example of a safe additive migration:
+  // Migration 002 — fix task_history to be a true per-run log.
   //
-  // {
-  //   id: "002-events-stash-dir",
-  //   up: `
-  //     ALTER TABLE events ADD COLUMN stash_dir TEXT DEFAULT NULL;
-  //     CREATE INDEX IF NOT EXISTS idx_events_stash ON events(stash_dir);
-  //   `,
-  // },
+  // Migration 001 used task_id as PRIMARY KEY, meaning each task had exactly
+  // one row and every new run overwrote the previous one. This silently
+  // discarded all historical runs — the opposite of a history table.
+  //
+  // This migration recreates the table with an AUTOINCREMENT id so each run
+  // appends a new row. The old single-row table is renamed to _old, the new
+  // table is created, data is copied, and the old table is dropped.
+  {
+    id: "002-task-history-per-run",
+    up: `
+      ALTER TABLE task_history RENAME TO task_history_v1;
+
+      CREATE TABLE task_history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id       TEXT    NOT NULL,
+        status        TEXT    NOT NULL,
+        started_at    TEXT    NOT NULL,
+        completed_at  TEXT,
+        failed_at     TEXT,
+        log_path      TEXT,
+        target_kind   TEXT,
+        target_ref    TEXT,
+        metadata_json TEXT    NOT NULL DEFAULT '{}'
+      );
+
+      INSERT INTO task_history
+        (task_id, status, started_at, completed_at, failed_at,
+         log_path, target_kind, target_ref, metadata_json)
+      SELECT task_id, status, started_at, completed_at, failed_at,
+             log_path, target_kind, target_ref, metadata_json
+      FROM task_history_v1;
+
+      DROP TABLE task_history_v1;
+
+      -- Unique constraint: same task cannot have two runs with the same start time.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_task_history_run
+        ON task_history(task_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_task_history_task_id
+        ON task_history(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_history_started
+        ON task_history(started_at);
+      CREATE INDEX IF NOT EXISTS idx_task_history_target
+        ON task_history(target_kind, target_ref);
+      CREATE INDEX IF NOT EXISTS idx_task_history_status
+        ON task_history(status);
+    `,
+  },
 ];
 
 /**
@@ -478,6 +517,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
  * Raw SQLite row shape for the `task_history` table.
  */
 export interface TaskHistoryRow {
+  id?: number; // AUTOINCREMENT — absent on insert, present on read
   task_id: string;
   status: string;
   started_at: string;
@@ -676,19 +716,13 @@ export function getStateProposal(db: Database, id: string): Proposal | undefined
  * Upsert a task history row.
  */
 export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
+  // INSERT OR IGNORE: if a run with the same (task_id, started_at) was already
+  // imported (e.g. by the migration script), skip it silently.
   db.prepare(`
-    INSERT INTO task_history
+    INSERT OR IGNORE INTO task_history
       (task_id, status, started_at, completed_at, failed_at, log_path,
        target_kind, target_ref, metadata_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(task_id) DO UPDATE SET
-      status       = excluded.status,
-      completed_at = excluded.completed_at,
-      failed_at    = excluded.failed_at,
-      log_path     = excluded.log_path,
-      target_kind  = excluded.target_kind,
-      target_ref   = excluded.target_ref,
-      metadata_json = excluded.metadata_json
   `).run(
     row.task_id,
     row.status,
@@ -705,14 +739,30 @@ export function upsertTaskHistory(db: Database, row: TaskHistoryRow): void {
 /**
  * Look up a task history row by task_id. Returns undefined when not found.
  */
+/**
+ * Return the most recent run for a given task_id, or undefined if no runs exist.
+ */
 export function getTaskHistory(db: Database, taskId: string): TaskHistoryRow | undefined {
   return db
     .prepare(
-      `SELECT task_id, status, started_at, completed_at, failed_at, log_path,
+      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
               target_kind, target_ref, metadata_json
-       FROM task_history WHERE task_id = ?`,
+       FROM task_history WHERE task_id = ? ORDER BY started_at DESC LIMIT 1`,
     )
     .get(taskId) as TaskHistoryRow | undefined;
+}
+
+/**
+ * Return all runs for a given task_id, newest first.
+ */
+export function getTaskHistoryRuns(db: Database, taskId: string, limit = 50): TaskHistoryRow[] {
+  return db
+    .prepare(
+      `SELECT id, task_id, status, started_at, completed_at, failed_at, log_path,
+              target_kind, target_ref, metadata_json
+       FROM task_history WHERE task_id = ? ORDER BY started_at DESC LIMIT ?`,
+    )
+    .all(taskId, limit) as TaskHistoryRow[];
 }
 
 /**
