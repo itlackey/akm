@@ -29,9 +29,15 @@ akm search "<query>" --source both            # Also search registries
 akm show <ref>                                # View asset details
 akm workflow next <ref>                       # Start or resume a workflow
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
+akm remember "note" --target my-stash         # Route write to a named writable stash source
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
+akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm wiki list                                 # List available wikis
 akm wiki ingest <name>                        # Print the ingest workflow for a wiki
+akm wiki stash <name> ./paper.md --target my-stash # Route wiki stash write to a named source
+akm diff skill:akm-dream                      # Diff proposal by ref, UUID, or 8-char prefix
+akm accept 7c115132                           # Accept by UUID prefix (proposal positional optional)
+akm reject skill:my-skill --reason "..."      # Reject by ref (proposal positional optional)
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working stash (optional --dest arg to clone to specific location)

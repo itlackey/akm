@@ -31,7 +31,7 @@ import {
 } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
@@ -170,12 +170,25 @@ function collectEligibleRefs(
     return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 } };
   }
 
+  // Only operate on writable sources — never mutate read-only registry caches
+  // or remote stashes that the user did not mark writable.
+  let writableDirs: string[];
+  try {
+    writableDirs = getWritableStashDirs(stashDir);
+  } catch {
+    writableDirs = sources.slice(0, 1).map((s) => s.path); // fallback: primary only
+  }
+  const writableDirSet = new Set(writableDirs.map((d) => path.resolve(d)));
+
   let db: Database | undefined;
   try {
     db = openExistingDatabase();
-    const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) =>
-      isEntryInScope(indexed.stashDir, indexed.filePath, stashDir),
-    );
+    const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) => {
+      // First apply the existing stashDir-scope filter (no-op when stashDir is unset).
+      if (!isEntryInScope(indexed.stashDir, indexed.filePath, stashDir)) return false;
+      // Then restrict to writable sources only.
+      return isEntryInWritableSource(indexed.stashDir, indexed.filePath, writableDirSet);
+    });
     const planned = new Map<string, ImproveEligibleRef>();
     let memoryEligible = 0;
     let memoryDerived = 0;
@@ -217,6 +230,26 @@ function isEntryInScope(entryStashDir: string, filePath: string, stashDir?: stri
     resolvedEntryStashDir.startsWith(`${resolvedScopeStashDir}${path.sep}`) ||
     resolvedFilePath.startsWith(`${resolvedScopeStashDir}${path.sep}`)
   );
+}
+
+/**
+ * Return true when the indexed entry belongs to one of the writable source
+ * directories. Entries from read-only registry caches or remote stashes that
+ * the user has not marked writable must never enter the improve/distill loop.
+ */
+function isEntryInWritableSource(entryStashDir: string, filePath: string, writableDirSet: Set<string>): boolean {
+  const resolvedEntryStashDir = path.resolve(entryStashDir);
+  const resolvedFilePath = path.resolve(filePath);
+  for (const writableDir of writableDirSet) {
+    if (
+      resolvedEntryStashDir === writableDir ||
+      resolvedEntryStashDir.startsWith(`${writableDir}${path.sep}`) ||
+      resolvedFilePath.startsWith(`${writableDir}${path.sep}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function memoryCleanupParentRef(

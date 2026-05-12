@@ -273,6 +273,14 @@ flowchart TD
 
 Two proposals can share the same `ref` — the UUID directory name prevents filesystem collisions. The dedup guard in `akmImprove` (checking `listProposals(stashDir, { ref: lessonRef })`) skips `akmDistill` when a pending proposal already exists for the derived lesson ref.
 
+## Scope restrictions
+
+`akm improve` and `akm lint` only operate on writable stash sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering.
+
+## Cooldown pre-filter
+
+Before the per-asset loop, `akm improve` builds Sets of all refs that are currently under cooldown (reflect, distill, consolidation, schema-repair) in a single batch of event reads. This replaces the prior design that issued one `readEvents` query per ref inside the loop. The change eliminates the "reflect cooldown" console spam on large stashes and reduces database round-trips to O(1) reads per cooldown category.
+
 ## Feature flags and configuration
 
 | Feature flag (`llm.features.*`) | Controls |

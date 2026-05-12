@@ -13,10 +13,13 @@ akm show <ref>                                # View asset details
 akm show knowledge:my-doc                    # Show a knowledge asset
 akm workflow next workflow:ship-release       # Resume the active run or start a new one
 akm remember "Deployment needs VPN access"    # Record a memory in your stash
+akm remember "note" --target my-stash         # Route write to a named writable stash source
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your stash
+akm import ./doc.md --target my-stash         # Route import to a named writable stash source
 akm import https://example.com/docs/auth      # Fetch one URL into knowledge/
 akm wiki list                                 # List wikis (multi-wiki knowledge bases)
 akm wiki stash research https://example.com/paper # Fetch one URL into wiki raw/
+akm wiki stash research ./paper.md --target my-stash # Route wiki stash write to a named source
 akm wiki ingest <name>                        # Print the ingest workflow for a wiki
 akm feedback <ref> --positive|--negative      # Record whether an asset helped
 akm add <ref>                                 # Add a source (npm, GitHub, git, local dir)
@@ -78,8 +81,11 @@ akm improve lesson docker-cleanup --task "consolidate cleanup feedback"
 akm proposals                                  # List pending proposals
 akm proposals --status pending|accepted|rejected
 akm show proposal <id>                         # Render the proposal body
-akm diff proposal <id>                         # See proposed delta vs. live
+akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm diff skill:akm-dream                       # diff accepts full asset ref
+akm accept 7c115132                            # Accept by UUID prefix
 akm accept <id>                                # Validate + promote into the stash
+akm reject skill:my-skill --reason "not ready" # Reject by asset ref
 akm reject <id> --reason "..."                 # Archive with a reason
 akm search "<query>" --include-proposed        # Surface proposal-queue entries in search
 akm history --ref <ref>                        # Per-asset state-change trail

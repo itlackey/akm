@@ -79,10 +79,10 @@ npx skills add itlackey/akm
 Upgrade in place with `akm upgrade` for binary, npm, bun, and pnpm installs.
 Preview release notes and migration guidance with `akm help migrate <version>`.
 
-This project is still pre-release. Treat `.stash.json` as a deprecated legacy
-compatibility format for older stashes, not the recommended authoring path. It
-will be removed in v0.8.0. Prefer frontmatter for markdown assets and
-structured header comments for scripts.
+`.stash.json` support was removed in v0.8.0. Prefer frontmatter for markdown
+assets and structured header comments for scripts. If you are upgrading from
+v0.7, run `scripts/migrate-storage.ts` and migrate any remaining `.stash.json`
+sidecars to inline metadata before indexing.
 
 ## Quick Start
 
@@ -93,7 +93,9 @@ akm add github:owner/repo         # Add a stash from GitHub
 akm curate "deploy"               # Start with a curated shortlist
 akm show workflow:deploy          # Load the best matching asset
 akm remember "Deployment needs VPN access"
+akm remember "Deployment needs VPN access" --target team-stash  # route to a named writable stash
 akm import ./notes/release.md
+akm import ./notes/release.md --wiki architecture              # save into a wiki instead of knowledge/
 akm wiki create architecture
 akm feedback skill:deploy --positive
 ```
@@ -263,7 +265,7 @@ ecosystem:
 | [Registry](docs/registry.md) | Registries, search, and the v3 index format |
 | [Wikis](docs/wikis.md) | Multi-wiki knowledge bases (Karpathy-style) |
 | [v1 Migration Guide](docs/migration/v1.md) | The path from 0.x to v1.0 |
-| [Release Notes — 0.7.0](docs/migration/release-notes/0.7.0.md) | Latest release notes |
+| [Release Notes — 0.8.0](docs/migration/release-notes/0.8.0.md) | Latest release notes |
 | [Blog Posts](docs/posts/) | Articles and posts about akm |
 
 ## License

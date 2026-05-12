@@ -66,9 +66,11 @@ akm show knowledge:my-doc                    # Show content (local or remote)
 ```sh
 akm remember "Deployment needs VPN access"     # Record a memory in your stash
 akm remember --name release-retro < notes.md   # Save multiline memory from stdin
+akm remember "note" --target my-other-stash    # Route write to a named writable stash source
 akm import ./docs/auth-flow.md                 # Import a file as knowledge
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
+akm import ./doc.md --target my-other-stash    # Route import to a named writable stash source
 akm workflow create ship-release               # Create a workflow asset in the stash
 akm workflow validate workflows/foo.md         # Validate a workflow file or ref; lists every error
 akm workflow next workflow:ship-release        # Start or resume the next workflow step
@@ -97,6 +99,7 @@ akm wiki pages research                        # Page refs + descriptions (exclu
 akm wiki search research "attention"           # Scoped search (equivalent to --type wiki --wiki research)
 akm wiki stash research ./paper.md             # Copy source into raw/<slug>.md (never overwrites)
 akm wiki stash research https://example.com/paper # Fetch one URL into raw/<slug>.md
+akm wiki stash research ./paper.md --target my-stash # Route write to a named writable stash source
 echo "..." | akm wiki stash research -         # stdin form
 akm wiki lint research                         # Structural checks: orphans, broken xrefs, uncited raws, stale index
 akm wiki ingest research                       # Print the ingest workflow for this wiki (no action)
@@ -238,6 +241,24 @@ akm hints                                     # Print this reference
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```
+
+## Proposals & Improvement (0.8.0+)
+
+```sh
+akm improve <ref>                              # Propose improvement for an asset
+akm proposals                                  # List pending proposals
+akm show proposal <id>                         # Render the proposal body
+akm diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix (proposal positional optional)
+akm diff skill:akm-dream                       # Diff by asset ref
+akm accept 7c115132                            # Accept by UUID prefix
+akm accept <id> --target team-stash            # Accept to a named writable stash source
+akm reject skill:my-skill --reason "not ready" # Reject by asset ref
+akm reject <id> --reason "..."                 # Archive with a reason
+```
+
+Per-task `timeoutMs`: task markdown frontmatter may set `timeoutMs: null` to
+disable the agent kill timer for long-running local-model tasks, or a number
+(milliseconds) to override `config.agent.timeoutMs` for that task only.
 
 ## Output Control
 

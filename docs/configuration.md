@@ -407,7 +407,7 @@ and v1 spec §12).
 {
   "agent": {
     "default": "opencode",
-    "timeoutMs": 60000,
+    "timeoutMs": 3000000,
     "profiles": {
       "opencode": {
         "bin": "opencode",
@@ -430,10 +430,10 @@ Per-key contract:
 | Key | Required | Description |
 | --- | --- | --- |
 | `agent.default` | optional | Default profile name. If unset, agent commands require an explicit `--profile` flag |
-| `agent.timeoutMs` | optional | Hard timeout for spawned agent CLIs (default 60_000) |
+| `agent.timeoutMs` | optional | Global hard kill timer for spawned agent CLIs in milliseconds (default 3_000_000 — 50 minutes). Override per-task via task frontmatter `timeoutMs` (positive number overrides; `null` disables the timer for that task). |
 | `agent.profiles[<name>]` | optional | Per-profile overrides on top of built-in defaults for `opencode`, `claude`, `codex`, `gemini`, `aider` |
 | `agent.profiles[<name>].bin` | required unless `sdkMode` is `true` | Command to spawn |
-| `agent.profiles[<name>].args` | optional | Base args prepended to caller args |
+| `agent.profiles[<name>].args` | optional | Extra args passed to the agent binary when akm spawns this profile (e.g. `["run", "--model", "shredder/qwen3.5-9b"]`) |
 | `agent.profiles[<name>].stdio` | optional | `"captured"` (default for CI / scripted) or `"interactive"` (default for `akm agent`) |
 | `agent.profiles[<name>].env` | optional | Extra env vars passed into the spawn |
 | `agent.profiles[<name>].envPassthrough` | optional | Array of env-var names to pass through from the calling process to the spawned agent. Use this for profile-level secrets you do not want stored in config (e.g. `["ANTHROPIC_API_KEY"]`). |

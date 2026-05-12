@@ -206,11 +206,9 @@ for most stashes and keeps descriptions close to the asset body.
 
 ### Legacy: `.stash.json`
 
-`.stash.json` is still supported so older curated stashes keep working in the
-0.7.x line, but it should be treated as a deprecated legacy format during the
-pre-release cycle. It will be removed in v0.8.0. Do not start new stashes with
-it unless you are maintaining an older repo that already depends on
-directory-level sidecars and are actively migrating away.
+`.stash.json` support was removed in v0.8.0. Do not create new stashes with
+it. If you are upgrading from v0.7, migrate any existing `.stash.json` sidecars
+to inline metadata using the guidance below before indexing.
 
 If you still have `.stash.json`, migrate the fields into the asset whenever
 possible:
@@ -247,9 +245,7 @@ Legacy example:
 }
 ```
 
-Use `.stash.json` only as a short-lived compatibility bridge while migrating an
-existing curated stash before v0.8.0. See
-[technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
+See [technical/filesystem.md](technical/filesystem.md) for the legacy field reference.
 
 ## Step 4: Test Locally
 

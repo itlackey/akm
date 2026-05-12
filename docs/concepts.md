@@ -20,8 +20,8 @@ search index. Each source has a **kind** inferred from the input:
 | Input | Kind | Behavior |
 | --- | --- | --- |
 | `~/.claude/skills` | `filesystem` | Indexed in place. Not updatable. Writable by default. |
-| `github:owner/repo` | `git` | Cloned into `~/.cache/akm/`. Updatable via `akm update`. Read-only by default. |
-| `npm:@scope/stash` | `npm` | Installed into `~/.cache/akm/`. Updatable via `akm update`. Read-only. |
+| `github:owner/repo` | `git` | Cloned into `~/.local/share/akm/`. Updatable via `akm update`. Read-only by default. |
+| `npm:@scope/stash` | `npm` | Installed into `~/.local/share/akm/`. Updatable via `akm update`. Read-only. |
 | `https://docs.example.com` | `website` | Crawled, converted to markdown, cached. Refreshed every 12 hours. Read-only. |
 
 The user never picks the kind. `akm add` infers it from the input shape.
@@ -179,13 +179,10 @@ override the upstream copy in subsequent searches.
 
 ## Metadata
 
-In this pre-release line, `.stash.json` is a deprecated legacy compatibility
-sidecar for older curated stashes, not the preferred authoring format for new
-content. It will be removed in v0.8.0. Prefer metadata that lives with the
-asset itself: frontmatter for markdown assets, and structured comments for
-scripts. When no `.stash.json` exists, the indexer derives metadata in memory
-for the search index from filenames, code comments, frontmatter, and
-package.json.
+`.stash.json` support was removed in v0.8.0. Prefer metadata that lives with
+the asset itself: frontmatter for markdown assets, and structured comments for
+scripts. The indexer derives metadata from filenames, code comments,
+frontmatter, and package.json.
 
 See [technical/filesystem.md](technical/filesystem.md) for the full field reference.
 
@@ -193,9 +190,8 @@ See [technical/filesystem.md](technical/filesystem.md) for the full field refere
 
 For script assets, akm resolves execution hints in this order:
 
-1. Legacy `.stash.json` fields (`run`, `setup`, `cwd`) while 0.7.x compatibility lasts
-2. Header comment tags (`@run`, `@setup`, `@cwd`)
-3. Auto-detection from extension and nearby dependency files
+1. Header comment tags (`@run`, `@setup`, `@cwd`)
+2. Auto-detection from extension and nearby dependency files
 
 ## Writable sources and write targets
 
@@ -215,6 +211,28 @@ this precedence:
 
 If none are configured, write commands raise a `ConfigError` pointing at
 `akm setup`.
+
+`akm improve` and `akm lint` only operate on writable sources. Read-only
+registry caches (`git`, `npm`, `website`) are excluded from improvement and
+lint passes even if they are indexed.
+
+## Storage
+
+akm separates **state** from **cache**:
+
+| Location | What lives there |
+| --- | --- |
+| `~/.local/share/akm/state.db` | Events, proposals, and task history |
+| `~/.local/share/akm/` | Cloned git sources, installed npm sources |
+| `~/.config/akm/config.json` | User configuration |
+| `~/akm` (or custom `stashDir`) | Your writable working stash |
+
+Events, proposals, and task history are stored in `state.db` — not in flat
+files or in the search index. The search index (`index.db`) is derived from
+the asset directories and is rebuildable with `akm index`.
+
+Users upgrading from v0.7 should run `scripts/migrate-storage.ts` once to
+move any flat-file state into `state.db`.
 
 ## Glossary
 

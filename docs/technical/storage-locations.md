@@ -14,7 +14,7 @@ All paths below use these resolved base directories:
 | `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR` |
 | `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_STASH_DIR` |
 
-> **Storage reorganization (v0.9):** akm uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `bun scripts/migrate-storage.ts` to migrate existing installations.
+> **Storage reorganization (v0.8.0):** akm uses four XDG directories instead of two. Durable data (`index.db`, `workflow.db`, `state.db`, `akm.lock`) lives in `$DATA`. The event log is stored in `state.db` rather than `events.jsonl`. Run `bun scripts/migrate-storage.ts` to migrate existing installations.
 
 ---
 
@@ -364,10 +364,10 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CONFIG/config.json` | User config (stash dirs, sources, LLM endpoints, feature flags, registries). JSONC — `//` and `/* */` comments stripped at parse time. | Manual |
 | `<cwd>/.akm/config.json` | Project-scoped config overrides. Walked up to filesystem root; all ancestors merged. | Manual |
 | `$DATA/config-backups/config-<ISO-ts>.json` | Pre-save snapshot of `config.json` before each write. `config.latest.json` symlink always points to the newest backup. | Accumulate forever |
-| `$CONFIG/akm.lock` | Legacy location. Removed in v0.9 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
+| `$CONFIG/akm.lock` | Legacy location. Removed in v0.8.0 — akm reads ONLY from `$DATA/akm.lock`. Run the migration script to copy this file to `$DATA/akm.lock` before upgrading. | Legacy |
 | `$DATA/akm.lock` | Installed stash lockfile (moved from `$CONFIG`). Application-managed install state. Same format as `$CONFIG/akm.lock`. | Managed by `akm add/remove` |
 | `$CACHE/semantic-status.json` | Embedding provider health: `status` (pending/ready-js/ready-vec/blocked), `reason`, `providerFingerprint`, `lastCheckedAt`, `entryCount`, `embeddingCount`. Blocked status auto-expires after 24h. | Reset on `akm index --full` |
-| `$CACHE/registry-index/<slug>.json` | Removed in v0.9 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
+| `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
 | `$STASH/.akm/graph.json` | Knowledge graph artifact: `{ schemaVersion, generatedAt, nodes, edges }` extracted from memory + knowledge assets via LLM. Written atomically. | Rebuilt each index run |
@@ -521,16 +521,16 @@ akm search  (ranking phase)
 | 1 | `$DATA/index.db` | SQLite 3 (WAL) | Main search index, embeddings, utility scores, usage events, LLM cache, registry index cache |
 | 2 | `$DATA/workflow.db` | SQLite 3 (WAL) | Workflow run state and per-step status |
 | 3 | `$DATA/state.db` | SQLite 3 (WAL) | Durable event log, proposals, task history (migration-safe) |
-| 4 | `$STATE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history (legacy location, removed in v0.9; import into state.db via migration script) |
+| 4 | `$STATE/tasks/history/<id>.jsonl` | JSONL | Per-task execution history (legacy location, removed in v0.8.0; import into state.db via migration script) |
 | 5 | `$STASH/.akm/memory-cleanup/belief-transitions.jsonl` | JSONL | Belief state transition audit log |
 | 6 | `$CONFIG/config.json` | JSONC | User configuration |
 | 7 | `<cwd>/.akm/config.json` | JSONC | Project-scoped config overrides |
 | 8 | `$DATA/config-backups/config-<ts>.json` | JSON | Config pre-save backups |
 | 9 | `$DATA/akm.lock` | JSON | Installed stash lockfile (moved from $CONFIG) |
-| 10 | `$CONFIG/akm.lock` | JSON | Legacy location (removed in v0.9). Run migration script to move to `$DATA/akm.lock`. |
+| 10 | `$CONFIG/akm.lock` | JSON | Legacy location (removed in v0.8.0). Run migration script to move to `$DATA/akm.lock`. |
 | 11 | `$DATA/akm.lock.lck` | Text (PID) | Write-lock sentinel for lockfile |
 | 12 | `$CACHE/semantic-status.json` | JSON | Embedding provider health cache |
-| 13 | `$CACHE/registry-index/<slug>.json` | JSON | Removed in v0.9 — replaced by `registry_index_cache` table in `$DATA/index.db`. Safe to delete after migration. |
+| 13 | `$CACHE/registry-index/<slug>.json` | JSON | Removed in v0.8.0 — replaced by `registry_index_cache` table in `$DATA/index.db`. Safe to delete after migration. |
 | 14 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | JSON | Skills.sh query result cache |
 | 15 | `$STASH/.akm/consolidate-journal.json` | JSON | Consolidation write-ahead journal |
 | 16 | `$STASH/.akm/graph.json` | JSON | Knowledge graph artifact |

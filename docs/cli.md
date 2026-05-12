@@ -745,6 +745,12 @@ akm remember "Long meeting notes..." --enrich
 # Multi-tenant / multi-agent scope (0.7.0+):
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
+
+# Route the write to a specific writable stash (0.8.0+):
+akm remember "Deployment needs VPN access" --target team-stash
+
+# Save into a wiki directory instead of memories/ (0.8.0+):
+akm remember "Deployment needs VPN access" --wiki architecture
 ```
 
 | Flag | Description |
@@ -762,6 +768,8 @@ akm remember "Use staging cluster for blue-green" \
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--stash <name>` | Route the write to a named writable stash source. Overrides `--target`, `defaultWriteTarget`, and the working stash. The named source must be configured as writable. |
+| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/`) instead of `memories/`. The wiki must already exist (created with `akm wiki create`). |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
@@ -798,6 +806,13 @@ akm import ./docs/auth-flow.md
 akm import ./notes/release.txt --name release-checklist
 akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
+
+# Route the write to a specific writable stash (0.8.0+):
+akm import ./docs/auth-flow.md --target team-stash
+
+# Save into a wiki directory instead of knowledge/ (0.8.0+):
+akm import ./docs/auth-flow.md --wiki architecture
+akm import https://example.com/docs/auth --wiki research
 ```
 
 | Flag | Description |
@@ -805,6 +820,8 @@ akm import https://example.com/docs/auth
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
+| `--stash <name>` | Route the write to a named writable stash source. Overrides `--target`, `defaultWriteTarget`, and the working stash. The named source must be configured as writable. |
+| `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
 not register a persistent website source. The default knowledge name comes from
@@ -915,7 +932,7 @@ akm events tail --format jsonl                    # Stream as JSONL
 | Flag | Description |
 | --- | --- |
 | `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
-| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`. |
+| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`, `select`, `improve_skipped`, `reflect_completed`. |
 | `--ref` | Filter by asset ref (`[origin//]type:name`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
@@ -1263,6 +1280,7 @@ Finding kinds:
 ```sh
 akm wiki stash research ./paper.md
 akm wiki stash research ./paper.md --as my-paper
+akm wiki stash research ./paper.md --target my-stash  # Route write to a named writable stash source
 echo "..." | akm wiki stash research -
 akm wiki stash research https://example.com/papers/attention
 ```
@@ -1384,6 +1402,12 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 
 Exactly one of `--task` or `--file` is required. Emits `improve_invoked`.
 
+**Per-task `timeoutMs` in task markdown files:** task markdown frontmatter may
+set `timeoutMs` to override the global `config.agent.timeoutMs` for that task
+only. Set `timeoutMs: null` to disable the kill timer entirely (useful for
+long-running local-model tasks), or a positive integer (milliseconds) to apply
+a task-specific limit.
+
 ### proposals
 
 **Status: Available since 0.8.0.**
@@ -1404,20 +1428,26 @@ akm proposals --ref skill:deploy
 ### accept
 
 **Status: Available since 0.8.0.**
-Accept a proposal and promote it into the stash.
+Accept a proposal and promote it into the stash. Accepts a full UUID, an
+8-character UUID prefix, or an asset ref.
 
 ```sh
 akm accept <id>
+akm accept 7c115132                           # 8-char UUID prefix
+akm accept skill:akm-dream                   # Asset ref
 akm accept <id> --target team-stash
 ```
 
 ### reject
 
 **Status: Available since 0.8.0.**
-Reject a proposal and archive the reason.
+Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
+UUID prefix, or an asset ref.
 
 ```sh
 akm reject <id> --reason "duplicates existing workflow"
+akm reject 7c115132 --reason "not ready"      # 8-char UUID prefix
+akm reject skill:my-skill --reason "not ready" # Asset ref
 ```
 
 ### show proposal
@@ -1430,10 +1460,15 @@ akm show proposal <id>
 
 ### diff proposal
 
-Preview the proposed change against the live asset.
+Preview the proposed change against the live asset. The `proposal` subject
+positional is optional — `akm diff` accepts a full UUID, an 8-character UUID
+prefix, or an asset ref directly.
 
 ```sh
 akm diff proposal <id>
+akm diff <id>
+akm diff skill:akm-dream                      # Asset ref form
+akm diff 7c115132                             # 8-char UUID prefix
 akm diff proposal <id> --target team-stash
 ```
 
