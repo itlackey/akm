@@ -3,7 +3,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError } from "../core/errors";
@@ -41,6 +41,7 @@ export interface ConsolidatePromoteOp {
 export type ConsolidateOperation = ConsolidateMergeOp | ConsolidateDeleteOp | ConsolidatePromoteOp;
 
 export interface ConsolidateResult {
+  schemaVersion: 1;
   ok: boolean;
   shape: "consolidate-result";
   dryRun: boolean;
@@ -354,7 +355,7 @@ function archiveMemory(
   } catch {
     if (warnings) warnings.push(`archiveMemory: could not parse frontmatter for ${ref} — archiving raw`);
   }
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const ts = timestampForFilename();
   const safeName = path.basename(filePath, ".md");
   const archivePath = path.join(archiveDir, `${ts}-${opIndex}-${safeName}.md`);
   try {
@@ -373,6 +374,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   if (!isLlmFeatureEnabled(config, "memory_consolidation")) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result" as const,
       dryRun: opts.dryRun ?? false,
@@ -395,6 +397,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   if (memories.length === 0) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result",
       dryRun: opts.dryRun ?? false,
@@ -490,6 +493,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   // -- Dry-run: show AI plan without executing any writes --------------------
   if (opts.dryRun) {
     return {
+      schemaVersion: 1 as const,
       ok: true,
       shape: "consolidate-result",
       dryRun: true,
@@ -513,6 +517,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
       const answer = await promptConfirm(`Apply ${n} operations? [y/N] `);
       if (!answer) {
         return {
+          schemaVersion: 1 as const,
           ok: true,
           shape: "consolidate-result",
           dryRun: false,
@@ -532,7 +537,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
 
   // -- Phase B + writes -------------------------------------------------------
   const target = resolveWriteTarget(config);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const timestamp = timestampForFilename();
   const backupDir = getBackupDir(stashDir, timestamp);
 
   // Write journal before any mutations
@@ -727,6 +732,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   }
 
   return {
+    schemaVersion: 1 as const,
     ok: true,
     shape: "consolidate-result",
     dryRun: false,

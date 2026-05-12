@@ -29,20 +29,22 @@ export interface TaskBackend {
   list(): Promise<InstalledTaskRef[]> | InstalledTaskRef[];
 }
 
-export type SelectBackendOptions =
-  | { platform?: NodeJS.Platform; cron?: CronBackendOptions }
-  | { platform?: NodeJS.Platform; launchd?: LaunchdBackendOptions }
-  | { platform?: NodeJS.Platform; schtasks?: SchtasksBackendOptions };
+export interface SelectBackendOptions {
+  platform?: NodeJS.Platform;
+  cron?: CronBackendOptions;
+  launchd?: LaunchdBackendOptions;
+  schtasks?: SchtasksBackendOptions;
+}
 
 export function selectBackend(options: SelectBackendOptions = {}): TaskBackend {
-  const platform = (options as { platform?: NodeJS.Platform }).platform ?? process.platform;
+  const platform = options.platform ?? process.platform;
   switch (platform) {
     case "win32":
-      return SCHTASKS_BACKEND((options as { schtasks?: SchtasksBackendOptions }).schtasks);
+      return SCHTASKS_BACKEND(options.schtasks);
     case "darwin":
-      return LAUNCHD_BACKEND((options as { launchd?: LaunchdBackendOptions }).launchd);
+      return LAUNCHD_BACKEND(options.launchd);
     default:
-      return CRON_BACKEND((options as { cron?: CronBackendOptions }).cron);
+      return CRON_BACKEND(options.cron);
   }
 }
 

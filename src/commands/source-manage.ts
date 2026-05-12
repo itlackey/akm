@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isRemoteUrl } from "../core/common";
 import type { SourceConfigEntry } from "../core/config";
 import { getSources, loadConfig, loadUserConfig, saveConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
@@ -50,16 +51,9 @@ export function addStash(opts: {
   }
   const config = loadUserConfig();
   const sources = [...getSources(config)];
-  const isRemoteUrl =
-    target.startsWith("http://") ||
-    target.startsWith("https://") ||
-    target.startsWith("git@") ||
-    target.startsWith("ssh://") ||
-    target.startsWith("git://");
-
   let entry: SourceConfigEntry;
 
-  if (isRemoteUrl) {
+  if (isRemoteUrl(target)) {
     if (!providerType) {
       throw new UsageError("--provider is required for URL sources (e.g. --provider git --provider website)");
     }
@@ -94,17 +88,12 @@ export function addStash(opts: {
 export function removeStash(target: string): SourceRemoveResult {
   const config = loadUserConfig();
   const sources = [...getSources(config)];
-  const isUrl =
-    target.startsWith("http://") ||
-    target.startsWith("https://") ||
-    target.startsWith("git@") ||
-    target.startsWith("ssh://") ||
-    target.startsWith("git://");
-  const resolvedPath = !isUrl ? path.resolve(target) : undefined;
+  const isUrlTarget = isRemoteUrl(target);
+  const resolvedPath = !isUrlTarget ? path.resolve(target) : undefined;
 
   // Try URL match first, then path, then name (most specific → least specific)
   let idx = -1;
-  if (isUrl) {
+  if (isUrlTarget) {
     idx = sources.findIndex((s) => s.url === target);
   }
   if (idx === -1 && resolvedPath) {

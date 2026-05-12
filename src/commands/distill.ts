@@ -49,13 +49,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
+import { stripMarkdownFences } from "../core/markdown";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup as indexerLookup } from "../indexer/indexer";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -384,6 +385,60 @@ async function runLessonQualityJudge(
   }
 }
 
+// ── Quality-rejection helper ─────────────────────────────────────────────────
+
+/**
+ * Write a rejected lesson to `.akm/distill-rejected/`, append a `distill_invoked`
+ * quality-rejected event, and return the `quality_rejected` envelope.
+ *
+ * @param stash     - Root stash directory.
+ * @param inputRef  - The original input ref (for the event).
+ * @param lessonRef - The proposed lesson/knowledge ref.
+ * @param content   - The raw content that failed the quality gate.
+ * @param score     - Quality score from the judge.
+ * @param reason    - Human-readable rejection reason.
+ * @param extraMeta - Optional additional metadata for the event.
+ */
+function writeQualityRejection(
+  stash: string,
+  inputRef: string,
+  lessonRef: string,
+  content: string,
+  score: number,
+  reason: string,
+  extraMeta: Record<string, unknown> = {},
+): AkmDistillResult {
+  const rejectDir = path.join(stash, ".akm", "distill-rejected");
+  fs.mkdirSync(rejectDir, { recursive: true });
+  const ts = timestampForFilename();
+  fs.writeFileSync(
+    path.join(rejectDir, `${ts}-${lessonRef}.md`),
+    `---\nscore: ${score}\nreason: ${reason}\n---\n\n${content}`,
+    "utf8",
+  );
+  appendEvent({
+    eventType: "distill_invoked",
+    ref: inputRef,
+    metadata: {
+      outcome: "quality_rejected",
+      lessonRef,
+      score,
+      reason,
+      ...extraMeta,
+    },
+  });
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "quality_rejected",
+    inputRef,
+    lessonRef,
+    score,
+    reason,
+    ...extraMeta,
+  };
+}
+
 // ── Main entry point ────────────────────────────────────────────────────────
 
 /**
@@ -460,31 +515,14 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
       const judgeResult = await runLessonQualityJudge(config, promotion.content, assetContent ?? "", chat);
       if (!judgeResult.pass) {
-        const rejectDir = path.join(stash, ".akm", "distill-rejected");
-        fs.mkdirSync(rejectDir, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, "-");
-        fs.writeFileSync(
-          path.join(rejectDir, `${ts}-${promotion.knowledgeRef}.md`),
-          `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${promotion.content}`,
-          "utf8",
-        );
-        appendEvent({
-          eventType: "distill_invoked",
-          ref: inputRef,
-          metadata: buildDistillEventMetadata("quality_rejected", promotion.knowledgeRef, {
-            score: judgeResult.score,
-            reason: judgeResult.reason,
-          }),
-        });
-        return {
-          schemaVersion: 1,
-          ok: true,
-          outcome: "quality_rejected",
+        return writeQualityRejection(
+          stash,
           inputRef,
-          lessonRef: promotion.knowledgeRef,
-          score: judgeResult.score,
-          reason: judgeResult.reason,
-        };
+          promotion.knowledgeRef,
+          promotion.content,
+          judgeResult.score,
+          judgeResult.reason,
+        );
       }
     }
     const knowledgeParsed = parseFrontmatter(promotion.content);
@@ -623,33 +661,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (isLlmFeatureEnabled(config, "lesson_quality_gate")) {
     const judgeResult = await runLessonQualityJudge(config, content, assetContent ?? "", chat);
     if (!judgeResult.pass) {
-      const rejectDir = path.join(stash, ".akm", "distill-rejected");
-      fs.mkdirSync(rejectDir, { recursive: true });
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      fs.writeFileSync(
-        path.join(rejectDir, `${ts}-${effectiveLessonRef}.md`),
-        `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${content}`,
-        "utf8",
-      );
-      appendEvent({
-        eventType: "distill_invoked",
-        ref: inputRef,
-        metadata: buildDistillEventMetadata("quality_rejected", effectiveLessonRef, {
-          score: judgeResult.score,
-          reason: judgeResult.reason,
-          ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-        }),
-      });
-      return {
-        schemaVersion: 1,
-        ok: true,
-        outcome: "quality_rejected",
+      return writeQualityRejection(
+        stash,
         inputRef,
-        lessonRef: effectiveLessonRef,
-        score: judgeResult.score,
-        reason: judgeResult.reason,
-        ...(exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {}),
-      };
+        effectiveLessonRef,
+        content,
+        judgeResult.score,
+        judgeResult.reason,
+        exclusionSet.size > 0 ? { filteredFeedbackCount, feedbackFullyFiltered } : {},
+      );
     }
   }
 
@@ -706,18 +726,4 @@ async function defaultLookup(ref: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Best-effort fence stripping. Keeps the body intact when no fence is present. */
-function stripMarkdownFences(raw: string): string {
-  // Strip <think>…</think> reasoning blocks first — local LLMs (e.g. Qwen3)
-  // emit these before the content, which breaks YAML frontmatter detection.
-  const stripped = raw
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim();
-  // Only strip outer triple-fence pairs — leave inner code blocks alone.
-  const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
-  if (fence) return fence[1].trim();
-  return stripped;
 }

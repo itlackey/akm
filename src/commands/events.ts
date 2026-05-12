@@ -11,6 +11,7 @@
 import { parseAssetRef } from "../core/asset-ref";
 import { UsageError } from "../core/errors";
 import { type EventEnvelope, type EventsContext, readEvents, type TailOptions, tailEvents } from "../core/events";
+import { parseSinceToIso } from "../core/time";
 
 export interface EventsListOptions {
   since?: string;
@@ -47,7 +48,7 @@ function parseSinceFlag(since: string | undefined): {
     }
     return { sinceOffset: value };
   }
-  return { since: normalizeSince(trimmed) };
+  return { since: parseSinceToIso(trimmed) };
 }
 
 export interface EventsListResult {
@@ -70,31 +71,6 @@ function validateRef(ref: string | undefined): string | undefined {
   }
   parseAssetRef(trimmed);
   return trimmed;
-}
-
-function normalizeSince(since: string | undefined): string | undefined {
-  if (since === undefined) return undefined;
-  const trimmed = since.trim();
-  if (!trimmed) {
-    throw new UsageError("--since cannot be empty.", "INVALID_FLAG_VALUE");
-  }
-  // Accept ISO timestamp (preferred), epoch ms, or plain date.
-  if (/^\d+$/.test(trimmed)) {
-    const ms = Number.parseInt(trimmed, 10);
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) {
-      throw new UsageError(`Invalid --since value: ${since}`, "INVALID_FLAG_VALUE");
-    }
-    return d.toISOString();
-  }
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new UsageError(
-      `Invalid --since value: ${since}. Expected ISO timestamp (e.g. 2026-04-01T00:00:00Z) or epoch ms.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return parsed.toISOString();
 }
 
 export function akmEventsList(options: EventsListOptions = {}): EventsListResult {

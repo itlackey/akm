@@ -16,6 +16,22 @@ export function isHttpUrl(value: string | undefined): boolean {
   return !!value && /^https?:\/\//.test(value);
 }
 
+/**
+ * Returns `true` when `value` looks like a remote URL that a VCS or HTTP
+ * fetch can access. Covers http/https, git@, ssh://, and git:// schemes.
+ * Consolidates the repeated inline URL-detection pattern in source-manage.ts.
+ */
+export function isRemoteUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  return (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("git@") ||
+    value.startsWith("ssh://") ||
+    value.startsWith("git://")
+  );
+}
+
 export function filterNonEmptyStrings(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
@@ -368,4 +384,76 @@ function parseRetryAfter(response: Response): number | undefined {
 
 export function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ── Date / timestamp utilities ───────────────────────────────────────────────
+
+/**
+ * Return today's date in ISO-8601 format (`YYYY-MM-DD`).
+ * Consolidates the `new Date().toISOString().slice(0, 10)` pattern that
+ * appears at multiple call sites.
+ */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Return a filesystem-safe timestamp string derived from the current instant.
+ * Colons and dots are replaced with hyphens so the result is safe as a
+ * filename component on all platforms (e.g. `2024-01-15T10-30-00-000Z`).
+ */
+export function timestampForFilename(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+// ── String coercion ──────────────────────────────────────────────────────────
+
+/**
+ * Return the trimmed string value if non-empty, otherwise `undefined`.
+ * Consolidates `toStringOrUndefined` (frontmatter.ts), `asNonEmptyString`
+ * (config.ts), and `firstString` (memory-improve.ts) — all had the same
+ * "return a string or undefined" contract with minor semantic differences.
+ */
+export function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// ── Generic data utilities ───────────────────────────────────────────────────
+
+/**
+ * Return the trimmed string if non-empty, otherwise `undefined`.
+ * Equivalent to `firstString` previously defined in `memory-improve.ts`.
+ */
+export function firstString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/**
+ * Coerce an unknown value to a filtered, trimmed string array.
+ * Non-strings and empty/whitespace-only entries are dropped.
+ */
+export function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item.trim().length > 0) out.push(item.trim());
+  }
+  return out;
+}
+
+/**
+ * Group an array of values by a string key derived from each element.
+ * Returns a `Map` so insertion order within each group is preserved.
+ */
+export function groupBy<T>(values: T[], keyFn: (value: T) => string): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const value of values) {
+    const key = keyFn(value);
+    const existing = groups.get(key);
+    if (existing) existing.push(value);
+    else groups.set(key, [value]);
+  }
+  return groups;
 }

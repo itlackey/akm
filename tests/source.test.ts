@@ -5,8 +5,8 @@ import path from "node:path";
 import { akmInit } from "../src/commands/init";
 import { akmSearch } from "../src/commands/search";
 import { akmShowUnified as akmShow } from "../src/commands/show";
-import { getConfigPath, saveConfig } from "../src/core/config";
-import { getBinDir } from "../src/core/paths";
+import { saveConfig } from "../src/core/config";
+import { getBinDir, getConfigPath } from "../src/core/paths";
 import { akmIndex } from "../src/indexer/indexer";
 import type { SearchHit, SourceSearchHit } from "../src/sources/types";
 
