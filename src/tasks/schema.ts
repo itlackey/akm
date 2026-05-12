@@ -46,4 +46,13 @@ export interface TaskDocument {
   description?: string;
   tags?: string[];
   source: { path: string };
+  /**
+   * Per-task agent timeout override (ms).
+   *
+   * - Positive number: overrides `config.agent.timeoutMs` for this task only.
+   * - `null` or `0`: disables the timeout entirely (no process kill). Use for
+   *   long-running local-model tasks where wall-clock time is unpredictable.
+   * - Omitted (`undefined`): inherits the global `config.agent.timeoutMs`.
+   */
+  timeoutMs?: number | null;
 }

@@ -100,6 +100,19 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     };
   }
 
+  // null / 0 / negative → disabled (no timeout). Positive number → override.
+  // Omitted → undefined (inherits config.agent.timeoutMs).
+  let timeoutMs: number | null | undefined;
+  if ("timeoutMs" in data) {
+    const raw = data.timeoutMs;
+    if (raw === null || raw === 0 || (typeof raw === "number" && raw < 0)) {
+      timeoutMs = null;
+    } else if (typeof raw === "number" && raw > 0) {
+      timeoutMs = raw;
+    }
+    // non-numeric / unrecognised → leave as undefined (inherit)
+  }
+
   return {
     schemaVersion: TASK_SCHEMA_VERSION,
     id,
@@ -109,6 +122,7 @@ export function parseTaskDocument(input: ParseTaskInput): TaskDocument {
     description: description && description.length > 0 ? description : undefined,
     tags: tags && tags.length > 0 ? tags : undefined,
     source: { path: filePath },
+    timeoutMs,
   };
 }
 

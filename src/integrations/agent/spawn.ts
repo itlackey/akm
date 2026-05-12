@@ -81,8 +81,8 @@ export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"
 export interface RunAgentOptions {
   /** Override `profile.stdio`. Captured = pipe stdout/stderr; interactive = inherit. */
   stdio?: AgentStdioMode;
-  /** Override the profile/global timeout (ms). */
-  timeoutMs?: number;
+  /** Override the profile/global timeout (ms). null = no timeout (runs until the process exits). */
+  timeoutMs?: number | null;
   /** Override `profile.parseOutput`. */
   parseOutput?: AgentParseMode;
   /** Extra env vars merged on top of the profile-derived env. */
@@ -238,7 +238,9 @@ export async function runAgent(
   options: RunAgentOptions = {},
 ): Promise<AgentRunResult> {
   const stdioMode = options.stdio ?? profile.stdio;
-  const timeoutMs = options.timeoutMs ?? profile.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // null = explicitly disabled (no kill timer). undefined = inherit from profile/default.
+  const timeoutMs: number | null =
+    options.timeoutMs !== undefined ? options.timeoutMs : (profile.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const parseOutput = options.parseOutput ?? profile.parseOutput;
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
@@ -284,25 +286,33 @@ export async function runAgent(
   // BUG-M3: only flag `timedOut` when the child has not already exited. A
   // timer firing in the same microtask as `proc.exited` resolving could
   // otherwise label a clean exit as a timeout.
+  //
+  // When timeoutMs is null the kill timer is skipped entirely — the task runs
+  // until the process exits naturally. Intended for long-running local-model
+  // tasks where wall-clock time is unpredictable.
   let timedOut = false;
-  const timer = setTimeoutImpl(() => {
-    if (proc.exitCode !== null) return;
-    timedOut = true;
-    killGroup(proc, "SIGTERM");
-    // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
-    setTimeoutImpl(() => {
+  let timer: ReturnType<typeof setTimeoutImpl> | undefined;
+  if (timeoutMs !== null) {
+    timer = setTimeoutImpl(() => {
       if (proc.exitCode !== null) return;
-      killGroup(proc, "SIGKILL");
-    }, 5000);
-  }, timeoutMs);
+      timedOut = true;
+      killGroup(proc, "SIGTERM");
+      // Follow up with SIGKILL after 5 s in case the process ignores SIGTERM.
+      setTimeoutImpl(() => {
+        if (proc.exitCode !== null) return;
+        killGroup(proc, "SIGKILL");
+      }, 5000);
+    }, timeoutMs);
+  }
 
   // Stream-drain timeout: the overall wall-clock budget plus a 2 s grace
   // period. When a process is killed via SIGTERM/SIGKILL (from our timeout
   // handler or from outside) some runtimes keep the pipe write-end open in
   // background threads, which would cause `Response.text()` to block forever.
-  // Capping stream draining at `timeoutMs + 2 000 ms` ensures the caller
-  // never hangs past the wall budget regardless of subprocess pipe behaviour.
-  const streamDrainTimeoutMs = timeoutMs + 2_000;
+  // Capping stream draining ensures the caller never hangs past the wall
+  // budget regardless of subprocess pipe behaviour.
+  // When there is no kill timer, allow up to 30 s for streams to drain.
+  const streamDrainTimeoutMs = timeoutMs !== null ? timeoutMs + 2_000 : 30_000;
   const stdoutPromise =
     stdioMode === "captured"
       ? readStream(proc.stdout ?? null, { timeoutMs: streamDrainTimeoutMs })
@@ -341,7 +351,7 @@ export async function runAgent(
   try {
     exitCode = await proc.exited;
   } catch (err) {
-    clearTimeoutImpl(timer);
+    if (timer !== undefined) clearTimeoutImpl(timer);
     // BUG-H2: drain stream readers before the early return so they don't
     // surface as unhandled rejections after the function resolves.
     // The streams already carry a built-in drain timeout so this allSettled
@@ -371,7 +381,7 @@ export async function runAgent(
       stderr,
       durationMs,
       reason: "timeout",
-      error: `agent CLI "${profile.name}" timed out after ${timeoutMs}ms`,
+      error: `agent CLI "${profile.name}" timed out after ${timeoutMs ?? 0}ms`,
     };
   }
 

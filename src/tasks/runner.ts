@@ -126,7 +126,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     runAgentImpl,
     agentOptions: options.agentOptions,
     agentConfig: config.agent,
-    agentTimeoutMs: config.agent?.timeoutMs,
+    agentTimeoutMs: config.agent?.timeoutMs ?? undefined,
   });
 }
 
@@ -228,8 +228,8 @@ async function runPromptTask(input: {
   agentOptions?: Partial<RunAgentOptions>;
   /** Pre-resolved agent config (avoids re-reading config file per task in batch runs). */
   agentConfig?: ReturnType<typeof loadConfig>["agent"];
-  /** Pre-resolved agent timeout (ms) from the calling context. */
-  agentTimeoutMs?: number;
+  /** Pre-resolved agent timeout (ms) from the calling context. null = no timeout. */
+  agentTimeoutMs?: number | null;
 }): Promise<TaskRunResult> {
   const { task, stashDir, logPath, startedAt, now, runAgentImpl, agentOptions } = input;
   if (task.target.kind !== "prompt") throw new Error("invariant: prompt target");
@@ -238,7 +238,13 @@ async function runPromptTask(input: {
   // calls in batch task runs (Fix C6). Fall back to loadConfig() for callers
   // that invoke runPromptTask directly without threading config.
   const agentCfg = input.agentConfig !== undefined ? input.agentConfig : loadConfig().agent;
-  const agentTimeoutMs = input.agentTimeoutMs !== undefined ? input.agentTimeoutMs : agentCfg?.timeoutMs;
+  // Task-level timeoutMs (including null = disabled) wins over global config.
+  const agentTimeoutMs =
+    task.timeoutMs !== undefined
+      ? task.timeoutMs
+      : input.agentTimeoutMs !== undefined
+        ? input.agentTimeoutMs
+        : agentCfg?.timeoutMs;
   const profile = requireAgentProfile(agentCfg, task.target.profile);
   const promptText = await resolvePromptText(task, stashDir);
 
