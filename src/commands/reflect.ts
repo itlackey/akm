@@ -26,6 +26,7 @@ import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { lintLessonContent } from "../core/lesson-lint";
+import { stripMarkdownFences } from "../core/markdown";
 import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup } from "../indexer/indexer";
 import {
@@ -125,16 +126,10 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
 
 function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined) {
   if (!ref) return undefined;
-  const trimmed = stripMarkdownFence(stdout).trim();
+  const trimmed = stripMarkdownFences(stdout).trim();
   if (!trimmed) return undefined;
   if (!looksLikeAssetContent(trimmed)) return undefined;
   return { ref, content: trimmed };
-}
-
-function stripMarkdownFence(stdout: string): string {
-  const trimmed = stdout.trim();
-  const match = trimmed.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i);
-  return match?.[1] ?? trimmed;
 }
 
 function looksLikeAssetContent(value: string): boolean {
