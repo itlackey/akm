@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { makeAssetRef, parseAssetRef } from "./asset-ref";
+import { firstString, groupBy, stringArray } from "./common";
 import { parseFrontmatter } from "./frontmatter";
 
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
@@ -807,19 +808,6 @@ function sameStringArray(a: string[], b: string[]): boolean {
   return true;
 }
 
-function firstString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const out: string[] = [];
-  for (const item of value) {
-    if (typeof item === "string" && item.trim().length > 0) out.push(item.trim());
-  }
-  return out;
-}
-
 function extractHeading(content: string): string | undefined {
   for (const line of content.split(/\r?\n/)) {
     const match = line.match(/^#\s+(.+)$/);
@@ -833,17 +821,6 @@ function firstNonEmpty(values: Array<string | undefined>): string | undefined {
     if (value && value.trim().length > 0) return value;
   }
   return undefined;
-}
-
-function groupBy<T>(values: T[], keyFn: (value: T) => string): Map<string, T[]> {
-  const groups = new Map<string, T[]>();
-  for (const value of values) {
-    const key = keyFn(value);
-    const existing = groups.get(key);
-    if (existing) existing.push(value);
-    else groups.set(key, [value]);
-  }
-  return groups;
 }
 
 function* walkMarkdownFiles(root: string): Generator<string> {
