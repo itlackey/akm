@@ -49,13 +49,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
-import { resolveStashDir } from "../core/common";
+import { resolveStashDir, timestampForFilename } from "../core/common";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
+import { stripMarkdownFences } from "../core/markdown";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { lookup as indexerLookup } from "../indexer/indexer";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
@@ -420,7 +421,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
       if (!judgeResult.pass) {
         const rejectDir = path.join(stash, ".akm", "distill-rejected");
         fs.mkdirSync(rejectDir, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const ts = timestampForFilename();
         fs.writeFileSync(
           path.join(rejectDir, `${ts}-${promotion.knowledgeRef}.md`),
           `---\nscore: ${judgeResult.score}\nreason: ${judgeResult.reason}\n---\n\n${promotion.content}`,
@@ -676,18 +677,4 @@ async function defaultLookup(ref: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Best-effort fence stripping. Keeps the body intact when no fence is present. */
-function stripMarkdownFences(raw: string): string {
-  // Strip <think>…</think> reasoning blocks first — local LLMs (e.g. Qwen3)
-  // emit these before the content, which breaks YAML frontmatter detection.
-  const stripped = raw
-    .trim()
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .trim();
-  // Only strip outer triple-fence pairs — leave inner code blocks alone.
-  const fence = stripped.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
-  if (fence) return fence[1].trim();
-  return stripped;
 }

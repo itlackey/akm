@@ -7,9 +7,8 @@
  */
 
 import path from "node:path";
+import { IS_WINDOWS } from "./common";
 import { ConfigError } from "./errors";
-
-const IS_WINDOWS = process.platform === "win32";
 
 // ── Config directory ─────────────────────────────────────────────────────────
 

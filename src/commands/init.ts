@@ -9,8 +9,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
-import { getConfigPath, loadUserConfig, saveConfig } from "../core/config";
-import { getBinDir, getDefaultStashDir } from "../core/paths";
+import { loadUserConfig, saveConfig } from "../core/config";
+import { getBinDir, getConfigPath, getDefaultStashDir } from "../core/paths";
 import { ensureRg } from "../setup/ripgrep-install";
 
 export interface InitResponse {
