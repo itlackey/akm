@@ -3016,17 +3016,9 @@ const improveCommand = defineCommand({
         });
       } finally {
         clearLogFile();
-        // Unref stdin so the event loop can drain after improve finishes.
-        // Without this, TTY stdin keeps the process alive indefinitely after
-        // all async work completes (promptConfirm used to do this, but improve
-        // now always runs consolidation non-interactively).
-        try {
-          process.stdin.unref();
-        } catch {
-          // ignore — may not exist in all runtimes
-        }
       }
       output("improve", improveResult);
+      process.exit(0);
     });
   },
 });

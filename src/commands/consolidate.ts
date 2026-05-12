@@ -916,11 +916,6 @@ async function generateMergedContent(
 }
 
 async function promptConfirm(message: string): Promise<boolean> {
-  // Non-TTY stdin (pipe, /dev/null, task runner) → skip confirmation, treat as "no".
-  if (!process.stdin.isTTY) {
-    warn(`[consolidate] stdin is not a TTY — skipping confirmation (treating as N)`);
-    return false;
-  }
   process.stdout.write(message);
   return new Promise((resolve) => {
     let settled = false;
@@ -928,15 +923,10 @@ async function promptConfirm(message: string): Promise<boolean> {
       if (settled) return;
       settled = true;
       rl.close();
-      // Unref stdin so the event loop is not held open after the readline
-      // interface closes. Without this, process.stdin remains in "resumed"
-      // state and the process hangs after akmImprove() returns.
-      process.stdin.unref();
       resolve(answer);
     };
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.once("line", (line: string) => done(line.trim().toLowerCase() === "y"));
-    // stdin closed/EOF before a line arrived → treat as "no"
     rl.once("close", () => done(false));
   });
 }
