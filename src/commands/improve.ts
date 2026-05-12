@@ -127,6 +127,8 @@ export interface AkmImproveResult {
   executionLogCandidates?: string[];
   evalCasesWritten?: number;
   deadUrls?: DeadUrl[];
+  /** Number of reflect calls that had at least one error in the rolling window at call time. */
+  crossStepErrorsInjected?: number;
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -580,6 +582,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       }
     }
 
+    const recentErrors: string[] = []; // rolling window, last 3 failures
+    const RECENT_ERRORS_CAP = 3;
+    let crossStepErrorsInjected = 0;
+
+    // Seed the rolling window from any schema repair errors that occurred before the main loop.
+    for (const repair of schemaRepairs) {
+      if (repair.outcome === "error") {
+        const errMsg = repair.error ?? `schema repair error: ${repair.reason}`;
+        recentErrors.push(errMsg);
+        if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+      }
+    }
+
     let completedCount = 0;
     for (const planned of actionableRefs) {
       if (validationFailureRefs.has(planned.ref)) continue;
@@ -636,12 +651,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         }
 
+        if (recentErrors.length > 0) crossStepErrorsInjected++;
         const reflectResult = await reflectFn({
           ref: planned.ref,
           task: options.task,
           ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+          ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
         });
         actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
+        if (!reflectResult.ok) {
+          const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
+          recentErrors.push(errMsg);
+          if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+        }
         if (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir)) {
           const parsedPlannedRef = parseAssetRef(planned.ref);
           const lessonRef = deriveLessonRef(planned.ref);
@@ -863,6 +885,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(executionLogCandidates.length > 0 ? { executionLogCandidates } : {}),
       ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
       ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
+      ...(crossStepErrorsInjected > 0 ? { crossStepErrorsInjected } : {}),
     };
   } finally {
     try {

@@ -59,6 +59,12 @@ export interface AkmReflectOptions {
   agentConfig?: AgentConfig;
   /** Test seam: stable id / clock for proposal creation. */
   ctx?: ProposalsContext;
+  /**
+   * Error patterns from earlier assets in the same improve run. When non-empty,
+   * injected into the reflect prompt so the agent avoids repeating the same
+   * mistakes across assets.
+   */
+  avoidPatterns?: string[];
 }
 
 export interface AkmReflectFailure {
@@ -198,6 +204,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
     ...(options.task ? { task: options.task } : {}),
+    ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
   });
 
   // 5. Spawn the agent.

@@ -111,6 +111,12 @@ export interface ReflectPromptInput {
    * When absent, the agent returns a JSON payload via stdout (legacy path).
    */
   draftFilePath?: string;
+  /**
+   * Error patterns from earlier assets in the same improve run. When non-empty,
+   * a warning section is appended to the prompt so the agent avoids repeating
+   * the same mistakes.
+   */
+  avoidPatterns?: string[];
 }
 
 /**
@@ -168,6 +174,12 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   if (input.schemaHints && input.schemaHints.length > 0) {
     sections.push("Schema / lint hints to address:");
     for (const line of input.schemaHints) sections.push(`- ${line}`);
+  }
+
+  if (input.avoidPatterns && input.avoidPatterns.length > 0) {
+    sections.push(
+      `## Avoid These Patterns\nPrevious assets in this run produced these errors — do not repeat them:\n${input.avoidPatterns.map((e) => `- ${e}`).join("\n")}`,
+    );
   }
 
   sections.push(
