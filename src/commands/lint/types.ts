@@ -25,6 +25,8 @@ export interface LintContext {
   frontmatter: string | null;
   fix: boolean;
   stashRoot: string;
+  /** Additional stash roots (secondary sources) for cross-stash ref resolution. */
+  extraStashRoots?: string[];
 }
 
 export interface AssetLinter {

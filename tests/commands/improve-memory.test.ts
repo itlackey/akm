@@ -13,6 +13,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 const tempDirs: string[] = [];
 const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
+  AKM_DATA_DIR: process.env.AKM_DATA_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
 };
@@ -68,11 +69,16 @@ async function buildIndex(stashDir: string): Promise<void> {
 beforeEach(() => {
   process.env.XDG_CACHE_HOME = makeTempDir("akm-improve-memory-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-improve-memory-config-");
+  // index.db moved from $CACHE to $DATA in v0.9; isolate it so tests don't
+  // share or contaminate the real ~/.local/share/akm/index.db.
+  process.env.AKM_DATA_DIR = makeTempDir("akm-improve-memory-data-");
 });
 
 afterEach(() => {
   if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
+  if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
+  else process.env.AKM_DATA_DIR = savedEnv.AKM_DATA_DIR;
   if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;

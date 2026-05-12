@@ -98,10 +98,42 @@ function refToRelPath(refType: string, refName: string): string | null {
 }
 
 /**
- * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
- * body that does not resolve to a real file under stashRoot.
+ * Returns true if `relPath` resolves to a real file (or multi-file directory
+ * primary) in ANY of the provided stash roots.
  */
-function checkMissingRefs(body: string, stashRoot: string): Array<{ ref: string; resolvedRelPath: string }> {
+function refExistsInAnyStash(relPath: string, refType: string, refName: string, stashRoots: string[]): boolean {
+  for (const root of stashRoots) {
+    const absPath = path.join(root, relPath);
+    if (fs.existsSync(absPath)) return true;
+    // Multi-file skill layout: directory containing SKILL.md
+    const bareDir = absPath.replace(/\.md$/, "");
+    if (fs.existsSync(bareDir) && fs.existsSync(path.join(bareDir, "SKILL.md"))) return true;
+    // .derived.md variant for memory refs
+    if (refType === "memory") {
+      const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
+      if (fs.existsSync(derivedPath)) return true;
+    }
+    // Fallback: the refName may already encode the full stash-relative path
+    // (e.g. knowledge:skills/foo/references/bar where the file lives at
+    // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
+    const directPath = path.join(root, `${refName}.md`);
+    if (fs.existsSync(directPath)) return true;
+    const directDir = path.join(root, refName);
+    if (fs.existsSync(directDir) && fs.existsSync(path.join(directDir, "SKILL.md"))) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
+ * body that does not resolve to a real file under any of the provided stash roots.
+ */
+function checkMissingRefs(
+  body: string,
+  stashRoot: string,
+  extraStashRoots: string[] = [],
+): Array<{ ref: string; resolvedRelPath: string }> {
+  const allRoots = [stashRoot, ...extraStashRoots];
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
   let match: RegExpExecArray | null;
   const re = new RegExp(REF_RE.source, REF_RE.flags);
@@ -133,15 +165,7 @@ function checkMissingRefs(body: string, stashRoot: string): Array<{ ref: string;
     const relPath = refToRelPath(refType, refName);
     if (relPath === null) continue; // type is skipped
 
-    const absPath = path.join(stashRoot, relPath);
-
-    // For memory, also accept the .derived.md variant
-    if (refType === "memory" && !fs.existsSync(absPath)) {
-      const derivedPath = path.join(stashRoot, "memories", `${refName}.derived.md`);
-      if (fs.existsSync(derivedPath)) continue;
-    }
-
-    if (!fs.existsSync(absPath)) {
+    if (!refExistsInAnyStash(relPath, refType, refName, allRoots)) {
       missing.push({ ref: fullRef, resolvedRelPath: relPath });
     }
   }
@@ -236,7 +260,7 @@ export abstract class BaseLinter implements AssetLinter {
     }
 
     // ── 4. missing-ref ─────────────────────────────────────────────────────
-    const missingRefs = checkMissingRefs(ctx.body, ctx.stashRoot);
+    const missingRefs = checkMissingRefs(ctx.body, ctx.stashRoot, ctx.extraStashRoots);
     for (const { ref, resolvedRelPath } of missingRefs) {
       issues.push({
         file: ctx.relPath,

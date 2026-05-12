@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config";
+import { loadConfig } from "../../core/config";
 import { parseFrontmatter } from "../../core/frontmatter";
+import { resolveSourceEntries } from "../../indexer/search-source";
 import { getLinterForType } from "./registry";
 import type { LintIssue } from "./types";
 
@@ -62,6 +64,14 @@ function isFileDeletion(issue: LintIssue): boolean {
 export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   const stashRoot = options.dir ?? options.config?.stashDir ?? resolveStashDir();
 
+  // Collect secondary stash roots from configured filesystem sources so that
+  // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
+  // not falsely flagged as missing-ref.
+  const cfg = options.config ?? loadConfig();
+  const extraStashRoots = resolveSourceEntries(undefined, cfg)
+    .map((s) => s.path)
+    .filter((p) => p !== stashRoot && fs.existsSync(p));
+
   const fix = options.fix ?? false;
   const fixed: LintIssue[] = [];
   const flagged: LintIssue[] = [];
@@ -99,7 +109,7 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
 
       const { data, content: body, frontmatter } = parseFrontmatter(raw);
 
-      const issues = linter.lint({ filePath, relPath, raw, data, body, frontmatter, fix, stashRoot });
+      const issues = linter.lint({ filePath, relPath, raw, data, body, frontmatter, fix, stashRoot, extraStashRoots });
 
       let fileDeleted = false;
       for (const issue of issues) {

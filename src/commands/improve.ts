@@ -1030,7 +1030,14 @@ function findAssetFilePath(ref: string, stashDir?: string): string | null {
         path.join(source.path, parsed.type, parsed.name),
       ];
       for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) return candidate;
+        if (!fs.existsSync(candidate)) continue;
+        const stat = fs.statSync(candidate);
+        if (stat.isFile()) return candidate;
+        // Multi-file skill layout: the ref resolves to a directory containing SKILL.md.
+        if (stat.isDirectory()) {
+          const skillMd = path.join(candidate, "SKILL.md");
+          if (fs.existsSync(skillMd)) return skillMd;
+        }
       }
     }
   } catch {
