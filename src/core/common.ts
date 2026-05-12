@@ -16,6 +16,22 @@ export function isHttpUrl(value: string | undefined): boolean {
   return !!value && /^https?:\/\//.test(value);
 }
 
+/**
+ * Returns `true` when `value` looks like a remote URL that a VCS or HTTP
+ * fetch can access. Covers http/https, git@, ssh://, and git:// schemes.
+ * Consolidates the repeated inline URL-detection pattern in source-manage.ts.
+ */
+export function isRemoteUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  return (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("git@") ||
+    value.startsWith("ssh://") ||
+    value.startsWith("git://")
+  );
+}
+
 export function filterNonEmptyStrings(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
