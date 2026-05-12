@@ -42,12 +42,19 @@ export interface MemoryBeliefStateTransition {
   currentBeliefRefs?: string[];
 }
 
+export interface RelativeDateCandidate {
+  ref: string;
+  filePath: string;
+  matches: string[];
+}
+
 export interface MemoryCleanupPlan {
   analyzedDerived: number;
   pruneCandidates: MemoryPruneCandidate[];
   contradictionCandidates: MemoryContradictionCandidate[];
   beliefStateTransitions: MemoryBeliefStateTransition[];
   consolidationCandidates: MemoryConsolidationCandidate[];
+  relativeDateCandidates: RelativeDateCandidate[];
 }
 
 export interface ArchivedMemoryCleanupRecord {
@@ -229,6 +236,21 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
     }
   }
 
+  const RELATIVE_DATE_RE =
+    /\b(yesterday|last week|last month|last year|\d+ days? ago|\d+ weeks? ago|\d+ months? ago)\b/gi;
+
+  const relativeDateCandidates: RelativeDateCandidate[] = [];
+  for (const record of records) {
+    const matches = record.body.match(RELATIVE_DATE_RE);
+    if (matches && matches.length > 0) {
+      relativeDateCandidates.push({
+        ref: record.ref,
+        filePath: record.filePath,
+        matches: [...new Set(matches.map((m) => m.toLowerCase()))],
+      });
+    }
+  }
+
   return {
     analyzedDerived: records.length,
     pruneCandidates: [...planned.values()]
@@ -237,6 +259,7 @@ export function analyzeMemoryCleanup(stashDir: string, options: MemoryCleanupOpt
     contradictionCandidates: contradictionCandidates.sort(compareContradictionCandidates),
     beliefStateTransitions: [...beliefTransitions.values()].sort(compareBeliefTransitions),
     consolidationCandidates: consolidationCandidates.sort(compareConsolidationCandidates),
+    relativeDateCandidates,
   };
 }
 

@@ -1426,6 +1426,43 @@ export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
 }
 
 /**
+ * Look up an entry by its integer numeric id.
+ * Returns null when no matching row is found.
+ */
+export function getEntryByRef(db: Database, type: string, name: string): { id: number } | null {
+  return db
+    .prepare("SELECT id FROM entries WHERE entry_type = ? AND entry_key LIKE ?")
+    .get(type, `%${type}:${name}`) as { id: number } | null;
+}
+
+/**
+ * Upsert a utility score adjustment derived from accumulated feedback events.
+ *
+ * - positiveDelta: +0.05 per positive event
+ * - negativeDelta: -0.03 per negative event
+ * - Score is clamped to [0.0, 1.0]
+ * - A new row starts at 0.5 + delta so the first positive feedback immediately
+ *   lifts the entry above the neutral midpoint.
+ */
+export function applyFeedbackToUtilityScore(
+  db: Database,
+  entryId: number,
+  positiveCount: number,
+  negativeCount: number,
+): void {
+  if (positiveCount === 0 && negativeCount === 0) return;
+  const delta = positiveCount * 0.05 - negativeCount * 0.03;
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
+    VALUES (?, MAX(0.0, MIN(1.0, 0.5 + ?)), 0, 0, 0, ?, ?)
+    ON CONFLICT(entry_id) DO UPDATE SET
+      utility    = MAX(0.0, MIN(1.0, utility + ?)),
+      updated_at = ?
+  `).run(entryId, delta, now, now, delta, now);
+}
+
+/**
  * Re-link detached usage_events to their current entry_ids via entry_ref.
  *
  * After a full rebuild, entry IDs change. This query matches events to their

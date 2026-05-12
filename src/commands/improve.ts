@@ -17,6 +17,7 @@ import {
   type MemoryConsolidationCandidate,
   type MemoryContradictionCandidate,
   type MemoryPruneCandidate,
+  type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { listProposals } from "../core/proposals";
 import { warn } from "../core/warn";
@@ -34,9 +35,11 @@ import { resolveSourceEntries } from "../indexer/search-source";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
+import { countEvalCases, writeEvalCase } from "./eval-cases";
 import { akmLint } from "./lint/index";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
+import { checkDeadUrls, type DeadUrl } from "./url-checker";
 
 export interface AkmImproveOptions {
   scope?: string;
@@ -86,6 +89,7 @@ export interface ImproveMemoryCleanupResult {
   contradictionCandidates: MemoryContradictionCandidate[];
   beliefStateTransitions: MemoryBeliefStateTransition[];
   consolidationCandidates: MemoryConsolidationCandidate[];
+  relativeDateCandidates?: RelativeDateCandidate[];
   archived?: ArchivedMemoryCleanupRecord[];
   transitionLogPath?: string;
   transitionLogEntries?: number;
@@ -121,6 +125,8 @@ export interface AkmImproveResult {
   feedbackRatioUsed?: boolean;
   coverageGaps?: string[];
   executionLogCandidates?: string[];
+  evalCasesWritten?: number;
+  deadUrls?: DeadUrl[];
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -683,6 +689,38 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
             ...(options.stashDir ? { stashDir: options.stashDir } : {}),
           });
           actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+          if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
+            const slug = planned.ref
+              .replace(/[^a-z0-9]/gi, "-")
+              .toLowerCase()
+              .slice(0, 60);
+            writeEvalCase(primaryStashDir, {
+              ref: planned.ref,
+              failureReason: distillResult.reason ?? "quality gate rejected",
+              assetType: parseAssetRef(planned.ref).type ?? "unknown",
+              rejectedAt: Date.now(),
+              source: "distill_quality_rejected",
+              slug: `${slug}-${Date.now()}`,
+            });
+          }
+          // Check for rejected proposals in the last 30 days
+          const rejectedProposals = readEvents({ type: "proposal_rejected", ref: planned.ref }).events.filter(
+            (e) => new Date(e.ts).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+          );
+          if (rejectedProposals.length > 0 && primaryStashDir) {
+            const slug = planned.ref
+              .replace(/[^a-z0-9]/gi, "-")
+              .toLowerCase()
+              .slice(0, 60);
+            writeEvalCase(primaryStashDir, {
+              ref: planned.ref,
+              failureReason: (rejectedProposals[0].metadata?.reason as string | undefined) ?? "proposal rejected",
+              assetType: parseAssetRef(planned.ref).type ?? "unknown",
+              rejectedAt: new Date(rejectedProposals[0].ts).getTime(),
+              source: "proposal_rejected",
+              slug: `${slug}-rejected`,
+            });
+          }
         }
       } catch (err) {
         actions.push({
@@ -761,6 +799,30 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       console.error(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
     }
 
+    // Item 8: URL dead-link detection — weekly (mode=all) runs only, best-effort, no LLM needed.
+    // Note: ImproveEligibleRef does not have a body field, so we can only pass empty bodies here.
+    // A follow-up improvement would read the file contents for each ref before calling checkDeadUrls.
+    let deadUrls: DeadUrl[] | undefined;
+    if (scope.mode === "all" && primaryStashDir && actionableRefs.length > 0) {
+      try {
+        const knowledgeEntries = actionableRefs
+          .filter((r) => {
+            try {
+              return parseAssetRef(r.ref).type === "knowledge";
+            } catch {
+              return false;
+            }
+          })
+          .slice(0, 10)
+          .map((r) => ({ ref: r.ref, body: "" }));
+        if (knowledgeEntries.length > 0) {
+          deadUrls = await checkDeadUrls(primaryStashDir, knowledgeEntries);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
     return {
       schemaVersion: 1,
       ok: true,
@@ -799,6 +861,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       feedbackRatioUsed,
       ...(coverageGaps.length > 0 ? { coverageGaps } : {}),
       ...(executionLogCandidates.length > 0 ? { executionLogCandidates } : {}),
+      ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
+      ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
     };
   } finally {
     try {
@@ -828,6 +892,7 @@ function shapeMemoryCleanup(plan: MemoryCleanupPlan): ImproveMemoryCleanupResult
     contradictionCandidates: plan.contradictionCandidates,
     beliefStateTransitions: plan.beliefStateTransitions,
     consolidationCandidates: plan.consolidationCandidates,
+    ...(plan.relativeDateCandidates.length > 0 ? { relativeDateCandidates: plan.relativeDateCandidates } : {}),
   };
 }
 

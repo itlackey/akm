@@ -62,7 +62,7 @@ import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
 import { setQuiet, setVerbose, warn } from "./core/warn";
-import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
+import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "./indexer/search-source";
@@ -1235,6 +1235,27 @@ const feedbackCommand = defineCommand({
           signal,
           metadata: metadataStr,
         });
+
+        // Apply feedback-derived utility score adjustment immediately so that
+        // positive/negative signals influence search ranking without requiring
+        // a full reindex. We query the total accumulated feedback counts from
+        // usage_events so the delta reflects the entire signal history.
+        try {
+          const counts = db
+            .prepare(
+              `SELECT
+                 SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+                 SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+               FROM usage_events
+               WHERE event_type = 'feedback' AND entry_id = ?`,
+            )
+            .get(entryId) as { pos: number | null; neg: number | null } | undefined;
+          const pos = counts?.pos ?? 0;
+          const neg = counts?.neg ?? 0;
+          applyFeedbackToUtilityScore(db, entryId, pos, neg);
+        } catch {
+          // best-effort — feedback recording succeeds even if utility update fails
+        }
       } finally {
         closeDatabase(db);
       }
