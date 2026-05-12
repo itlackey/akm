@@ -22,7 +22,7 @@ After this reorganization, akm uses four base directories instead of two:
 
 - `$CACHE` — **truly regenerable data only**: registry index files, website mirrors, LLM enrichment cache, ripgrep binary. Losing this costs time, not data.
 - `$DATA` — **durable non-regenerable application data**: SQLite databases (index.db, workflow.db, state.db), config-backups, akm.lock. Losing this loses history and work.
-- `$STATE` — **runtime state and log-like files**: events.jsonl, akm.lock.lck, task history JSONL. Persists across reboots but is less precious than $DATA.
+- `$STATE` — **runtime state and log-like files**: akm.lock.lck, task history JSONL. Persists across reboots but is less precious than $DATA.
 
 ### Windows fallback
 
@@ -44,7 +44,6 @@ On Windows, `$DATA` maps to `%LOCALAPPDATA%\akm\data` and `$STATE` maps to `%LOC
 
 | File | Old location | New location | Notes |
 |------|-------------|--------------|-------|
-| `events.jsonl` | `$CACHE/events.jsonl` | `$STATE/events.jsonl` | Existing file; kept in parallel until state.db migration complete |
 | `tasks/history/<id>.jsonl` | `$CACHE/tasks/history/` | `$STATE/tasks/history/` | No format change |
 
 ### Files remaining in $CACHE (regenerable only)
@@ -78,7 +77,6 @@ Proposals, consolidate-journal, graph.json, improve.lock, archive files, memory 
 
 ```sql
 -- events table: replaces events.jsonl for durable indexed queries
--- events.jsonl continues to exist in $STATE for backwards-compat tail consumers
 CREATE TABLE IF NOT EXISTS events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   schema_version INTEGER NOT NULL DEFAULT 1,
@@ -123,28 +121,26 @@ CREATE TABLE IF NOT EXISTS registry_index_cache (
 );
 ```
 
-This replaces `$CACHE/registry-index/<slug>.json` files. The file-based cache remains as a read fallback during migration. Net effect: registry index fetch goes to DB; file cache is written for one additional release cycle then removed.
+This replaces `$CACHE/registry-index/<slug>.json` files.
 
 ---
 
 ## 5. Team C Event Routing
 
-All new events from Team C go to **both** `events` table in `state.db` (via the new `appendEventToDb()` helper) AND the existing `events.jsonl` in `$STATE` (via existing `appendEvent()`) for one release cycle, then the JSONL write can be removed in a future cleanup.
+All new events from Team C go to the `events` table in `state.db` (via `appendEventToDb()` helper). Additionally, `select` and `improve_skipped` events go to `usage_events` in `index.db` via `insertUsageEvent()`.
 
-Additionally, `select` and `improve_skipped` events go to `usage_events` in `index.db` via `insertUsageEvent()`.
-
-| New event type | events table (state.db) | usage_events (index.db) | events.jsonl ($STATE) |
-|---------------|------------------------|------------------------|----------------------|
-| `select` | YES | YES (event_type='select') | YES (dual-write) |
-| `improve_skipped` | YES | NO | YES (dual-write) |
-| `reflect_completed` | YES | NO | YES (dual-write) |
-| extended `search` metadata (mode field) | existing row extended | existing row extended | existing row extended |
+| New event type | events table (state.db) | usage_events (index.db) |
+|---------------|------------------------|------------------------|
+| `select` | YES | YES (event_type='select') |
+| `improve_skipped` | YES | NO |
+| `reflect_completed` | YES | NO |
+| extended `search` metadata (mode field) | existing row extended | existing row extended |
 
 ### Event specifications
 
 **`select` event** (Gap 1 — HIGH):
 - Trigger: `akm show <ref>` executes within 60 seconds after `akm search` returned that ref in its hits.
-- Detection: in `logShowEvent()` (show.ts), read the most recent `search` event from events.jsonl; if `ref` appears in `metadata.resultRefs` and `Date.now() - searchTs < 60_000`, emit `select`.
+- Detection: in `logShowEvent()` (show.ts), read the most recent `search` event from state.db; if `ref` appears in `metadata.resultRefs` and `Date.now() - searchTs < 60_000`, emit `select`.
 - `metadata`: `{ query: string, searchTs: string }`
 - `usage_events` write: `insertUsageEvent(db, { event_type: 'select', entry_ref: ref, entry_id: ..., metadata: JSON.stringify({ query }) })`
 
@@ -187,56 +183,16 @@ Additionally, `select` and `improve_skipped` events go to `usage_events` in `ind
   - Linux/macOS: `path.join(env.XDG_STATE_HOME?.trim() || path.join(home, '.local', 'state'), 'akm')`
   - Windows: `path.join(localAppData, 'akm', 'state')`
 - Add `getStateDbPath()`: returns `path.join(getDataDir(), 'state.db')`
-- Add `getEventsPath_v2()` (or rename to `getEventsPath()` with fallback): returns `path.join(getStateDir(), 'events.jsonl')`
 - Add `getTaskHistoryDir_v2()`: returns `path.join(getStateDir(), 'tasks', 'history')`
 - Update `getDbPath()`: returns `path.join(getDataDir(), 'index.db')`
 - Update `getWorkflowDbPath()`: returns `path.join(getDataDir(), 'workflow.db')`
-- Keep all old functions returning $CACHE paths as deprecated aliases (for migration).
+- Keep all old functions returning $CACHE paths as deprecated aliases (for one release cycle).
 
 **No other files change in Phase 1.**
 
 ---
 
-### Phase 2 — Migration Helper
-
-**Goal:** On first startup after upgrade, silently migrate existing files to new locations. This runs once at process start.
-
-**New file:** `src/core/migrate-dirs.ts`
-
-```typescript
-/**
- * One-time migration: move durable data from $CACHE to $DATA/$STATE.
- * Runs at process entry (called from cli.ts before command dispatch).
- * Safe to run multiple times (idempotent).
- */
-export function migrateStorageDirs(): void { ... }
-```
-
-Migration steps (each is a try/catch — failures are non-fatal warnings to stderr):
-
-1. **index.db**: If `$CACHE/index.db` exists and `$DATA/index.db` does not, move (rename, fallback to copy+delete) `$CACHE/index.db` → `$DATA/index.db`.
-2. **workflow.db**: Same pattern: `$CACHE/workflow.db` → `$DATA/workflow.db`.
-3. **config-backups/**: If `$CACHE/config-backups/` exists and `$DATA/config-backups/` does not, move entire directory.
-4. **events.jsonl**: If `$CACHE/events.jsonl` exists and `$STATE/events.jsonl` does not, copy (do not move — tail consumers may still be reading the old path). After copying, write a sentinel line to old path: `{"schemaVersion":1,"ts":"...","eventType":"migrated","metadata":{"newPath":"<state>/events.jsonl"}}`.
-5. **tasks/history/**: If `$CACHE/tasks/history/` exists, copy files to `$STATE/tasks/history/`. Do not delete originals yet (defer to Phase 4 cleanup).
-6. **akm.lock** (deferred from Team B): Defer to Phase 3 — requires consumer updates first.
-
-**Fallback chain for `getDbPath()` callers:**
-
-```
-1. $DATA/index.db          ← preferred, written by Phase 2+
-2. $CACHE/index.db         ← pre-migration installs
-```
-
-`openExistingDatabase()` and `openDatabase()` in `src/indexer/db.ts` already call `getDbPath()`. After Phase 1 updates `getDbPath()` to return `$DATA/index.db`, Phase 2 migration ensures the file is there.
-
-**Files to change:**
-- `src/core/migrate-dirs.ts` (new file)
-- `src/cli.ts`: call `migrateStorageDirs()` at the top of the main entry before command dispatch.
-
----
-
-### Phase 3 — akm.lock Move to $DATA
+### Phase 2 — akm.lock Move to $DATA
 
 **Goal:** Move `akm.lock` (and its write-lock sentinel `akm.lock.lck`) from `$CONFIG` to `$DATA`.
 
@@ -245,7 +201,6 @@ Migration steps (each is a try/catch — failures are non-fatal warnings to stde
 **Files to change:**
 - `src/core/paths.ts`: Add `getLockfilePath()` returning `path.join(getDataDir(), 'akm.lock')` and `getLockfileLockPath()` returning `path.join(getDataDir(), 'akm.lock.lck')`.
 - All files that currently call `getConfigDir()` and append `akm.lock` — update to call the new helpers.
-- Phase 2 migration: add step for `$CONFIG/akm.lock` → `$DATA/akm.lock` (copy, not move, to preserve the config-dir version as fallback for one release).
 
 **Search for callers:**
 ```
@@ -254,9 +209,9 @@ grep -r "akm.lock" src/ --include="*.ts" -l
 
 ---
 
-### Phase 4 — state.db Creation and events Dual-Write
+### Phase 3 — state.db Creation and Event Writes
 
-**Goal:** Create `state.db` in `$DATA`. Begin writing new events to both `events.jsonl` (JSONL) and `events` table in `state.db` simultaneously.
+**Goal:** Create `state.db` in `$DATA`. Write all events exclusively to the `events` table in `state.db`.
 
 **Files to change:**
 
@@ -266,17 +221,16 @@ grep -r "akm.lock" src/ --include="*.ts" -l
 - `closeStateDb(db)`: closes the connection.
 
 `src/core/events.ts`:
-- `appendEvent()`: after the existing JSONL write, also call `appendEventToStateDb()` in a try/catch (fire-and-forget, same as current JSONL error handling).
-- `getEventsPath()`: update to return `$STATE/events.jsonl` (Phase 1 already updated this).
+- `appendEvent()`: write exclusively to the `events` table in state.db via `appendEventToStateDb()`. Remove any JSONL write path.
 
 `src/indexer/db.ts`:
 - `getZeroResultSearches()`: already correctly queries `usage_events`. Verify `metadata` JSON from `logSearchEvent()` in search.ts always includes `resultCount`. **No change needed** — confirmed at line 1413.
 
 ---
 
-### Phase 5 — Team C Event Gaps
+### Phase 4 — Team C Event Gaps
 
-**Goal:** Emit the four new event types. All use `appendEvent()` (which dual-writes to JSONL + state.db after Phase 4).
+**Goal:** Emit the four new event types. All use `appendEvent()` (which writes exclusively to state.db after Phase 3).
 
 #### Gap 1: `select` event
 
@@ -287,7 +241,7 @@ In `logShowEvent()` (line 226), after the existing `appendEvent({ eventType: 'sh
 ```typescript
 // Emit 'select' if this show follows a recent search that returned this ref.
 try {
-  const { events: recentSearches } = readEvents({ type: 'search' });
+  const { events: recentSearches } = readStateEvents(db, { type: 'search' });
   const cutoff = Date.now() - 60_000; // 60-second window
   const matchingSearch = recentSearches
     .slice()
@@ -386,7 +340,7 @@ Also add `mode` to the `insertUsageEvent` metadata JSON for the aggregate search
 
 ---
 
-### Phase 6 — registry_index_cache in index.db
+### Phase 5 — registry_index_cache in index.db
 
 **Goal:** Stop writing `$CACHE/registry-index/<slug>.json` files; serve from index.db instead.
 
@@ -403,7 +357,7 @@ Also add `mode` to the `insertUsageEvent` metadata JSON for the aggregate search
 
 ---
 
-### Phase 7 — task_history in state.db
+### Phase 6 — task_history in state.db
 
 **Goal:** Write new task history records to `task_history` table in `state.db`. Keep writing JSONL files for one release.
 
@@ -415,7 +369,7 @@ Also add `mode` to the `insertUsageEvent` metadata JSON for the aggregate search
 
 ---
 
-### Phase 8 — e2e Test Harness Fix
+### Phase 7 — e2e Test Harness Fix
 
 **Goal:** Tests must set `XDG_DATA_HOME` and `XDG_STATE_HOME` in addition to the existing `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` so all test-isolated storage lands in tmpdir.
 
@@ -474,13 +428,13 @@ grep -rn "XDG_CACHE_HOME" tests/ --include="*.ts"
 
 ---
 
-### Phase 9 — Documentation Update
+### Phase 8 — Documentation Update
 
 **File:** `docs/technical/storage-locations.md`
 
 - Add `$DATA` and `$STATE` to the Path Variables table.
 - Move `index.db`, `workflow.db` entries to use `$DATA`.
-- Move `events.jsonl`, `tasks/history/` entries to use `$STATE`.
+- Move `tasks/history/` entries to use `$STATE`.
 - Add `state.db` entry.
 - Add new event types (`select`, `improve_skipped`, `reflect_completed`) to the events catalog table.
 - Add `mode` field to the `search` event metadata notes.
@@ -491,16 +445,7 @@ grep -rn "XDG_CACHE_HOME" tests/ --include="*.ts"
 
 ## 7. Migration Strategy for Existing Installations
 
-The migration is automatic, transparent, and non-destructive:
-
-1. **Detection**: At process start, `migrateStorageDirs()` checks for files at old `$CACHE` paths.
-2. **Move vs copy**:
-   - SQLite databases (`index.db`, `workflow.db`): attempt `fs.renameSync` first (atomic on same filesystem). If rename fails (cross-device), copy with `fs.copyFileSync` then delete original.
-   - `events.jsonl`: **copy only** — do not delete the original. The new path becomes the write target immediately, but the old path is left in place in case other processes are still tailing it. The old file gets a sentinel event appended so tail consumers know to switch paths.
-   - JSONL task history files: copy to new location; originals kept until Phase 4 cleanup.
-3. **Fallback chain**: Every file-open path checks the new location first, then falls back to the old location. This means the migration can be rolled back by simply setting `AKM_DATA_DIR=$HOME/.cache/akm` and `AKM_STATE_DIR=$HOME/.cache/akm`.
-4. **No data loss**: The migration never deletes originals until a future cleanup pass (not in this plan).
-5. **Env override**: Users with `AKM_CACHE_DIR` set continue to work; their data stays in the overridden location. `AKM_DATA_DIR` and `AKM_STATE_DIR` override the new directories independently.
+A one-off migration script (`scripts/migrate-storage.ts`) handles migrating existing data for users who want it. New installs start clean. The script is available for download from the repository or as an AKM asset.
 
 ---
 
@@ -521,26 +466,24 @@ The following Team A HIGH items are deferred with rationale:
 
 | File | Phase | Change type |
 |------|-------|-------------|
-| `src/core/paths.ts` | 1 | Add `getDataDir`, `getStateDir`, `getStateDbPath`; update `getDbPath`, `getWorkflowDbPath`, `getEventsPath` |
-| `src/core/migrate-dirs.ts` | 2 | New file — migration helper |
-| `src/cli.ts` | 2 | Call `migrateStorageDirs()` at startup |
-| `src/core/paths.ts` | 3 | Add `getLockfilePath`, `getLockfileLockPath` |
-| All lockfile consumers | 3 | Update to use new path helpers |
-| `src/core/state-db.ts` | 4 | New file — state.db open/write helpers |
-| `src/core/events.ts` | 4 | `appendEvent()` dual-writes to state.db; update `getEventsPath()` |
-| `src/commands/show.ts` | 5 | Emit `select` event in `logShowEvent()` |
-| `src/commands/improve.ts` | 5 | Emit `improve_skipped` at each cooldown site |
-| `src/commands/reflect.ts` | 5 | Emit `reflect_completed` after `createProposal()` |
-| `src/indexer/db-search.ts` | 5 | Return `mode` field from `searchLocal()` |
-| `src/commands/search.ts` | 5 | Add `mode` to search event metadata |
-| `src/core/events.ts` | 5 | Add `select`, `improve_skipped`, `reflect_completed` to `EventType` union |
-| `src/indexer/db.ts` | 6 | Add `registry_index_cache` table; add read/write helpers |
-| Registry index read/write callers | 6 | Switch to DB helpers; retain file fallback |
-| Task history write sites | 7 | Dual-write to `task_history` table |
-| Task history read sites | 7 | Prefer `task_history` table; fall back to JSONL |
-| `tests/e2e.test.ts` | 8 | Add `XDG_DATA_HOME` + `XDG_STATE_HOME` to all env isolation blocks |
-| All other test files with `XDG_CACHE_HOME` | 8 | Same expansion |
-| `docs/technical/storage-locations.md` | 9 | Full update to reflect new structure |
+| `src/core/paths.ts` | 1 | Add `getDataDir`, `getStateDir`, `getStateDbPath`; update `getDbPath`, `getWorkflowDbPath` |
+| `src/core/paths.ts` | 2 | Add `getLockfilePath`, `getLockfileLockPath` |
+| All lockfile consumers | 2 | Update to use new path helpers |
+| `src/core/state-db.ts` | 3 | New file — state.db open/write helpers |
+| `src/core/events.ts` | 3 | `appendEvent()` writes exclusively to state.db |
+| `src/commands/show.ts` | 4 | Emit `select` event in `logShowEvent()` |
+| `src/commands/improve.ts` | 4 | Emit `improve_skipped` at each cooldown site |
+| `src/commands/reflect.ts` | 4 | Emit `reflect_completed` after `createProposal()` |
+| `src/indexer/db-search.ts` | 4 | Return `mode` field from `searchLocal()` |
+| `src/commands/search.ts` | 4 | Add `mode` to search event metadata |
+| `src/core/events.ts` | 4 | Add `select`, `improve_skipped`, `reflect_completed` to `EventType` union |
+| `src/indexer/db.ts` | 5 | Add `registry_index_cache` table; add read/write helpers |
+| Registry index read/write callers | 5 | Switch to DB helpers; retain file fallback |
+| Task history write sites | 6 | Write to `task_history` table |
+| Task history read sites | 6 | Prefer `task_history` table; fall back to JSONL |
+| `tests/e2e.test.ts` | 7 | Add `XDG_DATA_HOME` + `XDG_STATE_HOME` to all env isolation blocks |
+| All other test files with `XDG_CACHE_HOME` | 7 | Same expansion |
+| `docs/technical/storage-locations.md` | 8 | Full update to reflect new structure |
 
 ---
 
@@ -552,37 +495,31 @@ Phase 1:
 - [ ] `getDbPath()` returns `$DATA/index.db`
 
 Phase 2:
-- [ ] Fresh install: `index.db` created in `$DATA` not `$CACHE`
-- [ ] Existing install: `index.db` transparently moved from `$CACHE` to `$DATA` on first run
-- [ ] Migration is idempotent (running twice is safe)
-
-Phase 3:
 - [ ] `akm.lock` reads and writes from `$DATA/akm.lock`
 
-Phase 4:
+Phase 3:
 - [ ] `state.db` created in `$DATA` on first event write
 - [ ] Every `appendEvent()` call inserts a row into `events` table in `state.db`
-- [ ] `events.jsonl` still written (dual-write)
-- [ ] `events.jsonl` now in `$STATE`
+- [ ] Fresh install: `index.db` created in `$DATA` not `$CACHE`
 
-Phase 5:
+Phase 4:
 - [ ] `akm show <ref>` following `akm search` within 60s emits `select` event
 - [ ] `select` event appears in `usage_events` table
 - [ ] Cooldown skips in `akm improve` emit `improve_skipped` events
 - [ ] `akm reflect` emits `reflect_completed` with `proposalId` after proposal creation
 - [ ] `search` events include `mode: 'semantic' | 'keyword'` in metadata
 
-Phase 6:
+Phase 5:
 - [ ] Registry index data served from `registry_index_cache` table in `index.db`
 - [ ] File-based cache still written for one release as fallback
 
-Phase 7:
+Phase 6:
 - [ ] Task history writes insert into `task_history` table in `state.db`
 - [ ] `akm tasks history` reads from DB with JSONL fallback
 
-Phase 8:
+Phase 7:
 - [ ] All e2e tests set `XDG_DATA_HOME` and `XDG_STATE_HOME` to tmpdirs
 - [ ] No test leaks data to `~/.local/share/akm` or `~/.local/state/akm`
 
-Phase 9:
+Phase 8:
 - [ ] `docs/technical/storage-locations.md` matches the actual storage layout
