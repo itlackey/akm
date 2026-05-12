@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fetchWithRetry, jsonWithByteCap, toErrorMessage, writeFileAtomic } from "../../core/common";
+import { fetchWithRetry, jsonWithByteCap, toErrorMessage } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
-import { getRegistryIndexCacheDir } from "../../core/paths";
 import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { asString } from "../../integrations/github";
 import { registerProvider } from "../factory";
@@ -188,24 +185,7 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
     }
   }
 
-  // ── Step 2: Fall back to file-based cache (read-only, deprecated) ────────
-  const cachePath = indexCachePath(entry.url);
-  const fileCached = readCachedIndex(cachePath);
-
-  // Fresh file cache: return immediately (and promote to DB if DB is available)
-  if (fileCached && !isCacheExpired(fileCached.mtime)) {
-    if (db) {
-      try {
-        upsertRegistryIndexCache(db, entry.url, JSON.stringify(fileCached.index));
-      } catch {
-        /* best-effort promote */
-      }
-      closeDatabase(db);
-    }
-    return fileCached.index;
-  }
-
-  // ── Step 3: Fetch fresh index from remote ────────────────────────────────
+  // ── Step 2: Fetch fresh index from remote ────────────────────────────────
   try {
     const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
     if (!response.ok) {
@@ -227,7 +207,6 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
         }
         closeDatabase(db);
       }
-      // @deprecated: file cache write removed; file cache is read-only fallback
       return index;
     }
     throw new Error("Invalid registry index format");
@@ -244,50 +223,7 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
       const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
       if (index) return index;
     }
-    // Fall back to stale file cache
-    if (fileCached && !isCacheStale(fileCached.mtime)) {
-      return fileCached.index;
-    }
     throw err;
-  }
-}
-
-// ── File-based cache helpers (deprecated — read fallback only) ──────────────
-// These helpers remain for the migration script that reads file paths.
-// New writes go exclusively to the DB via upsertRegistryIndexCache().
-
-/** @deprecated Use getRegistryIndexCache() from indexer/db.ts instead. */
-export function indexCachePath(url: string): string {
-  const indexDir = getRegistryIndexCacheDir();
-  // Deterministic filename from URL
-  const slug = url
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
-  return path.join(indexDir, `${slug}.json`);
-}
-
-/** @deprecated Use getRegistryIndexCache() from indexer/db.ts instead. */
-export function readCachedIndex(cachePath: string): { index: RegistryIndex; mtime: number } | null {
-  try {
-    const stat = fs.statSync(cachePath);
-    const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    const index = parseRegistryIndex(raw);
-    if (!index) return null;
-    return { index, mtime: stat.mtimeMs };
-  } catch {
-    return null;
-  }
-}
-
-/** @deprecated Use upsertRegistryIndexCache() from indexer/db.ts instead. */
-export function writeCachedIndex(cachePath: string, index: RegistryIndex): void {
-  try {
-    const dir = path.dirname(cachePath);
-    fs.mkdirSync(dir, { recursive: true });
-    writeFileAtomic(cachePath, JSON.stringify(index));
-  } catch {
-    // Best-effort caching — don't fail the search if we can't write
   }
 }
 
