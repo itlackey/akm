@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { getConfigDir } from "../core/paths";
+import { getConfigDir, getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
 // ("npm" | "github" | "git" | "local"). It is now derived from
@@ -35,8 +35,23 @@ export interface LockfileEntry {
 
 const LOCKFILE_NAME = "akm.lock";
 
+/**
+ * Returns the path to the akm.lock file.
+ *
+ * Primary location is `$DATA/akm.lock` (getDataDir()). If that file does not
+ * exist but the legacy `$CONFIG/akm.lock` does, the config-dir path is
+ * returned as a migration fallback so existing installations continue to work
+ * until the lock is next written (at which point it will be written to $DATA).
+ */
 function getLockfilePath(): string {
-  return path.join(getConfigDir(), LOCKFILE_NAME);
+  const dataPath = path.join(getDataDir(), LOCKFILE_NAME);
+  if (!fs.existsSync(dataPath)) {
+    const configPath = path.join(getConfigDir(), LOCKFILE_NAME);
+    if (fs.existsSync(configPath)) {
+      return configPath;
+    }
+  }
+  return dataPath;
 }
 
 // ── Lock sentinel ────────────────────────────────────────────────────────────
@@ -45,7 +60,8 @@ const LOCK_MAX_RETRIES = 3;
 const LOCK_RETRY_DELAY_MS = 100;
 
 function getLockSentinelPath(): string {
-  return `${getLockfilePath()}.lck`;
+  // The sentinel always lives next to the lock file it guards.
+  return `${path.join(getDataDir(), LOCKFILE_NAME)}.lck`;
 }
 
 async function acquireLockSentinel(): Promise<boolean> {
@@ -121,7 +137,8 @@ export function readLockfile(): LockfileEntry[] {
 }
 
 export function writeLockfile(entries: LockfileEntry[]): void {
-  const lockfilePath = getLockfilePath();
+  // Always write to $DATA — never to the legacy $CONFIG location.
+  const lockfilePath = path.join(getDataDir(), LOCKFILE_NAME);
   const dir = path.dirname(lockfilePath);
   fs.mkdirSync(dir, { recursive: true });
   writeFileAtomic(lockfilePath, `${JSON.stringify(entries, null, 2)}\n`);

@@ -51,19 +51,19 @@ import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import type { EventEnvelope } from "./events";
-import { getCacheDir } from "./paths";
+import { getDataDir } from "./paths";
 import type { Proposal } from "./proposals";
 
 // ── Path helper ──────────────────────────────────────────────────────────────
 
 /**
- * Default path: `<cacheDir>/state.db`.
- * Respects the same `AKM_CACHE_DIR` / XDG env-isolation as `getDbPath()` so
- * cooperating processes sharing a cache root automatically share the same
+ * Default path: `<dataDir>/state.db`.
+ * Respects the same `AKM_DATA_DIR` / XDG_DATA_HOME env-isolation as `getDbPath()` so
+ * cooperating processes sharing a data root automatically share the same
  * state database.
  */
 export function getStateDbPath(): string {
-  return path.join(getCacheDir(), "state.db");
+  return path.join(getDataDir(), "state.db");
 }
 
 // ── Database open ────────────────────────────────────────────────────────────

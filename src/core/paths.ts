@@ -83,12 +83,129 @@ export function getCacheDir(): string {
   return path.join(home, ".cache", "akm");
 }
 
+// ── Data directory ───────────────────────────────────────────────────────────
+
+/**
+ * Returns the XDG data directory for akm (`~/.local/share/akm` on Linux/macOS,
+ * `%LOCALAPPDATA%\akm\data` on Windows).
+ *
+ * Holds durable, non-regenerable application data: SQLite databases
+ * (index.db, workflow.db, state.db), akm.lock, and config-backups.
+ * Losing this directory loses history and installed state.
+ *
+ * Env overrides (in priority order):
+ *   AKM_DATA_DIR   — point to any directory
+ *   XDG_DATA_HOME  — (Linux/macOS) override the XDG base; akm subdir is appended
+ */
+export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
+  const override = env.AKM_DATA_DIR?.trim();
+  if (override) return override;
+
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    if (localAppData) return path.join(localAppData, "akm", "data");
+
+    const userProfile = env.USERPROFILE?.trim();
+    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm", "data");
+
+    const appData = env.APPDATA?.trim();
+    if (!appData) {
+      throw new ConfigError(
+        "Unable to determine data directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
+        "CONFIG_DIR_UNRESOLVABLE",
+      );
+    }
+    return path.join(appData, "..", "Local", "akm", "data");
+  }
+
+  const xdgDataHome = env.XDG_DATA_HOME?.trim();
+  if (xdgDataHome) return path.join(xdgDataHome, "akm");
+
+  const home = env.HOME?.trim();
+  if (!home) return path.join("/tmp", "akm-data");
+
+  return path.join(home, ".local", "share", "akm");
+}
+
+// ── State directory ──────────────────────────────────────────────────────────
+
+/**
+ * Returns the XDG state directory for akm (`~/.local/state/akm` on Linux/macOS,
+ * `%LOCALAPPDATA%\akm\state` on Windows).
+ *
+ * Holds runtime state and log-like files that persist across reboots but are
+ * less precious than $DATA: task history JSONL files, akm.lock.lck sentinel.
+ *
+ * Env overrides (in priority order):
+ *   AKM_STATE_DIR   — point to any directory
+ *   XDG_STATE_HOME  — (Linux/macOS) override the XDG base; akm subdir is appended
+ */
+export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
+  const override = env.AKM_STATE_DIR?.trim();
+  if (override) return override;
+
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    if (localAppData) return path.join(localAppData, "akm", "state");
+
+    const userProfile = env.USERPROFILE?.trim();
+    if (userProfile) return path.join(userProfile, "AppData", "Local", "akm", "state");
+
+    const appData = env.APPDATA?.trim();
+    if (!appData) {
+      throw new ConfigError(
+        "Unable to determine state directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
+        "CONFIG_DIR_UNRESOLVABLE",
+      );
+    }
+    return path.join(appData, "..", "Local", "akm", "state");
+  }
+
+  const xdgStateHome = env.XDG_STATE_HOME?.trim();
+  if (xdgStateHome) return path.join(xdgStateHome, "akm");
+
+  const home = env.HOME?.trim();
+  if (!home) return path.join("/tmp", "akm-state");
+
+  return path.join(home, ".local", "state", "akm");
+}
+
 export function getDbPath(): string {
+  return path.join(getDataDir(), "index.db");
+}
+
+/** @deprecated use getDbPath() — index.db has moved to $DATA */
+export function getDbPathFromCache(): string {
   return path.join(getCacheDir(), "index.db");
 }
 
 export function getWorkflowDbPath(): string {
+  return path.join(getDataDir(), "workflow.db");
+}
+
+/** @deprecated use getWorkflowDbPath() — workflow.db has moved to $DATA */
+export function getWorkflowDbPathFromCache(): string {
   return path.join(getCacheDir(), "workflow.db");
+}
+
+/** Path to the state.db file in $DATA. */
+export function getStateDbPathInDataDir(): string {
+  return path.join(getDataDir(), "state.db");
+}
+
+/** Path for the task history directory in $STATE (v2 location). */
+export function getTaskHistoryStateDir(): string {
+  return path.join(getStateDir(), "tasks", "history");
+}
+
+/** Path to the akm.lock file in $DATA. */
+export function getLockfilePath(): string {
+  return path.join(getDataDir(), "akm.lock");
+}
+
+/** Path to the akm.lock.lck write-sentinel in $DATA. */
+export function getLockfileLockPath(): string {
+  return path.join(getDataDir(), "akm.lock.lck");
 }
 
 export function getSemanticStatusPath(): string {
