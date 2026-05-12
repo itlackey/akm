@@ -1402,6 +1402,30 @@ export function computeSourceHash(content: Buffer): string {
 }
 
 /**
+ * Return distinct zero-result search queries from the `search_events` table
+ * within the given lookback window.
+ *
+ * The `search_events` table is separate from `usage_events` and may not exist
+ * in older databases — all errors are caught and an empty array is returned so
+ * callers never need to guard against DB schema differences.
+ */
+export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
+  const since = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT query FROM search_events
+         WHERE ts >= ? AND result_count = 0
+         ORDER BY ts DESC LIMIT 20`,
+      )
+      .all(since) as { query: string }[];
+    return rows.map((r) => r.query);
+  } catch {
+    return []; // table may not exist in older DBs
+  }
+}
+
+/**
  * Re-link detached usage_events to their current entry_ids via entry_ref.
  *
  * After a full rebuild, entry IDs change. This query matches events to their

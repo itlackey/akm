@@ -25,13 +25,16 @@ import {
   getAllEntries,
   getRetrievalCounts,
   getUtilityScoresByIds,
+  getZeroResultSearches,
   openExistingDatabase,
 } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search-source";
+import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
 import { type AkmDistillResult, akmDistill, deriveLessonRef } from "./distill";
+import { akmLint } from "./lint/index";
 import { type AkmReflectResult, akmReflect } from "./reflect";
 import { runSchemaRepairPass } from "./schema-repair";
 
@@ -113,6 +116,11 @@ export interface AkmImproveResult {
     error?: string;
   }>;
   consolidation?: ConsolidateResult;
+  lintSummary?: { fixed: number; flagged: number };
+  memoryIndexHealth?: { lineCount: number; overBudget: boolean };
+  feedbackRatioUsed?: boolean;
+  coverageGaps?: string[];
+  executionLogCandidates?: string[];
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -333,6 +341,33 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const actions: ImproveActionResult[] = [];
     const cleanupWarnings: string[] = [];
 
+    // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
+    let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
+    if (primaryStashDir) {
+      const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
+      if (fs.existsSync(memoryMdPath)) {
+        try {
+          const lines = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
+          const overBudget = lines >= 180;
+          memoryIndexHealth = { lineCount: lines, overBudget };
+          if (overBudget) {
+            cleanupWarnings.push(`MEMORY.md has ${lines} lines (budget: 200). Consolidation strongly recommended.`);
+          }
+        } catch {
+          // best-effort
+        }
+      }
+    }
+
+    // Phase 0 — execution log synthesis
+    let executionLogCandidates: string[] = [];
+    try {
+      const logEntries = getExecutionLogCandidates(7);
+      executionLogCandidates = logEntries.filter((e) => e.isFailurePattern).map((e) => e.topic);
+    } catch {
+      // best-effort
+    }
+
     appendEvent({
       eventType: "improve_invoked",
       ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
@@ -420,7 +455,44 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       scope.mode === "ref" || signalAndRetrievalRefs.length === 0 ? postCleanupRefs : signalAndRetrievalRefs;
 
     const utilityMap = buildUtilityMap(mergedRefs);
-    const sorted = [...mergedRefs].sort((a, b) => (utilityMap.get(b.ref) ?? 0) - (utilityMap.get(a.ref) ?? 0));
+
+    // Load feedback ratio per ref and blend into sort key
+    const feedbackRatios = new Map<string, number>();
+    for (const ref of mergedRefs) {
+      const { events } = readEvents({ type: "feedback", ref: ref.ref });
+      const positive = events.filter((e) => e.metadata?.signal === "positive").length;
+      const negative = events.filter((e) => e.metadata?.signal === "negative").length;
+      const total = positive + negative;
+      // ratio = negative proportion (high = needs more improvement)
+      feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
+    }
+
+    // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
+    const sorted = [...mergedRefs].sort((a, b) => {
+      const utilA = utilityMap.get(a.ref) ?? 0;
+      const utilB = utilityMap.get(b.ref) ?? 0;
+      const ratioA = feedbackRatios.get(a.ref) ?? 0;
+      const ratioB = feedbackRatios.get(b.ref) ?? 0;
+      // Combined score: 70% utility, 30% negative ratio
+      const scoreA = utilA * 0.7 + ratioA * 0.3;
+      const scoreB = utilB * 0.7 + ratioB * 0.3;
+      return scoreB - scoreA;
+    });
+    const feedbackRatioUsed = true;
+
+    // Phase 0: surface coverage gaps from zero-result search queries
+    let coverageGaps: string[] = [];
+    try {
+      const dbForGaps = openExistingDatabase();
+      try {
+        coverageGaps = getZeroResultSearches(dbForGaps);
+      } finally {
+        closeDatabase(dbForGaps);
+      }
+    } catch {
+      // best-effort
+    }
+
     const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
 
     if (appliedCleanup) {
@@ -490,6 +562,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
 
     const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
+
+    // Phase 0.5 — structural hygiene pass
+    let lintSummary: { fixed: number; flagged: number } | undefined;
+    if (primaryStashDir) {
+      try {
+        const lintResult = akmLint({ fix: true, dir: primaryStashDir });
+        lintSummary = { fixed: lintResult.summary.fixed, flagged: lintResult.summary.flagged };
+      } catch {
+        // lint is best-effort; never block improve
+      }
+    }
 
     let completedCount = 0;
     for (const planned of actionableRefs) {
@@ -711,6 +794,11 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(validationFailures.length > 0 ? { validationFailures } : {}),
       ...(schemaRepairs.length > 0 ? { schemaRepairs } : {}),
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
+      ...(lintSummary !== undefined ? { lintSummary } : {}),
+      ...(memoryIndexHealth !== undefined ? { memoryIndexHealth } : {}),
+      feedbackRatioUsed,
+      ...(coverageGaps.length > 0 ? { coverageGaps } : {}),
+      ...(executionLogCandidates.length > 0 ? { executionLogCandidates } : {}),
     };
   } finally {
     try {
