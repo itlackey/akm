@@ -433,3 +433,84 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
 
   return summary;
 }
+
+// ── argv normalisation ───────────────────────────────────────────────────────
+
+const SHOW_VIEW_MODES = new Set(["toc", "frontmatter", "full", "section", "lines"]);
+
+/**
+ * Normalize argv so positional view-mode arguments after the asset ref
+ * are rewritten into internal flags that citty can parse.
+ *
+ * Converts:
+ *   akm show knowledge:guide.md toc          → akm show knowledge:guide.md --akmView toc
+ *   akm show knowledge:guide.md section Auth → akm show knowledge:guide.md --akmView section --akmHeading Auth
+ *   akm show knowledge:guide.md lines 1 50   → akm show knowledge:guide.md --akmView lines --akmStart 1 --akmEnd 50
+ *
+ * Legacy `--view` is intentionally unsupported.
+ * Returns a new array; the input is never modified.
+ */
+export function normalizeShowArgv(argv: string[]): string[] {
+  // argv[0]=bun argv[1]=script argv[2]=subcommand argv[3]=ref argv[4..]=rest
+  if (argv[2] !== "show") return argv;
+  if (argv[3] === "proposal") return argv;
+  if (argv.includes("--view") || argv.includes("--heading") || argv.includes("--start") || argv.includes("--end")) {
+    throw new UsageError(
+      'Legacy show flags are no longer supported. Use positional syntax like `akm show knowledge:guide toc` or `akm show knowledge:guide section "Auth"`.',
+    );
+  }
+
+  // Separate global flags from positional/show-specific args
+  const prefix = argv.slice(0, 3); // [bun, script, show]
+  const rest = argv.slice(3);
+
+  const globalFlags: string[] = [];
+  const showArgs: string[] = [];
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--quiet" || arg === "-q" || arg === "--for-agent" || arg === "--for-agent=true") {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg.startsWith("--format=") || arg.startsWith("--detail=")) {
+      globalFlags.push(arg);
+      continue;
+    }
+    if (arg === "--format" || arg === "--detail") {
+      globalFlags.push(arg);
+      if (rest[i + 1] !== undefined) {
+        globalFlags.push(rest[i + 1]);
+        i++;
+      }
+      continue;
+    }
+    showArgs.push(arg);
+  }
+
+  // showArgs[0] = ref, showArgs[1] = potential view mode, showArgs[2..] = view params
+  const ref = showArgs[0];
+  const viewMode = showArgs[1];
+
+  if (!ref || !viewMode || !SHOW_VIEW_MODES.has(viewMode)) {
+    return argv;
+  }
+
+  const result = [...prefix, ref, "--akmView", viewMode];
+
+  if (viewMode === "section") {
+    // Next arg is the heading name; pass empty string when missing so the
+    // show handler can produce a clear "section not found" error.
+    const heading = showArgs[2] ?? "";
+    result.push("--akmHeading", heading);
+  } else if (viewMode === "lines") {
+    // Next two args are start and end
+    const start = showArgs[2];
+    const end = showArgs[3];
+    if (start) result.push("--akmStart", start);
+    if (end) result.push("--akmEnd", end);
+  }
+
+  result.push(...globalFlags);
+  return result;
+}
