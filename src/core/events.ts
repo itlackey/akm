@@ -95,11 +95,9 @@ export interface EventsContext {
 }
 
 /**
- * Default events.jsonl location — kept for the migration script and any
- * callers that still read the legacy JSONL file.
- *
- * @deprecated After Phase 3 no new events are written here. The write path
- *   now targets `state.db` via `openStateDatabase()`.
+ * Legacy events.jsonl path — used only by the migration script
+ * (`scripts/migrate-storage.ts`) to import existing event history into
+ * state.db. No events are written here by akm v0.9+.
  */
 export function getEventsPath(): string {
   return path.join(getDataDir(), "events.jsonl");
@@ -157,12 +155,9 @@ export interface ReadEventsOptions {
   /**
    * Monotonic id lower bound — durable cursor.
    *
-   * Previously this was a byte-offset into events.jsonl. After Phase 3 it is
-   * the SQLite AUTOINCREMENT rowid of the last seen event. Callers that
-   * persisted a byte-offset cursor from the old JSONL implementation will see
-   * unexpected results until they reset their cursor to 0 (or run the
-   * migration script). New callers should treat `nextOffset` as an opaque
-   * non-negative integer.
+   * The SQLite AUTOINCREMENT rowid of the last seen event. Treat as an opaque
+   * non-negative integer. Callers migrating from the old JSONL implementation
+   * should reset any persisted byte-offset cursor to 0.
    */
   sinceOffset?: number;
   /** Filter to a single event type. */
@@ -180,10 +175,8 @@ export interface ReadEventsResult {
   /**
    * The maximum rowid seen (use as the next `sinceOffset`).
    *
-   * Previously this was an end-of-file byte offset. After Phase 3 it is the
-   * SQLite AUTOINCREMENT id of the last row returned (or `sinceOffset` when
-   * no rows matched). The value is still a non-negative integer and is
-   * monotonically increasing, preserving the durable-cursor contract.
+   * The SQLite AUTOINCREMENT id of the last row returned, or `sinceOffset`
+   * when no rows matched. Monotonically increasing non-negative integer.
    */
   nextOffset: number;
 }
