@@ -57,7 +57,7 @@ import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
 import { isHttpUrl, resolveStashDir } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
-import { DEFAULT_CONFIG, loadConfig, loadUserConfig, saveConfig } from "./core/config";
+import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
@@ -2498,12 +2498,42 @@ const wikiStashCommand = defineCommand({
     name: { type: "positional", description: "Wiki name", required: true },
     source: { type: "positional", description: "Source file path, URL, or '-' to read from stdin", required: true },
     as: { type: "string", description: "Preferred slug base (defaults to source filename or first-line slug)" },
+    target: {
+      type: "string",
+      description:
+        "Name of a writable stash source to write into instead of the default stash. Must match a configured source name (run `akm list` to see sources).",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { stashRaw } = await import("./wiki/wiki.js");
       const { content, preferredName } = await readKnowledgeInput(args.source);
-      const stashDir = resolveStashDir();
+
+      let stashDir: string;
+      if (args.target) {
+        // Resolve the named source to its filesystem path.
+        const cfg = loadConfig();
+        const sources = resolveConfiguredSources(cfg);
+        const match = sources.find((s) => s.name === args.target);
+        if (!match) {
+          throw new UsageError(
+            `--target must reference a configured source name. No source named "${args.target}" found. Run \`akm list\` to see available sources.`,
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        const spec = match.source;
+        if (spec.type !== "filesystem" && spec.type !== "local") {
+          throw new ConfigError(
+            `Source "${args.target}" is not a filesystem source and cannot be used as a wiki stash target.`,
+            "INVALID_CONFIG_FILE",
+            `Use a source with type "filesystem" or "local", or omit --target to use the default stash.`,
+          );
+        }
+        stashDir = spec.path;
+      } else {
+        stashDir = resolveStashDir();
+      }
+
       const result = stashRaw({
         stashDir,
         wikiName: args.name,

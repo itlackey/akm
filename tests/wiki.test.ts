@@ -437,6 +437,61 @@ describe("stashRaw", () => {
     );
   });
 
+  test("wiki stash --target <name> writes raw file into the named source's wiki directory", async () => {
+    // Primary stash — used as AKM_STASH_DIR; has no wiki named "notes".
+    const primaryStash = makeStash("akm-wiki-stash-primary-");
+    // Secondary stash — the target of --target.
+    const secondaryStash = makeStash("akm-wiki-stash-secondary-");
+    createWiki(secondaryStash, "notes");
+
+    const configDir = makeStash("akm-wiki-config-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      stashDir: primaryStash,
+      sources: [{ type: "filesystem", name: "my-other-stash", path: secondaryStash, writable: true }],
+    });
+
+    // Write a small markdown file to stash via stdin-style file.
+    const contentFile = path.join(makeStash("akm-wiki-tmp-"), "article.md");
+    fs.writeFileSync(contentFile, "# Hello\n\nWorld.\n", "utf8");
+
+    const result = await runCliAsync(["wiki", "stash", "notes", contentFile, "--target", "my-other-stash"], {
+      stashDir: primaryStash,
+      configDir,
+    });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string; slug: string };
+    expect(json.ok).toBe(true);
+    // The ref should point to the secondary stash's wiki.
+    expect(json.ref).toBe("wiki:notes/raw/article");
+    // The raw file must live inside the secondary stash, not the primary.
+    expect(json.path.startsWith(secondaryStash)).toBe(true);
+    expect(fs.existsSync(json.path)).toBe(true);
+    const body = fs.readFileSync(json.path, "utf8");
+    expect(body).toContain("Hello");
+    // Must NOT exist in the primary stash.
+    const primaryRawDir = path.join(primaryStash, WIKIS_SUBDIR, "notes", "raw");
+    expect(fs.existsSync(primaryRawDir)).toBe(false);
+  });
+
+  test("wiki stash --target <name> fails when source name is unknown", async () => {
+    const stash = makeStash("akm-wiki-stash-err-");
+    createWiki(stash, "research");
+    const configDir = makeStash("akm-wiki-config-err-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+
+    const contentFile = path.join(makeStash("akm-wiki-tmp-err-"), "a.md");
+    fs.writeFileSync(contentFile, "# A\n", "utf8");
+
+    const result = await runCliAsync(["wiki", "stash", "research", contentFile, "--target", "nonexistent-source"], {
+      stashDir: stash,
+      configDir,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toMatch(/nonexistent-source/);
+  });
+
   test("wiki stash accepts a URL and writes converted markdown to raw/", async () => {
     const stash = makeStash();
     createWiki(stash, "research");

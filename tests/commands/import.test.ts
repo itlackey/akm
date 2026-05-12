@@ -166,6 +166,78 @@ describe("import --target", () => {
     expect(json.error).toContain("source read-only is not writable");
   });
 
+  test("--target routes to a configured filesystem source", () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "secondary-stash", path: targetDir, writable: true }],
+    });
+    const sourcePath = makeKnowledgeFile("overview.md", "# Overview\n\nSome content.\n");
+
+    const { stashDir, result } = runCli(["import", sourcePath, "--target", "secondary-stash"], { configDir });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.ref).toBe("knowledge:overview");
+
+    const expectedPath = path.join(targetDir, "knowledge", "overview.md");
+    expect(json.path).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, "knowledge", "overview.md"))).toBe(false);
+  });
+
+  test("default stash is used when --target is omitted", () => {
+    const configDir = makeTempDir("akm-import-config-");
+    writeConfig(configDir, { semanticSearchMode: "off" });
+    const sourcePath = makeKnowledgeFile("default-stash.md", "# Default stash\n\nContent.\n");
+
+    const { stashDir, result } = runCli(["import", sourcePath], { configDir });
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
+    expect(json.ok).toBe(true);
+    expect(json.ref).toBe("knowledge:default-stash");
+
+    const expectedPath = path.join(stashDir, "knowledge", "default-stash.md");
+    expect(json.path).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+  });
+
+  test("--target with an unknown source name throws a usage error", () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "real-stash", path: targetDir, writable: true }],
+    });
+    const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
+
+    const { result } = runCli(["import", sourcePath, "--target", "no-such-stash"], { configDir });
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain('No source named "no-such-stash" is configured');
+    expect(json.error).toContain("--target must reference a source name");
+  });
+
+  test("--target on a non-writable source throws a config error", () => {
+    const configDir = makeTempDir("akm-import-config-");
+    const targetDir = makeTempDir("akm-import-target-");
+    writeConfig(configDir, {
+      semanticSearchMode: "off",
+      sources: [{ type: "filesystem", name: "locked-stash", path: targetDir, writable: false }],
+    });
+    const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
+
+    const { result } = runCli(["import", sourcePath, "--target", "locked-stash"], { configDir });
+    expect(result.status).not.toBe(0);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("source locked-stash is not writable");
+  });
+
   test("imports a URL into knowledge using a URL-path-derived name", async () => {
     const configDir = makeTempDir("akm-import-config-");
     writeConfig(configDir, { semanticSearchMode: "off" });
