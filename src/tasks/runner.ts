@@ -26,7 +26,8 @@ import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config";
 import { NotFoundError } from "../core/errors";
-import { getTaskHistoryDir, getTaskLogDir } from "../core/paths";
+import { getTaskHistoryDir, getTaskHistoryStateDir, getTaskLogDir } from "../core/paths";
+import { getTaskHistory, openStateDatabase, queryTaskHistory, upsertTaskHistory } from "../core/state-db";
 import { type AgentRunResult, type RunAgentOptions, requireAgentProfile, runAgent } from "../integrations/agent";
 import { resolveAssetPath } from "../sources/resolve";
 import type { WorkflowRunDetail } from "../workflows/runs";
@@ -74,7 +75,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   const startWorkflowRunImpl = options.startWorkflowRunImpl ?? startWorkflowRun;
   const now = options.now ?? (() => new Date());
   const logDir = options.logDir ?? getTaskLogDir();
-  const historyDir = options.historyDir ?? getTaskHistoryDir();
+  const historyDir = options.historyDir ?? getTaskHistoryStateDir();
 
   const filePath = await resolveAssetPath(stashDir, "task", id);
   const markdown = fs.readFileSync(filePath, "utf8");
@@ -321,6 +322,32 @@ function appendHistory(historyDir: string, id: string, result: TaskRunResult): v
   const file = path.join(historyDir, `${id}.jsonl`);
   fs.mkdirSync(historyDir, { recursive: true });
   fs.appendFileSync(file, `${JSON.stringify(result)}\n`);
+
+  // Also write to state.db task_history table (additive — JSONL is kept as fallback).
+  try {
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: result.id,
+        status: result.status,
+        started_at: result.startedAt,
+        completed_at: result.finishedAt,
+        failed_at: result.status === "failed" ? result.finishedAt : null,
+        log_path: result.log,
+        target_kind: result.target.kind,
+        target_ref: result.target.kind === "workflow" ? result.target.ref : null,
+        metadata_json: JSON.stringify({
+          durationMs: result.durationMs,
+          detail: result.detail ?? null,
+          profile: result.target.kind === "prompt" ? result.target.profile : undefined,
+        }),
+      });
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    process.stderr.write(`[akm] task history DB write failed: ${String(err)}\n`);
+  }
 }
 
 /**
@@ -335,31 +362,91 @@ export interface ReadHistoryOptions {
 }
 
 export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult[] {
-  const dir = options.historyDir ?? getTaskHistoryDir();
-  if (!fs.existsSync(dir)) return [];
-  const files = options.id
-    ? [path.join(dir, `${options.id}.jsonl`)].filter((f) => fs.existsSync(f))
-    : fs
-        .readdirSync(dir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => path.join(dir, f));
-  const rows: TaskRunResult[] = [];
-  for (const file of files) {
-    const text = fs.readFileSync(file, "utf8");
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        rows.push(JSON.parse(line) as TaskRunResult);
-      } catch {
-        // skip malformed lines
+  // Step 1: Try reading from state.db task_history table.
+  let dbRows: TaskRunResult[] = [];
+  try {
+    const db = openStateDatabase();
+    try {
+      if (options.id) {
+        const row = getTaskHistory(db, options.id);
+        if (row) {
+          dbRows = [taskHistoryRowToResult(row)];
+        }
+      } else {
+        const rows = queryTaskHistory(db, {});
+        dbRows = rows.map(taskHistoryRowToResult);
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    // state.db unavailable — fall through to JSONL
+  }
+
+  // Step 2: Read JSONL files from both state dir and legacy cache dir as fallback.
+  const jsonlRows: TaskRunResult[] = [];
+  const dirsToTry = options.historyDir ? [options.historyDir] : [getTaskHistoryStateDir(), getTaskHistoryDir()];
+
+  for (const dir of dirsToTry) {
+    if (!fs.existsSync(dir)) continue;
+    const files = options.id
+      ? [path.join(dir, `${options.id}.jsonl`)].filter((f) => fs.existsSync(f))
+      : fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith(".jsonl"))
+          .map((f) => path.join(dir, f));
+    for (const file of files) {
+      const text = fs.readFileSync(file, "utf8");
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          jsonlRows.push(JSON.parse(line) as TaskRunResult);
+        } catch {
+          // skip malformed lines
+        }
       }
     }
   }
-  rows.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+
+  // Step 3: Merge — prefer DB rows; supplement with JSONL rows not in DB (by startedAt).
+  const dbStartedAts = new Set(dbRows.map((r) => r.startedAt));
+  const onlyInJsonl = jsonlRows.filter((r) => !dbStartedAts.has(r.startedAt));
+  const merged = [...dbRows, ...onlyInJsonl];
+
+  merged.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
   if (options.limit !== undefined && options.limit >= 0) {
-    return rows.slice(0, options.limit);
+    return merged.slice(0, options.limit);
   }
-  return rows;
+  return merged;
+}
+
+/**
+ * Convert a `TaskHistoryRow` from state.db back to a `TaskRunResult` shape
+ * that callers of `readTaskHistory()` expect.
+ */
+function taskHistoryRowToResult(row: import("../core/state-db").TaskHistoryRow): TaskRunResult {
+  let meta: { durationMs?: number; detail?: TaskRunResult["detail"]; profile?: string } = {};
+  try {
+    meta = JSON.parse(row.metadata_json) as typeof meta;
+  } catch {
+    // ignore corrupt JSON
+  }
+
+  const target: TaskRunResult["target"] =
+    row.target_kind === "workflow"
+      ? { kind: "workflow", ref: row.target_ref ?? "" }
+      : { kind: "prompt", profile: meta.profile };
+
+  return {
+    id: row.task_id,
+    status: row.status as TaskRunStatus,
+    startedAt: row.started_at,
+    finishedAt: row.completed_at ?? row.failed_at ?? row.started_at,
+    durationMs: meta.durationMs ?? 0,
+    log: row.log_path ?? "",
+    target,
+    ...(meta.detail !== undefined ? { detail: meta.detail } : {}),
+  };
 }
 
 /**

@@ -142,15 +142,23 @@ async function withMockedFetch<T>(handler: (input: string) => Response, run: () 
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const _originalXdgDataHome = process.env.XDG_DATA_HOME;
+const _originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testDataDir = "";
+let testStateDir = "";
 
 beforeAll(async () => {
   testCacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-cache-"));
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-config-"));
+  testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-data-"));
+  testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-e2e-state-"));
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.XDG_DATA_HOME = testDataDir;
+  process.env.XDG_STATE_HOME = testStateDir;
 });
 
 beforeEach(() => {
@@ -174,6 +182,16 @@ afterAll(() => {
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
   }
+  if (originalXdgDataHome === undefined) {
+    delete process.env.XDG_DATA_HOME;
+  } else {
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
   if (originalAkmStashDir === undefined) {
     delete process.env.AKM_STASH_DIR;
   } else {
@@ -186,6 +204,14 @@ afterAll(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testDataDir) {
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+    testDataDir = "";
+  }
+  if (testStateDir) {
+    fs.rmSync(testStateDir, { recursive: true, force: true });
+    testStateDir = "";
   }
 });
 

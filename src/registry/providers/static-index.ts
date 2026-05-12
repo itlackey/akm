@@ -3,6 +3,7 @@ import path from "node:path";
 import { fetchWithRetry, jsonWithByteCap, toErrorMessage, writeFileAtomic } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config";
 import { getRegistryIndexCacheDir } from "../../core/paths";
+import { closeDatabase, getRegistryIndexCache, openDatabase, upsertRegistryIndexCache } from "../../indexer/db";
 import { asString } from "../../integrations/github";
 import { registerProvider } from "../factory";
 import type { ParsedRegistryRef, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
@@ -169,15 +170,42 @@ registerProvider("static-index", (config) => new StaticIndexProvider(config));
 // ── Index loading with cache ────────────────────────────────────────────────
 
 async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | null> {
-  const cachePath = indexCachePath(entry.url);
-  const cached = readCachedIndex(cachePath);
-
-  // Fresh cache: return immediately
-  if (cached && !isCacheExpired(cached.mtime)) {
-    return cached.index;
+  // ── Step 1: Try DB cache (index.db) ─────────────────────────────────────
+  let db: ReturnType<typeof openDatabase> | undefined;
+  let dbCacheResult: { indexJson: string; etag: string | null; lastModified: string | null } | undefined;
+  try {
+    db = openDatabase();
+    dbCacheResult = getRegistryIndexCache(db, entry.url, CACHE_TTL_MS);
+  } catch {
+    // index.db not available yet (pre-migration install or test env) — fall through
   }
 
-  // Try to fetch fresh index
+  if (dbCacheResult) {
+    const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
+    if (index) {
+      if (db) closeDatabase(db);
+      return index;
+    }
+  }
+
+  // ── Step 2: Fall back to file-based cache (read-only, deprecated) ────────
+  const cachePath = indexCachePath(entry.url);
+  const fileCached = readCachedIndex(cachePath);
+
+  // Fresh file cache: return immediately (and promote to DB if DB is available)
+  if (fileCached && !isCacheExpired(fileCached.mtime)) {
+    if (db) {
+      try {
+        upsertRegistryIndexCache(db, entry.url, JSON.stringify(fileCached.index));
+      } catch {
+        /* best-effort promote */
+      }
+      closeDatabase(db);
+    }
+    return fileCached.index;
+  }
+
+  // ── Step 3: Fetch fresh index from remote ────────────────────────────────
   try {
     const response = await fetchWithRetry(entry.url, undefined, { timeout: 10_000 });
     if (!response.ok) {
@@ -188,21 +216,47 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
     const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024);
     const index = parseRegistryIndex(data);
     if (index) {
-      writeCachedIndex(cachePath, index);
+      // Write to DB cache (primary)
+      if (db) {
+        try {
+          const etag = response.headers.get("etag") ?? undefined;
+          const lastModified = response.headers.get("last-modified") ?? undefined;
+          upsertRegistryIndexCache(db, entry.url, JSON.stringify(index), { etag, lastModified });
+        } catch {
+          /* best-effort */
+        }
+        closeDatabase(db);
+      }
+      // @deprecated: file cache write removed; file cache is read-only fallback
       return index;
     }
     throw new Error("Invalid registry index format");
   } catch (err) {
-    // Fetch failed — use stale cache if available
-    if (cached && !isCacheStale(cached.mtime)) {
-      return cached.index;
+    if (db) {
+      try {
+        closeDatabase(db);
+      } catch {
+        /* ignore */
+      }
+    }
+    // Fetch failed — use stale DB cache if available
+    if (dbCacheResult) {
+      const index = parseRegistryIndex(JSON.parse(dbCacheResult.indexJson) as unknown);
+      if (index) return index;
+    }
+    // Fall back to stale file cache
+    if (fileCached && !isCacheStale(fileCached.mtime)) {
+      return fileCached.index;
     }
     throw err;
   }
 }
 
-// ── Cache helpers (exported for reuse by other providers) ───────────────────
+// ── File-based cache helpers (deprecated — read fallback only) ──────────────
+// These helpers remain for the migration script that reads file paths.
+// New writes go exclusively to the DB via upsertRegistryIndexCache().
 
+/** @deprecated Use getRegistryIndexCache() from indexer/db.ts instead. */
 export function indexCachePath(url: string): string {
   const indexDir = getRegistryIndexCacheDir();
   // Deterministic filename from URL
@@ -213,6 +267,7 @@ export function indexCachePath(url: string): string {
   return path.join(indexDir, `${slug}.json`);
 }
 
+/** @deprecated Use getRegistryIndexCache() from indexer/db.ts instead. */
 export function readCachedIndex(cachePath: string): { index: RegistryIndex; mtime: number } | null {
   try {
     const stat = fs.statSync(cachePath);
@@ -225,6 +280,7 @@ export function readCachedIndex(cachePath: string): { index: RegistryIndex; mtim
   }
 }
 
+/** @deprecated Use upsertRegistryIndexCache() from indexer/db.ts instead. */
 export function writeCachedIndex(cachePath: string, index: RegistryIndex): void {
   try {
     const dir = path.dirname(cachePath);
