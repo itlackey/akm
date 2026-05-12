@@ -185,6 +185,48 @@ export interface AkmDistillResult {
   reason?: string;
 }
 
+// ── Distill event metadata factory ───────────────────────────────────────────
+
+/**
+ * Typed metadata shape for every `distill_invoked` event. Using a builder
+ * prevents per-exit-path metadata construction from drifting and ensures
+ * that any new field is added once and propagated to all exit paths.
+ */
+interface DistillEventMetadata {
+  outcome: DistillOutcome;
+  lessonRef: string;
+  proposalKind?: "lesson" | "knowledge";
+  proposalId?: string;
+  proposalRef?: string;
+  score?: number;
+  reason?: string;
+  findingKinds?: string[];
+  filteredFeedbackCount?: number;
+  sourceRun?: string;
+}
+
+/**
+ * Build the `distill_invoked` metadata object. All optional fields are
+ * included only when they carry a meaningful value — `undefined` fields are
+ * omitted.
+ */
+function buildDistillEventMetadata(
+  outcome: DistillOutcome,
+  lessonRef: string,
+  extras: Partial<Omit<DistillEventMetadata, "outcome" | "lessonRef">> = {},
+): Record<string, unknown> {
+  const meta: DistillEventMetadata = { outcome, lessonRef };
+  if (extras.proposalKind !== undefined) meta.proposalKind = extras.proposalKind;
+  if (extras.proposalId !== undefined) meta.proposalId = extras.proposalId;
+  if (extras.proposalRef !== undefined) meta.proposalRef = extras.proposalRef;
+  if (extras.score !== undefined) meta.score = extras.score;
+  if (extras.reason !== undefined) meta.reason = extras.reason;
+  if (extras.findingKinds !== undefined) meta.findingKinds = extras.findingKinds;
+  if (extras.filteredFeedbackCount !== undefined) meta.filteredFeedbackCount = extras.filteredFeedbackCount;
+  if (extras.sourceRun !== undefined) meta.sourceRun = extras.sourceRun;
+  return meta as unknown as Record<string, unknown>;
+}
+
 // ── Lesson-ref derivation ───────────────────────────────────────────────────
 
 /** Derive the proposed lesson ref from the input ref. See module docblock. */
@@ -501,15 +543,13 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
-      metadata: {
-        outcome: "queued",
-        lessonRef: promotion.knowledgeRef,
+      metadata: buildDistillEventMetadata("queued", promotion.knowledgeRef, {
         proposalRef: promotion.knowledgeRef,
         proposalKind: "knowledge",
         proposalId: proposal.id,
         ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      },
+      }),
     });
 
     return {
@@ -567,12 +607,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
-      metadata: {
-        outcome: "skipped",
-        lessonRef: effectiveLessonRef,
+      metadata: buildDistillEventMetadata("skipped", effectiveLessonRef, {
         proposalKind: effectiveProposalKind,
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      },
+      }),
     });
     return {
       schemaVersion: 1,
@@ -602,13 +640,11 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     appendEvent({
       eventType: "distill_invoked",
       ref: inputRef,
-      metadata: {
-        outcome: "validation_failed",
-        lessonRef: effectiveLessonRef,
+      metadata: buildDistillEventMetadata("validation_failed", effectiveLessonRef, {
         proposalKind: effectiveProposalKind,
         findingKinds: findings.map((f) => f.kind),
         ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-      },
+      }),
     });
     const message = findings.map((f) => f.message).join("\n");
     throw new UsageError(
@@ -658,15 +694,13 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   appendEvent({
     eventType: "distill_invoked",
     ref: inputRef,
-    metadata: {
-      outcome: "queued",
-      lessonRef: effectiveLessonRef,
+    metadata: buildDistillEventMetadata("queued", effectiveLessonRef, {
       proposalRef: effectiveLessonRef,
       proposalKind: effectiveProposalKind,
       proposalId: proposal.id,
       ...(options.sourceRun !== undefined ? { sourceRun: options.sourceRun } : {}),
       ...(exclusionSet.size > 0 ? { filteredFeedbackCount } : {}),
-    },
+    }),
   });
 
   return {
