@@ -12,7 +12,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,9 +38,6 @@ mock.module("../src/llm/graph-extract", () => ({
       return graphExtractor(body);
     });
   },
-  // Pass-through: graph-extraction.ts imports deduplicateGraph from this module.
-  // The mock must re-export it so destructured imports don't throw.
-  deduplicateGraph: (extractions: unknown[]) => extractions[0] ?? { entities: [], relations: [] },
 }));
 
 // Memory inference stub — controlled per-test via `memoryCompressor`.
@@ -130,6 +127,12 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+});
+
+// Restore all mock.module overrides so they don't leak into other test files
+// when Bun runs multiple files in the same worker process.
+afterAll(() => {
+  mock.restore();
 });
 
 // ── computeBodyHash ───────────────────────────────────────────────────────────

@@ -40,14 +40,10 @@ import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import {
-  deduplicateGraph,
-  extractGraphFromBodies,
-  extractGraphFromBody,
-  type GraphRelation,
-} from "../llm/graph-extract";
+import { extractGraphFromBodies, extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import { deduplicateGraph } from "./graph-dedup";
 import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
 import { walkMarkdownFiles } from "./walker";

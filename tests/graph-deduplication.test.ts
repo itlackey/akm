@@ -17,8 +17,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { GraphExtraction } from "../src/llm/graph-extract";
-import { deduplicateGraph } from "../src/llm/graph-extract";
+import type { GraphExtraction } from "../src/indexer/graph-dedup";
+import { deduplicateGraph } from "../src/indexer/graph-dedup";
 
 describe("deduplicateGraph", () => {
   // ── (a) Same entity across two assets → one entity ─────────────────────────
