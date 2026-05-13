@@ -228,3 +228,52 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - The diff stayed localized to classification internals plus tracking docs.
 - No test assertions or fixtures were rewritten.
 - The adapter layer keeps current `MatchResult` behavior intact while moving the underlying classification decisions onto fact-producing contributors.
+
+## Decision Checkpoint Before Phase 5
+
+- Go decision: proceed.
+- Phases 1 through 4 reduced duplicated branching in search/proposals, agent/session-log routing, metadata extraction, path resolution, and classification.
+- Complexity remains controlled: each new seam is still a narrow adapter or ordered registry tied to one process, not a generalized plugin framework.
+- Phase 5 is justified because `src/commands/improve.ts` still contains a long fixed-order orchestration flow with multiple separable stages, but the next cut should keep the current stage order explicit rather than introducing dynamic behavior.
+
+## Phase 5
+
+### Phase 5 baseline results
+
+- `bun test tests/commands/improve-memory.test.ts` -> pass (`13` tests)
+- `bun test tests/improve-no-hang.test.ts` -> pass (`3` tests)
+- `bun test tests/commands/reflect-propose-cli.test.ts` -> pass (`6` tests)
+
+### Phase 5 baseline notes
+
+- `src/commands/improve.ts` already had a fixed linear execution order, but the orchestration, loop behavior, and post-processing were still combined inside one long function.
+- The smallest safe cut was to keep the existing order explicit while extracting narrow helper stages rather than introducing a dynamic contributor framework for improve.
+
+### Phase 5 implementation notes
+
+- Split `akmImprove()` into three fixed internal stages in `src/commands/improve.ts`:
+  - `runImprovePreparationStage()`
+  - `runImproveLoopStage()`
+  - `runImprovePostLoopStage()`
+- Kept the public command surface and result shape unchanged.
+- Preserved the existing execution order:
+  - preflight setup and memory cleanup preparation
+  - signal/retrieval selection, validation, schema-repair, lint, and cooldown filtering
+  - main reflect/distill loop
+  - consolidation, dead-link scan, and final result shaping
+- Kept the cut intentionally narrow:
+  - no new plugin or registry framework
+  - no contributor dispatch for improve
+  - no test expectation or fixture rewrites
+
+### Phase 5 gate results
+
+- `bun test tests/commands/improve-memory.test.ts` -> pass (`13` tests)
+- `bun test tests/improve-no-hang.test.ts` -> pass (`3` tests)
+- `bun test tests/commands/reflect-propose-cli.test.ts` -> pass (`6` tests)
+
+### Phase 5 review notes
+
+- The refactor stayed architectural only: stage extraction and internal state shaping without workflow or output changes.
+- The implementation confirms the Phase 5 plan should be described as fixed-stage orchestration helpers, not `ImproveContributor[]`; using contributors here would have added unnecessary framework shape.
+- Parity remained green on the targeted improve surfaces after the extraction.

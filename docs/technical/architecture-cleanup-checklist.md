@@ -157,31 +157,31 @@ Suggested status markers:
 
 ## Decision Checkpoint Before Phase 5
 
-- [ ] Confirm Phases 1 through 4 measurably reduced duplication and switchboard logic.
-- [ ] Confirm complexity did not increase materially.
-- [ ] Stop and simplify if the contributor pattern is turning into a framework.
-- [ ] Record the go / no-go decision in this checklist before continuing.
+- [x] Confirm Phases 1 through 4 measurably reduced duplication and switchboard logic.
+- [x] Confirm complexity did not increase materially.
+- [x] Stop and simplify if the contributor pattern is turning into a framework.
+- [x] Record the go / no-go decision in this checklist before continuing.
 
 ---
 
 ## Phase 5 — Improve Fixed Stages
 
-- [ ] Refactor `src/commands/improve.ts` into fixed stages with `ImproveContributor[]`.
-- [ ] Preserve current stage order and all current behavior.
-- [ ] Keep the refactor architectural only.
+- [x] Refactor `src/commands/improve.ts` into fixed stages with narrow stage helpers.
+- [x] Preserve current stage order and all current behavior.
+- [x] Keep the refactor architectural only.
 
 ### Phase 5 Gate
 
-- [ ] Run stage-level improve parity tests.
-- [ ] Run targeted end-to-end improve regressions.
-- [ ] Verify no workflow or output changes.
-- [ ] Complete a deeper architecture review before moving on.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [x] Run stage-level improve parity tests.
+- [x] Run targeted end-to-end improve regressions.
+- [x] Verify no workflow or output changes.
+- [x] Complete a deeper architecture review before moving on.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
 - [ ] Keep commits scoped by stage if committing.
-- [ ] Ensure no speculative abstractions leaked in.
+- [x] Ensure no speculative abstractions leaked in.
 - [ ] Verify git status is clean except for intended changes.
 
 ---

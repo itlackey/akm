@@ -150,6 +150,41 @@ export interface AkmImproveResult {
   crossStepErrorsInjected?: number;
 }
 
+type ImproveScope = ReturnType<typeof resolveImproveScope>;
+
+interface ImprovePreparationResult {
+  actions: ImproveActionResult[];
+  cleanupWarnings: string[];
+  appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
+  memoryIndexHealth?: { lineCount: number; overBudget: boolean };
+  executionLogCandidates: string[];
+  actionableRefs: ImproveEligibleRef[];
+  signalBearingSet: Set<string>;
+  validationFailures: Array<{ ref: string; reason: string }>;
+  schemaRepairs: Array<{
+    ref: string;
+    reason: string;
+    outcome: "written" | "skipped" | "error";
+    error?: string;
+  }>;
+  lintSummary?: { fixed: number; flagged: number };
+  loopRefs: ImproveEligibleRef[];
+  distillCooledRefs: Set<string>;
+  feedbackRatioUsed: boolean;
+  coverageGaps: string[];
+  recentErrors: string[];
+}
+
+interface ImproveLoopResult {
+  crossStepErrorsInjected: number;
+}
+
+interface ImprovePostLoopResult {
+  allWarnings: string[];
+  consolidation: ConsolidateResult;
+  deadUrls?: DeadUrl[];
+}
+
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
   const trimmed = scope?.trim();
   if (!trimmed) return { mode: "all" };
@@ -334,7 +369,7 @@ function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
 }
 
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
-  const scope = resolveImproveScope(options.scope);
+  const scope: ImproveScope = resolveImproveScope(options.scope);
   const { plannedRefs, memorySummary } = await collectEligibleRefs(scope, options.stashDir);
   const reflectFn = options.reflectFn ?? akmReflect;
   const distillFn = options.distillFn ?? akmDistill;
@@ -406,603 +441,43 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const startMs = Date.now();
 
   try {
-    const actions: ImproveActionResult[] = [];
-    const cleanupWarnings: string[] = [];
-
-    // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
-    let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
-    if (primaryStashDir) {
-      const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
-      if (fs.existsSync(memoryMdPath)) {
-        try {
-          const lines = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
-          const overBudget = lines >= 180;
-          memoryIndexHealth = { lineCount: lines, overBudget };
-          if (overBudget) {
-            cleanupWarnings.push(`MEMORY.md has ${lines} lines (budget: 200). Consolidation strongly recommended.`);
-          }
-        } catch {
-          // best-effort
-        }
-      }
-    }
-
-    // Phase 0 — execution log synthesis
-    let executionLogCandidates: string[] = [];
-    try {
-      const logEntries = getExecutionLogCandidates(7);
-      executionLogCandidates = logEntries.filter((e) => e.isFailurePattern).map((e) => e.topic);
-    } catch {
-      // best-effort
-    }
-
-    appendEvent({
-      eventType: "improve_invoked",
-      ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-      metadata: { scope, dryRun: options.dryRun ?? false, assetCount: plannedRefs.length },
+    const preparation = await runImprovePreparationStage({
+      scope,
+      options,
+      plannedRefs,
+      memoryCleanupPlan,
+      primaryStashDir,
+      memorySummary,
+      ensureIndexFn,
+      reindexFn,
+      startMs,
+      budgetMs,
     });
 
-    if (primaryStashDir) {
-      try {
-        await ensureIndexFn(primaryStashDir);
-      } catch (err) {
-        cleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    let appliedCleanup: Awaited<ReturnType<typeof applyMemoryCleanup>> | undefined;
-    try {
-      appliedCleanup =
-        primaryStashDir && memoryCleanupPlan ? applyMemoryCleanup(primaryStashDir, memoryCleanupPlan) : undefined;
-    } catch (err) {
-      cleanupWarnings.push(`applyMemoryCleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
-    const postCleanupRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
-
-    // Gap 6: only surface feedback signals from the last 30 days so that
-    // ancient one-off feedback events don't permanently lock an asset into
-    // every improve run. Assets with only stale signals fall through to the
-    // high-retrieval path (P0-A) or are skipped until new signals arrive.
-    const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
-    const feedbackSinceCutoff = new Date(Date.now() - FEEDBACK_SIGNAL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
-    const signalFiltered = postCleanupRefs.filter((candidate) => {
-      const { events } = readEvents({ type: "feedback", ref: candidate.ref });
-      return events.some(
-        (e) =>
-          (e.ts ?? "") >= feedbackSinceCutoff &&
-          ((e.metadata !== undefined && typeof e.metadata.signal === "string") ||
-            (e.metadata !== undefined && typeof e.metadata.note === "string")),
-      );
+    const { crossStepErrorsInjected } = await runImproveLoopStage({
+      scope,
+      options,
+      primaryStashDir,
+      reflectFn,
+      distillFn,
+      loopRefs: preparation.loopRefs,
+      actions: preparation.actions,
+      signalBearingSet: preparation.signalBearingSet,
+      distillCooledRefs: preparation.distillCooledRefs,
+      recentErrors: preparation.recentErrors,
+      startMs,
+      budgetMs,
     });
 
-    // P0-A: also surface zero-feedback assets that have been retrieved many times.
-    const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
-
-    const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-    const noFeedbackCandidates = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
-
-    let highRetrievalRefs: typeof postCleanupRefs = [];
-    let dbForRetrieval: import("bun:sqlite").Database | undefined;
-    try {
-      dbForRetrieval = openExistingDatabase();
-      const showEventCount = (
-        dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
-          cnt: number;
-        }
-      ).cnt;
-      if (showEventCount === 0) {
-        warn(
-          "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
-        );
-      }
-      const retrievalCounts = getRetrievalCounts(
-        dbForRetrieval,
-        noFeedbackCandidates.map((r) => r.ref),
-      );
-      highRetrievalRefs = noFeedbackCandidates.filter(
-        (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
-      );
-    } catch {
-      // best-effort: if DB unavailable, highRetrievalRefs stays empty
-    } finally {
-      if (dbForRetrieval) closeDatabase(dbForRetrieval);
-    }
-
-    // If the user explicitly scoped to a single ref, always act on it —
-    // skip the signal/retrieval filter entirely. The filter exists to avoid
-    // noisy "improve everything" runs; it should not gate an intentional
-    // per-ref invocation where the user's explicit choice is the signal.
-    //
-    // For type/all scope with no signals yet (fresh environment), fall back
-    // to all postCleanupRefs so that the first improve run is not a no-op.
-    const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
-    const mergedRefs =
-      scope.mode === "ref"
-        ? postCleanupRefs
-        : options.requireFeedbackSignal
-          ? signalFiltered
-          : signalAndRetrievalRefs.length === 0
-            ? postCleanupRefs
-            : signalAndRetrievalRefs;
-
-    const utilityMap = buildUtilityMap(mergedRefs);
-
-    // Load feedback ratio per ref and blend into sort key
-    const feedbackRatios = new Map<string, number>();
-    for (const ref of mergedRefs) {
-      const { events } = readEvents({ type: "feedback", ref: ref.ref });
-      const positive = events.filter((e) => e.metadata?.signal === "positive").length;
-      const negative = events.filter((e) => e.metadata?.signal === "negative").length;
-      const total = positive + negative;
-      // ratio = negative proportion (high = needs more improvement)
-      feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
-    }
-
-    // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
-    const sorted = [...mergedRefs].sort((a, b) => {
-      const utilA = utilityMap.get(a.ref) ?? 0;
-      const utilB = utilityMap.get(b.ref) ?? 0;
-      const ratioA = feedbackRatios.get(a.ref) ?? 0;
-      const ratioB = feedbackRatios.get(b.ref) ?? 0;
-      // Combined score: 70% utility, 30% negative ratio
-      const scoreA = utilA * 0.7 + ratioA * 0.3;
-      const scoreB = utilB * 0.7 + ratioB * 0.3;
-      return scoreB - scoreA;
+    const { allWarnings, consolidation, deadUrls } = await runImprovePostLoopStage({
+      scope,
+      options,
+      primaryStashDir,
+      actionableRefs: preparation.actionableRefs,
+      appliedCleanup: preparation.appliedCleanup,
+      cleanupWarnings: preparation.cleanupWarnings,
+      memorySummary,
     });
-    const feedbackRatioUsed = true;
-
-    // Phase 0: surface coverage gaps from zero-result search queries
-    let coverageGaps: string[] = [];
-    try {
-      const dbForGaps = openExistingDatabase();
-      try {
-        coverageGaps = getZeroResultSearches(dbForGaps);
-      } finally {
-        closeDatabase(dbForGaps);
-      }
-    } catch {
-      // best-effort
-    }
-
-    const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
-
-    if (appliedCleanup) {
-      for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
-        const archived = appliedCleanup.archived.find((record) => record.ref === candidate.ref);
-        if (!archived) continue;
-        actions.push({
-          ref: candidate.ref,
-          mode: "memory-prune",
-          result: { ok: true, pruned: true, reason: candidate.reason },
-        });
-      }
-      if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
-        try {
-          await reindexFn({ stashDir: primaryStashDir });
-        } catch (err) {
-          cleanupWarnings.push(`reindex after cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
-    const validationFailures: Array<{ ref: string; reason: string }> = [];
-    for (const candidate of actionableRefs) {
-      try {
-        const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
-        if (!filePath) {
-          validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
-          continue;
-        }
-        if (isLessonCandidate(candidate.ref)) {
-          const raw = fs.readFileSync(filePath, "utf8");
-          const fm = parseFrontmatter(raw).data;
-          if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
-        }
-      } catch (e) {
-        validationFailures.push({ ref: candidate.ref, reason: String(e) });
-      }
-    }
-    if (validationFailures.length > 0) {
-      info(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
-      for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
-    }
-    // Schema repair pass: attempt to fix validation failures via LLM before skipping.
-    let schemaRepairs: Array<{
-      ref: string;
-      reason: string;
-      outcome: "written" | "skipped" | "error";
-      error?: string;
-    }> = [];
-    let repairedRefs = new Set<string>();
-
-    if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
-      const baseConfigForRepair = options.config ?? loadConfig();
-      const llmCfg = baseConfigForRepair.llm;
-      if (llmCfg) {
-        const result = await runSchemaRepairPass(validationFailures, {
-          startMs,
-          budgetMs,
-          llmConfig: llmCfg,
-          stashDir: options.stashDir,
-          findFilePath: findAssetFilePath,
-          isLessonCandidateFn: isLessonCandidate,
-        });
-        schemaRepairs = result.repairs;
-        repairedRefs = result.repairedRefs;
-      }
-    }
-
-    const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
-
-    // Phase 0.5 — structural hygiene pass
-    let lintSummary: { fixed: number; flagged: number } | undefined;
-    if (primaryStashDir) {
-      try {
-        const lintResult = akmLint({ fix: true, dir: primaryStashDir });
-        lintSummary = { fixed: lintResult.summary.fixed, flagged: lintResult.summary.flagged };
-      } catch {
-        // lint is best-effort; never block improve
-      }
-    }
-
-    const recentErrors: string[] = []; // rolling window, last 3 failures
-    const RECENT_ERRORS_CAP = 3;
-    let crossStepErrorsInjected = 0;
-
-    // Seed the rolling window from any schema repair errors that occurred before the main loop.
-    for (const repair of schemaRepairs) {
-      if (repair.outcome === "error") {
-        const errMsg = repair.error ?? `schema repair error: ${repair.reason}`;
-        recentErrors.push(errMsg);
-        if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
-      }
-    }
-
-    // ── Cooldown pre-filter ───────────────────────────────────────────────────
-    // Read all cooldown-relevant events in 4 bulk queries and materialise two
-    // Sets that the loop checks with O(1) Set.has() instead of N per-ref
-    // readEvents() + listProposals() calls. This eliminates the N×3 DB/FS
-    // round trips that caused per-asset "reflect cooldown" noise for every
-    // asset in the stash.
-    //
-    // SM-2 tier for reflect uses promoted/rejected events (recorded by
-    // `akm proposal accept/reject`) rather than the per-ref listProposals()
-    // filesystem scan, giving identical tier logic without touching the disk.
-    const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
-    const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
-
-    const reflectCooledRefs = new Set<string>();
-    const distillCooledRefs = new Set<string>();
-
-    if (REFLECT_COOLDOWN_DAYS > 0 || DISTILL_COOLDOWN_DAYS > 0) {
-      const bulkWindowMs = Math.max(REFLECT_COOLDOWN_DAYS, DISTILL_COOLDOWN_DAYS, 14) * 24 * 60 * 60 * 1000;
-      const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
-
-      const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
-      const bulkDistills = readEvents({ type: "distill_invoked", since: bulkSince }).events;
-      const bulkPromoted = readEvents({ type: "promoted", since: bulkSince }).events;
-      const bulkRejected = readEvents({ type: "rejected", since: bulkSince }).events;
-
-      // Latest promoted/rejected ts per ref (for SM-2 tier computation).
-      const promotedTs = new Map<string, string>();
-      for (const e of bulkPromoted) {
-        if (e.ref && (e.ts ?? "") > (promotedTs.get(e.ref) ?? "")) promotedTs.set(e.ref, e.ts ?? "");
-      }
-      const rejectedTs = new Map<string, string>();
-      for (const e of bulkRejected) {
-        if (e.ref && (e.ts ?? "") > (rejectedTs.get(e.ref) ?? "")) rejectedTs.set(e.ref, e.ts ?? "");
-      }
-
-      if (REFLECT_COOLDOWN_DAYS > 0) {
-        // Group reflect events by ref, find most recent per ref.
-        const latestReflect = new Map<string, string>(); // ref → ts
-        for (const e of bulkReflects) {
-          if (e.ref && (e.ts ?? "") > (latestReflect.get(e.ref) ?? "")) latestReflect.set(e.ref, e.ts ?? "");
-        }
-        for (const [ref, lastTs] of latestReflect) {
-          if (!lastTs) continue;
-          // SM-2 tier: promoted/rejected event that occurred AFTER the last reflect run.
-          const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
-          const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
-          let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
-          if (hasAccepted) continue;
-          else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
-          if (Date.now() - new Date(lastTs).getTime() < effectiveCooldownDays * 24 * 60 * 60 * 1000) {
-            reflectCooledRefs.add(ref);
-          }
-        }
-      }
-
-      if (DISTILL_COOLDOWN_DAYS > 0) {
-        const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-        const latestQueuedDistill = new Map<string, string>(); // ref → ts
-        for (const e of bulkDistills) {
-          if (e.ref && e.metadata?.outcome === "queued" && (e.ts ?? "") > (latestQueuedDistill.get(e.ref) ?? "")) {
-            latestQueuedDistill.set(e.ref, e.ts ?? "");
-          }
-        }
-        for (const [ref, lastTs] of latestQueuedDistill) {
-          if (lastTs && Date.now() - new Date(lastTs).getTime() < distillCooldownMs) {
-            distillCooledRefs.add(ref);
-          }
-        }
-      }
-    }
-
-    // Separate reflect-cooled assets from the active loop — emit a single
-    // summary line instead of one info() per skipped asset.
-    // Also exclude validation failures upfront so the loop counter reflects
-    // only assets that will actually be processed.
-    const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref) && !validationFailureRefs.has(r.ref));
-    const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
-    if (reflectCooledLoop.length > 0) {
-      info(`[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`);
-      for (const r of reflectCooledLoop) {
-        actions.push({
-          ref: r.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
-        });
-        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
-      }
-    }
-    if (validationFailureRefs.size > 0) {
-      info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
-    }
-
-    let completedCount = 0;
-    for (const planned of loopRefs) {
-      if (Date.now() - startMs >= budgetMs) {
-        const remaining = loopRefs.length - completedCount;
-        info(
-          `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
-        );
-        appendEvent({
-          eventType: "improve_skipped",
-          ref: planned.ref,
-          metadata: {
-            reason: "budget_exhausted",
-            remaining,
-          },
-        });
-        actions.push({
-          ref: planned.ref,
-          mode: "error",
-          result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
-        });
-        break;
-      }
-      try {
-        // Distill cooldown pre-check: skip both reflect AND distill for assets
-        // that would go through the distill path but are already on cooldown.
-        // Moving this before reflectFn avoids an unnecessary LLM call.
-        if (
-          DISTILL_COOLDOWN_DAYS > 0 &&
-          distillCooledRefs.has(planned.ref) &&
-          (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir))
-        ) {
-          actions.push({
-            ref: planned.ref,
-            mode: "distill-skipped",
-            result: { ok: true, reason: "distill cooldown" },
-          });
-          completedCount++;
-          appendEvent({
-            eventType: "improve_skipped",
-            ref: planned.ref,
-            metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS },
-          });
-          info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
-          continue;
-        }
-
-        if (recentErrors.length > 0) crossStepErrorsInjected++;
-        const reflectResult = await reflectFn({
-          ref: planned.ref,
-          task: options.task,
-          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-          ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
-          agentProcess: options.agentProcess ?? "reflect",
-        });
-        actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
-        if (!reflectResult.ok) {
-          const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-          recentErrors.push(errMsg);
-          if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
-        }
-        const parsedPlannedRef = parseAssetRef(planned.ref);
-        const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
-        const explicitRefScope = scope.mode === "ref";
-        const shouldAttemptDistill =
-          isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir);
-        const skipMemoryDistillForWeakSignal =
-          parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
-
-        if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal) {
-          const lessonRef = deriveLessonRef(planned.ref);
-          const dedupeStashDir = primaryStashDir ?? options.stashDir;
-          if (dedupeStashDir) {
-            const existingProposals = listProposals(dedupeStashDir, { ref: lessonRef });
-            if (existingProposals.some((p) => p.status === "pending")) {
-              actions.push({
-                ref: planned.ref,
-                mode: "distill-skipped",
-                result: { ok: true, reason: "pending proposal exists" },
-              });
-              completedCount++;
-              info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-              continue;
-            }
-          }
-
-          const distillResult = await distillFn({
-            ref: planned.ref,
-            ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
-            ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-          });
-          actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
-          if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
-            const slug = planned.ref
-              .replace(/[^a-z0-9]/gi, "-")
-              .toLowerCase()
-              .slice(0, 60);
-            writeEvalCase(primaryStashDir, {
-              ref: planned.ref,
-              failureReason: distillResult.reason ?? "quality gate rejected",
-              assetType: parseAssetRef(planned.ref).type ?? "unknown",
-              rejectedAt: Date.now(),
-              source: "distill_quality_rejected",
-              slug: `${slug}-${Date.now()}`,
-            });
-          }
-          // Check for rejected proposals in the last 30 days
-          const rejectedProposals = readEvents({ type: "proposal_rejected", ref: planned.ref }).events.filter(
-            (e) => new Date(e.ts).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
-          );
-          if (rejectedProposals.length > 0 && primaryStashDir) {
-            const slug = planned.ref
-              .replace(/[^a-z0-9]/gi, "-")
-              .toLowerCase()
-              .slice(0, 60);
-            writeEvalCase(primaryStashDir, {
-              ref: planned.ref,
-              failureReason: (rejectedProposals[0].metadata?.reason as string | undefined) ?? "proposal rejected",
-              assetType: parseAssetRef(planned.ref).type ?? "unknown",
-              rejectedAt: new Date(rejectedProposals[0].ts).getTime(),
-              source: "proposal_rejected",
-              slug: `${slug}-rejected`,
-            });
-          }
-        } else if (skipMemoryDistillForWeakSignal) {
-          actions.push({
-            ref: planned.ref,
-            mode: "distill-skipped",
-            result: { ok: true, reason: "memory requires recent feedback signal" },
-          });
-          appendEvent({
-            eventType: "improve_skipped",
-            ref: planned.ref,
-            metadata: { reason: "memory_distill_requires_feedback" },
-          });
-        }
-      } catch (err) {
-        actions.push({
-          ref: planned.ref,
-          mode: "error",
-          result: { ok: false, error: err instanceof Error ? err.message : String(err) },
-        });
-      }
-      completedCount++;
-      info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
-    }
-
-    const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
-
-    const baseConfig = options.config ?? loadConfig();
-    const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
-    const hasLlm = !!(baseConfig.llm || baseConfig.agent);
-    const volumeTriggered =
-      typeof memorySummary?.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
-    const consolidationConfig: AkmConfig = volumeTriggered
-      ? {
-          ...baseConfig,
-          ...(baseConfig.llm
-            ? {
-                llm: {
-                  ...baseConfig.llm,
-                  features: { ...baseConfig.llm.features, memory_consolidation: true },
-                },
-              }
-            : {}),
-        }
-      : baseConfig;
-
-    // Gap 4: skip consolidation if it ran recently (14-day cooldown) to prevent
-    // the same memory cluster being churned through consolidation on every run.
-    const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
-    const CONSOLIDATE_COOLDOWN_MS = consolidateCooldownDays * 24 * 60 * 60 * 1000;
-    const recentConsolidations = readEvents({ type: "consolidate_completed" });
-    const lastConsolidation = recentConsolidations.events
-      .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
-      .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
-    const consolidationOnCooldown =
-      !volumeTriggered &&
-      consolidateCooldownDays > 0 &&
-      lastConsolidation?.ts &&
-      Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
-
-    let consolidation: ConsolidateResult = {
-      schemaVersion: 1,
-      ok: true,
-      shape: "consolidate-result",
-      dryRun: false,
-      previewOnly: false,
-      target: "",
-      processed: 0,
-      merged: 0,
-      deleted: 0,
-      promoted: [],
-      warnings: [],
-      durationMs: 0,
-    };
-    if (!consolidationOnCooldown) {
-      consolidation = await akmConsolidate({
-        ...options.consolidateOptions,
-        config: consolidationConfig,
-        stashDir: options.stashDir,
-        autoTriggered: volumeTriggered,
-        // Consolidation is a sub-step of improve — the user already opted in by
-        // running improve. Always skip the interactive confirmation here; it only
-        // belongs in the standalone `akm consolidate` CLI path.
-        autoAccept: "safe",
-      });
-      if (consolidation.processed > 0) {
-        appendEvent({
-          eventType: "consolidate_completed",
-          ref: "memory:_consolidation",
-          metadata: { processed: consolidation.processed, merged: consolidation.merged },
-        });
-      }
-    } else {
-      const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
-      appendEvent({
-        eventType: "improve_skipped",
-        ref: "memory:_consolidation",
-        metadata: {
-          reason: "consolidation_cooldown",
-          cooldownDays: 14,
-          lastEventTs: lastConsolidation?.ts ?? null,
-        },
-      });
-      info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
-    }
-
-    // Item 8: URL dead-link detection — weekly (mode=all) runs only, best-effort, no LLM needed.
-    // Note: ImproveEligibleRef does not have a body field, so we can only pass empty bodies here.
-    // A follow-up improvement would read the file contents for each ref before calling checkDeadUrls.
-    let deadUrls: DeadUrl[] | undefined;
-    if (scope.mode === "all" && primaryStashDir && actionableRefs.length > 0) {
-      try {
-        const knowledgeEntries = actionableRefs
-          .filter((r) => {
-            try {
-              return parseAssetRef(r.ref).type === "knowledge";
-            } catch {
-              return false;
-            }
-          })
-          .slice(0, 10)
-          .map((r) => ({ ref: r.ref, body: "" }));
-        if (knowledgeEntries.length > 0) {
-          deadUrls = await checkDeadUrls(primaryStashDir, knowledgeEntries);
-        }
-      } catch {
-        // best-effort
-      }
-    }
 
     return {
       schemaVersion: 1,
@@ -1015,33 +490,35 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         ? {
             memoryCleanup: {
               ...shapeMemoryCleanup(memoryCleanupPlan),
-              ...(appliedCleanup
+              ...(preparation.appliedCleanup
                 ? {
-                    archived: appliedCleanup.archived,
-                    ...(appliedCleanup.transitionLogPath
-                      ? { transitionLogPath: appliedCleanup.transitionLogPath }
+                    archived: preparation.appliedCleanup.archived,
+                    ...(preparation.appliedCleanup.transitionLogPath
+                      ? { transitionLogPath: preparation.appliedCleanup.transitionLogPath }
                       : {}),
-                    ...(appliedCleanup.transitionLogEntries !== undefined
-                      ? { transitionLogEntries: appliedCleanup.transitionLogEntries }
+                    ...(preparation.appliedCleanup.transitionLogEntries !== undefined
+                      ? { transitionLogEntries: preparation.appliedCleanup.transitionLogEntries }
                       : {}),
                     ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
                   }
-                : cleanupWarnings.length > 0
-                  ? { warnings: cleanupWarnings }
+                : preparation.cleanupWarnings.length > 0
+                  ? { warnings: preparation.cleanupWarnings }
                   : {}),
             },
           }
         : {}),
-      plannedRefs: actionableRefs,
-      actions,
-      ...(validationFailures.length > 0 ? { validationFailures } : {}),
-      ...(schemaRepairs.length > 0 ? { schemaRepairs } : {}),
+      plannedRefs: preparation.actionableRefs,
+      actions: preparation.actions,
+      ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
+      ...(preparation.schemaRepairs.length > 0 ? { schemaRepairs: preparation.schemaRepairs } : {}),
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
-      ...(lintSummary !== undefined ? { lintSummary } : {}),
-      ...(memoryIndexHealth !== undefined ? { memoryIndexHealth } : {}),
-      feedbackRatioUsed,
-      ...(coverageGaps.length > 0 ? { coverageGaps } : {}),
-      ...(executionLogCandidates.length > 0 ? { executionLogCandidates } : {}),
+      ...(preparation.lintSummary !== undefined ? { lintSummary: preparation.lintSummary } : {}),
+      ...(preparation.memoryIndexHealth !== undefined ? { memoryIndexHealth: preparation.memoryIndexHealth } : {}),
+      feedbackRatioUsed: preparation.feedbackRatioUsed,
+      ...(preparation.coverageGaps.length > 0 ? { coverageGaps: preparation.coverageGaps } : {}),
+      ...(preparation.executionLogCandidates.length > 0
+        ? { executionLogCandidates: preparation.executionLogCandidates }
+        : {}),
       ...(primaryStashDir !== undefined ? { evalCasesWritten: countEvalCases(primaryStashDir) } : {}),
       ...(deadUrls !== undefined && deadUrls.length > 0 ? { deadUrls } : {}),
       ...(crossStepErrorsInjected > 0 ? { crossStepErrorsInjected } : {}),
@@ -1053,6 +530,672 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // ignore
     }
   }
+}
+
+async function runImprovePreparationStage(args: {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  plannedRefs: ImproveEligibleRef[];
+  memoryCleanupPlan?: MemoryCleanupPlan;
+  primaryStashDir?: string;
+  memorySummary: { eligible: number; derived: number };
+  ensureIndexFn: (stashDir: string) => Promise<unknown>;
+  reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  startMs: number;
+  budgetMs: number;
+}): Promise<ImprovePreparationResult> {
+  const {
+    scope,
+    options,
+    plannedRefs,
+    memoryCleanupPlan,
+    primaryStashDir,
+    ensureIndexFn,
+    reindexFn,
+    startMs,
+    budgetMs,
+  } = args;
+
+  const actions: ImproveActionResult[] = [];
+  const cleanupWarnings: string[] = [];
+
+  // Phase 0 — MEMORY.md budget check (200-line cap; warn at 180)
+  let memoryIndexHealth: { lineCount: number; overBudget: boolean } | undefined;
+  if (primaryStashDir) {
+    const memoryMdPath = path.join(primaryStashDir, "memories", "MEMORY.md");
+    if (fs.existsSync(memoryMdPath)) {
+      try {
+        const lines = fs.readFileSync(memoryMdPath, "utf8").split("\n").length;
+        const overBudget = lines >= 180;
+        memoryIndexHealth = { lineCount: lines, overBudget };
+        if (overBudget) {
+          cleanupWarnings.push(`MEMORY.md has ${lines} lines (budget: 200). Consolidation strongly recommended.`);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  // Phase 0 — execution log synthesis
+  let executionLogCandidates: string[] = [];
+  try {
+    const logEntries = getExecutionLogCandidates(7);
+    executionLogCandidates = logEntries.filter((e) => e.isFailurePattern).map((e) => e.topic);
+  } catch {
+    // best-effort
+  }
+
+  appendEvent({
+    eventType: "improve_invoked",
+    ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
+    metadata: { scope, dryRun: options.dryRun ?? false, assetCount: plannedRefs.length },
+  });
+
+  if (primaryStashDir) {
+    try {
+      await ensureIndexFn(primaryStashDir);
+    } catch (err) {
+      cleanupWarnings.push(`ensureIndex failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  let appliedCleanup: Awaited<ReturnType<typeof applyMemoryCleanup>> | undefined;
+  try {
+    appliedCleanup =
+      primaryStashDir && memoryCleanupPlan ? applyMemoryCleanup(primaryStashDir, memoryCleanupPlan) : undefined;
+  } catch (err) {
+    cleanupWarnings.push(`applyMemoryCleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const archivedRefs = appliedCleanup?.archived.map((record) => record.ref) ?? [];
+  const postCleanupRefs = filterRemovedPlannedRefs(plannedRefs, archivedRefs);
+
+  // Gap 6: only surface feedback signals from the last 30 days so that
+  // ancient one-off feedback events don't permanently lock an asset into
+  // every improve run. Assets with only stale signals fall through to the
+  // high-retrieval path (P0-A) or are skipped until new signals arrive.
+  const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
+  const feedbackSinceCutoff = new Date(Date.now() - FEEDBACK_SIGNAL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const signalFiltered = postCleanupRefs.filter((candidate) => {
+    const { events } = readEvents({ type: "feedback", ref: candidate.ref });
+    return events.some(
+      (e) =>
+        (e.ts ?? "") >= feedbackSinceCutoff &&
+        ((e.metadata !== undefined && typeof e.metadata.signal === "string") ||
+          (e.metadata !== undefined && typeof e.metadata.note === "string")),
+    );
+  });
+
+  // P0-A: also surface zero-feedback assets that have been retrieved many times.
+  const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
+
+  const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
+  const noFeedbackCandidates = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
+
+  let highRetrievalRefs: typeof postCleanupRefs = [];
+  let dbForRetrieval: import("bun:sqlite").Database | undefined;
+  try {
+    dbForRetrieval = openExistingDatabase();
+    const showEventCount = (
+      dbForRetrieval.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = 'show'").get() as {
+        cnt: number;
+      }
+    ).cnt;
+    if (showEventCount === 0) {
+      warn(
+        "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
+      );
+    }
+    const retrievalCounts = getRetrievalCounts(
+      dbForRetrieval,
+      noFeedbackCandidates.map((r) => r.ref),
+    );
+    highRetrievalRefs = noFeedbackCandidates.filter(
+      (r) => (retrievalCounts.get(r.ref) ?? 0) >= RETRIEVAL_COUNT_THRESHOLD,
+    );
+  } catch {
+    // best-effort: if DB unavailable, highRetrievalRefs stays empty
+  } finally {
+    if (dbForRetrieval) closeDatabase(dbForRetrieval);
+  }
+
+  // If the user explicitly scoped to a single ref, always act on it —
+  // skip the signal/retrieval filter entirely. The filter exists to avoid
+  // noisy "improve everything" runs; it should not gate an intentional
+  // per-ref invocation where the user's explicit choice is the signal.
+  //
+  // For type/all scope with no signals yet (fresh environment), fall back
+  // to all postCleanupRefs so that the first improve run is not a no-op.
+  const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
+  const mergedRefs =
+    scope.mode === "ref"
+      ? postCleanupRefs
+      : options.requireFeedbackSignal
+        ? signalFiltered
+        : signalAndRetrievalRefs.length === 0
+          ? postCleanupRefs
+          : signalAndRetrievalRefs;
+
+  const utilityMap = buildUtilityMap(mergedRefs);
+
+  // Load feedback ratio per ref and blend into sort key
+  const feedbackRatios = new Map<string, number>();
+  for (const ref of mergedRefs) {
+    const { events } = readEvents({ type: "feedback", ref: ref.ref });
+    const positive = events.filter((e) => e.metadata?.signal === "positive").length;
+    const negative = events.filter((e) => e.metadata?.signal === "negative").length;
+    const total = positive + negative;
+    // ratio = negative proportion (high = needs more improvement)
+    feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
+  }
+
+  // Sort: combine utility (desc) with feedback negativity (desc) — high-negative assets rank higher
+  const sorted = [...mergedRefs].sort((a, b) => {
+    const utilA = utilityMap.get(a.ref) ?? 0;
+    const utilB = utilityMap.get(b.ref) ?? 0;
+    const ratioA = feedbackRatios.get(a.ref) ?? 0;
+    const ratioB = feedbackRatios.get(b.ref) ?? 0;
+    // Combined score: 70% utility, 30% negative ratio
+    const scoreA = utilA * 0.7 + ratioA * 0.3;
+    const scoreB = utilB * 0.7 + ratioB * 0.3;
+    return scoreB - scoreA;
+  });
+  const feedbackRatioUsed = true;
+
+  // Phase 0: surface coverage gaps from zero-result search queries
+  let coverageGaps: string[] = [];
+  try {
+    const dbForGaps = openExistingDatabase();
+    try {
+      coverageGaps = getZeroResultSearches(dbForGaps);
+    } finally {
+      closeDatabase(dbForGaps);
+    }
+  } catch {
+    // best-effort
+  }
+
+  const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
+
+  if (appliedCleanup) {
+    for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
+      const archived = appliedCleanup.archived.find((record) => record.ref === candidate.ref);
+      if (!archived) continue;
+      actions.push({
+        ref: candidate.ref,
+        mode: "memory-prune",
+        result: { ok: true, pruned: true, reason: candidate.reason },
+      });
+    }
+    if ((appliedCleanup.archived.length > 0 || appliedCleanup.beliefStateTransitions.length > 0) && primaryStashDir) {
+      try {
+        await reindexFn({ stashDir: primaryStashDir });
+      } catch (err) {
+        cleanupWarnings.push(`reindex after cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  const validationFailures: Array<{ ref: string; reason: string }> = [];
+  for (const candidate of actionableRefs) {
+    try {
+      const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
+      if (!filePath) {
+        validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
+        continue;
+      }
+      if (isLessonCandidate(candidate.ref)) {
+        const raw = fs.readFileSync(filePath, "utf8");
+        const fm = parseFrontmatter(raw).data;
+        if (!fm.description) validationFailures.push({ ref: candidate.ref, reason: "missing description" });
+      }
+    } catch (e) {
+      validationFailures.push({ ref: candidate.ref, reason: String(e) });
+    }
+  }
+  if (validationFailures.length > 0) {
+    info(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
+    for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
+  }
+
+  let schemaRepairs: ImprovePreparationResult["schemaRepairs"] = [];
+  let repairedRefs = new Set<string>();
+
+  // Schema repair pass: attempt to fix validation failures via LLM before skipping.
+  if (validationFailures.length > 0 && options.repairValidationFailures !== false) {
+    const baseConfigForRepair = options.config ?? loadConfig();
+    const llmCfg = baseConfigForRepair.llm;
+    if (llmCfg) {
+      const result = await runSchemaRepairPass(validationFailures, {
+        startMs,
+        budgetMs,
+        llmConfig: llmCfg,
+        stashDir: options.stashDir,
+        findFilePath: findAssetFilePath,
+        isLessonCandidateFn: isLessonCandidate,
+      });
+      schemaRepairs = result.repairs;
+      repairedRefs = result.repairedRefs;
+    }
+  }
+
+  const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
+
+  // Phase 0.5 — structural hygiene pass
+  let lintSummary: { fixed: number; flagged: number } | undefined;
+  if (primaryStashDir) {
+    try {
+      const lintResult = akmLint({ fix: true, dir: primaryStashDir });
+      lintSummary = { fixed: lintResult.summary.fixed, flagged: lintResult.summary.flagged };
+    } catch {
+      // lint is best-effort; never block improve
+    }
+  }
+
+  const recentErrors: string[] = []; // rolling window, last 3 failures
+  const RECENT_ERRORS_CAP = 3;
+
+  // Seed the rolling window from any schema repair errors that occurred before the main loop.
+  for (const repair of schemaRepairs) {
+    if (repair.outcome === "error") {
+      const errMsg = repair.error ?? `schema repair error: ${repair.reason}`;
+      recentErrors.push(errMsg);
+      if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+    }
+  }
+
+  // ── Cooldown pre-filter ───────────────────────────────────────────────────
+  // Read all cooldown-relevant events in 4 bulk queries and materialise two
+  // Sets that the loop checks with O(1) Set.has() instead of N per-ref
+  // readEvents() + listProposals() calls. This eliminates the N×3 DB/FS
+  // round trips that caused per-asset "reflect cooldown" noise for every
+  // asset in the stash.
+  //
+  // SM-2 tier for reflect uses promoted/rejected events (recorded by
+  // `akm proposal accept/reject`) rather than the per-ref listProposals()
+  // filesystem scan, giving identical tier logic without touching the disk.
+  const REFLECT_COOLDOWN_DAYS = options.reflectCooldownDays ?? 7;
+  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+
+  const reflectCooledRefs = new Set<string>();
+  const distillCooledRefs = new Set<string>();
+
+  if (REFLECT_COOLDOWN_DAYS > 0 || DISTILL_COOLDOWN_DAYS > 0) {
+    const bulkWindowMs = Math.max(REFLECT_COOLDOWN_DAYS, DISTILL_COOLDOWN_DAYS, 14) * 24 * 60 * 60 * 1000;
+    const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
+
+    const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
+    const bulkDistills = readEvents({ type: "distill_invoked", since: bulkSince }).events;
+    const bulkPromoted = readEvents({ type: "promoted", since: bulkSince }).events;
+    const bulkRejected = readEvents({ type: "rejected", since: bulkSince }).events;
+
+    const promotedTs = new Map<string, string>();
+    for (const e of bulkPromoted) {
+      if (e.ref && (e.ts ?? "") > (promotedTs.get(e.ref) ?? "")) promotedTs.set(e.ref, e.ts ?? "");
+    }
+    const rejectedTs = new Map<string, string>();
+    for (const e of bulkRejected) {
+      if (e.ref && (e.ts ?? "") > (rejectedTs.get(e.ref) ?? "")) rejectedTs.set(e.ref, e.ts ?? "");
+    }
+
+    if (REFLECT_COOLDOWN_DAYS > 0) {
+      const latestReflect = new Map<string, string>();
+      for (const e of bulkReflects) {
+        if (e.ref && (e.ts ?? "") > (latestReflect.get(e.ref) ?? "")) latestReflect.set(e.ref, e.ts ?? "");
+      }
+      for (const [ref, lastTs] of latestReflect) {
+        if (!lastTs) continue;
+        const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
+        const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
+        let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
+        if (hasAccepted) continue;
+        else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
+        if (Date.now() - new Date(lastTs).getTime() < effectiveCooldownDays * 24 * 60 * 60 * 1000) {
+          reflectCooledRefs.add(ref);
+        }
+      }
+    }
+
+    if (DISTILL_COOLDOWN_DAYS > 0) {
+      const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+      const latestQueuedDistill = new Map<string, string>();
+      for (const e of bulkDistills) {
+        if (e.ref && e.metadata?.outcome === "queued" && (e.ts ?? "") > (latestQueuedDistill.get(e.ref) ?? "")) {
+          latestQueuedDistill.set(e.ref, e.ts ?? "");
+        }
+      }
+      for (const [ref, lastTs] of latestQueuedDistill) {
+        if (lastTs && Date.now() - new Date(lastTs).getTime() < distillCooldownMs) {
+          distillCooledRefs.add(ref);
+        }
+      }
+    }
+  }
+
+  const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref) && !validationFailureRefs.has(r.ref));
+  const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
+  if (reflectCooledLoop.length > 0) {
+    info(`[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`);
+    for (const r of reflectCooledLoop) {
+      actions.push({
+        ref: r.ref,
+        mode: "distill-skipped",
+        result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
+      });
+      appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
+    }
+  }
+  if (validationFailureRefs.size > 0) {
+    info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
+  }
+
+  return {
+    actions,
+    cleanupWarnings,
+    appliedCleanup,
+    memoryIndexHealth,
+    executionLogCandidates,
+    actionableRefs,
+    signalBearingSet,
+    validationFailures,
+    schemaRepairs,
+    lintSummary,
+    loopRefs,
+    distillCooledRefs,
+    feedbackRatioUsed,
+    coverageGaps,
+    recentErrors,
+  };
+}
+
+async function runImproveLoopStage(args: {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  reflectFn: (options: NonNullable<Parameters<typeof akmReflect>[0]>) => Promise<AkmReflectResult>;
+  distillFn: (options: NonNullable<Parameters<typeof akmDistill>[0]>) => Promise<AkmDistillResult>;
+  loopRefs: ImproveEligibleRef[];
+  actions: ImproveActionResult[];
+  signalBearingSet: Set<string>;
+  distillCooledRefs: Set<string>;
+  recentErrors: string[];
+  startMs: number;
+  budgetMs: number;
+}): Promise<ImproveLoopResult> {
+  const {
+    scope,
+    options,
+    primaryStashDir,
+    reflectFn,
+    distillFn,
+    loopRefs,
+    actions,
+    signalBearingSet,
+    distillCooledRefs,
+    recentErrors,
+    startMs,
+    budgetMs,
+  } = args;
+
+  const RECENT_ERRORS_CAP = 3;
+  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+  let completedCount = 0;
+  let crossStepErrorsInjected = 0;
+
+  for (const planned of loopRefs) {
+    if (Date.now() - startMs >= budgetMs) {
+      const remaining = loopRefs.length - completedCount;
+      info(
+        `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
+      );
+      appendEvent({
+        eventType: "improve_skipped",
+        ref: planned.ref,
+        metadata: {
+          reason: "budget_exhausted",
+          remaining,
+        },
+      });
+      actions.push({
+        ref: planned.ref,
+        mode: "error",
+        result: { ok: false, error: "timeout: improve wall-clock budget exhausted" },
+      });
+      break;
+    }
+    try {
+      if (
+        DISTILL_COOLDOWN_DAYS > 0 &&
+        distillCooledRefs.has(planned.ref) &&
+        (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir))
+      ) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "distill cooldown" },
+        });
+        completedCount++;
+        appendEvent({
+          eventType: "improve_skipped",
+          ref: planned.ref,
+          metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS },
+        });
+        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
+        continue;
+      }
+
+      if (recentErrors.length > 0) crossStepErrorsInjected++;
+      const reflectResult = await reflectFn({
+        ref: planned.ref,
+        task: options.task,
+        ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+        ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
+        agentProcess: options.agentProcess ?? "reflect",
+      });
+      actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
+      if (!reflectResult.ok) {
+        const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
+        recentErrors.push(errMsg);
+        if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+      }
+      const parsedPlannedRef = parseAssetRef(planned.ref);
+      const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
+      const explicitRefScope = scope.mode === "ref";
+      const shouldAttemptDistill =
+        isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir);
+      const skipMemoryDistillForWeakSignal =
+        parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
+
+      if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal) {
+        const lessonRef = deriveLessonRef(planned.ref);
+        const dedupeStashDir = primaryStashDir ?? options.stashDir;
+        if (dedupeStashDir) {
+          const existingProposals = listProposals(dedupeStashDir, { ref: lessonRef });
+          if (existingProposals.some((p) => p.status === "pending")) {
+            actions.push({
+              ref: planned.ref,
+              mode: "distill-skipped",
+              result: { ok: true, reason: "pending proposal exists" },
+            });
+            completedCount++;
+            info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+            continue;
+          }
+        }
+
+        const distillResult = await distillFn({
+          ref: planned.ref,
+          ...(parsedPlannedRef.type === "memory" ? { proposalKind: "auto" as const } : {}),
+          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+        });
+        actions.push({ ref: planned.ref, mode: "distill", result: distillResult });
+        if (distillResult.outcome === "quality_rejected" && primaryStashDir) {
+          const slug = planned.ref
+            .replace(/[^a-z0-9]/gi, "-")
+            .toLowerCase()
+            .slice(0, 60);
+          writeEvalCase(primaryStashDir, {
+            ref: planned.ref,
+            failureReason: distillResult.reason ?? "quality gate rejected",
+            assetType: parseAssetRef(planned.ref).type ?? "unknown",
+            rejectedAt: Date.now(),
+            source: "distill_quality_rejected",
+            slug: `${slug}-${Date.now()}`,
+          });
+        }
+        const rejectedProposals = readEvents({ type: "proposal_rejected", ref: planned.ref }).events.filter(
+          (e) => new Date(e.ts).getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+        );
+        if (rejectedProposals.length > 0 && primaryStashDir) {
+          const slug = planned.ref
+            .replace(/[^a-z0-9]/gi, "-")
+            .toLowerCase()
+            .slice(0, 60);
+          writeEvalCase(primaryStashDir, {
+            ref: planned.ref,
+            failureReason: (rejectedProposals[0].metadata?.reason as string | undefined) ?? "proposal rejected",
+            assetType: parseAssetRef(planned.ref).type ?? "unknown",
+            rejectedAt: new Date(rejectedProposals[0].ts).getTime(),
+            source: "proposal_rejected",
+            slug: `${slug}-rejected`,
+          });
+        }
+      } else if (skipMemoryDistillForWeakSignal) {
+        actions.push({
+          ref: planned.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "memory requires recent feedback signal" },
+        });
+        appendEvent({
+          eventType: "improve_skipped",
+          ref: planned.ref,
+          metadata: { reason: "memory_distill_requires_feedback" },
+        });
+      }
+    } catch (err) {
+      actions.push({
+        ref: planned.ref,
+        mode: "error",
+        result: { ok: false, error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+    completedCount++;
+    info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
+  }
+
+  return { crossStepErrorsInjected };
+}
+
+async function runImprovePostLoopStage(args: {
+  scope: ImproveScope;
+  options: AkmImproveOptions;
+  primaryStashDir?: string;
+  actionableRefs: ImproveEligibleRef[];
+  appliedCleanup?: Awaited<ReturnType<typeof applyMemoryCleanup>>;
+  cleanupWarnings: string[];
+  memorySummary: { eligible: number; derived: number };
+}): Promise<ImprovePostLoopResult> {
+  const { scope, options, primaryStashDir, actionableRefs, appliedCleanup, cleanupWarnings, memorySummary } = args;
+  const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
+
+  const baseConfig = options.config ?? loadConfig();
+  const MEMORY_VOLUME_THRESHOLD = options.memoryVolumeConsolidationThreshold ?? 100;
+  const hasLlm = !!(baseConfig.llm || baseConfig.agent);
+  const volumeTriggered =
+    typeof memorySummary.eligible === "number" && memorySummary.eligible > MEMORY_VOLUME_THRESHOLD && hasLlm;
+  const consolidationConfig: AkmConfig = volumeTriggered
+    ? {
+        ...baseConfig,
+        ...(baseConfig.llm
+          ? {
+              llm: {
+                ...baseConfig.llm,
+                features: { ...baseConfig.llm.features, memory_consolidation: true },
+              },
+            }
+          : {}),
+      }
+    : baseConfig;
+
+  const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
+  const CONSOLIDATE_COOLDOWN_MS = consolidateCooldownDays * 24 * 60 * 60 * 1000;
+  const recentConsolidations = readEvents({ type: "consolidate_completed" });
+  const lastConsolidation = recentConsolidations.events
+    .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
+    .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
+  const consolidationOnCooldown =
+    !volumeTriggered &&
+    consolidateCooldownDays > 0 &&
+    lastConsolidation?.ts &&
+    Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
+
+  let consolidation: ConsolidateResult = {
+    schemaVersion: 1,
+    ok: true,
+    shape: "consolidate-result",
+    dryRun: false,
+    previewOnly: false,
+    target: "",
+    processed: 0,
+    merged: 0,
+    deleted: 0,
+    promoted: [],
+    warnings: [],
+    durationMs: 0,
+  };
+  if (!consolidationOnCooldown) {
+    consolidation = await akmConsolidate({
+      ...options.consolidateOptions,
+      config: consolidationConfig,
+      stashDir: options.stashDir,
+      autoTriggered: volumeTriggered,
+      autoAccept: "safe",
+    });
+    if (consolidation.processed > 0) {
+      appendEvent({
+        eventType: "consolidate_completed",
+        ref: "memory:_consolidation",
+        metadata: { processed: consolidation.processed, merged: consolidation.merged },
+      });
+    }
+  } else {
+    const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
+    appendEvent({
+      eventType: "improve_skipped",
+      ref: "memory:_consolidation",
+      metadata: {
+        reason: "consolidation_cooldown",
+        cooldownDays: 14,
+        lastEventTs: lastConsolidation?.ts ?? null,
+      },
+    });
+    info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
+  }
+
+  let deadUrls: DeadUrl[] | undefined;
+  if (scope.mode === "all" && primaryStashDir && actionableRefs.length > 0) {
+    try {
+      const knowledgeEntries = actionableRefs
+        .filter((r) => {
+          try {
+            return parseAssetRef(r.ref).type === "knowledge";
+          } catch {
+            return false;
+          }
+        })
+        .slice(0, 10)
+        .map((r) => ({ ref: r.ref, body: "" }));
+      if (knowledgeEntries.length > 0) {
+        deadUrls = await checkDeadUrls(primaryStashDir, knowledgeEntries);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  return { allWarnings, consolidation, deadUrls };
 }
 
 function shouldAnalyzeMemoryCleanup(
