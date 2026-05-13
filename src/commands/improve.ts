@@ -61,11 +61,11 @@ export interface AkmImproveOptions {
   reindexFn?: (options: { stashDir: string }) => Promise<unknown>;
   /** When true (default), attempt LLM-driven schema repair on validation failures before skipping. Requires llm config. */
   repairValidationFailures?: boolean;
-  /** Cooldown in days before re-reflecting an asset that was recently reflected. Defaults to 7. Set to 0 to disable. */
+  /** Cooldown in days before re-reflecting an asset that was recently reflected. Defaults to 7. Set to 0 to disable. Only for this run; does not persist to config. */
   reflectCooldownDays?: number;
-  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. */
+  /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. Only for this run; does not persist to config. */
   distillCooldownDays?: number;
-  /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. */
+  /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. Only for this run; does not persist to config. */
   consolidateCooldownDays?: number;
   /**
    * Named process key forwarded to `akmReflect` so the improve loop picks up

@@ -52,25 +52,31 @@ afterEach(() => {
 });
 
 describe("loadConfig — llm.features (v1 spec §14)", () => {
-  test("parses all locked feature keys with runtime consumers", () => {
+  test("parses all locked feature keys", () => {
     writeConfig({
       llm: {
         endpoint: "http://localhost:11434/v1/chat/completions",
         model: "llama3.2",
         features: {
           curate_rerank: true,
+          memory_consolidation: true,
           feedback_distillation: true,
           memory_inference: true,
           graph_extraction: true,
+          lesson_quality_gate: true,
+          metadata_enhance: true,
         },
       },
     });
     const cfg = loadConfig();
     expect(cfg.llm?.features).toEqual({
       curate_rerank: true,
+      memory_consolidation: true,
       feedback_distillation: true,
       memory_inference: true,
       graph_extraction: true,
+      lesson_quality_gate: true,
+      metadata_enhance: true,
     });
   });
 
@@ -84,9 +90,12 @@ describe("loadConfig — llm.features (v1 spec §14)", () => {
     });
     const cfg = loadConfig();
     expect(cfg.llm?.features?.curate_rerank).toBe(true);
+    expect(cfg.llm?.features?.memory_consolidation).toBeUndefined();
     expect(cfg.llm?.features?.feedback_distillation).toBeUndefined();
     expect(cfg.llm?.features?.memory_inference).toBeUndefined();
     expect(cfg.llm?.features?.graph_extraction).toBeUndefined();
+    expect(cfg.llm?.features?.lesson_quality_gate).toBeUndefined();
+    expect(cfg.llm?.features?.metadata_enhance).toBeUndefined();
   });
 
   test("non-boolean values warn and are skipped without breaking siblings", () => {

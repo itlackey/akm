@@ -4,13 +4,17 @@ import { CONFIG_DOC_PATH, extractSection, readDoc, SPEC_PATH } from "./spec-help
 
 // Pins v1 spec §14 — `llm.features.*` (Planned for v1).
 //
-// The locked feature keys cannot be renamed after v1.0. New keys may be
-// added; these must not move. Spec §14 retains the historical phantom keys
-// (`tag_dedup`, `memory_consolidation`, `embedding_fallback_score`) so the
-// spec text continues to compile, but they are not in the runtime schema or
-// in user-facing configuration.md (issue #284 phantom-flag cleanup).
+// The locked feature keys cannot be renamed after v1.0.
 
-const LOCKED_FEATURE_KEYS = ["curate_rerank", "feedback_distillation", "memory_inference", "graph_extraction"];
+const LOCKED_FEATURE_KEYS = [
+  "curate_rerank",
+  "memory_consolidation",
+  "feedback_distillation",
+  "memory_inference",
+  "graph_extraction",
+  "lesson_quality_gate",
+  "metadata_enhance",
+];
 
 describe("v1 spec §14 — llm.features.*", () => {
   const spec = readDoc(SPEC_PATH);
@@ -31,7 +35,10 @@ describe("v1 spec §14 — llm.features.*", () => {
     expect(section).toMatch(/memory_inference.*default.*`true`/is);
     expect(section).toMatch(/graph_extraction.*default.*`true`/is);
     expect(section).toMatch(/curate_rerank.*default.*`false`/is);
+    expect(section).toMatch(/memory_consolidation.*default.*`false`/is);
     expect(section).toMatch(/feedback_distillation.*default.*`false`/is);
+    expect(section).toMatch(/lesson_quality_gate.*default.*`false`/is);
+    expect(section).toMatch(/metadata_enhance.*default.*`false`/is);
   });
 
   test("§14.2 defines mandatory failure-mode rules", () => {

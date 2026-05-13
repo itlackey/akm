@@ -2,8 +2,9 @@
  * Per-feature LLM gate seam (v1 spec §14, #227).
  *
  * Locks:
- *   - `isLlmFeatureEnabled` returns `true` only when the named flag is the
- *     literal boolean `true` in config (defaults are `false`).
+ *   - `isLlmFeatureEnabled` honours per-feature defaults: currently
+ *     `memory_inference` and `graph_extraction` default to enabled while
+ *     other stable keys default to disabled unless explicitly `true`.
  *   - `tryLlmFeature` returns the fallback on disablement, on any thrown
  *     error, and on hard-timeout — and never lets `fn`'s exception bubble.
  *   - The fallback may be a value or a thunk; the thunk is only invoked on
@@ -34,14 +35,15 @@ describe("isLlmFeatureEnabled", () => {
     expect(isLlmFeatureEnabled({} as AkmConfig, "curate_rerank")).toBe(false);
   });
 
-  test("returns false when the features block is missing", () => {
+  test("returns feature defaults when the features block is missing", () => {
     const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
     expect(isLlmFeatureEnabled(cfg, "feedback_distillation")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
   });
 
-  test("returns false when the key is absent (default-false)", () => {
+  test("returns true when graph_extraction key is absent (default-true)", () => {
     const cfg = configWith({});
-    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(false);
+    expect(isLlmFeatureEnabled(cfg, "graph_extraction")).toBe(true);
   });
 
   test("returns true only on literal boolean true", () => {
@@ -184,19 +186,20 @@ test("when timeoutMs is absent, DEFAULT_TIMEOUT_MS of 600 s is used (fast calls 
 // — we restrict this parametrised sweep to the 4 keys that are
 // definitely actually-implemented and used by the current code.
 const STABLE_FEATURE_KEYS = ["feedback_distillation", "memory_inference", "graph_extraction", "curate_rerank"] as const;
+const DEFAULT_ENABLED_KEYS = new Set(["memory_inference", "graph_extraction"]);
 
 describe("isLlmFeatureEnabled — parametrised over stable feature keys (#284)", () => {
   for (const key of STABLE_FEATURE_KEYS) {
-    test(`${key}: default-false when features block is missing`, () => {
+    test(`${key}: defaults correctly when features block is missing`, () => {
       const cfg = { stashDir: "/tmp", llm: baseLlm } as AkmConfig;
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(false);
+      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
-    test(`${key}: false when key is absent (default-false)`, () => {
+    test(`${key}: defaults correctly when key is absent`, () => {
       const cfg = configWith({});
       // biome-ignore lint/suspicious/noExplicitAny: gate accepts any LlmFeatureKey
-      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(false);
+      expect(isLlmFeatureEnabled(cfg, key as any)).toBe(DEFAULT_ENABLED_KEYS.has(key));
     });
 
     test(`${key}: literal true → enabled`, () => {
@@ -225,8 +228,13 @@ describe("tryLlmFeature — parametrised over stable feature keys (#284)", () =>
         },
         "fallback",
       );
-      expect(result).toBe("fallback");
-      expect(called).toBe(false);
+      if (DEFAULT_ENABLED_KEYS.has(key)) {
+        expect(result).toBe("real");
+        expect(called).toBe(true);
+      } else {
+        expect(result).toBe("fallback");
+        expect(called).toBe(false);
+      }
     });
 
     test(`${key}: enabled + happy → returns fn's result`, async () => {

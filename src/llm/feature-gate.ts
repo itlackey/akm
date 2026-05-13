@@ -8,10 +8,9 @@
  * The seam is intentionally tiny:
  *
  *   - `isLlmFeatureEnabled(config, feature)` — pure predicate, no side
- *     effects, no I/O. Returns `true` only when the feature flag is the
- *     literal boolean `true` in config. Defaults are `false` per v1
- *     spec §14 — adding a flag to the schema is a non-event until the user
- *     opts in.
+ *     effects, no I/O. Returns `true` when the feature flag is explicitly
+ *     `true`, or when the feature has a non-false default (currently
+ *     `graph_extraction`).
  *   - `tryLlmFeature(feature, config, fn, fallback, opts?)` — single-call
  *     wrapper that runs `fn()` only when the gate is open, enforces a hard
  *     timeout (default 600s — overridable per call via `opts.timeoutMs`),
@@ -35,15 +34,19 @@ export type LlmFeatureKey = keyof LlmFeatureFlags;
 /**
  * Pure predicate: is the named feature gate explicitly enabled in `config`?
  *
- * Returns `false` when:
- *   - the LLM block is missing,
- *   - the `features` block is missing,
- *   - the key is absent (defaults are `false`),
- *   - the key is set to `false`.
+ * Returns `false` only when the key is explicitly set to `false`, or when
+ * the key is absent and its default is `false`.
  */
+const FEATURE_DEFAULTS: Partial<Record<LlmFeatureKey, boolean>> = {
+  memory_inference: true,
+  graph_extraction: true,
+};
+
 export function isLlmFeatureEnabled(config: AkmConfig | undefined, feature: LlmFeatureKey): boolean {
-  if (!config?.llm?.features) return false;
-  return config.llm.features[feature] === true;
+  const configured = config?.llm?.features?.[feature];
+  if (configured === true) return true;
+  if (configured === false) return false;
+  return FEATURE_DEFAULTS[feature] === true;
 }
 
 /** Optional knobs for `tryLlmFeature`. */

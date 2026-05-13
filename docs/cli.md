@@ -6,9 +6,9 @@ brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
 > **Status legend.** Every command on this page runs today on the
-> current pre-release build. Commands shipped after 0.6.0 — `agent`,
-> `reflect`, `propose`, `proposal`, `distill`, and the `feedback --reason`
-> extension — carry an **Available since 0.7.0** marker so you can tell at
+> current pre-release build. Commands shipped in 0.8.0 — `agent`,
+> `improve`, `propose`, `proposals`, `accept`, `reject`, and the `feedback --reason`
+> extension — carry an **Available since 0.8.0** marker so you can tell at
 > a glance which surface arrived in that release. The locked v1.0 surface
 > is declared in
 > [`docs/technical/v1-architecture-spec.md`](technical/v1-architecture-spec.md)
@@ -107,11 +107,11 @@ The setup wizard configures AKM in two steps:
 
 **Step 1 — Small model connection** (for background processing)
 Configures the OpenAI-compatible endpoint and model used for `akm index --enrich`,
-`akm distill`, `akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
+`akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
 OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
 
 **Step 2 — Agent connection** (for agentic commands)
-Configures how `akm propose`, `akm reflect`, and `akm tasks run` dispatch AI sessions.
+Configures how `akm improve`, `akm propose`, and `akm tasks run` dispatch AI sessions.
 Options:
 - **Same connection** — reuse the Step 1 endpoint with a (optionally different) model
 - **New connection** — separate endpoint, model, and API key
@@ -209,6 +209,10 @@ Common flags:
 | `--format json\|jsonl` | Export format for `export` (default `json`) |
 
 If no graph artifact exists yet, run `akm index --enrich` first.
+
+Search ranking can optionally use graph-derived confidence-weighted boosts.
+Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
+in [`docs/configuration.md#graph-boost-search-tuning`](configuration.md#graph-boost-search-tuning).
 
 ### search
 
@@ -801,7 +805,6 @@ akm remember "Deployment needs VPN access" --wiki architecture
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
-| `--stash <name>` | Route the write to a named writable stash source. Overrides `--target`, `defaultWriteTarget`, and the working stash. The named source must be configured as writable. |
 | `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/`) instead of `memories/`. The wiki must already exist (created with `akm wiki create`). |
 
 Pass the content as a quoted positional argument for short notes, or pipe
@@ -853,7 +856,6 @@ akm import https://example.com/docs/auth --wiki research
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
 | `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working stash. |
-| `--stash <name>` | Route the write to a named writable stash source. Overrides `--target`, `defaultWriteTarget`, and the working stash. The named source must be configured as writable. |
 | `--wiki <name>` | Save the content into the named wiki directory (`wikis/<name>/raw/`) instead of `knowledge/`. The wiki must already exist (created with `akm wiki create`). |
 
 URL imports fetch only the exact page you pass, convert it to markdown, and do
@@ -949,7 +951,7 @@ erroring.
 ### events
 
 Append-only realtime events stream (#204). Every mutating CLI verb appends
-a JSON line to `<cacheDir>/events.jsonl`; `akm events list` reads it and
+an event row to `<dataDir>/state.db`; `akm events list` reads it and
 `akm events tail` follows it via polling.
 
 ```sh
@@ -957,21 +959,21 @@ akm events list                                   # All events, oldest first
 akm events list --type feedback                   # Filter by event type
 akm events list --ref skill:deploy                # Filter by asset ref
 akm events list --since 2026-04-01T00:00:00Z      # ISO timestamp
-akm events list --since '@offset:12345'           # Resume from a byte cursor
+akm events list --since '@offset:12345'           # Resume from a row-id cursor
 akm events tail --max-events 10                   # Follow until 10 events
 akm events tail --format jsonl                    # Stream as JSONL
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<bytes>` for a durable byte-cursor that survives across processes. |
-| `--type` | Filter by event type. Accepted values: `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `improve_invoked`, `select`, `improve_skipped`, `reflect_completed`. |
+| `--since` | Lower bound. Accepts ISO 8601, epoch ms, or `@offset:<id>` for a durable row-id cursor that survives across processes. |
+| `--type` | Filter by event type. Common values include `add`, `remove`, `update`, `remember`, `import`, `save`, `feedback`, `promoted`, `rejected`, `propose_invoked`, `reflect_invoked`, `distill_invoked`, `select`, and `improve_skipped`. |
 | `--ref` | Filter by asset ref (`[origin//]type:name`). |
 | `--interval-ms` | (`tail` only) Polling interval. Default `75`. |
 | `--max-events` | (`tail` only) Stop after this many events. |
 | `--max-duration-ms` | (`tail` only) Stop after this many ms. |
 
-The list/tail envelope echoes a `nextOffset` byte cursor — persist it and
+The list/tail envelope echoes a `nextOffset` row-id cursor — persist it and
 pass it back as `--since '@offset:<nextOffset>'` to resume from exactly
 where you stopped, with no duplicates and no losses, even across process
 boundaries.
@@ -980,19 +982,17 @@ Streaming output (`--format jsonl` / `--format text`) emits each event as
 a single line on stdout, then a trailer:
 
 - `--format jsonl` ends with a final discriminated row on stdout:
-  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<bytes>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
+  `{"_kind":"trailer","schemaVersion":1,"nextOffset":<id>,"totalCount":<n>,"reason":"signal|maxEvents|maxDuration"}`.
 - `--format text` writes the trailer to stderr to keep stdout pristine for
   line-oriented parsers: `[events-tail] reason=<r> nextOffset=<n> total=<t>`.
 
 #### Environment isolation
 
-`events.jsonl` lives at `<cacheDir>/events.jsonl`, where `<cacheDir>` is
-derived from `XDG_CACHE_HOME` at the time of each call. Two processes with
-different inherited `XDG_CACHE_HOME` values write to different files; if
-the events stream is being used as a shared bus between cooperating
-processes, set `XDG_CACHE_HOME` consistently across them. This is the same
-env-isolation behaviour the rest of akm uses for config, caches, and
-indexes.
+The events stream lives in `<dataDir>/state.db`, where `<dataDir>` is derived
+from `XDG_DATA_HOME` (or `AKM_DATA_DIR`) at the time of each call. Two
+processes with different inherited data-dir env values write to different
+databases; if the events stream is being used as a shared bus between
+cooperating processes, set those env vars consistently across them.
 
 ### registry
 
@@ -1366,9 +1366,9 @@ source <(akm completions)
 These commands define the v0.8.0 self-improvement surface. This is a hard
 break from the older `reflect` / `proposal` / `distill` public UX.
 
-### agent (Planned for v1)
+### agent
 
-**Status: Planned for v1.**
+**Status: Available since 0.8.0.**
 Dispatch a configured external agent profile.
 
 ```sh
@@ -1402,7 +1402,13 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show planned refs without generating proposals |
 | `--target` | Override the write target used later by `accept` |
-| `--auto-accept safe` | Reserved low-risk auto-accept mode |
+| `--auto-accept safe` | Low-risk auto-accept mode (only `safe` is accepted) |
+| `--limit <n>` | Maximum number of assets to process |
+| `--timeout-ms <ms>` | Wall-clock budget for the run |
+| `--ignore-cooldown` | Disable all cooldown checks for this run |
+| `--reflect-cooldown-days <n>` | Override reflect cooldown (non-negative integer) |
+| `--distill-cooldown-days <n>` | Override distill cooldown (non-negative integer) |
+| `--consolidate-cooldown-days <n>` | Override consolidate cooldown (non-negative integer) |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
@@ -1433,7 +1439,7 @@ akm propose lesson docker-cleanup --file ./prompts/docker-cleanup.md
 | `--profile` | Override the default agent profile |
 | `--timeout-ms` | Override `agent.timeoutMs` for this call |
 
-Exactly one of `--task` or `--file` is required. Emits `improve_invoked`.
+Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 
 **Per-task `timeoutMs` in task markdown files:** task markdown frontmatter may
 set `timeoutMs` to override the global `config.agent.timeoutMs` for that task
@@ -1516,5 +1522,6 @@ akm diff proposal <id> --target team-stash
 **Status: Available since 0.8.0.**
 Existing `akm feedback` keeps its current shape (positive/negative/`--note`)
 and gains an optional `--reason <slug>` flag whose value is forwarded into
-`improve_invoked` payloads. Backwards compatible: scripts without `--reason`
+feedback metadata and consumed by improve/distill proposal prompts.
+Backwards compatible: scripts without `--reason`
 behave exactly as today.

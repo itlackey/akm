@@ -124,13 +124,15 @@
             "confidenceMode": {
               "type": "string",
               "enum": ["off", "blend", "multiply"],
-              "description": "Confidence integration mode for graph boost scoring."
+              "description": "Confidence integration mode for graph boost scoring.",
+              "default": "blend"
             },
             "confidenceWeight": {
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "description": "Blend strength in [0,1] when confidenceMode is \"blend\"."
+              "description": "Blend strength in [0,1] when confidenceMode is \"blend\".",
+              "default": 0.2
             }
           },
           "additionalProperties": false
@@ -211,6 +213,84 @@
               "type": "integer",
               "description": "Maximum response token limit.",
               "exclusiveMinimum": 0
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "description": "Request timeout in milliseconds.",
+              "exclusiveMinimum": 0
+            },
+            "concurrency": {
+              "type": "integer",
+              "description": "Max parallel LLM requests issued by index passes.",
+              "exclusiveMinimum": 0
+            },
+            "contextLength": {
+              "type": "integer",
+              "description": "Model context window size in tokens used for prompt chunk sizing.",
+              "exclusiveMinimum": 0
+            },
+            "judgeModel": {
+              "type": "string",
+              "description": "Optional model override for the LLM-as-judge lesson quality gate.",
+              "minLength": 1
+            },
+            "capabilities": {
+              "type": "object",
+              "description": "Capability flags learned at setup time.",
+              "properties": {
+                "structuredOutput": {
+                  "type": "boolean",
+                  "description": "Whether the model reliably emits strict JSON."
+                }
+              },
+              "additionalProperties": false
+            },
+            "features": {
+              "type": "object",
+              "description": "Bounded in-tree LLM feature gates.",
+              "properties": {
+                "curate_rerank": {
+                  "type": "boolean",
+                  "description": "Gates the `akm curate` LLM rerank pass.",
+                  "default": false
+                },
+                "feedback_distillation": {
+                  "type": "boolean",
+                  "description": "Gates improve-driven feedback distillation into proposals.",
+                  "default": false
+                },
+                "memory_inference": {
+                  "type": "boolean",
+                  "description": "Gates the `akm index` memory-inference pass.",
+                  "default": true
+                },
+                "graph_extraction": {
+                  "type": "boolean",
+                  "description": "Gates the `akm index` graph-extraction pass.",
+                  "default": true
+                },
+                "memory_consolidation": {
+                  "type": "boolean",
+                  "description": "Gates automatic memory consolidation during `akm improve`.",
+                  "default": false
+                },
+                "lesson_quality_gate": {
+                  "type": "boolean",
+                  "description": "Gates the LLM-as-judge quality check in lesson distillation.",
+                  "default": false
+                },
+                "metadata_enhance": {
+                  "type": "boolean",
+                  "description": "Gates metadata enhancement during indexing.",
+                  "default": false
+                }
+              },
+              "additionalProperties": true
+            },
+            "extraParams": {
+              "type": "object",
+              "description": "Arbitrary provider-specific parameters forwarded to chat completions.",
+              "additionalProperties": true
             }
           },
           "additionalProperties": false
@@ -259,9 +339,9 @@
         },
         "provider": {
           "type": "string",
-          "description": "Provider type that handles this registry. Built-in providers: \"static-index\", \"skills-sh\", \"openviking\".",
+          "description": "Provider type that handles this registry. Built-in providers: \"static-index\", \"skills-sh\".",
           "minLength": 1,
-          "examples": ["static-index", "skills-sh", "openviking"]
+          "examples": ["static-index", "skills-sh"]
         },
         "options": {
           "type": "object",

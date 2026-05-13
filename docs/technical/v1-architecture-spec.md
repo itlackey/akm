@@ -437,11 +437,13 @@ introduces on the locked hit type. Both are optional. Renderers in
       "memory_consolidation":   false,
       "feedback_distillation":  false,
       "memory_inference":       true,
-      "graph_extraction":       true
+      "graph_extraction":       true,
+      "lesson_quality_gate":    false,
+      "metadata_enhance":       false
     }
   },
 
-  "defaultWriteTarget": "mine"              // optional; first writable if omitted
+  "defaultWriteTarget": "mine"              // optional; falls back to working stash if omitted
 }
 ```
 
@@ -652,8 +654,9 @@ v1.0 freeze surface and must ship before v1.0 GA.
   block disables agent commands with a clear `ConfigError` (§12).
 - **`Planned for v1`** — `llm.features.*` map with the keys named in §14.
   Locked keys: `curate_rerank`, `memory_consolidation`, `feedback_distillation`,
-  `memory_inference`, `graph_extraction`. Defaults are mixed: `memory_inference`
-  and `graph_extraction` default to `true`; the rest default to `false`.
+  `memory_inference`, `graph_extraction`, `lesson_quality_gate`, and
+  `metadata_enhance`. Defaults are mixed: `memory_inference` and
+  `graph_extraction` default to `true`; the rest default to `false`.
   Unknown keys warn and are ignored. (`tag_dedup` and
   `embedding_fallback_score` were removed in 0.7.0 as phantom keys that were
   never read at any call site.)
@@ -1048,16 +1051,18 @@ and `graph_extraction` default to `true`; other locked keys default to
 
 ### 14.1 Locked feature keys
 
-Five keys are locked in the v1 contract. (`tag_dedup` and `embedding_fallback_score`
+Seven keys are locked in the v1 contract. (`tag_dedup` and `embedding_fallback_score`
 were removed in 0.7.0 — they were declared but never read at any call site.)
 
 | Key | Use site | Behaviour when disabled |
 |---|---|---|
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline (no rerank) |
-| `memory_consolidation` | `akm consolidate` — agent-driven cross-memory dedup, merging, and promotion into `knowledge:` assets (§14.6) | `akm consolidate` exits with a structured `ConfigError` and a hint to enable the flag |
+| `memory_consolidation` | `akm improve` consolidation phase — agent-driven cross-memory dedup, merging, and promotion into `knowledge:` assets (§14.6) | Consolidation returns an immediate no-op result (`processed: 0`) |
 | `feedback_distillation` | improve-driven lesson distillation (§14.5) | improve skips lesson distillation cleanly when disabled |
 | `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
 | `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during `akm index`, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
+| `lesson_quality_gate` | LLM-as-judge quality scoring in `akm distill` | Judge step is skipped; distillation proceeds without judge scoring |
+| `metadata_enhance` | `akm index` metadata enhancement pass | Metadata enhancement is skipped (no description/searchHints/tags enrichment) |
 
 #### `llm.features.<key>` and `index.<pass>.llm` are orthogonal
 
@@ -1105,13 +1110,15 @@ Failure is observable but never blocks unrelated commands.
       "memory_consolidation":   false,
       "feedback_distillation":  false,
       "memory_inference":       true,
-      "graph_extraction":       true
+      "graph_extraction":       true,
+      "lesson_quality_gate":    false,
+      "metadata_enhance":       false
     }
   }
 }
 ```
 
-All five keys are configurable. `memory_inference` and `graph_extraction`
+All seven keys are configurable. `memory_inference` and `graph_extraction`
 default to `true`; the remaining keys default to `false`. Boolean `false`
 always disables a feature. (`memory_inference` and `graph_extraction` were
 the first two to ship. `memory_consolidation` gates the agent-driven
@@ -1127,7 +1134,7 @@ equivalent inline pattern. The wrapper guarantees:
 - **Disabled** → `fallback` is returned without ever calling `fn`.
 - **Throw** → `fn`'s error is swallowed; `fallback` is returned. The
   caller may pass `onFallback` to surface a structured `warnings` entry.
-- **Timeout** → a hard timeout (default 30s, override via `timeoutMs`)
+- **Timeout** → a hard timeout (default 600s / 10 minutes, override via `timeoutMs`)
   produces an `LlmFeatureTimeoutError`; `fallback` is returned.
 
 Pure-predicate access is via `isLlmFeatureEnabled(config, feature)` — used

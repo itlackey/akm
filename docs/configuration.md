@@ -585,9 +585,12 @@ LLM is configured (though the passes also require `akm.llm` to be set and
     "maxTokens": 512,
     "features": {
       "curate_rerank":         false,
+      "memory_consolidation":  false,
       "feedback_distillation": false,
       "memory_inference":      true,
-      "graph_extraction":      true
+      "graph_extraction":      true,
+      "lesson_quality_gate":   false,
+      "metadata_enhance":      false
     }
   }
 }
@@ -596,9 +599,12 @@ LLM is configured (though the passes also require `akm.llm` to be set and
 | Feature flag | Default | Use site | Behaviour when disabled |
 | --- | --- | --- | --- |
 | `curate_rerank` | `false` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
+| `memory_consolidation` | `false` | `akm improve` memory consolidation phase | Consolidation returns a no-op result (`processed: 0`) |
 | `feedback_distillation` | `false` | `akm distill <ref>` / `akm improve <ref>` | The command exits 0 with `outcome: "skipped"` rather than failing |
 | `memory_inference` | `true` | `akm index` memory-inference pass (splits a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain on disk |
 | `graph_extraction` | `true` | `akm index` graph-extraction pass (extracts entities + relations from memory/knowledge files into `graph.json` for search boosting) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
+| `lesson_quality_gate` | `false` | LLM-as-judge quality gate in `akm distill` | Judge step is skipped (distillation continues without judge scoring) |
+| `metadata_enhance` | `false` | `akm index` metadata-enhancement pass | Metadata enhancement is skipped (no description/searchHints/tags enrichment) |
 
 Unknown keys under `llm.features` are warn-and-ignore. The keys above
 are locked and cannot be renamed after v1.0.
@@ -637,7 +643,7 @@ connections. Long-lived state belongs in the agent path, not here.
 **Graceful-fallback contract.** Each gated feature uses the
 `tryLlmFeature(feature, config, fn, fallback)` wrapper from
 `src/llm/feature-gate.ts`. The wrapper returns `fallback` on disablement
-(`llm.features.<key>` not `true`), on timeout (default 30s; the wrapper
+(`llm.features.<key>` explicitly `false`, or absent for default-false keys), on timeout (default 600s / 10 minutes; the wrapper
 raises `LlmFeatureTimeoutError`), or on any thrown error from `fn`. Call
 sites may pass an `onFallback` sink to surface a structured `warnings`
 entry per spec §14.2 — the gate itself never throws and never blocks the

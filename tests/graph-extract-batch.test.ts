@@ -88,6 +88,38 @@ afterEach(() => {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("extractGraphFromBodies — unit", () => {
+  test("graph_extraction defaults enabled when feature key is absent", async () => {
+    singleRawQueue.push(JSON.stringify({ entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta" }] }));
+
+    const result = await extractGraphFromBody(SAMPLE_LLM, "Alpha references Beta.", undefined, {
+      semanticSearchMode: "auto",
+      llm: { ...SAMPLE_LLM },
+    });
+
+    expect(result.entities).toEqual(["Alpha", "Beta"]);
+    expect(result.relations).toHaveLength(1);
+    expect(chatCallCount).toBe(1);
+  });
+
+  test("graph_extraction explicit false disables calls and emits onFallback", async () => {
+    const fallbackEvents: Array<{ feature: string; reason: string }> = [];
+
+    const result = await extractGraphFromBody(
+      SAMPLE_LLM,
+      "Alpha references Beta.",
+      undefined,
+      {
+        semanticSearchMode: "auto",
+        llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
+      },
+      (evt) => fallbackEvents.push({ feature: evt.feature, reason: evt.reason }),
+    );
+
+    expect(result).toEqual({ entities: [], relations: [] });
+    expect(chatCallCount).toBe(0);
+    expect(fallbackEvents).toEqual([{ feature: "graph_extraction", reason: "disabled" }]);
+  });
+
   test("(a) successful 3-asset batch returns 3 correctly-matched results", async () => {
     const bodies = [
       "ServiceA integrates with ServiceB.",

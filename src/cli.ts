@@ -1223,7 +1223,7 @@ const feedbackCommand = defineCommand({
       "Record positive or negative feedback for any indexed stash asset.\n\n" +
       "Positive feedback boosts an asset's EMA utility score, making it rank higher\n" +
       "in future searches without requiring a full reindex.\n\n" +
-      "Negative feedback records a negative signal in usage_events and events.jsonl.\n" +
+      "Negative feedback records a negative signal in usage_events and state.db events.\n" +
       "It does NOT immediately lower the asset's ranking — the EMA utility score is\n" +
       "updated the next time `akm index` runs (incremental or full). Run `akm index`\n" +
       "after recording negative feedback to have it reflected in search results.",
@@ -1359,8 +1359,8 @@ const historyCommand = defineCommand({
       "Show mutation/usage history for a single asset (--ref) or stash-wide.\n\n" +
       "Event sources:\n" +
       "  usage_events (default): search, show, and feedback events from the local index.\n" +
-      "  events.jsonl (--include-proposals): proposal lifecycle events (promoted, rejected)\n" +
-      "    emitted by `akm proposal accept` / `akm proposal reject`.\n\n" +
+      "  state.db events (--include-proposals): proposal lifecycle events (promoted, rejected)\n" +
+      "    emitted by `akm accept` / `akm reject`.\n\n" +
       "Results from all active sources are merged and sorted chronologically.",
   },
   args: {
@@ -1369,7 +1369,7 @@ const historyCommand = defineCommand({
     "include-proposals": {
       type: "boolean",
       description:
-        "Also include proposal lifecycle events (promoted, rejected) from events.jsonl. " +
+        "Also include proposal lifecycle events (promoted, rejected) from state.db events. " +
         "Default: false (usage_events only).",
       default: false,
     },
@@ -2696,16 +2696,16 @@ const wikiCommand = defineCommand({
 });
 
 // ── `akm events` ────────────────────────────────────────────────────────────
-// Append-only events stream surface (#204). `list` reads `events.jsonl`
-// with optional --since/--type/--ref filters; `tail` follows the file via
+// Append-only events stream surface (#204). `list` reads state.db events
+// with optional --since/--type/--ref filters; `tail` follows the table via
 // a polling loop and prints each event as a single JSONL line.
 
 const eventsListCommand = defineCommand({
-  meta: { name: "list", description: "List events from the append-only events.jsonl stream" },
+  meta: { name: "list", description: "List events from the append-only state.db events stream" },
   args: {
     since: {
       type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
     },
     type: { type: "string", description: "Filter by event type (add, remove, remember, feedback, ...)" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
@@ -2735,11 +2735,11 @@ const eventsListCommand = defineCommand({
 });
 
 const eventsTailCommand = defineCommand({
-  meta: { name: "tail", description: "Follow the append-only events.jsonl stream (polling)" },
+  meta: { name: "tail", description: "Follow the append-only state.db events stream (polling)" },
   args: {
     since: {
       type: "string",
-      description: "ISO timestamp / epoch ms, OR `@offset:<bytes>` for a durable byte-cursor (resume across processes)",
+      description: "ISO timestamp / epoch ms, OR `@offset:<id>` for a durable row-id cursor (resume across processes)",
     },
     type: { type: "string", description: "Filter by event type" },
     ref: { type: "string", description: "Filter by asset ref (type:name)" },
@@ -2827,7 +2827,7 @@ function parsePositiveInt(raw: string | undefined, flag: string): number | undef
 const eventsCommand = defineCommand({
   meta: {
     name: "events",
-    description: "Read or follow the append-only events.jsonl stream (mutations, feedback, indexing)",
+    description: "Read or follow the append-only state.db events stream (mutations, feedback, indexing)",
   },
   subCommands: {
     list: eventsListCommand,
@@ -3043,15 +3043,15 @@ const improveCommand = defineCommand({
     },
     "reflect-cooldown-days": {
       type: "string",
-      description: "Days before re-reflecting a recently reflected asset (default: 7, 0 to disable)",
+      description: "Override reflect cooldown for this run only (default: 7, 0 to disable)",
     },
     "distill-cooldown-days": {
       type: "string",
-      description: "Days before re-distilling an asset with a recent accepted proposal (default: 30, 0 to disable)",
+      description: "Override distill cooldown for this run only (default: 30, 0 to disable)",
     },
     "consolidate-cooldown-days": {
       type: "string",
-      description: "Days before re-consolidating memories (default: 14, 0 to disable)",
+      description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
     },
   },
   async run({ args }) {
@@ -3070,44 +3070,26 @@ const improveCommand = defineCommand({
       if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
         throw new UsageError(`Invalid --timeout-ms value: "${timeoutRaw}". Must be a positive integer.`);
       }
+      const parseNonNegativeCooldownDays = (raw: string | undefined, flagName: string): number | undefined => {
+        if (raw === undefined) return undefined;
+        if (!/^\d+$/.test(raw.trim())) {
+          throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a non-negative integer.`);
+        }
+        return parseInt(raw, 10);
+      };
       const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
       const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
       const reflectCooldownDays = ignoreCooldown
         ? 0
-        : reflectCooldownRaw !== undefined
-          ? parseInt(reflectCooldownRaw, 10)
-          : undefined;
-      if (reflectCooldownDays !== undefined && reflectCooldownDays !== 0 && Number.isNaN(reflectCooldownDays)) {
-        throw new UsageError(
-          `Invalid --reflect-cooldown-days value: "${reflectCooldownRaw}". Must be a non-negative integer.`,
-        );
-      }
+        : parseNonNegativeCooldownDays(reflectCooldownRaw, "--reflect-cooldown-days");
       const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
       const distillCooldownDays = ignoreCooldown
         ? 0
-        : distillCooldownRaw !== undefined
-          ? parseInt(distillCooldownRaw, 10)
-          : undefined;
-      if (distillCooldownDays !== undefined && distillCooldownDays !== 0 && Number.isNaN(distillCooldownDays)) {
-        throw new UsageError(
-          `Invalid --distill-cooldown-days value: "${distillCooldownRaw}". Must be a non-negative integer.`,
-        );
-      }
+        : parseNonNegativeCooldownDays(distillCooldownRaw, "--distill-cooldown-days");
       const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
       const consolidateCooldownDays = ignoreCooldown
         ? 0
-        : consolidateCooldownRaw !== undefined
-          ? parseInt(consolidateCooldownRaw, 10)
-          : undefined;
-      if (
-        consolidateCooldownDays !== undefined &&
-        consolidateCooldownDays !== 0 &&
-        Number.isNaN(consolidateCooldownDays)
-      ) {
-        throw new UsageError(
-          `Invalid --consolidate-cooldown-days value: "${consolidateCooldownRaw}". Must be a non-negative integer.`,
-        );
-      }
+        : parseNonNegativeCooldownDays(consolidateCooldownRaw, "--consolidate-cooldown-days");
 
       const improveLogFile = path.join(
         getCacheDir(),
