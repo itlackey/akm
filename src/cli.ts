@@ -3037,7 +3037,8 @@ const improveCommand = defineCommand({
     },
     "ignore-cooldown": {
       type: "boolean",
-      description: "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0)",
+      description:
+        "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0 --consolidate-cooldown-days 0)",
       default: false,
     },
     "reflect-cooldown-days": {
@@ -3047,6 +3048,10 @@ const improveCommand = defineCommand({
     "distill-cooldown-days": {
       type: "string",
       description: "Days before re-distilling an asset with a recent accepted proposal (default: 30, 0 to disable)",
+    },
+    "consolidate-cooldown-days": {
+      type: "string",
+      description: "Days before re-consolidating memories (default: 14, 0 to disable)",
     },
   },
   async run({ args }) {
@@ -3088,6 +3093,21 @@ const improveCommand = defineCommand({
           `Invalid --distill-cooldown-days value: "${distillCooldownRaw}". Must be a non-negative integer.`,
         );
       }
+      const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
+      const consolidateCooldownDays = ignoreCooldown
+        ? 0
+        : consolidateCooldownRaw !== undefined
+          ? parseInt(consolidateCooldownRaw, 10)
+          : undefined;
+      if (
+        consolidateCooldownDays !== undefined &&
+        consolidateCooldownDays !== 0 &&
+        Number.isNaN(consolidateCooldownDays)
+      ) {
+        throw new UsageError(
+          `Invalid --consolidate-cooldown-days value: "${consolidateCooldownRaw}". Must be a non-negative integer.`,
+        );
+      }
 
       const improveLogFile = path.join(
         getCacheDir(),
@@ -3108,6 +3128,7 @@ const improveCommand = defineCommand({
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
           ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
+          ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
           consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
         });
       } finally {

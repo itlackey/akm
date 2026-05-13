@@ -65,6 +65,8 @@ export interface AkmImproveOptions {
   reflectCooldownDays?: number;
   /** Cooldown in days before re-distilling an asset with a recent accepted proposal. Defaults to 30. Set to 0 to disable. */
   distillCooldownDays?: number;
+  /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. */
+  consolidateCooldownDays?: number;
   /**
    * Named process key forwarded to `akmReflect` so the improve loop picks up
    * per-process agent config (e.g. `agent.processes["reflect"]`).
@@ -878,13 +880,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
     // Gap 4: skip consolidation if it ran recently (14-day cooldown) to prevent
     // the same memory cluster being churned through consolidation on every run.
-    const CONSOLIDATE_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+    const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
+    const CONSOLIDATE_COOLDOWN_MS = consolidateCooldownDays * 24 * 60 * 60 * 1000;
     const recentConsolidations = readEvents({ type: "consolidate_completed" });
     const lastConsolidation = recentConsolidations.events
       .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
       .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
     const consolidationOnCooldown =
       !volumeTriggered &&
+      consolidateCooldownDays > 0 &&
       lastConsolidation?.ts &&
       Date.now() - new Date(lastConsolidation.ts).getTime() < CONSOLIDATE_COOLDOWN_MS;
 
