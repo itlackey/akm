@@ -62,32 +62,32 @@ Suggested status markers:
 - [x] Ensure the diff is small and focused.
 - [x] Remove dead code and temporary scaffolding that is no longer needed.
 - [x] Verify no unrelated files changed.
-- [ ] Only create a commit at the phase gate if commits are desired for this effort.
+- [x] Only create a commit at the phase gate if commits are desired for this effort.
 
 ---
 
 ## Phase 1a — Agent Harness And Session-Log Seams
 
-- [ ] Introduce `AgentRunner` as the runtime dispatch seam for agent execution.
-- [ ] Keep spawned CLI harnesses as the default onboarding path for new harnesses.
-- [ ] Preserve OpenCode SDK as the fallback special-case harness when no CLI harness is configured or available.
-- [ ] Introduce `SessionLogHarness` as the raw-history ingestion seam.
-- [ ] Centralize session-event normalization, aggregation, and de-duplication.
-- [ ] Remove direct harness branching from higher-level orchestration where the seam now covers it.
+- [x] Introduce `AgentRunner` as the runtime dispatch seam for agent execution.
+- [x] Keep spawned CLI harnesses as the default onboarding path for new harnesses.
+- [x] Preserve OpenCode SDK as the fallback special-case harness when no CLI harness is configured or available.
+- [x] Introduce `SessionLogHarness` as the raw-history ingestion seam.
+- [x] Centralize session-event normalization, aggregation, and de-duplication.
+- [x] Remove direct harness branching from higher-level orchestration where the seam now covers it.
 
 ### Phase 1a Gate
 
-- [ ] Run existing agent integration tests and session-log coverage, or the nearest equivalent suites.
-- [ ] Verify no behavior drift in agent dispatch or improve-related integration behavior.
-- [ ] Confirm onboarding a new harness remains a narrow adapter exercise.
-- [ ] Complete a focused code review before moving on.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [x] Run existing agent integration tests and session-log coverage, or the nearest equivalent suites.
+- [x] Verify no behavior drift in agent dispatch or improve-related integration behavior.
+- [x] Confirm onboarding a new harness remains a narrow adapter exercise.
+- [x] Complete a focused code review before moving on.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
-- [ ] Inspect `git diff` and `git status`.
-- [ ] Ensure only integration-seam files changed.
-- [ ] Keep this patch isolated from unrelated refactors.
+- [x] Inspect `git diff` and `git status`.
+- [x] Ensure only integration-seam files changed.
+- [x] Keep this patch isolated from unrelated refactors.
 
 ---
 

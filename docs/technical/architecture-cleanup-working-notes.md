@@ -63,3 +63,45 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - No test expectation changes were needed.
 - Diff stayed limited to search/validation seam files plus checklist/working notes.
 - Pre-existing unrelated worktree changes remain outside the Phase 1 commit scope.
+
+## Phase 1a
+
+### Phase 1a baseline results
+
+- `bun test tests/agent/agent-config.test.ts` -> pass (`17` tests)
+- `bun test tests/agent/agent-process-config.test.ts` -> pass (`26` tests)
+- `bun test tests/architecture/agent-spawn-seam.test.ts` -> pass (`6` tests)
+- `bun test tests/agent/agent-spawn.test.ts` -> pass (`12` tests)
+- `bun test tests/integration/agent-real-profile.test.ts` -> skipped (`2` tests skipped by suite)
+- `bun test tests/commands/history.test.ts` -> pass (`17` tests)
+
+### Phase 1a baseline notes
+
+- Existing coverage is strong for agent config and spawn behavior.
+- There is no direct session-log seam test coverage yet; the nearest current regression coverage is `tests/commands/history.test.ts`.
+
+### Phase 1a implementation notes
+
+- Added `AgentRunner` in `src/integrations/agent/runners.ts` and routed `agent-dispatch` plus proposal pipeline execution through that seam.
+- Preserved spawn-backed CLI execution as the normal path and SDK-backed execution as the `sdkMode` path behind the same runtime seam.
+- Fixed custom `sdkMode: true` profile resolution so setup-generated SDK profiles no longer require a dummy `bin`.
+- Added `SessionLogHarness` in `src/integrations/session-logs/types.ts` and moved providers to raw-event readers.
+- Centralized session-log normalization, aggregation, and cross-harness de-duplication in `src/integrations/session-logs/index.ts`.
+- Added direct seam tests in `tests/architecture/agent-runner-seam.test.ts` and `tests/session-logs.test.ts`.
+
+### Phase 1a gate results
+
+- `bun test tests/agent/agent-config.test.ts` -> pass (`18` tests)
+- `bun test tests/agent/agent-process-config.test.ts` -> pass (`26` tests)
+- `bun test tests/architecture/agent-runner-seam.test.ts` -> pass (`3` tests)
+- `bun test tests/architecture/agent-spawn-seam.test.ts` -> pass (`6` tests)
+- `bun test tests/agent/agent-spawn.test.ts` -> pass (`12` tests)
+- `bun test tests/session-logs.test.ts` -> pass (`3` tests)
+- `bun test tests/commands/history.test.ts` -> pass (`17` tests)
+- `bun test tests/integration/agent-real-profile.test.ts` -> skipped (`2` tests skipped by suite)
+
+### Phase 1a review notes
+
+- No test expectation rewrites were needed.
+- Diff stayed isolated to agent runtime/session-log seam files, direct tests, and tracking docs.
+- Existing skipped real-profile integration coverage remains unchanged.

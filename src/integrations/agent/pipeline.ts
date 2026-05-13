@@ -9,8 +9,7 @@
 
 import type { LlmConnectionConfig } from "../../core/config";
 import type { AgentProfile } from "./profiles";
-import { runAgentSdk } from "./sdk-runner";
-import { runAgent } from "./spawn";
+import { runWithAgentRunner } from "./runners";
 
 export interface ProposalPipelineOptions {
   profile: AgentProfile;
@@ -41,28 +40,15 @@ export interface ProposalPipelineResult {
  * mode and output is read from stdout.
  */
 export async function runProposalAgentPipeline(opts: ProposalPipelineOptions): Promise<ProposalPipelineResult> {
-  if (opts.profile.sdkMode) {
-    const result = await runAgentSdk(
-      opts.profile,
-      opts.prompt,
-      opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {},
-      opts.llmConfig,
-    );
-    return {
-      ok: result.ok,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      durationMs: result.durationMs,
-      exitCode: result.exitCode,
-      error: result.error,
-      reason: result.reason,
-    };
-  }
-
-  const result = await runAgent(opts.profile, opts.prompt, {
-    stdio: opts.draftFilePath ? "interactive" : "captured",
-    parseOutput: "text",
-    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+  const result = await runWithAgentRunner({
+    profile: opts.profile,
+    prompt: opts.prompt,
+    llmConfig: opts.llmConfig,
+    runOptions: {
+      stdio: opts.draftFilePath ? "interactive" : "captured",
+      parseOutput: "text",
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    },
   });
   return {
     ok: result.ok,

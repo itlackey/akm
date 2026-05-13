@@ -176,6 +176,14 @@ describe("built-in profile resolution", () => {
     expect(ok?.stdio).toBe("captured");
   });
 
+  test("user-defined sdkMode profile can resolve without bin", async () => {
+    const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
+    const profile = resolveAgentProfile("custom", { sdkMode: true, model: "gpt-4o" });
+    expect(profile?.name).toBe("custom");
+    expect(profile?.sdkMode).toBe(true);
+    expect(profile?.model).toBe("gpt-4o");
+  });
+
   test("envPassthrough merges base + override", async () => {
     const { resolveAgentProfile } = await import("../../src/integrations/agent/config");
     const merged = resolveAgentProfile("opencode", { envPassthrough: ["MY_TOKEN"] });

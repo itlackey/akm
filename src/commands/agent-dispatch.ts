@@ -17,9 +17,8 @@ import type { LlmConnectionConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import type { AgentConfig } from "../integrations/agent/config";
 import { requireAgentProfile } from "../integrations/agent/config";
-import { runAgentSdk } from "../integrations/agent/sdk-runner";
+import { runWithAgentRunner } from "../integrations/agent/runners";
 import type { AgentRunResult } from "../integrations/agent/spawn";
-import { runAgent } from "../integrations/agent/spawn";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;
@@ -114,27 +113,18 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
   }
   // When prompt is undefined, the agent is launched interactively.
 
-  let result: AgentRunResult;
-
-  if (profile.sdkMode) {
-    // SDK mode: prompt is required — interactive launch is not meaningful.
-    const sdkPrompt = prompt ?? "";
-    result = await runAgentSdk(
-      profile,
-      sdkPrompt,
-      options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
-      options.llmConfig,
-    );
-  } else {
-    // Spawn mode: no prompt → interactive stdio so the user gets the TTY.
-    const stdio = prompt === undefined ? ("interactive" as const) : profile.stdio;
-    result = await runAgent(profile, prompt, {
+  const stdio = prompt === undefined && profile.sdkMode !== true ? ("interactive" as const) : profile.stdio;
+  const result: AgentRunResult = await runWithAgentRunner({
+    profile,
+    prompt,
+    llmConfig: options.llmConfig,
+    runOptions: {
       stdio,
       parseOutput: "text",
       ...(options.args?.length && !options.commandRef && !options.workflowRef ? { args: options.args } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    });
-  }
+    },
+  });
 
   return {
     schemaVersion: 1 as const,

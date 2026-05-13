@@ -427,7 +427,7 @@ function parseAgentProfileConfig(name: string, value: unknown): AgentProfileConf
  */
 export function resolveAgentProfile(name: string, overrides?: AgentProfileConfig): AgentProfile | undefined {
   const builtin = getBuiltinAgentProfile(name);
-  if (!builtin && !overrides?.bin) return undefined;
+  if (!builtin && !overrides?.bin && overrides?.sdkMode !== true) return undefined;
 
   const base: AgentProfile =
     builtin ??
