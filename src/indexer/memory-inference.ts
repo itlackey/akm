@@ -164,7 +164,7 @@ export async function runMemoryInferencePass(
             validate,
           )
         : await compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
-            console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+            warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
           });
 
       if (!derived) {

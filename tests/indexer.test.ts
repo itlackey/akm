@@ -644,6 +644,55 @@ test("akmIndex scan progress events include processed and total counts", async (
   expect(scanEvents.some((event) => event.message.includes("Processed 1/1 source"))).toBe(true);
 });
 
+test("akmIndex enrich progress events include visible per-entry progress", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
+  writeFile(path.join(stashDir, "scripts", "two", "two.sh"), "echo two\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: {
+      endpoint: "https://example.test/v1/chat/completions",
+      model: "demo-chat",
+      concurrency: 1,
+    },
+  });
+
+  const metadataEnhance = await import("../src/llm/metadata-enhance");
+  const enhanceSpy = spyOn(metadataEnhance, "enhanceMetadata").mockImplementation(async (_config, entry) => ({
+    description: entry.description ?? `Enhanced ${entry.name}`,
+    tags: ["enhanced"],
+    searchHints: [entry.name],
+  }));
+
+  try {
+    const llmEvents: Array<{ message: string; processed?: number; total?: number }> = [];
+    await akmIndex({
+      stashDir,
+      enrich: true,
+      onProgress: (event) => {
+        if (event.phase === "llm") {
+          llmEvents.push({ message: event.message, processed: event.processed, total: event.total });
+        }
+      },
+    });
+
+    expect(llmEvents.some((event) => event.message.includes("LLM enhancement starting for 2 entries"))).toBe(true);
+    expect(
+      llmEvents.some(
+        (event) => event.message.includes("Enhancing scripts/one") || event.message.includes("Enhancing scripts/two"),
+      ),
+    ).toBe(true);
+    expect(llmEvents.some((event) => event.message.includes("Enhanced 2/2 entries across 2/2 directories."))).toBe(
+      true,
+    );
+    expect(llmEvents.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+  } finally {
+    enhanceSpy.mockRestore();
+  }
+});
+
 test("akmIndex verbose progress reports why a directory was rescanned", async () => {
   const stashDir = tmpStash();
   const deployFile = path.join(stashDir, "scripts", "deploy", "deploy.sh");

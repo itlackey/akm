@@ -166,7 +166,7 @@ export async function runGraphExtractionPass(
   const batchSize = config.index?.graph?.graphExtractionBatchSize ?? 1;
 
   const onFallback = (evt: { feature: string; reason: string }) => {
-    console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+    warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
   };
 
   type ExtractionRecord =

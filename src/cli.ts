@@ -61,7 +61,7 @@ import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, s
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
 import { appendEvent } from "./core/events";
 import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "./core/paths";
-import { clearLogFile, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
+import { clearLogFile, info, setLogFile, setQuiet, setVerbose, warn } from "./core/warn";
 import { applyFeedbackToUtilityScore, closeDatabase, findEntryIdByRef, openExistingDatabase } from "./indexer/db";
 import { ensureIndex } from "./indexer/ensure-index";
 import { akmIndex } from "./indexer/indexer";
@@ -255,7 +255,14 @@ const indexCommand = defineCommand({
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
-      const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
+      const indexLogFile = path.join(
+        getCacheDir(),
+        "logs",
+        "index",
+        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+      );
+      setLogFile(indexLogFile);
+      const spin = !args.enrich && !args.verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -267,8 +274,8 @@ const indexCommand = defineCommand({
           onProgress: ({ message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (args.verbose) {
-              console.error(`[index] ${progressPrefix}${message}`);
+            if (args.verbose || args.enrich) {
+              info(`[index] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
               spin.start(`${progressPrefix}${message}`);
@@ -286,6 +293,7 @@ const indexCommand = defineCommand({
         }
         throw error;
       } finally {
+        clearLogFile();
         process.off("SIGINT", abort);
         process.off("SIGTERM", abort);
       }
@@ -1977,8 +1985,8 @@ const completionsCommand = defineCommand({
     const script = generateBashCompletions(main);
     if (args.install) {
       const dest = installBashCompletions(script);
-      console.error(`Completions installed to ${dest}`);
-      console.error(`Restart your shell or run:  source ${dest}`);
+      info(`Completions installed to ${dest}`);
+      info(`Restart your shell or run:  source ${dest}`);
     } else {
       process.stdout.write(script);
     }

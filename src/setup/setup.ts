@@ -22,6 +22,7 @@ import type {
 } from "../core/config";
 import { DEFAULT_CONFIG, getSources, loadUserConfig, saveConfig } from "../core/config";
 import { getConfigPath, getDefaultStashDir } from "../core/paths";
+import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
 import { akmIndex } from "../indexer/indexer";
 import {
@@ -1895,7 +1896,7 @@ export async function runSetupFromConfig(opts: {
   const ALLOWED_KEYS = new Set(["stashDir", "llm", "embedding", "agent", "semanticSearchMode", "output"]);
   for (const key of Object.keys(incoming)) {
     if (!ALLOWED_KEYS.has(key)) {
-      console.warn(`[akm setup] Ignoring unknown or restricted config key: "${key}"`);
+      warn(`[akm setup] Ignoring unknown or restricted config key: "${key}"`);
       delete (incoming as Record<string, unknown>)[key];
     }
   }

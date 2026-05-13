@@ -294,7 +294,7 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
   throwIfAborted(signal);
 
   // LLM enrichment for directories that need it
-  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, signal, enrich, reEnrich);
+  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, enrich, reEnrich);
   onProgress({
     phase: "llm",
     message:
@@ -1031,6 +1031,7 @@ async function enhanceDirsWithLlm(
     currentStashDir: string;
     stash: StashFile;
   }>,
+  onProgress?: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
   enrich = false,
   reEnrich = false,
@@ -1070,6 +1071,28 @@ async function enhanceDirsWithLlm(
   // as a single visible warning instead of silently degrading every entry
   // and leaving the user wondering why nothing got enhanced.
   const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
+  let completedDirs = 0;
+  let completedEntries = 0;
+  const totalDirs = dirsNeedingLlm.length;
+  const totalEntries = dirsNeedingLlm.reduce((sum, { stash }) => {
+    const entriesToEnhance = stash.entries.filter((e) => {
+      if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+      if (!reEnrich && isEnrichmentComplete(e)) return false;
+      return true;
+    });
+    return sum + entriesToEnhance.length;
+  }, 0);
+
+  if (totalEntries > 0) {
+    onProgress?.({
+      phase: "llm",
+      message:
+        `LLM enhancement starting for ${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} ` +
+        `across ${totalDirs} director${totalDirs === 1 ? "y" : "ies"}.`,
+      processed: 0,
+      total: totalEntries,
+    });
+  }
 
   await concurrentMap(
     dirsNeedingLlm,
@@ -1088,6 +1111,14 @@ async function enhanceDirsWithLlm(
         return true;
       });
       if (entriesToEnhance.length === 0) return undefined;
+      onProgress?.({
+        phase: "llm",
+        message:
+          `Enhancing ${path.relative(currentStashDir, dirPath) || "."} ` +
+          `(${entriesToEnhance.length} entr${entriesToEnhance.length === 1 ? "y" : "ies"}).`,
+        processed: completedEntries,
+        total: totalEntries,
+      });
       const targetStash: StashFile = { entries: entriesToEnhance };
       const entryKeys = entriesToEnhance.map((e) => `${currentStashDir}:${e.type}:${e.name}`);
       const enhanced = await enhanceStashWithLlm(
@@ -1112,6 +1143,16 @@ async function enhanceDirsWithLlm(
           upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
         }
       })();
+      completedDirs++;
+      completedEntries += entriesToEnhance.length;
+      onProgress?.({
+        phase: "llm",
+        message:
+          `Enhanced ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} ` +
+          `across ${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"}.`,
+        processed: completedEntries,
+        total: totalEntries,
+      });
       return undefined;
     },
     // Default concurrency of 4 works well for cloud LLM APIs. Local model

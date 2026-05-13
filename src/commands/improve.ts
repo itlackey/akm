@@ -20,7 +20,7 @@ import {
   type RelativeDateCandidate,
 } from "../core/memory-improve";
 import { listProposals } from "../core/proposals";
-import { error, info, warn } from "../core/warn";
+import { info, warn } from "../core/warn";
 import {
   closeDatabase,
   getAllEntries,
