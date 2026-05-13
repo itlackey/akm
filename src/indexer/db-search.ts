@@ -13,6 +13,7 @@
 
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
+import { buildActionFromContributors, defaultActionContributors } from "../core/action-contributors";
 import { makeAssetRef } from "../core/asset-ref";
 import { defaultRendererRegistry, type RendererRegistry } from "../core/asset-registry";
 import type { AkmConfig } from "../core/config";
@@ -31,10 +32,10 @@ import {
   searchVec,
 } from "./db";
 import { ensureIndex } from "./ensure-index";
-import { getRenderer } from "./file-context";
 import { type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
+import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 import {
   deriveSemanticProviderFingerprint,
@@ -43,18 +44,12 @@ import {
   readSemanticStatus,
 } from "./semantic-status";
 
-export async function rendererForType(type: string, registry: RendererRegistry = defaultRendererRegistry) {
-  const name = registry.rendererNameFor(type);
-  return name ? getRenderer(name) : undefined;
-}
-
 export function buildLocalAction(
   type: string,
   ref: string,
   registry: RendererRegistry = defaultRendererRegistry,
 ): string {
-  const builder = registry.actionBuilderFor(type);
-  return builder ? builder(ref) : `akm show ${ref}`;
+  return buildActionFromContributors({ type, ref }, defaultActionContributors(registry)) ?? `akm show ${ref}`;
 }
 
 function resolveSearchHitRef(entry: StashEntry, refName: string, source?: SearchSource): string {
@@ -484,10 +479,11 @@ export async function buildDbHit(input: {
     ...(input.entry.currentBeliefRefs ? { currentBeliefRefs: input.entry.currentBeliefRefs } : {}),
   };
 
-  const renderer = await rendererForType(input.entry.type, rendererRegistry);
-  if (renderer?.enrichSearchHit) {
-    renderer.enrichSearchHit(hit, entryStashDir);
-  }
+  await enrichSearchHit(hit, {
+    type: input.entry.type,
+    stashDir: entryStashDir,
+    rendererRegistry,
+  });
 
   return hit;
 }

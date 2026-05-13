@@ -42,8 +42,7 @@ import { makeAssetRef, parseAssetRef } from "./asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "./asset-spec";
 import type { AkmConfig } from "./config";
 import { NotFoundError, UsageError } from "./errors";
-import { parseFrontmatter } from "./frontmatter";
-import { lintLessonContent } from "./lesson-lint";
+import { runProposalValidators } from "./proposal-validators";
 import { resolveWriteTarget, type WriteTargetSource, writeAssetToSource } from "./write-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -386,45 +385,7 @@ export interface ProposalValidationReport {
  * here in the future without changing call sites.
  */
 export function validateProposal(proposal: Proposal): ProposalValidationReport {
-  const findings: ProposalValidationFinding[] = [];
-
-  if (!proposal.payload || typeof proposal.payload.content !== "string" || proposal.payload.content.trim() === "") {
-    findings.push({ kind: "empty-content", message: `Proposal ${proposal.id} has empty content.` });
-  }
-
-  let ref: AssetRef;
-  try {
-    ref = parseAssetRef(proposal.ref);
-  } catch (err) {
-    findings.push({
-      kind: "invalid-ref",
-      message: `Proposal ${proposal.id} has invalid ref "${proposal.ref}": ${(err as Error).message}`,
-    });
-    return { ok: false, findings };
-  }
-
-  // Generic frontmatter parse check for markdown-y types. If the content
-  // *looks* like it has frontmatter (`---\n…\n---`) we ensure it parses.
-  if (proposal.payload.content.startsWith("---")) {
-    try {
-      parseFrontmatter(proposal.payload.content);
-    } catch (err) {
-      findings.push({
-        kind: "invalid-frontmatter",
-        message: `Proposal ${proposal.id} frontmatter could not be parsed: ${(err as Error).message}`,
-      });
-    }
-  }
-
-  // Type-specific validators.
-  if (ref.type === "lesson") {
-    const lessonReport = lintLessonContent(proposal.payload.content, `proposal:${proposal.id}`);
-    for (const finding of lessonReport.findings) {
-      findings.push({ kind: finding.kind, message: finding.message });
-    }
-  }
-
-  return { ok: findings.length === 0, findings };
+  return runProposalValidators(proposal);
 }
 
 // ── Promotion ──────────────────────────────────────────────────────────────
