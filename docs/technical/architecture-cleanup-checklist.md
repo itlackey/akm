@@ -188,9 +188,11 @@ Suggested status markers:
 
 ## Decision Checkpoint Before Phase 6
 
-- [ ] Confirm index side-effect seams are justified by concrete duplication.
-- [ ] Confirm the work is not introducing a registry framework.
-- [ ] Record the go / no-go decision in this checklist before continuing.
+- [x] Confirm index side-effect seams are justified by concrete duplication.
+- [x] Confirm the work is not introducing a registry framework.
+- [x] Record the go / no-go decision in this checklist before continuing.
+
+Checkpoint decision: no-go for a new `IndexPostProcessor[]` seam at this time. `src/indexer/indexer.ts` already runs as an explicit fixed-stage pipeline (`runSourceCachePhase`, `runMemoryInferencePhase`, `runGraphExtractionPhase`, `runWalkPhase`, `runEmbeddingPhase`, `runFinalizePhase`), and the remaining indexing side-effects are already localized enough that adding a registry would increase abstraction without removing a concrete hotspot.
 
 ---
 

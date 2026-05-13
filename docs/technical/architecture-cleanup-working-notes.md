@@ -277,3 +277,21 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - The refactor stayed architectural only: stage extraction and internal state shaping without workflow or output changes.
 - The implementation confirms the Phase 5 plan should be described as fixed-stage orchestration helpers, not `ImproveContributor[]`; using contributors here would have added unnecessary framework shape.
 - Parity remained green on the targeted improve surfaces after the extraction.
+
+## Decision Checkpoint Before Phase 6
+
+- Decision: no-go for a new `IndexPostProcessor[]` seam right now.
+- `src/indexer/indexer.ts` already has an explicit fixed phase pipeline:
+  - `runSourceCachePhase()`
+  - `runMemoryInferencePhase()`
+  - `runGraphExtractionPhase()`
+  - `runWalkPhase()`
+  - `runEmbeddingPhase()`
+  - `runFinalizePhase()`
+- The original Phase 6 rationale was to remove hardcoded post-walk side-effects from a monolithic indexer. After inspection, that specific hotspot has largely already been addressed by the current phase split.
+- Remaining side-effects are narrow and localized rather than switchboard-like:
+  - workflow-document persistence is confined to the entry persistence path in `indexEntries()`
+  - memory inference and graph extraction already live in dedicated modules invoked by named phases
+  - finalize responsibilities are grouped in one explicit finalize phase rather than scattered callbacks
+- Adding a new registry layer here would mostly wrap existing named phase functions in another abstraction without materially reducing duplication.
+- Recommended follow-up: keep Phase 6 deferred unless a future concrete hotspot appears inside one phase, such as repeated persist-time side-effects or competing finalize-time behaviors that can be isolated without introducing framework drift.
