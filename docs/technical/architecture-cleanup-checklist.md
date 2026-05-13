@@ -116,21 +116,21 @@ Suggested status markers:
 
 ## Phase 3 — Structural Path Resolver
 
-- [ ] Introduce the structural `PathResolver` seam.
-- [ ] Replace duplicated path lookup logic in show, write, improve, and lint with the shared resolution layer.
-- [ ] Remove command-local path guessing where the shared resolver now applies.
+- [x] Introduce the structural `PathResolver` seam.
+- [x] Replace duplicated path lookup logic in show, write, improve, and lint with the shared resolution layer.
+- [x] Remove command-local path guessing where the shared resolver now applies.
 
 ### Phase 3 Gate
 
-- [ ] Run path-resolution parity tests across show, write, improve, and lint.
-- [ ] Confirm no command behavior changes.
-- [ ] Complete a focused code review before moving on.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [x] Run path-resolution parity tests across show, write, improve, and lint.
+- [x] Confirm no command behavior changes.
+- [x] Complete a focused code review before moving on.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
-- [ ] Verify path-related changes remain localized.
-- [ ] Confirm there are no fixture/assertion changes beyond imports.
+- [x] Verify path-related changes remain localized.
+- [x] Confirm there are no fixture/assertion changes beyond imports.
 
 ---
 

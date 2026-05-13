@@ -11,13 +11,13 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { parseAssetRef } from "../core/asset-ref";
 import type { LlmConnectionConfig } from "../core/config";
 import { appendEvent, readEvents } from "../core/events";
 import { parseFrontmatter } from "../core/frontmatter";
 import { info } from "../core/warn";
+import { resolveAssetPath } from "../indexer/path-resolver";
 import { chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ export interface SchemaRepairOptions {
   /** Optional stash directory for asset resolution. */
   stashDir?: string;
   /** Override the asset file-path resolver (test seam). */
-  findFilePath?: (ref: string, stashDir?: string) => string | null;
+  findFilePath?: (ref: string, stashDir?: string) => Promise<string | null> | string | null;
   /** Whether a given ref is a lesson candidate (affects which fields to repair). */
   isLessonCandidateFn?: (ref: string) => boolean;
 }
@@ -92,24 +92,8 @@ export async function runSchemaRepairPass(
       continue;
     }
 
-    let filePath = findFilePath(failure.ref, stashDir);
+    let filePath = await findFilePath(failure.ref, stashDir);
     if (!filePath) {
-      repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-      continue;
-    }
-
-    // Skill assets are stored as directories — resolve to the markdown file inside.
-    try {
-      if (fs.statSync(filePath).isDirectory()) {
-        const candidates = ["SKILL.md", "index.md", "README.md"];
-        const found = candidates.map((f) => path.join(filePath as string, f)).find((p) => fs.existsSync(p));
-        if (!found) {
-          repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
-          continue;
-        }
-        filePath = found;
-      }
-    } catch {
       repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
       continue;
     }
@@ -191,8 +175,11 @@ function defaultIsLessonCandidate(ref: string): boolean {
   }
 }
 
-function defaultFindFilePath(_ref: string, _stashDir?: string): string | null {
-  // The default implementation returns null — callers must pass their own
-  // findFilePath via SchemaRepairOptions to resolve asset paths.
-  return null;
+async function defaultFindFilePath(ref: string, stashDir?: string): Promise<string | null> {
+  return resolveAssetPath(ref, {
+    stashDir,
+    mode: "index-first",
+    directoryIndexNames: ["SKILL.md", "index.md", "README.md"],
+    preserveDirectNameFallback: true,
+  });
 }

@@ -26,6 +26,7 @@ import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
 import { lookup } from "../indexer/indexer";
 import type { StashEntryScope } from "../indexer/metadata";
+import { resolveAssetPath } from "../indexer/path-resolver";
 import { buildEditHint, findSourceForPath, isEditable, resolveSourceEntries } from "../indexer/search-source";
 import { insertUsageEvent } from "../indexer/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -309,10 +310,10 @@ export async function showLocal(input: {
     }
   }
   if (!assetPath) {
-    const resolved = await resolvePathViaIndex(parsed);
-    if (resolved?.assetPath) {
-      assetPath = resolved.assetPath;
-    }
+    assetPath = await resolveAssetPath(parsed, {
+      stashDir: input.stashDir,
+      mode: "index-only",
+    });
   }
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {

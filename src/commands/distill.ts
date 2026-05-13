@@ -59,7 +59,7 @@ import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
 import { createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
 import { warnVerbose } from "../core/warn";
-import { lookup as indexerLookup } from "../indexer/indexer";
+import { resolveAssetPath } from "../indexer/path-resolver";
 import { type ChatMessage, chatCompletion, parseEmbeddedJsonResponse } from "../llm/client";
 import { isLlmFeatureEnabled, tryLlmFeature } from "../llm/feature-gate";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
@@ -721,10 +721,5 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 async function defaultLookup(ref: string): Promise<string | null> {
-  try {
-    const entry = await indexerLookup(parseAssetRef(ref));
-    return entry?.filePath ?? null;
-  } catch {
-    return null;
-  }
+  return resolveAssetPath(ref, { mode: "index-only" });
 }

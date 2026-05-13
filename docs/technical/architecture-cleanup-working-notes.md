@@ -149,3 +149,46 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - Search-hit enrichment remains on the Phase 1 seam and was not merged into metadata contributors.
 - No test expectations or fixture outputs were rewritten.
 - The only test logic change was a seam stub in `tests/indexer.test.ts` to isolate graph telemetry from the separately enabled memory-inference pass.
+
+## Phase 3
+
+### Phase 3 baseline results
+
+- `bun test tests/commands/show.test.ts` -> pass (`16` tests)
+- `bun test tests/commands/show-indexer-parity.test.ts` -> pass (`4` tests)
+- `bun test tests/commands/improve-memory.test.ts` -> pass (`13` tests)
+- `bun test tests/distill.test.ts` -> pass (`38` tests)
+- `bun test tests/lint.test.ts` -> pass (`36` tests)
+
+### Phase 3 baseline notes
+
+- `show` already used index lookup directly, but `improve`, `distill`, and `schema-repair` still carried separate ref-to-file helpers and fallback path guessing.
+- The duplicated logic mostly covered the same cases: indexed file path resolution, type-directory lookup, cross-type direct-path fallback, and multi-file skill entrypoints.
+- The smallest safe seam is a shared path resolver with explicit modes (`index-only`, `index-first`, `disk-only`) so each command can keep its current behavior while sharing the lookup machinery.
+
+### Phase 3 implementation notes
+
+- Added `src/indexer/path-resolver.ts` as the shared structural path-resolution seam.
+- Centralized three resolution modes in that seam:
+  - `index-only` for index-backed lookups
+  - `index-first` for commands that prefer indexed paths but still need safe on-disk fallback
+  - `disk-only` for writable-scope or pre-index command flows
+- Rewired `src/commands/show.ts` to use the shared resolver for its indexed asset path lookup while preserving the existing wiki-root special case and error behavior.
+- Rewired `src/commands/distill.ts` to use the shared resolver for its default asset-content lookup seam.
+- Rewired `src/commands/improve.ts` to use the shared resolver for scope-ref and candidate file resolution, preserving writable-source filtering and direct-path fallback behavior.
+- Rewired `src/commands/schema-repair.ts` so its default file-path seam now uses the shared resolver with the existing index names (`SKILL.md`, `index.md`, `README.md`).
+- Left write-target path generation in `src/core/write-source.ts` unchanged; it already routes through the asset-spec mapping seam and did not require additional restructuring in this phase.
+
+### Phase 3 gate results
+
+- `bun test tests/commands/show.test.ts` -> pass (`16` tests)
+- `bun test tests/commands/show-indexer-parity.test.ts` -> pass (`4` tests)
+- `bun test tests/commands/improve-memory.test.ts` -> pass (`13` tests)
+- `bun test tests/distill.test.ts` -> pass (`38` tests)
+- `bun test tests/lint.test.ts` -> pass (`36` tests)
+
+### Phase 3 review notes
+
+- The path-related diff stayed localized to `show`, `improve`, `distill`, `schema-repair`, and the new shared resolver module.
+- No fixture or assertion rewrites were needed.
+- Lint's existing missing-ref checks remain separate for now; this phase only centralized ref-to-file resolution used by command execution paths.

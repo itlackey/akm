@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
-import { TYPE_DIRS } from "../core/asset-spec";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError } from "../core/errors";
@@ -31,6 +30,7 @@ import {
 } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { akmIndex } from "../indexer/indexer";
+import { resolveAssetPath } from "../indexer/path-resolver";
 import { getWritableStashDirs, resolveSourceEntries } from "../indexer/search-source";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 import { type AkmConsolidateOptions, akmConsolidate, type ConsolidateResult } from "./consolidate";
@@ -161,17 +161,17 @@ function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" 
   }
 }
 
-function collectEligibleRefs(
+async function collectEligibleRefs(
   scope: { mode: "all" | "type" | "ref"; value?: string },
   stashDir?: string,
-): {
+): Promise<{
   plannedRefs: ImproveEligibleRef[];
   memorySummary: { eligible: number; derived: number };
-} {
+}> {
   if (scope.mode === "ref" && scope.value) {
     const parsed = parseAssetRef(scope.value);
     const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
-    const filePath = findAssetFilePath(scope.value, stashDir, writableDirs);
+    const filePath = await findAssetFilePath(scope.value, stashDir, writableDirs);
     if (!filePath) {
       return {
         plannedRefs: [],
@@ -335,7 +335,7 @@ function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
 
 export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmImproveResult> {
   const scope = resolveImproveScope(options.scope);
-  const { plannedRefs, memorySummary } = collectEligibleRefs(scope, options.stashDir);
+  const { plannedRefs, memorySummary } = await collectEligibleRefs(scope, options.stashDir);
   const reflectFn = options.reflectFn ?? akmReflect;
   const distillFn = options.distillFn ?? akmDistill;
   const ensureIndexFn = options.ensureIndexFn ?? ensureIndex;
@@ -591,7 +591,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const validationFailures: Array<{ ref: string; reason: string }> = [];
     for (const candidate of actionableRefs) {
       try {
-        const filePath = findAssetFilePath(candidate.ref, options.stashDir);
+        const filePath = await findAssetFilePath(candidate.ref, options.stashDir);
         if (!filePath) {
           validationFailures.push({ ref: candidate.ref, reason: "file not found on disk" });
           continue;
@@ -1107,39 +1107,13 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
   return map;
 }
 
-function findAssetFilePath(ref: string, stashDir?: string, writableDirSet?: Set<string>): string | null {
-  try {
-    const parsed = parseAssetRef(ref);
-    // Use the canonical type directory name from the asset spec registry
-    // (e.g. "memories" for type "memory") rather than naive type + "s"
-    // pluralization, which produces incorrect names like "memorys".
-    const typeDir = TYPE_DIRS[parsed.type] ?? `${parsed.type}s`;
-    const sources = resolveSourceEntries(stashDir);
-    for (const source of sources) {
-      if (writableDirSet && !writableDirSet.has(path.resolve(source.path))) continue;
-      const candidates = [
-        path.join(source.path, typeDir, `${parsed.name}.md`),
-        path.join(source.path, parsed.type, `${parsed.name}.md`),
-        path.join(source.path, typeDir, parsed.name),
-        path.join(source.path, parsed.type, parsed.name),
-        // Cross-type paths: refs like knowledge:skills/foo/bar whose files live
-        // under skills/ in the stash root, not under knowledge/skills/foo/bar.
-        path.join(source.path, `${parsed.name}.md`),
-        path.join(source.path, parsed.name),
-      ];
-      for (const candidate of candidates) {
-        if (!fs.existsSync(candidate)) continue;
-        const stat = fs.statSync(candidate);
-        if (stat.isFile()) return candidate;
-        // Multi-file skill layout: the ref resolves to a directory containing SKILL.md.
-        if (stat.isDirectory()) {
-          const skillMd = path.join(candidate, "SKILL.md");
-          if (fs.existsSync(skillMd)) return skillMd;
-        }
-      }
-    }
-  } catch {
-    // best-effort
-  }
-  return null;
+async function findAssetFilePath(ref: string, stashDir?: string, writableDirSet?: Set<string>): Promise<string | null> {
+  return resolveAssetPath(ref, {
+    stashDir,
+    mode: "disk-only",
+    writableDirSet,
+    directoryIndexNames: ["SKILL.md"],
+    preserveDirectNameFallback: true,
+    honorOrigin: false,
+  });
 }
