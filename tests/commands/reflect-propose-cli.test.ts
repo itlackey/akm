@@ -15,6 +15,7 @@ import type { SpawnedSubprocess, SpawnFn } from "../../src/integrations/agent/sp
 const tempDirs: string[] = [];
 const savedEnv = {
   AKM_STASH_DIR: process.env.AKM_STASH_DIR,
+  AKM_DATA_DIR: process.env.AKM_DATA_DIR,
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
 };
@@ -79,6 +80,7 @@ const VALID_SKILL_PAYLOAD = JSON.stringify({
 });
 
 beforeEach(() => {
+  process.env.AKM_DATA_DIR = makeTempDir("akm-improve-cli-data-");
   process.env.XDG_CACHE_HOME = makeTempDir("akm-improve-cli-cache-");
   process.env.XDG_CONFIG_HOME = makeTempDir("akm-improve-cli-config-");
 });
@@ -86,6 +88,8 @@ beforeEach(() => {
 afterEach(() => {
   if (savedEnv.AKM_STASH_DIR === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = savedEnv.AKM_STASH_DIR;
+  if (savedEnv.AKM_DATA_DIR === undefined) delete process.env.AKM_DATA_DIR;
+  else process.env.AKM_DATA_DIR = savedEnv.AKM_DATA_DIR;
   if (savedEnv.XDG_CACHE_HOME === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
   if (savedEnv.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME;

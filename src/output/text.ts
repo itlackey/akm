@@ -43,6 +43,21 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "index": {
       const indexResult = result as Partial<IndexResponse>;
       let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
+      const graphQuality = indexResult.graphQuality as
+        | {
+            extractionCoverage?: number;
+            density?: number;
+            entityCount?: number;
+            relationCount?: number;
+          }
+        | undefined;
+      if (graphQuality) {
+        const coverage =
+          typeof graphQuality.extractionCoverage === "number"
+            ? `${Math.round(graphQuality.extractionCoverage * 100)}%`
+            : "n/a";
+        out += `\nGraph quality: entities ${graphQuality.entityCount ?? 0}, relations ${graphQuality.relationCount ?? 0}, coverage ${coverage}, density ${graphQuality.density ?? 0}`;
+      }
       const warnings = indexResult.warnings;
       if (Array.isArray(warnings) && warnings.length > 0) {
         out += `\nWarnings (${warnings.length}):`;
@@ -218,6 +233,14 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "distill": {
       return formatDistillPlain(r);
     }
+    case "graph-summary":
+      return formatGraphSummaryPlain(r);
+    case "graph-entities":
+      return formatGraphEntitiesPlain(r);
+    case "graph-relations":
+      return formatGraphRelationsPlain(r);
+    case "graph-export":
+      return formatGraphExportPlain(r);
     case "improve": {
       return formatImprovePlain(r);
     }
@@ -451,6 +474,48 @@ export function formatWorkflowValidatePlain(r: Record<string, unknown>): string 
   const title = typeof r.title === "string" ? r.title : "";
   const stepCount = typeof r.stepCount === "number" ? r.stepCount : 0;
   return `workflow validate: ok — ${title || pathValue} (${stepCount} step(s))`;
+}
+
+export function formatGraphSummaryPlain(r: Record<string, unknown>): string {
+  const lines = [
+    `Graph: ${String(r.graphPath ?? "?")}`,
+    `Generated: ${String(r.generatedAt ?? "?")}`,
+    `Files: ${String(r.fileCount ?? 0)}  Entities: ${String(r.entityCount ?? 0)}  Relations: ${String(r.relationCount ?? 0)}`,
+  ];
+  const quality = r.quality as Record<string, unknown> | undefined;
+  if (quality) {
+    const coverage =
+      typeof quality.extractionCoverage === "number" ? `${Math.round(quality.extractionCoverage * 100)}%` : "n/a";
+    lines.push(`Coverage: ${coverage}  Density: ${String(quality.density ?? 0)}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphEntitiesPlain(r: Record<string, unknown>): string {
+  const entities = Array.isArray(r.entities) ? (r.entities as Array<Record<string, unknown>>) : [];
+  if (entities.length === 0) return "No entities found in graph.";
+  const lines = [`Entities (${String(r.total ?? entities.length)} total):`];
+  for (const entity of entities) {
+    lines.push(`- ${String(entity.name ?? "?")} (${String(entity.fileCount ?? 0)} files)`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphRelationsPlain(r: Record<string, unknown>): string {
+  const relations = Array.isArray(r.relations) ? (r.relations as Array<Record<string, unknown>>) : [];
+  if (relations.length === 0) return "No relations found in graph.";
+  const lines = [`Relations (${String(r.total ?? relations.length)} total):`];
+  for (const relation of relations) {
+    const type = relation.type ? ` [${String(relation.type)}]` : "";
+    lines.push(
+      `- ${String(relation.from ?? "?")} -> ${String(relation.to ?? "?")}${type} x${String(relation.count ?? 0)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphExportPlain(r: Record<string, unknown>): string {
+  return `Exported graph (${String(r.format ?? "json")}, ${String(r.bytes ?? 0)} bytes) to ${String(r.outPath ?? "?")}`;
 }
 
 export function formatProposalProducerPlain(command: string, r: Record<string, unknown>): string {

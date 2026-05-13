@@ -18,18 +18,26 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
+import type { GraphQualityTelemetry } from "../src/indexer/graph-extraction";
 import type { SearchSource } from "../src/indexer/search-source";
 
 // ── Module-level LLM stub ───────────────────────────────────────────────────
 
-let extractor: (body: string) => { entities: string[]; relations: { from: string; to: string; type?: string }[] } =
-  () => ({
-    entities: [],
-    relations: [],
-  });
+let extractor: (body: string) => {
+  entities: string[];
+  relations: { from: string; to: string; type?: string; confidence?: number }[];
+  confidence?: number;
+} = () => ({
+  entities: [],
+  relations: [],
+});
+let extractorCallCount = 0;
 
 mock.module("../src/llm/graph-extract", () => ({
-  extractGraphFromBody: async (_config: unknown, body: string) => extractor(body),
+  extractGraphFromBody: async (_config: unknown, body: string) => {
+    extractorCallCount++;
+    return extractor(body);
+  },
   // Stub the batch API introduced with batching support — each body is processed
   // independently via the single-body extractor to keep test logic simple.
   extractGraphFromBodies: async (_config: unknown, bodies: string[]) =>
@@ -37,9 +45,13 @@ mock.module("../src/llm/graph-extract", () => ({
 }));
 
 // Import AFTER mock.module so the pass picks up the stub.
-const { runGraphExtractionPass, collectEligibleFiles, getGraphFilePath, GRAPH_FILE_SCHEMA_VERSION } = await import(
-  "../src/indexer/graph-extraction"
-);
+const {
+  runGraphExtractionPass,
+  collectEligibleFiles,
+  getGraphFilePath,
+  GRAPH_FILE_SCHEMA_VERSION,
+  getGraphExtractionIncludeTypes,
+} = await import("../src/indexer/graph-extraction");
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -50,6 +62,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(tmpStash, "memories"), { recursive: true });
   fs.mkdirSync(path.join(tmpStash, "knowledge"), { recursive: true });
   extractor = () => ({ entities: [], relations: [] });
+  extractorCallCount = 0;
 });
 
 afterEach(() => {
@@ -113,6 +126,30 @@ describe("collectEligibleFiles", () => {
       path.join("memories", "m1.md"),
       path.join("memories", "sub", "m2.md"),
     ]);
+  });
+
+  test("supports configurable include types while default remains memory+knowledge", () => {
+    writeFile("memories/m1.md", {}, "Memory body.");
+    writeFile("knowledge/k1.md", {}, "Knowledge body.");
+    writeFile("commands/c1.md", {}, "Command body.");
+
+    const defaults = collectEligibleFiles(tmpStash);
+    const defaultNames = defaults.map((e) => path.relative(tmpStash, e.absPath)).sort();
+    expect(defaultNames).toEqual([path.join("knowledge", "k1.md"), path.join("memories", "m1.md")]);
+
+    const expanded = collectEligibleFiles(tmpStash, ["memory", "command"]);
+    const expandedNames = expanded.map((e) => path.relative(tmpStash, e.absPath)).sort();
+    expect(expandedNames).toEqual([path.join("commands", "c1.md"), path.join("memories", "m1.md")]);
+  });
+
+  test("resolves include types from config with safe fallback", () => {
+    expect(getGraphExtractionIncludeTypes({ semanticSearchMode: "auto" })).toEqual(["memory", "knowledge"]);
+    expect(
+      getGraphExtractionIncludeTypes({
+        semanticSearchMode: "auto",
+        index: { graph: { graphExtractionIncludeTypes: ["memory", "command", "memory"] } },
+      }),
+    ).toEqual(["memory", "command"]);
   });
 
   test("skips inferred memory children", () => {
@@ -259,6 +296,27 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
   });
 });
 
+describe("runGraphExtractionPass — progress", () => {
+  test("emits per-file progress events", async () => {
+    writeFile("memories/m1.md", {}, "Body one.");
+    writeFile("knowledge/k1.md", {}, "Body two.");
+    extractor = () => ({ entities: ["E"], relations: [] });
+
+    const events: Array<{ processed: number; total: number; currentPath?: string }> = [];
+    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
+      events.push({ processed: event.processed, total: event.total, currentPath: event.currentPath });
+    });
+
+    expect(result.extracted).toBe(2);
+    expect(events[0]).toEqual({ processed: 0, total: 2, currentPath: undefined });
+    expect(events.some((event) => event.processed === 1 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.currentPath?.endsWith("m1.md") || event.currentPath?.endsWith("k1.md"))).toBe(
+      true,
+    );
+  });
+});
+
 // ── runGraphExtractionPass — enabled path ──────────────────────────────────
 
 describe("runGraphExtractionPass — enabled", () => {
@@ -269,11 +327,13 @@ describe("runGraphExtractionPass — enabled", () => {
       if (body.includes("ServiceA"))
         return {
           entities: ["ServiceA", "ServiceB"],
-          relations: [{ from: "ServiceA", to: "ServiceB", type: "uses" }],
+          relations: [{ from: "ServiceA", to: "ServiceB", type: "uses", confidence: 0.72 }],
+          confidence: 0.91,
         };
       return {
         entities: ["ServiceB", "ServiceC"],
         relations: [{ from: "ServiceB", to: "ServiceC" }],
+        confidence: 0.66,
       };
     };
 
@@ -284,21 +344,39 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(result.extracted).toBe(2);
     expect(result.totalEntities).toBe(4);
     expect(result.totalRelations).toBe(2);
+    expect(result.quality).toEqual({
+      consideredFiles: 2,
+      extractedFiles: 2,
+      entityCount: 3,
+      relationCount: 2,
+      extractionCoverage: 1,
+      density: 0.6667,
+    });
 
     const raw = fs.readFileSync(getGraphFilePath(tmpStash), "utf8");
     const parsed = JSON.parse(raw) as {
       schemaVersion: number;
       stashRoot: string;
+      quality?: GraphQualityTelemetry;
       files: Array<{
         path: string;
         type: string;
         entities: string[];
-        relations: Array<{ from: string; to: string; type?: string }>;
+        relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+        confidence?: number;
       }>;
     };
     expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
     expect(parsed.stashRoot).toBe(tmpStash);
     expect(parsed.files).toHaveLength(2);
+    expect(parsed.quality).toEqual({
+      consideredFiles: 2,
+      extractedFiles: 2,
+      entityCount: 3,
+      relationCount: 2,
+      extractionCoverage: 1,
+      density: 0.6667,
+    });
     // Entities are lower-cased at write time so the search-time boost
     // doesn't have to re-canonicalise on every query.
     for (const node of parsed.files) {
@@ -308,6 +386,22 @@ describe("runGraphExtractionPass — enabled", () => {
         expect(r.to).toBe(r.to.toLowerCase());
       }
     }
+    expect(parsed.files.some((node) => typeof node.confidence === "number")).toBe(true);
+    expect(parsed.files.some((node) => node.relations.some((rel) => typeof rel.confidence === "number"))).toBe(true);
+  });
+
+  test("include-types config can expand extraction beyond memory/knowledge", async () => {
+    writeFile("memories/m1.md", {}, "Memory body about A.");
+    writeFile("commands/c1.md", {}, "Command body about B.");
+    extractor = () => ({ entities: ["X"], relations: [] });
+
+    const result = await runGraphExtractionPass(
+      configWithLlm({ index: { graph: { graphExtractionIncludeTypes: ["memory", "command"] } } }),
+      sources(),
+    );
+
+    expect(result.considered).toBe(2);
+    expect(result.extracted).toBe(2);
   });
 
   test("files with no extracted entities are omitted but still considered", async () => {
@@ -358,5 +452,74 @@ describe("runGraphExtractionPass — enabled", () => {
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  test("incremental no-op reuses prior graph nodes when body hash matches", async () => {
+    writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    extractor = () => ({ entities: ["ServiceA"], relations: [] });
+
+    const first = await runGraphExtractionPass(configWithLlm(), sources());
+    expect(first.written).toBe(true);
+    expect(extractorCallCount).toBe(1);
+
+    extractor = () => {
+      throw new Error("must not be called when prior graph node is reusable");
+    };
+
+    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    expect(second.written).toBe(true);
+    expect(second.extracted).toBe(1);
+    expect(extractorCallCount).toBe(1);
+  });
+
+  test("changed file body hash invalidates prior graph node and falls back to extraction", async () => {
+    const filePath = writeFile("memories/m1.md", {}, "Original body about ServiceA.");
+    extractor = () => ({ entities: ["ServiceA"], relations: [] });
+    await runGraphExtractionPass(configWithLlm(), sources());
+    expect(extractorCallCount).toBe(1);
+
+    fs.writeFileSync(filePath, "---\n---\n\nUpdated body about ServiceB.\n", "utf8");
+    extractor = () => ({ entities: ["ServiceB"], relations: [] });
+
+    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    expect(second.written).toBe(true);
+    expect(extractorCallCount).toBe(2);
+
+    const graph = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+      files: Array<{ entities: string[] }>;
+    };
+    expect(graph.files[0]?.entities).toContain("serviceb");
+  });
+
+  test("invalid prior graph node falls back safely to fresh extraction", async () => {
+    writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    extractor = () => ({ entities: ["ServiceA"], relations: [] });
+    await runGraphExtractionPass(configWithLlm(), sources());
+    expect(extractorCallCount).toBe(1);
+
+    const graphPath = getGraphFilePath(tmpStash);
+    const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as {
+      schemaVersion: number;
+      generatedAt: string;
+      stashRoot: string;
+      files: Array<Record<string, unknown>>;
+      entities?: string[];
+      relations?: unknown[];
+    };
+    graph.files[0] = {
+      ...graph.files[0],
+      entities: "not-an-array",
+    };
+    fs.writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    extractor = () => ({ entities: ["ServiceC"], relations: [] });
+    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    expect(second.written).toBe(true);
+    expect(extractorCallCount).toBe(2);
+
+    const repaired = JSON.parse(fs.readFileSync(graphPath, "utf8")) as {
+      files: Array<{ entities: string[] }>;
+    };
+    expect(repaired.files[0]?.entities).toContain("servicec");
   });
 });

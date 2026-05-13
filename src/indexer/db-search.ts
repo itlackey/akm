@@ -308,7 +308,7 @@ async function searchDatabase(
     // missing files internally and returns `null` instead of throwing.
     const primaryDir = allSourceDirs[0];
     if (!primaryDir) return null;
-    return loadGraphBoostContext(primaryDir, query);
+    return loadGraphBoostContext(primaryDir, query, config);
   })();
 
   applyRankingRules({ db, query, items: scored, graphContext });

@@ -10,6 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { AkmConfig } from "../core/config";
+import type { GraphExtractionResult } from "./graph-extraction";
 import type { SearchSource } from "./search-source";
 import type { SemanticSearchReason } from "./semantic-status";
 
@@ -88,4 +89,6 @@ export interface IndexRunContext {
     reason?: SemanticSearchReason;
     message?: string;
   } | null;
+  /** Result from the graph extraction phase. */
+  graphExtractionResult: GraphExtractionResult | null;
 }

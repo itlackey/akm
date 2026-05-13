@@ -27,8 +27,11 @@ describe("v1 spec §14 — llm.features.*", () => {
     }
   });
 
-  test("§14.1 declares all defaults are false", () => {
-    expect(section).toMatch(/defaults are\s*`false`|all defaults are\s*`false`|defaults\s*`false`/i);
+  test("§14.1 declares mixed defaults with memory/graph enabled by default", () => {
+    expect(section).toMatch(/memory_inference.*default.*`true`/is);
+    expect(section).toMatch(/graph_extraction.*default.*`true`/is);
+    expect(section).toMatch(/curate_rerank.*default.*`false`/is);
+    expect(section).toMatch(/feedback_distillation.*default.*`false`/is);
   });
 
   test("§14.2 defines mandatory failure-mode rules", () => {

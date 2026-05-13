@@ -268,14 +268,14 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("sources field includes state.db when includeProposals is true", async () => {
-    const dbFile = path.join(makeTempDir("akm-history-events-"), "events.db");
+    const dbFile = path.join(makeTempDir("akm-history-events-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: dbFile },
+        eventsCtx: { dbPath: dbFile },
       });
       expect(result.sources).toEqual(["usage_events", "state.db"]);
     } finally {
@@ -284,7 +284,7 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("proposal accept event (promoted) appears in history with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-proposal-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-proposal-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -295,13 +295,13 @@ describe("akmHistory --include-proposals", () => {
           ref: "skill:deploy",
           metadata: { proposalId: "prop-001", source: "reflect", assetPath: "/stash/skills/deploy.md" },
         },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(1);
@@ -317,7 +317,7 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("proposal reject event (rejected) appears in history with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-reject-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-reject-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -327,13 +327,13 @@ describe("akmHistory --include-proposals", () => {
           ref: "memory:old-draft",
           metadata: { proposalId: "prop-002", source: "reflect", reason: "outdated" },
         },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(1);
@@ -346,24 +346,24 @@ describe("akmHistory --include-proposals", () => {
     }
   });
 
-  test("non-proposal events in events.jsonl are excluded even with --include-proposals", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-filter-"), "events.jsonl");
+  test("non-proposal events in state.db are excluded even with --include-proposals", async () => {
+    const stateDbPath = path.join(makeTempDir("akm-history-filter-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // These event types should NOT appear in history even with --include-proposals.
-      appendEvent({ eventType: "add", ref: "skill:deploy" }, { filePath: eventsFile });
-      appendEvent({ eventType: "reflect_invoked", ref: "memory:alpha" }, { filePath: eventsFile });
+      appendEvent({ eventType: "add", ref: "skill:deploy" }, { dbPath: stateDbPath });
+      appendEvent({ eventType: "reflect_invoked", ref: "memory:alpha" }, { dbPath: stateDbPath });
       // Only this one should appear.
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p1", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.entries.every((e) => e.eventType === "promoted" || e.eventType === "rejected")).toBe(true);
@@ -375,7 +375,7 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("usage events and proposal events are merged chronologically", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-merge-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-merge-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
@@ -396,7 +396,7 @@ describe("akmHistory --include-proposals", () => {
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p3", source: "reflect" } },
         {
-          filePath: eventsFile,
+          dbPath: stateDbPath,
           now: () => new Date("2026-01-02T09:00:00Z").getTime(),
         },
       );
@@ -404,7 +404,7 @@ describe("akmHistory --include-proposals", () => {
       const result = await akmHistory({
         db,
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       expect(result.totalCount).toBe(3);
@@ -417,25 +417,25 @@ describe("akmHistory --include-proposals", () => {
   });
 
   test("--include-proposals ref filter shows only matching ref events", async () => {
-    const eventsFile = path.join(makeTempDir("akm-history-ref-filter-"), "events.jsonl");
+    const stateDbPath = path.join(makeTempDir("akm-history-ref-filter-"), "state.db");
     const db = openDatabase(":memory:");
     try {
       ensureUsageEventsSchema(db);
       // Two proposal events for different refs.
       appendEvent(
         { eventType: "promoted", ref: "skill:deploy", metadata: { proposalId: "p1", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
       appendEvent(
         { eventType: "rejected", ref: "memory:draft", metadata: { proposalId: "p2", source: "reflect" } },
-        { filePath: eventsFile },
+        { dbPath: stateDbPath },
       );
 
       const result = await akmHistory({
         db,
         ref: "skill:deploy",
         includeProposals: true,
-        eventsCtx: { filePath: eventsFile },
+        eventsCtx: { dbPath: stateDbPath },
       });
 
       // Only the promoted event for skill:deploy should appear.

@@ -436,8 +436,8 @@ introduces on the locked hit type. Both are optional. Renderers in
       "curate_rerank":          false,
       "memory_consolidation":   false,
       "feedback_distillation":  false,
-      "memory_inference":       false,
-      "graph_extraction":       false
+      "memory_inference":       true,
+      "graph_extraction":       true
     }
   },
 
@@ -652,9 +652,11 @@ v1.0 freeze surface and must ship before v1.0 GA.
   block disables agent commands with a clear `ConfigError` (§12).
 - **`Planned for v1`** — `llm.features.*` map with the keys named in §14.
   Locked keys: `curate_rerank`, `memory_consolidation`, `feedback_distillation`,
-  `memory_inference`, `graph_extraction`. All defaults are `false`. Unknown keys
-  warn and are ignored. (`tag_dedup` and `embedding_fallback_score` were removed
-  in 0.7.0 as phantom keys that were never read at any call site.)
+  `memory_inference`, `graph_extraction`. Defaults are mixed: `memory_inference`
+  and `graph_extraction` default to `true`; the rest default to `false`.
+  Unknown keys warn and are ignored. (`tag_dedup` and
+  `embedding_fallback_score` were removed in 0.7.0 as phantom keys that were
+  never read at any call site.)
 
 ### 9.3 Errors and exit codes (shipped)
 
@@ -672,7 +674,7 @@ major. The current and planned set is:
 **Shipped pre-release (live today):**
 `add | remove | list | update | search | show | clone | index | setup |
 remember | import | feedback | registry * | info | curate | workflow * |
-vault * | wiki * | enable | disable | completions | upgrade | save | help |
+vault * | wiki * | graph * | enable | disable | completions | upgrade | save | help |
 hints | config *`.
 
 `akm setup` accepts the following flags:
@@ -1040,8 +1042,9 @@ authored directly with `akm import` or `akm remember`-style flows.
 ## 14. `llm.features.*` (`Planned for v1`)
 
 The in-tree LLM is intentionally bounded. Each call site is gated behind
-exactly one feature flag. All defaults are `false` so that adding the flag
-to the schema is itself a non-event.
+exactly one feature flag. Defaults are mixed by design: `memory_inference`
+and `graph_extraction` default to `true`; other locked keys default to
+`false`.
 
 ### 14.1 Locked feature keys
 
@@ -1102,15 +1105,16 @@ Failure is observable but never blocks unrelated commands.
       "memory_consolidation":   false,
       "feedback_distillation":  false,
       "memory_inference":       true,
-      "graph_extraction":       false
+      "graph_extraction":       true
     }
   }
 }
 ```
 
-All five keys are configurable, default `false`, and must be set to the
-literal boolean `true` to opt in. (`memory_inference` and `graph_extraction`
-were the first two to ship. `memory_consolidation` gates the agent-driven
+All five keys are configurable. `memory_inference` and `graph_extraction`
+default to `true`; the remaining keys default to `false`. Boolean `false`
+always disables a feature. (`memory_inference` and `graph_extraction` were
+the first two to ship. `memory_consolidation` gates the agent-driven
 consolidation pass described in §14.6.)
 Unknown keys under `llm.features` warn and are ignored (§9.2).
 

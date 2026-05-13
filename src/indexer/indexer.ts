@@ -72,6 +72,14 @@ export interface IndexResponse {
   directoriesSkipped: number;
   warnings?: string[];
   verification: IndexVerification;
+  graphQuality?: {
+    consideredFiles: number;
+    extractedFiles: number;
+    entityCount: number;
+    relationCount: number;
+    extractionCoverage: number;
+    density: number;
+  };
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; walkMs: number; llmMs: number; embedMs: number; ftsMs: number };
 }
@@ -118,6 +126,19 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("index interrupted");
   }
+}
+
+function getDefaultLlmConcurrency(llmConfig?: LlmConnectionConfig): number {
+  if (typeof llmConfig?.concurrency === "number") return llmConfig.concurrency;
+  if (!llmConfig?.endpoint) return 1;
+  try {
+    const url = new URL(llmConfig.endpoint);
+    const host = url.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) return 1;
+  } catch {
+    return 1;
+  }
+  return 4;
 }
 
 // ── Phase functions ──────────────────────────────────────────────────────────
@@ -176,7 +197,18 @@ async function runMemoryInferencePhase(ctx: IndexRunContext): Promise<void> {
   }
 
   try {
-    const inferenceResult = await runMemoryInferencePass(config, sources, signal, db, reEnrich);
+    onProgress({ phase: "llm", message: "Starting memory inference..." });
+    const inferenceResult = await runMemoryInferencePass(config, sources, signal, db, reEnrich, (event) => {
+      onProgress({
+        phase: "llm",
+        message:
+          `Memory inference ${event.processed}/${event.total}` +
+          (event.currentRef ? ` ${event.currentRef}` : "") +
+          `; wrote ${event.writtenFacts}, skipped ${event.skippedNoFacts}.`,
+        processed: event.processed,
+        total: event.total,
+      });
+    });
     if (inferenceResult.writtenFacts > 0 || inferenceResult.skippedNoFacts > 0) {
       onProgress({
         phase: "llm",
@@ -213,13 +245,27 @@ async function runGraphExtractionPhase(ctx: IndexRunContext): Promise<void> {
   if (!enrich) return;
 
   try {
-    const graphResult = await runGraphExtractionPass(config, sources, signal, db, reEnrich);
+    onProgress({ phase: "llm", message: "Starting graph extraction..." });
+    const graphResult = await runGraphExtractionPass(config, sources, signal, db, reEnrich, (event) => {
+      onProgress({
+        phase: "llm",
+        message:
+          `Graph extraction ${event.processed}/${event.total}` +
+          (event.currentPath ? ` ${event.currentPath}` : "") +
+          `; extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations}.`,
+        processed: event.processed,
+        total: event.total,
+      });
+    });
     if (graphResult.written) {
       onProgress({
         phase: "llm",
-        message: `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}.`,
+        message:
+          `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}; ` +
+          `coverage ${Math.round(graphResult.quality.extractionCoverage * 100)}%, density ${graphResult.quality.density}.`,
       });
     }
+    ctx.graphExtractionResult = graphResult;
   } catch (err) {
     warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -456,6 +502,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       walkWarnings: [],
       dirsNeedingLlm: [],
       embeddingResult: null,
+      graphExtractionResult: null,
     };
 
     onProgress({
@@ -495,6 +542,7 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       directoriesSkipped: ctx.skippedDirs,
       ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
       verification,
+      ...(ctx.graphExtractionResult ? { graphQuality: ctx.graphExtractionResult.quality } : {}),
       timing: {
         totalMs: Date.now() - timing.t0,
         walkMs: timing.tWalkEnd - timing.tWalkStart,
@@ -1044,10 +1092,26 @@ async function enhanceDirsWithLlm(
   const llmConfig = resolveIndexPassLLM("enrichment", config);
   if (!llmConfig || dirsNeedingLlm.length === 0) return;
 
+  // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
+  // as a single visible warning instead of silently degrading every entry
+  // and leaving the user wondering why nothing got enhanced.
+  const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
+  let completedDirs = 0;
+  let completedEntries = 0;
+  const totalDirs = dirsNeedingLlm.length;
+  const totalEntries = dirsNeedingLlm.reduce((sum, { stash }) => {
+    const entriesToEnhance = stash.entries.filter((e) => {
+      if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+      if (!reEnrich && isEnrichmentComplete(e)) return false;
+      return true;
+    });
+    return sum + entriesToEnhance.length;
+  }, 0);
+
   // P3 — wall-clock budget for the enrichment pass. Defaults to llm.timeoutMs
   // (or 10 minutes if not set). Users can extend this via llm.timeoutMs in
   // config — no separate knob needed.
-  const budgetMs = (llmConfig.timeoutMs ?? 10 * 60 * 1000) * dirsNeedingLlm.length;
+  const budgetMs = (llmConfig.timeoutMs ?? 10 * 60 * 1000) * Math.max(totalEntries, 1);
   const enrichDeadline = AbortSignal.timeout(budgetMs);
   let deadlineHit = false;
   const enrichSignal: AbortSignal = (() => {
@@ -1067,100 +1131,132 @@ async function enhanceDirsWithLlm(
     return controller.signal;
   })();
 
-  // Aggregate per-entry failures so a misconfigured LLM endpoint surfaces
-  // as a single visible warning instead of silently degrading every entry
-  // and leaving the user wondering why nothing got enhanced.
-  const summary: LlmEnhancementSummary = { attempted: 0, succeeded: 0, failureSamples: [] };
-  let completedDirs = 0;
-  let completedEntries = 0;
-  const totalDirs = dirsNeedingLlm.length;
-  const totalEntries = dirsNeedingLlm.reduce((sum, { stash }) => {
-    const entriesToEnhance = stash.entries.filter((e) => {
-      if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
-      if (!reEnrich && isEnrichmentComplete(e)) return false;
-      return true;
-    });
-    return sum + entriesToEnhance.length;
-  }, 0);
-
   if (totalEntries > 0) {
     onProgress?.({
       phase: "llm",
       message:
         `LLM enhancement starting for ${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} ` +
-        `across ${totalDirs} director${totalDirs === 1 ? "y" : "ies"}.`,
+        `across ${totalDirs} director${totalDirs === 1 ? "y" : "ies"} (concurrency ${getDefaultLlmConcurrency(llmConfig)}).`,
       processed: 0,
       total: totalEntries,
     });
   }
 
-  await concurrentMap(
-    dirsNeedingLlm,
-    async ({ dirPath, files, currentStashDir, stash: originalStash }) => {
-      if (enrichSignal.aborted) return undefined;
-      // Only enhance generated entries (or all when reEnrich=true);
-      // user-provided overrides should not be overwritten.
-      // Skip entries that are already fully enriched (description + tags + searchHints)
-      // unless the caller explicitly requests re-enrichment via reEnrich=true.
-      const entriesToEnhance = originalStash.entries.filter((e) => {
-        if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
-        if (!reEnrich && isEnrichmentComplete(e)) {
-          warnVerbose(`[akm] skipping LLM enrichment for "${e.name}" — entry already complete`);
-          return false;
-        }
-        return true;
-      });
-      if (entriesToEnhance.length === 0) return undefined;
-      onProgress?.({
+  let currentDirLabel: string | undefined;
+  let lastProgressAt = Date.now();
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  if (totalEntries > 0 && onProgress) {
+    heartbeatTimer = setInterval(() => {
+      if (Date.now() - lastProgressAt < 15000) return;
+      onProgress({
         phase: "llm",
         message:
-          `Enhancing ${path.relative(currentStashDir, dirPath) || "."} ` +
-          `(${entriesToEnhance.length} entr${entriesToEnhance.length === 1 ? "y" : "ies"}).`,
+          `Still enriching ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"}` +
+          (currentDirLabel ? `; waiting on ${currentDirLabel}` : "") +
+          ".",
         processed: completedEntries,
         total: totalEntries,
       });
-      const targetStash: StashFile = { entries: entriesToEnhance };
-      const entryKeys = entriesToEnhance.map((e) => `${currentStashDir}:${e.type}:${e.name}`);
-      const enhanced = await enhanceStashWithLlm(
-        llmConfig,
-        targetStash,
-        files,
-        summary,
-        enrichSignal,
-        db,
-        entryKeys,
-        reEnrich,
-        config,
-      );
+      lastProgressAt = Date.now();
+    }, 15000);
+  }
 
-      // Re-upsert the enhanced entries in a single transaction so a crash
-      // cannot leave half the entries updated and the rest stale.
-      db.transaction(() => {
-        for (const entry of enhanced.entries) {
-          const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
-          const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
-          const searchText = buildSearchText(entry);
-          upsertEntry(db, entryKey, dirPath, entryPath, currentStashDir, attachFileSize(entry, entryPath), searchText);
-        }
-      })();
-      completedDirs++;
-      completedEntries += entriesToEnhance.length;
-      onProgress?.({
-        phase: "llm",
-        message:
-          `Enhanced ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} ` +
-          `across ${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"}.`,
-        processed: completedEntries,
-        total: totalEntries,
-      });
-      return undefined;
-    },
-    // Default concurrency of 4 works well for cloud LLM APIs. Local model
-    // servers (LM Studio, Ollama) run one inference at a time — set
-    // `llm.concurrency: 1` in config.json to avoid "Model reloaded" / 500
-    // errors from concurrent request overload.
-    config.llm?.concurrency ?? 4,
-  );
+  try {
+    await concurrentMap(
+      dirsNeedingLlm,
+      async ({ dirPath, files, currentStashDir, stash: originalStash }) => {
+        if (enrichSignal.aborted) return undefined;
+        // Only enhance generated entries (or all when reEnrich=true);
+        // user-provided overrides should not be overwritten.
+        // Skip entries that are already fully enriched (description + tags + searchHints)
+        // unless the caller explicitly requests re-enrichment via reEnrich=true.
+        const entriesToEnhance = originalStash.entries.filter((e) => {
+          if (e.quality !== "generated" && !(reEnrich && e.quality === "enriched")) return false;
+          if (!reEnrich && isEnrichmentComplete(e)) {
+            warnVerbose(`[akm] skipping LLM enrichment for "${e.name}" — entry already complete`);
+            return false;
+          }
+          return true;
+        });
+        if (entriesToEnhance.length === 0) return undefined;
+        currentDirLabel = path.relative(currentStashDir, dirPath) || ".";
+        onProgress?.({
+          phase: "llm",
+          message:
+            `Enhancing ${currentDirLabel} ` +
+            `(${entriesToEnhance.length} entr${entriesToEnhance.length === 1 ? "y" : "ies"}).`,
+          processed: completedEntries,
+          total: totalEntries,
+        });
+        lastProgressAt = Date.now();
+        const targetStash: StashFile = { entries: entriesToEnhance };
+        const entryKeys = entriesToEnhance.map((e) => `${currentStashDir}:${e.type}:${e.name}`);
+        const enhanced = await enhanceStashWithLlm(
+          llmConfig,
+          targetStash,
+          files,
+          summary,
+          enrichSignal,
+          db,
+          entryKeys,
+          reEnrich,
+          config,
+          (event) => {
+            completedEntries++;
+            lastProgressAt = Date.now();
+            onProgress?.({
+              phase: "llm",
+              message:
+                `Enhanced ${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"}; ` +
+                `${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"} complete` +
+                (event.entryName ? `; current ${event.entryName}` : "") +
+                (currentDirLabel ? ` in ${currentDirLabel}` : "") +
+                (event.outcome === "cache-hit" ? " (cache hit)" : ""),
+              processed: completedEntries,
+              total: totalEntries,
+            });
+          },
+        );
+
+        // Re-upsert the enhanced entries in a single transaction so a crash
+        // cannot leave half the entries updated and the rest stale.
+        db.transaction(() => {
+          for (const entry of enhanced.entries) {
+            const entryPath = entry.filename ? path.join(dirPath, entry.filename) : files[0] || dirPath;
+            const entryKey = `${currentStashDir}:${entry.type}:${entry.name}`;
+            const searchText = buildSearchText(entry);
+            upsertEntry(
+              db,
+              entryKey,
+              dirPath,
+              entryPath,
+              currentStashDir,
+              attachFileSize(entry, entryPath),
+              searchText,
+            );
+          }
+        })();
+        completedDirs++;
+        lastProgressAt = Date.now();
+        onProgress?.({
+          phase: "llm",
+          message:
+            `Completed ${completedDirs}/${totalDirs} director${totalDirs === 1 ? "y" : "ies"}; ` +
+            `${completedEntries}/${totalEntries} entr${totalEntries === 1 ? "y" : "ies"} processed.`,
+          processed: completedEntries,
+          total: totalEntries,
+        });
+        return undefined;
+      },
+      // Default concurrency of 4 works well for cloud LLM APIs. Local model
+      // servers (LM Studio, Ollama) run one inference at a time — set
+      // `llm.concurrency: 1` in config.json to avoid "Model reloaded" / 500
+      // errors from concurrent request overload.
+      getDefaultLlmConcurrency(llmConfig),
+    );
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+  }
 
   if (deadlineHit) {
     warn(
@@ -1434,6 +1530,7 @@ async function enhanceStashWithLlm(
   entryKeys?: string[],
   reEnrich?: boolean,
   akmConfig?: AkmConfig,
+  onEntryDone?: (event: { entryName: string; outcome: "cache-hit" | "llm" | "failed" }) => void,
 ): Promise<StashFile> {
   const { enhanceMetadata } = await import("../llm/metadata-enhance");
   const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } = await import("./db.js");
@@ -1478,6 +1575,7 @@ async function enhanceStashWithLlm(
               if (parsed.tags?.length) updated.tags = parsed.tags;
               updated.quality = "enriched";
               summary.succeeded++;
+              onEntryDone?.({ entryName: entry.name, outcome: "cache-hit" });
               return updated;
             } catch {
               warn(`LLM enrichment cache entry corrupt for ${entry.name}; re-running enrichment`);
@@ -1509,6 +1607,7 @@ async function enhanceStashWithLlm(
         }
 
         summary.succeeded++;
+        onEntryDone?.({ entryName: entry.name, outcome: "llm" });
         return updated;
       } catch (err) {
         const msg = toErrorMessage(err);
@@ -1517,12 +1616,13 @@ async function enhanceStashWithLlm(
         if (summary.failureSamples.length < 3 && !summary.failureSamples.includes(msg)) {
           summary.failureSamples.push(msg);
         }
+        onEntryDone?.({ entryName: entry.name, outcome: "failed" });
         return entry;
       }
     },
     // Default concurrency of 4 works well for cloud LLM APIs. Set
     // `llm.concurrency: 1` in config.json for local model servers.
-    llmConfig.concurrency ?? 4,
+    getDefaultLlmConcurrency(llmConfig),
   );
 
   // concurrentMap returns Array<T | undefined>; filter out undefined slots

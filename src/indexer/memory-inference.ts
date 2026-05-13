@@ -101,6 +101,13 @@ export async function runMemoryInferencePass(
   signal?: AbortSignal,
   db?: Database,
   reEnrich?: boolean,
+  onProgress?: (event: {
+    processed: number;
+    total: number;
+    writtenFacts: number;
+    skippedNoFacts: number;
+    currentRef?: string;
+  }) => void,
 ): Promise<MemoryInferenceResult> {
   const result: MemoryInferenceResult = {
     considered: 0,
@@ -127,6 +134,10 @@ export async function runMemoryInferencePass(
   const pending = collectPendingMemories(primary.path);
   result.considered = pending.length;
   if (pending.length === 0) return result;
+
+  let processed = 0;
+  const total = pending.length;
+  onProgress?.({ processed, total, writtenFacts: 0, skippedNoFacts: 0 });
 
   const perRecordResults = await concurrentMap(
     pending,
@@ -159,7 +170,7 @@ export async function runMemoryInferencePass(
             reEnrich ?? false,
             () =>
               compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
-                console.warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
+                warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
               }),
             validate,
           )
@@ -179,10 +190,11 @@ export async function runMemoryInferencePass(
     },
     // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
     // in config.json for local model servers (LM Studio, Ollama).
-    config.llm?.concurrency ?? 4,
+    llmConfig.concurrency ?? 1,
   );
 
-  for (const res of perRecordResults) {
+  for (let i = 0; i < perRecordResults.length; i++) {
+    const res = perRecordResults[i];
     if (!res) continue;
     if (res.skipped) {
       result.skippedNoFacts += 1;
@@ -192,6 +204,14 @@ export async function runMemoryInferencePass(
       result.splitParents += 1;
       result.writtenFacts += res.written;
     }
+    processed++;
+    onProgress?.({
+      processed,
+      total,
+      writtenFacts: result.writtenFacts,
+      skippedNoFacts: result.skippedNoFacts,
+      currentRef: pending[i]?.ref,
+    });
   }
 
   return result;

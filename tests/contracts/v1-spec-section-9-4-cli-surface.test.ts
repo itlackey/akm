@@ -25,6 +25,7 @@ const SHIPPED_COMMANDS = [
   "workflow",
   "vault",
   "wiki",
+  "graph",
   "enable",
   "disable",
   "completions",

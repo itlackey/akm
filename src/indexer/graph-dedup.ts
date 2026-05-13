@@ -10,6 +10,20 @@ import type { GraphExtraction, GraphRelation } from "../llm/graph-extract";
 
 export type { GraphExtraction, GraphRelation };
 
+function normalizeRelationType(raw: string | undefined): string {
+  const normalized = raw?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
+  if (!normalized) return "";
+  if (normalized === "use" || normalized === "utilizes") return "uses";
+  if (normalized === "depend on" || normalized === "depends") return "depends on";
+  if (normalized === "integrates" || normalized === "integration with") return "integrates with";
+  return normalized;
+}
+
+function normalizeConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.max(0, Math.min(1, raw));
+}
+
 /**
  * Merge and deduplicate entities and relations from multiple per-asset
  * GraphExtraction results into one canonical graph.
@@ -45,6 +59,7 @@ export function deduplicateGraph(
   const entities: string[] = Array.from(entityCanonical.values());
   const entityNormSet = new Set(entityCanonical.keys());
   const relSeenKey = new Map<string, string[]>();
+  const relationIndexByKey = new Map<string, number>();
   const relations: GraphRelation[] = [];
 
   for (let i = 0; i < extractions.length; i++) {
@@ -52,7 +67,7 @@ export function deduplicateGraph(
     for (const rel of extractions[i].relations) {
       const fromNorm = rel.from.trim().toLowerCase();
       const toNorm = rel.to.trim().toLowerCase();
-      const typeNorm = rel.type?.trim().toLowerCase() ?? "";
+      const typeNorm = normalizeRelationType(rel.type);
       if (!entityNormSet.has(fromNorm) || !entityNormSet.has(toNorm)) continue;
       const key = `${fromNorm}\0${toNorm}\0${typeNorm}`;
       if (!relSeenKey.has(key)) {
@@ -61,11 +76,20 @@ export function deduplicateGraph(
           from: entityCanonical.get(fromNorm) ?? rel.from,
           to: entityCanonical.get(toNorm) ?? rel.to,
         };
-        if (rel.type?.trim()) canonical.type = rel.type.trim();
+        if (typeNorm) canonical.type = typeNorm;
+        const confidence = normalizeConfidence(rel.confidence);
+        if (confidence !== undefined) canonical.confidence = confidence;
+        relationIndexByKey.set(key, relations.length);
         relations.push(canonical);
       } else {
         const srcs = relSeenKey.get(key);
         if (srcs && !srcs.includes(ref)) srcs.push(ref);
+        const idx = relationIndexByKey.get(key);
+        const nextConfidence = normalizeConfidence(rel.confidence);
+        if (idx !== undefined && nextConfidence !== undefined) {
+          const current = normalizeConfidence(relations[idx]?.confidence) ?? 0;
+          if (nextConfidence > current && relations[idx]) relations[idx].confidence = nextConfidence;
+        }
       }
     }
   }

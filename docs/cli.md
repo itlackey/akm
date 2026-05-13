@@ -177,6 +177,39 @@ Returns a JSON object with:
 
 Use `akm info` to verify that semantic search is working after setup.
 
+### graph
+
+Inspect and export the stash-local graph artifact at `<stashRoot>/.akm/graph.json`.
+
+```sh
+akm graph                            # Alias for `akm graph summary`
+akm graph summary
+akm graph entities --limit 25
+akm graph relations --limit 25
+akm graph export --out ./graph.json
+akm graph export --out ./graph.jsonl --format jsonl
+```
+
+Subcommands:
+
+| Subcommand | Description |
+| --- | --- |
+| `summary` | Show graph counts and optional quality telemetry (`consideredFiles`, `extractedFiles`, `extractionCoverage`, `density`) |
+| `entities` | List deduplicated entities with per-file occurrence counts |
+| `relations` | List deduplicated relations with occurrence counts |
+| `export` | Write the graph to disk as `json` or `jsonl` |
+
+Common flags:
+
+| Flag | Description |
+| --- | --- |
+| `--source <name\|path>` | Select which configured source stash to inspect (defaults to primary source) |
+| `--limit <n>` | Cap rows returned by `entities` / `relations` |
+| `--out <path>` | Required for `export`; output file path |
+| `--format json\|jsonl` | Export format for `export` (default `json`) |
+
+If no graph artifact exists yet, run `akm index --enrich` first.
+
 ### search
 
 Search stash assets, registry stashes, or both.

@@ -57,6 +57,11 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     // everything for downstream automation.
     case "distill":
       return shapeDistillOutput(result as Record<string, unknown>, detail);
+    case "graph-summary":
+    case "graph-entities":
+    case "graph-relations":
+    case "graph-export":
+      return result;
     // Identity-passthrough commands — registered here so the registry stays
     // exhaustive (v1 spec §9). Each result object is already shaped at the
     // command boundary; the registry just confirms there's no surprise

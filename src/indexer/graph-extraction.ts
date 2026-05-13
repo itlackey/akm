@@ -35,6 +35,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { TYPE_DIRS } from "../core/asset-spec";
 import { writeFileAtomic } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
@@ -65,10 +66,14 @@ export interface GraphFileNode {
   path: string;
   /** Asset type (`memory` or `knowledge`). */
   type: string;
+  /** SHA-256 hash of the parsed markdown body used for staleness checks. */
+  bodyHash?: string;
   /** Entities surfaced by the LLM for this file. Lower-cased before matching. */
   entities: string[];
   /** Relations the LLM surfaced from this file's body. */
   relations: GraphRelation[];
+  /** Optional extraction confidence score in [0,1]. */
+  confidence?: number;
 }
 
 /** On-disk shape of `graph.json`. */
@@ -84,6 +89,23 @@ export interface GraphFile {
   entities?: string[];
   /** Deduplicated relation list across all files (schema v2+). Dangling relations excluded. */
   relations?: GraphRelation[];
+  /** Graph quality telemetry emitted by the extraction pass. */
+  quality?: GraphQualityTelemetry;
+}
+
+export interface GraphQualityTelemetry {
+  /** Eligible files considered by extraction. */
+  consideredFiles: number;
+  /** Files with at least one extracted entity. */
+  extractedFiles: number;
+  /** Unique deduplicated entity count in the graph. */
+  entityCount: number;
+  /** Unique deduplicated relation count in the graph. */
+  relationCount: number;
+  /** Fraction of eligible files that produced at least one entity. */
+  extractionCoverage: number;
+  /** Undirected graph density over unique entities/relations. */
+  density: number;
 }
 
 /** Telemetry — useful for tests and progress events. */
@@ -98,7 +120,18 @@ export interface GraphExtractionResult {
   totalRelations: number;
   /** Whether `graph.json` was written this run. False when the pass is a no-op. */
   written: boolean;
+  /** Graph quality telemetry computed from the extracted artifact. */
+  quality: GraphQualityTelemetry;
 }
+
+const EMPTY_QUALITY: GraphQualityTelemetry = {
+  consideredFiles: 0,
+  extractedFiles: 0,
+  entityCount: 0,
+  relationCount: 0,
+  extractionCoverage: 0,
+  density: 0,
+};
 
 const EMPTY_RESULT: GraphExtractionResult = {
   considered: 0,
@@ -106,7 +139,171 @@ const EMPTY_RESULT: GraphExtractionResult = {
   totalEntities: 0,
   totalRelations: 0,
   written: false,
+  quality: { ...EMPTY_QUALITY },
 };
+
+function roundMetric(value: number): number {
+  return Number(value.toFixed(4));
+}
+
+function computeGraphQualityTelemetry(
+  consideredFiles: number,
+  extractedFiles: number,
+  entityCount: number,
+  relationCount: number,
+): GraphQualityTelemetry {
+  const extractionCoverage = consideredFiles > 0 ? extractedFiles / consideredFiles : 0;
+  const maxEdges = entityCount > 1 ? (entityCount * (entityCount - 1)) / 2 : 0;
+  const density = maxEdges > 0 ? relationCount / maxEdges : 0;
+  return {
+    consideredFiles,
+    extractedFiles,
+    entityCount,
+    relationCount,
+    extractionCoverage: roundMetric(extractionCoverage),
+    density: roundMetric(density),
+  };
+}
+
+export const DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES = ["memory", "knowledge"] as const;
+
+const SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES = new Set([
+  "memory",
+  "knowledge",
+  "skill",
+  "command",
+  "agent",
+  "workflow",
+  "lesson",
+  "task",
+  "wiki",
+]);
+
+type GraphCacheShape = {
+  entities: string[];
+  relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  confidence?: number;
+};
+
+type ExtractionRecord =
+  | {
+      absPath: string;
+      type: string;
+      bodyHash: string;
+      entities: string[];
+      relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+      confidence?: number;
+    }
+  | undefined;
+
+function normalizeConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.max(0, Math.min(1, raw));
+}
+
+export function getGraphExtractionIncludeTypes(config: AkmConfig): string[] {
+  const configured = config.index?.graph?.graphExtractionIncludeTypes;
+  if (!configured || configured.length === 0) return [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const rawType of configured) {
+    const type = rawType.trim().toLowerCase();
+    if (!type || seen.has(type)) continue;
+    if (!SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES.has(type)) continue;
+    seen.add(type);
+    out.push(type);
+  }
+
+  return out.length > 0 ? out : [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES];
+}
+
+function validateGraphCacheShape(raw: unknown): GraphCacheShape | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.entities) || !obj.entities.every((e) => typeof e === "string")) return undefined;
+  if (
+    obj.relations !== undefined &&
+    (!Array.isArray(obj.relations) ||
+      !obj.relations.every((r) => {
+        if (!r || typeof r !== "object") return false;
+        const rel = r as Record<string, unknown>;
+        if (typeof rel.from !== "string" || typeof rel.to !== "string") return false;
+        if (rel.type !== undefined && typeof rel.type !== "string") return false;
+        if (rel.confidence !== undefined && (typeof rel.confidence !== "number" || !Number.isFinite(rel.confidence))) {
+          return false;
+        }
+        return true;
+      }))
+  ) {
+    return undefined;
+  }
+  return {
+    entities: obj.entities as string[],
+    relations: Array.isArray(obj.relations) ? (obj.relations as GraphCacheShape["relations"]) : [],
+    confidence: normalizeConfidence(obj.confidence),
+  };
+}
+
+function loadPreviousGraphNodes(stashRoot: string): Map<string, GraphFileNode> {
+  const target = getGraphFilePath(stashRoot);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(target, "utf8");
+  } catch {
+    return new Map();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return new Map();
+  }
+  if (!parsed || typeof parsed !== "object") return new Map();
+  const files = (parsed as Record<string, unknown>).files;
+  if (!Array.isArray(files)) return new Map();
+
+  const out = new Map<string, GraphFileNode>();
+  for (const f of files) {
+    if (!f || typeof f !== "object") continue;
+    const node = f as Record<string, unknown>;
+    if (typeof node.path !== "string") continue;
+    if (typeof node.type !== "string") continue;
+    const cacheShape = validateGraphCacheShape({
+      entities: node.entities,
+      relations: node.relations,
+    });
+    if (!cacheShape) continue;
+    out.set(node.path, {
+      path: node.path,
+      type: node.type,
+      bodyHash: typeof node.bodyHash === "string" ? node.bodyHash : undefined,
+      entities: cacheShape.entities,
+      relations: cacheShape.relations,
+      confidence: normalizeConfidence(node.confidence),
+    });
+  }
+  return out;
+}
+
+function reuseGraphNode(
+  previousNodes: Map<string, GraphFileNode>,
+  candidate: { absPath: string; type: string },
+  bodyHash: string,
+): GraphCacheShape | undefined {
+  const node = previousNodes.get(candidate.absPath);
+  if (!node) return undefined;
+  if (node.type !== candidate.type) return undefined;
+  if (typeof node.bodyHash !== "string" || node.bodyHash.length === 0) return undefined;
+  if (node.bodyHash !== bodyHash) return undefined;
+  const validated = validateGraphCacheShape({ entities: node.entities, relations: node.relations });
+  if (!validated) return undefined;
+  return {
+    entities: validated.entities,
+    relations: validated.relations,
+    confidence: normalizeConfidence(node.confidence),
+  };
+}
 
 /**
  * Top-level entry point. Returns a no-op result when the pass is disabled.
@@ -137,6 +334,14 @@ export async function runGraphExtractionPass(
   signal?: AbortSignal,
   db?: Database,
   reEnrich?: boolean,
+  onProgress?: (event: {
+    processed: number;
+    total: number;
+    extracted: number;
+    totalEntities: number;
+    totalRelations: number;
+    currentPath?: string;
+  }) => void,
 ): Promise<GraphExtractionResult> {
   // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
   // explicit `false` disables the pass entirely.
@@ -153,13 +358,18 @@ export async function runGraphExtractionPass(
   const primary = sources[0];
   if (!primary) return { ...EMPTY_RESULT };
 
-  const eligible = collectEligibleFiles(primary.path);
+  const eligible = collectEligibleFiles(primary.path, getGraphExtractionIncludeTypes(config));
   const considered = eligible.length;
   if (considered === 0) return { ...EMPTY_RESULT };
+
+  const previousNodes = loadPreviousGraphNodes(primary.path);
 
   const nodes: GraphFileNode[] = [];
   let totalEntities = 0;
   let totalRelations = 0;
+  let processed = 0;
+  let extracted = 0;
+  onProgress?.({ processed, total: considered, extracted, totalEntities, totalRelations });
 
   // Read the configured batch size. Default of 1 preserves the existing
   // per-asset behaviour and is fully opt-in.
@@ -169,15 +379,6 @@ export async function runGraphExtractionPass(
     warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
   };
 
-  type ExtractionRecord =
-    | {
-        absPath: string;
-        type: string;
-        entities: string[];
-        relations: Array<{ from: string; to: string; type?: string }>;
-      }
-    | undefined;
-
   let extractionResults: Array<ExtractionRecord | undefined>;
 
   if (batchSize <= 1) {
@@ -186,52 +387,58 @@ export async function runGraphExtractionPass(
       eligible,
       async (candidate) => {
         if (signal?.aborted) return undefined;
+        const bodyHash = computeBodyHash(candidate.body);
 
-        type GraphCacheShape = {
-          entities: string[];
-          relations: Array<{ from: string; to: string; type?: string }>;
-        };
+        let cached: GraphCacheShape | undefined;
+        if (db) {
+          // withLlmCache handles hash computation, cache lookup, LLM call, and cache write.
+          // When cache misses and this run is not forced, attempt graph-node reuse before LLM.
+          cached = await withLlmCache<GraphCacheShape>(
+            db,
+            candidate.absPath,
+            candidate.body,
+            reEnrich ?? false,
+            async () => {
+              if (!(reEnrich ?? false)) {
+                const reused = reuseGraphNode(previousNodes, candidate, bodyHash);
+                if (reused) return reused;
+              }
+              const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+              // Cache empty results too so we skip on next run.
+              return {
+                entities: extraction.entities,
+                relations: extraction.relations,
+                ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
+              };
+            },
+            validateGraphCacheShape,
+          );
+        } else if (!(reEnrich ?? false)) {
+          cached = reuseGraphNode(previousNodes, candidate, bodyHash);
+        }
 
-        const validate = (raw: unknown): GraphCacheShape | undefined => {
-          if (!raw || typeof raw !== "object") return undefined;
-          const obj = raw as Record<string, unknown>;
-          const entities = Array.isArray(obj.entities) ? (obj.entities as string[]) : [];
-          if (entities.length === 0) return undefined;
-          return {
-            entities,
-            relations: Array.isArray(obj.relations)
-              ? (obj.relations as Array<{ from: string; to: string; type?: string }>)
-              : [],
+        if (!cached) {
+          const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+          cached = {
+            entities: extraction.entities,
+            relations: extraction.relations,
+            ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
           };
-        };
-
-        // withLlmCache handles hash computation, cache lookup, LLM call, and cache write.
-        // When db is undefined we skip caching by passing reEnrich=true.
-        const cached = await withLlmCache<GraphCacheShape>(
-          // biome-ignore lint/style/noNonNullAssertion: guarded below
-          db!,
-          candidate.absPath,
-          candidate.body,
-          !db || (reEnrich ?? false),
-          async () => {
-            const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
-            // Cache empty results too so we skip on next run.
-            return { entities: extraction.entities, relations: extraction.relations };
-          },
-          validate,
-        );
+        }
 
         if (!cached || cached.entities.length === 0) return undefined;
         return {
           absPath: candidate.absPath,
           type: candidate.type,
+          bodyHash,
           entities: cached.entities,
           relations: cached.relations,
+          ...(cached.confidence !== undefined ? { confidence: cached.confidence } : {}),
         };
       },
       // Default concurrency of 4 for cloud APIs. Set `llm.concurrency: 1`
       // in config.json for local model servers (LM Studio, Ollama).
-      config.llm?.concurrency ?? 4,
+      llmConfig.concurrency ?? 1,
     );
   } else {
     // ── Batched path (with incremental cache) ────────────────────────────
@@ -251,18 +458,18 @@ export async function runGraphExtractionPass(
         const cached = getLlmCacheEntry(db, c.absPath, bodyHashes[j] ?? "");
         if (!cached) return true;
         try {
-          const parsed = JSON.parse(cached.resultJson) as {
-            entities?: string[];
-            relations?: Array<{ from: string; to: string; type?: string }>;
-          };
-          const entities = Array.isArray(parsed.entities) ? parsed.entities : [];
+          const parsed = validateGraphCacheShape(JSON.parse(cached.resultJson));
+          if (!parsed) return true;
+          const entities = parsed.entities;
           rawResults[start + j] =
             entities.length > 0
               ? {
                   absPath: c.absPath,
                   type: c.type,
+                  bodyHash: bodyHashes[j] ?? "",
                   entities,
-                  relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+                  relations: parsed.relations,
+                  ...(parsed.confidence !== undefined ? { confidence: parsed.confidence } : {}),
                 }
               : undefined;
           return false; // cache hit
@@ -271,8 +478,46 @@ export async function runGraphExtractionPass(
         }
       });
 
+      // Secondary incremental path: reuse previous graph nodes when the body hash
+      // still matches and DB cache is missing/stale/unavailable.
+      if (!(reEnrich ?? false)) {
+        for (let j = 0; j < chunk.length; j++) {
+          if (!needsLlm[j]) continue;
+          const candidate = chunk[j];
+          if (!candidate) continue;
+          const reused = reuseGraphNode(previousNodes, candidate, bodyHashes[j] ?? "");
+          if (!reused) continue;
+          rawResults[start + j] =
+            reused.entities.length > 0
+              ? {
+                  absPath: candidate.absPath,
+                  type: candidate.type,
+                  bodyHash: bodyHashes[j] ?? "",
+                  entities: reused.entities,
+                  relations: reused.relations,
+                  ...(reused.confidence !== undefined ? { confidence: reused.confidence } : {}),
+                }
+              : undefined;
+          if (db) {
+            upsertLlmCacheEntry(db, candidate.absPath, bodyHashes[j] ?? "", JSON.stringify(reused));
+          }
+          needsLlm[j] = false;
+        }
+      }
+
       const uncachedChunk = chunk.filter((_, j) => needsLlm[j]);
-      if (uncachedChunk.length === 0) continue;
+      if (uncachedChunk.length === 0) {
+        processed += chunk.length;
+        onProgress?.({
+          processed,
+          total: considered,
+          extracted,
+          totalEntities,
+          totalRelations,
+          currentPath: chunk.at(-1)?.absPath,
+        });
+        continue;
+      }
 
       const bodies = uncachedChunk.map((c) => c.body);
 
@@ -294,7 +539,11 @@ export async function runGraphExtractionPass(
             db,
             candidate.absPath,
             bodyHashes[j] ?? "",
-            JSON.stringify({ entities: extraction.entities, relations: extraction.relations }),
+            JSON.stringify({
+              entities: extraction.entities,
+              relations: extraction.relations,
+              ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
+            }),
           );
         }
 
@@ -304,10 +553,26 @@ export async function runGraphExtractionPass(
           rawResults[start + j] = {
             absPath: candidate.absPath,
             type: candidate.type,
+            bodyHash: bodyHashes[j] ?? "",
             entities: extraction.entities,
             relations: extraction.relations,
+            ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
           };
         }
+        processed++;
+        if (extraction.entities.length > 0) {
+          extracted++;
+          totalEntities += extraction.entities.length;
+          totalRelations += extraction.relations.length;
+        }
+        onProgress?.({
+          processed,
+          total: considered,
+          extracted,
+          totalEntities,
+          totalRelations,
+          currentPath: candidate.absPath,
+        });
       }
     }
 
@@ -319,6 +584,7 @@ export async function runGraphExtractionPass(
     nodes.push({
       path: result.absPath,
       type: result.type,
+      bodyHash: result.bodyHash,
       // Lower-case once at write time so the search-time boost can do a
       // single case-folded comparison without re-canonicalising on every
       // query.
@@ -327,10 +593,36 @@ export async function runGraphExtractionPass(
         from: r.from.toLowerCase(),
         to: r.to.toLowerCase(),
         ...(r.type ? { type: r.type.toLowerCase() } : {}),
+        ...(normalizeConfidence(r.confidence) !== undefined ? { confidence: normalizeConfidence(r.confidence) } : {}),
       })),
+      ...(normalizeConfidence(result.confidence) !== undefined
+        ? { confidence: normalizeConfidence(result.confidence) }
+        : {}),
     });
-    totalEntities += result.entities.length;
-    totalRelations += result.relations.length;
+  }
+
+  if (batchSize <= 1) {
+    processed = 0;
+    extracted = 0;
+    totalEntities = 0;
+    totalRelations = 0;
+    for (let i = 0; i < extractionResults.length; i++) {
+      const result = extractionResults[i];
+      processed++;
+      if (result) {
+        extracted++;
+        totalEntities += result.entities.length;
+        totalRelations += result.relations.length;
+      }
+      onProgress?.({
+        processed,
+        total: considered,
+        extracted,
+        totalEntities,
+        totalRelations,
+        currentPath: eligible[i]?.absPath,
+      });
+    }
   }
 
   const assetRefs = extractionResults.filter((r): r is NonNullable<typeof r> => Boolean(r)).map((r) => r.absPath);
@@ -349,8 +641,16 @@ export async function runGraphExtractionPass(
       totalEntities: 0,
       totalRelations: 0,
       written: false,
+      quality: computeGraphQualityTelemetry(considered, 0, 0, 0),
     };
   }
+
+  const quality = computeGraphQualityTelemetry(
+    considered,
+    nodes.length,
+    deduped.entities.length,
+    deduped.relations.length,
+  );
 
   const graph: GraphFile = {
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
@@ -359,6 +659,7 @@ export async function runGraphExtractionPass(
     files: nodes,
     entities: deduped.entities,
     relations: deduped.relations,
+    quality,
   };
 
   const written = writeGraphFile(primary.path, graph);
@@ -369,6 +670,7 @@ export async function runGraphExtractionPass(
     totalEntities,
     totalRelations,
     written,
+    quality,
   };
 }
 
@@ -376,7 +678,7 @@ export async function runGraphExtractionPass(
 
 interface EligibleFile {
   absPath: string;
-  type: "memory" | "knowledge";
+  type: string;
   body: string;
 }
 
@@ -391,10 +693,17 @@ interface EligibleFile {
  *
  * Exported for direct unit testing.
  */
-export function collectEligibleFiles(stashRoot: string): EligibleFile[] {
+export function collectEligibleFiles(
+  stashRoot: string,
+  includeTypes: string[] = [...DEFAULT_GRAPH_EXTRACTION_INCLUDE_TYPES],
+): EligibleFile[] {
   const out: EligibleFile[] = [];
-  for (const type of ["memory", "knowledge"] as const) {
-    const dir = path.join(stashRoot, `${type === "memory" ? "memories" : "knowledge"}`);
+  for (const rawType of includeTypes) {
+    const type = rawType.trim().toLowerCase();
+    if (!SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES.has(type)) continue;
+    const stashDir = TYPE_DIRS[type];
+    if (!stashDir) continue;
+    const dir = path.join(stashRoot, stashDir);
     if (!fs.existsSync(dir)) continue;
     for (const filePath of walkMarkdownFiles(dir)) {
       let raw: string;

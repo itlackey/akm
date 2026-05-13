@@ -61,6 +61,14 @@ directory. Project config files are meant to be edited directly in the project.
 | `security.installAudit.blockOnCritical` | boolean | `true` | Block installs when critical findings are detected |
 | `security.installAudit.registryAllowlist` | array | `[]` | Allowed registry names or hosts when allowlisting is enabled |
 | `security.installAudit.blockUnlistedRegistries` | boolean | `false` | Reject installs from registries not in the allowlist |
+| `search.minScore` | number | `0.2` | Minimum score floor for semantic-only hits |
+| `search.graphBoost.directBoostPerEntity` | number | `0.25` | Additive direct-match graph boost per matched entity |
+| `search.graphBoost.directBoostCap` | number | `0.75` | Maximum direct-match additive graph boost per hit |
+| `search.graphBoost.hopBoostPerEntity` | number | `0.1` | Additive connected-entity graph boost per matched entity |
+| `search.graphBoost.hopBoostCap` | number | `0.3` | Maximum connected-entity additive graph boost per hit |
+| `search.graphBoost.maxHops` | integer | `1` | Max graph traversal depth (hard cap `3`) |
+| `search.graphBoost.confidenceMode` | `"off"` \| `"blend"` \| `"multiply"` | `"blend"` | How extraction confidence values affect graph boosts |
+| `search.graphBoost.confidenceWeight` | number | `0.2` | Blend strength in `[0,1]` when `confidenceMode` is `"blend"` |
 
 > **Legacy `stashes` key removed:** `sources` was previously named `stashes`.
 > The one-cycle compat shim is gone — configs that still use `stashes[]` will
@@ -594,6 +602,32 @@ LLM is configured (though the passes also require `akm.llm` to be set and
 
 Unknown keys under `llm.features` are warn-and-ignore. The keys above
 are locked and cannot be renamed after v1.0.
+
+## Graph boost search tuning
+
+`search.graphBoost` controls only the search-time graph boost component in the
+single FTS5+boosts pipeline. Default values preserve current ranking behavior.
+
+```jsonc
+{
+  "search": {
+    "graphBoost": {
+      "directBoostPerEntity": 0.25,
+      "directBoostCap": 0.75,
+      "hopBoostPerEntity": 0.1,
+      "hopBoostCap": 0.3,
+      "maxHops": 1,
+      "confidenceMode": "blend",
+      "confidenceWeight": 0.2
+    }
+  }
+}
+```
+
+- `maxHops` is bounded to a conservative hard cap of `3`.
+- `confidenceMode` supports `off`, `blend`, and `multiply`.
+- `confidenceWeight` is clamped to `[0,1]` and only applies when `confidenceMode` is `blend`.
+- Unknown keys under `search` and `search.graphBoost` are warn-and-ignore.
 
 **Statelessness invariant.** Every in-tree LLM call site is a single,
 bounded request/response cycle with a hard timeout. There are no caches

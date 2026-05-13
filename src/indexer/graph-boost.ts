@@ -18,6 +18,7 @@
  */
 
 import fs from "node:fs";
+import type { AkmConfig } from "../core/config";
 import { warn } from "../core/warn";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, type GraphFileNode, getGraphFilePath } from "./graph-extraction";
 
@@ -38,12 +39,26 @@ export interface GraphBoostContext {
    */
   matchedEntities: Set<string>;
   /**
-   * Set of entities reachable in one hop from {@link matchedEntities} via
-   * extracted relations. Used so an entry whose entities are *connected*
-   * to the query (rather than directly matching) still receives a smaller
-   * boost — that is the whole point of having a graph.
+   * Set of entities reachable within configured hops from
+   * {@link matchedEntities} via extracted relations.
    */
-  oneHopEntities: Set<string>;
+  connectedEntities: Set<string>;
+  connectedConfidence: Map<string, number>;
+  entityConfidence: Map<string, number>;
+  weights: GraphBoostWeights;
+}
+
+function resolveGraphBoostWeights(config?: AkmConfig): GraphBoostWeights {
+  const configured = config?.search?.graphBoost;
+  return {
+    directBoostPerEntity: configured?.directBoostPerEntity ?? GRAPH_DIRECT_BOOST_PER_ENTITY,
+    directBoostCap: configured?.directBoostCap ?? GRAPH_DIRECT_BOOST_CAP,
+    hopBoostPerEntity: configured?.hopBoostPerEntity ?? GRAPH_HOP_BOOST_PER_ENTITY,
+    hopBoostCap: configured?.hopBoostCap ?? GRAPH_HOP_BOOST_CAP,
+    maxHops: Math.min(Math.max(configured?.maxHops ?? GRAPH_MAX_HOPS, 1), GRAPH_MAX_HOPS_HARD_CAP),
+    confidenceMode: configured?.confidenceMode ?? GRAPH_CONFIDENCE_MODE,
+    confidenceWeight: configured?.confidenceWeight ?? GRAPH_CONFIDENCE_WEIGHT,
+  };
 }
 
 /**
@@ -56,6 +71,43 @@ export const GRAPH_DIRECT_BOOST_PER_ENTITY = 0.25;
 export const GRAPH_DIRECT_BOOST_CAP = 0.75;
 export const GRAPH_HOP_BOOST_PER_ENTITY = 0.1;
 export const GRAPH_HOP_BOOST_CAP = 0.3;
+export const GRAPH_MAX_HOPS = 1;
+export const GRAPH_CONFIDENCE_MODE = "blend" as const;
+export const GRAPH_CONFIDENCE_WEIGHT = 0.2;
+const GRAPH_MAX_HOPS_HARD_CAP = 3;
+
+export interface GraphBoostWeights {
+  directBoostPerEntity: number;
+  directBoostCap: number;
+  hopBoostPerEntity: number;
+  hopBoostCap: number;
+  maxHops: number;
+  confidenceMode: "off" | "blend" | "multiply";
+  confidenceWeight: number;
+}
+
+function normalizeConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.max(0, Math.min(1, raw));
+}
+
+function combineConfidence(...parts: Array<number | undefined>): number | undefined {
+  let out: number | undefined;
+  for (const part of parts) {
+    const value = normalizeConfidence(part);
+    if (value === undefined) continue;
+    out = out === undefined ? value : out * value;
+  }
+  return out;
+}
+
+function toConfidenceMultiplier(rawConfidence: number | undefined, weights: GraphBoostWeights): number {
+  if (weights.confidenceMode === "off") return 1;
+  const confidence = normalizeConfidence(rawConfidence) ?? 1;
+  if (weights.confidenceMode === "multiply") return confidence;
+  const blendWeight = Math.max(0, Math.min(1, weights.confidenceWeight));
+  return 1 - blendWeight + blendWeight * confidence;
+}
 
 /**
  * Load the graph file for a stash root and pre-compute everything that's
@@ -67,9 +119,10 @@ export const GRAPH_HOP_BOOST_CAP = 0.3;
  *   - The query produces no token-level entity matches (no boost is
  *     possible, so we skip the per-entry overhead entirely).
  */
-export function loadGraphBoostContext(stashRoot: string, query: string): GraphBoostContext | null {
+export function loadGraphBoostContext(stashRoot: string, query: string, config?: AkmConfig): GraphBoostContext | null {
   const graph = readGraphFile(stashRoot);
   if (!graph) return null;
+  const weights = resolveGraphBoostWeights(config);
 
   const queryTokens = query
     .toLowerCase()
@@ -82,9 +135,37 @@ export function loadGraphBoostContext(stashRoot: string, query: string): GraphBo
   // path do a single set membership test.
   const allEntities = new Set<string>();
   const nodesByPath = new Map<string, GraphFileNode>();
+  const entityConfidence = new Map<string, number>();
+  const adjacency = new Map<string, Map<string, number>>();
+
+  function setBestEntityConfidence(entity: string, confidence: number | undefined): void {
+    const normalized = normalizeConfidence(confidence);
+    if (normalized === undefined) return;
+    const current = entityConfidence.get(entity);
+    if (current === undefined || normalized > current) entityConfidence.set(entity, normalized);
+  }
+
+  function setBestEdgeConfidence(from: string, to: string, confidence: number | undefined): void {
+    const normalized = normalizeConfidence(confidence);
+    if (!adjacency.has(from)) adjacency.set(from, new Map());
+    const neighbors = adjacency.get(from);
+    if (!neighbors) return;
+    const current = neighbors.get(to);
+    const next = normalized ?? 1;
+    if (current === undefined || next > current) neighbors.set(to, next);
+  }
+
   for (const node of graph.files) {
     nodesByPath.set(node.path, node);
-    for (const entity of node.entities) allEntities.add(entity);
+    for (const entity of node.entities) {
+      allEntities.add(entity);
+      setBestEntityConfidence(entity, node.confidence);
+    }
+    for (const rel of node.relations) {
+      const edgeConfidence = combineConfidence(node.confidence, rel.confidence);
+      setBestEdgeConfidence(rel.from, rel.to, edgeConfidence);
+      setBestEdgeConfidence(rel.to, rel.from, edgeConfidence);
+    }
   }
 
   // An entity matches the query when any of its sub-tokens equals or
@@ -103,20 +184,35 @@ export function loadGraphBoostContext(stashRoot: string, query: string): GraphBo
 
   if (matchedEntities.size === 0) return null;
 
-  // One-hop neighbours: any entity that appears on the other end of a
-  // relation whose other endpoint is in matchedEntities.
-  const oneHopEntities = new Set<string>();
-  for (const node of graph.files) {
-    for (const rel of node.relations) {
-      if (matchedEntities.has(rel.from) && !matchedEntities.has(rel.to)) {
-        oneHopEntities.add(rel.to);
-      } else if (matchedEntities.has(rel.to) && !matchedEntities.has(rel.from)) {
-        oneHopEntities.add(rel.from);
+  const connectedEntities = new Set<string>();
+  const connectedConfidence = new Map<string, number>();
+  const visited = new Set<string>();
+  let frontier = new Map<string, number>();
+  for (const entity of matchedEntities) {
+    const seed = entityConfidence.get(entity) ?? 1;
+    frontier.set(entity, seed);
+    visited.add(entity);
+  }
+  for (let hop = 1; hop <= weights.maxHops; hop += 1) {
+    const next = new Map<string, number>();
+    for (const [entity, pathConfidence] of frontier.entries()) {
+      const neighbors = adjacency.get(entity);
+      if (!neighbors) continue;
+      for (const [neighbor, edgeConfidence] of neighbors.entries()) {
+        const neighborPathConfidence = Math.max(0, Math.min(1, pathConfidence * edgeConfidence));
+        const currentBest = connectedConfidence.get(neighbor) ?? 0;
+        if (neighborPathConfidence > currentBest) connectedConfidence.set(neighbor, neighborPathConfidence);
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        next.set(neighbor, Math.max(next.get(neighbor) ?? 0, neighborPathConfidence));
+        connectedEntities.add(neighbor);
       }
     }
+    if (next.size === 0) break;
+    frontier = next;
   }
 
-  return { nodesByPath, matchedEntities, oneHopEntities };
+  return { nodesByPath, matchedEntities, connectedEntities, connectedConfidence, entityConfidence, weights };
 }
 
 /**
@@ -130,15 +226,25 @@ export function computeGraphBoost(context: GraphBoostContext, filePath: string):
   const node = context.nodesByPath.get(filePath);
   if (!node) return 0;
 
-  let directHits = 0;
-  let hopHits = 0;
+  let directBoostRaw = 0;
+  let hopBoostRaw = 0;
   for (const entity of node.entities) {
-    if (context.matchedEntities.has(entity)) directHits += 1;
-    else if (context.oneHopEntities.has(entity)) hopHits += 1;
+    if (context.matchedEntities.has(entity)) {
+      const directConfidence = combineConfidence(node.confidence, context.entityConfidence.get(entity));
+      directBoostRaw +=
+        context.weights.directBoostPerEntity * toConfidenceMultiplier(directConfidence, context.weights);
+    } else if (context.connectedEntities.has(entity)) {
+      const hopConfidence = combineConfidence(
+        node.confidence,
+        context.entityConfidence.get(entity),
+        context.connectedConfidence.get(entity),
+      );
+      hopBoostRaw += context.weights.hopBoostPerEntity * toConfidenceMultiplier(hopConfidence, context.weights);
+    }
   }
 
-  const directBoost = Math.min(GRAPH_DIRECT_BOOST_CAP, directHits * GRAPH_DIRECT_BOOST_PER_ENTITY);
-  const hopBoost = Math.min(GRAPH_HOP_BOOST_CAP, hopHits * GRAPH_HOP_BOOST_PER_ENTITY);
+  const directBoost = Math.min(context.weights.directBoostCap, directBoostRaw);
+  const hopBoost = Math.min(context.weights.hopBoostCap, hopBoostRaw);
   return directBoost + hopBoost;
 }
 
@@ -189,6 +295,7 @@ function isGraphFile(value: unknown): value is GraphFile {
       const rel = r as Record<string, unknown>;
       if (typeof rel.from !== "string" || typeof rel.to !== "string") return false;
       if (rel.type !== undefined && typeof rel.type !== "string") return false;
+      if (rel.confidence !== undefined && typeof rel.confidence !== "number") return false;
     }
   }
   return true;

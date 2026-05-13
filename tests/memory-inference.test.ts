@@ -253,6 +253,25 @@ describe("runMemoryInferencePass — feature flag and per-pass key are orthogona
   });
 });
 
+describe("runMemoryInferencePass — progress", () => {
+  test("emits per-memory progress events", async () => {
+    writeMemory("one", {}, "Body one.");
+    writeMemory("two", {}, "Body two.");
+    compressor = () => sampleDraft();
+
+    const events: Array<{ processed: number; total: number; currentRef?: string }> = [];
+    const result = await runMemoryInferencePass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
+      events.push({ processed: event.processed, total: event.total, currentRef: event.currentRef });
+    });
+
+    expect(result.writtenFacts).toBe(2);
+    expect(events[0]).toEqual({ processed: 0, total: 2, currentRef: undefined });
+    expect(events.some((event) => event.processed === 1 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
+    expect(events.some((event) => event.currentRef === "memory:one" || event.currentRef === "memory:two")).toBe(true);
+  });
+});
+
 // ── runMemoryInferencePass — enabled path ───────────────────────────────────
 
 describe("runMemoryInferencePass — enabled", () => {

@@ -47,6 +47,10 @@ export async function validateTaskDocument(task: TaskDocument, options: Validate
     return;
   }
 
+  if (task.target.kind !== "prompt") {
+    return;
+  }
+
   // Prompt target. Resolve the profile unconditionally — when no profile is
   // set on the task, requireAgentProfile falls back to config.agent.default
   // and throws a clear error if neither is configured. Catching this at

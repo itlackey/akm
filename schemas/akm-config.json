@@ -90,6 +90,50 @@
           "description": "Minimum score floor for semantic-only hits. Hits below this score are dropped.",
           "minimum": 0,
           "maximum": 1
+        },
+        "graphBoost": {
+          "type": "object",
+          "description": "Graph boost tuning for search-time ranking.",
+          "properties": {
+            "directBoostPerEntity": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Additive direct-match boost per matched entity."
+            },
+            "directBoostCap": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Maximum direct-match additive boost per hit."
+            },
+            "hopBoostPerEntity": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Additive connected-entity boost per matched graph entity."
+            },
+            "hopBoostCap": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Maximum connected-entity additive boost per hit."
+            },
+            "maxHops": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3,
+              "description": "Maximum graph traversal depth from query-matched entities."
+            },
+            "confidenceMode": {
+              "type": "string",
+              "enum": ["off", "blend", "multiply"],
+              "description": "Confidence integration mode for graph boost scoring."
+            },
+            "confidenceWeight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Blend strength in [0,1] when confidenceMode is \"blend\"."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

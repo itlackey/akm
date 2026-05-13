@@ -68,7 +68,7 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
-  const extraStashRoots = resolveSourceEntries(undefined, cfg)
+  const extraStashRoots = resolveSourceEntries(stashRoot, cfg)
     .map((s) => s.path)
     .filter((p) => p !== stashRoot && fs.existsSync(p));
 

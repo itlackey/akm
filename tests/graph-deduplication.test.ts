@@ -176,4 +176,39 @@ describe("deduplicateGraph", () => {
     const sources = result.entitySources.get("node");
     expect(sources).toEqual(["unknown"]);
   });
+
+  test("relation type hygiene normalizes common verb-phrase variants", () => {
+    const extractions: GraphExtraction[] = [
+      {
+        entities: ["ServiceA", "ServiceB"],
+        relations: [
+          { from: "ServiceA", to: "ServiceB", type: "use" },
+          { from: "ServiceA", to: "ServiceB", type: "uses" },
+          { from: "ServiceA", to: "ServiceB", type: "utilizes" },
+        ],
+      },
+    ];
+    const result = deduplicateGraph(extractions, ["asset:t"]);
+
+    expect(result.relations).toHaveLength(1);
+    expect(result.relations[0]?.type).toBe("uses");
+  });
+
+  test("relation confidence keeps the highest score for duplicates", () => {
+    const extractions: GraphExtraction[] = [
+      {
+        entities: ["ServiceA", "ServiceB"],
+        relations: [{ from: "ServiceA", to: "ServiceB", type: "uses", confidence: 0.4 }],
+      },
+      {
+        entities: ["ServiceA", "ServiceB"],
+        relations: [{ from: "ServiceA", to: "ServiceB", type: "use", confidence: 0.8 }],
+      },
+    ];
+
+    const result = deduplicateGraph(extractions, ["asset:1", "asset:2"]);
+    expect(result.relations).toHaveLength(1);
+    expect(result.relations[0]?.confidence).toBe(0.8);
+    expect(result.relations[0]?.type).toBe("uses");
+  });
 });

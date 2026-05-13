@@ -794,3 +794,95 @@ describe("stashDir config", () => {
     expect(loadConfig().stashDir).toBeUndefined();
   });
 });
+
+// ── search config ────────────────────────────────────────────────────────────
+
+describe("search config", () => {
+  test("loads search.graphBoost values", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          minScore: 0.15,
+          graphBoost: {
+            directBoostPerEntity: 0.2,
+            directBoostCap: 0.6,
+            hopBoostPerEntity: 0.08,
+            hopBoostCap: 0.24,
+            maxHops: 2,
+            confidenceMode: "multiply",
+            confidenceWeight: 0.4,
+          },
+        },
+      }),
+    );
+
+    expect(loadConfig().search).toEqual({
+      minScore: 0.15,
+      graphBoost: {
+        directBoostPerEntity: 0.2,
+        directBoostCap: 0.6,
+        hopBoostPerEntity: 0.08,
+        hopBoostCap: 0.24,
+        maxHops: 2,
+        confidenceMode: "multiply",
+        confidenceWeight: 0.4,
+      },
+    });
+  });
+
+  test("loads search.graphBoost confidence mode and caps confidenceWeight at 1", () => {
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        search: {
+          graphBoost: {
+            confidenceMode: "blend",
+            confidenceWeight: 99,
+          },
+        },
+      }),
+    );
+
+    expect(loadConfig().search?.graphBoost).toEqual({
+      confidenceMode: "blend",
+      confidenceWeight: 1,
+    });
+  });
+
+  test("caps search.graphBoost.maxHops at conservative hard limit", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ search: { graphBoost: { maxHops: 99 } } }));
+    expect(loadConfig().search?.graphBoost?.maxHops).toBe(3);
+  });
+
+  test("warns and ignores unknown search and search.graphBoost keys", () => {
+    const originalWarn = console.warn;
+    const messages: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      messages.push(args.map(String).join(" "));
+    };
+    try {
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          search: {
+            minScore: 0.2,
+            unsupportedTopLevel: true,
+            graphBoost: {
+              maxHops: 2,
+              unsupportedNested: "x",
+            },
+          },
+        }),
+      );
+
+      const loaded = loadConfig();
+      expect(loaded.search?.minScore).toBe(0.2);
+      expect(loaded.search?.graphBoost?.maxHops).toBe(2);
+      expect(messages.some((m) => m.includes('Ignoring unknown search key "unsupportedTopLevel"'))).toBe(true);
+      expect(messages.some((m) => m.includes('Ignoring unknown search.graphBoost key "unsupportedNested"'))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});

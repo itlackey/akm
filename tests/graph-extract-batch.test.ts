@@ -215,4 +215,22 @@ describe("extractGraphFromBodies — unit", () => {
     // 1 batch call + 2 fallback individual calls = 3 total.
     expect(chatCallCount).toBe(3);
   });
+
+  test("normalizes entities/relation types and keeps confidence when provided", async () => {
+    const body = "ServiceA uses ServiceB.";
+    singleRawQueue.push(
+      JSON.stringify({
+        entities: ["  ServiceA  ", "serviceb", "ServiceA"],
+        relations: [{ from: "ServiceA", to: "serviceb", type: "USE", confidence: 1.4 }],
+        confidence: -0.2,
+      }),
+    );
+
+    const [result] = await extractGraphFromBodies(SAMPLE_LLM, [body], undefined, AKM_CFG_WITH_GATE);
+
+    expect(result?.entities).toEqual(["ServiceA", "serviceb"]);
+    expect(result?.relations).toHaveLength(1);
+    expect(result?.relations[0]).toMatchObject({ from: "ServiceA", to: "serviceb", type: "uses", confidence: 1 });
+    expect(result?.confidence).toBe(0);
+  });
 });

@@ -678,13 +678,15 @@ test("akmIndex enrich progress events include visible per-entry progress", async
       },
     });
 
+    expect(llmEvents.some((event) => event.message.includes("Starting memory inference"))).toBe(true);
+    expect(llmEvents.some((event) => event.message.includes("Starting graph extraction"))).toBe(true);
     expect(llmEvents.some((event) => event.message.includes("LLM enhancement starting for 2 entries"))).toBe(true);
     expect(
       llmEvents.some(
         (event) => event.message.includes("Enhancing scripts/one") || event.message.includes("Enhancing scripts/two"),
       ),
     ).toBe(true);
-    expect(llmEvents.some((event) => event.message.includes("Enhanced 2/2 entries across 2/2 directories."))).toBe(
+    expect(llmEvents.some((event) => event.message.includes("Completed 2/2 directories; 2/2 entries processed."))).toBe(
       true,
     );
     expect(llmEvents.some((event) => event.processed === 2 && event.total === 2)).toBe(true);
@@ -720,6 +722,46 @@ test("akmIndex verbose progress reports why a directory was rescanned", async ()
   expect(reasonLine).toContain("mtime-changed");
   expect(reasonLine).toContain("deploy.sh");
   expect(reasonLine).toContain("previous rows=1");
+});
+
+test("akmIndex surfaces graph quality telemetry in result", async () => {
+  const stashDir = tmpStash();
+  writeFile(path.join(stashDir, "knowledge", "k1.md"), "---\ndescription: K1\n---\n\nAlpha uses Beta.\n");
+  writeFile(path.join(stashDir, "memories", "m1.md"), "---\ndescription: M1\n---\n\nAlpha depends on Gamma.\n");
+
+  process.env.AKM_STASH_DIR = stashDir;
+  saveConfig({
+    semanticSearchMode: "off",
+    llm: {
+      endpoint: "https://example.test/v1/chat/completions",
+      model: "demo-chat",
+      features: { graph_extraction: true },
+      concurrency: 1,
+    },
+  });
+
+  const graphExtract = await import("../src/llm/graph-extract");
+  const graphSpy = spyOn(graphExtract, "extractGraphFromBody").mockImplementation(async (_cfg, body) => {
+    if (body.includes("Beta")) {
+      return { entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta", type: "uses" }] };
+    }
+    return { entities: ["Alpha", "Gamma"], relations: [{ from: "Alpha", to: "Gamma" }] };
+  });
+
+  try {
+    const result = await akmIndex({ stashDir, enrich: true, full: true });
+    expect(result.graphQuality).toBeDefined();
+    expect(result.graphQuality).toEqual({
+      consideredFiles: 2,
+      extractedFiles: 2,
+      entityCount: 3,
+      relationCount: 2,
+      extractionCoverage: 1,
+      density: 0.6667,
+    });
+  } finally {
+    graphSpy.mockRestore();
+  }
 });
 
 test("akmIndex incremental reruns stabilize for stash-owned wiki indexes", async () => {

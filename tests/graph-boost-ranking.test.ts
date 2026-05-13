@@ -26,9 +26,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { akmSearch } from "../src/commands/search";
+import type { AkmConfig } from "../src/core/config";
 import { resetConfigCache, saveConfig } from "../src/core/config";
 import { getDbPath } from "../src/core/paths";
 import { closeDatabase, openDatabase, openExistingDatabase, rebuildFts, setMeta, upsertEntry } from "../src/indexer/db";
+import {
+  computeGraphBoost,
+  GRAPH_CONFIDENCE_MODE,
+  GRAPH_CONFIDENCE_WEIGHT,
+  GRAPH_DIRECT_BOOST_CAP,
+  GRAPH_DIRECT_BOOST_PER_ENTITY,
+  GRAPH_HOP_BOOST_CAP,
+  GRAPH_HOP_BOOST_PER_ENTITY,
+  loadGraphBoostContext,
+} from "../src/indexer/graph-boost";
 import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, getGraphFilePath } from "../src/indexer/graph-extraction";
 import type { StashEntry } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
@@ -66,11 +77,7 @@ beforeAll(() => {
   process.env.AKM_STASH_DIR = stashDir;
 
   resetConfigCache();
-  saveConfig({
-    semanticSearchMode: "off",
-    sources: [{ type: "filesystem", path: stashDir }],
-    registries: [],
-  });
+  saveTestConfig();
 
   buildFixture();
 });
@@ -141,6 +148,12 @@ function buildFixture(): void {
     "---\ntype: memory\n---\n\nDuring the 2024 database outage we recovered shard-3 by following the runbook.\n",
   );
 
+  const checklistPath = path.join(knowledgeDir, "incident-checklist.md");
+  fs.writeFileSync(
+    checklistPath,
+    "---\ntype: knowledge\n---\n\nDatabase outage recovery checklist for incident triage and escalation.\n",
+  );
+
   // Index the corpus directly into the SQLite DB.
   const dbPath = getDbPath();
   // Make sure the cache dir exists (akm-graph-rank-cache-* is fresh).
@@ -178,6 +191,16 @@ function buildFixture(): void {
         filePath: memoryPath,
         dirPath: memoryDir,
       },
+      {
+        entry: {
+          name: "incident-checklist",
+          type: "knowledge",
+          filename: "incident-checklist.md",
+          description: "Database outage recovery checklist for incident triage and escalation.",
+        },
+        filePath: checklistPath,
+        dirPath: knowledgeDir,
+      },
     ];
     for (const e of entries) {
       const entryKey = `${stashDir}:${e.entry.type}:${e.entry.name}`;
@@ -208,6 +231,7 @@ function buildFixture(): void {
         relations: [
           { from: "outage", to: "recovery" },
           { from: "recovery", to: "database" },
+          { from: "recovery", to: "runbook" },
         ],
       },
       {
@@ -215,6 +239,12 @@ function buildFixture(): void {
         type: "memory",
         entities: ["database", "outage", "recovery", "shard-3"],
         relations: [{ from: "outage", to: "recovery" }],
+      },
+      {
+        path: checklistPath,
+        type: "knowledge",
+        entities: ["playbook"],
+        relations: [{ from: "runbook", to: "playbook" }],
       },
       // database-faq has NO graph entries — the FAQ doesn't operationally
       // relate to outage recovery; it just shares vocabulary. This is the
@@ -243,9 +273,53 @@ function uninstallGraph(): void {
   if (fs.existsSync(target)) fs.unlinkSync(target);
 }
 
+function installGraphWithMutator(mutator: (graph: GraphFile) => GraphFile): void {
+  const prepared = path.join(stashDir, ".akm", "graph.prepared.json");
+  const raw = fs.readFileSync(prepared, "utf8");
+  const parsed = JSON.parse(raw) as GraphFile;
+  const mutated = mutator(parsed);
+  fs.writeFileSync(getGraphFilePath(stashDir), `${JSON.stringify(mutated, null, 2)}\n`, "utf8");
+}
+
 async function searchHits(query: string) {
-  const result = await akmSearch({ query, source: "stash", limit: 20 });
+  const result = await akmSearch({ query, source: "stash", limit: 100 });
   return result.hits;
+}
+
+function configWithGraphBoost(graphBoost: NonNullable<NonNullable<AkmConfig["search"]>["graphBoost"]>): AkmConfig {
+  return {
+    semanticSearchMode: "off",
+    search: { graphBoost },
+  };
+}
+
+function saveTestConfig(search?: {
+  minScore?: number;
+  graphBoost?: {
+    directBoostPerEntity?: number;
+    directBoostCap?: number;
+    hopBoostPerEntity?: number;
+    hopBoostCap?: number;
+    maxHops?: number;
+    confidenceMode?: "off" | "blend" | "multiply";
+    confidenceWeight?: number;
+  };
+}): void {
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: stashDir }],
+    registries: [],
+    ...(search ? { search } : {}),
+  });
+}
+
+function resetUtilityScores(): void {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    db.exec("DELETE FROM utility_scores");
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 function rankOf(hits: { name: string }[], name: string): number {
@@ -296,20 +370,14 @@ describe("graph boost — search-time integration (#207)", () => {
     // confirms the graph integration is purely additive — there's no
     // hidden second scorer running unconditionally.
     uninstallGraph();
+    resetUtilityScores();
     const without = await searchHits("database");
     expect(without.length).toBeGreaterThan(0);
 
     // Reset utility scores bumped by the first search's logSearchEvent() call
     // so the second run sees the same baseline scores and produces identical
     // hits and scores.
-    {
-      const db = openExistingDatabase(getDbPath());
-      try {
-        db.exec("DELETE FROM utility_scores");
-      } finally {
-        closeDatabase(db);
-      }
-    }
+    resetUtilityScores();
     // Re-run the same query while the file is uninstalled — must be
     // byte-identical (same hits, same scores) within the deterministic
     // tiebreaker.
@@ -367,5 +435,120 @@ describe("graph boost — search-time integration (#207)", () => {
     );
     expect((boostedHit as { ref?: string } | undefined)?.ref).toBe((baselineHit as { ref?: string } | undefined)?.ref);
     expect(boostedHit?.score ?? 0).toBeGreaterThanOrEqual(baselineHit?.score ?? 0);
+  });
+
+  test("explicit legacy graphBoost config matches default behavior", async () => {
+    const query = "database outage recovery";
+    installGraph();
+
+    resetUtilityScores();
+    saveTestConfig();
+    const defaultHits = await searchHits(query);
+
+    resetUtilityScores();
+    saveTestConfig({
+      graphBoost: {
+        directBoostPerEntity: GRAPH_DIRECT_BOOST_PER_ENTITY,
+        directBoostCap: GRAPH_DIRECT_BOOST_CAP,
+        hopBoostPerEntity: GRAPH_HOP_BOOST_PER_ENTITY,
+        hopBoostCap: GRAPH_HOP_BOOST_CAP,
+        maxHops: 1,
+        confidenceMode: GRAPH_CONFIDENCE_MODE,
+        confidenceWeight: GRAPH_CONFIDENCE_WEIGHT,
+      },
+    });
+    const explicitLegacyHits = await searchHits(query);
+
+    expect(explicitLegacyHits.map((h) => h.name)).toEqual(defaultHits.map((h) => h.name));
+    expect(explicitLegacyHits.map((h) => h.score)).toEqual(defaultHits.map((h) => h.score));
+  });
+
+  test("maxHops=2 enables bounded multi-hop boost beyond default one hop", async () => {
+    const query = "database outage recovery";
+    installGraph();
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { maxHops: 1 } });
+    const oneHopHits = await searchHits(query);
+    const oneHopScore = scoreOf(oneHopHits, "incident-checklist");
+    const oneHopRank = rankOf(oneHopHits, "incident-checklist");
+    expect(oneHopRank).not.toBe(Infinity);
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { maxHops: 2 } });
+    const twoHopHits = await searchHits(query);
+    const twoHopScore = scoreOf(twoHopHits, "incident-checklist");
+    const twoHopRank = rankOf(twoHopHits, "incident-checklist");
+    expect(twoHopRank).not.toBe(Infinity);
+
+    expect(twoHopScore).toBeGreaterThan(oneHopScore);
+    expect(twoHopRank).toBeLessThanOrEqual(oneHopRank);
+  });
+
+  test("node and relation confidence affect boost when present", async () => {
+    const query = "database outage recovery";
+    const runbookPath = path.join(stashDir, "knowledge", "database-runbook.md");
+
+    installGraph();
+    const baselineContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "multiply" }),
+    );
+    expect(baselineContext).not.toBeNull();
+    if (!baselineContext) throw new Error("expected baseline graph boost context");
+    const baselineBoost = computeGraphBoost(baselineContext, runbookPath);
+
+    installGraphWithMutator((graph) => ({
+      ...graph,
+      files: graph.files.map((file) => {
+        if (file.path.endsWith("database-runbook.md")) {
+          return {
+            ...file,
+            confidence: 0.25,
+            relations: file.relations.map((rel) => ({ ...rel, confidence: 0.25 })),
+          };
+        }
+        return file;
+      }),
+    }));
+    const confidenceContext = loadGraphBoostContext(
+      stashDir,
+      query,
+      configWithGraphBoost({ confidenceMode: "multiply" }),
+    );
+    expect(confidenceContext).not.toBeNull();
+    if (!confidenceContext) throw new Error("expected confidence graph boost context");
+    const confidenceBoost = computeGraphBoost(confidenceContext, runbookPath);
+
+    expect(confidenceBoost).toBeLessThan(baselineBoost);
+  });
+
+  test("absent confidence remains neutral in confidence-aware mode", async () => {
+    const query = "database outage recovery";
+
+    resetUtilityScores();
+    saveTestConfig({ graphBoost: { confidenceMode: "multiply" } });
+    installGraph();
+    const withoutConfidence = await searchHits(query);
+
+    resetUtilityScores();
+    installGraphWithMutator((graph) => ({
+      ...graph,
+      files: graph.files.map((file) => {
+        if (file.path.endsWith("database-runbook.md") || file.path.endsWith("incident-checklist.md")) {
+          return {
+            ...file,
+            confidence: 1,
+            relations: file.relations.map((rel) => ({ ...rel, confidence: 1 })),
+          };
+        }
+        return file;
+      }),
+    }));
+    const explicitNeutralConfidence = await searchHits(query);
+
+    expect(explicitNeutralConfidence.map((h) => h.name)).toEqual(withoutConfidence.map((h) => h.name));
+    expect(explicitNeutralConfidence.map((h) => h.score)).toEqual(withoutConfidence.map((h) => h.score));
   });
 });

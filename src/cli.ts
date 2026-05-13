@@ -10,6 +10,7 @@ import { generateBashCompletions, installBashCompletions } from "./commands/comp
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
+import { akmGraphEntities, akmGraphExport, akmGraphRelations, akmGraphSummary } from "./commands/graph";
 import { akmHistory } from "./commands/history";
 import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
@@ -271,11 +272,11 @@ const indexCommand = defineCommand({
         const result = await akmIndex({
           full: args.full,
           enrich: args.enrich,
-          onProgress: ({ message, processed, total }) => {
+          onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
             if (args.verbose || args.enrich) {
-              info(`[index] ${progressPrefix}${message}`);
+              info(`[index:${phase}] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
               spin.start(`${progressPrefix}${message}`);
@@ -307,6 +308,79 @@ const infoCommand = defineCommand({
     return runWithJsonErrors(() => {
       const result = assembleInfo();
       output("info", result);
+    });
+  },
+});
+
+const graphCommand = defineCommand({
+  meta: { name: "graph", description: "Inspect the indexed entity graph artifact (.akm/graph.json)" },
+  subCommands: {
+    summary: defineCommand({
+      meta: { name: "summary", description: "Show entity-graph counts and quality telemetry" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output("graph-summary", akmGraphSummary({ source: args.source }));
+        });
+      },
+    }),
+    entities: defineCommand({
+      meta: { name: "entities", description: "List entities with per-file occurrence counts" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum entities to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-entities",
+            akmGraphEntities({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
+          );
+        });
+      },
+    }),
+    relations: defineCommand({
+      meta: { name: "relations", description: "List relations with occurrence counts" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum relations to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-relations",
+            akmGraphRelations({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
+          );
+        });
+      },
+    }),
+    export: defineCommand({
+      meta: { name: "export", description: "Export graph artifact as JSON or JSONL" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        out: { type: "string", description: "Output path" },
+        format: { type: "string", description: "Export format (json|jsonl)", default: "json" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-export",
+            akmGraphExport({
+              source: args.source,
+              out: args.out ?? "",
+              format: args.format,
+            }),
+          );
+        });
+      },
+    }),
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      if (hasSubcommand(args, GRAPH_SUBCOMMAND_SET)) return;
+      output("graph-summary", akmGraphSummary());
     });
   },
 });
@@ -2961,6 +3035,11 @@ const improveCommand = defineCommand({
       type: "string",
       description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",
     },
+    "ignore-cooldown": {
+      type: "boolean",
+      description: "Ignore all cooldown periods (equivalent to --reflect-cooldown-days 0 --distill-cooldown-days 0)",
+      default: false,
+    },
     "reflect-cooldown-days": {
       type: "string",
       description: "Days before re-reflecting a recently reflected asset (default: 7, 0 to disable)",
@@ -2986,16 +3065,25 @@ const improveCommand = defineCommand({
       if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
         throw new UsageError(`Invalid --timeout-ms value: "${timeoutRaw}". Must be a positive integer.`);
       }
+      const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
       const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
-      const reflectCooldownDays = reflectCooldownRaw !== undefined ? parseInt(reflectCooldownRaw, 10) : undefined;
-      if (reflectCooldownDays !== undefined && Number.isNaN(reflectCooldownDays)) {
+      const reflectCooldownDays = ignoreCooldown
+        ? 0
+        : reflectCooldownRaw !== undefined
+          ? parseInt(reflectCooldownRaw, 10)
+          : undefined;
+      if (reflectCooldownDays !== undefined && reflectCooldownDays !== 0 && Number.isNaN(reflectCooldownDays)) {
         throw new UsageError(
           `Invalid --reflect-cooldown-days value: "${reflectCooldownRaw}". Must be a non-negative integer.`,
         );
       }
       const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
-      const distillCooldownDays = distillCooldownRaw !== undefined ? parseInt(distillCooldownRaw, 10) : undefined;
-      if (distillCooldownDays !== undefined && Number.isNaN(distillCooldownDays)) {
+      const distillCooldownDays = ignoreCooldown
+        ? 0
+        : distillCooldownRaw !== undefined
+          ? parseInt(distillCooldownRaw, 10)
+          : undefined;
+      if (distillCooldownDays !== undefined && distillCooldownDays !== 0 && Number.isNaN(distillCooldownDays)) {
         throw new UsageError(
           `Invalid --distill-cooldown-days value: "${distillCooldownRaw}". Must be a non-negative integer.`,
         );
@@ -3095,6 +3183,7 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "sync",
   "doctor",
 ]);
+const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "relations", "export"]);
 
 const tasksAddCommand = defineCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
@@ -3299,6 +3388,7 @@ const main = defineCommand({
     init: initCommand,
     index: indexCommand,
     info: infoCommand,
+    graph: graphCommand,
     add: addCommand,
     list: listCommand,
     remove: removeCommand,

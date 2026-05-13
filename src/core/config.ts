@@ -350,6 +350,45 @@ export interface AkmConfig {
      * hybrid hits are never filtered. Default: 0.2. Set to 0 to disable.
      */
     minScore?: number;
+    /**
+     * Search-time graph boost tuning knobs.
+     *
+     * Defaults preserve current behavior:
+     * - directBoostPerEntity: 0.25
+     * - directBoostCap: 0.75
+     * - hopBoostPerEntity: 0.1
+     * - hopBoostCap: 0.3
+     * - maxHops: 1
+     * - confidenceMode: "blend"
+     * - confidenceWeight: 0.2
+     */
+    graphBoost?: {
+      /** Additive direct-match boost per matched entity in the hit. */
+      directBoostPerEntity?: number;
+      /** Maximum total direct-match additive boost for one hit. */
+      directBoostCap?: number;
+      /** Base additive connected-entity boost per matched hop entity. */
+      hopBoostPerEntity?: number;
+      /** Maximum total connected-entity additive boost for one hit. */
+      hopBoostCap?: number;
+      /**
+       * Maximum traversal depth from query-matched entities.
+       * Default: 1 (existing behavior). Hard-capped conservatively at 3.
+       */
+      maxHops?: number;
+      /**
+       * Confidence integration mode for graph boost scoring.
+       * - "off": ignore confidence values.
+       * - "blend": softly downweight by confidence using confidenceWeight.
+       * - "multiply": directly multiply by confidence.
+       */
+      confidenceMode?: "off" | "blend" | "multiply";
+      /**
+       * Blend strength in [0,1] when confidenceMode is "blend".
+       * 0 means no effect; 1 means full confidence-driven downweight.
+       */
+      confidenceWeight?: number;
+    };
   };
   /**
    * Feedback-specific configuration.
@@ -387,6 +426,8 @@ export interface OutputConfig {
  * behaviour):
  *   - `graphExtractionBatchSize` — how many asset bodies to pack into one
  *     graph-extraction LLM call. Default: 1 (one call per asset).
+ *   - `graphExtractionIncludeTypes` — asset types eligible for graph extraction.
+ *     Default: ["memory", "knowledge"] (backwards compatible).
  *   - `memoryInferenceBatchSize` — same for the memory-inference pass.
  *     Default: 1 (one call per memory).
  * Set to values > 1 to amortise LLM HTTP round-trips across multiple assets.
@@ -401,6 +442,12 @@ export interface IndexPassConfig {
    * of larger prompts; values above ~10 risk hitting context limits.
    */
   graphExtractionBatchSize?: number;
+  /**
+   * Asset types eligible for graph extraction.
+   * Default: ["memory", "knowledge"] (existing behavior).
+   * Unknown values are rejected at config-load time.
+   */
+  graphExtractionIncludeTypes?: string[];
   /**
    * Number of memory bodies to batch into a single memory-inference LLM call.
    * Default: 1 (one call per memory — existing behaviour, fully opt-in).
@@ -443,6 +490,11 @@ function parsePositiveInteger(_fieldPath: string, value: unknown): number | unde
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     return undefined;
   }
+  return value;
+}
+
+function parseNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
   return value;
 }
 
@@ -700,8 +752,58 @@ function parseConfigLayer(raw: Record<string, unknown>): Partial<AkmConfig> {
   if (typeof raw.search === "object" && raw.search !== null && !Array.isArray(raw.search)) {
     const searchRaw = raw.search as Record<string, unknown>;
     const searchConfig: AkmConfig["search"] = {};
+    for (const key of Object.keys(searchRaw)) {
+      if (key !== "minScore" && key !== "graphBoost") {
+        warn(`[akm] Ignoring unknown search key "${key}".`);
+      }
+    }
     if (typeof searchRaw.minScore === "number" && Number.isFinite(searchRaw.minScore) && searchRaw.minScore >= 0) {
       searchConfig.minScore = searchRaw.minScore;
+    }
+    if (
+      typeof searchRaw.graphBoost === "object" &&
+      searchRaw.graphBoost !== null &&
+      !Array.isArray(searchRaw.graphBoost)
+    ) {
+      const graphBoostRaw = searchRaw.graphBoost as Record<string, unknown>;
+      const graphBoostConfig: NonNullable<AkmConfig["search"]>["graphBoost"] = {};
+      for (const key of Object.keys(graphBoostRaw)) {
+        if (
+          key !== "directBoostPerEntity" &&
+          key !== "directBoostCap" &&
+          key !== "hopBoostPerEntity" &&
+          key !== "hopBoostCap" &&
+          key !== "maxHops" &&
+          key !== "confidenceMode" &&
+          key !== "confidenceWeight"
+        ) {
+          warn(`[akm] Ignoring unknown search.graphBoost key "${key}".`);
+        }
+      }
+
+      const directBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.directBoostPerEntity);
+      if (directBoostPerEntity !== undefined) graphBoostConfig.directBoostPerEntity = directBoostPerEntity;
+
+      const directBoostCap = parseNonNegativeNumber(graphBoostRaw.directBoostCap);
+      if (directBoostCap !== undefined) graphBoostConfig.directBoostCap = directBoostCap;
+
+      const hopBoostPerEntity = parseNonNegativeNumber(graphBoostRaw.hopBoostPerEntity);
+      if (hopBoostPerEntity !== undefined) graphBoostConfig.hopBoostPerEntity = hopBoostPerEntity;
+
+      const hopBoostCap = parseNonNegativeNumber(graphBoostRaw.hopBoostCap);
+      if (hopBoostCap !== undefined) graphBoostConfig.hopBoostCap = hopBoostCap;
+
+      const maxHops = parsePositiveInteger("search.graphBoost.maxHops", graphBoostRaw.maxHops);
+      if (maxHops !== undefined) graphBoostConfig.maxHops = Math.min(maxHops, 3);
+
+      if (isOneOf(graphBoostRaw.confidenceMode, ["off", "blend", "multiply"] as const)) {
+        graphBoostConfig.confidenceMode = graphBoostRaw.confidenceMode;
+      }
+
+      const confidenceWeight = parseNonNegativeNumber(graphBoostRaw.confidenceWeight);
+      if (confidenceWeight !== undefined) graphBoostConfig.confidenceWeight = Math.min(confidenceWeight, 1);
+
+      if (Object.keys(graphBoostConfig).length > 0) searchConfig.graphBoost = graphBoostConfig;
     }
     if (Object.keys(searchConfig).length > 0) config.search = searchConfig;
   }
@@ -1060,6 +1162,18 @@ const PROVIDER_CONFIG_KEYS = new Set([
   "capabilities",
 ]);
 
+const GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED = new Set([
+  "memory",
+  "knowledge",
+  "skill",
+  "command",
+  "agent",
+  "workflow",
+  "lesson",
+  "task",
+  "wiki",
+]);
+
 /**
  * Parse the `index` config block. Each entry is a pass name → small object
  * `{ llm?: boolean }`. Anything richer (a parallel provider config, unknown
@@ -1096,9 +1210,14 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
           'Move provider settings to the top-level "llm" block, then set `index.<pass>.llm = false` to opt a single pass out.',
         );
       }
-      if (key !== "llm" && key !== "graphExtractionBatchSize" && key !== "memoryInferenceBatchSize") {
+      if (
+        key !== "llm" &&
+        key !== "graphExtractionBatchSize" &&
+        key !== "graphExtractionIncludeTypes" &&
+        key !== "memoryInferenceBatchSize"
+      ) {
         throw new ConfigError(
-          `Unknown key \`index.${passName}.${key}\`. Per-pass entries support \`llm\` (boolean opt-out), \`graphExtractionBatchSize\`, and \`memoryInferenceBatchSize\`.`,
+          `Unknown key \`index.${passName}.${key}\`. Per-pass entries support \`llm\` (boolean opt-out), \`graphExtractionBatchSize\`, \`graphExtractionIncludeTypes\`, and \`memoryInferenceBatchSize\`.`,
           "INVALID_CONFIG_FILE",
         );
       }
@@ -1119,6 +1238,24 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
     if ("graphExtractionBatchSize" in passRaw) {
       const n = parsePositiveInteger(`index.${passName}.graphExtractionBatchSize`, passRaw.graphExtractionBatchSize);
       if (n !== undefined) passConfig.graphExtractionBatchSize = n;
+    }
+    if ("graphExtractionIncludeTypes" in passRaw) {
+      const rawTypes = passRaw.graphExtractionIncludeTypes;
+      if (!Array.isArray(rawTypes) || !rawTypes.every((t) => typeof t === "string" && t.trim().length > 0)) {
+        throw new ConfigError(
+          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: expected a non-empty string array of asset types.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      const normalized = rawTypes.map((t) => t.trim().toLowerCase());
+      const invalid = normalized.filter((t) => !GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED.has(t));
+      if (invalid.length > 0) {
+        throw new ConfigError(
+          `Invalid \`index.${passName}.graphExtractionIncludeTypes\`: unsupported type(s): ${invalid.join(", ")}.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      passConfig.graphExtractionIncludeTypes = normalized;
     }
     if ("memoryInferenceBatchSize" in passRaw) {
       const n = parsePositiveInteger(`index.${passName}.memoryInferenceBatchSize`, passRaw.memoryInferenceBatchSize);

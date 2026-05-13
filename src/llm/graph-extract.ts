@@ -52,12 +52,94 @@ export interface GraphRelation {
   from: string;
   to: string;
   type?: string;
+  confidence?: number;
 }
 
 /** Result returned by {@link extractGraphFromBody}. */
 export interface GraphExtraction {
   entities: string[];
   relations: GraphRelation[];
+  confidence?: number;
+}
+
+function parseConfidence(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.max(0, Math.min(1, raw));
+}
+
+function normalizeEntityName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[`"']+|[`"']+$/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[;,!?]+$/g, "")
+    .trim();
+}
+
+function normalizeRelationType(raw: string): string | undefined {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^[`"']+|[`"']+$/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.;,!?]+$/g, "")
+    .trim();
+  if (!normalized) return undefined;
+  if (normalized === "use" || normalized === "utilizes") return "uses";
+  if (normalized === "depend on" || normalized === "depends") return "depends on";
+  if (normalized === "integrates" || normalized === "integration with") return "integrates with";
+  return normalized;
+}
+
+function parseGraphExtraction(raw: unknown): GraphExtraction {
+  const empty: GraphExtraction = { entities: [], relations: [] };
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return empty;
+  const item = raw as Record<string, unknown>;
+
+  const entityCanonical = new Map<string, string>();
+  if (Array.isArray(item.entities)) {
+    for (const value of item.entities) {
+      if (typeof value !== "string") continue;
+      const normalized = normalizeEntityName(value);
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (!entityCanonical.has(key)) entityCanonical.set(key, normalized);
+      if (entityCanonical.size >= MAX_ENTITIES_PER_ASSET) break;
+    }
+  }
+  const entities = Array.from(entityCanonical.values());
+
+  const relations: GraphRelation[] = [];
+  if (Array.isArray(item.relations)) {
+    for (const relation of item.relations) {
+      if (typeof relation !== "object" || relation === null || Array.isArray(relation)) continue;
+      const rel = relation as Record<string, unknown>;
+      const fromRaw = typeof rel.from === "string" ? normalizeEntityName(rel.from) : "";
+      const toRaw = typeof rel.to === "string" ? normalizeEntityName(rel.to) : "";
+      if (!fromRaw || !toRaw) continue;
+
+      const from = entityCanonical.get(fromRaw.toLowerCase());
+      const to = entityCanonical.get(toRaw.toLowerCase());
+      if (!from || !to) continue;
+
+      const type = typeof rel.type === "string" ? normalizeRelationType(rel.type) : undefined;
+      const confidence = parseConfidence(rel.confidence);
+      relations.push({
+        from,
+        to,
+        ...(type ? { type } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+      });
+      if (relations.length >= MAX_RELATIONS_PER_ASSET) break;
+    }
+  }
+
+  const confidence = parseConfidence(item.confidence);
+  return {
+    entities,
+    relations,
+    ...(confidence !== undefined ? { confidence } : {}),
+  };
 }
 
 /**
@@ -127,35 +209,7 @@ function buildBatchUserPrompt(bodies: string[]): string {
  * Mirrors the validation logic in `extractGraphFromBody`.
  */
 function parseBatchItem(raw: unknown): GraphExtraction {
-  const empty: GraphExtraction = { entities: [], relations: [] };
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return empty;
-  const item = raw as Record<string, unknown>;
-
-  const entities = Array.isArray(item.entities)
-    ? item.entities
-        .filter((e): e is string => typeof e === "string")
-        .map((e) => e.trim())
-        .filter((e) => e.length > 0)
-        .slice(0, MAX_ENTITIES_PER_ASSET)
-    : [];
-
-  const entitySet = new Set(entities);
-  const relations = Array.isArray(item.relations)
-    ? item.relations
-        .filter(
-          (r): r is { from: unknown; to: unknown; type?: unknown } =>
-            typeof r === "object" && r !== null && !Array.isArray(r),
-        )
-        .map((r) => ({
-          from: typeof r.from === "string" ? r.from.trim() : "",
-          to: typeof r.to === "string" ? r.to.trim() : "",
-          type: typeof r.type === "string" && r.type.trim() ? r.type.trim() : undefined,
-        }))
-        .filter((r) => r.from && r.to && entitySet.has(r.from) && entitySet.has(r.to))
-        .slice(0, MAX_RELATIONS_PER_ASSET)
-    : [];
-
-  return { entities, relations };
+  return parseGraphExtraction(raw);
 }
 
 /**
@@ -338,33 +392,7 @@ export async function extractGraphFromBody(
           return empty;
         }
 
-        const entities = Array.isArray(parsed.entities)
-          ? parsed.entities
-              .filter((e): e is string => typeof e === "string")
-              .map((e) => e.trim())
-              .filter((e) => e.length > 0)
-              .slice(0, MAX_ENTITIES_PER_ASSET)
-          : [];
-
-        const entitySet = new Set(entities);
-        const relations = Array.isArray(parsed.relations)
-          ? parsed.relations
-              .filter(
-                (r): r is { from: unknown; to: unknown; type?: unknown } =>
-                  typeof r === "object" && r !== null && !Array.isArray(r),
-              )
-              .map((r) => ({
-                from: typeof r.from === "string" ? r.from.trim() : "",
-                to: typeof r.to === "string" ? r.to.trim() : "",
-                type: typeof r.type === "string" && r.type.trim() ? r.type.trim() : undefined,
-              }))
-              // Both endpoints must be non-empty AND mentioned in entities[];
-              // dangling relations are noise and inflate the boost component.
-              .filter((r) => r.from && r.to && entitySet.has(r.from) && entitySet.has(r.to))
-              .slice(0, MAX_RELATIONS_PER_ASSET)
-          : [];
-
-        return { entities, relations };
+        return parseGraphExtraction(parsed);
       } catch (err) {
         warn(`graph extraction failed: ${toErrorMessage(err)}`);
         return empty;

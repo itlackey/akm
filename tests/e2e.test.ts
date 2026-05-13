@@ -142,8 +142,8 @@ async function withMockedFetch<T>(handler: (input: string) => Response, run: () 
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
-const _originalXdgDataHome = process.env.XDG_DATA_HOME;
-const _originalXdgStateHome = process.env.XDG_STATE_HOME;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";

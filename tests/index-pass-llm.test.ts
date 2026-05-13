@@ -106,6 +106,17 @@ describe("config loader: `index` block parsing", () => {
     });
   });
 
+  test("loads graphExtractionIncludeTypes for graph pass", () => {
+    writeUserConfig({
+      llm: SAMPLE_LLM,
+      index: {
+        graph: { llm: true, graphExtractionIncludeTypes: ["memory", "command"] },
+      },
+    });
+    const config = loadUserConfig();
+    expect(config.index?.graph?.graphExtractionIncludeTypes).toEqual(["memory", "command"]);
+  });
+
   test("rejects per-pass provider configuration (duplicate provider path)", () => {
     writeUserConfig({
       llm: SAMPLE_LLM,
@@ -152,6 +163,14 @@ describe("config loader: `index` block parsing", () => {
       index: { enrichment: { foo: true } },
     });
     expect(() => loadUserConfig()).toThrow(/Unknown key `index\.enrichment\.foo`/);
+  });
+
+  test("rejects invalid graphExtractionIncludeTypes values", () => {
+    writeUserConfig({
+      llm: SAMPLE_LLM,
+      index: { graph: { graphExtractionIncludeTypes: ["memory", "bogus-type"] } },
+    });
+    expect(() => loadUserConfig()).toThrow(/unsupported type/);
   });
 
   test("rejects array-shaped `index` block", () => {
