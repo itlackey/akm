@@ -93,24 +93,24 @@ Suggested status markers:
 
 ## Phase 2 — Split Presentation From Metadata Extraction
 
-- [ ] Keep show payload generation on a narrow presentation seam.
-- [ ] Move indexing metadata logic behind `MetadataContributor[]`.
-- [ ] Preserve search-hit enrichment as its own contract from Phase 1.
-- [ ] Keep search and show behavior stable while separating responsibilities.
+- [x] Keep show payload generation on a narrow presentation seam.
+- [x] Move indexing metadata logic behind `MetadataContributor[]`.
+- [x] Preserve search-hit enrichment as its own contract from Phase 1.
+- [x] Keep search and show behavior stable while separating responsibilities.
 
 ### Phase 2 Gate
 
-- [ ] Run metadata, search, and show parity tests.
-- [ ] Verify render/search output parity.
-- [ ] Complete a focused code review before moving on.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [x] Run metadata, search, and show parity tests.
+- [x] Verify render/search output parity.
+- [x] Complete a focused code review before moving on.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
-- [ ] Review the diff against the base branch.
-- [ ] Keep module moves tidy.
-- [ ] Confirm test edits, if any, are import-only.
-- [ ] Avoid opportunistic cleanup outside the touched seam.
+- [x] Review the diff against the base branch.
+- [x] Keep module moves tidy.
+- [x] Confirm test edits, if any, are import-only.
+- [x] Avoid opportunistic cleanup outside the touched seam.
 
 ---
 

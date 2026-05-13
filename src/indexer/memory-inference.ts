@@ -41,7 +41,8 @@ import { parseFrontmatter, parseFrontmatterBlock } from "../core/frontmatter";
 import { warn } from "../core/warn";
 import { type WriteTargetSource, writeAssetToSource } from "../core/write-source";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { compressMemoryToDerivedMemory, type DerivedMemoryDraft } from "../llm/memory-infer";
+import type { DerivedMemoryDraft } from "../llm/memory-infer";
+import * as memoryInfer from "../llm/memory-infer";
 import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
 import { walkMarkdownFiles } from "./walker";
@@ -169,12 +170,12 @@ export async function runMemoryInferencePass(
             record.body,
             reEnrich ?? false,
             () =>
-              compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+              memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
                 warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
               }),
             validate,
           )
-        : await compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
+        : await memoryInfer.compressMemoryToDerivedMemory(llmConfig, record.body, signal, config, (evt) => {
             warn(`[akm] LLM fallback for ${evt.feature}: ${evt.reason}`);
           });
 

@@ -10,7 +10,6 @@ import path from "node:path";
 import { toPosix } from "../core/common";
 import { parseFrontmatter } from "../core/frontmatter";
 import type { ShowResponse, SourceSearchHit } from "../sources/types";
-import type { StashEntry } from "./metadata";
 
 // ── FileContext ──────────────────────────────────────────────────────────────
 
@@ -167,8 +166,6 @@ export interface AssetRenderer {
   buildShowResponse(ctx: RenderContext): ShowResponse;
   /** Optionally enrich a SourceSearchHit with renderer-specific fields */
   enrichSearchHit?(hit: SourceSearchHit, stashDir: string): void;
-  /** Optionally extract/augment metadata for a StashEntry */
-  extractMetadata?(entry: StashEntry, ctx: RenderContext): void;
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────

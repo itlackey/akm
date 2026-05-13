@@ -741,12 +741,14 @@ test("akmIndex surfaces graph quality telemetry in result", async () => {
   });
 
   const graphExtract = await import("../src/llm/graph-extract");
+  const memoryInfer = await import("../src/llm/memory-infer");
   const graphSpy = spyOn(graphExtract, "extractGraphFromBody").mockImplementation(async (_cfg, body) => {
     if (body.includes("Beta")) {
       return { entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta", type: "uses" }] };
     }
     return { entities: ["Alpha", "Gamma"], relations: [{ from: "Alpha", to: "Gamma" }] };
   });
+  const memorySpy = spyOn(memoryInfer, "compressMemoryToDerivedMemory").mockImplementation(async () => undefined);
 
   try {
     const result = await akmIndex({ stashDir, enrich: true, full: true });
@@ -760,6 +762,7 @@ test("akmIndex surfaces graph quality telemetry in result", async () => {
       density: 0.6667,
     });
   } finally {
+    memorySpy.mockRestore();
     graphSpy.mockRestore();
   }
 });

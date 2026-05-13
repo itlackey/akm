@@ -23,6 +23,7 @@ import type { AssetRenderer, RenderContext } from "../indexer/file-context";
 import { registerRenderer } from "../indexer/file-context";
 import type { StashEntry } from "../indexer/metadata";
 import { extractCommentMetadata, extractDescriptionFromComments } from "../indexer/metadata";
+import { registerMetadataContributor } from "../indexer/metadata-contributors";
 import type { KnowledgeView, ShowResponse, SourceSearchHit } from "../sources/types";
 import { buildWorkflowAction, workflowMdRenderer } from "../workflows/renderer";
 
@@ -331,15 +332,6 @@ const knowledgeMdRenderer: AssetRenderer = {
       }
     }
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const toc = parseMarkdownToc(ctx.content());
-      if (toc.headings.length > 0) entry.toc = toc.headings;
-    } catch {
-      // Non-fatal: skip TOC if file can't be read
-    }
-  },
 };
 
 // ── 4b. wiki-md ──────────────────────────────────────────────────────────────
@@ -414,15 +406,6 @@ const wikiMdRenderer: AssetRenderer = {
       }
     }
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const toc = parseMarkdownToc(ctx.content());
-      if (toc.headings.length > 0) entry.toc = toc.headings;
-    } catch {
-      // Non-fatal: skip TOC if file can't be read
-    }
-  },
 };
 
 // ── 4c. lesson-md ────────────────────────────────────────────────────────────
@@ -457,33 +440,6 @@ const lessonMdRenderer: AssetRenderer = {
       content: parsed.content,
     };
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const parsed = parseFrontmatter(ctx.content());
-      const fm = parsed.data;
-      const desc = toStringOrUndefined(fm.description);
-      if (desc && !entry.description) {
-        entry.description = desc;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
-      const whenToUse = toStringOrUndefined(fm.when_to_use);
-      if (whenToUse) {
-        const hints = new Set<string>(entry.searchHints ?? []);
-        hints.add(`when_to_use:${whenToUse}`);
-        entry.searchHints = Array.from(hints).filter(Boolean);
-      }
-      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
-        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        if (fmTags.length > 0) {
-          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
-        }
-      }
-    } catch {
-      // Non-fatal: skip metadata extraction on parse error
-    }
-  },
 };
 
 // ── 5. memory-md ─────────────────────────────────────────────────────────────
@@ -500,60 +456,6 @@ const memoryMdRenderer: AssetRenderer = {
       action: "Recall context — read the content below",
       content: ctx.content(),
     };
-  },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const parsed = parseFrontmatter(ctx.content());
-      const fm = parsed.data;
-
-      // Description from frontmatter
-      const desc = toStringOrUndefined(fm.description);
-      if (desc && !entry.description) {
-        entry.description = desc;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
-
-      // Tags from frontmatter
-      if (Array.isArray(fm.tags) && fm.tags.length > 0) {
-        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        if (fmTags.length > 0) {
-          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
-        }
-      }
-
-      // Build searchHints from structured memory metadata fields
-      const hints = new Set<string>(entry.searchHints ?? []);
-      const source = toStringOrUndefined(fm.source);
-      if (source) hints.add(source);
-
-      // observed_at: prefer frontmatter value, fall back to file mtime
-      const fmObservedAt = toStringOrUndefined(fm.observed_at);
-      if (fmObservedAt) {
-        hints.add(`observed_at:${fmObservedAt}`);
-      } else {
-        // mtime fallback: format as ISO date (YYYY-MM-DD)
-        try {
-          const mtime = ctx.stat().mtime;
-          const isoDate = mtime.toISOString().slice(0, 10);
-          hints.add(`observed_at:${isoDate}`);
-        } catch {
-          // Non-fatal: skip mtime fallback on stat error
-        }
-      }
-
-      const expires = toStringOrUndefined(fm.expires);
-      if (expires) hints.add(`expires:${expires}`);
-
-      if (fm.subjective === true) hints.add("subjective");
-
-      if (hints.size > 0) {
-        entry.searchHints = Array.from(hints).filter(Boolean);
-      }
-    } catch {
-      // Non-fatal: skip metadata extraction on error
-    }
   },
 };
 
@@ -607,17 +509,6 @@ const scriptSourceRenderer: AssetRenderer = {
       if (!hasErrnoCode(error, "ENOENT")) throw error;
     }
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    if (ctx.ext !== ".md") {
-      const commentDesc = extractDescriptionFromComments(ctx.absPath);
-      if (commentDesc && !entry.description) {
-        entry.description = commentDesc;
-        entry.source = "comments";
-        entry.confidence = 0.7;
-      }
-    }
-  },
 };
 
 // ── 8. vault-env ─────────────────────────────────────────────────────────────
@@ -649,22 +540,6 @@ const vaultEnvRenderer: AssetRenderer = {
     const { keys } = listVaultKeys(hit.path);
     if (keys.length > 0) hit.keys = keys;
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    // Re-derive from the file directly to guarantee no value ever transits
-    // through any other code path. Caller already short-circuits in
-    // generateMetadata{,Flat}, but this is defense in depth.
-    const { keys, comments } = listVaultKeys(ctx.absPath);
-    if (comments.length > 0 && !entry.description) {
-      entry.description = comments.join(" ").slice(0, 500);
-      entry.source = "comments";
-      entry.confidence = 0.7;
-    }
-    if (keys.length > 0) {
-      entry.searchHints = keys;
-    }
-    entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
-  },
 };
 
 // ── 7. task-md ───────────────────────────────────────────────────────────────
@@ -685,40 +560,179 @@ const taskMdRenderer: AssetRenderer = {
       content: ctx.content(),
     };
   },
-
-  extractMetadata(entry: StashEntry, ctx: RenderContext): void {
-    try {
-      const parsed = parseFrontmatter(ctx.content());
-      const fm = parsed.data;
-
-      const desc = toStringOrUndefined(fm.description);
-      if (desc && !entry.description) {
-        entry.description = desc;
-        entry.source = "frontmatter";
-        entry.confidence = 0.9;
-      }
-
-      if (Array.isArray(fm.tags)) {
-        const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        if (fmTags.length > 0) {
-          entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
-        }
-      }
-      entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
-
-      const hints = new Set<string>(entry.searchHints ?? []);
-      const schedule = toStringOrUndefined(fm.schedule);
-      if (schedule) hints.add(`schedule:${schedule}`);
-      const workflow = toStringOrUndefined(fm.workflow);
-      if (workflow) hints.add(`workflow:${workflow}`);
-      const prompt = toStringOrUndefined(fm.prompt);
-      if (prompt) hints.add(`prompt:${prompt}`);
-      if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
-    } catch {
-      // Non-fatal: skip metadata extraction on error
-    }
-  },
 };
+
+function applyTocMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const toc = parseMarkdownToc(ctx.content());
+    if (toc.headings.length > 0) entry.toc = toc.headings;
+  } catch {
+    // Non-fatal: skip TOC if file can't be read
+  }
+}
+
+function applyLessonMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const parsed = parseFrontmatter(ctx.content());
+    const fm = parsed.data;
+    const desc = toStringOrUndefined(fm.description);
+    if (desc && !entry.description) {
+      entry.description = desc;
+      entry.source = "frontmatter";
+      entry.confidence = 0.9;
+    }
+    const whenToUse = toStringOrUndefined(fm.when_to_use);
+    if (whenToUse) {
+      const hints = new Set<string>(entry.searchHints ?? []);
+      hints.add(`when_to_use:${whenToUse}`);
+      entry.searchHints = Array.from(hints).filter(Boolean);
+    }
+    if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+      const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      if (fmTags.length > 0) {
+        entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+      }
+    }
+  } catch {
+    // Non-fatal: skip metadata extraction on parse error
+  }
+}
+
+function applyMemoryMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const parsed = parseFrontmatter(ctx.content());
+    const fm = parsed.data;
+    const desc = toStringOrUndefined(fm.description);
+    if (desc && !entry.description) {
+      entry.description = desc;
+      entry.source = "frontmatter";
+      entry.confidence = 0.9;
+    }
+    if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+      const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      if (fmTags.length > 0) {
+        entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+      }
+    }
+    const hints = new Set<string>(entry.searchHints ?? []);
+    const source = toStringOrUndefined(fm.source);
+    if (source) hints.add(source);
+    const fmObservedAt = toStringOrUndefined(fm.observed_at);
+    if (fmObservedAt) {
+      hints.add(`observed_at:${fmObservedAt}`);
+    } else {
+      try {
+        const isoDate = ctx.stat().mtime.toISOString().slice(0, 10);
+        hints.add(`observed_at:${isoDate}`);
+      } catch {
+        // Non-fatal: skip mtime fallback on stat error
+      }
+    }
+    const expires = toStringOrUndefined(fm.expires);
+    if (expires) hints.add(`expires:${expires}`);
+    if (fm.subjective === true) hints.add("subjective");
+    if (hints.size > 0) {
+      entry.searchHints = Array.from(hints).filter(Boolean);
+    }
+  } catch {
+    // Non-fatal: skip metadata extraction on error
+  }
+}
+
+function applyScriptMetadata(entry: StashEntry, ctx: RenderContext): void {
+  if (ctx.ext === ".md") return;
+  const commentDesc = extractDescriptionFromComments(ctx.absPath);
+  if (commentDesc && !entry.description) {
+    entry.description = commentDesc;
+    entry.source = "comments";
+    entry.confidence = 0.7;
+  }
+}
+
+function applyVaultMetadata(entry: StashEntry, ctx: RenderContext): void {
+  const { keys, comments } = listVaultKeys(ctx.absPath);
+  if (comments.length > 0 && !entry.description) {
+    entry.description = comments.join(" ").slice(0, 500);
+    entry.source = "comments";
+    entry.confidence = 0.7;
+  }
+  if (keys.length > 0) {
+    entry.searchHints = keys;
+  }
+  entry.tags = Array.from(new Set([...(entry.tags ?? []), "vault", "secrets"]));
+}
+
+function applyTaskMetadata(entry: StashEntry, ctx: RenderContext): void {
+  try {
+    const parsed = parseFrontmatter(ctx.content());
+    const fm = parsed.data;
+    const desc = toStringOrUndefined(fm.description);
+    if (desc && !entry.description) {
+      entry.description = desc;
+      entry.source = "frontmatter";
+      entry.confidence = 0.9;
+    }
+    if (Array.isArray(fm.tags)) {
+      const fmTags = fm.tags.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      if (fmTags.length > 0) {
+        entry.tags = Array.from(new Set([...(entry.tags ?? []), ...fmTags]));
+      }
+    }
+    entry.tags = Array.from(new Set([...(entry.tags ?? []), "task", "scheduled"]));
+    const hints = new Set<string>(entry.searchHints ?? []);
+    const schedule = toStringOrUndefined(fm.schedule);
+    if (schedule) hints.add(`schedule:${schedule}`);
+    const workflow = toStringOrUndefined(fm.workflow);
+    if (workflow) hints.add(`workflow:${workflow}`);
+    const prompt = toStringOrUndefined(fm.prompt);
+    if (prompt) hints.add(`prompt:${prompt}`);
+    if (hints.size > 0) entry.searchHints = Array.from(hints).filter(Boolean);
+  } catch {
+    // Non-fatal: skip metadata extraction on error
+  }
+}
+
+registerMetadataContributor({
+  name: "knowledge-toc-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "knowledge-md",
+  contribute: (entry, ctx) => applyTocMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "wiki-toc-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "wiki-md",
+  contribute: (entry, ctx) => applyTocMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "lesson-frontmatter-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "lesson-md",
+  contribute: (entry, ctx) => applyLessonMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "memory-frontmatter-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "memory-md",
+  contribute: (entry, ctx) => applyMemoryMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "script-comment-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "script-source",
+  contribute: (entry, ctx) => applyScriptMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "vault-secret-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "vault-env",
+  contribute: (entry, ctx) => applyVaultMetadata(entry, ctx.renderContext),
+});
+
+registerMetadataContributor({
+  name: "task-frontmatter-metadata",
+  appliesTo: ({ rendererName }) => rendererName === "task-md",
+  contribute: (entry, ctx) => applyTaskMetadata(entry, ctx.renderContext),
+});
 
 // ── Registration ─────────────────────────────────────────────────────────────
 

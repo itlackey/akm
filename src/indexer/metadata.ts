@@ -10,6 +10,7 @@ import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import type { TocHeading } from "../core/markdown";
 import { isVerbose, warn } from "../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
+import { applyMetadataContributors } from "./metadata-contributors";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -957,10 +958,13 @@ async function buildEntryFromFile(
   const resolvedMatch = match ?? (await runMatchers(ctx));
   if (resolvedMatch) {
     const renderer = await getRenderer(resolvedMatch.renderer);
-    if (renderer?.extractMetadata) {
+    if (renderer) {
       const renderCtx = buildRenderContext(ctx, resolvedMatch, [stashRoot]);
       try {
-        renderer.extractMetadata(entry, renderCtx);
+        await applyMetadataContributors(entry, {
+          rendererName: renderer.name,
+          renderContext: renderCtx,
+        });
       } catch (error) {
         return {
           skip: true,

@@ -41,7 +41,8 @@ import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
 import { warn } from "../core/warn";
-import { extractGraphFromBodies, extractGraphFromBody, type GraphRelation } from "../llm/graph-extract";
+import type { GraphRelation } from "../llm/graph-extract";
+import * as graphExtract from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
 import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
 import { deduplicateGraph } from "./graph-dedup";
@@ -403,7 +404,13 @@ export async function runGraphExtractionPass(
                 const reused = reuseGraphNode(previousNodes, candidate, bodyHash);
                 if (reused) return reused;
               }
-              const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+              const extraction = await graphExtract.extractGraphFromBody(
+                llmConfig,
+                candidate.body,
+                signal,
+                config,
+                onFallback,
+              );
               // Cache empty results too so we skip on next run.
               return {
                 entities: extraction.entities,
@@ -418,7 +425,13 @@ export async function runGraphExtractionPass(
         }
 
         if (!cached) {
-          const extraction = await extractGraphFromBody(llmConfig, candidate.body, signal, config, onFallback);
+          const extraction = await graphExtract.extractGraphFromBody(
+            llmConfig,
+            candidate.body,
+            signal,
+            config,
+            onFallback,
+          );
           cached = {
             entities: extraction.entities,
             relations: extraction.relations,
@@ -523,7 +536,7 @@ export async function runGraphExtractionPass(
 
       // extractGraphFromBodies always returns an array of the same length
       // as bodies (it falls back per-asset for any missing indices).
-      const batchExtractions = await extractGraphFromBodies(llmConfig, bodies, signal, config, onFallback);
+      const batchExtractions = await graphExtract.extractGraphFromBodies(llmConfig, bodies, signal, config, onFallback);
 
       // Map LLM results back to original positions and write cache entries.
       let llmIdx = 0;

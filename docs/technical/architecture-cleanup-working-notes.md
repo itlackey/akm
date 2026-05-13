@@ -105,3 +105,47 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - No test expectation rewrites were needed.
 - Diff stayed isolated to agent runtime/session-log seam files, direct tests, and tracking docs.
 - Existing skipped real-profile integration coverage remains unchanged.
+
+## Phase 2
+
+### Phase 2 baseline results
+
+- `bun test tests/commands/show.test.ts` -> pass (`16` tests)
+- `bun test tests/commands/show-indexer-parity.test.ts` -> pass (`4` tests)
+- `bun test tests/wiki.test.ts` -> pass (`43` tests)
+- `bun test tests/parameter-metadata.test.ts` -> pass (`19` tests)
+- `bun test tests/output-baseline.test.ts` -> pass (`9` tests)
+
+### Phase 2 baseline notes
+
+- `src/output/renderers.ts` still mixes show rendering with metadata extraction.
+- `src/indexer/metadata.ts` currently calls renderer-owned metadata hooks directly.
+- The safe next seam is `MetadataContributor[]`, leaving show rendering and search-hit enrichment unchanged.
+
+### Phase 2 implementation notes
+
+- Added `src/indexer/metadata-contributors.ts` as the new metadata extraction seam and removed renderer-owned metadata extraction from `AssetRenderer`.
+- Rewired `src/indexer/metadata.ts` to resolve the matched renderer name and apply registered `MetadataContributor[]` during entry generation.
+- Registered built-in metadata contributors from `src/output/renderers.ts` and `src/workflows/renderer.ts`, keeping show rendering and search-hit enrichment unchanged.
+- Added lazy built-in contributor registration in `src/indexer/metadata-contributors.ts` so indexer-only paths register metadata behavior without depending on prior show/renderer initialization.
+- Fixed two stabilization regressions during the Phase 2 cutover:
+  - `src/indexer/metadata.ts` now awaits async contributor application so metadata writes and workflow-skip warnings stay in the intended control flow.
+  - built-in contributors in `src/output/renderers.ts` now unwrap `ctx.renderContext` instead of treating the higher-level metadata context itself as a render context.
+- Restored spyable LLM seams in `src/indexer/graph-extraction.ts` and `src/indexer/memory-inference.ts` by calling extractor helpers through their module objects.
+- The only test edit was in `tests/indexer.test.ts`, where the graph-quality test now also stubs `compressMemoryToDerivedMemory()` so it isolates graph telemetry instead of timing out in the separate memory-inference pass.
+
+### Phase 2 gate results
+
+- `bun test tests/indexer.test.ts` -> pass (`45` tests)
+- `bun test tests/commands/show.test.ts` -> pass (`16` tests)
+- `bun test tests/commands/show-indexer-parity.test.ts` -> pass (`4` tests)
+- `bun test tests/wiki.test.ts` -> pass (`43` tests)
+- `bun test tests/parameter-metadata.test.ts` -> pass (`19` tests)
+- `bun test tests/output-baseline.test.ts` -> pass (`9` tests)
+
+### Phase 2 review notes
+
+- Show payload generation remains renderer-owned; only indexing metadata extraction moved behind the new contributor seam.
+- Search-hit enrichment remains on the Phase 1 seam and was not merged into metadata contributors.
+- No test expectations or fixture outputs were rewritten.
+- The only test logic change was a seam stub in `tests/indexer.test.ts` to isolate graph telemetry from the separately enabled memory-inference pass.
