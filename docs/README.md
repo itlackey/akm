@@ -35,6 +35,7 @@
 - [Classification](technical/classification.md) -- Matcher and renderer behavior
 - [Functional Contract Patterns](technical/functional-contract-patterns.md) -- Quick reference for contributor pipelines and small process contracts
 - [Implementation Plan: Functional Contract Refactor](technical/implementation-plan-functional-contract-refactor.md) -- Phased plan to move behavior from type-centric switchboards to process-local contributors
+- [Architecture Cleanup Checklist](technical/architecture-cleanup-checklist.md) -- Living checklist for executing the cleanup plan with parity gates, reviews, and git hygiene
 - [Show Response](technical/show-response.md) -- `akm show` output fields by asset type
 - [Testing Workflow](technical/testing-workflow.md) -- End-to-end, Docker, deployment, and upgrade validation
 - [Ref Format](technical/ref.md) -- Wire format for asset references

@@ -1409,6 +1409,7 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--reflect-cooldown-days <n>` | Override reflect cooldown (non-negative integer) |
 | `--distill-cooldown-days <n>` | Override distill cooldown (non-negative integer) |
 | `--consolidate-cooldown-days <n>` | Override consolidate cooldown (non-negative integer) |
+| `--consolidate-recovery <abort|clean>` | Handle stale consolidate journal by aborting (default) or cleaning stale artifacts |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
 | `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 5) |
 

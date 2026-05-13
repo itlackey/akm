@@ -66,6 +66,8 @@ export interface AkmConsolidateOptions {
   config?: AkmConfig;
   /** When true, indicates the run was triggered automatically by volume threshold rather than by the memory_consolidation feature flag. */
   autoTriggered?: boolean;
+  /** How to handle stale/incomplete consolidate journals from prior interrupted runs. */
+  recoveryMode?: "abort" | "clean";
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -297,6 +299,7 @@ interface ConsolidateJournal {
   startedAt: string;
   operations: ConsolidateOperation[];
   completed: string[];
+  backupTimestamp?: string;
 }
 
 function getJournalPath(stashDir: string): string {
@@ -307,30 +310,86 @@ function getBackupDir(stashDir: string, timestamp: string): string {
   return path.join(stashDir, ".akm", "consolidate-backup", timestamp);
 }
 
-function checkForIncompleteJournal(stashDir: string): void {
+function removeStaleJournal(stashDir: string, journal: ConsolidateJournal, warnings: string[]): void {
+  const journalPath = getJournalPath(stashDir);
+  try {
+    fs.unlinkSync(journalPath);
+  } catch {
+    warnings.push(`Failed to remove stale consolidate journal at ${journalPath}.`);
+  }
+
+  const backupTimestamp =
+    typeof journal.backupTimestamp === "string" && journal.backupTimestamp.trim().length > 0
+      ? journal.backupTimestamp.trim()
+      : typeof journal.startedAt === "string" && journal.startedAt.trim().length > 0
+        ? journal.startedAt.replace(/[:.]/g, "-")
+        : "";
+  if (!backupTimestamp) return;
+
+  const backupDir = getBackupDir(stashDir, backupTimestamp);
+  if (!fs.existsSync(backupDir)) return;
+  try {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  } catch {
+    warnings.push(`Failed to remove stale consolidate backup at ${backupDir}.`);
+  }
+
+  warnings.push(`Cleared stale consolidate backup at ${backupDir}.`);
+}
+
+function checkForIncompleteJournal(stashDir: string, recoveryMode: "abort" | "clean", warnings: string[]): void {
   const journalPath = getJournalPath(stashDir);
   if (!fs.existsSync(journalPath)) return;
+
   let journal: ConsolidateJournal;
   try {
     journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as ConsolidateJournal;
   } catch {
-    return;
-  }
-  if (journal.completed.length < journal.operations.length) {
+    if (recoveryMode === "clean") {
+      try {
+        fs.unlinkSync(journalPath);
+        warnings.push(`Removed unreadable consolidate journal at ${journalPath}.`);
+      } catch {
+        warnings.push(`Failed to remove unreadable consolidate journal at ${journalPath}.`);
+      }
+      return;
+    }
     throw new ConfigError(
-      "Incomplete consolidation run detected. Run akm consolidate --clean to remove the journal and backup, or --resume to retry (not yet implemented). Aborting.",
+      `Incomplete consolidation state detected: unreadable journal at ${journalPath}. Re-run with --consolidate-recovery clean to remove stale journal artifacts, or remove the file manually.`,
       "INVALID_CONFIG_FILE",
     );
   }
+
+  const operationCount = Array.isArray(journal.operations) ? journal.operations.length : 0;
+  const completedCount = Array.isArray(journal.completed) ? journal.completed.length : 0;
+  if (completedCount >= operationCount) return;
+
+  if (recoveryMode === "clean") {
+    removeStaleJournal(stashDir, journal, warnings);
+    warnings.push(
+      `Removed stale consolidation journal at ${journalPath} (${completedCount}/${operationCount} operations completed).`,
+    );
+    return;
+  }
+
+  const backupHint =
+    typeof journal.backupTimestamp === "string" && journal.backupTimestamp.trim().length > 0
+      ? ` Backup dir: ${getBackupDir(stashDir, journal.backupTimestamp.trim())}.`
+      : "";
+  throw new ConfigError(
+    `Incomplete consolidation run detected at ${journalPath} (${completedCount}/${operationCount} operations completed). Re-run with --consolidate-recovery clean to remove stale journal artifacts.${backupHint}`,
+    "INVALID_CONFIG_FILE",
+  );
 }
 
-function writeJournal(stashDir: string, ops: ConsolidateOperation[]): void {
+function writeJournal(stashDir: string, ops: ConsolidateOperation[], backupTimestamp: string): void {
   const journalPath = getJournalPath(stashDir);
   fs.mkdirSync(path.dirname(journalPath), { recursive: true });
   const journal: ConsolidateJournal = {
     startedAt: new Date().toISOString(),
     operations: ops,
     completed: [],
+    backupTimestamp,
   };
   fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), "utf8");
 }
@@ -449,9 +508,8 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
     };
   }
 
-  checkForIncompleteJournal(stashDir);
-
   const warnings: string[] = [];
+  checkForIncompleteJournal(stashDir, opts.recoveryMode ?? "abort", warnings);
 
   const memories = loadMemoriesForSource(opts.target, stashDir, warnings);
 
@@ -633,7 +691,7 @@ export async function akmConsolidate(opts: AkmConsolidateOptions = {}): Promise<
   const backupDir = getBackupDir(stashDir, timestamp);
 
   // Write journal before any mutations
-  writeJournal(stashDir, allOps);
+  writeJournal(stashDir, allOps, timestamp);
 
   let merged = 0;
   let deleted = 0;

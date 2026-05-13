@@ -13,6 +13,7 @@
 | `--auto-accept` | `"safe"` | Passed to `akmConsolidate`; skips interactive confirmation on the HTTP consolidation path. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
+| `--consolidate-recovery` | `"abort" \| "clean"` | Recovery mode for stale/incomplete consolidate journals. Default: `abort`. |
 | `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; disable retrieval fallback. |
 | `--min-retrieval-count` | `number` | Minimum retrieval count for zero-feedback fallback eligibility. Default: 5. |
 

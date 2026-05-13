@@ -977,4 +977,117 @@ describe("akm improve memory cleanup", () => {
       ),
     ).toBe(true);
   });
+
+  test("stale consolidate journal error gives actionable improve recovery guidance", async () => {
+    const stashDir = makeTempDir("akm-improve-stale-journal-abort-");
+    fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, ".akm", "consolidate-journal.json"),
+      JSON.stringify(
+        {
+          startedAt: "2026-01-01T00:00:00.000Z",
+          operations: [{ op: "delete", ref: "memory:old", reason: "stale" }],
+          completed: [],
+          backupTimestamp: "2026-01-01T00-00-00-000Z",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    await expect(
+      akmImprove({
+        scope: "memory",
+        stashDir,
+        config: {
+          semanticSearchMode: "off",
+          llm: {
+            endpoint: "http://localhost/chat/completions",
+            model: "test",
+            features: { memory_consolidation: true },
+          },
+        },
+        ensureIndexFn: async () => false,
+        reindexFn: async () => ({
+          schemaVersion: 1,
+          ok: true,
+          indexed: 0,
+          warnings: [],
+          errors: [],
+          durationMs: 0,
+        }),
+      }),
+    ).rejects.toThrow("--consolidate-recovery clean");
+    await expect(
+      akmImprove({
+        scope: "memory",
+        stashDir,
+        config: {
+          semanticSearchMode: "off",
+          llm: {
+            endpoint: "http://localhost/chat/completions",
+            model: "test",
+            features: { memory_consolidation: true },
+          },
+        },
+        ensureIndexFn: async () => false,
+        reindexFn: async () => ({
+          schemaVersion: 1,
+          ok: true,
+          indexed: 0,
+          warnings: [],
+          errors: [],
+          durationMs: 0,
+        }),
+      }),
+    ).rejects.not.toThrow("akm consolidate --clean");
+  });
+
+  test("consolidate recovery clean removes stale journal and allows improve to continue", async () => {
+    const stashDir = makeTempDir("akm-improve-stale-journal-clean-");
+    const staleBackupTs = "2026-01-01T00-00-00-000Z";
+    fs.mkdirSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, ".akm", "consolidate-journal.json"),
+      JSON.stringify(
+        {
+          startedAt: "2026-01-01T00:00:00.000Z",
+          operations: [{ op: "delete", ref: "memory:old", reason: "stale" }],
+          completed: [],
+          backupTimestamp: staleBackupTs,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      config: {
+        semanticSearchMode: "off",
+        llm: {
+          endpoint: "http://localhost/chat/completions",
+          model: "test",
+          features: { memory_consolidation: true },
+        },
+      },
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      consolidateOptions: { recoveryMode: "clean" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-journal.json"))).toBe(false);
+    expect(fs.existsSync(path.join(stashDir, ".akm", "consolidate-backup", staleBackupTs))).toBe(false);
+  });
 });

@@ -3053,6 +3053,11 @@ const improveCommand = defineCommand({
       type: "string",
       description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
     },
+    "consolidate-recovery": {
+      type: "string",
+      description:
+        "How to handle stale/incomplete consolidation journals: abort (default) or clean (remove stale journal artifacts)",
+    },
     "require-feedback-signal": {
       type: "boolean",
       description: "Only process assets with recent feedback signals (disables retrieval fallback)",
@@ -3099,6 +3104,17 @@ const improveCommand = defineCommand({
       const consolidateCooldownDays = ignoreCooldown
         ? 0
         : parseNonNegativeCooldownDays(consolidateCooldownRaw, "--consolidate-cooldown-days");
+      const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
+      const consolidateRecovery =
+        consolidateRecoveryRaw === undefined
+          ? undefined
+          : (consolidateRecoveryRaw.trim().toLowerCase() as "abort" | "clean" | string);
+      if (consolidateRecovery !== undefined && consolidateRecovery !== "abort" && consolidateRecovery !== "clean") {
+        throw new UsageError(
+          `Invalid --consolidate-recovery value: "${consolidateRecoveryRaw}". Must be one of: abort, clean.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
       const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
       const minRetrievalCount = parseNonNegativeCooldownDays(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
@@ -3125,7 +3141,13 @@ const improveCommand = defineCommand({
           ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
           ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
           ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
-          consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
+          consolidateOptions: {
+            target: targetArg,
+            dryRun,
+            autoAccept,
+            task: taskArg,
+            ...(consolidateRecovery !== undefined ? { recoveryMode: consolidateRecovery } : {}),
+          },
         });
       } finally {
         clearLogFile();

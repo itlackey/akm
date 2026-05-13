@@ -92,6 +92,17 @@ describe("improve CLI cooldown flags", () => {
     expect(parsed.error).toContain("non-negative integer");
   });
 
+  test("rejects invalid consolidate recovery mode", () => {
+    const result = runCli(["improve", "--consolidate-recovery", "resume", "--dry-run"]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("--consolidate-recovery");
+    expect(parsed.error).toContain("abort");
+    expect(parsed.error).toContain("clean");
+  });
+
   test("--ignore-cooldown takes precedence over explicit cooldown values", () => {
     const stash = makeStashDir();
     const result = runCli(

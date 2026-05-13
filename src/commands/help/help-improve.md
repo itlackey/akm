@@ -38,6 +38,8 @@ Options:
                         Override distill cooldown with a non-negative integer
   --consolidate-cooldown-days <n>
                         Override consolidate cooldown with a non-negative integer
+  --consolidate-recovery <mode>
+                        Recovery mode for stale consolidate journals: abort (default) or clean
   --require-feedback-signal
                         Only process refs with recent feedback signal events
   --min-retrieval-count <n>
