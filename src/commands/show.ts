@@ -16,7 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseAssetRef } from "../core/asset-ref";
+import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
@@ -268,19 +268,6 @@ function logShowEvent(ref: string, existingDb?: import("bun:sqlite").Database): 
   } catch {
     /* fire-and-forget */
   }
-}
-
-/**
- * Resolve an asset path via the FTS5 index only. Spec §6.2's primary path.
- *
- * Returns `undefined` if the index has no matching row.
- */
-async function resolvePathViaIndex(parsed: AssetRef): Promise<{ assetPath: string } | undefined> {
-  const entry = await lookup(parsed);
-  if (entry) {
-    return { assetPath: entry.filePath };
-  }
-  return undefined;
 }
 
 /** @internal Use akmShowUnified() for all external callers. */

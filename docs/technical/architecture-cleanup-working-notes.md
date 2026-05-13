@@ -192,3 +192,39 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - The path-related diff stayed localized to `show`, `improve`, `distill`, `schema-repair`, and the new shared resolver module.
 - No fixture or assertion rewrites were needed.
 - Lint's existing missing-ref checks remain separate for now; this phase only centralized ref-to-file resolution used by command execution paths.
+
+## Phase 4
+
+### Phase 4 baseline results
+
+- `bun test tests/asset-spec.test.ts` -> pass (`33` tests)
+- `bun test tests/wiki.test.ts` -> pass (`43` tests)
+- `bun test tests/indexer.test.ts` -> pass (`45` tests)
+
+### Phase 4 baseline notes
+
+- Classification precedence is currently encoded directly in `src/indexer/matchers.ts` through hard-coded matcher functions plus registration order.
+- Renderer selection is also baked into those same matcher return values, so classification facts and presentation concerns are still coupled.
+- Existing regression coverage for precedence is strongest in `tests/file-context.test.ts`, `tests/matchers-unit.test.ts`, and `tests/wiki.test.ts`.
+
+### Phase 4 implementation notes
+
+- Added `src/indexer/match-contributors.ts` as the fact-producing classification seam.
+- Moved the actual classification rules into `MatchContributor[]` that emit `{ type, specificity, meta? }` facts without direct renderer names.
+- Reworked `src/indexer/matchers.ts` into a compatibility adapter that translates those facts back into the existing `MatchResult` shape via the shared renderer registry.
+- Preserved built-in matcher registration order and the current specificity/tie-break behavior.
+- Kept the public matcher exports (`extensionMatcher`, `directoryMatcher`, `parentDirHintMatcher`, `smartMdMatcher`, `wikiMatcher`) stable so existing tests and callers continue to exercise the same API.
+
+### Phase 4 gate results
+
+- `bun test tests/matchers-unit.test.ts` -> pass (`31` tests)
+- `bun test tests/file-context.test.ts` -> pass (`45` tests)
+- `bun test tests/wiki.test.ts` -> pass (`43` tests)
+- `bun test tests/indexer.test.ts` -> pass (`45` tests)
+- `bun test tests/asset-spec.test.ts` -> pass (`33` tests)
+
+### Phase 4 review notes
+
+- The diff stayed localized to classification internals plus tracking docs.
+- No test assertions or fixtures were rewritten.
+- The adapter layer keeps current `MatchResult` behavior intact while moving the underlying classification decisions onto fact-producing contributors.

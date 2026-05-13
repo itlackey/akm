@@ -136,22 +136,22 @@ Suggested status markers:
 
 ## Phase 4 — Classification As Facts
 
-- [ ] Rework classification into fact-producing `MatchContributor[]`.
-- [ ] Remove direct renderer selection from match results.
-- [ ] Preserve classification precedence and current resolution behavior.
+- [x] Rework classification into fact-producing `MatchContributor[]`.
+- [x] Remove direct renderer selection from match results.
+- [x] Preserve classification precedence and current resolution behavior.
 
 ### Phase 4 Gate
 
-- [ ] Run classification precedence tests.
-- [ ] Run wiki/workflow regression tests.
-- [ ] Validate no search/show behavior drift.
-- [ ] Complete a focused code review before moving on.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [x] Run classification precedence tests.
+- [x] Run wiki/workflow regression tests.
+- [x] Validate no search/show behavior drift.
+- [x] Complete a focused code review before moving on.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
-- [ ] Keep the phase localized to classification and immediate callers.
-- [ ] Confirm import-only test edits if modules moved.
+- [x] Keep the phase localized to classification and immediate callers.
+- [x] Confirm import-only test edits if modules moved.
 
 ---
 

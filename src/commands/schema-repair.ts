@@ -92,7 +92,7 @@ export async function runSchemaRepairPass(
       continue;
     }
 
-    let filePath = await findFilePath(failure.ref, stashDir);
+    const filePath = await findFilePath(failure.ref, stashDir);
     if (!filePath) {
       repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
       continue;
