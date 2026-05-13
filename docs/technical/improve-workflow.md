@@ -13,6 +13,8 @@
 | `--auto-accept` | `"safe"` | Passed to `akmConsolidate`; skips interactive confirmation on the HTTP consolidation path. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
+| `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; disable retrieval fallback. |
+| `--min-retrieval-count` | `number` | Minimum retrieval count for zero-feedback fallback eligibility. Default: 5. |
 
 Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`) replace production defaults in tests.
 
@@ -40,8 +42,9 @@ flowchart TD
     G --> J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/archive/]
     J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
 
-    K --> L[Signal filter\nkeep only refs with feedback events\nhaving metadata.signal or metadata.note]
-    L --> M[buildUtilityMap\nlook up utility scores from SQLite]
+    K --> L[Signal filter\nkeep only refs with recent feedback events\nhaving metadata.signal or metadata.note]
+    L --> L2[Zero-feedback fallback\ninclude refs with retrievalCount >= threshold\ndefault threshold: 5]
+    L2 --> M[buildUtilityMap\nlook up utility scores from SQLite]
     M --> N[Sort by utility score DESC\napply --limit if set]
     N --> J2{anything archived or transitioned?}
     J2 -- yes --> J3[push memory-prune actions\nreindexFn: rebuild SQLite index]
@@ -75,6 +78,8 @@ flowchart TD
 
         REFLECT_H --> T{lesson or distillable memory?}
         T -- no --> NEXT_ASSET
+        T -- yes + memory without recent feedback
+        --> SKIP_WEAK[push distill-skipped action\nappendEvent improve_skipped\nreason: memory_distill_requires_feedback]
         T -- yes --> DEDUP{pending proposal\nalready exists for lessonRef?}
         DEDUP -- yes --> SKIP_DISTILL[push distill-skipped action]
         DEDUP -- no --> DISTILL
@@ -96,6 +101,7 @@ flowchart TD
         end
 
         SKIP_DISTILL --> NEXT_ASSET
+        SKIP_WEAK --> NEXT_ASSET
         DISTILL_RETURN --> NEXT_ASSET([completedCount++\nlog progress])
     end
 
@@ -160,22 +166,25 @@ flowchart TD
 
 `akmReflect` is the agent-invocation subprocess. It always emits a `reflect_invoked` event at entry, regardless of success or failure.
 
+For `skill:*` refs, reflect also reviews related distilled lessons as consolidation evidence. When those lessons show strong, repeatable, factual guidance, the agent may propose promoting that guidance into long-term skill documentation, including companion reference docs under `skills/<skill>/references/*.md` via `knowledge:skills/<skill>/references/<topic>` refs.
+
 **Internal steps:**
 
 1. Emit `reflect_invoked` event via `appendEvent`.
 2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal.
 3. Resolve the agent profile from config (`agent.default` or the `--profile` override).
-4. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
-5. Spawn the agent via `runProposalAgentPipeline`:
+4. For skill refs, load the canonical derived lesson (`lesson:<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
+5. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
+6. Spawn the agent via `runProposalAgentPipeline`:
    - When `profile.sdkMode === true`: routes to `runAgentSdk` (in-process Claude SDK, no binary spawn).
    - Otherwise: calls `runAgent` with `stdio: "captured"` — agent binary is spawned as a subprocess, stdout is captured.
    - The test seam (`options.runAgentOptions.spawn`) bypasses `runProposalAgentPipeline` entirely and calls `runAgent` directly.
-6. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
-7. Write the proposal: `createProposal(stash, { ref, source: "reflect", payload: { content, frontmatter } })`.
+7. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
+8. Write the proposal: `createProposal(stash, { ref, source: "reflect", payload: { content, frontmatter } })`.
 
 **What it writes:** one `proposal.json` file at `<stashRoot>/.akm/proposals/<UUID>/proposal.json`. It never writes asset files directly.
 
-**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt constrains the agent to schema/structural improvements only. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after.
+**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skill:*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge:skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after.
 
 ### distill (akmDistill)
 
@@ -279,7 +288,7 @@ Two proposals can share the same `ref` — the UUID directory name prevents file
 
 ## Cooldown pre-filter
 
-Before the per-asset loop, `akm improve` builds Sets of all refs that are currently under cooldown (reflect, distill, consolidation, schema-repair) in a single batch of event reads. This replaces the prior design that issued one `readEvents` query per ref inside the loop. The change eliminates the "reflect cooldown" console spam on large stashes and reduces database round-trips to O(1) reads per cooldown category.
+Before the per-asset loop, `akm improve` builds Sets of all refs that are currently under cooldown (reflect, distill, consolidation, schema-repair) in a single batch of event reads. This replaces the prior design that issued one `readEvents` query per ref inside the loop. The change eliminates the "reflect cooldown" console spam on large stashes and reduces database round-trips to O(1) reads per cooldown category. Reflect cooldown now bypasses refs with a newer `promoted` event than their last `reflect_invoked` event.
 
 ## Feature flags and configuration
 

@@ -7,6 +7,7 @@ import { type AkmDistillOptions, type AkmDistillResult, akmDistill } from "../..
 import { akmImprove } from "../../src/commands/improve";
 import { akmPropose } from "../../src/commands/propose";
 import type { AkmReflectOptions } from "../../src/commands/reflect";
+import { akmReflect } from "../../src/commands/reflect";
 import type { AkmConfig } from "../../src/core/config";
 import { listProposals } from "../../src/core/proposals";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
@@ -220,6 +221,79 @@ describe("improve argv coercion", () => {
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
     expect(proposals[0].ref).toBe("knowledge:deploy-fact");
+  });
+
+  test("skill-scoped improve passes related lesson evidence into reflect for promotion decisions", async () => {
+    const stash = makeStashDir();
+    fs.writeFileSync(
+      path.join(stash, "lessons", "skill-deploy-lesson.md"),
+      "---\ndescription: Capture rollback invariants\nwhen_to_use: When updating deployment guidance\nsources:\n  - skill:deploy\n---\n\nRecord rollback checks and readiness gates after repeated incidents.\n",
+      "utf8",
+    );
+
+    const config = {
+      stashDir: stash,
+      sources: [{ type: "filesystem", name: "stash", path: stash, writable: true }],
+      defaultWriteTarget: "stash",
+    } as AkmConfig;
+
+    let capturedPrompt = "";
+    const reflected: string[] = [];
+    const distilled: string[] = [];
+
+    const result = await akmImprove({
+      scope: "skill:deploy",
+      stashDir: stash,
+      config,
+      ensureIndexFn: async () => undefined,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async (options) => {
+        reflected.push(options.ref ?? "");
+        return akmReflect({
+          ...options,
+          stashDir: stash,
+          agentProfile: makeProfile(),
+          runAgentOptions: {
+            spawn: (cmd, spawnOpts) => {
+              capturedPrompt = cmd.at(-1) ?? "";
+              return fakeSpawn(
+                JSON.stringify({
+                  ref: "knowledge:skills/deploy/references/rollback-gates",
+                  content: "# Rollback gates\n\nCapture rollback invariants and readiness checks.\n",
+                }),
+                "",
+                0,
+              )(cmd, spawnOpts);
+            },
+          },
+        });
+      },
+      distillFn: async ({ ref }) => {
+        if (ref) distilled.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref.replace(/[:/]/g, "-")}-lesson`,
+        } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(result.plannedRefs.map((planned) => planned.ref)).toEqual(["skill:deploy"]);
+    expect(reflected).toEqual(["skill:deploy"]);
+    expect(distilled).toEqual(["skill:deploy"]);
+    expect(capturedPrompt).toContain("Related distilled lessons to evaluate for consolidation:");
+    expect(capturedPrompt).toContain("Lesson ref: lesson:skill-deploy-lesson");
+    expect(capturedPrompt).toContain("Record rollback checks and readiness gates after repeated incidents.");
+    expect(capturedPrompt).toContain("knowledge:skills/<skill>/references/<topic>");
   });
 });
 

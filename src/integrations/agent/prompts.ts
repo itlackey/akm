@@ -103,6 +103,8 @@ export interface ReflectPromptInput {
   feedback?: string[];
   /** Optional schema/lint hints (e.g. lesson-lint findings). */
   schemaHints?: string[];
+  /** Related lesson content that may justify consolidating durable guidance. */
+  relatedLessons?: Array<{ ref: string; content: string }>;
   /** Optional operator task/focus hint. */
   task?: string;
   /**
@@ -130,9 +132,12 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   if (input.ref && input.type && input.name) {
     // Change 2 — type-conditioned goal framing
     const isLesson = input.type === "lesson";
+    const isSkill = input.type === "skill";
     const goalSentence = isLesson
       ? `Your task is to distill what usage signals reveal about this ${input.type} asset — when to reach for it, what goes wrong without it, and what real use has revealed that the asset itself does not say. Do not reproduce the source content; your proposal must add information the source does not contain.`
-      : `Your task is to review this ${input.type} asset, identify what the feedback signals as broken, missing, or unclear, and produce an improved version. Do not reproduce the source content unchanged; your proposal must correct or add something the source lacks.`;
+      : isSkill
+        ? "Your task is to review this skill asset, identify what the feedback and related distilled lessons show is broken, missing, unclear, or durable enough to promote into long-term documentation, and produce a single improved proposal. If the strongest evidence points to companion reference material rather than the main SKILL.md, you may instead propose a skill-adjacent knowledge doc such as `knowledge:skills/<skill>/references/<topic>`."
+        : `Your task is to review this ${input.type} asset, identify what the feedback signals as broken, missing, or unclear, and produce an improved version. Do not reproduce the source content unchanged; your proposal must correct or add something the source lacks.`;
     sections.push(goalSentence);
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
@@ -153,6 +158,10 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   } else if (!input.ref) {
     sections.push("Recent feedback / signals:");
     sections.push("- (no feedback events recorded)");
+  } else if (input.type === "skill" && input.relatedLessons && input.relatedLessons.length > 0) {
+    sections.push(
+      "No direct feedback events were recorded. Limit substantive changes to what is justified by the related distilled lessons below; do not speculate beyond that evidence.",
+    );
   } else {
     // ref is set but no feedback — explicitly constrain scope to schema compliance
     sections.push(
@@ -174,6 +183,25 @@ export function buildReflectPrompt(input: ReflectPromptInput): string {
   if (input.schemaHints && input.schemaHints.length > 0) {
     sections.push("Schema / lint hints to address:");
     for (const line of input.schemaHints) sections.push(`- ${line}`);
+  }
+
+  if (input.relatedLessons && input.relatedLessons.length > 0) {
+    sections.push("Related distilled lessons to evaluate for consolidation:");
+    for (const lesson of input.relatedLessons) {
+      sections.push(`Lesson ref: ${lesson.ref}`);
+      sections.push("```");
+      sections.push(lesson.content.trimEnd());
+      sections.push("```");
+    }
+    sections.push(
+      "Evaluate whether these lessons contain strong evidence of factual, repeatable guidance that should be promoted into long-term skill documentation.",
+    );
+    sections.push(
+      "Promote only guidance that is durable, generally applicable, and supported by repeated evidence. Do not copy anecdotal details, one-off incidents, or duplicate wording verbatim.",
+    );
+    sections.push(
+      "If the guidance belongs in the main skill instructions, update the skill proposal. If it belongs in a companion reference document, return a `knowledge:skills/<skill>/references/<topic>` proposal instead.",
+    );
   }
 
   if (input.avoidPatterns && input.avoidPatterns.length > 0) {

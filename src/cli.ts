@@ -3053,6 +3053,15 @@ const improveCommand = defineCommand({
       type: "string",
       description: "Override consolidate cooldown for this run only (default: 14, 0 to disable)",
     },
+    "require-feedback-signal": {
+      type: "boolean",
+      description: "Only process assets with recent feedback signals (disables retrieval fallback)",
+      default: false,
+    },
+    "min-retrieval-count": {
+      type: "string",
+      description: "Minimum retrieval count for zero-feedback fallback eligibility (default: 5)",
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
@@ -3090,6 +3099,9 @@ const improveCommand = defineCommand({
       const consolidateCooldownDays = ignoreCooldown
         ? 0
         : parseNonNegativeCooldownDays(consolidateCooldownRaw, "--consolidate-cooldown-days");
+      const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
+      const minRetrievalCount = parseNonNegativeCooldownDays(minRetrievalCountRaw, "--min-retrieval-count");
+      const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
 
       const improveLogFile = path.join(
         getCacheDir(),
@@ -3111,6 +3123,8 @@ const improveCommand = defineCommand({
           ...(reflectCooldownDays !== undefined ? { reflectCooldownDays } : {}),
           ...(distillCooldownDays !== undefined ? { distillCooldownDays } : {}),
           ...(consolidateCooldownDays !== undefined ? { consolidateCooldownDays } : {}),
+          ...(minRetrievalCount !== undefined ? { minRetrievalCount } : {}),
+          ...(requireFeedbackSignal ? { requireFeedbackSignal } : {}),
           consolidateOptions: { target: targetArg, dryRun, autoAccept, task: taskArg },
         });
       } finally {

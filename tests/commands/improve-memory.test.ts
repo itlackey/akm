@@ -7,8 +7,10 @@ import { akmImprove } from "../../src/commands/improve";
 import type { AkmReflectResult } from "../../src/commands/reflect";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
+import { appendEvent } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
 import { akmIndex } from "../../src/indexer/indexer";
+import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 
 const tempDirs: string[] = [];
 const savedEnv = {
@@ -710,5 +712,269 @@ describe("akm improve memory cleanup", () => {
     expect(result.memoryCleanup?.archived?.[0]?.ref).toBe("memory:deploy-copy.derived");
     expect(fs.existsSync(path.join(stashDir, "memories", "deploy-copy.derived.md"))).toBe(false);
     expect(fs.existsSync(path.join(stashDir, "memories", "incident-copy.derived.md"))).toBe(true);
+  });
+
+  test("ref-scoped improve excludes website-source assets from planning and execution", async () => {
+    const stashDir = makeTempDir("akm-improve-website-scope-");
+    fs.mkdirSync(path.join(stashDir, "skills", "local-deploy"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "skills", "local-deploy", "SKILL.md"),
+      "---\ndescription: Local deploy\nwhen_to_use: When deploying locally\n---\n\n# Local deploy\n",
+      "utf8",
+    );
+
+    const websiteUrl = "https://docs.example.test/";
+    const websiteStash = getWebsiteCachePaths(websiteUrl).stashDir;
+    fs.mkdirSync(path.join(websiteStash, "knowledge", "skills", "remote-deploy", "references"), { recursive: true });
+    fs.writeFileSync(
+      path.join(websiteStash, "knowledge", "skills", "remote-deploy", "references", "gates.md"),
+      "# Remote gates\n\nWebsite-backed deployment notes.\n",
+      "utf8",
+    );
+
+    saveConfig({
+      semanticSearchMode: "off",
+      sources: [
+        { type: "filesystem", name: "local", path: stashDir, writable: true },
+        { type: "website", name: "docs-site", url: websiteUrl },
+      ],
+    });
+
+    const reflectedRefs: string[] = [];
+    const distilledRefs: string[] = [];
+
+    const dryRun = await akmImprove({
+      scope: "knowledge:skills/remote-deploy/references/gates",
+      dryRun: true,
+      stashDir,
+    });
+    expect(dryRun.plannedRefs).toEqual([]);
+
+    const result = await akmImprove({
+      scope: "knowledge:skills/remote-deploy/references/gates",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "knowledge:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref.replace(/[:/]/g, "-")}-lesson`,
+        } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(result.plannedRefs).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(reflectedRefs).toEqual([]);
+    expect(distilledRefs).toEqual([]);
+  });
+
+  test("requireFeedbackSignal restricts planning to refs with recent feedback", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-signal-filter-");
+    writeMemory(stashDir, "alpha", { description: "alpha memory" }, "Remember alpha details.");
+    writeMemory(stashDir, "beta", { description: "beta memory" }, "Remember beta details.");
+    await buildIndex(stashDir);
+
+    const reflectedWithoutSignals: string[] = [];
+
+    const withoutSignals = await akmImprove({
+      scope: "memory",
+      stashDir,
+      requireFeedbackSignal: true,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedWithoutSignals.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+    expect(withoutSignals.plannedRefs).toEqual([]);
+    expect(reflectedWithoutSignals).toEqual([]);
+
+    appendEvent({
+      eventType: "feedback",
+      ref: "memory:alpha",
+      metadata: { signal: "positive", note: "helpful" },
+    });
+
+    const reflectedWithSignal: string[] = [];
+
+    const withSignal = await akmImprove({
+      scope: "memory",
+      stashDir,
+      requireFeedbackSignal: true,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedWithSignal.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+    expect(withSignal.plannedRefs).toEqual([{ ref: "memory:alpha", reason: "scope-type" }]);
+    expect(reflectedWithSignal).toEqual(["memory:alpha"]);
+  });
+
+  test("accepted refs bypass reflect cooldown during improve", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-accepted-bypass-");
+    writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
+    await buildIndex(stashDir);
+
+    const reflectedRefs: string[] = [];
+    const now = Date.now();
+    appendEvent({ eventType: "reflect_invoked", ref: "memory:deploy" }, { now: () => now - 24 * 60 * 60 * 1000 });
+    appendEvent({ eventType: "promoted", ref: "memory:deploy" }, { now: () => now });
+
+    await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflectedRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        } satisfies AkmReflectResult;
+      },
+      distillFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        }) satisfies AkmDistillResult,
+    });
+
+    expect(reflectedRefs).toContain("memory:deploy");
+  });
+
+  test("memory distill is skipped without recent feedback for non-ref scope", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-distill-skip-");
+    writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
+    await buildIndex(stashDir);
+
+    const distilledRefs: string[] = [];
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        indexed: 0,
+        warnings: [],
+        errors: [],
+        durationMs: 0,
+      }),
+      reflectFn: async ({ ref }) =>
+        ({
+          schemaVersion: 1,
+          ok: true,
+          proposal: makeProposal(ref ?? "memory:missing"),
+          ref: ref ?? "",
+          agentProfile: "test",
+          durationMs: 1,
+        }) satisfies AkmReflectResult,
+      distillFn: async ({ ref }) => {
+        if (ref) distilledRefs.push(ref);
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        } satisfies AkmDistillResult;
+      },
+    });
+
+    expect(distilledRefs).toEqual([]);
+    expect(
+      result.actions?.some(
+        (action) =>
+          action.ref === "memory:deploy" &&
+          action.mode === "distill-skipped" &&
+          "reason" in action.result &&
+          action.result.reason === "memory requires recent feedback signal",
+      ),
+    ).toBe(true);
   });
 });

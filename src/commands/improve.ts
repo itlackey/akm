@@ -68,6 +68,16 @@ export interface AkmImproveOptions {
   /** Cooldown in days before re-consolidating memories. Defaults to 14. Set to 0 to disable. Only for this run; does not persist to config. */
   consolidateCooldownDays?: number;
   /**
+   * When true, only assets with recent feedback signals are eligible.
+   * Disables the high-retrieval fallback path for type/all scope runs.
+   */
+  requireFeedbackSignal?: boolean;
+  /**
+   * Minimum retrieval count required for the zero-feedback fallback path.
+   * Defaults to 5.
+   */
+  minRetrievalCount?: number;
+  /**
    * Named process key forwarded to `akmReflect` so the improve loop picks up
    * per-process agent config (e.g. `agent.processes["reflect"]`).
    * Defaults to `"reflect"`. Set to another process name to route improve's
@@ -160,6 +170,14 @@ function collectEligibleRefs(
 } {
   if (scope.mode === "ref" && scope.value) {
     const parsed = parseAssetRef(scope.value);
+    const writableDirs = new Set(getWritableStashDirs(stashDir).map((dir) => path.resolve(dir)));
+    const filePath = findAssetFilePath(scope.value, stashDir, writableDirs);
+    if (!filePath) {
+      return {
+        plannedRefs: [],
+        memorySummary: { eligible: 0, derived: 0 },
+      };
+    }
     return {
       plannedRefs: [{ ref: scope.value, reason: "scope-ref" }],
       memorySummary: {
@@ -461,7 +479,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     });
 
     // P0-A: also surface zero-feedback assets that have been retrieved many times.
-    const RETRIEVAL_COUNT_THRESHOLD = 3;
+    const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
 
     const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
     const noFeedbackCandidates = postCleanupRefs.filter((r) => !signalBearingSet.has(r.ref));
@@ -502,7 +520,13 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     // to all postCleanupRefs so that the first improve run is not a no-op.
     const signalAndRetrievalRefs = [...signalFiltered, ...highRetrievalRefs];
     const mergedRefs =
-      scope.mode === "ref" || signalAndRetrievalRefs.length === 0 ? postCleanupRefs : signalAndRetrievalRefs;
+      scope.mode === "ref"
+        ? postCleanupRefs
+        : options.requireFeedbackSignal
+          ? signalFiltered
+          : signalAndRetrievalRefs.length === 0
+            ? postCleanupRefs
+            : signalAndRetrievalRefs;
 
     const utilityMap = buildUtilityMap(mergedRefs);
 
@@ -684,7 +708,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           const hasAccepted = (promotedTs.get(ref) ?? "") > lastTs;
           const hasRejected = (rejectedTs.get(ref) ?? "") > lastTs;
           let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
-          if (hasAccepted) effectiveCooldownDays = Math.max(REFLECT_COOLDOWN_DAYS, 14);
+          if (hasAccepted) continue;
           else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
           if (Date.now() - new Date(lastTs).getTime() < effectiveCooldownDays * 24 * 60 * 60 * 1000) {
             reflectCooledRefs.add(ref);
@@ -789,8 +813,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           recentErrors.push(errMsg);
           if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
         }
-        if (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir)) {
-          const parsedPlannedRef = parseAssetRef(planned.ref);
+        const parsedPlannedRef = parseAssetRef(planned.ref);
+        const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
+        const explicitRefScope = scope.mode === "ref";
+        const shouldAttemptDistill =
+          isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir);
+        const skipMemoryDistillForWeakSignal =
+          parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
+
+        if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal) {
           const lessonRef = deriveLessonRef(planned.ref);
           const dedupeStashDir = primaryStashDir ?? options.stashDir;
           if (dedupeStashDir) {
@@ -845,6 +876,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
               slug: `${slug}-rejected`,
             });
           }
+        } else if (skipMemoryDistillForWeakSignal) {
+          actions.push({
+            ref: planned.ref,
+            mode: "distill-skipped",
+            result: { ok: true, reason: "memory requires recent feedback signal" },
+          });
+          appendEvent({
+            eventType: "improve_skipped",
+            ref: planned.ref,
+            metadata: { reason: "memory_distill_requires_feedback" },
+          });
         }
       } catch (err) {
         actions.push({
@@ -1065,7 +1107,7 @@ function buildUtilityMap(refs: ImproveEligibleRef[]): Map<string, number> {
   return map;
 }
 
-function findAssetFilePath(ref: string, stashDir?: string): string | null {
+function findAssetFilePath(ref: string, stashDir?: string, writableDirSet?: Set<string>): string | null {
   try {
     const parsed = parseAssetRef(ref);
     // Use the canonical type directory name from the asset spec registry
@@ -1074,6 +1116,7 @@ function findAssetFilePath(ref: string, stashDir?: string): string | null {
     const typeDir = TYPE_DIRS[parsed.type] ?? `${parsed.type}s`;
     const sources = resolveSourceEntries(stashDir);
     for (const source of sources) {
+      if (writableDirSet && !writableDirSet.has(path.resolve(source.path))) continue;
       const candidates = [
         path.join(source.path, typeDir, `${parsed.name}.md`),
         path.join(source.path, parsed.type, `${parsed.name}.md`),

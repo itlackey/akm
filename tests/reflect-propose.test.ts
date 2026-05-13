@@ -338,6 +338,69 @@ describe("akm reflect", () => {
     expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
     expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
   });
+
+  test("skill reflect includes related lessons and consolidation guidance", async () => {
+    const stash = makeStashDir();
+    const skillDir = path.join(stash, "skills", "deploy");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\ndescription: Deploy apps\nwhen_to_use: When shipping a service\n---\n\n# Deploy\n\nShip it carefully.\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(stash, "lessons", "skill-deploy-lesson.md"),
+      "---\ndescription: Capture rollback invariants\nwhen_to_use: When updating deployment guidance\nsources:\n  - skill:deploy\n---\n\nRecord rollback checks and readiness gates after repeated incidents.\n",
+      "utf8",
+    );
+
+    let prompt = "";
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: fakeSpawnWithCapture(VALID_SKILL_PAYLOAD, "", 0, (cmd) => {
+          prompt = cmd.at(-1) ?? "";
+        }),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prompt).toContain("Related distilled lessons to evaluate for consolidation:");
+    expect(prompt).toContain("Lesson ref: lesson:skill-deploy-lesson");
+    expect(prompt).toContain("Record rollback checks and readiness gates after repeated incidents.");
+    expect(prompt).toContain("knowledge:skills/<skill>/references/<topic>");
+    expect(prompt).toContain("promoted into long-term skill documentation");
+    expect(prompt).not.toContain("Limit your proposal to schema and structural improvements only");
+  });
+
+  test("skill reflect without related lessons keeps schema-only constraint when no feedback exists", async () => {
+    const stash = makeStashDir();
+    const skillDir = path.join(stash, "skills", "deploy");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\ndescription: Deploy apps\nwhen_to_use: When shipping a service\n---\n\n# Deploy\n\nShip it carefully.\n",
+      "utf8",
+    );
+
+    let prompt = "";
+    const result = await akmReflect({
+      ref: "skill:deploy",
+      stashDir: stash,
+      agentProfile: makeProfile(),
+      runAgentOptions: {
+        spawn: fakeSpawnWithCapture(VALID_SKILL_PAYLOAD, "", 0, (cmd) => {
+          prompt = cmd.at(-1) ?? "";
+        }),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prompt).not.toContain("Related distilled lessons to evaluate for consolidation:");
+    expect(prompt).toContain("Limit your proposal to schema and structural improvements only");
+  });
 });
 
 // ── propose ────────────────────────────────────────────────────────────────

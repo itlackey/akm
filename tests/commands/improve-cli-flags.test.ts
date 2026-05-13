@@ -82,6 +82,16 @@ describe("improve CLI cooldown flags", () => {
     expect(parsed.error).toContain("non-negative integer");
   });
 
+  test("rejects negative min retrieval count", () => {
+    const result = runCli(["improve", "--min-retrieval-count", "-1", "--dry-run"]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
+    expect(parsed.error).toContain("--min-retrieval-count");
+    expect(parsed.error).toContain("non-negative integer");
+  });
+
   test("--ignore-cooldown takes precedence over explicit cooldown values", () => {
     const stash = makeStashDir();
     const result = runCli(

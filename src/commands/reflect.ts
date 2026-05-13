@@ -20,10 +20,12 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { resolveStashDir } from "../core/common";
 import { ConfigError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
+import { parseFrontmatter } from "../core/frontmatter";
 import { lintLessonContent } from "../core/lesson-lint";
 import { stripMarkdownFences } from "../core/markdown";
 import { type CreateProposalInput, createProposal, type Proposal, type ProposalsContext } from "../core/proposals";
@@ -46,6 +48,7 @@ import {
   loadAgentConfigFromDisk,
   resolveAgentProfile,
 } from "./agent-support";
+import { deriveLessonRef } from "./distill";
 
 export interface AkmReflectOptions {
   /** Optional asset ref (`type:name`) to focus on. */
@@ -141,6 +144,74 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
   return report.findings.map((f) => `[${f.kind}] ${f.message}`);
 }
 
+interface RelatedLesson {
+  ref: string;
+  content: string;
+}
+
+function hasRelatedSkillSource(content: string, skillRef: string): boolean {
+  const parsed = parseFrontmatter(content);
+  const sources = parsed.data.sources;
+  return Array.isArray(sources) && sources.some((source) => typeof source === "string" && source.trim() === skillRef);
+}
+
+async function readRelatedLessons(
+  stash: string,
+  ref: string,
+  parsedRef: { type: string; name: string },
+): Promise<RelatedLesson[]> {
+  if (parsedRef.type !== "skill") return [];
+
+  const related = new Map<string, RelatedLesson>();
+  const derivedLessonRef = deriveLessonRef(ref);
+  const candidateRefs = new Set<string>([derivedLessonRef]);
+  const derivedLessonPath = path.join(stash, "lessons", `${derivedLessonRef.slice("lesson:".length)}.md`);
+  if (fs.existsSync(derivedLessonPath)) {
+    related.set(derivedLessonRef, { ref: derivedLessonRef, content: fs.readFileSync(derivedLessonPath, "utf8") });
+  }
+
+  try {
+    const feedbackEvents = readEvents({ type: "distill_invoked", ref }).events;
+    for (const event of feedbackEvents) {
+      const lessonRef = typeof event.metadata?.lessonRef === "string" ? event.metadata.lessonRef : undefined;
+      if (lessonRef?.startsWith("lesson:")) candidateRefs.add(lessonRef);
+    }
+  } catch {
+    // Best effort only.
+  }
+
+  for (const candidateRef of candidateRefs) {
+    try {
+      const entry = await lookup(parseAssetRef(candidateRef));
+      if (!entry?.filePath || !fs.existsSync(entry.filePath)) continue;
+      const content = fs.readFileSync(entry.filePath, "utf8");
+      related.set(candidateRef, { ref: candidateRef, content });
+    } catch {
+      // Index miss is non-fatal.
+    }
+  }
+
+  try {
+    const lessonsDir = path.join(stash, "lessons");
+    if (fs.existsSync(lessonsDir)) {
+      for (const fileName of fs.readdirSync(lessonsDir)) {
+        if (!fileName.endsWith(".md")) continue;
+        const content = fs.readFileSync(path.join(lessonsDir, fileName), "utf8");
+        if (!hasRelatedSkillSource(content, ref)) continue;
+        const lessonName = fileName.slice(0, -3);
+        const lessonRef = `lesson:${lessonName}`;
+        if (!related.has(lessonRef)) {
+          related.set(lessonRef, { ref: lessonRef, content });
+        }
+      }
+    }
+  } catch {
+    // Best effort only.
+  }
+
+  return [...related.values()];
+}
+
 function fallbackPayloadFromRawContent(stdout: string, ref: string | undefined) {
   if (!ref) return undefined;
   const trimmed = stripMarkdownFences(stdout).trim();
@@ -230,6 +301,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   // local opencode models and caused proposal generation failures.
   const feedback = readRecentFeedback(options.ref);
   const schemaHints = buildSchemaHints(parsedRef?.type ?? "", assetContent);
+  const relatedLessons = options.ref && parsedRef ? await readRelatedLessons(stash, options.ref, parsedRef) : [];
   const prompt = buildReflectPrompt({
     ...(options.ref ? { ref: options.ref } : {}),
     ...(parsedRef?.type ? { type: parsedRef.type } : {}),
@@ -237,6 +309,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(assetContent !== undefined ? { assetContent } : {}),
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
+    ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
     ...(options.task ? { task: options.task } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
   });

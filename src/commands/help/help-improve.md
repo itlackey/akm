@@ -22,6 +22,7 @@ What it does:
   - reviews feedback and recent history
   - proposes edits to existing assets
   - distills lessons where useful
+  - promotes durable skill lessons into skill reference-doc proposals when justified
   - cleans and consolidates memories
   - writes results to the proposal queue
 
@@ -30,6 +31,17 @@ Options:
   --dry-run            Show planned actions without generating proposals
   --target <source>    Override the write target for accepted proposals
   --auto-accept safe   Automatically accept low-risk proposals
+  --ignore-cooldown    Disable reflect/distill/consolidate cooldown checks for this run
+  --reflect-cooldown-days <n>
+                        Override reflect cooldown with a non-negative integer
+  --distill-cooldown-days <n>
+                        Override distill cooldown with a non-negative integer
+  --consolidate-cooldown-days <n>
+                        Override consolidate cooldown with a non-negative integer
+  --require-feedback-signal
+                        Only process refs with recent feedback signal events
+  --min-retrieval-count <n>
+                        Retrieval fallback threshold when no recent feedback exists (default: 5)
 
 Examples:
   akm improve

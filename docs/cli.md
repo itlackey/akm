@@ -1409,10 +1409,16 @@ akm improve workflow:release-checklist --task "reduce duplication"
 | `--reflect-cooldown-days <n>` | Override reflect cooldown (non-negative integer) |
 | `--distill-cooldown-days <n>` | Override distill cooldown (non-negative integer) |
 | `--consolidate-cooldown-days <n>` | Override consolidate cooldown (non-negative integer) |
+| `--require-feedback-signal` | Only process assets with recent feedback signals |
+| `--min-retrieval-count <n>` | Minimum retrieval count for zero-feedback fallback (default: 5) |
 
 `akm improve` is the public entrypoint for whole-stash, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow that used to be split across multiple commands.
+
+Selection behavior defaults to recent feedback signals first, with a
+zero-feedback retrieval fallback for high-traffic refs. Use
+`--require-feedback-signal` to disable retrieval fallback for the run.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`. The deterministic search ranking also prefers
