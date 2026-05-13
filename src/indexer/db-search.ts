@@ -557,7 +557,7 @@ export function deriveSize(bytes?: number): SearchHitSize | undefined {
  * precondition is always met regardless of caller.
  */
 function deduplicateByPath<T extends { filePath: string; score?: number }>(items: T[]): T[] {
-  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.filePath.localeCompare(b.filePath));
   const seen = new Set<string>();
   return sorted.filter((item) => {
     if (seen.has(item.filePath)) return false;

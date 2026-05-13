@@ -26,10 +26,18 @@ const warnings: string[] = [];
 //      still observe what was emitted.
 let mockedQuiet = false;
 let mockedVerbose = false;
+let mockedLogFile: string | undefined;
 mock.module("../../src/core/warn", () => ({
+  info: (...args: unknown[]) => {
+    if (!mockedQuiet) console.warn(...args);
+  },
   warn: (...args: unknown[]) => {
     warnings.push(args.join(" "));
     if (!mockedQuiet) console.warn(...args);
+  },
+  error: (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+    if (!mockedQuiet) console.error(...args);
   },
   warnVerbose: (...args: unknown[]) => {
     if (!mockedVerbose) return;
@@ -55,6 +63,13 @@ mock.module("../../src/core/warn", () => ({
     if (env === "0" || env === "false" || env === "no" || env === "off") return false;
     return mockedVerbose;
   },
+  setLogFile: (value: string) => {
+    mockedLogFile = value;
+  },
+  clearLogFile: () => {
+    mockedLogFile = undefined;
+  },
+  getLogFile: () => mockedLogFile,
 }));
 
 beforeEach(() => {

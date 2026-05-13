@@ -198,40 +198,40 @@ Checkpoint decision: no-go for a new `IndexPostProcessor[]` seam at this time. `
 
 ## Phase 6 — Index Post-Processors
 
-- [ ] Formalize index side-effects as `IndexPostProcessor[]`.
-- [ ] Preserve indexing outputs, DB behavior, and workflow document handling.
-- [ ] Keep this phase architectural only.
+- [~] Formalize index side-effects as `IndexPostProcessor[]`.
+- [~] Preserve indexing outputs, DB behavior, and workflow document handling.
+- [~] Keep this phase architectural only.
 
 ### Phase 6 Gate
 
-- [ ] Run indexer parity tests.
-- [ ] Run feature-specific regressions for graph extraction, memory inference, and workflow document handling.
-- [ ] Verify no schema or behavior drift.
-- [ ] Complete final architecture review.
-- [ ] Update this checklist with pass/fail/block notes for the gate.
+- [~] Run indexer parity tests.
+- [~] Run feature-specific regressions for graph extraction, memory inference, and workflow document handling.
+- [~] Verify no schema or behavior drift.
+- [x] Complete final architecture review.
+- [x] Update this checklist with pass/fail/block notes for the gate.
 
 ### Git Hygiene
 
-- [ ] Keep indexing changes isolated.
-- [ ] Confirm no accidental schema or output changes slipped in.
+- [~] Keep indexing changes isolated.
+- [x] Confirm no accidental schema or output changes slipped in.
 
 ---
 
 ## Final Verification
 
-- [ ] Review `git diff` and confirm the whole change set is architectural cleanup only.
-- [ ] Remove temporary shims that are no longer needed and are safe to delete without behavior change.
-- [ ] Confirm no unrelated files are included.
-- [ ] Run the agreed full validation suite for all touched surfaces.
-- [ ] Confirm all tests pass with unchanged expectations.
-- [ ] Document the parity evidence in the working notes.
+- [x] Review `git diff` and confirm the whole change set is architectural cleanup only.
+- [x] Remove temporary shims that are no longer needed and are safe to delete without behavior change.
+- [x] Confirm no unrelated files are included.
+- [x] Run the agreed full validation suite for all touched surfaces.
+- [x] Confirm all tests pass with unchanged expectations.
+- [x] Document the parity evidence in the working notes.
 
 ---
 
 ## Final Review And Handoff
 
-- [ ] Summarize phase outcomes.
-- [ ] Summarize review findings and any residual risks.
-- [ ] Record any deferred items or follow-up cleanups that were intentionally kept out of scope.
-- [ ] Update this checklist one final time with completed, blocked, or deferred states.
+- [x] Summarize phase outcomes.
+- [x] Summarize review findings and any residual risks.
+- [x] Record any deferred items or follow-up cleanups that were intentionally kept out of scope.
+- [x] Update this checklist one final time with completed, blocked, or deferred states.
 - [ ] Prepare commit(s) only if explicitly requested.

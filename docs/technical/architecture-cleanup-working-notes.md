@@ -295,3 +295,24 @@ Working notes and parity evidence for the behavior-preserving architecture clean
   - finalize responsibilities are grouped in one explicit finalize phase rather than scattered callbacks
 - Adding a new registry layer here would mostly wrap existing named phase functions in another abstraction without materially reducing duplication.
 - Recommended follow-up: keep Phase 6 deferred unless a future concrete hotspot appears inside one phase, such as repeated persist-time side-effects or competing finalize-time behaviors that can be isolated without introducing framework drift.
+
+## Final Verification
+
+### Final validation suite results
+
+- `bun test tests/proposals.test.ts tests/contracts/v1-spec-section-11-proposal-queue.test.ts tests/scoring-pipeline.test.ts tests/ranking-regression.test.ts tests/commands/search.test.ts` -> pass (`110` tests)
+- `bun test tests/commands/history.test.ts tests/agent/agent-config.test.ts tests/agent/agent-process-config.test.ts tests/architecture/agent-runner-seam.test.ts tests/architecture/agent-spawn-seam.test.ts tests/agent/agent-spawn.test.ts tests/session-logs.test.ts` -> pass (`85` tests)
+- `bun test tests/indexer.test.ts tests/commands/show.test.ts tests/commands/show-indexer-parity.test.ts tests/wiki.test.ts tests/parameter-metadata.test.ts tests/output-baseline.test.ts tests/distill.test.ts tests/lint.test.ts tests/matchers-unit.test.ts tests/file-context.test.ts tests/asset-spec.test.ts tests/commands/improve-memory.test.ts tests/improve-no-hang.test.ts tests/commands/reflect-propose-cli.test.ts` -> pass (`341` tests)
+
+### Final verification notes
+
+- The final consolidated suite uncovered two cross-file test-isolation issues that were not caused by the core architecture changes but did affect final verification:
+  - `tests/agent/agent-config.test.ts` and `tests/agent/agent-process-config.test.ts` mocked `src/core/warn` without the full export surface; added the missing exports so later-loaded modules such as `src/tasks/runner.ts` do not fail during combined runs.
+  - `src/indexer/db-search.ts` preserved deterministic ordering before deduplication, but `deduplicateByPath()` re-sorted tied results by score only; added a stable `filePath` tiebreaker so tied-score local hits remain deterministic across combined test runs.
+- After those fixes, the full touched-surface validation suite passed with unchanged expectations.
+- The resulting change set remains architectural cleanup plus narrowly scoped test-isolation/stability fixes discovered by the final validation pass.
+
+### Residual risks and deferred follow-up
+
+- Phase 6 remains intentionally deferred. The current indexer structure already has named fixed stages, so a new `IndexPostProcessor[]` seam should only be introduced if a future concrete duplication hotspot appears inside one phase.
+- Final verification did not run the repo-wide all-tests command; it ran the agreed touched-surface suite covering the phases completed in this cleanup.
