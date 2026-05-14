@@ -1434,6 +1434,7 @@ export function getAllEntriesForEmbedding(
     .prepare(`
       SELECT e.id, e.search_text AS searchText, e.entry_key AS entryKey, e.file_path AS filePath FROM entries e
       WHERE NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id)
+        AND e.entry_type != 'vault'
     `)
     .all() as Array<{ id: number; searchText: string; entryKey: string; filePath: string }>;
 }

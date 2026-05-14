@@ -2309,6 +2309,9 @@ function listVaultsRecursive(
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
         const canonical = deriveCanonicalAssetName("vault", vaultsDir, full);
         if (!canonical) continue;
+        // Skip sensitive vaults: presence of a sibling .sensitive marker file suppresses listing.
+        const markerPath = full.replace(/\.env$/, ".sensitive");
+        if (fs.existsSync(markerPath)) continue;
         const { keys } = listKeysFn(full);
         result.push({ ref: makeVaultRef(canonical, source), path: full, keys });
       }
@@ -2334,6 +2337,9 @@ function splitVaultRunTarget(target: string): { ref: string; key?: string } {
   if (!key) {
     throw new UsageError("Expected vault run target in the form <ref> or <ref/KEY>.");
   }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new UsageError(`"${key}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
+  }
   const resolved = resolveVaultPath(refPart);
   if (!fs.existsSync(resolved.absPath)) {
     throw new NotFoundError(`Vault not found: ${makeVaultRef(resolved.name, resolved.source)}`);
@@ -2356,13 +2362,24 @@ const vaultCreateCommand = defineCommand({
   meta: { name: "create", description: "Create an empty vault file (no-op if it already exists)" },
   args: {
     name: { type: "positional", description: "Vault name (e.g. prod) — file becomes <name>.env", required: true },
+    sensitive: {
+      type: "boolean",
+      description: "Exclude this vault from vault list output and the search index",
+      default: false,
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { createVault } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.name);
       createVault(absPath);
-      output("vault-create", { ref: makeVaultRef(name, source), path: absPath });
+      if (args.sensitive) {
+        const markerPath = absPath.replace(/\.env$/, ".sensitive");
+        if (!fs.existsSync(markerPath)) {
+          fs.writeFileSync(markerPath, "", { mode: 0o600 });
+        }
+      }
+      output("vault-create", { ref: makeVaultRef(name, source) });
     });
   },
 });
@@ -2405,7 +2422,7 @@ const vaultSetCommand = defineCommand({
       }
 
       setKey(absPath, args.key, realValue, args.comment);
-      output("vault-set", { ref: makeVaultRef(name, source), key: args.key, path: absPath });
+      output("vault-set", { ref: makeVaultRef(name, source), key: args.key });
     });
   },
 });
@@ -2424,7 +2441,7 @@ const vaultUnsetCommand = defineCommand({
         throw new NotFoundError(`Vault not found: ${makeVaultRef(name, source)}`);
       }
       const removed = unsetKey(absPath, args.key);
-      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed, path: absPath });
+      output("vault-unset", { ref: makeVaultRef(name, source), key: args.key, removed });
     });
   },
 });
@@ -2485,6 +2502,16 @@ const vaultRunCommand = defineCommand({
           mergedEnv[envKey] = envValue;
         }
       }
+
+      // Emit vault access event (keys only, no values) for audit trail.
+      // Best-effort: never block vault run on event write failure.
+      appendEvent({
+        eventType: "vault_access",
+        ref: makeVaultRef(name, source),
+        metadata: {
+          keys: key ? [key] : Object.keys(envValues),
+        },
+      });
 
       const result = spawnSync(command[0] as string, command.slice(1), {
         stdio: "inherit",

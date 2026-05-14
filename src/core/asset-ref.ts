@@ -93,6 +93,10 @@ function validateName(name: string): void {
   if (normalized === ".." || normalized.startsWith("../")) {
     throw new UsageError("Path traversal in asset name.", "MISSING_REQUIRED_ARGUMENT");
   }
+  const segments = normalized.split("/");
+  if (segments.some((seg) => seg === "." || seg === "..")) {
+    throw new UsageError("Asset name cannot contain relative path segments.", "MISSING_REQUIRED_ARGUMENT");
+  }
 }
 
 function normalizeName(name: string): string {

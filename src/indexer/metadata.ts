@@ -547,6 +547,12 @@ export function shouldIndexStashFile(
   const segments = relPath.split(/[\\/]+/).filter(Boolean);
   if (segments.length === 0) return true;
 
+  // Skip vault .env files that have a sibling .sensitive marker file.
+  if (segments[0] === "vaults" && (file.endsWith(".env") || path.basename(file) === ".env")) {
+    const markerPath = file.replace(/\.env$/, ".sensitive");
+    if (fs.existsSync(markerPath)) return false;
+  }
+
   if (options?.treatStashRootAsWikiRoot) {
     return !(segments.length === 1 && WIKI_INFRA_FILES.has(segments[0]));
   }

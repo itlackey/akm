@@ -159,6 +159,46 @@ printf '%s' "$AUTH_TOKEN" | akm vault set vault:staging AUTH_TOKEN --comment "Se
 source "$(akm vault path vault:staging)"
 ```
 
+## Security model
+
+### What akm protects
+
+Values never cross argv (no `/proc/cmdline` exposure), never appear in akm's
+structured output or search index, and vault files are stored at mode 0600.
+
+### What akm does NOT protect
+
+Values are **plaintext at rest** — protected only by filesystem permissions.
+OS-level full-disk encryption (FileVault, LUKS, BitLocker) is the recommended
+complement. Vault files are excluded from `akm save` git commits when `vaults/`
+is listed in your stash `.gitignore`.
+
+### Threat model scope
+
+Suitable for developer workstation secrets (API keys, DB URLs). Not a
+replacement for a dedicated secrets manager (HashiCorp Vault, AWS Secrets
+Manager, 1Password Secrets Automation) in production infrastructure.
+
+### Key-name hygiene
+
+Key names are visible metadata — `vault list` shows them. Avoid encoding
+sensitive context in key names (e.g. prefer `DATABASE_URL` over
+`PROD_POSTGRES_MASTER_PASSWORD`).
+
+### Subprocess env residency
+
+`vault run` injects secrets into the child process environment for its entire
+lifetime and they are visible to all subprocesses the child spawns. Prefer the
+single-key form `akm vault run vault:prod/SINGLE_KEY -- cmd` when the command
+only needs one secret. Avoid `vault run` for long-lived daemon or server
+processes.
+
+### Rotation
+
+`vault set` overwrites the live file atomically. If the stash is git-tracked,
+the old value may remain in git history — use `git filter-repo` or BFG to purge
+if a secret needs to be expunged from history.
+
 ## See also
 
 - [Search & Discovery](search-discovery.md) — finding assets you have captured

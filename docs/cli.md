@@ -1266,6 +1266,14 @@ Use `akm vault run vault:<name> -- <command>` when a command needs the full
 vault, or `akm vault run vault:<name>/<KEY> -- <command>` when you want to
 scope env injection to one variable.
 
+> **Prefer single-key injection** when the command only needs one secret:
+> `akm vault run vault:prod/API_KEY -- curl ...`
+> This avoids exposing unrelated secrets to the subprocess environment.
+
+> Secrets injected via `vault run` live in the child process environment for its
+> entire lifetime and are visible to all subprocesses it spawns. Avoid
+> `vault run` for long-lived daemon or server processes.
+
 ### wiki
 
 Manage multiple markdown wikis following the Karpathy LLM-wiki pattern.

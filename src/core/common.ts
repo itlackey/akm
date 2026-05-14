@@ -53,8 +53,8 @@ export function isAssetType(type: string): type is AkmAssetType {
 export function writeFileAtomic(target: string, content: string, mode?: number): void {
   const tmp = `${target}.tmp.${process.pid}.${Math.random().toString(36).slice(2)}`;
   fs.writeFileSync(tmp, content, "utf8");
+  if (mode !== undefined) fs.chmodSync(tmp, mode);
   fs.renameSync(tmp, target);
-  if (mode !== undefined) fs.chmodSync(target, mode);
 }
 
 /**

@@ -211,6 +211,16 @@ describe("unsetKey", () => {
   test("returns false when the file does not exist", () => {
     expect(unsetKey(path.join(tmpDir(), "missing.env"), "FOO")).toBe(false);
   });
+
+  test("preserves mode 0o600 after removing a key", () => {
+    if (process.platform === "win32") return; // chmod is best-effort on win32
+    const dir = tmpDir();
+    const fp = path.join(dir, "v.env");
+    fs.writeFileSync(fp, "FOO=one\nBAR=two\n");
+    fs.chmodSync(fp, 0o600);
+    expect(unsetKey(fp, "FOO")).toBe(true);
+    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
+  });
 });
 
 // ── createVault ─────────────────────────────────────────────────────────────
@@ -230,6 +240,14 @@ describe("createVault", () => {
     fs.writeFileSync(fp, "FOO=existing\n");
     createVault(fp);
     expect(loadEnv(fp).FOO).toBe("existing");
+  });
+
+  test("creates the file with mode 0o600", () => {
+    if (process.platform === "win32") return; // chmod is best-effort on win32
+    const dir = tmpDir();
+    const fp = path.join(dir, "vaults", "secure.env");
+    createVault(fp);
+    expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
   });
 });
 

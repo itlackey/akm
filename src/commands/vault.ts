@@ -182,6 +182,9 @@ export function buildShellExportScript(vaultPath: string): string {
  */
 export function setKey(vaultPath: string, key: string, value: string, comment?: string): void {
   validateKeyName(key);
+  if (comment !== undefined && /[\r\n]/.test(comment)) {
+    throw new Error("Vault key comment cannot contain newline characters.");
+  }
   ensureParentDir(vaultPath);
   const existing = fs.existsSync(vaultPath) ? fs.readFileSync(vaultPath, "utf8") : "";
   const lines = existing.length > 0 ? existing.split(/\r?\n/) : [];
@@ -250,7 +253,7 @@ export function unsetKey(vaultPath: string, key: string): boolean {
   if (!removed) return false;
   let out = kept.join("\n");
   if (out.length > 0 && !out.endsWith("\n")) out += "\n";
-  writeFileAtomic(vaultPath, out);
+  writeFileAtomic(vaultPath, out, 0o600);
   return true;
 }
 
@@ -258,7 +261,7 @@ export function unsetKey(vaultPath: string, key: string): boolean {
 export function createVault(vaultPath: string): void {
   ensureParentDir(vaultPath);
   if (fs.existsSync(vaultPath)) return;
-  writeFileAtomic(vaultPath, "");
+  writeFileAtomic(vaultPath, "", 0o600);
 }
 
 /**
@@ -306,5 +309,5 @@ function validateKeyName(key: string): void {
 
 function ensureParentDir(filePath: string): void {
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
