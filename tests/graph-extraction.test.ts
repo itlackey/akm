@@ -1,8 +1,9 @@
 /**
  * Tests for the graph-extraction pass (#207).
  *
- * `extractGraphFromBody` is mocked via `mock.module` so no real LLM call
- * is ever made. These tests cover:
+ * Graph extraction runs against a local Bun HTTP server so the real
+ * transport and parsing path is exercised without process-global module
+ * mocking. These tests cover:
  *   - eligible-file detection (memory + knowledge .md, inferred children skipped)
  *   - the disabled-by-default path (no `akm.llm` configured)
  *   - the `index.graph.llm = false` per-pass opt-out
@@ -12,7 +13,7 @@
  *   - read-only cache sources are not extracted (only the primary stash)
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +23,7 @@ import { closeDatabase, openDatabase } from "../src/indexer/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/graph-db";
 import type { SearchSource } from "../src/indexer/search-source";
 
-// ── Module-level LLM stub ───────────────────────────────────────────────────
+// ── Local LLM server ────────────────────────────────────────────────────────
 
 let extractor: (body: string) => {
   entities: string[];
@@ -34,18 +35,24 @@ let extractor: (body: string) => {
 });
 let extractorCallCount = 0;
 
-mock.module("../src/llm/graph-extract", () => ({
-  extractGraphFromBody: async (_config: unknown, body: string) => {
+const llmServer = Bun.serve({
+  port: 0,
+  async fetch(request) {
+    const payload = (await request.json()) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
     extractorCallCount++;
-    return extractor(body);
+    const content = JSON.stringify(extractor(userContent));
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content } }],
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
   },
-  // Stub the batch API introduced with batching support — each body is processed
-  // independently via the single-body extractor to keep test logic simple.
-  extractGraphFromBodies: async (_config: unknown, bodies: string[]) =>
-    Promise.all(bodies.map((body) => extractor(body))),
-}));
+});
 
-// Import AFTER mock.module so the pass picks up the stub.
 const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
   await import("../src/indexer/graph-extraction");
 
@@ -69,7 +76,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  mock.restore();
+  llmServer.stop(true);
 });
 
 function writeFile(rel: string, frontmatter: Record<string, unknown>, body: string): string {
@@ -86,7 +93,7 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
 }
 
 const SAMPLE_LLM = {
-  endpoint: "http://localhost:11434/v1/chat/completions",
+  endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
   model: "llama3.2",
 };
 

@@ -1,8 +1,9 @@
 /**
  * Integration tests for `runGraphExtractionPass` with `graphExtractionBatchSize`.
  *
- * The `../src/llm/graph-extract` module is mocked so no real LLM calls are
- * made. These tests verify that:
+ * The graph extraction pass runs against a local Bun HTTP server so the real
+ * `../src/llm/graph-extract` and client transport path are exercised without
+ * process-global module mocks. These tests verify that:
  *
  *   (g) `graphExtractionBatchSize > 1` routes through `extractGraphFromBodies`
  *       (batch path), writing a correct SQLite-backed graph snapshot for a 3-file stash.
@@ -10,7 +11,7 @@
  *       — behaviour is identical to the original implementation.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,33 +22,56 @@ import { loadStoredGraphSnapshot } from "../src/indexer/graph-db";
 import type { GraphExtractionResult } from "../src/indexer/graph-extraction";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
-// ── LLM stubs (module-level) ─────────────────────────────────────────────────
+// ── Local LLM server ─────────────────────────────────────────────────────────
 
 let batchExtractorStub: ((bodies: string[]) => Promise<GraphExtraction[]>) | null = null;
 let singleExtractorStub: ((body: string) => Promise<GraphExtraction>) | null = null;
 let batchCallCount = 0;
 let singleCallCount = 0;
 
-mock.module("../src/llm/graph-extract", () => ({
-  extractGraphFromBody: async (_cfg: unknown, body: string) => {
-    singleCallCount++;
-    if (singleExtractorStub) return singleExtractorStub(body);
-    return { entities: [], relations: [] };
-  },
-  extractGraphFromBodies: async (_cfg: unknown, bodies: string[]) => {
-    batchCallCount++;
-    if (batchExtractorStub) return batchExtractorStub(bodies);
-    return bodies.map(() => ({ entities: [], relations: [] }));
-  },
-}));
+function parseBatchBodies(userContent: string): string[] {
+  const marker = "=== ASSET ";
+  if (!userContent.includes(marker)) return [];
+  return userContent
+    .split(/=== ASSET \d+ ===\n/g)
+    .slice(1)
+    .map((body) => body.trim())
+    .filter(Boolean);
+}
 
-// Import AFTER mocks.
+const llmServer = Bun.serve({
+  port: 0,
+  async fetch(request) {
+    const payload = (await request.json()) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    const userContent = payload.messages?.find((m) => m.role === "user")?.content ?? "";
+
+    if (userContent.includes("N=")) {
+      batchCallCount++;
+      const bodies = parseBatchBodies(userContent);
+      const result = batchExtractorStub
+        ? await batchExtractorStub(bodies)
+        : bodies.map(() => ({ entities: [], relations: [] }));
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    singleCallCount++;
+    const result = singleExtractorStub ? await singleExtractorStub(userContent) : { entities: [], relations: [] };
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  },
+});
+
 const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
 const SAMPLE_LLM: LlmConnectionConfig = {
-  endpoint: "http://localhost:11434/v1/chat/completions",
+  endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
   model: "llama3.2",
 };
 
@@ -79,7 +103,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  mock.restore();
+  llmServer.stop(true);
 });
 
 function writeMemory(name: string, body: string): void {
@@ -184,7 +208,7 @@ describe("runGraphExtractionPass — batch path", () => {
     expect(result.considered).toBe(2);
   });
 
-  test("(g2) batchSize=2 chunks 5 files into 3 batch calls (2+2+1)", async () => {
+  test("(g2) batchSize=2 chunks 5 files into 2 batch calls plus 1 single-body fallback chunk", async () => {
     for (let i = 1; i <= 5; i++) writeMemory(`m${i}`, `Entity${i} uses Tool${i}.`);
 
     const callSizes: number[] = [];
@@ -195,6 +219,7 @@ describe("runGraphExtractionPass — batch path", () => {
         relations: [],
       }));
     };
+    singleExtractorStub = async () => ({ entities: ["E-final"], relations: [] });
 
     const db = openDatabase(path.join(tmpStash, "graph-chunked.db"));
     let result: GraphExtractionResult;
@@ -209,9 +234,12 @@ describe("runGraphExtractionPass — batch path", () => {
       closeDatabase(db);
     }
 
-    // 5 files / batchSize=2 → chunks [2, 2, 1] → 3 batch calls.
-    expect(batchCallCount).toBe(3);
-    expect(callSizes).toEqual([2, 2, 1]);
+    // 5 files / batchSize=2 → chunks [2, 2, 1]. The final 1-item chunk still
+    // routes through extractGraphFromBodies, which delegates to the single-body
+    // path, so we observe 2 batch calls and 1 single-body call.
+    expect(batchCallCount).toBe(2);
+    expect(singleCallCount).toBe(1);
+    expect(callSizes).toEqual([2, 2]);
     expect(result.considered).toBe(5);
     expect(result.extracted).toBe(5);
   });
