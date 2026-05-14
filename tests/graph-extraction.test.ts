@@ -7,8 +7,8 @@
  *   - the disabled-by-default path (no `akm.llm` configured)
  *   - the `index.graph.llm = false` per-pass opt-out
  *   - the `llm.features.graph_extraction = false` feature-gate opt-out
- *   - graph.json is written under `<stashRoot>/.akm/`
- *   - toggling off after a successful run leaves the existing graph.json on disk
+ *   - graph data is written into the SQLite graph tables for the stash
+ *   - toggling off after a successful run leaves the existing graph snapshot intact
  *   - read-only cache sources are not extracted (only the primary stash)
  */
 
@@ -18,7 +18,8 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
-import type { GraphQualityTelemetry } from "../src/indexer/graph-extraction";
+import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/graph-db";
 import type { SearchSource } from "../src/indexer/search-source";
 
 // ── Module-level LLM stub ───────────────────────────────────────────────────
@@ -45,13 +46,8 @@ mock.module("../src/llm/graph-extract", () => ({
 }));
 
 // Import AFTER mock.module so the pass picks up the stub.
-const {
-  runGraphExtractionPass,
-  collectEligibleFiles,
-  getGraphFilePath,
-  GRAPH_FILE_SCHEMA_VERSION,
-  getGraphExtractionIncludeTypes,
-} = await import("../src/indexer/graph-extraction");
+const { runGraphExtractionPass, collectEligibleFiles, GRAPH_FILE_SCHEMA_VERSION, getGraphExtractionIncludeTypes } =
+  await import("../src/indexer/graph-extraction");
 
 // ── Fixture helpers ─────────────────────────────────────────────────────────
 
@@ -89,6 +85,23 @@ const SAMPLE_LLM = {
   endpoint: "http://localhost:11434/v1/chat/completions",
   model: "llama3.2",
 };
+
+function withGraphDb<T>(name: string, fn: (db: import("bun:sqlite").Database) => Promise<T> | T): Promise<T> | T {
+  void name;
+  const db = openDatabase(path.join(tmpStash, "graph-test.db"));
+  const result = fn(db);
+  if (result instanceof Promise) {
+    return result.finally(() => {
+      closeDatabase(db);
+    }) as Promise<T>;
+  }
+  try {
+    closeDatabase(db);
+    return result;
+  } finally {
+    // no-op
+  }
+}
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   return {
@@ -180,10 +193,11 @@ describe("runGraphExtractionPass — disabled paths", () => {
     extractor = () => {
       throw new Error("must not be called when no llm is configured");
     };
-    const result = await runGraphExtractionPass({ semanticSearchMode: "auto" }, sources());
+    const result = await withGraphDb("disabled-no-llm", (db) =>
+      runGraphExtractionPass({ semanticSearchMode: "auto" }, sources(), undefined, db),
+    );
     expect(result.written).toBe(false);
     expect(result.considered).toBe(0);
-    expect(fs.existsSync(getGraphFilePath(tmpStash))).toBe(false);
   });
 
   test("no-op when index.graph.llm = false", async () => {
@@ -192,9 +206,10 @@ describe("runGraphExtractionPass — disabled paths", () => {
       throw new Error("must not be called when per-pass disabled");
     };
     const cfg = configWithLlm({ index: { graph: { llm: false } } });
-    const result = await runGraphExtractionPass(cfg, sources());
+    const result = await withGraphDb("disabled-pass-gate", (db) =>
+      runGraphExtractionPass(cfg, sources(), undefined, db),
+    );
     expect(result.written).toBe(false);
-    expect(fs.existsSync(getGraphFilePath(tmpStash))).toBe(false);
   });
 
   test("no-op when llm.features.graph_extraction = false", async () => {
@@ -207,27 +222,28 @@ describe("runGraphExtractionPass — disabled paths", () => {
       llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
       index: { graph: { llm: true } },
     };
-    const result = await runGraphExtractionPass(cfg, sources());
+    const result = await withGraphDb("feature-gated-off", (db) =>
+      runGraphExtractionPass(cfg, sources(), undefined, db),
+    );
     expect(result.written).toBe(false);
-    expect(fs.existsSync(getGraphFilePath(tmpStash))).toBe(false);
   });
 
-  test("toggling off after a successful run preserves the existing graph.json", async () => {
+  test("toggling off after a successful run preserves the existing SQLite graph snapshot", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
-    await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("toggle-preserve", async (db) => {
+      await runGraphExtractionPass(configWithLlm(), sources(), undefined, db);
+      const before = loadStoredGraphSnapshot(tmpStash, db);
+      expect(before).not.toBeNull();
 
-    const graphPath = getGraphFilePath(tmpStash);
-    expect(fs.existsSync(graphPath)).toBe(true);
-    const beforeBytes = fs.readFileSync(graphPath, "utf8");
+      extractor = () => {
+        throw new Error("must not be called when disabled");
+      };
+      await runGraphExtractionPass(configWithLlm({ index: { graph: { llm: false } } }), sources(), undefined, db);
 
-    extractor = () => {
-      throw new Error("must not be called when disabled");
-    };
-    await runGraphExtractionPass(configWithLlm({ index: { graph: { llm: false } } }), sources());
-
-    expect(fs.existsSync(graphPath)).toBe(true);
-    expect(fs.readFileSync(graphPath, "utf8")).toBe(beforeBytes);
+      const after = loadStoredGraphSnapshot(tmpStash, db);
+      expect(after).toEqual(before);
+    });
   });
 });
 
@@ -241,7 +257,7 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       semanticSearchMode: "auto",
       llm: { ...SAMPLE_LLM, features: { graph_extraction: true } },
     };
-    const result = await runGraphExtractionPass(cfg, sources());
+    const result = await withGraphDb("both-gates-allow", (db) => runGraphExtractionPass(cfg, sources(), undefined, db));
     expect(result.written).toBe(true);
     expect(result.considered).toBe(1);
     expect(result.extracted).toBe(1);
@@ -253,7 +269,7 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
     //   2. `llm.features.graph_extraction !== false`  (true here)
     //   3. `index.graph.llm !== false`  (true here)
     // With #1 missing, the pass must short-circuit silently — no error
-    // thrown, no graph.json written, no existing graph.json modified.
+    // thrown, no graph snapshot written, no existing graph snapshot modified.
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => {
       throw new Error("must not be called when akm.llm is absent");
@@ -263,34 +279,41 @@ describe("runGraphExtractionPass — feature flag and per-pass key are orthogona
       // No `llm` block at all.
       index: { graph: { llm: true } },
     };
-    const graphPath = getGraphFilePath(tmpStash);
-    expect(fs.existsSync(graphPath)).toBe(false);
-    const result = await runGraphExtractionPass(cfg, sources());
+    const result = await withGraphDb("llm-absent-third-precondition", (db) =>
+      runGraphExtractionPass(cfg, sources(), undefined, db),
+    );
     expect(result.written).toBe(false);
     expect(result.considered).toBe(0);
     expect(result.extracted).toBe(0);
-    expect(fs.existsSync(graphPath)).toBe(false);
   });
 
   test("either gate set to false short-circuits", async () => {
     writeFile("memories/m1.md", {}, "Body.");
     extractor = () => ({ entities: ["E"], relations: [] });
-    const featureOff = await runGraphExtractionPass(
-      {
-        semanticSearchMode: "auto",
-        llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
-      },
-      sources(),
+    const featureOff = await withGraphDb("either-gate-feature-off", (db) =>
+      runGraphExtractionPass(
+        {
+          semanticSearchMode: "auto",
+          llm: { ...SAMPLE_LLM, features: { graph_extraction: false } },
+        },
+        sources(),
+        undefined,
+        db,
+      ),
     );
     expect(featureOff.written).toBe(false);
 
-    const passOff = await runGraphExtractionPass(
-      {
-        semanticSearchMode: "auto",
-        llm: { ...SAMPLE_LLM, features: { graph_extraction: true } },
-        index: { graph: { llm: false } },
-      },
-      sources(),
+    const passOff = await withGraphDb("either-gate-pass-off", (db) =>
+      runGraphExtractionPass(
+        {
+          semanticSearchMode: "auto",
+          llm: { ...SAMPLE_LLM, features: { graph_extraction: true } },
+          index: { graph: { llm: false } },
+        },
+        sources(),
+        undefined,
+        db,
+      ),
     );
     expect(passOff.written).toBe(false);
   });
@@ -303,9 +326,11 @@ describe("runGraphExtractionPass — progress", () => {
     extractor = () => ({ entities: ["E"], relations: [] });
 
     const events: Array<{ processed: number; total: number; currentPath?: string }> = [];
-    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, (event) => {
-      events.push({ processed: event.processed, total: event.total, currentPath: event.currentPath });
-    });
+    const result = await withGraphDb("progress", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, (event) => {
+        events.push({ processed: event.processed, total: event.total, currentPath: event.currentPath });
+      }),
+    );
 
     expect(result.extracted).toBe(2);
     expect(events[0]).toEqual({ processed: 0, total: 2, currentPath: undefined });
@@ -320,7 +345,7 @@ describe("runGraphExtractionPass — progress", () => {
 // ── runGraphExtractionPass — enabled path ──────────────────────────────────
 
 describe("runGraphExtractionPass — enabled", () => {
-  test("writes graph.json with schema version + canonical entity names", async () => {
+  test("writes SQLite graph rows with schema version + canonical entity names", async () => {
     writeFile("memories/parent.md", {}, "Body about ServiceA and ServiceB.");
     writeFile("knowledge/k1.md", {}, "Body about ServiceB and ServiceC.");
     extractor = (body) => {
@@ -337,7 +362,10 @@ describe("runGraphExtractionPass — enabled", () => {
       };
     };
 
-    const result = await runGraphExtractionPass(configWithLlm(), sources());
+    const result = await withGraphDb("writes-graph", async (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
+    const parsed = await withGraphDb("writes-graph-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
 
     expect(result.written).toBe(true);
     expect(result.considered).toBe(2);
@@ -353,21 +381,9 @@ describe("runGraphExtractionPass — enabled", () => {
       density: 0.6667,
     });
 
-    const raw = fs.readFileSync(getGraphFilePath(tmpStash), "utf8");
-    const parsed = JSON.parse(raw) as {
-      schemaVersion: number;
-      stashRoot: string;
-      quality?: GraphQualityTelemetry;
-      files: Array<{
-        path: string;
-        type: string;
-        entities: string[];
-        relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
-        confidence?: number;
-      }>;
-    };
+    if (!parsed) throw new Error("expected stored graph snapshot");
     expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
-    expect(parsed.stashRoot).toBe(tmpStash);
+    expect(parsed.stashPath).toBe(tmpStash);
     expect(parsed.files).toHaveLength(2);
     expect(parsed.quality).toEqual({
       consideredFiles: 2,
@@ -377,9 +393,11 @@ describe("runGraphExtractionPass — enabled", () => {
       extractionCoverage: 1,
       density: 0.6667,
     });
-    expect(parsed.files[0]?.entities).toEqual(["ServiceA", "ServiceB"]);
-    expect(parsed.files[1]?.entities).toEqual(["ServiceB", "ServiceC"]);
-    expect(parsed.files[0]?.relations[0]).toMatchObject({ from: "ServiceA", to: "ServiceB", type: "uses" });
+    const parentNode = parsed.files.find((file) => file.path.endsWith(path.join("memories", "parent.md")));
+    const knowledgeNode = parsed.files.find((file) => file.path.endsWith(path.join("knowledge", "k1.md")));
+    expect(parentNode?.entities).toEqual(["ServiceA", "ServiceB"]);
+    expect(knowledgeNode?.entities).toEqual(["ServiceB", "ServiceC"]);
+    expect(parentNode?.relations[0]).toMatchObject({ from: "ServiceA", to: "ServiceB", type: "uses" });
     expect(parsed.files.some((node) => typeof node.confidence === "number")).toBe(true);
     expect(parsed.files.some((node) => node.relations.some((rel) => typeof rel.confidence === "number"))).toBe(true);
   });
@@ -389,9 +407,13 @@ describe("runGraphExtractionPass — enabled", () => {
     writeFile("commands/c1.md", {}, "Command body about B.");
     extractor = () => ({ entities: ["X"], relations: [] });
 
-    const result = await runGraphExtractionPass(
-      configWithLlm({ index: { graph: { graphExtractionIncludeTypes: ["memory", "command"] } } }),
-      sources(),
+    const result = await withGraphDb("include-types-expand", (db) =>
+      runGraphExtractionPass(
+        configWithLlm({ index: { graph: { graphExtractionIncludeTypes: ["memory", "command"] } } }),
+        sources(),
+        undefined,
+        db,
+      ),
     );
 
     expect(result.considered).toBe(2);
@@ -406,12 +428,15 @@ describe("runGraphExtractionPass — enabled", () => {
       return { entities: [], relations: [] };
     };
 
-    const result = await runGraphExtractionPass(configWithLlm(), sources());
+    const result = await withGraphDb("omit-empty-entities", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(result.considered).toBe(2);
     expect(result.extracted).toBe(1);
     expect(result.written).toBe(true);
 
-    const parsed = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as { files: unknown[] };
+    const parsed = await withGraphDb("omit-empty-entities-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
+    if (!parsed) throw new Error("expected stored graph snapshot");
     expect(parsed.files).toHaveLength(1);
   });
 
@@ -423,7 +448,9 @@ describe("runGraphExtractionPass — enabled", () => {
       return { entities: ["ServiceB"], relations: [] };
     };
 
-    await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("candidate-preserve-initial", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated.\n", "utf8");
 
     extractor = (body) => {
@@ -431,12 +458,14 @@ describe("runGraphExtractionPass — enabled", () => {
       throw new Error("untouched file should be preserved from the previous graph");
     };
 
-    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, undefined, {
-      candidatePaths: new Set([memoryPath]),
-    });
+    const result = await withGraphDb("candidate-preserve-refresh", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, undefined, {
+        candidatePaths: new Set([memoryPath]),
+      }),
+    );
 
     expect(result.written).toBe(true);
-    const parsed = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+    const parsed = (await withGraphDb("candidate-preserve-read", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
       files: Array<{ path: string; entities: string[] }>;
       entities: string[];
     };
@@ -453,7 +482,9 @@ describe("runGraphExtractionPass — enabled", () => {
       return { entities: ["ServiceB"], relations: [] };
     };
 
-    await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("candidate-remove-initial", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated again.\n", "utf8");
 
     extractor = (body) => {
@@ -461,12 +492,14 @@ describe("runGraphExtractionPass — enabled", () => {
       throw new Error("untouched file should be preserved from the previous graph");
     };
 
-    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, undefined, {
-      candidatePaths: new Set([memoryPath]),
-    });
+    const result = await withGraphDb("candidate-remove-refresh", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db, false, undefined, {
+        candidatePaths: new Set([memoryPath]),
+      }),
+    );
 
     expect(result.written).toBe(true);
-    const parsed = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+    const parsed = (await withGraphDb("candidate-remove-read", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
       files: Array<{ path: string; entities: string[] }>;
       entities: string[];
     };
@@ -475,19 +508,36 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(parsed.entities).toEqual(["ServiceB"]);
   });
 
-  test("leaves an existing graph.json untouched when every extraction returns no entities", async () => {
+  test("leaves an existing stored graph untouched when every extraction returns no entities", async () => {
     writeFile("memories/m1.md", {}, "Empty graph body.");
-    const graphPath = getGraphFilePath(tmpStash);
-    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
-    fs.writeFileSync(graphPath, "sentinel", "utf8");
     extractor = () => ({ entities: [], relations: [] });
 
-    const result = await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("existing-graph-sentinel", (db) =>
+      replaceStoredGraph(db, {
+        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: tmpStash,
+        files: [
+          {
+            path: path.join(tmpStash, "memories", "sentinel.md"),
+            type: "memory",
+            entities: ["Sentinel"],
+            relations: [],
+          },
+        ],
+      }),
+    );
+
+    const result = await withGraphDb("existing-graph-noop", async (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
+    const after = await withGraphDb("existing-graph-noop-read", (db) => loadStoredGraphSnapshot(tmpStash, db));
 
     expect(result.considered).toBe(1);
     expect(result.extracted).toBe(0);
     expect(result.written).toBe(false);
-    expect(fs.readFileSync(graphPath, "utf8")).toBe("sentinel");
+    if (!after) throw new Error("expected existing stored graph snapshot");
+    expect(after.files[0]?.entities).toEqual(["Sentinel"]);
   });
 
   test("does not extract from cache-only sources (only the primary stash)", async () => {
@@ -499,10 +549,14 @@ describe("runGraphExtractionPass — enabled", () => {
       writeFile("memories/m1.md", {}, "Primary body.");
       extractor = () => ({ entities: ["X"], relations: [] });
 
-      const result = await runGraphExtractionPass(configWithLlm(), [{ path: tmpStash }, { path: cacheDir }]);
+      const result = await withGraphDb("cache-only-source", (db) =>
+        runGraphExtractionPass(configWithLlm(), [{ path: tmpStash }, { path: cacheDir }], undefined, db),
+      );
       expect(result.considered).toBe(1);
-      expect(fs.existsSync(getGraphFilePath(cacheDir))).toBe(false);
-      expect(fs.existsSync(getGraphFilePath(tmpStash))).toBe(true);
+      await withGraphDb("cache-only-source-read", (db) => {
+        expect(loadStoredGraphSnapshot(cacheDir, db)).toBeNull();
+        expect(loadStoredGraphSnapshot(tmpStash, db)).not.toBeNull();
+      });
     } finally {
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
@@ -512,7 +566,9 @@ describe("runGraphExtractionPass — enabled", () => {
     writeFile("memories/m1.md", {}, "Body about ServiceA.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
 
-    const first = await runGraphExtractionPass(configWithLlm(), sources());
+    const first = await withGraphDb("incremental-reuse-first", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(first.written).toBe(true);
     expect(extractorCallCount).toBe(1);
 
@@ -520,7 +576,9 @@ describe("runGraphExtractionPass — enabled", () => {
       throw new Error("must not be called when prior graph node is reusable");
     };
 
-    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    const second = await withGraphDb("incremental-reuse-second", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(second.written).toBe(true);
     expect(second.extracted).toBe(1);
     expect(extractorCallCount).toBe(1);
@@ -529,17 +587,21 @@ describe("runGraphExtractionPass — enabled", () => {
   test("changed file body hash invalidates prior graph node and falls back to extraction", async () => {
     const filePath = writeFile("memories/m1.md", {}, "Original body about ServiceA.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
-    await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("hash-invalidate-first", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(extractorCallCount).toBe(1);
 
     fs.writeFileSync(filePath, "---\n---\n\nUpdated body about ServiceB.\n", "utf8");
     extractor = () => ({ entities: ["ServiceB"], relations: [] });
 
-    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    const second = await withGraphDb("hash-invalidate-second", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(second.written).toBe(true);
     expect(extractorCallCount).toBe(2);
 
-    const graph = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+    const graph = (await withGraphDb("hash-invalidate-read", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
       files: Array<{ entities: string[] }>;
     };
     expect(graph.files[0]?.entities).toContain("ServiceB");
@@ -548,30 +610,26 @@ describe("runGraphExtractionPass — enabled", () => {
   test("invalid prior graph node falls back safely to fresh extraction", async () => {
     writeFile("memories/m1.md", {}, "Body about ServiceA.");
     extractor = () => ({ entities: ["ServiceA"], relations: [] });
-    await runGraphExtractionPass(configWithLlm(), sources());
+    await withGraphDb("invalid-prior-first", (db) => runGraphExtractionPass(configWithLlm(), sources(), undefined, db));
     expect(extractorCallCount).toBe(1);
 
-    const graphPath = getGraphFilePath(tmpStash);
-    const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as {
-      schemaVersion: number;
-      generatedAt: string;
-      stashRoot: string;
-      files: Array<Record<string, unknown>>;
-      entities?: string[];
-      relations?: unknown[];
-    };
-    graph.files[0] = {
-      ...graph.files[0],
-      entities: "not-an-array",
-    };
-    fs.writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    await withGraphDb("invalid-prior-corrupt", (db) => {
+      const filePath = path.join(tmpStash, "memories", "m1.md");
+      db.prepare("UPDATE graph_files SET body_hash = NULL WHERE stash_root = ? AND file_path = ?").run(
+        tmpStash,
+        filePath,
+      );
+      db.prepare("DELETE FROM llm_enrichment_cache WHERE asset_ref = ?").run(filePath);
+    });
 
     extractor = () => ({ entities: ["ServiceC"], relations: [] });
-    const second = await runGraphExtractionPass(configWithLlm(), sources());
+    const second = await withGraphDb("invalid-prior-second", (db) =>
+      runGraphExtractionPass(configWithLlm(), sources(), undefined, db),
+    );
     expect(second.written).toBe(true);
     expect(extractorCallCount).toBe(2);
 
-    const repaired = JSON.parse(fs.readFileSync(graphPath, "utf8")) as {
+    const repaired = (await withGraphDb("invalid-prior-read", (db) => loadStoredGraphSnapshot(tmpStash, db))) as {
       files: Array<{ entities: string[] }>;
     };
     expect(repaired.files[0]?.entities).toContain("ServiceC");

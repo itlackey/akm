@@ -3,13 +3,10 @@ import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import { closeDatabase, openExistingDatabase } from "../indexer/db";
 import { listRelatedPathsForFile } from "../indexer/graph-boost";
-import {
-  GRAPH_FILE_SCHEMA_VERSION,
-  type GraphFile,
-  type GraphFileNode,
-  getGraphFilePath,
-} from "../indexer/graph-extraction";
+import { loadStoredGraphSnapshot } from "../indexer/graph-db";
+import type { GraphFile, GraphFileNode } from "../indexer/graph-extraction";
 import { lookup } from "../indexer/indexer";
 import { resolveAssetPath } from "../indexer/path-resolver";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search-source";
@@ -95,39 +92,35 @@ function resolveGraphStashPath(source?: string): string {
   return matched.path;
 }
 
-function isGraphFile(value: unknown): value is GraphFile {
-  if (typeof value !== "object" || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  if (obj.schemaVersion !== GRAPH_FILE_SCHEMA_VERSION) return false;
-  if (typeof obj.generatedAt !== "string") return false;
-  if (typeof obj.stashRoot !== "string") return false;
-  if (!Array.isArray(obj.files)) return false;
-  return true;
-}
-
 function loadGraph(source?: string): LoadedGraph {
   const stashPath = resolveGraphStashPath(source);
-  const graphPath = getGraphFilePath(stashPath);
-  if (!fs.existsSync(graphPath)) {
-    throw new NotFoundError(
-      `Graph artifact not found at ${graphPath}.`,
-      "FILE_NOT_FOUND",
-      "Run the improvement flow that refreshes graph artifacts.",
-    );
-  }
-  let parsed: unknown;
+  let db: import("bun:sqlite").Database | undefined;
   try {
-    parsed = JSON.parse(fs.readFileSync(graphPath, "utf8"));
-  } catch {
-    throw new UsageError(`Graph artifact is not valid JSON: ${graphPath}`, "INVALID_FLAG_VALUE");
+    db = openExistingDatabase();
+    const snapshot = loadStoredGraphSnapshot(stashPath, db);
+    if (!snapshot) {
+      throw new NotFoundError(
+        `Graph data not found for source ${stashPath}.`,
+        "FILE_NOT_FOUND",
+        "Run the improvement flow that refreshes graph extraction data.",
+      );
+    }
+    return {
+      graph: {
+        schemaVersion: snapshot.schemaVersion,
+        generatedAt: snapshot.generatedAt,
+        stashRoot: snapshot.stashPath,
+        files: snapshot.files,
+        entities: snapshot.entities,
+        relations: snapshot.relations,
+        ...(snapshot.quality ? { quality: snapshot.quality } : {}),
+      },
+      stashPath,
+      graphPath: snapshot.graphPath,
+    };
+  } finally {
+    if (db) closeDatabase(db);
   }
-  if (!isGraphFile(parsed)) {
-    throw new UsageError(
-      `Graph artifact schema is invalid or unsupported (expected v${GRAPH_FILE_SCHEMA_VERSION}).`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return { graph: parsed, stashPath, graphPath };
 }
 
 function countEntitiesByFile(nodes: GraphFileNode[]): Map<string, number> {
@@ -264,7 +257,15 @@ export async function akmGraphRelated(options: {
   }
   const target = await resolveGraphTarget(ref, options.source);
   const { graph, stashPath, graphPath } = loadGraph(target.stashPath);
-  const related = listRelatedPathsForFile(stashPath, target.filePath, limit ?? 5);
+  let db: import("bun:sqlite").Database | undefined;
+  const related = (() => {
+    try {
+      db = openExistingDatabase();
+      return listRelatedPathsForFile(stashPath, target.filePath, limit ?? 5, db);
+    } finally {
+      if (db) closeDatabase(db);
+    }
+  })();
   return {
     schemaVersion: 1,
     shape: "graph-related",

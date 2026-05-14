@@ -46,8 +46,9 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 11;
+export const DB_VERSION = 12;
 export const EMBEDDING_DIM = 384;
+export const GRAPH_SCHEMA_VERSION = 1;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
@@ -268,8 +269,67 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       updated_at  INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
-      ON llm_enrichment_cache(updated_at);
+     CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
+       ON llm_enrichment_cache(updated_at);
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS graph_meta (
+      stash_root          TEXT PRIMARY KEY,
+      schema_version      INTEGER NOT NULL,
+      generated_at        TEXT NOT NULL,
+      considered_files    INTEGER NOT NULL DEFAULT 0,
+      extracted_files     INTEGER NOT NULL DEFAULT 0,
+      entity_count        INTEGER NOT NULL DEFAULT 0,
+      relation_count      INTEGER NOT NULL DEFAULT 0,
+      extraction_coverage REAL NOT NULL DEFAULT 0,
+      density             REAL NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS graph_files (
+      stash_root  TEXT NOT NULL,
+      file_path   TEXT NOT NULL,
+      file_order  INTEGER NOT NULL,
+      file_type   TEXT NOT NULL,
+      body_hash   TEXT,
+      confidence  REAL,
+      PRIMARY KEY (stash_root, file_path),
+      FOREIGN KEY (stash_root) REFERENCES graph_meta(stash_root) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
+      ON graph_files(stash_root, file_order);
+
+    CREATE TABLE IF NOT EXISTS graph_file_entities (
+      stash_root   TEXT NOT NULL,
+      file_path    TEXT NOT NULL,
+      entity_order INTEGER NOT NULL,
+      entity       TEXT NOT NULL,
+      PRIMARY KEY (stash_root, file_path, entity_order),
+      FOREIGN KEY (stash_root, file_path)
+        REFERENCES graph_files(stash_root, file_path)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_lookup
+      ON graph_file_entities(stash_root, file_path, entity_order);
+
+    CREATE TABLE IF NOT EXISTS graph_file_relations (
+      stash_root      TEXT NOT NULL,
+      file_path       TEXT NOT NULL,
+      relation_order  INTEGER NOT NULL,
+      from_entity     TEXT NOT NULL,
+      to_entity       TEXT NOT NULL,
+      relation_type   TEXT,
+      confidence      REAL,
+      PRIMARY KEY (stash_root, file_path, relation_order),
+      FOREIGN KEY (stash_root, file_path)
+        REFERENCES graph_files(stash_root, file_path)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_graph_file_relations_lookup
+      ON graph_file_relations(stash_root, file_path, relation_order);
   `);
 
   // FTS-dirty queue. Created here (not lazily on first upsert) so the
@@ -378,6 +438,14 @@ function handleVersionUpgrade(db: Database): UsageEventRow[] {
   db.exec("DROP TABLE IF EXISTS index_dir_state");
   db.exec("DROP TABLE IF EXISTS llm_enrichment_cache");
   db.exec("DROP INDEX IF EXISTS idx_llm_cache_updated");
+  db.exec("DROP TABLE IF EXISTS graph_file_relations");
+  db.exec("DROP TABLE IF EXISTS graph_file_entities");
+  db.exec("DROP TABLE IF EXISTS graph_files");
+  db.exec("DROP TABLE IF EXISTS graph_meta");
+  db.exec("DROP TABLE IF EXISTS graph_relations");
+  db.exec("DROP TABLE IF EXISTS graph_entities");
+  db.exec("DROP TABLE IF EXISTS graph_nodes");
+  db.exec("DROP TABLE IF EXISTS graph_stashes");
   db.exec("DROP INDEX IF EXISTS idx_entries_dir");
   db.exec("DROP INDEX IF EXISTS idx_entries_type");
   db.exec("DROP TABLE IF EXISTS entries");

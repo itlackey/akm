@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { seedStoredGraph } from "./helpers/graph-store";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -137,48 +138,48 @@ describe("capture commands", () => {
 
   test("graph summary and entities commands return structured output", () => {
     const stashDir = makeTempDir("akm-capture-graph-stash-");
-    const graphPath = path.join(stashDir, ".akm", "graph.json");
-    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
-    fs.writeFileSync(
-      graphPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          generatedAt: "2026-05-01T00:00:00.000Z",
-          stashRoot: stashDir,
-          files: [
-            {
-              path: path.join(stashDir, "knowledge", "k1.md"),
-              type: "knowledge",
-              entities: ["alpha", "beta"],
-              relations: [{ from: "alpha", to: "beta", type: "uses" }],
-            },
-          ],
-          entities: ["alpha", "beta"],
-          relations: [{ from: "alpha", to: "beta", type: "uses" }],
-          quality: {
-            consideredFiles: 1,
-            extractedFiles: 1,
-            entityCount: 2,
-            relationCount: 1,
-            extractionCoverage: 1,
-            density: 1,
+    const xdgData = makeTempDir("akm-capture-graph-data-");
+    seedStoredGraph(
+      {
+        schemaVersion: 1,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: stashDir,
+        files: [
+          {
+            path: path.join(stashDir, "knowledge", "k1.md"),
+            type: "knowledge",
+            entities: ["alpha", "beta"],
+            relations: [{ from: "alpha", to: "beta", type: "uses" }],
           },
+        ],
+        entities: ["alpha", "beta"],
+        relations: [{ from: "alpha", to: "beta", type: "uses" }],
+        quality: {
+          consideredFiles: 1,
+          extractedFiles: 1,
+          entityCount: 2,
+          relationCount: 1,
+          extractionCoverage: 1,
+          density: 1,
         },
-        null,
-        2,
-      )}\n`,
-      "utf8",
+      },
+      path.join(xdgData, "akm", "index.db"),
     );
 
-    const summary = runCli(["graph", "summary", "--format=json"], { stashDir }).result;
+    const summary = runCli(["graph", "summary", "--format=json"], {
+      stashDir,
+      env: { XDG_DATA_HOME: xdgData },
+    }).result;
     expect(summary.status).toBe(0);
     const summaryJson = JSON.parse(summary.stdout) as { shape: string; entityCount: number; relationCount: number };
     expect(summaryJson.shape).toBe("graph-summary");
     expect(summaryJson.entityCount).toBe(2);
     expect(summaryJson.relationCount).toBe(1);
 
-    const entities = runCli(["graph", "entities", "--limit", "1", "--format=json"], { stashDir }).result;
+    const entities = runCli(["graph", "entities", "--limit", "1", "--format=json"], {
+      stashDir,
+      env: { XDG_DATA_HOME: xdgData },
+    }).result;
     expect(entities.status).toBe(0);
     const entitiesJson = JSON.parse(entities.stdout) as {
       shape: string;

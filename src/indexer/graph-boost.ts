@@ -2,7 +2,7 @@
  * Search-time graph-boost integration for the `akm index` graph pass (#207).
  *
  * This module is the consumer half of the graph-extraction pass. It loads
- * the persisted `graph.json` (when present) and exposes a single helper,
+ * the persisted graph snapshot from SQLite and exposes a single helper,
  * {@link computeGraphBoost}, that the existing FTS5+boosts loop in
  * `src/indexer/db-search.ts` calls per-entry to obtain an additive boost
  * value.
@@ -13,14 +13,14 @@
  *   - There is no second `SearchHit` scorer. `searchDatabase` continues to
  *     own ranking; this module just answers "what additive boost does the
  *     graph contribute for this (query, entry) pair?".
- *   - Missing/stale/unparseable `graph.json` → boost is `0`. The pipeline
+ *   - Missing graph rows → boost is `0`. The pipeline
  *     degrades gracefully to its non-graph behaviour, exactly as today.
  */
 
-import fs from "node:fs";
+import type { Database } from "bun:sqlite";
 import type { AkmConfig } from "../core/config";
-import { warn } from "../core/warn";
-import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, type GraphFileNode, getGraphFilePath } from "./graph-extraction";
+import { loadStoredGraphMeta, loadStoredGraphSnapshot } from "./graph-db";
+import type { GraphFile, GraphFileNode } from "./graph-extraction";
 
 /**
  * Per-query state for the graph boost. Built once per search invocation by
@@ -83,9 +83,7 @@ interface ParsedGraphContext {
 
 let cachedParsedGraph:
   | {
-      graphPath: string;
-      mtimeMs: number;
-      size: number;
+      cacheKey: string;
       context: ParsedGraphContext;
     }
   | undefined;
@@ -154,15 +152,18 @@ function toConfidenceMultiplier(rawConfidence: number | undefined, weights: Grap
 /**
  * Load the graph file for a stash root and pre-compute everything that's
  * shared across all entries scored for one query. Returns `null` when:
- *   - `graph.json` does not exist.
- *   - The file fails to parse.
- *   - The schema version doesn't match (treated like "missing" so an old
- *     index keeps working until the next `akm index --full`).
+ *   - No graph snapshot exists in SQLite.
  *   - The query produces no token-level entity matches (no boost is
  *     possible, so we skip the per-entry overhead entirely).
  */
-export function loadGraphBoostContext(stashRoot: string, query: string, config?: AkmConfig): GraphBoostContext | null {
-  const parsed = readParsedGraphContext(stashRoot);
+export function loadGraphBoostContext(
+  stashRoot: string | string[],
+  query: string,
+  config?: AkmConfig,
+  db?: Database,
+): GraphBoostContext | null {
+  const stashRoots = Array.isArray(stashRoot) ? stashRoot : [stashRoot];
+  const parsed = readParsedGraphContext(stashRoots, db);
   if (!parsed) return null;
   const weights = resolveGraphBoostWeights(config);
 
@@ -327,13 +328,14 @@ export function listRelatedPathsForFile(
   stashRoot: string,
   filePath: string,
   limit = 5,
+  db?: Database,
 ): Array<{
   path: string;
   type: string;
   sharedEntities: string[];
   relationCount: number;
 }> {
-  const parsed = readParsedGraphContext(stashRoot);
+  const parsed = readParsedGraphContext([stashRoot], db);
   if (!parsed) return [];
   const node = parsed.nodesByPath.get(filePath);
   if (!node) return [];
@@ -365,51 +367,36 @@ export function listRelatedPathsForFile(
 }
 
 /**
- * Lightweight reader — extracted so the boost loader and tests share one
- * code path. Tolerant of missing files (returns null) but logs a warning
- * when an existing file fails to parse so corruption is visible.
+ * Load and normalize graph data from SQLite once, then reuse it across all
+ * per-entry boost lookups in the current query.
  */
-function readGraphFile(stashRoot: string): GraphFile | null {
-  const target = getGraphFilePath(stashRoot);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(target, "utf8");
-  } catch {
-    // Missing → no boost. Not an error: the user simply hasn't enabled
-    // graph extraction yet, or the pass hasn't run.
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    warn(`graph boost: failed to parse ${target}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  if (!isGraphFile(parsed) || parsed.schemaVersion !== GRAPH_FILE_SCHEMA_VERSION) {
-    return null;
-  }
-  return parsed;
-}
+function readParsedGraphContext(stashRoots: string[], db?: Database): ParsedGraphContext | null {
+  const sortedRoots = [...new Set(stashRoots)].sort((a, b) => a.localeCompare(b));
+  if (sortedRoots.length === 0) return null;
+  const metas = sortedRoots
+    .map((stashRoot) => loadStoredGraphMeta(stashRoot, db))
+    .filter((meta): meta is NonNullable<typeof meta> => meta !== null);
+  if (metas.length === 0) return null;
+  const cacheKey = metas.map((meta) => `${meta.stashPath}\u0000${meta.generatedAt}`).join("\u0001");
+  if (cachedParsedGraph && cachedParsedGraph.cacheKey === cacheKey) return cachedParsedGraph.context;
 
-function readParsedGraphContext(stashRoot: string): ParsedGraphContext | null {
-  const target = getGraphFilePath(stashRoot);
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(target);
-  } catch {
-    return null;
-  }
-  if (
-    cachedParsedGraph &&
-    cachedParsedGraph.graphPath === target &&
-    cachedParsedGraph.mtimeMs === stat.mtimeMs &&
-    cachedParsedGraph.size === stat.size
-  ) {
-    return cachedParsedGraph.context;
-  }
-  const graph = readGraphFile(stashRoot);
-  if (!graph) return null;
+  const snapshots = metas
+    .map((meta) => loadStoredGraphSnapshot(meta.stashPath, db))
+    .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot !== null);
+  if (snapshots.length === 0) return null;
+
+  const graph: GraphFile = {
+    schemaVersion: Math.max(...snapshots.map((snapshot) => snapshot.schemaVersion)),
+    generatedAt:
+      snapshots
+        .map((snapshot) => snapshot.generatedAt)
+        .sort()
+        .at(-1) ?? new Date(0).toISOString(),
+    stashRoot: snapshots[0]?.stashPath ?? "",
+    files: snapshots.flatMap((snapshot) => snapshot.files),
+    entities: [...new Set(snapshots.flatMap((snapshot) => snapshot.entities))],
+    relations: snapshots.flatMap((snapshot) => snapshot.relations),
+  };
 
   const nodesByPath = new Map<string, GraphFileNode>();
   const entityConfidence = new Map<string, number>();
@@ -445,31 +432,6 @@ function readParsedGraphContext(stashRoot: string): ParsedGraphContext | null {
   }
 
   const context = { graph, nodesByPath, entityConfidence, adjacency };
-  cachedParsedGraph = { graphPath: target, mtimeMs: stat.mtimeMs, size: stat.size, context };
+  cachedParsedGraph = { cacheKey, context };
   return context;
-}
-
-function isGraphFile(value: unknown): value is GraphFile {
-  if (typeof value !== "object" || value === null) return false;
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.schemaVersion !== "number") return false;
-  if (typeof obj.generatedAt !== "string") return false;
-  if (typeof obj.stashRoot !== "string") return false;
-  if (!Array.isArray(obj.files)) return false;
-  for (const f of obj.files) {
-    if (typeof f !== "object" || f === null) return false;
-    const node = f as Record<string, unknown>;
-    if (typeof node.path !== "string") return false;
-    if (typeof node.type !== "string") return false;
-    if (!Array.isArray(node.entities) || !node.entities.every((e) => typeof e === "string")) return false;
-    if (!Array.isArray(node.relations)) return false;
-    for (const r of node.relations as unknown[]) {
-      if (typeof r !== "object" || r === null) return false;
-      const rel = r as Record<string, unknown>;
-      if (typeof rel.from !== "string" || typeof rel.to !== "string") return false;
-      if (rel.type !== undefined && typeof rel.type !== "string") return false;
-      if (rel.confidence !== undefined && typeof rel.confidence !== "number") return false;
-    }
-  }
-  return true;
 }

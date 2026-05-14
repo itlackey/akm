@@ -2,14 +2,14 @@
  * Integration test for the search-time graph boost (#207).
  *
  * Asserts deterministically that for a corpus with a known graph-eligible
- * query, the rank of the expected target improves when a `graph.json`
- * artifact is present versus absent. No LLM calls are made — the graph
- * file is written directly to the fixture stash, simulating what the
+ * query, the rank of the expected target improves when SQLite-backed graph
+ * data is present versus absent. No LLM calls are made — the graph
+ * snapshot is written directly to the fixture DB, simulating what the
  * extraction pass would produce.
  *
  * The test uses TWO independent runs against the SAME database state:
- *   1. Baseline — `graph.json` deleted before search.
- *   2. Boosted — `graph.json` present before search.
+ *   1. Baseline — graph snapshot removed before search.
+ *   2. Boosted — graph snapshot present before search.
  *
  * Acceptance: the target's rank in the boosted run must be ≤ its rank in
  * the baseline run, and at least one of (rank improves) OR (score
@@ -40,7 +40,8 @@ import {
   GRAPH_HOP_BOOST_PER_ENTITY,
   loadGraphBoostContext,
 } from "../src/indexer/graph-boost";
-import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile, getGraphFilePath } from "../src/indexer/graph-extraction";
+import { deleteStoredGraph, replaceStoredGraph } from "../src/indexer/graph-db";
+import { GRAPH_FILE_SCHEMA_VERSION, type GraphFile } from "../src/indexer/graph-extraction";
 import type { StashEntry } from "../src/indexer/metadata";
 import { buildSearchText } from "../src/indexer/search-fields";
 
@@ -115,7 +116,7 @@ afterAll(() => {
 //   - memory:incident-2024-shard — operational note. Anchors the graph
 //     edge connecting "outage recovery" to the runbook file.
 //
-// With graph.json present, the runbook's entities directly match the
+// With graph data present, the runbook's entities directly match the
 // query tokens and pick up the graph boost; the FAQ has no graph node
 // and gets nothing. The deterministic acceptance is "rank improves OR
 // score strictly increases" — both work even if the baseline already
@@ -124,7 +125,7 @@ afterAll(() => {
 function buildFixture(): void {
   // Asset files on disk — the search-time graph boost matches by absolute
   // file path, so paths must be consistent between fixture build and
-  // graph.json contents.
+  // graph snapshot contents.
   const knowledgeDir = path.join(stashDir, "knowledge");
   const memoryDir = path.join(stashDir, "memories");
   fs.mkdirSync(knowledgeDir, { recursive: true });
@@ -216,16 +217,31 @@ function buildFixture(): void {
     closeDatabase(db);
   }
 
-  // Pre-build the graph file once, but DON'T install it yet — each test
-  // installs/removes it as needed. The entity set is exactly what the
-  // graph-extraction LLM helper would have produced for these bodies.
-  const graphFile: GraphFile = {
+  installGraphWithMutator((graph) => graph);
+  uninstallGraph();
+}
+
+function installGraph(): void {
+  installGraphWithMutator((graph) => graph);
+}
+
+function uninstallGraph(): void {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    deleteStoredGraph(db, stashDir);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function installGraphWithMutator(mutator: (graph: GraphFile) => GraphFile): void {
+  const mutated = mutator({
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot: stashDir,
     files: [
       {
-        path: runbookPath,
+        path: path.join(stashDir, "knowledge", "database-runbook.md"),
         type: "knowledge",
         entities: ["database", "outage", "recovery", "runbook"],
         relations: [
@@ -235,50 +251,25 @@ function buildFixture(): void {
         ],
       },
       {
-        path: memoryPath,
+        path: path.join(stashDir, "memories", "incident-2024-shard.md"),
         type: "memory",
         entities: ["database", "outage", "recovery", "shard-3"],
         relations: [{ from: "outage", to: "recovery" }],
       },
       {
-        path: checklistPath,
+        path: path.join(stashDir, "knowledge", "incident-checklist.md"),
         type: "knowledge",
         entities: ["playbook"],
         relations: [{ from: "runbook", to: "playbook" }],
       },
-      // database-faq has NO graph entries — the FAQ doesn't operationally
-      // relate to outage recovery; it just shares vocabulary. This is the
-      // asymmetry that lets the graph signal differentiate the runbook
-      // from a vocabulary-matching FAQ.
     ],
-  };
-
-  // Stash the prepared graph payload as a JSON file alongside the stash so
-  // tests can install/uninstall by file rename.
-  fs.mkdirSync(path.join(stashDir, ".akm"), { recursive: true });
-  fs.writeFileSync(
-    path.join(stashDir, ".akm", "graph.prepared.json"),
-    `${JSON.stringify(graphFile, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function installGraph(): void {
-  const prepared = path.join(stashDir, ".akm", "graph.prepared.json");
-  fs.copyFileSync(prepared, getGraphFilePath(stashDir));
-}
-
-function uninstallGraph(): void {
-  const target = getGraphFilePath(stashDir);
-  if (fs.existsSync(target)) fs.unlinkSync(target);
-}
-
-function installGraphWithMutator(mutator: (graph: GraphFile) => GraphFile): void {
-  const prepared = path.join(stashDir, ".akm", "graph.prepared.json");
-  const raw = fs.readFileSync(prepared, "utf8");
-  const parsed = JSON.parse(raw) as GraphFile;
-  const mutated = mutator(parsed);
-  fs.writeFileSync(getGraphFilePath(stashDir), `${JSON.stringify(mutated, null, 2)}\n`, "utf8");
+  });
+  const db = openExistingDatabase(getDbPath());
+  try {
+    replaceStoredGraph(db, mutated);
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 async function searchHits(query: string) {

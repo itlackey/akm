@@ -279,8 +279,8 @@ artifacts — they remain on disk and continue to be searchable.
 When `akm.llm` is configured, `akm improve` can run a post-consolidation
 graph-extraction maintenance step that walks the primary stash for `memory:`
 and `knowledge:` markdown files, asks the configured LLM to surface entities
-and relations from each body, and persists the result to
-`<stashRoot>/.akm/graph.json`. The search-time scorer reads this artifact and
+and relations from each body, and persists the result to graph tables in
+`$DATA/index.db`. The search-time scorer reads this indexed graph data and
 contributes a single additive boost component inside the existing FTS5+boosts
 loop.
 
@@ -297,9 +297,9 @@ set `index.graph.llm = false`. To block graph extraction entirely at the
 feature-flag layer (e.g. air-gapped environments), set
 `llm.features.graph_extraction = false`.
 
-Disabling either layer after a previous run never deletes the existing
-`<stashRoot>/.akm/graph.json` artifact — it stays on disk and continues to
-contribute to ranking, it just stops refreshing on subsequent improve runs.
+Disabling either layer after a previous run never deletes the existing graph
+rows — they remain in `index.db` and continue to contribute to ranking until a
+later refresh or full index rebuild replaces them.
 
 ## Install Security Audit
 

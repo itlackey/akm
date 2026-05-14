@@ -270,10 +270,10 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 
 1. Run `runGraphExtractionPass` only after consolidation and any inference
    reindex are complete.
-2. Refresh `<stashRoot>/.akm/graph.json` against the final post-improve disk
+2. Refresh the graph rows in `index.db` against the final post-improve disk
    state so search-time graph boosts do not immediately go stale.
-3. Internal partial refresh paths preserve unrelated graph nodes rather than
-   rewriting the artifact from only the touched subset.
+3. Internal partial refresh paths preserve unrelated graph rows rather than
+   rebuilding the indexed graph state from only the touched subset.
 
 ### Proposal queue
 

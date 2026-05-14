@@ -212,7 +212,7 @@ dead-URL detections, and skip reasons observed in the selected time window.
 
 ### graph
 
-Inspect and export the stash-local graph artifact at `<stashRoot>/.akm/graph.json`.
+Inspect and export the indexed graph data stored in `index.db`.
 
 ```sh
 akm graph                            # Alias for `akm graph summary`

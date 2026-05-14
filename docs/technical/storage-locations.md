@@ -371,7 +371,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
-| `$STASH/.akm/graph.json` | Knowledge graph artifact: `{ schemaVersion, generatedAt, nodes, edges }` extracted from memory + knowledge assets via LLM. Written atomically. | Rebuilt each index run |
+| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. | Refreshed by graph extraction / rebuilt on index DB reset |
 
 ---
 

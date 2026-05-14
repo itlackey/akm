@@ -71,6 +71,7 @@ const { runGraphExtractionPass } = await import("../src/indexer/graph-extraction
 const { runMemoryInferencePass } = await import("../src/indexer/memory-inference");
 const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheEntries, openDatabase, closeDatabase } =
   await import("../src/indexer/db");
+const { loadStoredGraphSnapshot } = await import("../src/indexer/graph-db");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -270,8 +271,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     expect(graphExtractCallCount).toBe(2);
     expect(second.written).toBe(true);
     // The graph should now contain the new entity.
-    const graphPath = path.join(tmpStash, ".akm", "graph.json");
-    const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as { files: Array<{ entities: string[] }> };
+    const graph = loadStoredGraphSnapshot(tmpStash, db) as { files: Array<{ entities: string[] }> };
     expect(graph.files[0]?.entities).toContain("ServiceB");
   });
 

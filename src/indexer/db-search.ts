@@ -301,9 +301,8 @@ async function searchDatabase(
     // Search across all source dirs; the graph file lives next to the
     // primary source root. Cache misses are silent — the helper handles
     // missing files internally and returns `null` instead of throwing.
-    const primaryDir = allSourceDirs[0];
-    if (!primaryDir) return null;
-    return loadGraphBoostContext(primaryDir, query, config);
+    if (allSourceDirs.length === 0) return null;
+    return loadGraphBoostContext(allSourceDirs, query, config, db);
   })();
 
   applyRankingRules({ db, query, items: scored, graphContext });

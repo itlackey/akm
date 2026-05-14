@@ -402,7 +402,7 @@ const healthCommand = defineCommand({
 });
 
 const graphCommand = defineCommand({
-  meta: { name: "graph", description: "Inspect the indexed entity graph artifact (.akm/graph.json)" },
+  meta: { name: "graph", description: "Inspect the indexed entity graph stored in SQLite" },
   subCommands: {
     summary: defineCommand({
       meta: { name: "summary", description: "Show entity-graph counts and quality telemetry" },

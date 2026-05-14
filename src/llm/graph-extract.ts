@@ -5,8 +5,8 @@
  * asks the configured LLM to surface the entities mentioned in it and the
  * relations between them. The pass itself
  * (`src/indexer/graph-extraction.ts`) is responsible for deciding which
- * files to extract, persisting the resulting nodes/edges to a stash-local
- * `graph.json` artifact, and feeding the artifact into the FTS5+boosts
+ * files to extract, persisting the resulting nodes/edges to the index DB,
+ * and feeding the graph data into the FTS5+boosts
  * search pipeline as a single boost component.
  *
  * This module is intentionally tiny and stateless so tests can stub it via

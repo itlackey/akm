@@ -3,8 +3,8 @@
  *
  * Walks the primary stash for `memory:` and `knowledge:` assets, asks the
  * configured LLM to extract entities and relations from each one, and
- * persists the result to a single stash-local artifact at
- * `<stashRoot>/.akm/graph.json`. The artifact is consumed by the search
+ * persists the result to stash-local SQLite graph tables keyed by stash root.
+ * The artifact is consumed by the search
  * pipeline (see `src/indexer/graph-boost.ts`) as a single boost component
  * inside the existing FTS5+boosts loop — there is NO second SearchHit
  * scorer and no parallel ranking track.
@@ -19,13 +19,13 @@
  *   3. `index.graph.llm !== false` — the per-pass opt-out layer (#208).
  *      Set to `false` to skip just this pass while leaving other passes
  *      that share the same `llm` block enabled.
- *   Toggling any one off does NOT delete the existing `graph.json` — the
+ *   Toggling any one off does NOT delete the existing persisted graph — the
  *   user keeps the boost component they already have, it just stops
  *   refreshing.
  *
  * Locked v1 contract:
  *   - LLM access is exclusively via `resolveIndexPassLLM("graph", config)`.
- *   - The `graph.json` file is an indexer artifact, NOT a user-visible
+ *   - The graph rows are an indexer artifact, NOT a user-visible
  *     asset. It does not have an asset ref, does not appear in search
  *     hits, and is not addressable via `akm show`. Direct `fs.writeFile`
  *     is therefore the correct primitive — `writeAssetToSource` is
@@ -36,7 +36,6 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { TYPE_DIRS } from "../core/asset-spec";
-import { writeFileAtomic } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig } from "../core/config";
 import { parseFrontmatter } from "../core/frontmatter";
@@ -44,22 +43,15 @@ import { warn } from "../core/warn";
 import type { GraphRelation } from "../llm/graph-extract";
 import * as graphExtract from "../llm/graph-extract";
 import { resolveIndexPassLLM } from "../llm/index-passes";
-import { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import { computeBodyHash, GRAPH_SCHEMA_VERSION, getLlmCacheEntry, upsertLlmCacheEntry } from "./db";
+import { loadStoredGraphSnapshot, replaceStoredGraph } from "./graph-db";
 import { deduplicateGraph } from "./graph-dedup";
 import { withLlmCache } from "./llm-cache";
 import type { SearchSource } from "./search-source";
 import { walkMarkdownFiles } from "./walker";
 
 /** Schema version for the persisted artifact — bumps trigger a full rebuild. */
-export const GRAPH_FILE_SCHEMA_VERSION = 1;
-
-/** Path scheme — kept stable so consumers (search-time boost) can find it. */
-export const GRAPH_FILE_RELATIVE_PATH = path.join(".akm", "graph.json");
-
-/** Public path resolver — exported so the search-side reader and tests share the rule. */
-export function getGraphFilePath(stashRoot: string): string {
-  return path.join(stashRoot, GRAPH_FILE_RELATIVE_PATH);
-}
+export const GRAPH_FILE_SCHEMA_VERSION = GRAPH_SCHEMA_VERSION;
 
 /** One node in the graph — corresponds to a single asset file. */
 export interface GraphFileNode {
@@ -77,7 +69,7 @@ export interface GraphFileNode {
   confidence?: number;
 }
 
-/** On-disk shape of `graph.json`. */
+/** Persisted graph shape loaded from SQLite. */
 export interface GraphFile {
   schemaVersion: number;
   /** ISO-8601 timestamp of the last refresh. */
@@ -119,7 +111,7 @@ export interface GraphExtractionResult {
   totalEntities: number;
   /** Total relations across all extracted files. */
   totalRelations: number;
-  /** Whether `graph.json` was written this run. False when the pass is a no-op. */
+  /** Whether graph rows were written this run. False when the pass is a no-op. */
   written: boolean;
   /** Graph quality telemetry computed from the extracted artifact. */
   quality: GraphQualityTelemetry;
@@ -254,39 +246,18 @@ function validateGraphCacheShape(raw: unknown): GraphCacheShape | undefined {
   };
 }
 
-function loadGraphFile(stashRoot: string): LoadedGraphFile {
-  const target = getGraphFilePath(stashRoot);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(target, "utf8");
-  } catch {
-    return { files: [] };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { files: [] };
-  }
-  if (!parsed || typeof parsed !== "object") return { files: [] };
-  const files = (parsed as Record<string, unknown>).files;
-  if (!Array.isArray(files)) return { files: [] };
-
+function loadGraphFile(stashRoot: string, db?: Database): LoadedGraphFile {
+  if (!db) return { files: [] };
+  const graph = loadStoredGraphSnapshot(stashRoot, db);
+  if (!graph) return { files: [] };
   const out: GraphFileNode[] = [];
-  for (const f of files) {
-    if (!f || typeof f !== "object") continue;
-    const node = f as Record<string, unknown>;
-    if (typeof node.path !== "string") continue;
-    if (typeof node.type !== "string") continue;
-    const cacheShape = validateGraphCacheShape({
-      entities: node.entities,
-      relations: node.relations,
-    });
+  for (const node of graph.files) {
+    const cacheShape = validateGraphCacheShape({ entities: node.entities, relations: node.relations });
     if (!cacheShape) continue;
     out.push({
       path: node.path,
       type: node.type,
-      bodyHash: typeof node.bodyHash === "string" ? node.bodyHash : undefined,
+      bodyHash: node.bodyHash,
       entities: cacheShape.entities,
       relations: cacheShape.relations,
       confidence: normalizeConfidence(node.confidence),
@@ -345,8 +316,7 @@ function reuseGraphNode(
  *      `false`, the indexer simply skips this pass for the current run.
  *
  * If any of the three is missing or `false`, this function short-circuits
- * to an empty no-op result, leaving any existing `graph.json` untouched on
- * disk.
+ * to an empty no-op result, leaving any existing persisted graph untouched.
  *
  * When `config.index.graph.graphExtractionBatchSize > 1`, eligible files are
  * chunked into batches and each chunk is processed with a single LLM call via
@@ -390,7 +360,7 @@ export async function runGraphExtractionPass(
   const considered = eligible.length;
   if (considered === 0) return { ...EMPTY_RESULT };
 
-  const previousGraph = loadGraphFile(primary.path);
+  const previousGraph = loadGraphFile(primary.path, db);
   const previousNodes = new Map(previousGraph.files.map((node) => [node.path, node]));
 
   const nodes: GraphFileNode[] = [];
@@ -658,7 +628,7 @@ export async function runGraphExtractionPass(
   );
 
   if (mergedNodes.length === 0) {
-    warn("graph extraction: all extractions failed or returned no entities; leaving existing graph.json untouched.");
+    warn("graph extraction: all extractions failed or returned no entities; leaving existing graph rows untouched.");
     return {
       considered,
       extracted: 0,
@@ -687,7 +657,7 @@ export async function runGraphExtractionPass(
     quality,
   };
 
-  const written = writeGraphFile(primary.path, graph);
+  const written = writeGraphFile(primary.path, graph, db);
 
   return {
     considered,
@@ -752,24 +722,20 @@ export function collectEligibleFiles(
 // ── Persistence ─────────────────────────────────────────────────────────────
 
 /**
- * Write `graph.json` atomically to `<stashRoot>/.akm/graph.json`.
- *
- * Direct `fs.writeFile` is intentional. The graph artifact is an indexer
- * cache — not a user-visible asset — so it does not have an asset ref and
- * `writeAssetToSource` (which routes through the asset-spec rendering
- * layer) is the wrong primitive here. See CLAUDE.md / spec §10 step 5 for
- * the carve-out: kind-branching writes for asset content live in
- * `src/core/write-source.ts`; opaque indexer artifacts may write directly.
+ * Persist graph rows into the SQLite index DB.
  */
-function writeGraphFile(stashRoot: string, graph: GraphFile): boolean {
-  const target = getGraphFilePath(stashRoot);
-  const dir = path.dirname(target);
+function writeGraphFile(stashRoot: string, graph: GraphFile, db?: Database): boolean {
+  if (!db) {
+    warn("graph extraction: no database handle available; skipping graph persistence.");
+    return false;
+  }
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    writeFileAtomic(target, `${JSON.stringify(graph, null, 2)}\n`);
+    replaceStoredGraph(db, graph);
     return true;
   } catch (err) {
-    warn(`graph extraction: failed to write ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    warn(
+      `graph extraction: failed to persist graph for ${stashRoot}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return false;
   }
 }

@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getDbPath } from "../../src/core/paths";
+import { closeDatabase, openDatabase } from "../../src/indexer/db";
 
 const tempDirs: string[] = [];
 
@@ -20,11 +22,15 @@ function makeStashDir(): string {
   return stash;
 }
 
-function runCli(args: string[], stashDir: string): { status: number; stdout: string; stderr: string } {
-  const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
-  const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
-  const xdgData = makeTempDir("akm-graph-cli-neg-data-");
-  const xdgState = makeTempDir("akm-graph-cli-neg-state-");
+function runCli(
+  args: string[],
+  stashDir: string,
+  envDirs?: { xdgCache?: string; xdgConfig?: string; xdgData?: string; xdgState?: string },
+): { status: number; stdout: string; stderr: string } {
+  const xdgCache = envDirs?.xdgCache ?? makeTempDir("akm-graph-cli-neg-cache-");
+  const xdgConfig = envDirs?.xdgConfig ?? makeTempDir("akm-graph-cli-neg-config-");
+  const xdgData = envDirs?.xdgData ?? makeTempDir("akm-graph-cli-neg-data-");
+  const xdgState = envDirs?.xdgState ?? makeTempDir("akm-graph-cli-neg-state-");
   const cliPath = path.join(path.resolve(import.meta.dir, "..", ".."), "src", "cli.ts");
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
@@ -43,6 +49,22 @@ function runCli(args: string[], stashDir: string): { status: number; stdout: str
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+}
+
+function seedEmptyIndexDb(xdgData: string, xdgState: string): void {
+  const prevData = process.env.XDG_DATA_HOME;
+  const prevState = process.env.XDG_STATE_HOME;
+  try {
+    process.env.XDG_DATA_HOME = xdgData;
+    process.env.XDG_STATE_HOME = xdgState;
+    const db = openDatabase(getDbPath());
+    closeDatabase(db);
+  } finally {
+    if (prevData === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prevData;
+    if (prevState === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = prevState;
+  }
 }
 
 afterAll(() => {
@@ -75,38 +97,50 @@ describe("graph CLI negative paths", () => {
 
   test("summary fails when graph artifact is missing", () => {
     const stash = makeStashDir();
-    const result = runCli(["graph", "summary"], stash);
+    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
+    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
+    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
+    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
+    seedEmptyIndexDb(xdgData, xdgState);
+    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("FILE_NOT_FOUND");
-    expect(parsed.error).toContain("Graph artifact not found");
+    expect(parsed.error).toContain("Graph data not found");
   });
 
-  test("summary fails when graph artifact is invalid JSON", () => {
+  test("summary ignores graph.json when no SQLite graph data exists", () => {
     const stash = makeStashDir();
     fs.writeFileSync(path.join(stash, ".akm", "graph.json"), "not-json\n", "utf8");
-    const result = runCli(["graph", "summary"], stash);
-    expect(result.status).toBe(2);
+    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
+    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
+    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
+    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
+    seedEmptyIndexDb(xdgData, xdgState);
+    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
+    expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("not valid JSON");
+    expect(parsed.error).toContain("Graph data not found");
   });
 
-  test("summary fails when graph artifact schema is invalid", () => {
+  test("summary ignores invalid graph.json schema when no SQLite graph data exists", () => {
     const stash = makeStashDir();
     fs.writeFileSync(
       path.join(stash, ".akm", "graph.json"),
       `${JSON.stringify({ schemaVersion: 999, generatedAt: "2026-01-01T00:00:00.000Z", stashRoot: stash, files: [] })}\n`,
       "utf8",
     );
-    const result = runCli(["graph", "summary"], stash);
-    expect(result.status).toBe(2);
+    const xdgCache = makeTempDir("akm-graph-cli-neg-cache-");
+    const xdgConfig = makeTempDir("akm-graph-cli-neg-config-");
+    const xdgData = makeTempDir("akm-graph-cli-neg-data-");
+    const xdgState = makeTempDir("akm-graph-cli-neg-state-");
+    seedEmptyIndexDb(xdgData, xdgState);
+    const result = runCli(["graph", "summary"], stash, { xdgCache, xdgConfig, xdgData, xdgState });
+    expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("schema is invalid or unsupported");
+    expect(parsed.error).toContain("Graph data not found");
   });
 
   test("entities rejects non-positive --limit", () => {

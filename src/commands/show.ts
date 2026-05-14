@@ -360,8 +360,16 @@ export async function showLocal(input: {
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
     related: (() => {
-      const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5);
-      return { total: related.length, hits: related };
+      let db: import("bun:sqlite").Database | undefined;
+      try {
+        db = openExistingDatabase();
+        const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
+        return { total: related.length, hits: related };
+      } catch {
+        return { total: 0, hits: [] };
+      } finally {
+        if (db) closeDatabase(db);
+      }
     })(),
   };
 

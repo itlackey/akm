@@ -12,7 +12,8 @@ import {
 import { saveConfig } from "../../src/core/config";
 import { getDbPath } from "../../src/core/paths";
 import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";
-import { getGraphFilePath } from "../../src/indexer/graph-extraction";
+import { replaceStoredGraph } from "../../src/indexer/graph-db";
+import { GRAPH_FILE_SCHEMA_VERSION } from "../../src/indexer/graph-extraction";
 import { buildSearchText } from "../../src/indexer/search-fields";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
@@ -70,49 +71,44 @@ function seedGraphLookupIndex(): void {
 }
 
 function writeGraphArtifact(): string {
-  const graphPath = getGraphFilePath(stashDir);
-  fs.mkdirSync(path.dirname(graphPath), { recursive: true });
-  fs.writeFileSync(
-    graphPath,
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        generatedAt: "2026-05-01T00:00:00.000Z",
-        stashRoot: stashDir,
-        files: [
-          {
-            path: path.join(stashDir, "knowledge", "k1.md"),
-            type: "knowledge",
-            entities: ["alpha", "beta"],
-            relations: [{ from: "alpha", to: "beta", type: "uses" }],
-          },
-          {
-            path: path.join(stashDir, "memories", "m1.md"),
-            type: "memory",
-            entities: ["alpha", "gamma"],
-            relations: [{ from: "alpha", to: "gamma" }],
-          },
-        ],
-        entities: ["alpha", "beta", "gamma"],
-        relations: [
-          { from: "alpha", to: "beta", type: "uses" },
-          { from: "alpha", to: "gamma" },
-        ],
-        quality: {
-          consideredFiles: 2,
-          extractedFiles: 2,
-          entityCount: 3,
-          relationCount: 2,
-          extractionCoverage: 1,
-          density: 0.6667,
+  const graphDb = openDatabase(getDbPath());
+  try {
+    replaceStoredGraph(graphDb, {
+      schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+      generatedAt: "2026-05-01T00:00:00.000Z",
+      stashRoot: stashDir,
+      files: [
+        {
+          path: path.join(stashDir, "knowledge", "k1.md"),
+          type: "knowledge",
+          entities: ["alpha", "beta"],
+          relations: [{ from: "alpha", to: "beta", type: "uses" }],
         },
+        {
+          path: path.join(stashDir, "memories", "m1.md"),
+          type: "memory",
+          entities: ["alpha", "gamma"],
+          relations: [{ from: "alpha", to: "gamma" }],
+        },
+      ],
+      entities: ["alpha", "beta", "gamma"],
+      relations: [
+        { from: "alpha", to: "beta", type: "uses" },
+        { from: "alpha", to: "gamma" },
+      ],
+      quality: {
+        consideredFiles: 2,
+        extractedFiles: 2,
+        entityCount: 3,
+        relationCount: 2,
+        extractionCoverage: 1,
+        density: 0.6667,
       },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return graphPath;
+    });
+  } finally {
+    closeDatabase(graphDb);
+  }
+  return getDbPath();
 }
 
 beforeEach(() => {
@@ -236,35 +232,30 @@ describe("akm graph", () => {
       closeDatabase(db);
     }
 
-    const graphPath = getGraphFilePath(secondaryStashDir);
-    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
-    fs.writeFileSync(
-      graphPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          generatedAt: "2026-05-01T00:00:00.000Z",
-          stashRoot: secondaryStashDir,
-          files: [
-            {
-              path: sharedPath,
-              type: "knowledge",
-              entities: ["Shared", "Guide"],
-              relations: [{ from: "Shared", to: "Guide" }],
-            },
-            {
-              path: neighborPath,
-              type: "memory",
-              entities: ["Shared"],
-              relations: [{ from: "Shared", to: "Neighbor" }],
-            },
-          ],
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
+    const graphDb = openDatabase(getDbPath());
+    try {
+      replaceStoredGraph(graphDb, {
+        schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
+        generatedAt: "2026-05-01T00:00:00.000Z",
+        stashRoot: secondaryStashDir,
+        files: [
+          {
+            path: sharedPath,
+            type: "knowledge",
+            entities: ["Shared", "Guide"],
+            relations: [{ from: "Shared", to: "Guide" }],
+          },
+          {
+            path: neighborPath,
+            type: "memory",
+            entities: ["Shared"],
+            relations: [{ from: "Shared", to: "Neighbor" }],
+          },
+        ],
+      });
+    } finally {
+      closeDatabase(graphDb);
+    }
 
     const result = await akmGraphRelated({ ref: "sec-a//knowledge:shared" });
     expect(result.stashPath).toBe(secondaryStashDir);

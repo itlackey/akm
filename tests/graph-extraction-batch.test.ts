@@ -5,7 +5,7 @@
  * made. These tests verify that:
  *
  *   (g) `graphExtractionBatchSize > 1` routes through `extractGraphFromBodies`
- *       (batch path), writing a correct `graph.json` for a 3-file stash.
+ *       (batch path), writing a correct SQLite-backed graph snapshot for a 3-file stash.
  *   (h) Default batch size (=1) uses the per-asset `extractGraphFromBody` path
  *       — behaviour is identical to the original implementation.
  */
@@ -16,6 +16,9 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig, LlmConnectionConfig } from "../src/core/config";
+import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { loadStoredGraphSnapshot } from "../src/indexer/graph-db";
+import type { GraphExtractionResult } from "../src/indexer/graph-extraction";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
 // ── LLM stubs (module-level) ─────────────────────────────────────────────────
@@ -39,9 +42,7 @@ mock.module("../src/llm/graph-extract", () => ({
 }));
 
 // Import AFTER mocks.
-const { runGraphExtractionPass, getGraphFilePath, GRAPH_FILE_SCHEMA_VERSION } = await import(
-  "../src/indexer/graph-extraction"
-);
+const { runGraphExtractionPass, GRAPH_FILE_SCHEMA_VERSION } = await import("../src/indexer/graph-extraction");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ function sources() {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("runGraphExtractionPass — batch path", () => {
-  test("(g) batchSize=3 routes through extractGraphFromBodies once for 3 files and writes correct graph.json", async () => {
+  test("(g) batchSize=3 routes through extractGraphFromBodies once for 3 files and writes correct SQLite graph rows", async () => {
     writeMemory("m1", "ServiceA integrates with ServiceB.");
     writeMemory("m2", "Terraform provisions ProdCluster.");
     writeMemory("m3", "No extractable content.");
@@ -104,32 +105,48 @@ describe("runGraphExtractionPass — batch path", () => {
       ];
     };
 
-    const result = await runGraphExtractionPass(
-      makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
-      sources(),
-    );
+    const db = openDatabase(path.join(tmpStash, "graph-batch.db"));
+    let parsed:
+      | {
+          schemaVersion: number;
+          files: Array<{ entities: string[]; relations: unknown[] }>;
+        }
+      | undefined;
+    try {
+      const result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 3 } } }),
+        sources(),
+        undefined,
+        db,
+      );
 
-    // extractGraphFromBodies was called exactly once with all 3 bodies.
-    expect(batchCallCount).toBe(1);
-    expect(singleCallCount).toBe(0);
-    expect(capturedBodies).toHaveLength(3);
+      // extractGraphFromBodies was called exactly once with all 3 bodies.
+      expect(batchCallCount).toBe(1);
+      expect(singleCallCount).toBe(0);
+      expect(capturedBodies).toHaveLength(3);
 
-    // Telemetry: m3 returned no entities so it is excluded from extracted count.
-    expect(result.written).toBe(true);
-    expect(result.considered).toBe(3);
-    expect(result.extracted).toBe(2);
-    expect(result.totalEntities).toBe(4);
-    expect(result.totalRelations).toBe(1);
+      // Telemetry: m3 returned no entities so it is excluded from extracted count.
+      expect(result.written).toBe(true);
+      expect(result.considered).toBe(3);
+      expect(result.extracted).toBe(2);
+      expect(result.totalEntities).toBe(4);
+      expect(result.totalRelations).toBe(1);
 
-    const raw = fs.readFileSync(getGraphFilePath(tmpStash), "utf8");
-    const parsed = JSON.parse(raw) as {
-      schemaVersion: number;
-      files: Array<{ entities: string[]; relations: unknown[] }>;
-    };
-    expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
-    expect(parsed.files).toHaveLength(2);
-    expect(parsed.files[0]?.entities).toEqual(["ServiceA", "ServiceB"]);
-    expect(parsed.files[1]?.entities).toEqual(["Terraform", "ProdCluster"]);
+      parsed = loadStoredGraphSnapshot(tmpStash, db) as {
+        schemaVersion: number;
+        files: Array<{ entities: string[]; relations: unknown[] }>;
+      };
+      expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
+      expect(parsed.files).toHaveLength(2);
+      expect(
+        parsed.files.some((file) => file.entities.includes("ServiceA") && file.entities.includes("ServiceB")),
+      ).toBe(true);
+      expect(
+        parsed.files.some((file) => file.entities.includes("Terraform") && file.entities.includes("ProdCluster")),
+      ).toBe(true);
+    } finally {
+      closeDatabase(db);
+    }
   });
 
   test("(h) default batchSize=1 uses per-asset path and behaves identically to original implementation", async () => {
@@ -145,7 +162,13 @@ describe("runGraphExtractionPass — batch path", () => {
     };
 
     // Use default (no graphExtractionBatchSize → defaults to 1).
-    const result = await runGraphExtractionPass(makeConfig(), sources());
+    const db = openDatabase(path.join(tmpStash, "graph-default.db"));
+    let result: GraphExtractionResult;
+    try {
+      result = await runGraphExtractionPass(makeConfig(), sources(), undefined, db);
+    } finally {
+      closeDatabase(db);
+    }
 
     // Per-asset path: 2 individual calls, 0 batch calls.
     expect(singleCallCount).toBe(2);
@@ -169,10 +192,18 @@ describe("runGraphExtractionPass — batch path", () => {
       }));
     };
 
-    const result = await runGraphExtractionPass(
-      makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
-      sources(),
-    );
+    const db = openDatabase(path.join(tmpStash, "graph-chunked.db"));
+    let result: GraphExtractionResult;
+    try {
+      result = await runGraphExtractionPass(
+        makeConfig({ index: { graph: { graphExtractionBatchSize: 2 } } }),
+        sources(),
+        undefined,
+        db,
+      );
+    } finally {
+      closeDatabase(db);
+    }
 
     // 5 files / batchSize=2 → chunks [2, 2, 1] → 3 batch calls.
     expect(batchCallCount).toBe(3);
