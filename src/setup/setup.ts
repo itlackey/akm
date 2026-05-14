@@ -20,7 +20,7 @@ import type {
   RegistryConfigEntry,
   SourceConfigEntry,
 } from "../core/config";
-import { DEFAULT_CONFIG, getSources, loadUserConfig, saveConfig } from "../core/config";
+import { DEFAULT_CONFIG, loadUserConfig, saveConfig } from "../core/config";
 import { getConfigPath, getDefaultStashDir } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, isVecAvailable, openDatabase } from "../indexer/db";
@@ -443,8 +443,15 @@ async function prepareSemanticSearchAssets(
 
 // ── Steps ───────────────────────────────────────────────────────────────────
 
-async function stepStashDir(current: AkmConfig): Promise<string> {
-  const defaultDir = current.stashDir ?? getDefaultStashDir();
+async function stepStashDir(
+  current: AkmConfig,
+  options?: { nonInteractive?: boolean; preferredDir?: string },
+): Promise<string> {
+  const defaultDir = options?.preferredDir ?? current.stashDir ?? getDefaultStashDir();
+
+  if (options?.nonInteractive) {
+    return defaultDir;
+  }
 
   const choice = await prompt(() =>
     p.select({
@@ -828,7 +835,7 @@ export async function stepAddSources(
   current: AkmConfig,
   options?: { promptForAdditional?: boolean },
 ): Promise<SourceConfigEntry[]> {
-  const existingSources: SourceConfigEntry[] = [...getSources(current)];
+  const existingSources: SourceConfigEntry[] = [...(current.sources ?? [])];
   const sources: SourceConfigEntry[] = [];
 
   if (existingSources.length > 0) {
@@ -917,7 +924,7 @@ async function stepAgentPlatforms(current: AkmConfig): Promise<SourceConfigEntry
     return [];
   }
 
-  const existingPaths = new Set(getSources(current).map((s) => s.path));
+  const existingPaths = new Set((current.sources ?? []).map((s) => s.path));
 
   // Filter out platforms already configured
   const newPlatforms = platforms.filter((pl) => !existingPaths.has(pl.path));
@@ -1529,6 +1536,7 @@ export function stepAgentCliDetection(
 export function buildSetupSteps(options: {
   online: boolean;
   semanticSearchOutcome: { mode: "off" | "auto"; prepareAssets: boolean };
+  preferredStashDir?: string;
 }): {
   steps: SetupStep[];
   /** Latest semantic-search choice; populated by the semantic-search step. */
@@ -1546,7 +1554,10 @@ export function buildSetupSteps(options: {
       label: "Stash Directory",
       nonInteractive: true,
       async run(ctx) {
-        const stashDir = await stepStashDir(ctx.config);
+        const stashDir = await stepStashDir(ctx.config, {
+          nonInteractive: ctx.nonInteractive,
+          preferredDir: options.preferredStashDir,
+        });
         ctx.apply({ stashDir });
       },
     },
@@ -1668,6 +1679,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const { steps, outcome } = buildSetupSteps({
     online,
     semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
+    preferredStashDir: resolvedStashDir,
   });
 
   // Wrap each step with a `p.log.step()` header so the wizard UI is
@@ -1703,7 +1715,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
   const embedding = newConfig.embedding;
   const llm = newConfig.llm;
   const registries = newConfig.registries;
-  const allStashes = getSources(newConfig);
+  const allStashes = newConfig.sources ?? [];
 
   // Feature capability summary
   const agentConfigured = Boolean(agentConfig);
@@ -1847,6 +1859,7 @@ export async function runSetupWithDefaults(opts: {
   const { steps } = buildSetupSteps({
     online: false,
     semanticSearchOutcome: { mode: current.semanticSearchMode, prepareAssets: false },
+    preferredStashDir: stashDir,
   });
   await runSetupSteps(steps, ctx);
 

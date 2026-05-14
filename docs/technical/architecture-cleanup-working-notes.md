@@ -316,3 +316,52 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 
 - Phase 6 remains intentionally deferred. The current indexer structure already has named fixed stages, so a new `IndexPostProcessor[]` seam should only be introduced if a future concrete duplication hotspot appears inside one phase.
 - Final verification did not run the repo-wide all-tests command; it ran the agreed touched-surface suite covering the phases completed in this cleanup.
+
+## Post-Cleanup QA Remediation
+
+### QA remediation implementation notes
+
+- Addressed repo-level regressions and manual-QA findings in narrow batches rather than reopening architecture scope:
+  - Batch A: freshness/discoverability
+  - Batch B: config CLI consistency
+  - Batch C: non-interactive setup stash-dir behavior
+  - Batch D: source-management and early-stderr UX
+- Hardened setup-related test isolation after release-check fallout:
+  - normalized mocked registry defaults in `tests/setup-run.integration.ts` to match production `DEFAULT_CONFIG`
+  - kept `tests/setup-wizard.test.ts` on cache-busted module reloads under its local prompt mocks
+- Hardened `tests/source.test.ts` around env/config cache reset without relying on unsupported Bun `serial` helpers.
+- Hardened `tests/registry-cli.test.ts` against registry cache collisions by making each ephemeral localhost registry URL unique per test server instance.
+
+### QA remediation verification results
+
+- `bunx tsc --noEmit` -> pass
+- `bun test tests/commands/search.test.ts` -> pass
+- `bun test tests/commands/show-indexer-parity.test.ts` -> pass
+- `bun test tests/config-cli.test.ts` -> pass
+- `bun test tests/setup-wizard.test.ts` -> pass
+- `bun test tests/setup-run.integration.ts tests/setup.test.ts tests/setup-wizard.test.ts` -> pass (`45` tests)
+- `bun test tests/source-registry.test.ts` -> pass
+- `bun test tests/e2e.test.ts` -> pass
+- `bun test tests/source.test.ts` -> pass (`29` tests)
+- `bun test tests/setup-wizard.test.ts tests/setup-run.integration.ts` -> pass (`34` tests)
+- `bun test tests/registry-cli.test.ts` -> pass (`14` tests)
+
+## Final Release Validation
+
+### Release-check results
+
+- `./tests/release-check.sh --skip-docker` -> pass
+- Release validation summary:
+  - lint -> pass
+  - type check -> pass
+  - build -> pass
+  - npm bin target verification -> pass
+  - install/setup regression suite -> pass (`57` tests)
+  - full test suite -> pass (`2742` pass, `9` skip, `0` fail)
+
+### Final release-check notes
+
+- One additional full-suite-only failure appeared during final release validation in `tests/registry-cli.test.ts`.
+- Root cause was test-only registry index cache aliasing: ephemeral localhost registry URLs can be reused across the full suite, while the registry cache is keyed only by URL in `registry_index_cache`.
+- The fix stayed test-local by making each served mock registry URL unique with a per-instance query token.
+- After that harness fix, repo-wide release validation passed without changing product behavior.

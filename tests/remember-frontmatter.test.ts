@@ -8,7 +8,7 @@
  * - Required-field rejection before any file write
  * - --expires duration → ISO date computation
  * - Zero-flag remember still works (no frontmatter written)
- * - memoryMdRenderer.extractMetadata populates StashEntry fields
+ * - memory metadata contributors populate StashEntry fields
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -19,7 +19,7 @@ import path from "node:path";
 import { parseFrontmatter } from "../src/core/frontmatter";
 import { buildFileContext, buildRenderContext } from "../src/indexer/file-context";
 import type { StashEntry } from "../src/indexer/metadata";
-import { memoryMdRenderer } from "../src/output/renderers";
+import { applyMetadataContributors } from "../src/indexer/metadata-contributors";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
 
@@ -314,12 +314,12 @@ describe("remember --auto", () => {
   });
 });
 
-// ── memoryMdRenderer.extractMetadata ─────────────────────────────────────────
+// ── memory metadata contributors ─────────────────────────────────────────────
 
 /** A static MatchResult for memory-md (avoids calling runMatchers and null assertions). */
 const MEMORY_MATCH = { type: "memory", specificity: 10, renderer: "memory-md" };
 
-describe("memoryMdRenderer.extractMetadata", () => {
+describe("memory metadata contributors", () => {
   const createdTmpDirs: string[] = [];
 
   afterEach(() => {
@@ -338,40 +338,40 @@ describe("memoryMdRenderer.extractMetadata", () => {
     return { filePath, stashRoot };
   }
 
-  test("populates tags from frontmatter", () => {
+  async function applyMemoryMetadata(entry: StashEntry, stashRoot: string, filePath: string): Promise<void> {
+    const ctx = buildFileContext(stashRoot, filePath);
+    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
+    await applyMetadataContributors(entry, { rendererName: "memory-md", renderContext: renderCtx });
+  }
+
+  test("populates tags from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops, networking]\n---\nDeployment needs VPN access\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");
   });
 
-  test("populates description from frontmatter", () => {
+  test("populates description from frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ndescription: VPN required for staging deploys\ntags: [ops]\n---\nBody content\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.description).toBe("VPN required for staging deploys");
   });
 
-  test("populates searchHints with source, observed_at, expires, subjective", () => {
+  test("populates searchHints with source, observed_at, expires, subjective", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.searchHints).toBeDefined();
     expect(entry.searchHints).toContain("skill:deploy");
@@ -380,13 +380,11 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(entry.searchHints).toContain("subjective");
   });
 
-  test("observed_at falls back to file mtime when not in frontmatter", () => {
+  test("observed_at falls back to file mtime when not in frontmatter", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     // Should have an observed_at hint derived from mtime
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
@@ -396,28 +394,24 @@ describe("memoryMdRenderer.extractMetadata", () => {
     expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("works for bare memory with no frontmatter (no crash)", () => {
+  test("works for bare memory with no frontmatter (no crash)", async () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
 
     // Should not throw
-    expect(() => memoryMdRenderer.extractMetadata?.(entry, renderCtx)).not.toThrow();
+    await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
 
     // mtime fallback should still fire
     const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
     expect(mtimeHint).toBeDefined();
   });
 
-  test("block-sequence tags in frontmatter are parsed correctly", () => {
+  test("block-sequence tags in frontmatter are parsed correctly", async () => {
     const { filePath, stashRoot } = writeTmpMemory("---\ntags:\n- ops\n- networking\n- deploy\n---\nVPN required\n");
 
-    const ctx = buildFileContext(stashRoot, filePath);
     const entry: StashEntry = { name: "test-memory", type: "memory" };
-    const renderCtx = buildRenderContext(ctx, MEMORY_MATCH, [stashRoot]);
-    memoryMdRenderer.extractMetadata?.(entry, renderCtx);
+    await applyMemoryMetadata(entry, stashRoot, filePath);
 
     expect(entry.tags).toContain("ops");
     expect(entry.tags).toContain("networking");

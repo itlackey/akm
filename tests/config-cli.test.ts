@@ -86,6 +86,27 @@ describe("config CLI helpers", () => {
     });
   });
 
+  test("parseConfigValue accepts llm JSON with endpoint and omitted model", () => {
+    expect(parseConfigValue("llm", '{"endpoint":"http://localhost:11434/v1/chat/completions"}')).toEqual({
+      llm: {
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "",
+      },
+    });
+  });
+
+  test("parseConfigValue rejects writable website sources through config CLI", () => {
+    expect(() =>
+      parseConfigValue("sources", '[{"type":"website","url":"https://example.com","writable":true}]'),
+    ).toThrow("writable: true is only supported on filesystem and git sources");
+  });
+
+  test("parseConfigValue rejects writable npm sources through config CLI", () => {
+    expect(() => parseConfigValue("sources", '[{"type":"npm","path":"left-pad","writable":true}]')).toThrow(
+      "writable: true is only supported on filesystem and git sources",
+    );
+  });
+
   test("setConfigValue sets embedding via JSON", () => {
     const base: AkmConfig = { semanticSearchMode: "auto" };
     const updated = setConfigValue(

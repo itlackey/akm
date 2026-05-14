@@ -112,6 +112,15 @@ const SKILLS_SH_PROVIDER = "skills-sh";
 
 import { stringify as yamlStringify } from "yaml";
 
+function applyEarlyStderrFlags(argv: string[]): void {
+  if (argv.includes("--quiet") || argv.includes("-q")) {
+    setQuiet(true);
+  }
+  if (argv.includes("--verbose")) {
+    setVerbose(true);
+  }
+}
+
 /**
  * Collect all occurrences of a repeatable flag from process.argv.
  * Citty's StringArgDef only exposes the last value when a flag is repeated,
@@ -3493,6 +3502,7 @@ process.argv = normalizeShowArgv(process.argv);
 // invalid; surface it through the same JSON-error path the rest of the CLI uses
 // rather than letting the raw exception escape with a stack trace.
 try {
+  applyEarlyStderrFlags(process.argv);
   initOutputMode(process.argv, loadConfig().output ?? {});
 } catch (error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -3516,16 +3526,7 @@ function classifyExitCode(error: unknown): number {
 
 async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
   try {
-    // Apply --quiet flag early so warnings inside the command are suppressed
-    if (process.argv.includes("--quiet") || process.argv.includes("-q")) {
-      setQuiet(true);
-    }
-    // Apply --verbose flag early so per-spec diagnostics (gated behind
-    // `isVerbose()` in src/core/warn.ts) are restored. The `AKM_VERBOSE`
-    // env var still wins regardless — see warn.ts for the precedence rule.
-    if (process.argv.includes("--verbose")) {
-      setVerbose(true);
-    }
+    applyEarlyStderrFlags(process.argv);
     await fn();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

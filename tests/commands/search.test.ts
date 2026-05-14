@@ -1029,6 +1029,31 @@ describe("Auto-index on stale", () => {
     expect(doctorHit).toBeDefined();
     expect(doctorHit?.description).not.toBe("Legacy metadata that should not be used without filename");
   });
+
+  test("auto-indexes when a new memory is added after the prior build", async () => {
+    const stashDir = tmpStash();
+    fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
+    process.env.AKM_STASH_DIR = stashDir;
+    saveConfig({ semanticSearchMode: "off" });
+
+    writeFile(
+      path.join(stashDir, "memories", "first-note.md"),
+      "---\ndescription: first note\n---\nInitial memory body\n",
+    );
+    await akmIndex({ stashDir, full: true });
+
+    const freshPath = path.join(stashDir, "memories", "fresh-note.md");
+    writeFile(
+      freshPath,
+      "---\ndescription: fresh note for verification\n---\nFresh memory body about deploy verification\n",
+    );
+    const future = new Date(Date.now() + 2_000);
+    fs.utimesSync(freshPath, future, future);
+
+    const result = await akmSearch({ query: "fresh note verification", source: "stash" });
+    const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
+    expect(localHits.some((h) => h.ref === "memory:fresh-note")).toBe(true);
+  });
 });
 
 // ── 2.4 Source filtering ────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ function writeConfig(configPath: string, config: Record<string, unknown>): void 
 
 function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
   const body = JSON.stringify(index);
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const server = Bun.serve({
     port: 0,
     fetch() {
@@ -34,7 +35,7 @@ function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
     },
   });
   return {
-    url: `http://localhost:${server.port}/index.json`,
+    url: `http://localhost:${server.port}/index.json?test=${token}`,
     close: () => server.stop(true),
   };
 }

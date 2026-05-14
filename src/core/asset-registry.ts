@@ -20,6 +20,7 @@ export const TYPE_TO_RENDERER: Record<string, string> = {
   command: "command-md",
   agent: "agent-md",
   knowledge: "knowledge-md",
+  lesson: "lesson-md",
   memory: "memory-md",
   workflow: "workflow-md",
   vault: "vault-env",
@@ -34,6 +35,7 @@ export const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   command: (ref) => `akm show ${ref} -> fill placeholders and dispatch`,
   agent: (ref) => `akm show ${ref} -> dispatch with full prompt`,
   knowledge: (ref) => `akm show ${ref} -> read reference material`,
+  lesson: (ref) => `akm show ${ref} -> read the lesson and apply when_to_use`,
   memory: (ref) => `akm show ${ref} -> recall context`,
   workflow: (ref) => buildWorkflowAction(ref),
   vault: (ref) =>

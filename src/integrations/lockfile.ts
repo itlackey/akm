@@ -141,6 +141,7 @@ export async function upsertLockEntry(entry: LockfileEntry): Promise<void> {
 }
 
 export async function removeLockEntry(id: string): Promise<void> {
+  if (!fs.existsSync(getDataDir())) return;
   const acquired = await acquireLockSentinel();
   try {
     const entries = readLockfile();

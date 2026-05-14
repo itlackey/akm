@@ -65,7 +65,7 @@ beforeEach(() => {
   process.env.XDG_DATA_HOME = createTmpDir("akm-parity-data-");
   process.env.XDG_STATE_HOME = createTmpDir("akm-parity-state-");
   stashDir = createTmpDir("akm-parity-stash-");
-  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge"]) {
+  for (const sub of ["scripts", "skills", "commands", "agents", "knowledge", "lessons"]) {
     fs.mkdirSync(path.join(stashDir, sub), { recursive: true });
   }
   process.env.AKM_STASH_DIR = stashDir;
@@ -184,5 +184,30 @@ describe("Phase 4 parity: indexer.lookup ↔ akmShowUnified", () => {
     await akmIndex({ stashDir, full: true });
     const result = await lookup(parseAssetRef("skill:does-not-exist"));
     expect(result).toBeNull();
+  });
+
+  test("show falls back to disk for a new lesson added after indexing", async () => {
+    await akmIndex({ stashDir, full: true });
+
+    const lessonPath = path.join(stashDir, "lessons", "fresh-lesson.md");
+    writeFile(
+      lessonPath,
+      [
+        "---",
+        "description: Fresh lesson added after indexing",
+        "when_to_use: When a new lesson lands on disk before reindex",
+        "---",
+        "# Fresh lesson",
+        "",
+        "Use the disk fallback when the index has not caught up yet.",
+      ].join("\n"),
+    );
+
+    const indexed = await lookup(parseAssetRef("lesson:fresh-lesson"));
+    expect(indexed).toBeNull();
+
+    const shown = await akmShowUnified({ ref: "lesson:fresh-lesson" });
+    expect(shown.type).toBe("lesson");
+    expect(shown.path).toBe(lessonPath);
   });
 });

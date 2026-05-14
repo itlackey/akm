@@ -231,6 +231,14 @@ export function auditInstallCandidate(input: {
 }
 
 export function formatInstallAuditFailure(ref: string, report: InstallAuditReport): string {
+  return formatInstallAuditFailureForAction(ref, report, "add");
+}
+
+export function formatInstallAuditFailureForAction(
+  ref: string,
+  report: InstallAuditReport,
+  action: "add" | "update",
+): string {
   const lines = [`Security audit failed for ${ref}.`, formatInstallAuditSummary(report)];
   for (const finding of report.findings.slice(0, 5)) {
     lines.push(`- [${finding.severity}] ${finding.message}${finding.file ? ` (${finding.file})` : ""}`);
@@ -238,9 +246,10 @@ export function formatInstallAuditFailure(ref: string, report: InstallAuditRepor
   if (report.findings.length > 5) {
     lines.push(`- ${report.findings.length - 5} more finding(s) omitted`);
   }
+  const trustCommand = action === "update" ? `akm update ${ref} --trust` : `akm add ${ref} --trust`;
   lines.push(
     "Disable blocking with `security.installAudit.blockOnCritical = false`, or disable audits with `security.installAudit.enabled = false`." +
-      " Or pass --trust on a one-off 'akm add' to bypass this audit for this install only.",
+      ` Or pass --trust on a one-off '${trustCommand}' to bypass this audit for this ${action} only.`,
   );
   return lines.join("\n");
 }

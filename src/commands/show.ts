@@ -297,10 +297,11 @@ export async function showLocal(input: {
     }
   }
   if (!assetPath) {
-    assetPath = await resolveAssetPath(parsed, {
+    const resolvedAssetPath = await resolveAssetPath(parsed, {
       stashDir: input.stashDir,
-      mode: "index-only",
+      mode: "index-first",
     });
+    assetPath = resolvedAssetPath ?? undefined;
   }
 
   if (!assetPath && parsed.origin && searchSources.length === 0) {

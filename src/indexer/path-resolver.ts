@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type AssetRef, parseAssetRef } from "../core/asset-ref";
 import { resolveAssetPathFromName, TYPE_DIRS } from "../core/asset-spec";
+import { isWithin } from "../core/common";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { lookup } from "./indexer";
 import { resolveSourceEntries } from "./search-source";
@@ -70,7 +71,11 @@ function resolveViaDisk(ref: AssetRef, options: ResolveAssetPathOptions): string
     for (const candidate of candidates) {
       if (!fs.existsSync(candidate)) continue;
       const resolved = resolveDirectoryEntry(candidate, directoryIndexNames);
-      if (resolved) return resolved;
+      if (!resolved) continue;
+      const resolvedRoot = fs.realpathSync(source.path);
+      const realTarget = fs.realpathSync(resolved);
+      if (!isWithin(realTarget, resolvedRoot)) continue;
+      return realTarget;
     }
   }
   return null;

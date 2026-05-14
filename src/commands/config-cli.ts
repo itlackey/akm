@@ -11,6 +11,7 @@ import {
   type SourceConfigEntry,
 } from "../core/config";
 import { UsageError } from "../core/errors";
+import { assertWritableAllowedForKind } from "../core/write-source";
 
 // ── Merge helpers for LLM/embedding subkey set ───────────────────────────────
 
@@ -23,6 +24,14 @@ function mergeLlmLikeEmbedding(
   patch: Partial<EmbeddingConnectionConfig>,
 ): EmbeddingConnectionConfig {
   return { endpoint: "", model: "", ...(base ?? {}), ...patch };
+}
+
+function validateSources(entries: SourceConfigEntry[] | undefined): SourceConfigEntry[] | undefined {
+  if (!entries) return undefined;
+  for (const entry of entries) {
+    assertWritableAllowedForKind(entry);
+  }
+  return entries;
 }
 
 export function parseConfigValue(key: string, value: string): Partial<AkmConfig> {
@@ -68,7 +77,7 @@ export function parseConfigValue(key: string, value: string): Partial<AkmConfig>
     case "sources":
     case "stashes":
       // "stashes" is kept as an alias for backwards-compat; both write to `sources`.
-      return { sources: parseStashesValue(value) };
+      return { sources: validateSources(parseStashesValue(value)) };
     case "output.format":
       return { output: { format: parseOutputFormat(value) } };
     case "output.detail":
@@ -485,12 +494,20 @@ function parseLlmConnectionValue(value: string): LlmConnectionConfig | undefined
     endpoint: "http://localhost:11434/v1/chat/completions",
     model: "llama3.2",
   });
-  // Both endpoint and model are required structural fields for an LLM connection.
+  if (parsed.endpoint !== undefined && typeof parsed.endpoint !== "string") {
+    throw new UsageError(`Invalid value for llm: "endpoint" is a required string field`);
+  }
+  if (parsed.model !== undefined && typeof parsed.model !== "string") {
+    throw new UsageError(`Invalid value for llm: "model" is a required string field`);
+  }
   if (typeof parsed.endpoint !== "string" || !parsed.endpoint) {
     throw new UsageError(`Invalid value for llm: "endpoint" is a required string field`);
   }
-  if (typeof parsed.model !== "string" || !parsed.model) {
-    throw new UsageError(`Invalid value for llm: "model" is a required string field`);
+  if (parsed.model === undefined) {
+    return { endpoint: parsed.endpoint, model: "", ...parsed } as unknown as LlmConnectionConfig;
+  }
+  if (!parsed.model) {
+    throw new UsageError(`Invalid value for llm: "model" must be a non-empty string when provided`);
   }
   // Spread the full parsed object so unknown/future fields round-trip intact.
   // The config loader (config.ts) handles warn-and-ignore for unknown sub-keys

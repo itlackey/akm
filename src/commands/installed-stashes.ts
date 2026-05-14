@@ -23,7 +23,7 @@ import {
   auditInstallCandidate,
   deriveRegistryLabels,
   enforceRegistryInstallPolicy,
-  formatInstallAuditFailure,
+  formatInstallAuditFailureForAction,
 } from "./install-audit";
 import { removeInstalledRegistryEntry, upsertInstalledRegistryEntry } from "./source-add";
 import { removeStash } from "./source-manage";
@@ -267,7 +267,11 @@ async function updateRegistryEntry(
     config: auditConfig,
   });
   if (audit.blocked) {
-    throw new Error(formatInstallAuditFailure(synced.ref, audit));
+    throw new UsageError(
+      formatInstallAuditFailureForAction(synced.ref, audit, "update"),
+      "INVALID_FLAG_VALUE",
+      `Re-run with \`akm update ${synced.ref} --trust\` only if you intentionally trust this source.`,
+    );
   }
 
   const installedEntry: InstalledStashEntry = {

@@ -940,6 +940,23 @@ describe("Scenario: CLI subprocess execution", () => {
     });
   });
 
+  test("cli: startup applies --quiet before config-load warnings", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      llm: { endpoint: "http://localhost/v1", model: "gpt-4" },
+    });
+
+    const result = runCli("config", "get", "llm", "--quiet");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+
+    const json = parseJson(result.stdout);
+    expect(json).toMatchObject({
+      endpoint: "http://localhost/v1",
+      model: "gpt-4",
+    });
+  });
+
   test("cli: akm with no command prints usage", async () => {
     const result = runCli();
     expect(result.exitCode).not.toBe(0);
