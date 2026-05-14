@@ -89,7 +89,7 @@ export interface RunAgentOptions {
   env?: Record<string, string>;
   /** Working directory for the child. */
   cwd?: string;
-  /** Extra args appended after `profile.args`. */
+  /** Extra args appended after the builder-constructed argv. */
   args?: readonly string[];
   /** Optional stdin payload (only honoured in `captured` mode). */
   stdin?: string;
@@ -104,6 +104,18 @@ export interface RunAgentOptions {
   setTimeoutFn?: typeof setTimeout;
   /** `clearTimeout` shim. Defaults to the global. */
   clearTimeoutFn?: typeof clearTimeout;
+  /**
+   * Abstract dispatch parameters. When present, the platform-specific
+   * AgentCommandBuilder constructs the argv from these fields (system prompt,
+   * model alias, tool policy). When absent, falls back to the legacy
+   * positional-prompt behaviour for backwards compatibility.
+   */
+  dispatch?: import("./builders").AgentDispatchRequest;
+  /**
+   * Builder registry override — used by tests to inject fake builders without
+   * touching the global BUILTIN_BUILDERS map.
+   */
+  builderRegistry?: Record<string, import("./builders").AgentCommandBuilder>;
 }
 
 /** Result envelope. `ok=false` always carries a `reason`. */
@@ -245,16 +257,31 @@ export async function runAgent(
   const setTimeoutImpl = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutImpl = options.clearTimeoutFn ?? clearTimeout;
 
-  const args: string[] = [...profile.args, ...(options.args ?? [])];
-  if (prompt !== undefined) args.push(prompt);
+  // Build argv via the platform-specific builder when dispatch params are
+  // provided; fall back to the legacy positional-prompt form otherwise.
+  const { getCommandBuilder } = await import("./builders");
+  let builtArgv: readonly string[];
+  let builtEnv: Record<string, string> | undefined;
+  if (options.dispatch !== undefined) {
+    const builder = getCommandBuilder(profile.commandBuilder ?? profile.name, options.builderRegistry);
+    const built = builder.build(profile, options.dispatch);
+    builtArgv = built.argv;
+    builtEnv = built.env;
+  } else {
+    const legacyArgs: string[] = [...profile.args, ...(options.args ?? [])];
+    if (prompt !== undefined) legacyArgs.push(prompt);
+    builtArgv = [profile.bin, ...legacyArgs];
+  }
+  // Extra args (e.g. forwarded CLI positionals) are appended after the builder output.
+  const finalArgv: string[] = [...builtArgv, ...(options.dispatch ? (options.args ?? []) : [])];
 
-  const env = buildChildEnv(profile, options);
+  const env = { ...buildChildEnv(profile, options), ...(builtEnv ?? {}) };
   const start = Date.now();
 
   let proc: SpawnedSubprocess;
   try {
     const spawnFn = resolveSpawnFn(options);
-    proc = spawnFn([profile.bin, ...args], {
+    proc = spawnFn(finalArgv, {
       stdin: stdioMode === "captured" ? (options.stdin !== undefined ? "pipe" : "ignore") : "inherit",
       stdout: stdioMode === "captured" ? "pipe" : "inherit",
       stderr: stdioMode === "captured" ? "pipe" : "inherit",

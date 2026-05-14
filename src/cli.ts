@@ -3072,19 +3072,27 @@ const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent by named profile, optionally injecting a prompt from inline text, a stash command: asset, or a stash workflow: asset",
+      "Dispatch an agent CLI (opencode, claude, …) optionally embodying a stash agent asset that provides the system prompt, model, and tool policy",
   },
   args: {
     profile: {
       type: "positional",
-      description: "Agent profile name (from config.agent.profiles or a built-in)",
+      description: "Agent profile / platform to use (opencode, claude, …)",
       required: false,
     },
-    prompt: { type: "string", description: "Inline prompt text to pass to the agent" },
-    command: { type: "string", description: "Load the body of a command: asset from the index and use as the prompt" },
-    workflow: {
+    "agent-ref": {
+      type: "positional",
+      description:
+        "Optional agent asset ref (e.g. agent:code-reviewer). Loads system prompt, model, and tool policy from the stash asset.",
+      required: false,
+    },
+    prompt: { type: "string", description: "Task prompt to pass to the agent" },
+    command: { type: "string", description: "Load prompt from a command: asset" },
+    workflow: { type: "string", description: "Load prompt from a workflow: asset" },
+    model: {
       type: "string",
-      description: "Load the body of a workflow: asset from the index and use as the prompt",
+      description:
+        "Model override — accepts aliases (opus, sonnet, haiku) or exact platform model IDs. Overrides the model specified in the agent asset.",
     },
     "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
   },
@@ -3092,15 +3100,11 @@ const agentCommand = defineCommand({
     await runWithJsonErrors(async () => {
       if (!args.profile) {
         throw new UsageError(
-          "Usage: akm agent <profile> [--prompt <text>] [--command <ref>] [--workflow <ref>] [args...]",
+          "Usage: akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>]",
           "MISSING_REQUIRED_ARGUMENT",
           "Provide the agent profile name. Available profiles are listed in config.agent.profiles.",
         );
       }
-
-      // Collect extra positional args (forwarded to the agent and used as
-      // template placeholders when a command/workflow ref is specified).
-      const extraArgs = Array.isArray(args._) ? (args._ as string[]).filter((a) => a !== args.profile) : [];
 
       const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
       const timeoutMs =
@@ -3110,14 +3114,39 @@ const agentCommand = defineCommand({
       const { parseAgentConfig } = await import("./integrations/agent/config.js");
       const agentConfig = parseAgentConfig(config.agent);
 
+      // Resolve agent asset ref → extract system prompt, model, and tool policy.
+      const agentRefRaw = (args as Record<string, unknown>)["agent-ref"];
+      const agentRef = typeof agentRefRaw === "string" && agentRefRaw.trim() ? agentRefRaw.trim() : undefined;
+
+      let systemPrompt: string | undefined;
+      let assetModel: string | undefined;
+      let assetTools: import("./sources/types.js").ShowResponse["toolPolicy"] | undefined;
+
+      if (agentRef) {
+        const { akmShowUnified } = await import("./commands/show.js");
+        const asset = await akmShowUnified({ ref: agentRef, detail: "full" });
+        systemPrompt = typeof asset.content === "string" ? asset.content : undefined;
+        assetModel = typeof asset.modelHint === "string" ? asset.modelHint : undefined;
+        assetTools = asset.toolPolicy;
+      }
+
+      // --model flag wins over the asset's modelHint.
+      const modelRaw = typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
+      const model = modelRaw ?? assetModel;
+
       const result = await akmAgentDispatch({
         profileName: String(args.profile),
         prompt: typeof args.prompt === "string" ? args.prompt : undefined,
         commandRef: typeof args.command === "string" && args.command.trim() ? args.command.trim() : undefined,
         workflowRef: typeof args.workflow === "string" && args.workflow.trim() ? args.workflow.trim() : undefined,
-        args: extraArgs.length > 0 ? extraArgs : undefined,
         agentConfig,
         llmConfig: config.llm,
+        dispatch: {
+          prompt: typeof args.prompt === "string" ? args.prompt : "",
+          systemPrompt,
+          model,
+          tools: assetTools,
+        },
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });
 

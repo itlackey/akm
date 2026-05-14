@@ -47,6 +47,17 @@ export interface AgentProfile {
   readonly endpoint?: string;
   /** API key for sdkMode endpoint. If absent, inherits from config.llm.apiKey. */
   readonly apiKey?: string;
+  /**
+   * Which AgentCommandBuilder handles argv construction. Defaults to profile.name.
+   * Override in config.json to map a custom profile to a known platform builder.
+   */
+  readonly commandBuilder?: string;
+  /**
+   * Per-profile model aliases merged on top of the built-in alias table.
+   * Keys are lowercase alias strings; values are the exact model string this
+   * platform's CLI expects. Configured under agent.profiles.<name>.modelAliases.
+   */
+  readonly modelAliases?: Readonly<Record<string, string>>;
 }
 
 const COMMON_PASSTHROUGH = ["HOME", "PATH", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR"] as const;
