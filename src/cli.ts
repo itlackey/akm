@@ -2371,27 +2371,64 @@ const vaultSetCommand = defineCommand({
   meta: {
     name: "set",
     description:
-      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Optionally attach a comment with --comment "description".',
+      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Use --stdin or --from-env to avoid passing secrets via argv. Optionally attach a comment with --comment "description".',
   },
   args: {
     ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
     key: { type: "positional", description: "Key name (e.g. DB_URL) or KEY=VALUE combined form", required: true },
     value: {
       type: "positional",
-      description: "Value to store (omit when using KEY=VALUE combined form)",
+      description: "Value to store (omit when using KEY=VALUE combined form, --stdin, or --from-env)",
       required: false,
     },
     comment: { type: "string", description: "Optional comment written above the key line", required: false },
+    stdin: {
+      type: "boolean",
+      description: "Read value from stdin instead of argv — avoids /proc/cmdline exposure",
+      default: false,
+    },
+    "from-env": {
+      type: "string",
+      description: "Read value from the named environment variable instead of argv — avoids /proc/cmdline exposure",
+    },
   },
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { setKey } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.ref);
 
+      const useStdin = getHyphenatedBoolean(args, "stdin");
+      const fromEnv = getHyphenatedArg<string>(args, "from-env");
+
+      if (useStdin && fromEnv !== undefined) {
+        throw new UsageError("--stdin and --from-env are mutually exclusive.", "INVALID_FLAG_VALUE");
+      }
+
       let realKey: string;
       let realValue: string;
 
-      if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
+      if (useStdin || fromEnv !== undefined) {
+        if (args.value !== undefined && args.value !== "") {
+          throw new UsageError(
+            "Positional value argument cannot be combined with --stdin or --from-env.",
+            "INVALID_FLAG_VALUE",
+          );
+        }
+        realKey = args.key;
+        if (useStdin) {
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of Bun.stdin.stream()) {
+            chunks.push(chunk);
+          }
+          realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
+        } else {
+          const envVal = process.env[fromEnv as string];
+          if (envVal === undefined) {
+            throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
+          }
+          realValue = envVal;
+        }
+      } else if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
         const eqIdx = args.key.indexOf("=");
         realKey = args.key.slice(0, eqIdx);
         realValue = args.key.slice(eqIdx + 1);
