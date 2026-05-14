@@ -404,11 +404,11 @@ describe("parseAgentConfig — modelAliases field", () => {
     const aliases = parsed?.profiles?.myprofile?.modelAliases;
     expect(aliases).toBeDefined();
     // Keys must be lowercased by the parser
-    expect(aliases?.["fast"]).toBe("opencode/claude-haiku-4-5");
-    expect(aliases?.["turbo"]).toBe("opencode/claude-sonnet-4-6");
+    expect(aliases?.fast).toBe("opencode/claude-haiku-4-5");
+    expect(aliases?.turbo).toBe("opencode/claude-sonnet-4-6");
     // Original cased keys must NOT be present
-    expect(aliases?.["Fast"]).toBeUndefined();
-    expect(aliases?.["TURBO"]).toBeUndefined();
+    expect(aliases?.Fast).toBeUndefined();
+    expect(aliases?.TURBO).toBeUndefined();
   });
 
   test("invalid modelAliases (string) is warn-and-ignored", async () => {
@@ -440,9 +440,9 @@ describe("parseAgentConfig — modelAliases field", () => {
     });
     const aliases = parsed?.profiles?.myprofile?.modelAliases;
     // Only the valid string value survives
-    expect(aliases?.["fast"]).toBe("opencode/claude-haiku-4-5");
-    expect(aliases?.["broken"]).toBeUndefined();
-    expect(aliases?.["alsobad"]).toBeUndefined();
+    expect(aliases?.fast).toBe("opencode/claude-haiku-4-5");
+    expect(aliases?.broken).toBeUndefined();
+    expect(aliases?.alsobad).toBeUndefined();
   });
 });
 
@@ -457,9 +457,9 @@ describe("resolveAgentProfile — modelAliases merge", () => {
     const merged = resolveAgentProfile("opencode", {
       modelAliases: { fast: "opencode/claude-haiku-4-5", opus: "opencode/my-custom-opus" },
     });
-    expect(merged?.modelAliases?.["fast"]).toBe("opencode/claude-haiku-4-5");
+    expect(merged?.modelAliases?.fast).toBe("opencode/claude-haiku-4-5");
     // User override for "opus" is present
-    expect(merged?.modelAliases?.["opus"]).toBe("opencode/my-custom-opus");
+    expect(merged?.modelAliases?.opus).toBe("opencode/my-custom-opus");
   });
 
   test("user modelAliases merged on top of hypothetical base aliases via custom profile", async () => {
@@ -471,8 +471,8 @@ describe("resolveAgentProfile — modelAliases merge", () => {
       modelAliases: { fast: "my-cli/haiku", big: "my-cli/opus" },
     });
     expect(profile).toBeDefined();
-    expect(profile?.modelAliases?.["fast"]).toBe("my-cli/haiku");
-    expect(profile?.modelAliases?.["big"]).toBe("my-cli/opus");
+    expect(profile?.modelAliases?.fast).toBe("my-cli/haiku");
+    expect(profile?.modelAliases?.big).toBe("my-cli/opus");
   });
 
   test("when no user modelAliases provided, base modelAliases is retained as-is", async () => {
@@ -495,14 +495,14 @@ describe("resolveAgentProfile — modelAliases merge", () => {
       bin: "my-cli",
       modelAliases: { fast: "my-cli/haiku-v1" },
     });
-    expect(first?.modelAliases?.["fast"]).toBe("my-cli/haiku-v1");
+    expect(first?.modelAliases?.fast).toBe("my-cli/haiku-v1");
 
     // Now resolve with an override that changes "fast" — user wins.
     const second = resolveAgentProfile("my-agent", {
       bin: "my-cli",
       modelAliases: { fast: "my-cli/haiku-v2" },
     });
-    expect(second?.modelAliases?.["fast"]).toBe("my-cli/haiku-v2");
+    expect(second?.modelAliases?.fast).toBe("my-cli/haiku-v2");
   });
 });
 
