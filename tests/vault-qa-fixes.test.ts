@@ -31,11 +31,13 @@ const cliPath = path.join(repoRoot, "src", "cli.ts");
 function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
+  stdinInput?: string,
 ): { stdout: string; stderr: string; status: number } {
   const result = spawnSync("bun", [cliPath, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     cwd: repoRoot,
+    input: stdinInput,
     env: {
       ...process.env,
       HOME: isolatedHome,
@@ -175,39 +177,44 @@ describe("vault list", () => {
   });
 });
 
-// ── vault set combined KEY=VALUE form (CLI tests) ────────────────────────────
+// ── vault set stdin / --from-env forms (CLI tests) ───────────────────────────
+// KEY=VALUE combined form and positional value were removed in 0.8.0 to
+// eliminate /proc/cmdline secret exposure. Values must come from stdin or --from-env.
 
-describe("vault set: KEY=VALUE combined form", () => {
-  test("8. vault set prod KEY=value succeeds and writes KEY=value", () => {
+describe("vault set: stdin and --from-env forms", () => {
+  test("8. vault set reads value from stdin (default)", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "MY_KEY=myvalue"], { AKM_STASH_DIR: stashDir });
+    const result = runCli(["vault", "set", "prod", "MY_KEY"], { AKM_STASH_DIR: stashDir }, "myvalue");
     expect(result.status).toBe(0);
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
     expect(loadEnv(vaultPath).MY_KEY).toBe("myvalue");
   });
 
-  test("9. vault set prod KEY value (3-arg form) still works", () => {
+  test("9. vault set --from-env reads value from named env var", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "ANOTHER_KEY", "anothervalue"], { AKM_STASH_DIR: stashDir });
+    const result = runCli(["vault", "set", "prod", "ANOTHER_KEY", "--from-env", "AKM_VALUE"], {
+      AKM_STASH_DIR: stashDir,
+      AKM_VALUE: "anothervalue",
+    });
     expect(result.status).toBe(0);
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
     expect(loadEnv(vaultPath).ANOTHER_KEY).toBe("anothervalue");
   });
 
-  test("10. vault set prod KEY=val1=val2 writes KEY with value val1=val2 (split on first =)", () => {
+  test("10. vault set stdin value containing = is stored verbatim", () => {
     const stashDir = makeTempDir("akm-vqa-stash-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "COMPLEX_KEY=val1=val2"], { AKM_STASH_DIR: stashDir });
+    const result = runCli(["vault", "set", "prod", "COMPLEX_KEY"], { AKM_STASH_DIR: stashDir }, "val1=val2");
     expect(result.status).toBe(0);
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
@@ -223,9 +230,13 @@ describe("vault set: --comment flag", () => {
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
 
-    const result = runCli(["vault", "set", "prod", "AUTH_TOKEN", "tok123", "--comment", "auth secret"], {
-      AKM_STASH_DIR: stashDir,
-    });
+    const result = runCli(
+      ["vault", "set", "prod", "AUTH_TOKEN", "--comment", "auth secret"],
+      {
+        AKM_STASH_DIR: stashDir,
+      },
+      "tok123",
+    );
     expect(result.status).toBe(0);
 
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
