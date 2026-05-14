@@ -113,6 +113,21 @@ function refExistsInAnyStash(relPath: string, refType: string, refName: string, 
       const derivedPath = path.join(root, "memories", `${refName}.derived.md`);
       if (fs.existsSync(derivedPath)) return true;
     }
+    // Knowledge-specific: search subdirectories like knowledge/projects/, knowledge/tools/, etc.
+    if (refType === "knowledge") {
+      try {
+        const knowledgeDir = path.join(root, "knowledge");
+        if (fs.existsSync(knowledgeDir) && fs.statSync(knowledgeDir).isDirectory()) {
+          const entries = fs.readdirSync(knowledgeDir);
+          for (const entry of entries) {
+            const subPath = path.join(knowledgeDir, entry, `${refName}.md`);
+            if (fs.existsSync(subPath)) return true;
+          }
+        }
+      } catch {
+        // Ignore errors reading directory
+      }
+    }
     // Fallback: the refName may already encode the full stash-relative path
     // (e.g. knowledge:skills/foo/references/bar where the file lives at
     // <stash>/skills/foo/references/bar.md, not <stash>/knowledge/skills/...).
@@ -127,6 +142,11 @@ function refExistsInAnyStash(relPath: string, refType: string, refName: string, 
 /**
  * Returns an array of {ref, resolvedRelPath} for every local AKM ref in the
  * body that does not resolve to a real file under any of the provided stash roots.
+ *
+ * Skips false-positive patterns:
+ * - Shell variables: memory:$(cmd) or knowledge:${VAR}
+ * - ACP type notation: agent::Type (double colons are C++/ACP syntax)
+ * - Incomplete/placeholder refs: slug is single character or "**"
  */
 function checkMissingRefs(
   body: string,
@@ -141,6 +161,16 @@ function checkMissingRefs(
   // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
   while ((match = re.exec(body)) !== null) {
     const fullRef = match[1]; // e.g. "workflow:foo" or "local//workflow:foo"
+
+    // Skip shell variables: memory:$(cmd) or knowledge:${VAR}
+    if (fullRef.includes("$(") || fullRef.includes("${")) {
+      continue;
+    }
+
+    // Skip ACP type notation: agent::Type (double colons)
+    if (fullRef.includes("::")) {
+      continue;
+    }
 
     // Strip leading "local//" prefix if present
     let ref = fullRef;
@@ -159,6 +189,11 @@ function checkMissingRefs(
 
     // Guard against empty names or names that look like paths/URLs
     if (!refName || refName.startsWith("/") || refName.startsWith("~") || refName.startsWith("http")) {
+      continue;
+    }
+
+    // Skip placeholder/incomplete refs: single character slug or "**"
+    if (refName.length <= 1 || refName === "**") {
       continue;
     }
 
