@@ -16,7 +16,7 @@
  *   (f) LLM returns non-array JSON → falls back to individual calls for all assets.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config";
 
 // ── LLM transport stub ───────────────────────────────────────────────────────
@@ -83,6 +83,10 @@ beforeEach(() => {
 
 afterEach(() => {
   // no-op — state is reset in beforeEach
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────

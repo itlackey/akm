@@ -10,7 +10,7 @@
  *       — behaviour is identical to the original implementation.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +76,10 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 function writeMemory(name: string, body: string): void {

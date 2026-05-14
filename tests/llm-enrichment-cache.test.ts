@@ -141,6 +141,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  mock.restore();
   llmServer.stop(true);
 });
 

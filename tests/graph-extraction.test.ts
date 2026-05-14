@@ -12,7 +12,7 @@
  *   - read-only cache sources are not extracted (only the primary stash)
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,6 +66,10 @@ afterEach(() => {
     fs.rmSync(tmpStash, { recursive: true, force: true });
     tmpStash = "";
   }
+});
+
+afterAll(() => {
+  mock.restore();
 });
 
 function writeFile(rel: string, frontmatter: Record<string, unknown>, body: string): string {
