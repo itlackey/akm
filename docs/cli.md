@@ -176,6 +176,40 @@ Returns a JSON object with:
 
 Use `akm info` to verify that semantic search is working after setup.
 
+### health
+
+Check akm runtime health, durable state, and recent improve-loop telemetry.
+
+```sh
+akm health
+akm health --since 24h
+akm health --since 7d --format text
+akm health --since 2026-05-01T00:00:00Z
+```
+
+| Flag | Description |
+| --- | --- |
+| `--since` | Rolling window start for task-history, improve, and advisory metrics. Accepts ISO 8601, `YYYY-MM-DD`, epoch milliseconds, or shorthand like `24h` / `7d`. Default: last 24 hours. |
+
+The command reads `state.db`, verifies that the required tables exist, performs a
+write-read probe against the events stream, inspects `task_history`, checks the
+default agent profile, and summarizes recent `improve_*` events.
+
+Primary result fields:
+
+| Field | Description |
+| --- | --- |
+| `status` | Overall health verdict: `pass`, `warn`, or `fail` |
+| `hardChecks` | Deterministic checks such as `state-db-schema`, `state-db-round-trip`, `task-log-backing`, `active-runs`, and `agent-profile` |
+| `advisories` | Non-fatal warnings such as semantic-search runtime status and repeated external session-log failures |
+| `metrics` | Aggregate task/runtime metrics: `taskFailRate`, `agentFailureRate`, `stuckActiveRuns`, `logBackingRate`, `probeRoundTripMs` |
+| `improve` | Recent improve-loop counts derived from `improve_invoked`, `improve_skipped`, and `improve_completed` events |
+| `sessionLogAdvisories` | Repeated session-log topics detected from external agent logs |
+
+The `improve` section includes counts for planned refs, reflect/distill actions,
+memory-prune actions, memory-inference writes, graph-extraction refreshes,
+dead-URL detections, and skip reasons observed in the selected time window.
+
 ### graph
 
 Inspect and export the stash-local graph artifact at `<stashRoot>/.akm/graph.json`.

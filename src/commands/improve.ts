@@ -216,11 +216,13 @@ interface ImprovePostLoopResult {
   deadUrls?: DeadUrl[];
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
+  maintenanceActions?: ImproveActionResult[];
 }
 
 interface ImproveMaintenanceResult {
   memoryInference?: MemoryInferenceResult;
   graphExtraction?: GraphExtractionResult;
+  actions?: ImproveActionResult[];
 }
 
 function resolveImproveScope(scope: string | undefined): { mode: "all" | "type" | "ref"; value?: string } {
@@ -429,7 +431,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       : undefined;
 
   if (options.dryRun) {
-    return {
+    const result: AkmImproveResult = {
       schemaVersion: 1,
       ok: true,
       scope,
@@ -439,6 +441,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(memoryCleanupPlan ? { memoryCleanup: shapeMemoryCleanup(memoryCleanupPlan) } : {}),
       plannedRefs,
     };
+    return result;
   }
 
   const resolvedLockPath = primaryStashDir
@@ -507,19 +510,25 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       budgetMs,
     });
 
-    const { allWarnings, consolidation, deadUrls, memoryInference, graphExtraction } = await runImprovePostLoopStage({
-      scope,
-      options,
-      primaryStashDir,
-      actionableRefs: preparation.actionableRefs,
-      appliedCleanup: preparation.appliedCleanup,
-      cleanupWarnings: preparation.cleanupWarnings,
-      memorySummary,
-      memoryRefsForInference,
-      reindexFn,
-    });
+    const { allWarnings, consolidation, deadUrls, memoryInference, graphExtraction, maintenanceActions } =
+      await runImprovePostLoopStage({
+        scope,
+        options,
+        primaryStashDir,
+        actionableRefs: preparation.actionableRefs,
+        appliedCleanup: preparation.appliedCleanup,
+        cleanupWarnings: preparation.cleanupWarnings,
+        memorySummary,
+        memoryRefsForInference,
+        reindexFn,
+      });
 
-    return {
+    const finalActions =
+      maintenanceActions && maintenanceActions.length > 0
+        ? [...preparation.actions, ...maintenanceActions]
+        : preparation.actions;
+
+    const result: AkmImproveResult = {
       schemaVersion: 1,
       ok: true,
       scope,
@@ -548,7 +557,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
           }
         : {}),
       plannedRefs: preparation.actionableRefs,
-      actions: preparation.actions,
+      actions: finalActions,
       ...(preparation.validationFailures.length > 0 ? { validationFailures: preparation.validationFailures } : {}),
       ...(preparation.schemaRepairs.length > 0 ? { schemaRepairs: preparation.schemaRepairs } : {}),
       ...(consolidation.processed > 0 || consolidation.warnings.length > 0 ? { consolidation } : {}),
@@ -565,6 +574,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       ...(memoryInference ? { memoryInference } : {}),
       ...(graphExtraction ? { graphExtraction } : {}),
     };
+    if (!result.dryRun) emitImproveCompletedEvent(result);
+    return result;
   } finally {
     try {
       fs.unlinkSync(resolvedLockPath);
@@ -572,6 +583,79 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       // ignore
     }
   }
+}
+
+function emitImproveCompletedEvent(result: AkmImproveResult): void {
+  const actionCounts = {
+    reflect: 0,
+    distill: 0,
+    distillSkipped: 0,
+    memoryPrune: 0,
+    memoryInference: 0,
+    graphExtraction: 0,
+    error: 0,
+  };
+  for (const action of result.actions ?? []) {
+    switch (action.mode) {
+      case "reflect":
+        actionCounts.reflect += 1;
+        break;
+      case "distill":
+        actionCounts.distill += 1;
+        break;
+      case "distill-skipped":
+        actionCounts.distillSkipped += 1;
+        break;
+      case "memory-prune":
+        actionCounts.memoryPrune += 1;
+        break;
+      case "memory-inference":
+        actionCounts.memoryInference += 1;
+        break;
+      case "graph-extraction":
+        actionCounts.graphExtraction += 1;
+        break;
+      case "error":
+        actionCounts.error += 1;
+        break;
+    }
+  }
+
+  appendEvent({
+    eventType: "improve_completed",
+    ref:
+      result.scope.mode === "ref" ? result.scope.value : `improve:${result.scope.mode}:${result.scope.value ?? "all"}`,
+    metadata: {
+      plannedRefs: result.plannedRefs.length,
+      reflectActions: actionCounts.reflect,
+      distillActions: actionCounts.distill,
+      distillSkippedActions: actionCounts.distillSkipped,
+      memoryPruneActions: actionCounts.memoryPrune,
+      memoryInferenceActions: actionCounts.memoryInference,
+      graphExtractionActions: actionCounts.graphExtraction,
+      errorActions: actionCounts.error,
+      crossStepErrorsInjected: result.crossStepErrorsInjected ?? 0,
+      feedbackRatioUsed: result.feedbackRatioUsed,
+      coverageGapCount: result.coverageGaps?.length ?? 0,
+      executionLogCandidateCount: result.executionLogCandidates?.length ?? 0,
+      evalCasesWritten: result.evalCasesWritten ?? 0,
+      deadUrlCount: result.deadUrls?.length ?? 0,
+      memoryEligible: result.memorySummary.eligible,
+      memoryDerived: result.memorySummary.derived,
+      memoryCleanupPruneCandidates: result.memoryCleanup?.pruneCandidates.length ?? 0,
+      memoryCleanupContradictionCandidates: result.memoryCleanup?.contradictionCandidates.length ?? 0,
+      memoryCleanupBeliefStateTransitions: result.memoryCleanup?.beliefStateTransitions.length ?? 0,
+      memoryCleanupConsolidationCandidates: result.memoryCleanup?.consolidationCandidates.length ?? 0,
+      memoryCleanupArchived: result.memoryCleanup?.archived?.length ?? 0,
+      memoryCleanupWarnings: result.memoryCleanup?.warnings?.length ?? 0,
+      consolidationProcessed: result.consolidation?.processed ?? 0,
+      consolidationDurationMs: result.consolidation?.durationMs ?? 0,
+      memoryInferenceWrites: result.memoryInference?.writtenFacts ?? 0,
+      memoryInferenceDurationMs: 0,
+      graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
+      graphExtractionDurationMs: 0,
+    },
+  });
 }
 
 async function runImprovePreparationStage(args: {
@@ -1233,6 +1317,7 @@ async function runImprovePostLoopStage(args: {
     info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
   }
 
+  info("[improve] post-loop maintenance starting");
   const maintenanceResult = await runImproveMaintenancePasses({
     options,
     primaryStashDir,
@@ -1256,7 +1341,9 @@ async function runImprovePostLoopStage(args: {
         .slice(0, 10)
         .map((r) => ({ ref: r.ref, body: "" }));
       if (knowledgeEntries.length > 0) {
+        info(`[improve] checking URLs in ${knowledgeEntries.length} knowledge refs`);
         deadUrls = await checkDeadUrls(primaryStashDir, knowledgeEntries);
+        info(`[improve] URL check complete (${deadUrls.length} dead/timeout URLs)`);
       }
     } catch {
       // best-effort
@@ -1269,6 +1356,9 @@ async function runImprovePostLoopStage(args: {
     deadUrls,
     ...(maintenanceResult.memoryInference ? { memoryInference: maintenanceResult.memoryInference } : {}),
     ...(maintenanceResult.graphExtraction ? { graphExtraction: maintenanceResult.graphExtraction } : {}),
+    ...(maintenanceResult.actions && maintenanceResult.actions.length > 0
+      ? { maintenanceActions: maintenanceResult.actions }
+      : {}),
   };
 }
 
@@ -1292,6 +1382,7 @@ async function runImproveMaintenancePasses(args: {
   let memoryInference: MemoryInferenceResult | undefined;
   let graphExtraction: GraphExtractionResult | undefined;
   let reindexedAfterInference = false;
+  const actions: ImproveActionResult[] = [];
 
   try {
     db = openDatabase(
@@ -1300,25 +1391,46 @@ async function runImproveMaintenancePasses(args: {
     );
 
     if (memoryRefsForInference.size > 0) {
+      info(`[improve] memory inference starting (${memoryRefsForInference.size} candidate refs)`);
       try {
-        memoryInference = await memoryInferenceFn(config, sources, undefined, db, false, undefined, {
-          candidateRefs: memoryRefsForInference,
-        } satisfies MemoryInferencePassOptions);
+        memoryInference = await memoryInferenceFn(
+          config,
+          sources,
+          undefined,
+          db,
+          false,
+          (event) => {
+            const current = event.currentRef ? ` ${event.currentRef}` : "";
+            info(
+              `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+            );
+          },
+          {
+            candidateRefs: memoryRefsForInference,
+          } satisfies MemoryInferencePassOptions,
+        );
+        actions.push({ ref: "memory:_inference", mode: "memory-inference", result: memoryInference });
+        info(
+          `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
+        );
       } catch (err) {
         allWarnings.push(`memory inference failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
     if (memoryInference && (memoryInference.splitParents > 0 || memoryInference.writtenFacts > 0)) {
+      info("[improve] reindexing after memory inference writes");
       try {
         await reindexFn({ stashDir: primaryStashDir });
         reindexedAfterInference = true;
+        info("[improve] reindex after memory inference complete");
       } catch (err) {
         allWarnings.push(`reindex after memory inference failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
     if (sources.length > 0) {
+      info("[improve] graph extraction starting");
       try {
         if (db && reindexedAfterInference) {
           closeDatabase(db);
@@ -1327,7 +1439,16 @@ async function runImproveMaintenancePasses(args: {
             config.embedding?.dimension ? { embeddingDim: config.embedding.dimension } : undefined,
           );
         }
-        graphExtraction = await graphExtractionFn(config, sources, undefined, db, false, undefined);
+        graphExtraction = await graphExtractionFn(config, sources, undefined, db, false, (event) => {
+          const current = event.currentPath ? ` ${path.basename(event.currentPath)}` : "";
+          info(
+            `[improve] graph extraction ${event.processed}/${event.total}${current} (extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations})`,
+          );
+        });
+        actions.push({ ref: "graph:_artifact", mode: "graph-extraction", result: graphExtraction });
+        info(
+          `[improve] graph extraction complete (${graphExtraction.quality.extractedFiles} files, ${graphExtraction.quality.entityCount} entities, ${graphExtraction.quality.relationCount} relations)`,
+        );
       } catch (err) {
         allWarnings.push(`graph extraction failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1339,6 +1460,7 @@ async function runImproveMaintenancePasses(args: {
   return {
     ...(memoryInference ? { memoryInference } : {}),
     ...(graphExtraction ? { graphExtraction } : {}),
+    ...(actions.length > 0 ? { actions } : {}),
   };
 }
 

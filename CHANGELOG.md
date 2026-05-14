@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
 
 - **Deprecated config-dir fallback removed**: The `AKM_CONFIG_DIR`-as-data-directory fallback is removed. Set `AKM_DATA_DIR` explicitly if you override data paths in scripts or CI environments.
 
+- **`akm index --enrich` and `--re-enrich` removed**: Plain `akm index` now owns fast metadata enhancement when LLM metadata enrichment is enabled. Slow LLM maintenance work no longer runs from `index`.
+
+- **Memory inference and graph extraction moved out of `index`**: The slow memory-maintenance passes now run from `akm improve` after consolidation, not from `akm index`. Automation that previously treated `index` as the owner of all LLM enrichment work must switch to the improve-owned maintenance flow.
+
 ### New Features
 
 - **`state.db`**: New migration-safe SQLite database using Flyway-pattern schema migrations (never drops durable rows). Tables: `events`, `proposals`, `task_history`. Located at `$DATA/state.db`.
@@ -40,6 +44,8 @@ All notable changes to this project will be documented in this file.
 
 - **Per-task `timeoutMs` override**: Individual task definitions can set `timeoutMs` to override the global task timeout. Set to `null` to disable the timeout for a specific task.
 
+- **`akm health`**: New runtime health command that validates `state.db`, checks task-history/log integrity, probes the default agent profile, and summarizes recent improve-loop telemetry from `improve_*` events.
+
 - **`--target` on `remember`, `import`, and `wiki stash`**: All three write commands now accept a uniform `--target <stash-name>` flag to route the write to a specific named writable source, bypassing `defaultWriteTarget` and working-stash resolution.
 
 - **Proposal resolution by ref or UUID prefix**: `akm accept`, `akm reject`, and `akm diff` now accept a short UUID prefix (e.g. `akm accept abc123`) or an asset ref (e.g. `akm accept memory:my-note`) in addition to full UUIDs.
@@ -50,6 +56,8 @@ All notable changes to this project will be documented in this file.
 
 - **`akm improve` cooldown pre-filter**: Assets under cooldown are now filtered out before the main improvement loop rather than inside it. Reduces LLM API calls and speeds up runs on large stashes with many recently-processed assets.
 
+- **Improve-owned maintenance refreshes the final corpus state**: `akm improve` now runs memory inference after distill/consolidation, reindexes when inference writes new derived memories, and refreshes graph extraction against the settled post-improve state.
+
 ### Bug Fixes
 
 - **EISDIR on `akm improve`**: Fixed a crash when the improve pipeline encountered a directory entry where it expected a file. Directory paths are now validated and skipped with a warning rather than throwing an uncaught EISDIR error.
@@ -59,6 +67,16 @@ All notable changes to this project will be documented in this file.
 - **`task_history` upsert overwrite bug**: Fixed migration 002 where a `task_history` upsert could silently overwrite an existing row for the same `(task_id, started_at)` pair instead of inserting a new row. Per-run rows are now correctly keyed on the auto-increment `id`.
 
 - **Index isolation in XDG test harness**: Expanded XDG env isolation in tests so that `index.db`, `workflow.db`, and `state.db` always resolve inside the test's temporary directory tree, preventing cross-test state leakage.
+
+- **Empty-query `search` regression**: `akm search` now rejects a missing query with a structured `MISSING_REQUIRED_ARGUMENT` usage error instead of returning filler results.
+
+- **`remember --enrich` fail-soft write path**: When no LLM is configured or enrichment yields nothing, `akm remember --enrich` now still writes the memory instead of failing a later tag-required validation check.
+
+- **`wiki stash <wiki> <url>` URL ingestion**: URL-based wiki stashing now uses the website snapshot fetch path directly, restoring deterministic markdown capture for raw wiki sources.
+
+- **`help migrate --format json` positional parsing**: Global output flags no longer get consumed as the migration version positional, so missing-version invocations fail with the correct structured usage envelope.
+
+- **Docker Bun install matrix**: Fixed the Bun-based Docker build path by declaring `@opencode-ai/sdk` as a package dependency and copying `scripts/` into the Bun image build context, bringing the release-check Docker matrix back to green.
 
 ### Migration
 

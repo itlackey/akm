@@ -11,18 +11,20 @@ tags:
 published: true
 ---
 
-akm 0.8.0 is out. This release focuses on refining the agent interaction model: the self-improvement CLI has been replaced with a more flexible `improve` command, task assets now enable persistent, long-running agent workflows, and belief-aware memory ensures stash updates are grounded in the agent's current beliefs about the world.
+akm 0.8.0 is out. This release combines the storage reorganization and CLI redesign with the final improve-owned maintenance migration: plain `akm index` now keeps metadata current, while slower memory inference and graph extraction maintenance run from `akm improve` after consolidation.
 
 If you are on 0.7.x, the v1 migration guide covers the per-surface delta. The upgrade requires updating scripts and agent instructions due to breaking CLI changes.
 
 ## TL;DR
 
-- **`akm improve`** — unified command for agent-driven asset refinement, replacing `reflect` and `distill`.
+- **`akm improve`** — unified command for agent-driven asset refinement and post-loop maintenance.
+- **Improve-owned maintenance** — memory inference and graph extraction now run from `akm improve`, not `akm index`.
 - **Task assets** — first-class asset type for defining persistent agent workflows with scheduling, triggers, and context.
 - **Belief-aware memory** — stash updates now incorporate the agent's belief state to prevent overwriting correct information.
 - **Proposal queue commands renamed** — `akm proposals` (list), `akm show proposal`, `akm diff proposal`, `akm accept`, `akm reject`.
-- **CLI breaking changes** — old `reflect`, `distill`, and `akm proposal *` commands are removed; update your automation.
-- **Security and hygiene** — Windows task path parsing fixed, cron apostrophe escaping stabilized, flaky tests addressed.
+- **`akm health`** — runtime health report for `state.db`, task execution logs, agent availability, and recent improve telemetry.
+- **CLI breaking changes** — proposal queue workflows are consolidated around `akm improve`, `akm propose`, `akm proposals`, `akm show proposal`, `akm diff`, `akm accept`, and `akm reject`; update your automation.
+- **Release hardening** — empty-query search is a structured error again, `remember --enrich` now truly fail-softs, and the Docker install matrix is green for Bun and binary paths.
 
 ---
 
@@ -35,7 +37,7 @@ akm improve <type> <name>          # generate a new asset of type <type> named <
 akm improve <ref>                  # refine an existing asset and produce a proposal
 ```
 
-This replaces the previous `akm propose <type> <name> --task "..."` and `akm reflect <ref>` workflows. The `--task` flag is now replaced by providing task context via the asset's definition or through interactive refinement.
+This consolidates the main proposal-oriented improvement workflow. It also now owns the slow maintenance passes that used to be coupled to indexing: after distill and consolidation settle the corpus, improve runs memory inference, reindexes if inference wrote new facts, and then refreshes graph extraction against the final post-improve state.
 
 ## Task Assets: Persistent Agent Workflows
 
@@ -82,19 +84,45 @@ The proposal queue itself is unchanged, but the CLI surfaces have been renamed f
 
 All commands retain the same functionality and flags (e.g., `akm reject <id> --reason "..."`). There are no compatibility aliases—update your scripts and documentation.
 
+## `akm health`: Runtime Checks in One Command
+
+`akm health` provides a quick operator-facing snapshot of whether the local akm
+runtime is healthy.
+
+```sh
+akm health
+akm health --since 24h
+akm health --since 7d --format text
+```
+
+It checks that `state.db` is readable and writable, verifies that required
+tables exist, inspects `task_history` for missing log files or stale active
+runs, probes the default agent profile, and summarizes recent `akm improve`
+activity from `improve_invoked`, `improve_skipped`, and `improve_completed`
+events.
+
+This makes it easier to validate an upgraded installation after migration or to
+spot regressions in task execution and improve-loop maintenance without querying
+SQLite tables directly.
+
 ## Migration Guidance
 
 Breaking changes in 0.8.0:
-- Removed: `akm reflect`, `akm distill`, `akm proposal *` (all subcommands)
-- Added: `akm improve`, task assets, renamed proposal commands
+- Consolidated around: `akm improve`, `akm propose`, `akm proposals`, `akm show proposal`, `akm diff`, `akm accept`, `akm reject`
+- Added: task assets, renamed proposal commands
+- Added: `akm health` for runtime and improve telemetry checks
+- Removed: `akm index --enrich` and `akm index --re-enrich`
+- Changed: plain `akm index` now owns metadata enhancement only; slow LLM maintenance moved to `akm improve`
 - Windows task path parsing now correctly handles absolute paths and drive letters
 - Cron expressions with apostrophes are now properly escaped in schtasks XML
 
 To upgrade:
-1. Update any scripts or automation that use the removed commands.
-2. Replace `akm reflect` and `akm distill` with `akm improve` workflows.
-3. Rename proposal queue commands as per the table above.
-4. Review task definitions for Windows path compatibility if using absolute paths.
+1. Update any scripts or automation that still target the pre-0.8 proposal queue and indexing workflow.
+2. Prefer `akm improve` for the main refinement/maintenance workflow.
+3. Stop calling `akm index --enrich`; use plain `akm index` plus `akm improve` maintenance flows.
+4. Use `akm health --since 24h` after upgrade to confirm state-db and task-history health.
+5. Rename proposal queue commands as per the table above.
+6. Review task definitions for Windows path compatibility if using absolute paths.
 
 No manual data migration is required. The proposal queue and existing stash assets remain compatible.
 
@@ -122,6 +150,7 @@ akm task run daily-code-review
 After upgrading:
 ```sh
 akm info --format text     # version 0.8.x
+akm health --since 24h     # runtime + improve telemetry checks
 akm proposals              # queue starts empty — that's expected
 akm task list              # shows your defined tasks
 ```

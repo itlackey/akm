@@ -11,6 +11,7 @@ import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./
 import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import { akmGraphEntities, akmGraphExport, akmGraphRelations, akmGraphSummary } from "./commands/graph";
+import { akmHealth } from "./commands/health";
 import { akmHistory } from "./commands/history";
 import { akmImprove } from "./commands/improve";
 import { assembleInfo } from "./commands/info";
@@ -374,6 +375,22 @@ const infoCommand = defineCommand({
     return runWithJsonErrors(() => {
       const result = assembleInfo();
       output("info", result);
+    });
+  },
+});
+
+const healthCommand = defineCommand({
+  meta: { name: "health", description: "Check akm runtime health, artifacts, and improve metrics" },
+  args: {
+    since: {
+      type: "string",
+      description: "Rolling window start (ISO timestamp, date, epoch ms, or shorthand like 24h / 7d)",
+    },
+  },
+  run({ args }) {
+    return runWithJsonErrors(() => {
+      const result = akmHealth({ since: args.since });
+      output("health", result);
     });
   },
 });
@@ -3500,6 +3517,7 @@ const main = defineCommand({
     setup: setupCommand,
     init: initCommand,
     index: indexCommand,
+    health: healthCommand,
     info: infoCommand,
     graph: graphCommand,
     add: addCommand,

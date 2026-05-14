@@ -383,3 +383,88 @@ export interface InfoResponse {
     vecAvailable: boolean;
   };
 }
+
+export interface HealthResponse {
+  schemaVersion: 1;
+  ok: boolean;
+  status: "pass" | "warn" | "fail";
+  since: string;
+  hardChecks: Array<{
+    name: string;
+    kind: "deterministic" | "heuristic";
+    status: "pass" | "warn" | "fail" | "unknown";
+    message: string;
+    confidence: "high" | "medium" | "low";
+    evidence?: Record<string, unknown>;
+  }>;
+  advisories: Array<{
+    name: string;
+    kind: "deterministic" | "heuristic";
+    status: "pass" | "warn" | "fail" | "unknown";
+    message: string;
+    confidence: "high" | "medium" | "low";
+    evidence?: Record<string, unknown>;
+  }>;
+  metrics: {
+    taskFailRate: number;
+    agentFailureRate: number;
+    stuckActiveRuns: number;
+    logBackingRate: number;
+    probeRoundTripMs: number | null;
+  };
+  improve: {
+    invoked: number;
+    completed: number;
+    skipped: number;
+    skipReasons: Record<string, number>;
+    plannedRefs: number;
+    actions: {
+      reflect: number;
+      distill: number;
+      distillSkipped: number;
+      memoryPrune: number;
+      memoryInference: number;
+      graphExtraction: number;
+      error: number;
+    };
+    crossStepErrorsInjected: number;
+    feedbackRatioUsed: boolean;
+    coverageGapCount: number;
+    executionLogCandidateCount: number;
+    evalCasesWritten: number;
+    deadUrlCount: number;
+    memorySummary: {
+      eligible: number;
+      derived: number;
+    };
+    memoryCleanup: {
+      pruneCandidates: number;
+      contradictionCandidates: number;
+      beliefStateTransitions: number;
+      consolidationCandidates: number;
+      archived: number;
+      warnings: number;
+    };
+    consolidation: {
+      ran: boolean;
+      processed: number;
+      durationMs: number;
+    };
+    memoryInference: {
+      ran: boolean;
+      writes: number;
+      durationMs: number;
+    };
+    graphExtraction: {
+      ran: boolean;
+      extractedFiles: number;
+      durationMs: number;
+    };
+  };
+  sessionLogAdvisories: Array<{
+    topic: string;
+    frequency: number;
+    source: string;
+    isFailurePattern: boolean;
+  }>;
+}

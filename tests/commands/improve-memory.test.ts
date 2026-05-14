@@ -7,7 +7,7 @@ import { akmImprove } from "../../src/commands/improve";
 import type { AkmReflectResult } from "../../src/commands/reflect";
 import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
-import { appendEvent } from "../../src/core/events";
+import { appendEvent, readEvents } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
 import type { GraphExtractionResult } from "../../src/indexer/graph-extraction";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -788,7 +788,7 @@ describe("akm improve memory cleanup", () => {
     });
 
     expect(result.plannedRefs).toEqual([]);
-    expect(result.actions).toEqual([]);
+    expect(result.actions?.map((action) => action.mode)).toEqual(["graph-extraction"]);
     expect(reflectedRefs).toEqual([]);
     expect(distilledRefs).toEqual([]);
   });
@@ -1134,6 +1134,80 @@ describe("akm improve memory cleanup", () => {
     expect(callOrder).toEqual(["memoryInference", "reindex", "graphExtraction"]);
     expect(result.memoryInference?.writtenFacts).toBe(1);
     expect(result.graphExtraction?.written).toBe(true);
+  });
+
+  test("improve emits maintenance action counts in completed events", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-completed-event-");
+    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
+    await buildIndex(stashDir);
+
+    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:missing"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        proposalKind: "lesson",
+      }),
+      memoryInferenceFn: async () => ({
+        considered: 1,
+        splitParents: 1,
+        writtenFacts: 1,
+        skippedNoFacts: 0,
+      }),
+      graphExtractionFn: async () => ({
+        considered: 1,
+        extracted: 1,
+        totalEntities: 1,
+        totalRelations: 0,
+        written: true,
+        quality: {
+          consideredFiles: 1,
+          extractedFiles: 1,
+          entityCount: 1,
+          relationCount: 0,
+          extractionCoverage: 1,
+          density: 0,
+        },
+      }),
+    });
+
+    expect(result.actions?.map((action) => action.mode)).toEqual([
+      "reflect",
+      "distill",
+      "memory-inference",
+      "graph-extraction",
+    ]);
+
+    const { events } = readEvents({ type: "improve_completed" });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toMatchObject({
+      plannedRefs: 1,
+      reflectActions: 1,
+      distillActions: 1,
+      memoryInferenceActions: 1,
+      graphExtractionActions: 1,
+      memoryInferenceWrites: 1,
+      graphExtractionExtractedFiles: 1,
+      memoryEligible: 1,
+      memoryDerived: 0,
+    });
   });
 
   test("stale consolidate journal error gives actionable improve recovery guidance", async () => {

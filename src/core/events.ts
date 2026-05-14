@@ -65,6 +65,7 @@ export type EventType =
   | "improve_skipped"
   /** Emitted after `createProposal()` succeeds in `akm reflect`. */
   | "reflect_completed"
+  | "improve_completed"
   | string;
 
 export interface AppendEventInput {

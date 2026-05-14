@@ -306,6 +306,7 @@ describe("shapeForCommand", () => {
   test("non-search/show commands pass through unmodified", () => {
     const result = { something: "untouched" };
     expect(shapeForCommand("info", result, "full", false)).toEqual(result);
+    expect(shapeForCommand("health", result, "full", false)).toEqual(result);
   });
 });
 

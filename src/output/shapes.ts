@@ -75,6 +75,7 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "feedback":
     case "import":
     case "index":
+    case "health":
     case "info":
     case "init":
     case "list":

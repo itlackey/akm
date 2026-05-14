@@ -254,6 +254,8 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "agent-result": {
       return formatAgentResultPlain(r);
     }
+    case "health":
+      return formatHealthPlain(r);
     case "info":
       return formatInfoPlain(r);
     case "config":
@@ -325,6 +327,60 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
     }
   }
   if (lines.length === 0) return JSON.stringify(r, null, 2);
+  return lines.join("\n");
+}
+
+export function formatHealthPlain(r: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(`health: ${String(r.status ?? "unknown")}`);
+  if (typeof r.since === "string") lines.push(`since: ${r.since}`);
+
+  const metrics =
+    typeof r.metrics === "object" && r.metrics !== null ? (r.metrics as Record<string, unknown>) : undefined;
+  if (metrics) {
+    lines.push("metrics:");
+    lines.push(`  taskFailRate: ${String(metrics.taskFailRate ?? 0)}`);
+    lines.push(`  agentFailureRate: ${String(metrics.agentFailureRate ?? 0)}`);
+    lines.push(`  stuckActiveRuns: ${String(metrics.stuckActiveRuns ?? 0)}`);
+    lines.push(`  logBackingRate: ${String(metrics.logBackingRate ?? 0)}`);
+    lines.push(`  probeRoundTripMs: ${String(metrics.probeRoundTripMs ?? "null")}`);
+  }
+
+  const improve =
+    typeof r.improve === "object" && r.improve !== null ? (r.improve as Record<string, unknown>) : undefined;
+  if (improve) {
+    const actions =
+      typeof improve.actions === "object" && improve.actions !== null
+        ? (improve.actions as Record<string, unknown>)
+        : {};
+    lines.push("improve:");
+    lines.push(`  invoked: ${String(improve.invoked ?? 0)}`);
+    lines.push(`  completed: ${String(improve.completed ?? 0)}`);
+    lines.push(`  skipped: ${String(improve.skipped ?? 0)}`);
+    lines.push(`  plannedRefs: ${String(improve.plannedRefs ?? 0)}`);
+    lines.push(
+      `  actions: reflect=${String(actions.reflect ?? 0)} distill=${String(actions.distill ?? 0)} distillSkipped=${String(actions.distillSkipped ?? 0)} memoryPrune=${String(actions.memoryPrune ?? 0)} memoryInference=${String(actions.memoryInference ?? 0)} graphExtraction=${String(actions.graphExtraction ?? 0)} error=${String(actions.error ?? 0)}`,
+    );
+    lines.push(`  coverageGapCount: ${String(improve.coverageGapCount ?? 0)}`);
+    lines.push(`  executionLogCandidateCount: ${String(improve.executionLogCandidateCount ?? 0)}`);
+    lines.push(`  deadUrlCount: ${String(improve.deadUrlCount ?? 0)}`);
+  }
+
+  const sections: Array<[string, unknown]> = [
+    ["hardChecks", r.hardChecks],
+    ["advisories", r.advisories],
+  ];
+  for (const [label, value] of sections) {
+    const checks = Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+    if (checks.length === 0) continue;
+    lines.push(`${label}:`);
+    for (const check of checks) {
+      lines.push(
+        `  - [${String(check.status ?? "unknown")}] ${String(check.name ?? "check")}: ${String(check.message ?? "")}`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }
 
