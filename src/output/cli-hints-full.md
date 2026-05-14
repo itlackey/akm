@@ -230,9 +230,8 @@ akm config path --all                         # Show all config paths
 
 ```sh
 akm init                                      # Initialize working stash
-akm index                                     # Rebuild search index (no LLM enrichment)
-akm index --full                              # Full reindex (no LLM enrichment)
-akm index --enrich                            # Reindex with LLM inference/enrichment passes
+akm index                                     # Rebuild search index (metadata enrichment when configured)
+akm index --full                              # Full reindex (metadata enrichment when configured)
 akm list                                      # List all sources
 akm upgrade                                   # Upgrade akm using its install method
 akm upgrade --check                           # Check for updates

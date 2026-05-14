@@ -5,6 +5,7 @@
       "name": "akm-cli",
       "dependencies": {
         "@clack/prompts": "^1.3.0",
+        "@opencode-ai/sdk": "1.2.20",
         "citty": "^0.2.2",
         "dotenv": "^17.4.2",
         "yaml": "^2.8.4",
@@ -101,6 +102,8 @@
     "@img/sharp-win32-ia32": ["@img/sharp-win32-ia32@0.34.5", "", { "os": "win32", "cpu": "ia32" }, "sha512-FV9m/7NmeCmSHDD5j4+4pNI8Cp3aW+JvLoXcTUo0IqyjSfAZJ8dIUmijx1qaJsIiU+Hosw6xM5KijAWRJCSgNg=="],
 
     "@img/sharp-win32-x64": ["@img/sharp-win32-x64@0.34.5", "", { "os": "win32", "cpu": "x64" }, "sha512-+29YMsqY2/9eFEiW93eqWnuLcWcufowXewwSNIT6UwZdUUCrM3oFjMWH/Z6/TMmb4hlFenmfAVbpWeup2jryCw=="],
+
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.2.20", "", {}, "sha512-U5ROpG21D8jg9rkc1IgKAk1g5dn6X/rkOBfveupd0peSDO9n6VM9aikYccVLaMObxVqdjtG08IeQOFTPVS8ySQ=="],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="],
 

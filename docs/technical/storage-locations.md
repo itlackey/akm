@@ -119,7 +119,8 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |
 
-Cache miss on body change. Stale rows removed by `clearStaleCacheEntries()`. Bypassed with `--re-enrich` flag.
+Cache miss on body change. Stale rows removed by `clearStaleCacheEntries()`. The
+cache can also be bypassed by internal forced re-enrichment callers.
 
 **What is cached:** metadata enhancement results, graph extraction (entities + relations), memory inference results.
 

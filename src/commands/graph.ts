@@ -88,7 +88,7 @@ function loadGraph(source?: string): LoadedGraph {
     throw new NotFoundError(
       `Graph artifact not found at ${graphPath}.`,
       "FILE_NOT_FOUND",
-      "Run `akm index --enrich` to generate .akm/graph.json.",
+      "Run the improvement flow that refreshes graph artifacts.",
     );
   }
   let parsed: unknown;

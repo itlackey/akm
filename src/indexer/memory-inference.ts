@@ -67,6 +67,10 @@ export interface MemoryInferenceResult {
   skippedNoFacts: number;
 }
 
+export interface MemoryInferencePassOptions {
+  candidateRefs?: ReadonlySet<string>;
+}
+
 interface MemoryRecord {
   /** Absolute path on disk. */
   filePath: string;
@@ -109,6 +113,7 @@ export async function runMemoryInferencePass(
     skippedNoFacts: number;
     currentRef?: string;
   }) => void,
+  options: MemoryInferencePassOptions = {},
 ): Promise<MemoryInferenceResult> {
   const result: MemoryInferenceResult = {
     considered: 0,
@@ -132,7 +137,9 @@ export async function runMemoryInferencePass(
   const primary = sources[0];
   if (!primary) return result;
 
-  const pending = collectPendingMemories(primary.path);
+  const pending = collectPendingMemories(primary.path).filter(
+    (record) => !options.candidateRefs || options.candidateRefs.has(record.ref),
+  );
   result.considered = pending.length;
   if (pending.length === 0) return result;
 

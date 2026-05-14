@@ -211,7 +211,7 @@ When using a remote provider, `dimension` must match the index vector size
 ## LLM Configuration
 
 When configured, the indexer can use an LLM to generate richer descriptions,
-intent phrases, and tags during `akm index --enrich`.
+intent phrases, and tags during `akm index`.
 
 ```sh
 akm config set llm '{"endpoint":"http://localhost:11434/v1/chat/completions","model":"llama3.2","temperature":0.3,"maxTokens":512}'
@@ -229,7 +229,7 @@ and `AKM_LLM_API_KEY` rather than stored in the config file.
 
 ### Per-pass LLM opt-out (`index.<pass>.llm`)
 
-Every LLM-using pass inside `akm index --enrich` shares the same top-level `llm`
+Every LLM-using pass in AKM shares the same top-level `llm`
 block — there is exactly one provider/model configuration. To skip the LLM
 for a single pass while keeping it on for others, set
 `index.<passName>.llm = false`:
@@ -255,37 +255,37 @@ provider configuration under `index.<pass>` (e.g. `endpoint`, `model`,
 configure the LLM. To use a different model entirely, change the top-level
 `llm` block.
 
-### Memory inference pass (`index.memory`)
+### Memory inference maintenance (`index.memory`)
 
-When `akm.llm` is configured, `akm index --enrich` runs the memory inference
-pass that derives higher-signal memory artifacts from each pending memory in
-`<stashDir>/memories/`. The design direction is to prefer compact,
-information-dense derived memories with rich metadata and explicit provenance
-back to the source memory, rather than exploding one parent into many
-sentence-level child files. After a successful derivation, the parent is
-marked `inferenceProcessed: true` so subsequent index runs are idempotent.
+When `akm.llm` is configured, `akm improve` can run a post-consolidation
+memory-inference maintenance step that derives higher-signal memory artifacts
+from pending memories in `<stashDir>/memories/`. The design direction is to
+prefer compact, information-dense derived memories with rich metadata and
+explicit provenance back to the source memory, rather than exploding one
+parent into many sentence-level child files. After a successful derivation,
+the parent is marked `inferenceProcessed: true` so subsequent improve runs are
+idempotent.
 
 The pass is disabled when:
 
-- `--enrich` is not passed to `akm index`, or
 - No `akm.llm` block is configured (the default), or
 - `index.memory.llm = false` is set explicitly.
 
 Disabling the pass after a previous run never deletes previously derived
 artifacts — they remain on disk and continue to be searchable.
 
-### Graph extraction pass (`index.graph`)
+### Graph extraction maintenance (`index.graph`)
 
-When `akm.llm` is configured, `akm index --enrich` runs the graph-extraction
-pass that walks the primary stash for `memory:` and `knowledge:` markdown
-files, asks the configured LLM to surface entities and relations from each
-body, and persists the result to `<stashRoot>/.akm/graph.json`. The
-search-time scorer reads this artifact and contributes a single additive
-boost component inside the existing FTS5+boosts loop.
+When `akm.llm` is configured, `akm improve` can run a post-consolidation
+graph-extraction maintenance step that walks the primary stash for `memory:`
+and `knowledge:` markdown files, asks the configured LLM to surface entities
+and relations from each body, and persists the result to
+`<stashRoot>/.akm/graph.json`. The search-time scorer reads this artifact and
+contributes a single additive boost component inside the existing FTS5+boosts
+loop.
 
 Three preconditions must ALL hold for the pass to run:
 
-- `--enrich` must be passed to `akm index`;
 - `akm.llm` must be configured (no provider configured → no extraction);
 - `llm.features.graph_extraction` must not be `false` (locked v1 spec §14
   feature flag — defaults to `true`);
@@ -299,7 +299,7 @@ feature-flag layer (e.g. air-gapped environments), set
 
 Disabling either layer after a previous run never deletes the existing
 `<stashRoot>/.akm/graph.json` artifact — it stays on disk and continues to
-contribute to ranking, it just stops refreshing on subsequent index runs.
+contribute to ranking, it just stops refreshing on subsequent improve runs.
 
 ## Install Security Audit
 
@@ -601,8 +601,8 @@ LLM is configured (though the passes also require `akm.llm` to be set and
 | `curate_rerank` | `false` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline |
 | `memory_consolidation` | `false` | `akm improve` memory consolidation phase | Consolidation returns a no-op result (`processed: 0`) |
 | `feedback_distillation` | `false` | `akm distill <ref>` / `akm improve <ref>` | The command exits 0 with `outcome: "skipped"` rather than failing |
-| `memory_inference` | `true` | `akm index` memory-inference pass (splits a pending memory into atomic facts) | The pass is a no-op; existing inferred children remain on disk |
-| `graph_extraction` | `true` | `akm index` graph-extraction pass (extracts entities + relations from memory/knowledge files into `graph.json` for search boosting) | The pass is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
+| `memory_inference` | `true` | `akm improve` memory-inference maintenance step (derives higher-signal child memories and marks parents processed) | The step is a no-op; existing inferred children remain on disk |
+| `graph_extraction` | `true` | `akm improve` graph-extraction maintenance step (refreshes `graph.json` for search boosting after improve writes settle) | The step is a no-op; an existing `graph.json` is preserved and still feeds the boost component |
 | `lesson_quality_gate` | `false` | LLM-as-judge quality gate in `akm distill` | Judge step is skipped (distillation continues without judge scoring) |
 | `metadata_enhance` | `false` | `akm index` metadata-enhancement pass | Metadata enhancement is skipped (no description/searchHints/tags enrichment) |
 

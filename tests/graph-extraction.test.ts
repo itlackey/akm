@@ -421,6 +421,66 @@ describe("runGraphExtractionPass — enabled", () => {
     expect(parsed.files).toHaveLength(1);
   });
 
+  test("candidate-path refresh preserves unrelated nodes from the existing graph", async () => {
+    const memoryPath = writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    writeFile("knowledge/k1.md", {}, "Body about ServiceB.");
+    extractor = (body) => {
+      if (body.includes("ServiceA")) return { entities: ["ServiceA"], relations: [] };
+      return { entities: ["ServiceB"], relations: [] };
+    };
+
+    await runGraphExtractionPass(configWithLlm(), sources());
+    fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated.\n", "utf8");
+
+    extractor = (body) => {
+      if (body.includes("updated")) return { entities: ["ServiceA2"], relations: [] };
+      throw new Error("untouched file should be preserved from the previous graph");
+    };
+
+    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, undefined, {
+      candidatePaths: new Set([memoryPath]),
+    });
+
+    expect(result.written).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+      files: Array<{ path: string; entities: string[] }>;
+      entities: string[];
+    };
+    expect(parsed.files).toHaveLength(2);
+    expect(parsed.files.find((node) => node.path === memoryPath)?.entities).toEqual(["servicea2"]);
+    expect(parsed.entities.sort()).toEqual(["servicea2", "serviceb"]);
+  });
+
+  test("candidate-path refresh removes touched nodes that no longer yield graph entities", async () => {
+    const memoryPath = writeFile("memories/m1.md", {}, "Body about ServiceA.");
+    writeFile("knowledge/k1.md", {}, "Body about ServiceB.");
+    extractor = (body) => {
+      if (body.includes("ServiceA")) return { entities: ["ServiceA"], relations: [] };
+      return { entities: ["ServiceB"], relations: [] };
+    };
+
+    await runGraphExtractionPass(configWithLlm(), sources());
+    fs.writeFileSync(memoryPath, "---\n---\n\nBody about ServiceA updated again.\n", "utf8");
+
+    extractor = (body) => {
+      if (body.includes("updated again")) return { entities: [], relations: [] };
+      throw new Error("untouched file should be preserved from the previous graph");
+    };
+
+    const result = await runGraphExtractionPass(configWithLlm(), sources(), undefined, undefined, false, undefined, {
+      candidatePaths: new Set([memoryPath]),
+    });
+
+    expect(result.written).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
+      files: Array<{ path: string; entities: string[] }>;
+      entities: string[];
+    };
+    expect(parsed.files).toHaveLength(1);
+    expect(parsed.files[0]?.path).toBe(path.join(tmpStash, "knowledge", "k1.md"));
+    expect(parsed.entities).toEqual(["serviceb"]);
+  });
+
   test("leaves an existing graph.json untouched when every extraction returns no entities", async () => {
     writeFile("memories/m1.md", {}, "Empty graph body.");
     const graphPath = getGraphFilePath(tmpStash);

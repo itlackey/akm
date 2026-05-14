@@ -69,21 +69,25 @@ function expectDefined<T>(value: T | null | undefined): T {
 
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const originalAkmDataDir = process.env.AKM_DATA_DIR;
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
 const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalAkmStashDir = process.env.AKM_STASH_DIR;
 let testCacheDir = "";
 let testConfigDir = "";
+let testAkmDataDir = "";
 let testDataDir = "";
 let testStateDir = "";
 
 beforeEach(() => {
   testCacheDir = createTmpDir("akm-scoring-cache-");
   testConfigDir = createTmpDir("akm-scoring-config-");
+  testAkmDataDir = createTmpDir("akm-scoring-akm-data-");
   testDataDir = createTmpDir("akm-scoring-data-");
   testStateDir = createTmpDir("akm-scoring-state-");
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.AKM_DATA_DIR = testAkmDataDir;
   process.env.XDG_DATA_HOME = testDataDir;
   process.env.XDG_STATE_HOME = testStateDir;
 });
@@ -98,6 +102,11 @@ afterEach(() => {
     delete process.env.XDG_CONFIG_HOME;
   } else {
     process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  }
+  if (originalAkmDataDir === undefined) {
+    delete process.env.AKM_DATA_DIR;
+  } else {
+    process.env.AKM_DATA_DIR = originalAkmDataDir;
   }
   if (originalXdgDataHome === undefined) {
     delete process.env.XDG_DATA_HOME;
@@ -121,6 +130,10 @@ afterEach(() => {
   if (testConfigDir) {
     fs.rmSync(testConfigDir, { recursive: true, force: true });
     testConfigDir = "";
+  }
+  if (testAkmDataDir) {
+    fs.rmSync(testAkmDataDir, { recursive: true, force: true });
+    testAkmDataDir = "";
   }
   if (testDataDir) {
     fs.rmSync(testDataDir, { recursive: true, force: true });

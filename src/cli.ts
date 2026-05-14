@@ -144,6 +144,55 @@ function parseAllFlagValues(flag: string): string[] {
   return values;
 }
 
+function resolveHelpMigrateVersionArg(version: string | undefined): string | undefined {
+  if (version === undefined) return undefined;
+
+  const parsedFormat = parseFlagValue(process.argv, "--format");
+  if (
+    parsedFormat !== undefined &&
+    version === parsedFormat &&
+    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedFormat, "--format")
+  ) {
+    return undefined;
+  }
+
+  const parsedDetail = parseFlagValue(process.argv, "--detail");
+  if (
+    parsedDetail !== undefined &&
+    version === parsedDetail &&
+    wasHelpMigrateFlagValueConsumedAsVersion(version, parsedDetail, "--detail")
+  ) {
+    return undefined;
+  }
+
+  return version;
+}
+
+function wasHelpMigrateFlagValueConsumedAsVersion(
+  version: string,
+  flagValue: string,
+  flagName: "--format" | "--detail",
+): boolean {
+  const argv = process.argv.slice(2);
+  const helpIndex = argv.indexOf("help");
+  const tokens = helpIndex >= 0 ? argv.slice(helpIndex + 1) : argv;
+  const migrateIndex = tokens.indexOf("migrate");
+  const relevant = migrateIndex >= 0 ? tokens.slice(migrateIndex + 1) : tokens;
+
+  let flagIndex = -1;
+  for (let i = 0; i < relevant.length; i += 1) {
+    const token = relevant[i];
+    if (token === flagName || token === `${flagName}=${flagValue}`) {
+      flagIndex = i;
+      break;
+    }
+  }
+
+  if (flagIndex === -1) return false;
+  if (relevant.slice(0, flagIndex).includes(version)) return false;
+  return relevant[flagIndex] === flagName ? relevant[flagIndex + 1] === version : true;
+}
+
 function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
   const shaped = shapeForCommand(command, result, mode.detail, mode.forAgent);
@@ -255,11 +304,20 @@ const indexCommand = defineCommand({
   meta: { name: "index", description: "Build search index (incremental by default; --full forces full reindex)" },
   args: {
     full: { type: "boolean", description: "Force full reindex", default: false },
-    enrich: { type: "boolean", description: "Enable LLM inference and enrichment passes", default: false },
     verbose: { type: "boolean", description: "Print phase-by-phase indexing progress to stderr", default: false },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      if (getHyphenatedBoolean(args, "enrich") || parseFlagValue(process.argv, "--enrich") !== undefined) {
+        throw new UsageError(
+          "`akm index --enrich` has been removed. Plain `akm index` now performs metadata enrichment by default.",
+        );
+      }
+      if (getHyphenatedBoolean(args, "re-enrich") || parseFlagValue(process.argv, "--re-enrich") !== undefined) {
+        throw new UsageError(
+          "`akm index --re-enrich` has been removed. Re-enrichment of index-time LLM passes is not exposed in this slice.",
+        );
+      }
       const outputMode = getOutputMode();
       const controller = new AbortController();
       const abort = (): void => controller.abort(new Error("index interrupted"));
@@ -272,7 +330,7 @@ const indexCommand = defineCommand({
         `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
       );
       setLogFile(indexLogFile);
-      const spin = !args.enrich && !args.verbose && outputMode.format === "text" ? p.spinner() : null;
+      const spin = !args.verbose && outputMode.format === "text" ? p.spinner() : null;
       if (spin) {
         spin.start(`Building search index${args.full ? " (full rebuild)" : ""}...`);
       }
@@ -280,11 +338,10 @@ const indexCommand = defineCommand({
       try {
         const result = await akmIndex({
           full: args.full,
-          enrich: args.enrich,
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
-            if (args.verbose || args.enrich) {
+            if (args.verbose) {
               info(`[index:${phase}] ${progressPrefix}${message}`);
             } else if (spin) {
               spin.stop(`${progressPrefix}${message}`);
@@ -426,11 +483,14 @@ const searchCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      // An empty query enumerates all indexed assets (list mode).
-      // The guard that rejected empty queries was removed; akmSearch handles
-      // empty strings end-to-end via getAllEntries (DB path) and the
-      // substring-search fallback's query-less branch.
       const query = (args.query ?? "").trim();
+      if (!query) {
+        throw new UsageError(
+          'A search query is required. Usage: akm search "<query>" [--type <type>] [--limit <n>]',
+          "MISSING_REQUIRED_ARGUMENT",
+          'Pass a query like `akm search "docker"` or `akm search "code review" --type skill`.',
+        );
+      }
       const type = args.type as string | undefined;
       const limit = parsePositiveIntFlag(args.limit ?? undefined);
       const source = parseSearchSource(args.source);
@@ -1787,8 +1847,7 @@ const rememberCommand = defineCommand({
       if (typeof args.channel === "string" && args.channel.trim()) scopeFields.channel = args.channel.trim();
       const hasScope = Object.keys(scopeFields).length > 0;
 
-      const hasTagRequiringArgs =
-        rawTags.length > 0 || !!args.expires || !!args.source || !!args.description || args.enrich;
+      const hasTagRequiringArgs = rawTags.length > 0 || !!args.expires || !!args.source || !!args.description;
       const hasStructuredArgs = hasTagRequiringArgs || hasScope || args.auto;
 
       if (!hasStructuredArgs) {
@@ -2030,14 +2089,15 @@ const helpCommand = defineCommand({
       },
       run({ args }) {
         return runWithJsonErrors(() => {
-          if (!args.version || !String(args.version).trim()) {
+          const version = resolveHelpMigrateVersionArg(typeof args.version === "string" ? args.version : undefined);
+          if (!version?.trim()) {
             throw new UsageError(
               "Usage: akm help migrate <version>.",
               "MISSING_REQUIRED_ARGUMENT",
               "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
             );
           }
-          process.stdout.write(renderMigrationHelp(args.version));
+          process.stdout.write(renderMigrationHelp(version));
         });
       },
     }),
@@ -2598,7 +2658,12 @@ const wikiStashCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(async () => {
       const { stashRaw } = await import("./wiki/wiki.js");
-      const { content, preferredName } = await readKnowledgeInput(args.source);
+      const { content, preferredName } = await (async () => {
+        if (!isHttpUrl(args.source)) return readKnowledgeInput(args.source);
+        const { fetchWebsiteMarkdownSnapshot } = await import("./sources/website-ingest");
+        const snapshot = await fetchWebsiteMarkdownSnapshot(args.source);
+        return { content: snapshot.content, preferredName: args.as ?? snapshot.preferredName };
+      })();
 
       let stashDir: string;
       if (args.target) {

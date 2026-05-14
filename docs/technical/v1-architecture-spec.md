@@ -350,8 +350,8 @@ field. The contract is:
   - `"curated"` — promoted by a human or via the proposal queue (§11).
     Included in default search.
   - `"enriched"` — LLM enrichment pass completed for this asset. Written by
-    the indexer after a successful `--enrich` run. Included in default search;
-    subsequent index runs skip re-enrichment unless `--re-enrich` is passed.
+    the indexer after a successful metadata-enhancement pass. Included in default search;
+    subsequent index runs skip re-enrichment unless the caller explicitly requests it.
   - `"proposed"` — sitting in the proposal queue, not yet promoted.
     **Excluded from default search**; surfaced only with
     `--include-proposed` or via `akm proposals` commands.
@@ -1059,8 +1059,8 @@ were removed in 0.7.0 — they were declared but never read at any call site.)
 | `curate_rerank` | `akm curate` re-orders top-N results via LLM scoring | Curate falls back to the deterministic pipeline (no rerank) |
 | `memory_consolidation` | `akm improve` consolidation phase — agent-driven cross-memory dedup, merging, and promotion into `knowledge:` assets (§14.6) | Consolidation returns an immediate no-op result (`processed: 0`) |
 | `feedback_distillation` | improve-driven lesson distillation (§14.5) | improve skips lesson distillation cleanly when disabled |
-| `memory_inference` | In-tree LLM split of pending memories into atomic facts during `akm index`. | The memory-inference pass is a no-op; existing inferred children are preserved |
-| `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during `akm index`, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
+| `memory_inference` | In-tree LLM split of pending memories into atomic facts during the memory-maintenance / improve-owned flow. | The memory-inference pass is a no-op; existing inferred children are preserved |
+| `graph_extraction` | In-tree LLM extraction of entities and relations from `memory:` and `knowledge:` assets during the graph-refresh / improve-owned flow, persisted as a `graph.json` artifact under the stash that feeds the FTS5+boosts pipeline as a single boost component. | The graph-extraction pass is a no-op; an existing `graph.json` is preserved and continues to feed the boost component until it is stale or removed. |
 | `lesson_quality_gate` | LLM-as-judge quality scoring in `akm distill` | Judge step is skipped; distillation proceeds without judge scoring |
 | `metadata_enhance` | `akm index` metadata enhancement pass | Metadata enhancement is skipped (no description/searchHints/tags enrichment) |
 

@@ -605,7 +605,6 @@ test("akmIndex reports progress events and semantic-search verification details"
     expect(messages[0]).toContain("Starting full index");
     expect(messages[0]).toContain("1 stash source");
     expect(messages[0]).toContain("semantic search: remote embeddings");
-    expect(messages.some((message) => message.includes("LLM passes disabled; rerun with --enrich"))).toBe(true);
     expect(messages.some((message) => message.includes("Scanned"))).toBe(true);
     expect(messages.some((message) => message.includes("Embedding generation failed: TEST_EMBEDDING_ERROR"))).toBe(
       true,
@@ -644,7 +643,7 @@ test("akmIndex scan progress events include processed and total counts", async (
   expect(scanEvents.some((event) => event.message.includes("Processed 1/1 source"))).toBe(true);
 });
 
-test("akmIndex enrich progress events include visible per-entry progress", async () => {
+test("akmIndex metadata enrichment progress events include visible per-entry progress", async () => {
   const stashDir = tmpStash();
   writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
   writeFile(path.join(stashDir, "scripts", "two", "two.sh"), "echo two\n");
@@ -670,7 +669,6 @@ test("akmIndex enrich progress events include visible per-entry progress", async
     const llmEvents: Array<{ message: string; processed?: number; total?: number }> = [];
     await akmIndex({
       stashDir,
-      enrich: true,
       onProgress: (event) => {
         if (event.phase === "llm") {
           llmEvents.push({ message: event.message, processed: event.processed, total: event.total });
@@ -678,8 +676,8 @@ test("akmIndex enrich progress events include visible per-entry progress", async
       },
     });
 
-    expect(llmEvents.some((event) => event.message.includes("Starting memory inference"))).toBe(true);
-    expect(llmEvents.some((event) => event.message.includes("Starting graph extraction"))).toBe(true);
+    expect(llmEvents.some((event) => event.message.includes("Starting memory inference"))).toBe(false);
+    expect(llmEvents.some((event) => event.message.includes("Starting graph extraction"))).toBe(false);
     expect(llmEvents.some((event) => event.message.includes("LLM enhancement starting for 2 entries"))).toBe(true);
     expect(
       llmEvents.some(
@@ -724,10 +722,9 @@ test("akmIndex verbose progress reports why a directory was rescanned", async ()
   expect(reasonLine).toContain("previous rows=1");
 });
 
-test("akmIndex surfaces graph quality telemetry in result", async () => {
+test("akmIndex does not run slow passes", async () => {
   const stashDir = tmpStash();
-  writeFile(path.join(stashDir, "knowledge", "k1.md"), "---\ndescription: K1\n---\n\nAlpha uses Beta.\n");
-  writeFile(path.join(stashDir, "memories", "m1.md"), "---\ndescription: M1\n---\n\nAlpha depends on Gamma.\n");
+  writeFile(path.join(stashDir, "scripts", "one", "one.sh"), "echo one\n");
 
   process.env.AKM_STASH_DIR = stashDir;
   saveConfig({
@@ -735,32 +732,38 @@ test("akmIndex surfaces graph quality telemetry in result", async () => {
     llm: {
       endpoint: "https://example.test/v1/chat/completions",
       model: "demo-chat",
-      features: { graph_extraction: true },
       concurrency: 1,
     },
   });
 
-  const graphExtract = await import("../src/llm/graph-extract");
-  const memoryInfer = await import("../src/llm/memory-infer");
-  const graphSpy = spyOn(graphExtract, "extractGraphFromBody").mockImplementation(async (_cfg, body) => {
-    if (body.includes("Beta")) {
-      return { entities: ["Alpha", "Beta"], relations: [{ from: "Alpha", to: "Beta", type: "uses" }] };
-    }
-    return { entities: ["Alpha", "Gamma"], relations: [{ from: "Alpha", to: "Gamma" }] };
+  const memoryInfer = await import("../src/indexer/memory-inference");
+  const graphExtract = await import("../src/indexer/graph-extraction");
+  const memorySpy = spyOn(memoryInfer, "runMemoryInferencePass").mockResolvedValue({
+    considered: 0,
+    splitParents: 0,
+    writtenFacts: 0,
+    skippedNoFacts: 0,
   });
-  const memorySpy = spyOn(memoryInfer, "compressMemoryToDerivedMemory").mockImplementation(async () => undefined);
+  const graphSpy = spyOn(graphExtract, "runGraphExtractionPass").mockResolvedValue({
+    considered: 0,
+    extracted: 0,
+    totalEntities: 0,
+    totalRelations: 0,
+    written: false,
+    quality: {
+      consideredFiles: 0,
+      extractedFiles: 0,
+      entityCount: 0,
+      relationCount: 0,
+      extractionCoverage: 0,
+      density: 0,
+    },
+  });
 
   try {
-    const result = await akmIndex({ stashDir, enrich: true, full: true });
-    expect(result.graphQuality).toBeDefined();
-    expect(result.graphQuality).toEqual({
-      consideredFiles: 2,
-      extractedFiles: 2,
-      entityCount: 3,
-      relationCount: 2,
-      extractionCoverage: 1,
-      density: 0.6667,
-    });
+    await akmIndex({ stashDir });
+    expect(memorySpy).not.toHaveBeenCalled();
+    expect(graphSpy).not.toHaveBeenCalled();
   } finally {
     memorySpy.mockRestore();
     graphSpy.mockRestore();
@@ -1524,7 +1527,7 @@ test("enhanceDirsWithLlm does not call LLM for entries that are already complete
   }) as typeof globalThis.fetch;
 
   try {
-    await akmIndex({ stashDir, enrich: true, reEnrich: false });
+    await akmIndex({ stashDir, reEnrich: false });
     expect(llmFetchCalled).toBe(false);
   } finally {
     globalThis.fetch = originalFetch2;

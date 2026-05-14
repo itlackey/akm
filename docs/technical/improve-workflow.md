@@ -1,6 +1,6 @@
 # akm improve — Workflow Reference
 
-`akm improve` is the scheduled self-improvement loop that walks every asset in the stash (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, and then runs memory consolidation across the entire corpus. It is the primary mechanism for turning accumulated feedback signals into queued proposals that humans (or automation) can accept.
+`akm improve` is the scheduled self-improvement loop that walks every asset in the stash (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, runs memory consolidation across the corpus, and then performs improve-owned maintenance passes such as memory inference and graph extraction. It is the primary mechanism for turning accumulated feedback signals into queued proposals that humans (or automation) can accept.
 
 ## Command surface
 
@@ -152,10 +152,22 @@ flowchart TD
     end
 
     CONSOLIDATE --> CON_A
-    CON_NOOP --> FINAL
-    CON_DONE --> FINAL
-    CON_DRYRESULT --> FINAL
-    CON_ABORT2 --> FINAL
+    CON_NOOP --> MAINT
+    CON_DONE --> MAINT
+    CON_DRYRESULT --> MAINT
+    CON_ABORT2 --> MAINT
+
+    subgraph MAINTENANCE["Improve-owned maintenance"]
+        MAINT[runImproveMaintenancePasses] --> MI{memory refs queued for inference?}
+        MI -- no --> GRAPH
+        MI -- yes --> MI_RUN[runMemoryInferencePass]
+        MI_RUN --> MI_WRITE{wrote derived memories\nor marked parents?}
+        MI_WRITE -- yes --> MI_REINDEX[reindexFn\nrefresh SQLite state after inference writes]
+        MI_WRITE -- no --> GRAPH
+        MI_REINDEX --> GRAPH[runGraphExtractionPass\nafter consolidation and inference settle]
+    end
+
+    GRAPH --> FINAL
 
     FINAL[Assemble AkmImproveResult\nschemaVersion: 1] --> UNLOCK[fs.unlinkSync improve.lock\nfinally block]
     UNLOCK --> RETURN([return AkmImproveResult])
@@ -240,6 +252,29 @@ For `skill:*` refs, reflect also reviews related distilled lessons as consolidat
 - Modified or deleted memory asset files via `writeAssetToSource` / `deleteAssetFromSource`.
 - `<stashRoot>/.akm/proposals/<UUID>/proposal.json` for each `promote` op.
 
+### improve-owned maintenance
+
+After consolidation completes, `akmImprove` runs maintenance steps that own the
+remaining live-write memory/index artifacts previously coupled to indexing.
+
+**Memory inference:**
+
+1. Collect the memory refs that completed distill without being promoted to
+   `knowledge:` in the same improve run.
+2. Call `runMemoryInferencePass` with those refs.
+3. If the pass writes derived memories or marks parents with
+   `inferenceProcessed: true`, call `reindexFn({ stashDir })` so SQLite/search
+   state reflects the new disk state before any later steps run.
+
+**Graph extraction:**
+
+1. Run `runGraphExtractionPass` only after consolidation and any inference
+   reindex are complete.
+2. Refresh `<stashRoot>/.akm/graph.json` against the final post-improve disk
+   state so search-time graph boosts do not immediately go stale.
+3. Internal partial refresh paths preserve unrelated graph nodes rather than
+   rewriting the artifact from only the touched subset.
+
 ### Proposal queue
 
 `createProposal` is the single write point used by reflect, distill, and consolidate (promote). It is also used by the memory consolidation promote path in akmConsolidate.
@@ -312,9 +347,11 @@ Agent path vs. HTTP path in consolidate is determined at runtime: `isAgentPath =
 | `memorySummary` | `{ eligible, derived }` | Count of memory assets in scope and count of `.derived` ones. |
 | `memoryCleanup` | `ImproveMemoryCleanupResult?` | Analysis (always present when eligible > 0) merged with apply results on a live run. Includes `archived`, `transitionLogPath`, `transitionLogEntries`, and `warnings`. |
 | `plannedRefs` | `ImproveEligibleRef[]` | The post-filter, post-cleanup, utility-sorted refs that were (or would be) processed. |
-| `actions` | `ImproveActionResult[]?` | Per-asset action record: mode (`reflect`, `distill`, `distill-skipped`, `memory-prune`, `error`) and the subprocess result. Absent on dry-run. |
+| `actions` | `ImproveActionResult[]?` | Per-asset action record: mode (`reflect`, `distill`, `distill-skipped`, `memory-prune`, `memory-inference`, `graph-extraction`, `error`) and the subprocess result. Absent on dry-run. |
 | `validationFailures` | `Array<{ ref, reason }>?` | Refs skipped due to pre-run validation failures (missing file, missing description). |
 | `consolidation` | `ConsolidateResult?` | Result from `akmConsolidate`; omitted when `processed === 0` and no warnings. |
+| `memoryInference` | `MemoryInferenceResult?` | Improve-owned post-consolidation memory inference telemetry. |
+| `graphExtraction` | `GraphExtractionResult?` | Improve-owned post-consolidation graph refresh telemetry. |
 
 ## Reviewed
 
@@ -325,6 +362,7 @@ Reviewed against `src/commands/improve.ts` (full `akmImprove` function), `src/co
 - Diagram branch ordering for dry-run early-return
 - Validation sweep placement relative to the limit filter
 - Consolidation placement relative to the per-asset loop
+- Maintenance placement relative to consolidation and reindex
 - Per-asset loop branch ordering (validation skip vs. budget check)
 - Memory cleanup step sequencing (analyzeMemoryCleanup, applyMemoryCleanup, reindexFn)
 - Feature flag gating for consolidation (`llm.features.memory_consolidation`)
@@ -340,4 +378,4 @@ Reviewed against `src/commands/improve.ts` (full `akmImprove` function), `src/co
 
 3. **`reindexFn` timing (accuracy bug):** The original diagram placed `J3[reindexFn]` before `K[filterRemovedPlannedRefs]`. In the code, `filterRemovedPlannedRefs` (line 336) and the signal filter/sort/limit steps (lines 338–349) all run before the reindex block (lines 351–368). Moved `reindexFn` and `push memory-prune actions` to after the sort/limit step and before the validation sweep, matching the actual code order.
 
-**No changes made to:** subprocess detail prose (reflect, distill, consolidate), feature flag table, output shape table, proposal queue section, or filesystem layout — these were accurate.
+4. **Post-loop maintenance placement (accuracy bug):** Improve now runs memory inference and graph extraction after consolidation, not before it. The workflow now documents the maintenance stage and the reindex after inference writes.

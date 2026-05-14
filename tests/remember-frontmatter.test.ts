@@ -426,20 +426,13 @@ describe("memory metadata contributors", () => {
 // against a non-existent endpoint and verify the graceful-degradation behaviour.
 
 describe("remember --enrich graceful degradation", () => {
-  test("when no LLM is configured, --enrich emits warning but still fails if no tags", () => {
-    // No LLM configured in the temp config dir — should warn and return empty tags
+  test("when no LLM is configured, --enrich emits warning and still writes the memory", () => {
     const { result } = runCli(["remember", "Some note about ops", "--enrich"]);
-    // Will fail because enrichment produces no tags and no CLI tags given.
-    // stderr may contain a warning line followed by a multi-line JSON error block.
-    if (result.status !== 0) {
-      // Extract the JSON portion (from first '{' to end of stderr)
-      const jsonStart = result.stderr.indexOf("{");
-      expect(jsonStart).toBeGreaterThanOrEqual(0);
-      const jsonStr = result.stderr.slice(jsonStart);
-      const json = JSON.parse(jsonStr) as { error: string };
-      expect(json.error).toContain("tags");
-    }
-    // Either path is acceptable: rejection (no tags) or success (if enrichment happened to work)
+    expect(result.status).toBe(0);
+
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    expect(content).toContain("Some note about ops");
   });
 
   test("--enrich with --tag satisfies required-field check even if LLM fails", () => {

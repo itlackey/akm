@@ -9,7 +9,9 @@ import { akmSearch } from "../../src/commands/search";
 import { saveConfig } from "../../src/core/config";
 import { appendEvent } from "../../src/core/events";
 import type { Proposal } from "../../src/core/proposals";
+import type { GraphExtractionResult } from "../../src/indexer/graph-extraction";
 import { akmIndex } from "../../src/indexer/indexer";
+import type { MemoryInferenceResult } from "../../src/indexer/memory-inference";
 import { getWebsiteCachePaths } from "../../src/sources/website-ingest";
 
 const tempDirs: string[] = [];
@@ -976,6 +978,162 @@ describe("akm improve memory cleanup", () => {
           action.result.reason === "memory requires recent feedback signal",
       ),
     ).toBe(true);
+  });
+
+  test("improve runs memory inference after distill and skips refs promoted to knowledge", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-maintenance-");
+    writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
+    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
+    await buildIndex(stashDir);
+
+    appendEvent({ eventType: "feedback", ref: "memory:deploy", metadata: { signal: "positive", note: "good" } });
+    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+
+    const inferredRefs: string[][] = [];
+    const graphCalls: number[] = [];
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:missing"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => {
+        if (ref === "memory:deploy") {
+          return {
+            schemaVersion: 1,
+            ok: true,
+            outcome: "queued",
+            inputRef: ref,
+            lessonRef: "knowledge:deploy",
+            proposalRef: "knowledge:deploy",
+            proposalKind: "knowledge",
+          } satisfies AkmDistillResult;
+        }
+        return {
+          schemaVersion: 1,
+          ok: true,
+          outcome: "queued",
+          inputRef: ref,
+          lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+          proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+          proposalKind: "lesson",
+        } satisfies AkmDistillResult;
+      },
+      memoryInferenceFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+        inferredRefs.push([...(options?.candidateRefs ?? new Set<string>())].sort());
+        return {
+          considered: 1,
+          splitParents: 1,
+          writtenFacts: 1,
+          skippedNoFacts: 0,
+        } satisfies MemoryInferenceResult;
+      },
+      graphExtractionFn: async () => {
+        graphCalls.push(1);
+        return {
+          considered: 1,
+          extracted: 1,
+          totalEntities: 1,
+          totalRelations: 0,
+          written: true,
+          quality: {
+            consideredFiles: 1,
+            extractedFiles: 1,
+            entityCount: 1,
+            relationCount: 0,
+            extractionCoverage: 1,
+            density: 0,
+          },
+        } satisfies GraphExtractionResult;
+      },
+    });
+
+    expect(inferredRefs).toEqual([["memory:vpn"]]);
+    expect(graphCalls).toHaveLength(1);
+    expect(result.memoryInference).toEqual({
+      considered: 1,
+      splitParents: 1,
+      writtenFacts: 1,
+      skippedNoFacts: 0,
+    });
+    expect(result.graphExtraction?.written).toBe(true);
+  });
+
+  test("improve reindexes after memory inference before refreshing the graph", async () => {
+    const stashDir = makeTempDir("akm-improve-memory-reindex-order-");
+    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
+    await buildIndex(stashDir);
+
+    appendEvent({ eventType: "feedback", ref: "memory:vpn", metadata: { signal: "positive", note: "good" } });
+
+    const callOrder: string[] = [];
+
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => {
+        callOrder.push("reindex");
+        return { schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 };
+      },
+      reflectFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        proposal: makeProposal(ref ?? "memory:missing"),
+        ref: ref ?? "",
+        agentProfile: "test",
+        durationMs: 1,
+      }),
+      distillFn: async ({ ref }) => ({
+        schemaVersion: 1,
+        ok: true,
+        outcome: "queued",
+        inputRef: ref,
+        lessonRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        proposalRef: `lesson:${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
+        proposalKind: "lesson",
+      }),
+      memoryInferenceFn: async () => {
+        callOrder.push("memoryInference");
+        return {
+          considered: 1,
+          splitParents: 1,
+          writtenFacts: 1,
+          skippedNoFacts: 0,
+        } satisfies MemoryInferenceResult;
+      },
+      graphExtractionFn: async (_config, _sources, _signal, _db, _reEnrich, _onProgress, options) => {
+        callOrder.push("graphExtraction");
+        expect(options).toBeUndefined();
+        return {
+          considered: 1,
+          extracted: 1,
+          totalEntities: 1,
+          totalRelations: 0,
+          written: true,
+          quality: {
+            consideredFiles: 1,
+            extractedFiles: 1,
+            entityCount: 1,
+            relationCount: 0,
+            extractionCoverage: 1,
+            density: 0,
+          },
+        } satisfies GraphExtractionResult;
+      },
+    });
+
+    expect(callOrder).toEqual(["memoryInference", "reindex", "graphExtraction"]);
+    expect(result.memoryInference?.writtenFacts).toBe(1);
+    expect(result.graphExtraction?.written).toBe(true);
   });
 
   test("stale consolidate journal error gives actionable improve recovery guidance", async () => {

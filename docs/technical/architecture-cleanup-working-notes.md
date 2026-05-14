@@ -365,3 +365,71 @@ Working notes and parity evidence for the behavior-preserving architecture clean
 - Root cause was test-only registry index cache aliasing: ephemeral localhost registry URLs can be reused across the full suite, while the registry cache is keyed only by URL in `registry_index_cache`.
 - The fix stayed test-local by making each served mock registry URL unique with a per-instance query token.
 - After that harness fix, repo-wide release validation passed without changing product behavior.
+
+## Enrichment Migration Checklist
+
+Decision summary for the next migration cycle:
+
+- Keep fast metadata enrichment in `akm index`.
+- Remove the `akm index --enrich` gate rather than keeping it as a compatibility alias.
+- Move slow graph extraction and memory inference out of index and into improve-owned flow.
+- Allow `akm improve` to mutate persisted non-proposal state for these maintenance steps.
+- Drop `--re-enrich` for now.
+- Do not move memory inference into `reflect`.
+- Do not merge direct memory-inference writes into `distill`; keep it as a separate improve-owned memory-maintenance step that can use distill outcomes.
+
+### Checklist
+
+- [x] Make metadata enrichment part of plain `akm index` by default.
+- [x] Remove `--enrich` and `--re-enrich` from the CLI surface and help text.
+- [x] Extract memory inference into a workflow-neutral helper/service instead of an index-owned phase.
+- [x] Wire memory inference into `akm improve` as a separate post-distill memory-maintenance step.
+- [x] Skip memory inference for memories promoted to knowledge during the same improve run.
+- [ ] Revisit memory-cleanup sequencing so cleanup decisions are not made stale by new `.derived` writes.
+- [x] Extract graph extraction into a workflow-neutral helper/service instead of an index-owned phase.
+- [x] Wire graph extraction into `akm improve` post-loop so it reflects final post-improve disk state.
+- [x] Keep metadata-enrichment config on the index path and move slow-pass ownership/config to improve where appropriate.
+- [x] Update docs/spec language that currently describes `akm index --enrich` as the owner of metadata, memory inference, and graph extraction.
+- [x] Update tests for index CLI/config fallout, improve sequencing, memory inference, graph extraction, and cache behavior.
+- [ ] Run focused suites first, then full release validation.
+
+### Open design constraints to preserve during implementation
+
+- Metadata enrichment remains broad and index-owned, including read-only source coverage.
+- Memory inference and graph extraction become improve-owned and scope-aware rather than corpus-wide index sweeps.
+- `distill` remains proposal/promotion-oriented; it may influence whether memory inference runs, but it should not directly take over the live-write semantics.
+- `reflect` remains proposal-queue-only.
+
+### Migration progress
+
+- Completed the first ownership cut:
+  - plain `akm index` now owns fast metadata enrichment by default
+  - `akm index --enrich` was removed rather than kept as a compatibility alias
+  - `akm index --re-enrich` was removed for now
+- Removed slow-pass ownership from index runtime flow:
+  - memory inference no longer runs from `akmIndex()`
+  - graph extraction no longer runs from `akmIndex()`
+- Added improve-owned maintenance flow:
+  - `reflect` remains proposal-only
+  - `distill` remains proposal/promotion-oriented
+  - improve now runs a separate memory-inference maintenance step after the loop
+  - improve skips same-run memory inference for memory refs promoted to knowledge by distill
+  - improve now runs graph extraction as a separate post-loop maintenance step
+- Updated docs/help/spec references that still described `akm index --enrich` as the owner of all enrichment behavior.
+
+### Migration verification results
+
+- `bun test tests/e2e.test.ts -t "cli: akm index rejects removed --enrich flag"` -> pass
+- `bun test tests/indexer.test.ts tests/commands/improve-memory.test.ts tests/e2e.test.ts tests/contracts/v1-spec-section-9-4-cli-surface.test.ts tests/contracts/v1-spec-section-14-llm-features.test.ts` -> pass (`172` tests)
+- `bunx tsc --noEmit` -> pass
+
+### Migration follow-up notes
+
+- The focused migration suites are green after reconciling the removed `--enrich` CLI behavior with subprocess coverage.
+- Current improve sequencing is:
+  - preparation
+  - reflect/distill loop
+  - improve-owned memory inference maintenance
+  - improve-owned graph extraction
+  - consolidation and final shaping
+- One follow-up worth re-evaluating after broader validation: whether memory cleanup planning should move later or be recomputed once new `.derived` memories are written during the same improve run.

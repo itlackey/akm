@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lock
 # Copy source and build (only this layer invalidates on code changes)
 COPY tsconfig.json tsconfig.build.json biome.json ./
 COPY src/ src/
+COPY scripts/ scripts/
 RUN bun run build
 
 # Make akm available globally via bun link

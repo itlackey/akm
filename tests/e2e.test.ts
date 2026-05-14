@@ -701,29 +701,19 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.hits.every((h: CliJsonHit) => h.type === "knowledge")).toBe(true);
   });
 
-  // Issue 9: empty query must list all assets rather than throwing UsageError.
-  // The CLI contract (--help text) promises omitting the query returns all
-  // indexed assets. The akmSearch function handles empty queries end-to-end
-  // via getAllEntries (DB path) and the substring-fallback's query-less branch.
-  test("cli: akm search with no query lists all assets (empty-query listing)", async () => {
+  test("cli: akm search with no query fails with structured usage error", async () => {
     const result = runCli("search");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.hits).toBeInstanceOf(Array);
-    expect(json.hits.length).toBeGreaterThan(0);
-    // Brief output: ref is NOT present (only full/agent levels include ref)
-    expect(json.hits.every((h: CliJsonHit) => h.type !== undefined)).toBe(true);
-    expect(json.hits.every((h: CliJsonHit) => h.name !== undefined)).toBe(true);
+    expect(result.exitCode).toBe(2);
+    const json = parseJson(result.stderr);
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(json.error).toContain("search query is required");
   });
 
-  test("cli: akm search with no query and --type filters by type", async () => {
+  test("cli: akm search with no query and --type still fails", async () => {
     const result = runCli("search", "--type", "skill");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.hits).toBeInstanceOf(Array);
-    expect(json.hits.every((h: CliJsonHit) => h.type === "skill")).toBe(true);
+    expect(result.exitCode).toBe(2);
+    const json = parseJson(result.stderr);
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
   });
 
   test("cli: akm search --limit 2 respects limit", async () => {
@@ -886,12 +876,10 @@ describe("Scenario: CLI subprocess execution", () => {
     expect(json.mode).toBe("full");
   });
 
-  test("cli: akm index accepts --enrich", async () => {
+  test("cli: akm index rejects removed --enrich flag", async () => {
     const result = runCli("index", "--enrich");
-    expect(result.exitCode).toBe(0);
-
-    const json = parseJson(result.stdout);
-    expect(json.totalEntries).toBeGreaterThan(0);
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain("--enrich");
   });
 
   test("cli: repeated index runs on a stash-owned wiki keep a stable entry count", async () => {
@@ -1334,6 +1322,17 @@ describe("Scenario: upgrade and update --force (no network)", () => {
     expect(result.status).toBe(0);
     expect(output).toContain("Migration notes for akm v0.5.0");
     expect(output).toContain("## [0.5.0]");
+  });
+
+  test("cli: akm help migrate with no version fails structurally even with --format json", async () => {
+    const result = spawnSync("bun", [CLI, "help", "migrate", "--format", "json"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status).toBe(2);
+    const json = JSON.parse(result.stderr) as { code: string; error: string };
+    expect(json.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(json.error).toContain("Usage: akm help migrate <version>");
   });
 
   test("cli: akm --help lists the help command", async () => {

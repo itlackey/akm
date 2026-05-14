@@ -125,6 +125,14 @@ export interface GraphExtractionResult {
   quality: GraphQualityTelemetry;
 }
 
+export interface GraphExtractionPassOptions {
+  candidatePaths?: ReadonlySet<string>;
+}
+
+interface LoadedGraphFile {
+  files: GraphFileNode[];
+}
+
 const EMPTY_QUALITY: GraphQualityTelemetry = {
   consideredFiles: 0,
   extractedFiles: 0,
@@ -246,25 +254,25 @@ function validateGraphCacheShape(raw: unknown): GraphCacheShape | undefined {
   };
 }
 
-function loadPreviousGraphNodes(stashRoot: string): Map<string, GraphFileNode> {
+function loadGraphFile(stashRoot: string): LoadedGraphFile {
   const target = getGraphFilePath(stashRoot);
   let raw: string;
   try {
     raw = fs.readFileSync(target, "utf8");
   } catch {
-    return new Map();
+    return { files: [] };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return new Map();
+    return { files: [] };
   }
-  if (!parsed || typeof parsed !== "object") return new Map();
+  if (!parsed || typeof parsed !== "object") return { files: [] };
   const files = (parsed as Record<string, unknown>).files;
-  if (!Array.isArray(files)) return new Map();
+  if (!Array.isArray(files)) return { files: [] };
 
-  const out = new Map<string, GraphFileNode>();
+  const out: GraphFileNode[] = [];
   for (const f of files) {
     if (!f || typeof f !== "object") continue;
     const node = f as Record<string, unknown>;
@@ -275,7 +283,7 @@ function loadPreviousGraphNodes(stashRoot: string): Map<string, GraphFileNode> {
       relations: node.relations,
     });
     if (!cacheShape) continue;
-    out.set(node.path, {
+    out.push({
       path: node.path,
       type: node.type,
       bodyHash: typeof node.bodyHash === "string" ? node.bodyHash : undefined,
@@ -284,7 +292,23 @@ function loadPreviousGraphNodes(stashRoot: string): Map<string, GraphFileNode> {
       confidence: normalizeConfidence(node.confidence),
     });
   }
-  return out;
+  return { files: out };
+}
+
+function mergeGraphNodes(
+  previousNodes: GraphFileNode[],
+  refreshedNodes: GraphFileNode[],
+  candidatePaths?: ReadonlySet<string>,
+): GraphFileNode[] {
+  if (!candidatePaths) return refreshedNodes;
+  const refreshedByPath = new Map(refreshedNodes.map((node) => [node.path, node]));
+  const merged: GraphFileNode[] = [];
+  for (const node of previousNodes) {
+    if (candidatePaths.has(node.path)) continue;
+    merged.push(node);
+  }
+  for (const node of refreshedNodes) merged.push(refreshedByPath.get(node.path) ?? node);
+  return merged;
 }
 
 function reuseGraphNode(
@@ -343,6 +367,7 @@ export async function runGraphExtractionPass(
     totalRelations: number;
     currentPath?: string;
   }) => void,
+  options: GraphExtractionPassOptions = {},
 ): Promise<GraphExtractionResult> {
   // Gate 1 — locked feature flag (§14). Defaults to enabled; only an
   // explicit `false` disables the pass entirely.
@@ -359,11 +384,14 @@ export async function runGraphExtractionPass(
   const primary = sources[0];
   if (!primary) return { ...EMPTY_RESULT };
 
-  const eligible = collectEligibleFiles(primary.path, getGraphExtractionIncludeTypes(config));
+  const eligible = collectEligibleFiles(primary.path, getGraphExtractionIncludeTypes(config)).filter(
+    (candidate) => !options.candidatePaths || options.candidatePaths.has(candidate.absPath),
+  );
   const considered = eligible.length;
   if (considered === 0) return { ...EMPTY_RESULT };
 
-  const previousNodes = loadPreviousGraphNodes(primary.path);
+  const previousGraph = loadGraphFile(primary.path);
+  const previousNodes = new Map(previousGraph.files.map((node) => [node.path, node]));
 
   const nodes: GraphFileNode[] = [];
   let totalEntities = 0;
@@ -638,15 +666,14 @@ export async function runGraphExtractionPass(
     }
   }
 
-  const assetRefs = extractionResults.filter((r): r is NonNullable<typeof r> => Boolean(r)).map((r) => r.absPath);
+  const mergedNodes = mergeGraphNodes(previousGraph.files, nodes, options.candidatePaths);
+  const assetRefs = mergedNodes.map((node) => node.path);
   const deduped = deduplicateGraph(
-    extractionResults
-      .filter((r): r is NonNullable<typeof r> => Boolean(r))
-      .map((r) => ({ entities: r.entities, relations: r.relations })),
+    mergedNodes.map((node) => ({ entities: node.entities, relations: node.relations })),
     assetRefs,
   );
 
-  if (nodes.length === 0) {
+  if (mergedNodes.length === 0) {
     warn("graph extraction: all extractions failed or returned no entities; leaving existing graph.json untouched.");
     return {
       considered,
@@ -658,9 +685,10 @@ export async function runGraphExtractionPass(
     };
   }
 
+  const qualityConsidered = options.candidatePaths ? mergedNodes.length : considered;
   const quality = computeGraphQualityTelemetry(
-    considered,
-    nodes.length,
+    qualityConsidered,
+    mergedNodes.length,
     deduped.entities.length,
     deduped.relations.length,
   );
@@ -669,7 +697,7 @@ export async function runGraphExtractionPass(
     schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stashRoot: primary.path,
-    files: nodes,
+    files: mergedNodes,
     entities: deduped.entities,
     relations: deduped.relations,
     quality,

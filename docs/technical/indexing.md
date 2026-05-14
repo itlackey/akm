@@ -2,9 +2,9 @@
 
 `akm index` builds and refreshes the local SQLite search index.
 
-By default it skips all index-time LLM passes, even when `akm.llm` is
-configured. Pass `--enrich` to enable memory inference, graph extraction, and
-metadata enrichment for that run.
+By default it builds the local index and keeps metadata in the index. When
+`akm.llm` is configured and `index.enrichment.llm` is not `false`, metadata
+enhancement runs during indexing.
 
 ## High-Level Flow
 
@@ -50,17 +50,14 @@ The `content` column is intentionally sparse. Longer freeform guidance such as
 
 - incremental (default): reprocesses changed directories/files
 - full rebuild (`akm index --full`): rebuilds the search index from scratch
-- enriched (`akm index --enrich`): enables index-time LLM passes for the run
-- re-enrich (`akm index --enrich --re-enrich`): re-runs enrichment even on
-  entries already marked `quality: "enriched"`
 
 Full rebuilds preserve usage history and then re-link it to rebuilt entries by
 ref.
 
 ## LLM Enrichment Pass
 
-When `--enrich` is active, the enrichment pass runs after all entries are
-upserted and FTS is rebuilt. Key properties:
+When metadata enhancement is enabled, the enrichment pass runs after all
+entries are upserted and FTS is rebuilt. Key properties:
 
 **Concurrency** — directories are enriched in parallel using a bounded
 concurrency pool of 4 workers (`concurrentMap(..., 4)` from
@@ -69,19 +66,18 @@ isolated; the pool continues with remaining work.
 
 **`quality: "enriched"` caching** — after a successful LLM enrichment call,
 the entry's `quality` field is set to `"enriched"` and written back to the
-index. On subsequent `akm index --enrich` runs, entries already marked
-`"enriched"` are skipped. Pass `--re-enrich` to override this and re-process
-all entries regardless of their current quality value.
+index. On subsequent `akm index` runs, entries already marked `"enriched"`
+are skipped unless the caller explicitly requests re-enrichment.
 
 **5-minute wall-clock budget** — the enrichment pass operates under a 5-minute
 total deadline enforced by `AbortSignal.timeout(5 * 60 * 1000)`. Once the
 deadline fires, no new enrichment calls are started; entries that were not
 reached are left at `quality: "generated"` and will be picked up on the next
-`--enrich` run.
+eligible run.
 
 **Eligibility** — only entries with `quality: "generated"` are enriched by
 default. Entries with `quality: "curated"` or `quality: "enriched"` are
-skipped unless `--re-enrich` is passed.
+skipped unless the caller explicitly requests re-enrichment.
 
 ## Progress Reporting
 
@@ -169,8 +165,9 @@ Well-known values (defined in `src/indexer/metadata.ts`):
 | `"curated"` | metadata written or explicitly approved by a human |
 | `"proposed"` | metadata from a proposal awaiting review |
 
-The `"enriched"` marker is set by the indexer after a successful `--enrich`
-pass and prevents re-enrichment on the next run (see LLM Enrichment Pass above).
+The `"enriched"` marker is set by the indexer after a successful metadata
+enrichment pass during plain `akm index` and prevents unnecessary re-enrichment
+on the next run (see LLM Enrichment Pass above).
 
 ## Utility Recomputation
 

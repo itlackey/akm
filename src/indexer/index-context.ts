@@ -44,8 +44,6 @@ export interface IndexRunContext {
   sourceDirs: string[];
   /** Whether to perform a full rebuild (true) or incremental update (false). */
   full: boolean;
-  /** Whether LLM enrichment passes are enabled. */
-  enrich: boolean;
   /** Whether to re-enrich already-enriched entries. */
   reEnrich: boolean;
   /** Primary stash directory. */

@@ -106,8 +106,8 @@ akm setup
 The setup wizard configures AKM in two steps:
 
 **Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm index --enrich`,
-`akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
+Configures the OpenAI-compatible endpoint and model used for `akm index`
+metadata enhancement, `akm remember --enrich`, and `akm curate --rerank`. Supports Ollama,
 OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
 
 **Step 2 — Agent connection** (for agentic commands)
@@ -129,9 +129,8 @@ and builds the search index.
 Build or refresh the search index.
 
 ```sh
-akm index            # Incremental (only changed directories; no LLM enrichment)
-akm index --full     # Full rebuild; no LLM enrichment
-akm index --enrich   # Enable index-time LLM passes (memory/graph/enrichment)
+akm index            # Incremental (only changed directories)
+akm index --full     # Full rebuild
 akm index --verbose  # Print phase progress to stderr
 ```
 
@@ -142,11 +141,11 @@ semantic-search settings, and phase-by-phase progress to stderr while the
 index is being built. Malformed workflow assets are skipped with file-path
 warnings instead of aborting the full run.
 
-By default, `akm index` does not run any index-time LLM passes even when
-`akm.llm` is configured. Pass `--enrich` to enable memory inference, graph
-extraction, and metadata enrichment for that run. In text mode, the default
-CLI UI shows a spinner with processed-versus-total source counts; structured
-output modes (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
+`akm index` always rebuilds the search index and keeps metadata in the index.
+When `akm.llm` is configured and the per-pass gate allows it, metadata
+enhancement runs during indexing. In text mode, the default CLI UI shows a
+spinner with processed-versus-total source counts; structured output modes
+(`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 
 ### info
 
@@ -208,7 +207,7 @@ Common flags:
 | `--out <path>` | Required for `export`; output file path |
 | `--format json\|jsonl` | Export format for `export` (default `json`) |
 
-If no graph artifact exists yet, run `akm index --enrich` first.
+If no graph artifact exists yet, run the flow that refreshes graph extraction for your stash.
 
 Search ranking can optionally use graph-derived confidence-weighted boosts.
 Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
@@ -811,10 +810,11 @@ Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
 
 **Zero-flag form** (`akm remember "body"`) writes a bare memory with no
-frontmatter — existing agent scripts keep working unchanged. Any use of
-`--tag` / `--expires` / `--source` / `--auto` / `--enrich` triggers a
-required-field check: if `tags` cannot be derived, the command rejects
-*before* writing the file, so you never end up with an orphan.
+frontmatter — existing agent scripts keep working unchanged. `--tag` /
+`--expires` / `--source` still trigger the required-field check: if `tags`
+cannot be derived, the command rejects *before* writing the file, so you
+never end up with an orphan. `--auto` and `--enrich` are fail-soft metadata
+helpers: if they derive nothing, the memory still writes successfully.
 
 **Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
 of the tag-required check. They write the four canonical top-level

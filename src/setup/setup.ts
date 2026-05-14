@@ -974,7 +974,7 @@ export interface SmallModelConnectionResult {
 }
 
 /**
- * Step 1/2: Configure the small model connection used for enrichment features.
+ * Step 1/2: Configure the small model connection used for metadata and bounded LLM features.
  *
  * Detects Ollama automatically and pre-selects it. The user may also choose
  * OpenAI, LM Studio, a custom endpoint, or skip the step entirely.
@@ -985,7 +985,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
   p.note(
     [
       "This connection is used for background processing:",
-      "  • akm index --enrich  (metadata enrichment, memory inference, graph extraction)",
+      "  • akm index           (metadata enhancement)",
       "  • akm distill         (lesson distillation)",
       "  • akm remember --enrich (memory compression)",
       "  • akm curate --rerank   (search reranking)",
@@ -1041,7 +1041,7 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     p.note(
       [
         "Enrichment features disabled:",
-        "  • akm index --enrich  — LLM metadata enrichment",
+        "  • akm index           — metadata enhancement disabled",
         "  • akm distill         — lesson generation",
         "  • akm remember --enrich",
         "  • akm curate --rerank",
@@ -1395,9 +1395,9 @@ function printCapabilitySummary(smallModelSkipped: boolean, agentConfigured: boo
   lines.push("  ✓ akm search, akm curate, akm show — always available");
 
   if (!smallModelSkipped) {
-    lines.push("  ✓ akm index --enrich, akm distill, akm remember — small model configured");
+    lines.push("  ✓ akm index, akm distill, akm remember — small model configured");
   } else {
-    lines.push("  ✗ akm index --enrich, akm distill, akm remember — run `akm setup` to enable");
+    lines.push("  ✗ akm index, akm distill, akm remember — run `akm setup` to enable");
   }
 
   if (agentConfigured) {

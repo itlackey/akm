@@ -54,16 +54,20 @@ function createTmpDir(prefix = "akm-ranking-"): string {
 
 let originalXdgCacheHome: string | undefined;
 let originalXdgConfigHome: string | undefined;
+let originalAkmDataDir: string | undefined;
 let originalAkmStashDir: string | undefined;
 let testCacheDir: string;
 let testConfigDir: string;
+let testDataDir: string;
 
 beforeAll(async () => {
   originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  originalAkmDataDir = process.env.AKM_DATA_DIR;
   originalAkmStashDir = process.env.AKM_STASH_DIR;
   testCacheDir = createTmpDir("akm-ranking-cache-");
   testConfigDir = createTmpDir("akm-ranking-config-");
+  testDataDir = createTmpDir("akm-ranking-data-");
 
   // Materialise the shared ranking-baseline fixture into a tmp dir.
   // The suite indexes it in-process against isolated XDG dirs so the
@@ -75,6 +79,7 @@ beforeAll(async () => {
 
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_CONFIG_HOME = testConfigDir;
+  process.env.AKM_DATA_DIR = testDataDir;
   process.env.AKM_STASH_DIR = FIXTURE_STASH;
 
   saveConfig({
@@ -91,6 +96,8 @@ afterAll(() => {
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (originalXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdgConfigHome;
+  if (originalAkmDataDir === undefined) delete process.env.AKM_DATA_DIR;
+  else process.env.AKM_DATA_DIR = originalAkmDataDir;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
 

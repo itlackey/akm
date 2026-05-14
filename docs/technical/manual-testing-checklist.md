@@ -1,6 +1,6 @@
 # Manual Testing Checklist
 
-Use this checklist to exercise akm `v0.7.0` in an isolated sandbox before
+Use this checklist to exercise akm `v0.8.x` in an isolated sandbox before
 cutting a release. Pair it with `testing-workflow.md` and
 `test-coverage-guide.md`.
 
@@ -11,16 +11,16 @@ cover:
 - prompt/usage flows
 - migration/error envelopes
 - file-system side effects
-- commands added in `0.7.0` (`history`, `events`, `reflect`, `propose`,
-  `proposal`, `distill`)
+- newer command surfaces and maintenance flows (`history`, `events`, `graph`,
+  `improve`, `propose`, `proposals`, `tasks`, `wiki`, `vault`)
 
 Time budget:
 
 - ~35 minutes for the core offline/local pass
 - +10 to 15 minutes for network-backed source and registry checks
-- +10 to 15 minutes for optional agent/LLM-backed `0.7.0` flows
+- +10 to 15 minutes for optional agent/LLM-backed `0.8.x` flows
 
-This document was rebuilt against current `0.7.0-rc1` behavior on 2026-04-30.
+This document was rebuilt against current `0.8.x` behavior on 2026-05-13.
 
 ---
 
@@ -31,8 +31,8 @@ your real config, real stash, real shell profile, or a globally installed `akm`
 you care about.
 
 - [ ] Use a disposable shell session.
-- [ ] Isolate `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, and
-      `AKM_STASH_DIR` under one temp directory.
+- [ ] Isolate `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`,
+      `AKM_DATA_DIR`, and `AKM_STASH_DIR` under one temp directory.
 - [ ] Invoke the CLI from this repo (`bun ./src/cli.ts` or the freshly built
       binary from this branch), not a previously installed global `akm`.
 - [ ] Only add disposable local paths, test registries, and remotes you control.
@@ -61,8 +61,9 @@ export HOME="$AKM_SANDBOX/home"
 export XDG_CONFIG_HOME="$AKM_SANDBOX/config"
 export XDG_CACHE_HOME="$AKM_SANDBOX/cache"
 export XDG_DATA_HOME="$AKM_SANDBOX/data"
+export AKM_DATA_DIR="$AKM_SANDBOX/data-home"
 export AKM_STASH_DIR="$AKM_SANDBOX/stash"
-mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$AKM_STASH_DIR"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$AKM_DATA_DIR" "$AKM_STASH_DIR"
 
 # 2.3 Convenience alias for this shell only
 alias akm='bun ./src/cli.ts'
@@ -73,7 +74,7 @@ akm config path --all
 ```
 
 - [ ] `akm setup --yes` reports a stash path under `$AKM_SANDBOX`.
-- [ ] `akm config path --all` reports config, stash, cache, and index paths
+- [ ] `akm config path --all` reports config, stash, cache, and index/data paths
       under `$AKM_SANDBOX`.
 
 ---
@@ -89,8 +90,8 @@ cp -r tests/fixtures/stashes/ranking-baseline/* "$AKM_STASH_DIR/"
 ls "$AKM_STASH_DIR"
 ```
 
-- [ ] Expected top-level dirs exist:
-      `agents commands knowledge memories scripts skills vaults wikis workflows`.
+- [ ] Expected fixture top-level entries exist:
+      `agents commands knowledge scripts skills MANIFEST.json`.
 
 Fixture refs worth using throughout this doc:
 
@@ -118,8 +119,9 @@ Fixture refs worth using throughout this doc:
       `setup`, `init`, `index`, `info`, `add`, `list`, `remove`, `update`,
       `upgrade`, `search`, `curate`, `show`, `workflow`, `remember`, `import`,
       `save`, `clone`, `registry`, `config`, `enable`, `disable`, `feedback`,
-      `history`, `events`, `proposal`, `reflect`, `propose`, `distill`, `help`,
-      `hints`, `completions`, `vault`, `wiki`.
+      `history`, `events`, `agent`, `lint`, `improve`, `propose`, `proposals`,
+      `accept`, `reject`, `diff`, `help`, `hints`, `completions`, `vault`,
+      `wiki`, `graph`, `tasks`.
 - [ ] `akm enable --help` and `akm disable --help` mention `skills.sh` only.
 - [ ] `akm upgrade --check` returns structured version/install-method info and
       does not modify the sandbox or the host install.
@@ -164,7 +166,7 @@ Fixture refs worth using throughout this doc:
 - [ ] Re-run `akm index` with no flags; incremental indexing succeeds and keeps
       entry count stable.
 
-### 5.1 Scoped memory search (`0.7.0`)
+### 5.1 Scoped memory search
 
 - [ ] Create one scoped memory:
       `akm remember "scoped note" --name scoped-note --user alice --agent claude`.
@@ -178,8 +180,8 @@ Fixture refs worth using throughout this doc:
 
 - [ ] `akm show skill:k8s-deploy` returns structured content including
       `type`, `name`, `action`, and `content`.
-- [ ] `akm show skill:k8s-deploy --format text` renders the markdown body
-      directly.
+- [ ] `akm show skill:k8s-deploy --format text` renders a plain-text view that
+      includes header/metadata lines plus the body content.
 - [ ] `akm show skill:k8s-deploy --detail summary` returns the compact summary
       shape.
 - [ ] `akm show skill:k8s-deploy --detail agent` returns the action-oriented
@@ -198,7 +200,7 @@ Fixture refs worth using throughout this doc:
 - [ ] `akm show skill:does-not-exist` fails with `ASSET_NOT_FOUND`, includes a
       structured JSON envelope on stderr, and exits non-zero.
 
-### 6.1 Scoped show (`0.7.0`)
+### 6.1 Scoped show
 
 - [ ] `akm show memory:scoped-note --scope user=alice` resolves the memory.
 - [ ] `akm show memory:scoped-note --scope user=bob` fails to resolve it.
@@ -267,8 +269,8 @@ These cover the shared write-target path and git-backed save behavior.
 - [ ] `akm remember "Found curl pipe" --name auto-note --auto` succeeds only if
       heuristic tagging derives tags; written frontmatter includes derived data.
 - [ ] `akm remember "Long meeting notes" --name enrich-note --enrich` either
-      enriches successfully when LLM config exists or fails/soft-fails in the
-      documented structured way without a stack trace.
+      enriches successfully when LLM config exists or fails in a documented,
+      structured way without a stack trace.
 - [ ] `akm remember "scope only" --name scoped-only --user alice --run run-42`
       succeeds without tags and persists scope frontmatter.
 
@@ -413,7 +415,8 @@ Workflows now include authoring, validation, execution, and recovery flows.
       overwriting.
 - [ ] `akm wiki ingest my-wiki` prints the ingest workflow and does not mutate
       content.
-- [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass.
+- [ ] `akm wiki lint my-wiki` returns deterministic findings or a clean pass;
+      findings may exit non-zero but should still be structured and not crash.
 - [ ] `akm show wiki:my-wiki` returns the same summary class as
       `akm wiki show my-wiki`.
 - [ ] `akm wiki remove my-wiki --force` removes the wiki.
@@ -447,7 +450,7 @@ that guarantee carefully.
 
 ## 14. Feedback, History, and Events
 
-These are the main auditability additions/expansions to validate in `0.7.0`.
+These are core auditability flows to validate in `0.8.x`.
 
 - [ ] `akm feedback skill:k8s-deploy --positive` succeeds.
 - [ ] `akm feedback skill:k8s-deploy --negative --note "not specific enough"`
@@ -467,7 +470,7 @@ These are the main auditability additions/expansions to validate in `0.7.0`.
 
 ---
 
-## 15. Proposal Queue and Agent-Backed `0.7.0` Commands
+## 15. Proposal Queue and Agent-Backed Commands
 
 These require configured external agent profiles and, for `distill`, LLM config.
 Run only inside the sandbox.
@@ -521,13 +524,13 @@ Run only inside the sandbox.
 - [ ] `akm help migrate 9.9.9` prints a graceful fallback listing available
       notes.
 
-### 16.1 Legacy config migration
+### 16.1 Legacy config rejection
 
 - [ ] Replace `$XDG_CONFIG_HOME/akm/config.json` with one using legacy
       `stashes[]`.
-- [ ] `akm list` succeeds and warns that `stashes` is deprecated in favor of
-      `sources`.
-- [ ] Running a config write command rewrites persisted config to `sources[]`.
+- [ ] `akm list` fails with a structured `INVALID_CONFIG_FILE` error telling you
+      to rename `stashes[]` to `sources`.
+- [ ] Restore a valid config before continuing.
 
 ### 16.2 OpenViking rejection
 
@@ -543,7 +546,8 @@ Run only inside the sandbox.
 Spot-check that failures always arrive as structured JSON on stderr with
 `{ok:false, error, code?, hint?}` and exit non-zero.
 
-- [ ] `akm search` with no query fails with `MISSING_REQUIRED_ARGUMENT`.
+- [ ] `akm search` with no query should fail with `MISSING_REQUIRED_ARGUMENT`;
+      if it returns filler results instead, log that as a bug.
 - [ ] `akm curate ""` fails with `MISSING_REQUIRED_ARGUMENT`.
 - [ ] `akm show foo` fails with a ref-parse usage error.
 - [ ] `akm config set sources weird-thing` fails with a structured JSON/usage
@@ -587,7 +591,7 @@ done
 
 ```sh
 rm -rf "$AKM_SANDBOX"
-unset AKM_SANDBOX HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME AKM_STASH_DIR
+unset AKM_SANDBOX HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME AKM_DATA_DIR AKM_STASH_DIR
 unalias akm
 ```
 

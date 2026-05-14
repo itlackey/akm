@@ -34,9 +34,7 @@ import {
   upsertWorkflowDocument,
   warnIfVecMissing,
 } from "./db";
-import { runGraphExtractionPass } from "./graph-extraction";
 import type { IndexRunContext } from "./index-context";
-import { runMemoryInferencePass } from "./memory-inference";
 import {
   applyCuratedFrontmatter,
   applyWikiFrontmatter,
@@ -107,7 +105,6 @@ export interface IndexProgressEvent {
 interface IndexOptions {
   stashDir?: string;
   full?: boolean;
-  enrich?: boolean;
   /**
    * When true, re-enrich all entries regardless of quality (including already
    * `"enriched"` entries). Default: false — already-enriched entries are skipped.
@@ -182,96 +179,6 @@ async function runSourceCachePhase(ctx: IndexRunContext): Promise<void> {
 }
 
 /**
- * Memory inference phase: run the LLM-backed memory-inference pass so any
- * new derived-memory children are written before the walk discovers them.
- */
-async function runMemoryInferencePhase(ctx: IndexRunContext): Promise<void> {
-  const { db, config, sources, signal, enrich, reEnrich, onProgress } = ctx;
-
-  if (!enrich) {
-    onProgress({
-      phase: "llm",
-      message: "LLM passes disabled; rerun with --enrich to enable inference and enrichment.",
-    });
-    return;
-  }
-
-  try {
-    onProgress({ phase: "llm", message: "Starting memory inference..." });
-    const inferenceResult = await runMemoryInferencePass(config, sources, signal, db, reEnrich, (event) => {
-      onProgress({
-        phase: "llm",
-        message:
-          `Memory inference ${event.processed}/${event.total}` +
-          (event.currentRef ? ` ${event.currentRef}` : "") +
-          `; wrote ${event.writtenFacts}, skipped ${event.skippedNoFacts}.`,
-        processed: event.processed,
-        total: event.total,
-      });
-    });
-    if (inferenceResult.writtenFacts > 0 || inferenceResult.skippedNoFacts > 0) {
-      onProgress({
-        phase: "llm",
-        message:
-          `Memory inference reviewed ${inferenceResult.considered} ` +
-          `${inferenceResult.considered === 1 ? "memory" : "memories"}; wrote ` +
-          `${inferenceResult.writtenFacts} derived memor${inferenceResult.writtenFacts === 1 ? "y" : "ies"} ` +
-          `from ${inferenceResult.splitParents} parent memor${inferenceResult.splitParents === 1 ? "y" : "ies"}` +
-          (inferenceResult.skippedNoFacts > 0
-            ? `; skipped ${inferenceResult.skippedNoFacts} ${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} with unusable LLM responses`
-            : "") +
-          ".",
-      });
-    }
-    if (inferenceResult.skippedNoFacts > 0) {
-      warn(
-        `Memory inference skipped ${inferenceResult.skippedNoFacts} ` +
-          `${inferenceResult.skippedNoFacts === 1 ? "memory" : "memories"} because the LLM returned empty, invalid, or incomplete derived payloads. ` +
-          "Check your model and token budget.",
-      );
-    }
-  } catch (err) {
-    warn(`Memory inference pass aborted: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-/**
- * Graph extraction phase: run the LLM-backed entity/relation graph pass after
- * memory inference so any new atomic-fact children are included in the graph.
- */
-async function runGraphExtractionPhase(ctx: IndexRunContext): Promise<void> {
-  const { db, config, sources, signal, enrich, reEnrich, onProgress } = ctx;
-
-  if (!enrich) return;
-
-  try {
-    onProgress({ phase: "llm", message: "Starting graph extraction..." });
-    const graphResult = await runGraphExtractionPass(config, sources, signal, db, reEnrich, (event) => {
-      onProgress({
-        phase: "llm",
-        message:
-          `Graph extraction ${event.processed}/${event.total}` +
-          (event.currentPath ? ` ${event.currentPath}` : "") +
-          `; extracted ${event.extracted}, entities ${event.totalEntities}, relations ${event.totalRelations}.`,
-        processed: event.processed,
-        total: event.total,
-      });
-    });
-    if (graphResult.written) {
-      onProgress({
-        phase: "llm",
-        message:
-          `Graph extraction wrote ${graphResult.totalEntities} entit${graphResult.totalEntities === 1 ? "y" : "ies"} and ${graphResult.totalRelations} relation${graphResult.totalRelations === 1 ? "" : "s"} from ${graphResult.extracted} file${graphResult.extracted === 1 ? "" : "s"}; ` +
-          `coverage ${Math.round(graphResult.quality.extractionCoverage * 100)}%, density ${graphResult.quality.density}.`,
-      });
-    }
-    ctx.graphExtractionResult = graphResult;
-  } catch (err) {
-    warn(`Graph extraction pass aborted: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-/**
  * Walk phase: scan the filesystem, generate metadata, and persist entries to
  * the database. Also kicks off LLM enrichment for directories that need it.
  *
@@ -279,19 +186,7 @@ async function runGraphExtractionPhase(ctx: IndexRunContext): Promise<void> {
  * `ctx.walkWarnings`, and `ctx.dirsNeedingLlm` for downstream phases.
  */
 async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
-  const {
-    db,
-    sources,
-    isIncremental,
-    builtAtMs,
-    hadRemovedSources,
-    full,
-    enrich,
-    reEnrich,
-    signal,
-    onProgress,
-    config,
-  } = ctx;
+  const { db, sources, isIncremental, builtAtMs, hadRemovedSources, full, reEnrich, signal, onProgress, config } = ctx;
 
   throwIfAborted(signal);
 
@@ -340,13 +235,12 @@ async function runWalkPhase(ctx: IndexRunContext): Promise<void> {
   throwIfAborted(signal);
 
   // LLM enrichment for directories that need it
-  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, enrich, reEnrich);
+  await enhanceDirsWithLlm(db, config, dirsNeedingLlm, onProgress, signal, true, reEnrich);
   onProgress({
     phase: "llm",
-    message:
-      enrich && resolveIndexPassLLM("enrichment", config)
-        ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
-        : "LLM enhancement disabled.",
+    message: resolveIndexPassLLM("enrichment", config)
+      ? `LLM enhancement reviewed ${dirsNeedingLlm.length} ${dirsNeedingLlm.length === 1 ? "directory" : "directories"}.`
+      : "LLM enhancement disabled.",
   });
 
   ctx.timing.tLlmEnd = Date.now();
@@ -444,7 +338,6 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
   const stashDir = options?.stashDir || resolveStashDir();
   const onProgress = options?.onProgress ?? (() => {});
   const signal = options?.signal;
-  const enrich = options?.enrich === true;
   const reEnrich = options?.reEnrich === true;
   const full = options?.full === true;
 
@@ -480,7 +373,6 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       sources: allSourceEntries,
       sourceDirs: allSourceDirs,
       full,
-      enrich,
       reEnrich,
       stashDir,
       onProgress,
@@ -512,15 +404,13 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
         sourcesCount: allSourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
         embeddingProvider: getEmbeddingProvider(config.embedding),
-        llmEnabled: enrich && !!resolveIndexPassLLM("enrichment", config),
+        llmEnabled: !!resolveIndexPassLLM("enrichment", config),
         vecAvailable: isVecAvailable(db),
       }),
     });
 
     // ── Phase sequence ───────────────────────────────────────────────────────
     await runSourceCachePhase(ctx);
-    await runMemoryInferencePhase(ctx);
-    await runGraphExtractionPhase(ctx);
     await runWalkPhase(ctx);
     await runEmbeddingPhase(ctx);
     await runFinalizePhase(ctx);
@@ -542,7 +432,6 @@ export async function akmIndex(options?: IndexOptions): Promise<IndexResponse> {
       directoriesSkipped: ctx.skippedDirs,
       ...(ctx.walkWarnings.length > 0 ? { warnings: ctx.walkWarnings } : {}),
       verification,
-      ...(ctx.graphExtractionResult ? { graphQuality: ctx.graphExtractionResult.quality } : {}),
       timing: {
         totalMs: Date.now() - timing.t0,
         walkMs: timing.tWalkEnd - timing.tWalkStart,
@@ -1081,11 +970,9 @@ async function enhanceDirsWithLlm(
   }>,
   onProgress?: (event: IndexProgressEvent) => void,
   signal?: AbortSignal,
-  enrich = false,
+  _enrich = false,
   reEnrich = false,
 ): Promise<void> {
-  if (!enrich) return;
-
   // Resolve per-pass LLM config via the unified shim. Returns undefined when
   // either no `akm.llm` is configured or the user opted this pass out via
   // `index.enrichment.llm = false`. (#208)
@@ -1260,7 +1147,7 @@ async function enhanceDirsWithLlm(
 
   if (deadlineHit) {
     warn(
-      "[akm] LLM enrichment budget exceeded — re-run `akm index --enrich` to continue. Increase llm.timeoutMs for a larger budget.",
+      "[akm] LLM enrichment budget exceeded. Re-run `akm index` to continue. Increase llm.timeoutMs for a larger budget.",
     );
   }
 
