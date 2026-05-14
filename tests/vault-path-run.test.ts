@@ -130,7 +130,7 @@ describe("vault run", () => {
   });
 });
 
-describe("vault set --stdin", () => {
+describe("vault set (stdin default)", () => {
   test("reads value from stdin and writes it to the vault", () => {
     const stashDir = makeTempDir("akm-vault-stdin-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
@@ -138,7 +138,7 @@ describe("vault set --stdin", () => {
     fs.writeFileSync(vaultPath, "", "utf8");
 
     const { stdout, stderr, status } = runCli(
-      ["vault", "set", "vault:prod", "DB_URL", "--stdin"],
+      ["vault", "set", "vault:prod", "DB_URL"],
       { AKM_STASH_DIR: stashDir },
       "postgres://secret@host/db",
     );
@@ -158,43 +158,11 @@ describe("vault set --stdin", () => {
     const vaultPath = path.join(stashDir, "vaults", "prod.env");
     fs.writeFileSync(vaultPath, "", "utf8");
 
-    runCli(["vault", "set", "vault:prod", "KEY", "--stdin"], { AKM_STASH_DIR: stashDir }, "myvalue\n");
+    runCli(["vault", "set", "vault:prod", "KEY"], { AKM_STASH_DIR: stashDir }, "myvalue\n");
 
     const contents = fs.readFileSync(vaultPath, "utf8");
     expect(contents).not.toContain("myvalue\n=");
     expect(contents).toContain("KEY=myvalue");
-  });
-
-  test("errors when --stdin is combined with a positional value", () => {
-    const stashDir = makeTempDir("akm-vault-stdin-err-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const { stderr, status } = runCli(
-      ["vault", "set", "vault:prod", "KEY", "oops", "--stdin"],
-      { AKM_STASH_DIR: stashDir },
-      "fromstdin",
-    );
-
-    expect(status).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-  });
-
-  test("errors when --stdin and --from-env are both set", () => {
-    const stashDir = makeTempDir("akm-vault-mutex-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const { stderr, status } = runCli(
-      ["vault", "set", "vault:prod", "KEY", "--stdin", "--from-env", "MY_VAR"],
-      { AKM_STASH_DIR: stashDir, MY_VAR: "val" },
-      "fromstdin",
-    );
-
-    expect(status).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
   });
 });
 
@@ -233,20 +201,5 @@ describe("vault set --from-env", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("DOES_NOT_EXIST_XYZ");
-  });
-
-  test("errors when --from-env is combined with a positional value", () => {
-    const stashDir = makeTempDir("akm-vault-fromenv-err-");
-    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "vaults", "prod.env"), "", "utf8");
-
-    const { stderr, status } = runCli(["vault", "set", "vault:prod", "KEY", "oops", "--from-env", "AKM_VALUE"], {
-      AKM_STASH_DIR: stashDir,
-      AKM_VALUE: "val",
-    });
-
-    expect(status).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
   });
 });

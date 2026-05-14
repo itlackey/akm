@@ -2371,25 +2371,15 @@ const vaultSetCommand = defineCommand({
   meta: {
     name: "set",
     description:
-      'Set a key in a vault. Value is written to disk and never echoed back. Accepts KEY=VALUE combined form or separate KEY VALUE args. Use --stdin or --from-env to avoid passing secrets via argv. Optionally attach a comment with --comment "description".',
+      'Set a key in a vault. Value is read from stdin by default (never via argv, avoiding /proc/cmdline exposure). Use --from-env <VAR> to read from an environment variable instead. Optionally attach a comment with --comment "description".',
   },
   args: {
     ref: { type: "positional", description: "Vault ref (e.g. vault:prod or just prod)", required: true },
-    key: { type: "positional", description: "Key name (e.g. DB_URL) or KEY=VALUE combined form", required: true },
-    value: {
-      type: "positional",
-      description: "Value to store (omit when using KEY=VALUE combined form, --stdin, or --from-env)",
-      required: false,
-    },
+    key: { type: "positional", description: "Key name (e.g. DB_URL)", required: true },
     comment: { type: "string", description: "Optional comment written above the key line", required: false },
-    stdin: {
-      type: "boolean",
-      description: "Read value from stdin instead of argv — avoids /proc/cmdline exposure",
-      default: false,
-    },
     "from-env": {
       type: "string",
-      description: "Read value from the named environment variable instead of argv — avoids /proc/cmdline exposure",
+      description: "Read value from the named environment variable instead of stdin",
     },
   },
   run({ args }) {
@@ -2397,48 +2387,25 @@ const vaultSetCommand = defineCommand({
       const { setKey } = await import("./commands/vault.js");
       const { name, absPath, source } = resolveVaultPath(args.ref);
 
-      const useStdin = getHyphenatedBoolean(args, "stdin");
       const fromEnv = getHyphenatedArg<string>(args, "from-env");
 
-      if (useStdin && fromEnv !== undefined) {
-        throw new UsageError("--stdin and --from-env are mutually exclusive.", "INVALID_FLAG_VALUE");
-      }
-
-      let realKey: string;
       let realValue: string;
-
-      if (useStdin || fromEnv !== undefined) {
-        if (args.value !== undefined && args.value !== "") {
-          throw new UsageError(
-            "Positional value argument cannot be combined with --stdin or --from-env.",
-            "INVALID_FLAG_VALUE",
-          );
+      if (fromEnv !== undefined) {
+        const envVal = process.env[fromEnv];
+        if (envVal === undefined) {
+          throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
         }
-        realKey = args.key;
-        if (useStdin) {
-          const chunks: Uint8Array[] = [];
-          for await (const chunk of Bun.stdin.stream()) {
-            chunks.push(chunk);
-          }
-          realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
-        } else {
-          const envVal = process.env[fromEnv as string];
-          if (envVal === undefined) {
-            throw new UsageError(`Environment variable "${fromEnv}" is not set.`, "INVALID_FLAG_VALUE");
-          }
-          realValue = envVal;
-        }
-      } else if ((args.value === undefined || args.value === "") && args.key.includes("=")) {
-        const eqIdx = args.key.indexOf("=");
-        realKey = args.key.slice(0, eqIdx);
-        realValue = args.key.slice(eqIdx + 1);
+        realValue = envVal;
       } else {
-        realKey = args.key;
-        realValue = args.value ?? "";
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of Bun.stdin.stream()) {
+          chunks.push(chunk);
+        }
+        realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
       }
 
-      setKey(absPath, realKey, realValue, args.comment);
-      output("vault-set", { ref: makeVaultRef(name, source), key: realKey, path: absPath });
+      setKey(absPath, args.key, realValue, args.comment);
+      output("vault-set", { ref: makeVaultRef(name, source), key: args.key, path: absPath });
     });
   },
 });
