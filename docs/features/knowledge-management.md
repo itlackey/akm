@@ -127,8 +127,14 @@ structured output**. Only key names are shown. Values reach processes through
 
 ```sh
 akm vault create prod
-akm vault set vault:prod DATABASE_URL https://db.example.com
-akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+
+# Values are read from stdin by default — never via argv
+printf '%s' "$DB_URL"   | akm vault set vault:prod DATABASE_URL
+printf '%s' "$API_KEY"  | akm vault set vault:prod API_KEY --comment "Rotate every 90 days"
+
+# Or from an env var
+AKM_VALUE="$TOKEN" akm vault set vault:prod TOKEN --from-env AKM_VALUE
+
 akm vault list
 akm vault path vault:prod
 
@@ -140,15 +146,16 @@ akm vault run vault:prod -- env
 akm vault run vault:prod/API_KEY -- printenv API_KEY
 ```
 
-Vault files are stored at mode 0600 under `vaults/` in your stash. The
-`akm show vault:prod` command returns key names and comments, never values.
+Vault files are stored at mode 0600 under `vaults/` in your stash. Values
+**never cross argv** (no `/proc/cmdline` exposure) and never appear in akm's
+structured output — only key names are shown.
 
 **Example: store API endpoint config**
 
 ```sh
 akm vault create staging
-akm vault set vault:staging API_BASE=https://api.staging.example.com
-akm vault set vault:staging AUTH_TOKEN=... --comment "Service account — rotate monthly"
+printf '%s' "https://api.staging.example.com" | akm vault set vault:staging API_BASE
+printf '%s' "$AUTH_TOKEN" | akm vault set vault:staging AUTH_TOKEN --comment "Service account — rotate monthly"
 source "$(akm vault path vault:staging)"
 ```
 

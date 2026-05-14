@@ -1157,9 +1157,8 @@ appear in structured output**. `list` and `show` key metadata only; `path` and
 akm vault list
 akm vault path vault:prod
 akm vault create prod
-akm vault set vault:prod DATABASE_URL https://db.example.com
-akm vault set vault:prod DATABASE_URL=https://db.example.com
-akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
+AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
 akm vault unset vault:prod DATABASE_URL
 source "$(akm vault path vault:prod)"
 akm vault run vault:prod -- env
@@ -1174,7 +1173,7 @@ Subcommands:
 | `path <ref>` | Print the absolute vault file path for direct shell loading |
 | `run <ref[/KEY]> -- <command>` | Run one command with a whole vault or single key injected into the subprocess env |
 | `create <name>` | Create an empty `.env` vault (mode 0600). No-op if it already exists |
-| `set <ref> <KEY> <VALUE>` | Set a key in the vault |
+| `set <ref> <KEY>` | Set a key — reads value from stdin by default, or use `--from-env` |
 | `unset <ref> <KEY>` | Remove a key from the vault |
 
 #### vault list
@@ -1222,14 +1221,17 @@ command exits 0 and reports `created: false` — it never overwrites.
 #### vault set
 
 ```sh
-akm vault set vault:prod DATABASE_URL https://db.example.com
-akm vault set vault:prod DATABASE_URL=https://db.example.com
-akm vault set vault:prod API_KEY=abc123 --comment "Rotate every 90 days"
+# Default: read value from stdin (never crosses argv — no /proc/cmdline exposure)
+printf '%s' "$SECRET" | akm vault set vault:prod DATABASE_URL
+printf '%s' "$SECRET" | akm vault set vault:prod API_KEY --comment "Rotate every 90 days"
+
+# From an environment variable
+AKM_VALUE="$SECRET" akm vault set vault:prod API_KEY --from-env AKM_VALUE
 ```
 
-Both the three-positional form (`<ref> <KEY> <VALUE>`) and the combined
-`KEY=VALUE` form are accepted. The `=` split happens on the first `=` so
-values may themselves contain `=`.
+Values are **never accepted via positional arguments or `KEY=VALUE` form** — both
+were removed to eliminate `/proc/cmdline` secret exposure. The value is always
+read from stdin (default) or from a named environment variable (`--from-env`).
 
 `--comment "<text>"` attaches a `# <text>` comment line immediately above the
 key in the `.env` file. If the key already exists and is being updated, the
@@ -1238,6 +1240,7 @@ preceding comment is also updated. Existing unrelated comments are preserved.
 | Flag | Description |
 | --- | --- |
 | `--comment` | Attach a comment line above the key |
+| `--from-env <VAR>` | Read value from the named environment variable instead of stdin |
 
 #### vault unset
 

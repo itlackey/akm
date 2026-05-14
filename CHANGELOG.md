@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking Changes
 
+- **`vault set` no longer accepts values via argv**: The positional `<VALUE>` argument and the `KEY=VALUE` combined form have been removed. Values must be supplied via stdin (default) or `--from-env <VAR>`. This eliminates `/proc/cmdline` secret exposure. Migrate existing scripts:
+  ```sh
+  # Before
+  akm vault set vault:prod DB_URL postgres://...
+  akm vault set vault:prod DB_URL=postgres://...
+
+  # After
+  printf '%s' "postgres://..." | akm vault set vault:prod DB_URL
+  AKM_VALUE="postgres://..." akm vault set vault:prod DB_URL --from-env AKM_VALUE
+  ```
+
 - **Storage directories**: akm now uses four XDG directories instead of two. Existing data must be migrated using `bun scripts/migrate-storage.ts`. See [docs/migration/v0.7-to-v0.8.md](docs/migration/v0.7-to-v0.8.md) for the full guide.
   - `$DATA` (`~/.local/share/akm`): `index.db`, `workflow.db`, `state.db`, `akm.lock`, `config-backups/`
   - `$STATE` (`~/.local/state/akm`): task run logs
@@ -31,6 +42,10 @@ All notable changes to this project will be documented in this file.
 - **Memory inference and graph extraction moved out of `index`**: The slow memory-maintenance passes now run from `akm improve` after consolidation, not from `akm index`. Automation that previously treated `index` as the owner of all LLM enrichment work must switch to the improve-owned maintenance flow.
 
 ### New Features
+
+- **`vault set` reads from stdin by default**: Values are never passed via argv. `printf '%s' "$SECRET" | akm vault set vault:prod KEY` is the default pattern. Use `--from-env <VAR>` to read from a named environment variable instead.
+
+- **`vault set --from-env <VAR>`**: New flag reads the value from the named environment variable, avoiding both argv and stdin. Errors with exit 2 if the variable is not set.
 
 - **`state.db`**: New migration-safe SQLite database using Flyway-pattern schema migrations (never drops durable rows). Tables: `events`, `proposals`, `task_history`. Located at `$DATA/state.db`.
 
