@@ -1,9 +1,10 @@
 /**
  * Unit tests for `extractGraphFromBodies` — the batched graph-extraction helper.
  *
- * The LLM transport layer (`chatCompletion` in `../src/llm/client`) is stubbed
- * at the module level so no real HTTP calls are made. The real implementation
- * of `extractGraphFromBodies` (and `extractGraphFromBody`) is exercised.
+ * The real `../src/llm/client` transport is exercised against a local Bun HTTP
+ * server so no module-level mocks leak across files under newer Bun versions.
+ * The real implementation of `extractGraphFromBodies` (and
+ * `extractGraphFromBody`) is exercised.
  *
  * Coverage:
  *   (a) Successful 3-asset batch returns 3 correctly-matched results.
@@ -16,13 +17,13 @@
  *   (f) LLM returns non-array JSON → falls back to individual calls for all assets.
  */
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import type { LlmConnectionConfig } from "../src/core/config";
 
-// ── LLM transport stub ───────────────────────────────────────────────────────
+// ── Local LLM server ─────────────────────────────────────────────────────────
 
 /**
- * Call-count and response queues for the stubbed `chatCompletion`.
+ * Call-count and response queues for the local OpenAI-compatible endpoint.
  *
  * Strategy: the user message in a batch call always contains "N=" (from the
  * buildBatchUserPrompt template). We use that to distinguish batch calls from
@@ -34,39 +35,36 @@ let batchRawOnce: string | null = null;
 /** Queue of raw strings for individual (single-asset fallback) calls. */
 const singleRawQueue: string[] = [];
 
-mock.module("../src/llm/client", () => ({
-  chatCompletion: async (_config: unknown, messages: Array<{ role: string; content: string }>) => {
+const llmServer = Bun.serve({
+  port: 0,
+  async fetch(request) {
     chatCallCount++;
-    const userContent = messages.find((m) => m.role === "user")?.content ?? "";
+    const body = (await request.json()) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    const userContent = body.messages?.find((m) => m.role === "user")?.content ?? "";
+    let content = "";
     if (userContent.includes("N=") && batchRawOnce !== null) {
-      const resp = batchRawOnce;
+      content = batchRawOnce;
       batchRawOnce = null;
-      return resp;
+    } else {
+      content = singleRawQueue.shift() ?? "";
     }
-    return singleRawQueue.shift() ?? "";
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content } }],
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
   },
-  // Re-export the real parse utility so graph-extract.ts can use it.
-  parseEmbeddedJsonResponse: <T>(raw: string): T | null => {
-    if (!raw) return null;
-    try {
-      const stripped = raw
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-      return JSON.parse(stripped) as T;
-    } catch {
-      return null;
-    }
-  },
-}));
+});
 
-// Import AFTER mocks so graph-extract picks up the stub.
 const { extractGraphFromBodies, extractGraphFromBody } = await import("../src/llm/graph-extract");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
 const SAMPLE_LLM: LlmConnectionConfig = {
-  endpoint: "http://localhost:11434/v1/chat/completions",
+  endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
   model: "llama3.2",
 };
 
@@ -81,12 +79,8 @@ beforeEach(() => {
   singleRawQueue.length = 0;
 });
 
-afterEach(() => {
-  // no-op — state is reset in beforeEach
-});
-
 afterAll(() => {
-  mock.restore();
+  llmServer.stop(true);
 });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
