@@ -20,8 +20,8 @@ search index. Each source has a **kind** inferred from the input:
 | Input | Kind | Behavior |
 | --- | --- | --- |
 | `~/.claude/skills` | `filesystem` | Indexed in place. Not updatable. Writable by default. |
-| `github:owner/repo` | `git` | Cloned into `~/.local/share/akm/`. Updatable via `akm update`. Read-only by default. |
-| `npm:@scope/stash` | `npm` | Installed into `~/.local/share/akm/`. Updatable via `akm update`. Read-only. |
+| `github:owner/repo` | `git` | Cloned into `~/.cache/akm/registry/`. Updatable via `akm update`. Read-only by default. |
+| `npm:@scope/stash` | `npm` | Installed into `~/.cache/akm/registry/`. Updatable via `akm update`. Read-only. |
 | `https://docs.example.com` | `website` | Crawled, converted to markdown, cached. Refreshed every 12 hours. Read-only. |
 
 The user never picks the kind. `akm add` infers it from the input shape.
@@ -218,12 +218,15 @@ lint passes even if they are indexed.
 
 ## Storage
 
-akm separates **state** from **cache**:
+akm uses four XDG-compliant directories:
 
 | Location | What lives there |
 | --- | --- |
+| `~/.local/share/akm/index.db` | Search index, embeddings, LLM cache, registry index cache |
+| `~/.local/share/akm/workflow.db` | Workflow run state |
 | `~/.local/share/akm/state.db` | Events, proposals, and task history |
-| `~/.local/share/akm/` | Cloned git sources, installed npm sources |
+| `~/.local/share/akm/akm.lock` | Installed stash lockfile |
+| `~/.cache/akm/registry/` | Downloaded stash packages (regenerable) |
 | `~/.config/akm/config.json` | User configuration |
 | `~/akm` (or custom `stashDir`) | Your writable working stash |
 
@@ -231,8 +234,10 @@ Events, proposals, and task history are stored in `state.db` — not in flat
 files or in the search index. The search index (`index.db`) is derived from
 the asset directories and is rebuildable with `akm index`.
 
-Users upgrading from v0.7 should run `scripts/migrate-storage.ts` once to
-move any flat-file state into `state.db`.
+Users upgrading from v0.7 should run `bun scripts/migrate-storage.ts --yes`
+once to move `index.db`, `workflow.db`, and flat-file state to their new
+locations. See [migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md) for
+the full guide.
 
 ## Glossary
 

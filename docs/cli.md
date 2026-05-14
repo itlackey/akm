@@ -6,7 +6,7 @@ brief|normal|full|summary` when you want a different presentation. Errors
 include `error` and `hint` fields.
 
 > **Status legend.** Every command on this page runs today on the
-> current pre-release build. Commands shipped in 0.8.0 — `agent`,
+> current pre-release build. Commands shipped in 0.8.0 — `health`, `agent`,
 > `improve`, `propose`, `proposals`, `accept`, `reject`, and the `feedback --reason`
 > extension — carry an **Available since 0.8.0** marker so you can tell at
 > a glance which surface arrived in that release. The locked v1.0 surface
@@ -178,6 +178,7 @@ Use `akm info` to verify that semantic search is working after setup.
 
 ### health
 
+**Status: Available since 0.8.0.**
 Check akm runtime health, durable state, and recent improve-loop telemetry.
 
 ```sh

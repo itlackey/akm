@@ -659,7 +659,9 @@ the variables that are read directly by the CLI.
 | Variable | Purpose | Default | Notes |
 | --- | --- | --- | --- |
 | `AKM_CONFIG_DIR` | Override the platform config directory. | `~/.config/akm` (XDG) / `%APPDATA%\akm` | Overrides the table at the top of this page. |
-| `AKM_CACHE_DIR` | Override the platform cache directory used for indexes, registry mirrors, and bench tmp roots. | `~/.cache/akm` (XDG) | Read at startup; takes precedence over `XDG_CACHE_HOME`. |
+| `AKM_DATA_DIR` | Override the platform data directory used for durable databases (`index.db`, `workflow.db`, `state.db`, `akm.lock`). | `~/.local/share/akm` (XDG) / `%LOCALAPPDATA%\akm\data` | Takes precedence over `XDG_DATA_HOME`. Set explicitly in CI if you previously relied on `AKM_CONFIG_DIR` as a data-dir fallback (removed in 0.8.0). |
+| `AKM_STATE_DIR` | Override the platform state directory used for task run logs. | `~/.local/state/akm` (XDG) / `%LOCALAPPDATA%\akm\state` | Takes precedence over `XDG_STATE_HOME`. |
+| `AKM_CACHE_DIR` | Override the platform cache directory used for registry mirrors, binary cache, and other regenerable data. | `~/.cache/akm` (XDG) | Read at startup; takes precedence over `XDG_CACHE_HOME`. |
 | `AKM_STASH_DIR` | Override the working stash directory. | `config.stashDir` or `~/.akm` | Per-invocation override; never persisted. |
 | `AKM_EMBED_API_KEY` | API key applied to `embedding` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |
 | `AKM_LLM_API_KEY` | API key applied to `llm` config when `apiKey` is unset. | — | Preferred over storing the key in `config.json`. |

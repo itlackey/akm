@@ -174,8 +174,8 @@ requiring explicit prompts.
 
 ## Step 3: Add Metadata
 
-Metadata makes your stash searchable. In this pre-release project, prefer
-metadata that travels with the asset itself.
+Metadata makes your stash searchable. Prefer metadata that travels with the
+asset itself.
 
 ### Preferred: inline metadata
 
@@ -410,13 +410,11 @@ after the working stash.
 
 - **Use frontmatter in markdown assets.** A `description` in frontmatter is
   extracted automatically with high confidence (0.9), making your commands,
-  agents, and knowledge documents more discoverable without needing a legacy
-  `.stash.json` sidecar.
+  agents, and knowledge documents more discoverable.
 
 - **Use structured header comments for scripts.** `.sh`, `.ts`, `.py`, etc. get
   strong results from good filenames plus leading comments and tags like
-  `@param`, `@run`, `@setup`, and `@cwd`. Treat `.stash.json` as a last-resort
-  legacy fallback.
+  `@param`, `@run`, `@setup`, and `@cwd`.
 
 - **Test the search experience.** After installing your stash, search for it
   using the terms you expect users to try. If results are poor, improve the
