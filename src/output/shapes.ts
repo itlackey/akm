@@ -60,6 +60,7 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "graph-summary":
     case "graph-entities":
     case "graph-relations":
+    case "graph-related":
     case "graph-export":
       return result;
     // Identity-passthrough commands — registered here so the registry stays
@@ -547,6 +548,7 @@ export function shapeShowOutput(
       "steps",
       "keys",
       "comments",
+      "related",
     ]);
   }
   if (detail === "summary") {
@@ -562,6 +564,7 @@ export function shapeShowOutput(
       "origin",
       "keys",
       "comments",
+      "related",
     ]);
   }
 
@@ -588,6 +591,7 @@ export function shapeShowOutput(
     "activeRun",
     "keys",
     "comments",
+    "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
     "path",

@@ -69,7 +69,7 @@ export interface GraphFileNode {
   type: string;
   /** SHA-256 hash of the parsed markdown body used for staleness checks. */
   bodyHash?: string;
-  /** Entities surfaced by the LLM for this file. Lower-cased before matching. */
+  /** Entities surfaced by the LLM for this file. */
   entities: string[];
   /** Relations the LLM surfaced from this file's body. */
   relations: GraphRelation[];
@@ -488,134 +488,121 @@ export async function runGraphExtractionPass(
     // before chunking so they don't consume LLM tokens in the batch call.
     const rawResults: ExtractionRecord[] = new Array(eligible.length).fill(undefined);
 
-    for (let start = 0; start < eligible.length; start += batchSize) {
-      if (signal?.aborted) break;
-      const chunk = eligible.slice(start, start + batchSize);
+    const chunkStarts: number[] = [];
+    for (let start = 0; start < eligible.length; start += batchSize) chunkStarts.push(start);
 
-      // Pre-resolve cache hits for this chunk; track which positions need LLM.
-      const bodyHashes: string[] = chunk.map((c) => computeBodyHash(c.body));
-      const needsLlm: boolean[] = chunk.map((c, j) => {
-        if (!db || reEnrich) return true;
-        const cached = getLlmCacheEntry(db, c.absPath, bodyHashes[j] ?? "");
-        if (!cached) return true;
-        try {
-          const parsed = validateGraphCacheShape(JSON.parse(cached.resultJson));
-          if (!parsed) return true;
-          const entities = parsed.entities;
-          rawResults[start + j] =
-            entities.length > 0
-              ? {
-                  absPath: c.absPath,
-                  type: c.type,
-                  bodyHash: bodyHashes[j] ?? "",
-                  entities,
-                  relations: parsed.relations,
-                  ...(parsed.confidence !== undefined ? { confidence: parsed.confidence } : {}),
-                }
-              : undefined;
-          return false; // cache hit
-        } catch {
-          return true; // corrupt cache entry — re-call LLM
+    await concurrentMap(
+      chunkStarts,
+      async (start) => {
+        if (signal?.aborted) return;
+        const chunk = eligible.slice(start, start + batchSize);
+
+        // Pre-resolve cache hits for this chunk; track which positions need LLM.
+        const bodyHashes: string[] = chunk.map((c) => computeBodyHash(c.body));
+        const needsLlm: boolean[] = chunk.map((c, j) => {
+          if (!db || reEnrich) return true;
+          const cached = getLlmCacheEntry(db, c.absPath, bodyHashes[j] ?? "");
+          if (!cached) return true;
+          try {
+            const parsed = validateGraphCacheShape(JSON.parse(cached.resultJson));
+            if (!parsed) return true;
+            const entities = parsed.entities;
+            rawResults[start + j] =
+              entities.length > 0
+                ? {
+                    absPath: c.absPath,
+                    type: c.type,
+                    bodyHash: bodyHashes[j] ?? "",
+                    entities,
+                    relations: parsed.relations,
+                    ...(parsed.confidence !== undefined ? { confidence: parsed.confidence } : {}),
+                  }
+                : undefined;
+            return false;
+          } catch {
+            return true;
+          }
+        });
+
+        // Secondary incremental path: reuse previous graph nodes when the body hash
+        // still matches and DB cache is missing/stale/unavailable.
+        if (!(reEnrich ?? false)) {
+          for (let j = 0; j < chunk.length; j++) {
+            if (!needsLlm[j]) continue;
+            const candidate = chunk[j];
+            if (!candidate) continue;
+            const reused = reuseGraphNode(previousNodes, candidate, bodyHashes[j] ?? "");
+            if (!reused) continue;
+            rawResults[start + j] =
+              reused.entities.length > 0
+                ? {
+                    absPath: candidate.absPath,
+                    type: candidate.type,
+                    bodyHash: bodyHashes[j] ?? "",
+                    entities: reused.entities,
+                    relations: reused.relations,
+                    ...(reused.confidence !== undefined ? { confidence: reused.confidence } : {}),
+                  }
+                : undefined;
+            if (db) {
+              upsertLlmCacheEntry(db, candidate.absPath, bodyHashes[j] ?? "", JSON.stringify(reused));
+            }
+            needsLlm[j] = false;
+          }
         }
-      });
 
-      // Secondary incremental path: reuse previous graph nodes when the body hash
-      // still matches and DB cache is missing/stale/unavailable.
-      if (!(reEnrich ?? false)) {
+        const uncachedChunk = chunk.filter((_, j) => needsLlm[j]);
+        if (uncachedChunk.length === 0) return;
+
+        const bodies = uncachedChunk.map((c) => c.body);
+
+        // extractGraphFromBodies always returns an array of the same length
+        // as bodies (it falls back per-asset for any missing indices).
+        const batchExtractions = await graphExtract.extractGraphFromBodies(
+          llmConfig,
+          bodies,
+          signal,
+          config,
+          onFallback,
+        );
+
+        // Map LLM results back to original positions and write cache entries.
+        let llmIdx = 0;
         for (let j = 0; j < chunk.length; j++) {
           if (!needsLlm[j]) continue;
           const candidate = chunk[j];
-          if (!candidate) continue;
-          const reused = reuseGraphNode(previousNodes, candidate, bodyHashes[j] ?? "");
-          if (!reused) continue;
-          rawResults[start + j] =
-            reused.entities.length > 0
-              ? {
-                  absPath: candidate.absPath,
-                  type: candidate.type,
-                  bodyHash: bodyHashes[j] ?? "",
-                  entities: reused.entities,
-                  relations: reused.relations,
-                  ...(reused.confidence !== undefined ? { confidence: reused.confidence } : {}),
-                }
-              : undefined;
+          const extraction = batchExtractions[llmIdx++];
+          if (!candidate || !extraction) continue;
+
           if (db) {
-            upsertLlmCacheEntry(db, candidate.absPath, bodyHashes[j] ?? "", JSON.stringify(reused));
+            upsertLlmCacheEntry(
+              db,
+              candidate.absPath,
+              bodyHashes[j] ?? "",
+              JSON.stringify({
+                entities: extraction.entities,
+                relations: extraction.relations,
+                ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
+              }),
+            );
           }
-          needsLlm[j] = false;
-        }
-      }
 
-      const uncachedChunk = chunk.filter((_, j) => needsLlm[j]);
-      if (uncachedChunk.length === 0) {
-        processed += chunk.length;
-        onProgress?.({
-          processed,
-          total: considered,
-          extracted,
-          totalEntities,
-          totalRelations,
-          currentPath: chunk.at(-1)?.absPath,
-        });
-        continue;
-      }
-
-      const bodies = uncachedChunk.map((c) => c.body);
-
-      // extractGraphFromBodies always returns an array of the same length
-      // as bodies (it falls back per-asset for any missing indices).
-      const batchExtractions = await graphExtract.extractGraphFromBodies(llmConfig, bodies, signal, config, onFallback);
-
-      // Map LLM results back to original positions and write cache entries.
-      let llmIdx = 0;
-      for (let j = 0; j < chunk.length; j++) {
-        if (!needsLlm[j]) continue;
-        const candidate = chunk[j];
-        const extraction = batchExtractions[llmIdx++];
-        if (!candidate || !extraction) continue;
-
-        // Cache the result for future runs.
-        if (db) {
-          upsertLlmCacheEntry(
-            db,
-            candidate.absPath,
-            bodyHashes[j] ?? "",
-            JSON.stringify({
+          if (extraction.entities.length === 0) {
+            rawResults[start + j] = undefined;
+          } else {
+            rawResults[start + j] = {
+              absPath: candidate.absPath,
+              type: candidate.type,
+              bodyHash: bodyHashes[j] ?? "",
               entities: extraction.entities,
               relations: extraction.relations,
               ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
-            }),
-          );
+            };
+          }
         }
-
-        if (extraction.entities.length === 0) {
-          rawResults[start + j] = undefined;
-        } else {
-          rawResults[start + j] = {
-            absPath: candidate.absPath,
-            type: candidate.type,
-            bodyHash: bodyHashes[j] ?? "",
-            entities: extraction.entities,
-            relations: extraction.relations,
-            ...(extraction.confidence !== undefined ? { confidence: extraction.confidence } : {}),
-          };
-        }
-        processed++;
-        if (extraction.entities.length > 0) {
-          extracted++;
-          totalEntities += extraction.entities.length;
-          totalRelations += extraction.relations.length;
-        }
-        onProgress?.({
-          processed,
-          total: considered,
-          extracted,
-          totalEntities,
-          totalRelations,
-          currentPath: candidate.absPath,
-        });
-      }
-    }
+      },
+      llmConfig.concurrency ?? 1,
+    );
 
     extractionResults = rawResults;
   }
@@ -626,44 +613,41 @@ export async function runGraphExtractionPass(
       path: result.absPath,
       type: result.type,
       bodyHash: result.bodyHash,
-      // Lower-case once at write time so the search-time boost can do a
-      // single case-folded comparison without re-canonicalising on every
-      // query.
-      entities: result.entities.map((e) => e.toLowerCase()),
-      relations: result.relations.map((r) => ({
-        from: r.from.toLowerCase(),
-        to: r.to.toLowerCase(),
-        ...(r.type ? { type: r.type.toLowerCase() } : {}),
-        ...(normalizeConfidence(r.confidence) !== undefined ? { confidence: normalizeConfidence(r.confidence) } : {}),
-      })),
+      entities: [...new Set(result.entities.map((entity) => entity.trim()).filter(Boolean))],
+      relations: result.relations
+        .map((r) => ({
+          from: r.from.trim(),
+          to: r.to.trim(),
+          ...(r.type ? { type: r.type.trim() } : {}),
+          ...(normalizeConfidence(r.confidence) !== undefined ? { confidence: normalizeConfidence(r.confidence) } : {}),
+        }))
+        .filter((relation) => relation.from && relation.to),
       ...(normalizeConfidence(result.confidence) !== undefined
         ? { confidence: normalizeConfidence(result.confidence) }
         : {}),
     });
   }
 
-  if (batchSize <= 1) {
-    processed = 0;
-    extracted = 0;
-    totalEntities = 0;
-    totalRelations = 0;
-    for (let i = 0; i < extractionResults.length; i++) {
-      const result = extractionResults[i];
-      processed++;
-      if (result) {
-        extracted++;
-        totalEntities += result.entities.length;
-        totalRelations += result.relations.length;
-      }
-      onProgress?.({
-        processed,
-        total: considered,
-        extracted,
-        totalEntities,
-        totalRelations,
-        currentPath: eligible[i]?.absPath,
-      });
+  processed = 0;
+  extracted = 0;
+  totalEntities = 0;
+  totalRelations = 0;
+  for (let i = 0; i < extractionResults.length; i++) {
+    const result = extractionResults[i];
+    processed += 1;
+    if (result) {
+      extracted += 1;
+      totalEntities += result.entities.length;
+      totalRelations += result.relations.length;
     }
+    onProgress?.({
+      processed,
+      total: considered,
+      extracted,
+      totalEntities,
+      totalRelations,
+      currentPath: eligible[i]?.absPath,
+    });
   }
 
   const mergedNodes = mergeGraphNodes(previousGraph.files, nodes, options.candidatePaths);
@@ -707,7 +691,7 @@ export async function runGraphExtractionPass(
 
   return {
     considered,
-    extracted: nodes.length,
+    extracted,
     totalEntities,
     totalRelations,
     written,

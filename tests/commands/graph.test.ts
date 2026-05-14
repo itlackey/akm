@@ -2,9 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmGraphEntities, akmGraphExport, akmGraphRelations, akmGraphSummary } from "../../src/commands/graph";
+import {
+  akmGraphEntities,
+  akmGraphExport,
+  akmGraphRelated,
+  akmGraphRelations,
+  akmGraphSummary,
+} from "../../src/commands/graph";
 import { saveConfig } from "../../src/core/config";
+import { getDbPath } from "../../src/core/paths";
+import { closeDatabase, openDatabase, rebuildFts, setMeta, upsertEntry } from "../../src/indexer/db";
 import { getGraphFilePath } from "../../src/indexer/graph-extraction";
+import { buildSearchText } from "../../src/indexer/search-fields";
 
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
@@ -17,6 +26,48 @@ let testCacheDir = "";
 let testDataDir = "";
 let testStateDir = "";
 let stashDir = "";
+let secondaryStashDir = "";
+
+function seedGraphLookupIndex(): void {
+  const knowledgeDir = path.join(stashDir, "knowledge");
+  const memoryDir = path.join(stashDir, "memories");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
+  fs.mkdirSync(memoryDir, { recursive: true });
+  const k1Path = path.join(knowledgeDir, "k1.md");
+  const m1Path = path.join(memoryDir, "m1.md");
+  fs.writeFileSync(k1Path, "# Alpha\n", "utf8");
+  fs.writeFileSync(m1Path, "# Gamma\n", "utf8");
+
+  const dbPath = getDbPath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = openDatabase(dbPath);
+  try {
+    upsertEntry(
+      db,
+      `${stashDir}:knowledge:k1`,
+      knowledgeDir,
+      k1Path,
+      stashDir,
+      { name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" },
+      buildSearchText({ name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" }),
+    );
+    upsertEntry(
+      db,
+      `${stashDir}:memory:m1`,
+      memoryDir,
+      m1Path,
+      stashDir,
+      { name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" },
+      buildSearchText({ name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" }),
+    );
+    rebuildFts(db);
+    setMeta(db, "stashDir", stashDir);
+    setMeta(db, "builtAt", new Date().toISOString());
+    setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+  } finally {
+    closeDatabase(db);
+  }
+}
 
 function writeGraphArtifact(): string {
   const graphPath = getGraphFilePath(stashDir);
@@ -70,12 +121,16 @@ beforeEach(() => {
   testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-data-"));
   testStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-state-"));
   stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-stash-"));
+  secondaryStashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-graph-secondary-"));
   process.env.XDG_CONFIG_HOME = testConfigDir;
   process.env.XDG_CACHE_HOME = testCacheDir;
   process.env.XDG_DATA_HOME = testDataDir;
   process.env.XDG_STATE_HOME = testStateDir;
   process.env.AKM_STASH_DIR = stashDir;
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig({
+    semanticSearchMode: "off",
+    sources: [{ type: "filesystem", path: secondaryStashDir, name: "sec-a" }],
+  });
 });
 
 afterEach(() => {
@@ -89,7 +144,7 @@ afterEach(() => {
   else process.env.XDG_STATE_HOME = originalXdgStateHome;
   if (originalAkmStashDir === undefined) delete process.env.AKM_STASH_DIR;
   else process.env.AKM_STASH_DIR = originalAkmStashDir;
-  for (const dir of [testConfigDir, testCacheDir, testDataDir, testStateDir, stashDir]) {
+  for (const dir of [testConfigDir, testCacheDir, testDataDir, testStateDir, stashDir, secondaryStashDir]) {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -123,6 +178,98 @@ describe("akm graph", () => {
     expect(result.shape).toBe("graph-relations");
     expect(result.total).toBe(2);
     expect(result.relations[0]).toEqual({ from: "alpha", to: "beta", type: "uses", count: 1 });
+  });
+
+  test("related resolves neighboring assets for a ref", async () => {
+    writeGraphArtifact();
+    seedGraphLookupIndex();
+    const result = await akmGraphRelated({ ref: "knowledge:k1" });
+    expect(result.shape).toBe("graph-related");
+    expect(result.ref).toBe("knowledge:k1");
+    expect(result.total).toBe(1);
+    expect(result.related[0]?.type).toBe("memory");
+    expect(result.related[0]?.sharedEntities).toContain("alpha");
+  });
+
+  test("related infers source graph from resolved secondary asset path", async () => {
+    const secKnowledgeDir = path.join(secondaryStashDir, "knowledge");
+    const secMemoryDir = path.join(secondaryStashDir, "memories");
+    fs.mkdirSync(secKnowledgeDir, { recursive: true });
+    fs.mkdirSync(secMemoryDir, { recursive: true });
+    const sharedPath = path.join(secKnowledgeDir, "shared.md");
+    const neighborPath = path.join(secMemoryDir, "neighbor.md");
+    fs.writeFileSync(sharedPath, "# Shared\n", "utf8");
+    fs.writeFileSync(neighborPath, "# Neighbor\n", "utf8");
+
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = openDatabase(dbPath);
+    try {
+      upsertEntry(
+        db,
+        `${secondaryStashDir}:knowledge:shared`,
+        secKnowledgeDir,
+        sharedPath,
+        secondaryStashDir,
+        { name: "shared", type: "knowledge", filename: "shared.md", description: "Secondary shared" },
+        buildSearchText({ name: "shared", type: "knowledge", filename: "shared.md", description: "Secondary shared" }),
+      );
+      upsertEntry(
+        db,
+        `${secondaryStashDir}:memory:neighbor`,
+        secMemoryDir,
+        neighborPath,
+        secondaryStashDir,
+        { name: "neighbor", type: "memory", filename: "neighbor.md", description: "Secondary neighbor" },
+        buildSearchText({
+          name: "neighbor",
+          type: "memory",
+          filename: "neighbor.md",
+          description: "Secondary neighbor",
+        }),
+      );
+      rebuildFts(db);
+      setMeta(db, "stashDir", stashDir);
+      setMeta(db, "builtAt", new Date().toISOString());
+      setMeta(db, "stashDirs", JSON.stringify([stashDir, secondaryStashDir]));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const graphPath = getGraphFilePath(secondaryStashDir);
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(
+      graphPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          generatedAt: "2026-05-01T00:00:00.000Z",
+          stashRoot: secondaryStashDir,
+          files: [
+            {
+              path: sharedPath,
+              type: "knowledge",
+              entities: ["Shared", "Guide"],
+              relations: [{ from: "Shared", to: "Guide" }],
+            },
+            {
+              path: neighborPath,
+              type: "memory",
+              entities: ["Shared"],
+              relations: [{ from: "Shared", to: "Neighbor" }],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await akmGraphRelated({ ref: "sec-a//knowledge:shared" });
+    expect(result.stashPath).toBe(secondaryStashDir);
+    expect(result.total).toBe(1);
+    expect(result.related[0]?.type).toBe("memory");
   });
 
   test("export writes JSONL output", () => {

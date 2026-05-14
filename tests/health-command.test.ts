@@ -5,6 +5,7 @@ import path from "node:path";
 import { akmHealth, parseHealthSince } from "../src/commands/health";
 import { appendEvent } from "../src/core/events";
 import { openStateDatabase, upsertTaskHistory } from "../src/core/state-db";
+import type { SessionLogEntry } from "../src/integrations/session-logs";
 
 const savedEnv = {
   XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
@@ -147,5 +148,35 @@ describe("akmHealth", () => {
     expect(result.metrics.agentFailureRate).toBe(0.5);
     expect(result.metrics.logBackingRate).toBe(0.5);
     expect(result.hardChecks.some((check) => check.name === "task-log-backing" && check.status === "fail")).toBe(true);
+  });
+
+  test("passes requested since window through to session log candidates", () => {
+    const seen: number[] = [];
+    const getExecutionLogCandidatesFn = (sinceDays = 7): SessionLogEntry[] => {
+      seen.push(sinceDays);
+      return [];
+    };
+
+    akmHealth({ since: "12h", getExecutionLogCandidatesFn });
+
+    expect(seen).toEqual([1]);
+  });
+
+  test("heuristic-only advisories do not degrade overall status", () => {
+    const getExecutionLogCandidatesFn = (): SessionLogEntry[] => [
+      {
+        topic: "failed again",
+        frequency: 2,
+        source: "claude-code",
+        isFailurePattern: true,
+      },
+    ];
+
+    const result = akmHealth({ since: "7d", getExecutionLogCandidatesFn });
+
+    expect(result.status).toBe("pass");
+    expect(result.advisories.some((check) => check.name === "session-log-failures" && check.status === "warn")).toBe(
+      true,
+    );
   });
 });

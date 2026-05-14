@@ -320,7 +320,7 @@ describe("runGraphExtractionPass — progress", () => {
 // ── runGraphExtractionPass — enabled path ──────────────────────────────────
 
 describe("runGraphExtractionPass — enabled", () => {
-  test("writes graph.json with schema version + canonicalised entities", async () => {
+  test("writes graph.json with schema version + canonical entity names", async () => {
     writeFile("memories/parent.md", {}, "Body about ServiceA and ServiceB.");
     writeFile("knowledge/k1.md", {}, "Body about ServiceB and ServiceC.");
     extractor = (body) => {
@@ -377,15 +377,9 @@ describe("runGraphExtractionPass — enabled", () => {
       extractionCoverage: 1,
       density: 0.6667,
     });
-    // Entities are lower-cased at write time so the search-time boost
-    // doesn't have to re-canonicalise on every query.
-    for (const node of parsed.files) {
-      for (const e of node.entities) expect(e).toBe(e.toLowerCase());
-      for (const r of node.relations) {
-        expect(r.from).toBe(r.from.toLowerCase());
-        expect(r.to).toBe(r.to.toLowerCase());
-      }
-    }
+    expect(parsed.files[0]?.entities).toEqual(["ServiceA", "ServiceB"]);
+    expect(parsed.files[1]?.entities).toEqual(["ServiceB", "ServiceC"]);
+    expect(parsed.files[0]?.relations[0]).toMatchObject({ from: "ServiceA", to: "ServiceB", type: "uses" });
     expect(parsed.files.some((node) => typeof node.confidence === "number")).toBe(true);
     expect(parsed.files.some((node) => node.relations.some((rel) => typeof rel.confidence === "number"))).toBe(true);
   });
@@ -447,8 +441,8 @@ describe("runGraphExtractionPass — enabled", () => {
       entities: string[];
     };
     expect(parsed.files).toHaveLength(2);
-    expect(parsed.files.find((node) => node.path === memoryPath)?.entities).toEqual(["servicea2"]);
-    expect(parsed.entities.sort()).toEqual(["servicea2", "serviceb"]);
+    expect(parsed.files.find((node) => node.path === memoryPath)?.entities).toEqual(["ServiceA2"]);
+    expect(parsed.entities.sort()).toEqual(["ServiceA2", "ServiceB"]);
   });
 
   test("candidate-path refresh removes touched nodes that no longer yield graph entities", async () => {
@@ -478,7 +472,7 @@ describe("runGraphExtractionPass — enabled", () => {
     };
     expect(parsed.files).toHaveLength(1);
     expect(parsed.files[0]?.path).toBe(path.join(tmpStash, "knowledge", "k1.md"));
-    expect(parsed.entities).toEqual(["serviceb"]);
+    expect(parsed.entities).toEqual(["ServiceB"]);
   });
 
   test("leaves an existing graph.json untouched when every extraction returns no entities", async () => {
@@ -548,7 +542,7 @@ describe("runGraphExtractionPass — enabled", () => {
     const graph = JSON.parse(fs.readFileSync(getGraphFilePath(tmpStash), "utf8")) as {
       files: Array<{ entities: string[] }>;
     };
-    expect(graph.files[0]?.entities).toContain("serviceb");
+    expect(graph.files[0]?.entities).toContain("ServiceB");
   });
 
   test("invalid prior graph node falls back safely to fresh extraction", async () => {
@@ -580,6 +574,6 @@ describe("runGraphExtractionPass — enabled", () => {
     const repaired = JSON.parse(fs.readFileSync(graphPath, "utf8")) as {
       files: Array<{ entities: string[] }>;
     };
-    expect(repaired.files[0]?.entities).toContain("servicec");
+    expect(repaired.files[0]?.entities).toContain("ServiceC");
   });
 });

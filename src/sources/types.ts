@@ -42,6 +42,10 @@ export interface SourceSearchHit {
   quality?: string;
   beliefState?: string;
   currentBeliefRefs?: string[];
+  graph?: {
+    entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
+    relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
+  };
 }
 
 export interface RegistrySearchResultHit {
@@ -309,6 +313,10 @@ export interface ShowResponse {
    * leading `#` stripped). Inline/trailing comments are deliberately omitted.
    */
   comments?: string[];
+  related?: {
+    total: number;
+    hits: Array<{ path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  };
 }
 
 export type KnowledgeView =

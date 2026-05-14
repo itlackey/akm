@@ -24,6 +24,7 @@ import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
+import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import { lookup } from "../indexer/indexer";
 import type { StashEntryScope } from "../indexer/metadata";
 import { resolveAssetPath } from "../indexer/path-resolver";
@@ -358,6 +359,10 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(assetPath, parsed.type, parsed.name, source?.registryId) } : {}),
+    related: (() => {
+      const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5);
+      return { total: related.length, hits: related };
+    })(),
   };
 
   const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());

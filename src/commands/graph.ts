@@ -1,14 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseAssetRef } from "../core/asset-ref";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import { listRelatedPathsForFile } from "../indexer/graph-boost";
 import {
   GRAPH_FILE_SCHEMA_VERSION,
   type GraphFile,
   type GraphFileNode,
   getGraphFilePath,
 } from "../indexer/graph-extraction";
-import { resolveSourceEntries } from "../indexer/search-source";
+import { lookup } from "../indexer/indexer";
+import { resolveAssetPath } from "../indexer/path-resolver";
+import { findSourceForPath, resolveSourceEntries } from "../indexer/search-source";
 
 export interface GraphSummaryResult {
   schemaVersion: 1;
@@ -52,10 +56,30 @@ export interface GraphExportResult {
   bytes: number;
 }
 
+export interface GraphRelatedResult {
+  schemaVersion: 1;
+  shape: "graph-related";
+  stashPath: string;
+  graphPath: string;
+  generatedAt: string;
+  ref: string;
+  path: string;
+  total: number;
+  related: Array<{ path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  tip?: string;
+}
+
 interface LoadedGraph {
   graph: GraphFile;
   stashPath: string;
   graphPath: string;
+}
+
+interface ResolvedGraphTarget {
+  ref: string;
+  parsedRef: ReturnType<typeof parseAssetRef>;
+  filePath: string;
+  stashPath: string;
 }
 
 function resolveGraphStashPath(source?: string): string {
@@ -222,5 +246,69 @@ export function akmGraphExport(options: { source?: string; out: string; format?:
     outPath,
     format,
     bytes: Buffer.byteLength(payload, "utf8"),
+  };
+}
+
+export async function akmGraphRelated(options: {
+  ref: string;
+  source?: string;
+  limit?: number;
+}): Promise<GraphRelatedResult> {
+  const ref = options.ref.trim();
+  if (!ref) {
+    throw new UsageError("`akm graph related` requires <ref>.", "MISSING_REQUIRED_ARGUMENT");
+  }
+  const limit = options.limit;
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
+  }
+  const target = await resolveGraphTarget(ref, options.source);
+  const { graph, stashPath, graphPath } = loadGraph(target.stashPath);
+  const related = listRelatedPathsForFile(stashPath, target.filePath, limit ?? 5);
+  return {
+    schemaVersion: 1,
+    shape: "graph-related",
+    stashPath,
+    graphPath,
+    generatedAt: graph.generatedAt,
+    ref: target.ref,
+    path: target.filePath,
+    total: related.length,
+    related,
+    ...(related.length === 0 ? { tip: "No related graph neighbors were found for this asset." } : {}),
+  };
+}
+
+async function resolveGraphTarget(ref: string, source?: string): Promise<ResolvedGraphTarget> {
+  const parsedRef = parseAssetRef(ref);
+  const filePath =
+    (await resolveAssetPath(parsedRef, {
+      mode: "index-first",
+      honorOrigin: true,
+    })) ?? (await lookup(parsedRef))?.filePath;
+  if (!filePath) {
+    throw new NotFoundError(`Asset not found for ref: ${ref}`);
+  }
+
+  const allSources = resolveSourceEntries(undefined, loadConfig());
+  const matchedSource = findSourceForPath(filePath, allSources);
+  const inferredStashPath = matchedSource?.path;
+  const stashPath = source ? resolveGraphStashPath(source) : inferredStashPath;
+  if (!stashPath) {
+    throw new NotFoundError(`Could not determine stash source for ref: ${ref}`, "SOURCE_NOT_FOUND");
+  }
+  if (!filePath.startsWith(path.resolve(stashPath) + path.sep) && path.resolve(filePath) !== path.resolve(stashPath)) {
+    throw new UsageError(
+      `Resolved asset ${ref} is not inside source ${source ?? stashPath}.`,
+      "INVALID_SOURCE_VALUE",
+      "Pass --source for the asset's source, or omit it to infer from the resolved asset path.",
+    );
+  }
+
+  return {
+    ref,
+    parsedRef,
+    filePath,
+    stashPath,
   };
 }

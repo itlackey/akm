@@ -32,7 +32,7 @@ import {
   searchVec,
 } from "./db";
 import { ensureIndex } from "./ensure-index";
-import { type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
+import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
@@ -362,6 +362,7 @@ async function searchDatabase(
         sources,
         config,
         utilityBoosted,
+        graphContext,
         rendererRegistry,
       });
     }),
@@ -422,6 +423,7 @@ export async function buildDbHit(input: {
   sources: SearchSource[];
   config?: AkmConfig;
   utilityBoosted?: boolean;
+  graphContext?: GraphBoostContext | null;
   /** Optional renderer registry override for test isolation. */
   rendererRegistry?: RendererRegistry;
 }): Promise<SourceSearchHit> {
@@ -448,6 +450,8 @@ export async function buildDbHit(input: {
     confidenceBoost,
     input.utilityBoosted,
   );
+
+  const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, input.path) : null;
 
   const source = findSourceForPath(input.path, input.sources);
   const ref = resolveSearchHitRef(input.entry, input.entry.name, source);
@@ -477,6 +481,7 @@ export async function buildDbHit(input: {
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),
     ...(input.entry.currentBeliefRefs ? { currentBeliefRefs: input.entry.currentBeliefRefs } : {}),
+    ...(graphHit ? { graph: { entities: graphHit.entities, relations: graphHit.relations } } : {}),
   };
 
   await enrichSearchHit(hit, {

@@ -10,7 +10,13 @@ import { generateBashCompletions, installBashCompletions } from "./commands/comp
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
 import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
-import { akmGraphEntities, akmGraphExport, akmGraphRelations, akmGraphSummary } from "./commands/graph";
+import {
+  akmGraphEntities,
+  akmGraphExport,
+  akmGraphRelated,
+  akmGraphRelations,
+  akmGraphSummary,
+} from "./commands/graph";
 import { akmHealth } from "./commands/health";
 import { akmHistory } from "./commands/history";
 import { akmImprove } from "./commands/improve";
@@ -439,6 +445,26 @@ const graphCommand = defineCommand({
         });
       },
     }),
+    related: defineCommand({
+      meta: { name: "related", description: "Show graph-related neighboring assets for a ref" },
+      args: {
+        ref: { type: "positional", description: "Asset ref", required: true },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum related assets to return" },
+      },
+      async run({ args }) {
+        return runWithJsonErrors(async () => {
+          output(
+            "graph-related",
+            await akmGraphRelated({
+              ref: args.ref ?? "",
+              source: args.source,
+              limit: parsePositiveIntFlag(args.limit ?? undefined),
+            }),
+          );
+        });
+      },
+    }),
     export: defineCommand({
       meta: { name: "export", description: "Export graph artifact as JSON or JSONL" },
       args: {
@@ -860,14 +886,7 @@ const showCommand = defineCommand({
         output("proposal-show", result);
         return;
       }
-      try {
-        parseAssetRef(args.ref);
-      } catch (error) {
-        if (error instanceof UsageError && error.code === "MISSING_REQUIRED_ARGUMENT") {
-          throw new UsageError(error.message, "INVALID_FLAG_VALUE", error.hint());
-        }
-        throw error;
-      }
+      parseAssetRef(args.ref);
       // The knowledge-view positional syntax (`akm show knowledge:foo section "Auth"`)
       // is rewritten to `--akmView` / `--akmHeading` / `--akmStart` / `--akmEnd`
       // by `normalizeShowArgv` before citty parses argv. We read those values
@@ -3313,7 +3332,7 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "sync",
   "doctor",
 ]);
-const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "relations", "export"]);
+const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "relations", "related", "export"]);
 
 const tasksAddCommand = defineCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },

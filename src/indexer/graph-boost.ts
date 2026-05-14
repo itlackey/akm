@@ -45,8 +45,50 @@ export interface GraphBoostContext {
   connectedEntities: Set<string>;
   connectedConfidence: Map<string, number>;
   entityConfidence: Map<string, number>;
+  graph: GraphFile;
+  adjacency: Map<string, Map<string, number>>;
   weights: GraphBoostWeights;
 }
+
+export interface GraphRelatedEntity {
+  name: string;
+  kind: "matched" | "connected";
+  confidence?: number;
+}
+
+export interface GraphRelatedRelation {
+  from: string;
+  to: string;
+  type?: string;
+  confidence?: number;
+}
+
+export interface GraphRelatedHit {
+  path: string;
+  type: string;
+  entities: GraphRelatedEntity[];
+  relations: GraphRelatedRelation[];
+}
+
+function normalizeGraphName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+interface ParsedGraphContext {
+  graph: GraphFile;
+  nodesByPath: Map<string, GraphFileNode>;
+  entityConfidence: Map<string, number>;
+  adjacency: Map<string, Map<string, number>>;
+}
+
+let cachedParsedGraph:
+  | {
+      graphPath: string;
+      mtimeMs: number;
+      size: number;
+      context: ParsedGraphContext;
+    }
+  | undefined;
 
 function resolveGraphBoostWeights(config?: AkmConfig): GraphBoostWeights {
   const configured = config?.search?.graphBoost;
@@ -120,8 +162,8 @@ function toConfidenceMultiplier(rawConfidence: number | undefined, weights: Grap
  *     possible, so we skip the per-entry overhead entirely).
  */
 export function loadGraphBoostContext(stashRoot: string, query: string, config?: AkmConfig): GraphBoostContext | null {
-  const graph = readGraphFile(stashRoot);
-  if (!graph) return null;
+  const parsed = readParsedGraphContext(stashRoot);
+  if (!parsed) return null;
   const weights = resolveGraphBoostWeights(config);
 
   const queryTokens = query
@@ -134,48 +176,23 @@ export function loadGraphBoostContext(stashRoot: string, query: string, config?:
   // is small (capped per-asset at extract time) and lets the per-entry
   // path do a single set membership test.
   const allEntities = new Set<string>();
-  const nodesByPath = new Map<string, GraphFileNode>();
-  const entityConfidence = new Map<string, number>();
-  const adjacency = new Map<string, Map<string, number>>();
-
-  function setBestEntityConfidence(entity: string, confidence: number | undefined): void {
-    const normalized = normalizeConfidence(confidence);
-    if (normalized === undefined) return;
-    const current = entityConfidence.get(entity);
-    if (current === undefined || normalized > current) entityConfidence.set(entity, normalized);
-  }
-
-  function setBestEdgeConfidence(from: string, to: string, confidence: number | undefined): void {
-    const normalized = normalizeConfidence(confidence);
-    if (!adjacency.has(from)) adjacency.set(from, new Map());
-    const neighbors = adjacency.get(from);
-    if (!neighbors) return;
-    const current = neighbors.get(to);
-    const next = normalized ?? 1;
-    if (current === undefined || next > current) neighbors.set(to, next);
-  }
-
-  for (const node of graph.files) {
-    nodesByPath.set(node.path, node);
-    for (const entity of node.entities) {
-      allEntities.add(entity);
-      setBestEntityConfidence(entity, node.confidence);
-    }
-    for (const rel of node.relations) {
-      const edgeConfidence = combineConfidence(node.confidence, rel.confidence);
-      setBestEdgeConfidence(rel.from, rel.to, edgeConfidence);
-      setBestEdgeConfidence(rel.to, rel.from, edgeConfidence);
-    }
+  for (const node of parsed.graph.files) {
+    for (const entity of node.entities) allEntities.add(entity);
   }
 
   // An entity matches the query when any of its sub-tokens equals or
-  // contains a query token. Cheap and forgiving — exact substring match is
-  // sufficient because both sides are already lower-cased at extract time.
+  // contains a query token. Matching is case-insensitive; the graph keeps
+  // canonical display strings and we normalize only for comparisons here.
   const matchedEntities = new Set<string>();
   for (const entity of allEntities) {
-    const entityTokens = entity.split(/[\s\-_/]+/).filter(Boolean);
+    const normalizedEntity = normalizeGraphName(entity);
+    const entityTokens = normalizedEntity.split(/[\s\-_/]+/).filter(Boolean);
     for (const qt of queryTokens) {
-      if (entity === qt || entity.includes(qt) || entityTokens.some((et) => et === qt)) {
+      if (
+        normalizedEntity === qt ||
+        normalizedEntity.includes(qt) ||
+        entityTokens.some((et) => et === qt || et.includes(qt))
+      ) {
         matchedEntities.add(entity);
         break;
       }
@@ -189,14 +206,14 @@ export function loadGraphBoostContext(stashRoot: string, query: string, config?:
   const visited = new Set<string>();
   let frontier = new Map<string, number>();
   for (const entity of matchedEntities) {
-    const seed = entityConfidence.get(entity) ?? 1;
+    const seed = parsed.entityConfidence.get(entity) ?? 1;
     frontier.set(entity, seed);
     visited.add(entity);
   }
   for (let hop = 1; hop <= weights.maxHops; hop += 1) {
     const next = new Map<string, number>();
     for (const [entity, pathConfidence] of frontier.entries()) {
-      const neighbors = adjacency.get(entity);
+      const neighbors = parsed.adjacency.get(entity);
       if (!neighbors) continue;
       for (const [neighbor, edgeConfidence] of neighbors.entries()) {
         const neighborPathConfidence = Math.max(0, Math.min(1, pathConfidence * edgeConfidence));
@@ -212,7 +229,16 @@ export function loadGraphBoostContext(stashRoot: string, query: string, config?:
     frontier = next;
   }
 
-  return { nodesByPath, matchedEntities, connectedEntities, connectedConfidence, entityConfidence, weights };
+  return {
+    graph: parsed.graph,
+    nodesByPath: parsed.nodesByPath,
+    matchedEntities,
+    connectedEntities,
+    connectedConfidence,
+    entityConfidence: parsed.entityConfidence,
+    adjacency: parsed.adjacency,
+    weights,
+  };
 }
 
 /**
@@ -248,6 +274,96 @@ export function computeGraphBoost(context: GraphBoostContext, filePath: string):
   return directBoost + hopBoost;
 }
 
+export function collectGraphRelatedHit(context: GraphBoostContext, filePath: string): GraphRelatedHit | null {
+  const node = context.nodesByPath.get(filePath);
+  if (!node) return null;
+
+  const entities: GraphRelatedEntity[] = [];
+  for (const entity of node.entities) {
+    if (context.matchedEntities.has(entity)) {
+      entities.push({
+        name: entity,
+        kind: "matched",
+        ...(context.entityConfidence.get(entity) !== undefined
+          ? { confidence: context.entityConfidence.get(entity) }
+          : {}),
+      });
+      continue;
+    }
+    if (context.connectedEntities.has(entity)) {
+      entities.push({
+        name: entity,
+        kind: "connected",
+        ...(context.connectedConfidence.get(entity) !== undefined
+          ? { confidence: context.connectedConfidence.get(entity) }
+          : {}),
+      });
+    }
+  }
+
+  if (entities.length === 0) return null;
+
+  const relatedNames = new Set(entities.map((entity) => entity.name));
+  const relations = node.relations
+    .filter((relation) => relatedNames.has(relation.from) || relatedNames.has(relation.to))
+    .map((relation) => ({
+      from: relation.from,
+      to: relation.to,
+      ...(relation.type ? { type: relation.type } : {}),
+      ...(normalizeConfidence(relation.confidence) !== undefined
+        ? { confidence: normalizeConfidence(relation.confidence) }
+        : {}),
+    }));
+
+  return {
+    path: filePath,
+    type: node.type,
+    entities: entities.sort((a, b) => a.name.localeCompare(b.name)),
+    relations,
+  };
+}
+
+export function listRelatedPathsForFile(
+  stashRoot: string,
+  filePath: string,
+  limit = 5,
+): Array<{
+  path: string;
+  type: string;
+  sharedEntities: string[];
+  relationCount: number;
+}> {
+  const parsed = readParsedGraphContext(stashRoot);
+  if (!parsed) return [];
+  const node = parsed.nodesByPath.get(filePath);
+  if (!node) return [];
+
+  const entitySet = new Set(node.entities.map(normalizeGraphName));
+  const results: Array<{ path: string; type: string; sharedEntities: string[]; relationCount: number }> = [];
+  for (const candidate of parsed.graph.files) {
+    if (candidate.path === filePath) continue;
+    const sharedEntities = candidate.entities.filter((entity) => entitySet.has(normalizeGraphName(entity)));
+    if (sharedEntities.length === 0) continue;
+    const relationCount = candidate.relations.filter(
+      (relation) => entitySet.has(normalizeGraphName(relation.from)) || entitySet.has(normalizeGraphName(relation.to)),
+    ).length;
+    results.push({
+      path: candidate.path,
+      type: candidate.type,
+      sharedEntities: [...new Set(sharedEntities)].sort((a, b) => a.localeCompare(b)),
+      relationCount,
+    });
+  }
+
+  results.sort(
+    (a, b) =>
+      b.sharedEntities.length - a.sharedEntities.length ||
+      b.relationCount - a.relationCount ||
+      a.path.localeCompare(b.path),
+  );
+  return results.slice(0, Math.max(1, limit));
+}
+
 /**
  * Lightweight reader — extracted so the boost loader and tests share one
  * code path. Tolerant of missing files (returns null) but logs a warning
@@ -274,6 +390,63 @@ function readGraphFile(stashRoot: string): GraphFile | null {
     return null;
   }
   return parsed;
+}
+
+function readParsedGraphContext(stashRoot: string): ParsedGraphContext | null {
+  const target = getGraphFilePath(stashRoot);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(target);
+  } catch {
+    return null;
+  }
+  if (
+    cachedParsedGraph &&
+    cachedParsedGraph.graphPath === target &&
+    cachedParsedGraph.mtimeMs === stat.mtimeMs &&
+    cachedParsedGraph.size === stat.size
+  ) {
+    return cachedParsedGraph.context;
+  }
+  const graph = readGraphFile(stashRoot);
+  if (!graph) return null;
+
+  const nodesByPath = new Map<string, GraphFileNode>();
+  const entityConfidence = new Map<string, number>();
+  const adjacency = new Map<string, Map<string, number>>();
+
+  function setBestEntityConfidence(entity: string, confidence: number | undefined): void {
+    const normalized = normalizeConfidence(confidence);
+    if (normalized === undefined) return;
+    const current = entityConfidence.get(entity);
+    if (current === undefined || normalized > current) entityConfidence.set(entity, normalized);
+  }
+
+  function setBestEdgeConfidence(from: string, to: string, confidence: number | undefined): void {
+    const normalized = normalizeConfidence(confidence);
+    if (!adjacency.has(from)) adjacency.set(from, new Map());
+    const neighbors = adjacency.get(from);
+    if (!neighbors) return;
+    const current = neighbors.get(to);
+    const next = normalized ?? 1;
+    if (current === undefined || next > current) neighbors.set(to, next);
+  }
+
+  for (const node of graph.files) {
+    nodesByPath.set(node.path, node);
+    for (const entity of node.entities) {
+      setBestEntityConfidence(entity, node.confidence);
+    }
+    for (const rel of node.relations) {
+      const edgeConfidence = combineConfidence(node.confidence, rel.confidence);
+      setBestEdgeConfidence(rel.from, rel.to, edgeConfidence);
+      setBestEdgeConfidence(rel.to, rel.from, edgeConfidence);
+    }
+  }
+
+  const context = { graph, nodesByPath, entityConfidence, adjacency };
+  cachedParsedGraph = { graphPath: target, mtimeMs: stat.mtimeMs, size: stat.size, context };
+  return context;
 }
 
 function isGraphFile(value: unknown): value is GraphFile {

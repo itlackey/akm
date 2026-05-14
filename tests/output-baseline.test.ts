@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { formatSearchPlain } from "../src/output/text";
 
 const CLI = path.join(__dirname, "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -170,6 +171,7 @@ describe("output baseline", () => {
       "origin",
       "parameters",
       "path",
+      "related",
       "template",
       "type",
     ]);
@@ -221,6 +223,138 @@ describe("output baseline", () => {
     expect(json.schemaVersion).toBe(1);
     expect(Object.keys(json)).toContain("path");
     expect(Object.keys(json)).toContain("editable");
+  });
+
+  test("show full JSON can include related graph neighbors", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
+    writeFile(
+      path.join(stashDir, ".akm", "graph.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          generatedAt: "2026-05-01T00:00:00.000Z",
+          stashRoot: stashDir,
+          files: [
+            {
+              path: path.join(stashDir, "knowledge", "guide.md"),
+              type: "knowledge",
+              entities: ["Guide", "Deploy"],
+              relations: [{ from: "Guide", to: "Deploy" }],
+            },
+            {
+              path: path.join(stashDir, "memories", "incident.md"),
+              type: "memory",
+              entities: ["Guide"],
+              relations: [{ from: "Guide", to: "Incident" }],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const output = runCli(stashDir, ["show", "knowledge:guide.md", "--format=json", "--detail=full"]);
+    const json = JSON.parse(output) as Record<string, unknown>;
+
+    expect(json.related).toBeTruthy();
+  });
+
+  test("show full JSON includes empty related object when no graph neighbors exist", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(
+      path.join(stashDir, ".akm", "graph.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          generatedAt: "2026-05-01T00:00:00.000Z",
+          stashRoot: stashDir,
+          files: [
+            {
+              path: path.join(stashDir, "knowledge", "guide.md"),
+              type: "knowledge",
+              entities: ["Guide"],
+              relations: [],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const output = runCli(stashDir, ["show", "knowledge:guide.md", "--format=json", "--detail=full"]);
+    const json = JSON.parse(output) as { related?: { total?: number; hits?: unknown[] } };
+
+    expect(json.related).toEqual({ total: 0, hits: [] });
+  });
+
+  test("show text output uses compact related labels", () => {
+    const stashDir = makeTempDir("akm-output-stash-");
+    writeFile(path.join(stashDir, "knowledge", "guide.md"), "# Guide\nUse this.\n");
+    writeFile(path.join(stashDir, "memories", "incident.md"), "# Incident\nFollow guide.\n");
+    writeFile(
+      path.join(stashDir, ".akm", "graph.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          generatedAt: "2026-05-01T00:00:00.000Z",
+          stashRoot: stashDir,
+          files: [
+            {
+              path: path.join(stashDir, "knowledge", "guide.md"),
+              type: "knowledge",
+              entities: ["Guide", "Deploy"],
+              relations: [{ from: "Guide", to: "Deploy" }],
+            },
+            {
+              path: path.join(stashDir, "memories", "incident.md"),
+              type: "memory",
+              entities: ["Guide"],
+              relations: [{ from: "Guide", to: "Incident" }],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const output = runCli(stashDir, ["show", "knowledge:guide.md", "--format=text", "--detail=full"]);
+
+    expect(output).toContain("related: 1");
+    expect(output).toContain("  - memory: incident.md");
+    expect(output).toContain("    shared: Guide");
+    expect(output).not.toContain(path.join(stashDir, "memories", "incident.md"));
+  });
+
+  test("search text output uses query match and neighbors graph labels", () => {
+    const output = formatSearchPlain(
+      {
+        hits: [
+          {
+            type: "knowledge",
+            name: "guide",
+            action: "akm show knowledge:guide -> read reference material",
+            score: 1,
+            graph: {
+              entities: [
+                { name: "Guide", kind: "matched" },
+                { name: "Incident", kind: "connected" },
+              ],
+              relations: [{ from: "Guide", to: "Incident" }],
+            },
+          },
+        ],
+      },
+      "normal",
+    );
+
+    expect(output).toContain("graph: query match=");
+    expect(output).toContain("neighbors=");
   });
 
   test("config defaults drive output mode and CLI flags override them", () => {

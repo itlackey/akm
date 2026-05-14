@@ -272,7 +272,7 @@ describe("runGraphExtractionPass — cache hit skips LLM call", () => {
     // The graph should now contain the new entity.
     const graphPath = path.join(tmpStash, ".akm", "graph.json");
     const graph = JSON.parse(fs.readFileSync(graphPath, "utf8")) as { files: Array<{ entities: string[] }> };
-    expect(graph.files[0]?.entities).toContain("serviceb");
+    expect(graph.files[0]?.entities).toContain("ServiceB");
   });
 
   test("(c) --re-enrich bypasses the cache even when body is unchanged", async () => {

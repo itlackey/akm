@@ -128,10 +128,8 @@ describe("runGraphExtractionPass — batch path", () => {
     };
     expect(parsed.schemaVersion).toBe(GRAPH_FILE_SCHEMA_VERSION);
     expect(parsed.files).toHaveLength(2);
-    // Entities are lower-cased at write time.
-    for (const node of parsed.files) {
-      for (const e of node.entities) expect(e).toBe(e.toLowerCase());
-    }
+    expect(parsed.files[0]?.entities).toEqual(["ServiceA", "ServiceB"]);
+    expect(parsed.files[1]?.entities).toEqual(["Terraform", "ProdCluster"]);
   });
 
   test("(h) default batchSize=1 uses per-asset path and behaves identically to original implementation", async () => {

@@ -9,6 +9,7 @@ import { parseSinceToIso } from "../core/time";
 import { readSemanticStatus } from "../indexer/semantic-status";
 import type { AgentProfile } from "../integrations/agent";
 import { detectAgentCliProfiles, requireAgentProfile } from "../integrations/agent";
+import type { SessionLogEntry } from "../integrations/session-logs";
 import { getExecutionLogCandidates } from "../integrations/session-logs";
 
 export interface HealthCheckResult {
@@ -99,6 +100,7 @@ export interface AkmHealthResult {
 
 export interface AkmHealthOptions {
   since?: string;
+  getExecutionLogCandidatesFn?: (sinceDays?: number) => SessionLogEntry[];
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -339,6 +341,7 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
   const stateDbPath = getStateDbPathInDataDir();
   const hardChecks: HealthCheckResult[] = [];
   const advisories: HealthCheckResult[] = [];
+  const getExecutionLogCandidatesFn = options.getExecutionLogCandidatesFn ?? getExecutionLogCandidates;
 
   let db: ReturnType<typeof openStateDatabase> | undefined;
   try {
@@ -460,7 +463,8 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
 
     let sessionLogEntries: SessionLogAdvisory[] = [];
     try {
-      sessionLogEntries = getExecutionLogCandidates().map((entry) => ({
+      const sinceDays = Math.max(0, Math.ceil((Date.now() - new Date(since).getTime()) / (24 * 60 * 60 * 1000)));
+      sessionLogEntries = getExecutionLogCandidatesFn(sinceDays).map((entry) => ({
         topic: entry.topic,
         frequency: entry.frequency,
         source: entry.source,
@@ -491,8 +495,10 @@ export function akmHealth(options: AkmHealthOptions = {}): AkmHealthResult {
     };
 
     const hardFailure = hardChecks.some((check) => check.status === "fail");
-    const anyWarnings = [...hardChecks, ...advisories].some((check) => check.status === "warn");
-    const status: AkmHealthResult["status"] = hardFailure ? "fail" : anyWarnings ? "warn" : "pass";
+    const deterministicWarnings = [...hardChecks, ...advisories].some(
+      (check) => check.status === "warn" && check.kind === "deterministic",
+    );
+    const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
 
     return {
       schemaVersion: 1,
