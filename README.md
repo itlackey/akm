@@ -24,33 +24,33 @@ Upgrade in place: `akm upgrade`
 
 ## What akm does
 
-- **Manage sources** — add local dirs, git repos, npm packages, and websites as searchable asset sources
+- **Manage sources** — add local dirs, git repos, npm packages, and websites as searchable asset sources [(details)](docs/features/sources-registries.md)
   ```sh
   akm add github:owner/stash        # GitHub
   akm add https://docs.example.com  # crawled website
   ```
-- **Search a unified index** — one FTS5 index across all your sources
+- **Search a unified index** — one FTS5 index across all your sources [(details)](docs/features/search-discovery.md)
   ```sh
   akm search "deploy" --type script --limit 5
   ```
-- **Curate a shortlist** — get the best-match assets for a task without knowing exact names
+- **Curate a shortlist** — get the best-match assets for a task without knowing exact names [(details)](docs/features/search-discovery.md)
   ```sh
   akm curate "set up a kubernetes deployment"
   ```
-- **Load assets on demand** — show the full content of any asset by ref
+- **Load assets on demand** — show the full content of any asset by ref [(details)](docs/features/search-discovery.md)
   ```sh
   akm show workflow:ship-release
   ```
-- **Capture local knowledge** — save discoveries as memories, imported docs, or wiki pages
+- **Capture local knowledge** — save discoveries as memories, imported docs, or wiki pages [(details)](docs/features/knowledge-management.md)
   ```sh
   akm remember "Staging deploys require VPN"
   akm import ./notes/runbook.md --wiki ops
   ```
-- **Run structured workflows** — parse, start, step through, and resume multi-step procedures
+- **Run structured workflows** — parse, start, step through, and resume multi-step procedures [(details)](docs/features/workflows.md)
   ```sh
   akm workflow start workflow:onboarding
   ```
-- **Improve continuously** — feedback drives proposals; proposals drive asset quality
+- **Improve continuously** — feedback drives proposals; proposals drive asset quality [(details)](docs/features/improvement-loop.md)
   ```sh
   akm feedback skill:code-review --positive
   akm improve && akm proposals
@@ -160,6 +160,19 @@ No plugins or SDKs required. Platform-specific integrations are available in [ak
 | [itlackey/akm-eval](https://github.com/itlackey/akm-eval) | Eval framework and tools for akm asset quality |
 
 ## Documentation
+
+### Features
+
+| Feature | Description |
+| --- | --- |
+| [Search & Discovery](docs/features/search-discovery.md) | Build the index, search, curate a shortlist, and load assets by ref |
+| [Knowledge Management](docs/features/knowledge-management.md) | Capture memories, import docs, manage wikis, and store config in vaults |
+| [Sources & Registries](docs/features/sources-registries.md) | Connect local dirs, git repos, npm packages, and websites; browse the registry |
+| [Workflows](docs/features/workflows.md) | Structured multi-step procedures with resumable run state |
+| [The Improvement Loop](docs/features/improvement-loop.md) | Feedback, history, proposals, and automated asset improvement |
+| [Agent Integration](docs/features/agent-integration.md) | Wire akm into Claude Code, OpenCode, Cursor, and other coding assistants |
+
+### Reference docs
 
 | Doc | Description |
 | --- | --- |
