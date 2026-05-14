@@ -1415,17 +1415,59 @@ break from the older `reflect` / `proposal` / `distill` public UX.
 ### agent
 
 **Status: Available since 0.8.0.**
-Dispatch a configured external agent profile.
+Dispatch a configured external agent profile, optionally embodying a stash agent asset.
 
 ```sh
-akm agent <profile> [args...]
+akm agent <profile> [<agent-ref>] [--prompt <text>] [--model <model>] [--command <ref>] [--workflow <ref>] [--timeout-ms <ms>]
 ```
+
+| Argument / Flag | Description |
+| --- | --- |
+| `<profile>` | Agent profile / platform to use (`opencode`, `claude`, `codex`, `gemini`, `aider`, or any custom profile name from config) |
+| `<agent-ref>` | Optional agent asset ref (e.g. `agent:code-reviewer`). Loads system prompt, model, and tool policy from the stash asset. |
+| `--prompt <text>` | Task prompt to pass to the agent |
+| `--model <model>` | Model override. Accepts aliases (`opus`, `sonnet`, `haiku`) or exact platform model IDs. Overrides the model in the agent asset. Resolved per platform: `opencode/claude-opus-4-7` for opencode, `claude-opus-4-7` for claude. |
+| `--command <ref>` | Load prompt from a `command:` asset |
+| `--workflow <ref>` | Load prompt from a `workflow:` asset |
+| `--timeout-ms <ms>` | Override the agent CLI timeout in milliseconds |
+
+When `<agent-ref>` is provided, akm loads the stash agent asset and extracts
+its system prompt, `modelHint`, and `toolPolicy`. The `--model` flag wins
+over any model specified in the asset.
+
+**Platform-specific dispatch:** akm uses a platform builder to construct the
+CLI argv for each profile. `opencode` profiles emit:
+`opencode run [--system-prompt "..."] [--model opencode/claude-opus-4-7] "<prompt>"`.
+`claude` profiles emit:
+`claude [--system-prompt "..."] [--model claude-opus-4-7] [--allowedTools ...] --print "<prompt>"`.
+Custom profiles may set `commandBuilder` in config to map to a known builder.
+
+Without any `--prompt`, `<agent-ref>`, or `--model`, the agent is launched
+interactively (no injected prompt, no platform-specific flags beyond the
+profile's base args) — the same behaviour as before 0.8.0.
 
 Profiles ship for `opencode`, `claude`, `codex`, `gemini`, and `aider` and
 can be extended via `agent.profiles[<name>]` in config (see
 [Configuration](configuration.md)). akm spawns the profile's `bin` via the
 shared spawn wrapper described in v1 spec §12.2 — captured or interactive
 stdio, hard timeout, structured failure reasons.
+
+```sh
+# Interactive launch (unchanged from pre-0.8.0):
+akm agent opencode
+
+# Dispatch with a prompt only:
+akm agent claude --prompt "summarize recent changes"
+
+# Embody a stash agent asset:
+akm agent opencode agent:code-reviewer --prompt "review src/"
+
+# Model override with alias:
+akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
+
+# Exact model ID override:
+akm agent opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
+```
 
 Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
 failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |

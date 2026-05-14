@@ -7,7 +7,7 @@
  *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
  *   • Config: parseAgentConfig, resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
- *   • Spawn: runAgent.
+ *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 

@@ -3072,7 +3072,7 @@ const agentCommand = defineCommand({
   meta: {
     name: "agent",
     description:
-      "Dispatch an agent CLI (opencode, claude, …) optionally embodying a stash agent asset that provides the system prompt, model, and tool policy",
+      "Dispatch an agent CLI (opencode, claude, …) with an optional agent asset that provides the system prompt, model, and tool policy. Use <agent-ref> to embody a stash agent, --model to override the model, and --prompt/--command/--workflow to provide the task.",
   },
   args: {
     profile: {

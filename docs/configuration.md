@@ -451,6 +451,8 @@ Per-key contract:
 | `agent.profiles[<name>].model` | optional | Model identifier to use when `sdkMode` is `true` (e.g. `"qwen2.5-coder:32b"`, `"anthropic/claude-sonnet-4-5"`). Same model as the small connection is valid. |
 | `agent.profiles[<name>].endpoint` | optional | OpenAI-compatible chat completions endpoint for `sdkMode`. If absent, inherits from `config.llm.endpoint`. |
 | `agent.profiles[<name>].apiKey` | optional | API key for the `sdkMode` endpoint. If absent, inherits from `config.llm.apiKey`. |
+| `agent.profiles[<name>].commandBuilder` | optional | Which platform builder handles argv construction when `akm agent` dispatches with a system prompt, model, or tool policy. Defaults to the profile name. Use to map a custom profile to a known builder (`"opencode"` or `"claude"`). |
+| `agent.profiles[<name>].modelAliases` | optional | Per-profile model aliases. Keys are lowercase alias strings (e.g. `"opus"`, `"sonnet"`, `"haiku"`); values are the exact model string this platform's CLI expects (e.g. `"opencode/claude-opus-4-7"`). User-defined aliases override the built-in alias table. |
 
 Unknown keys under `agent` are warn-and-ignore. A missing `agent` block
 disables all agent commands with a `ConfigError` whose hint points at this
