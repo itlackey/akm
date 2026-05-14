@@ -112,7 +112,8 @@ describe("improve argv coercion", () => {
   });
 
   test("ref scope is preserved", async () => {
-    const result = await akmImprove({ scope: "skill:deploy", dryRun: true });
+    const stash = makeStashDir();
+    const result = await akmImprove({ scope: "skill:deploy", dryRun: true, stashDir: stash });
     expect(result.scope).toEqual({ mode: "ref", value: "skill:deploy" });
   });
 
