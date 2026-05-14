@@ -126,14 +126,18 @@ const claudeBuilder: AgentCommandBuilder = {
 };
 
 /**
- * Default builder — reproduces the pre-builder behaviour for custom profiles
- * and any platform without a dedicated builder. Treats prompt as a bare
- * positional; ignores tools (no standard flag).
+ * Default builder — used for custom profiles and any platform without a
+ * dedicated builder. Passes systemPrompt and model via the same flags as
+ * the builtin builders so custom profiles benefit from agent asset metadata.
+ * Tools are omitted — no standard cross-platform flag exists.
  */
 const defaultBuilder: AgentCommandBuilder = {
   platform: "default",
   build(profile, req) {
     const args: string[] = [...profile.args];
+    if (req.systemPrompt) {
+      args.push("--system-prompt", req.systemPrompt);
+    }
     if (req.model) {
       const resolved = resolveModel(req.model, profile.name, profile.modelAliases);
       args.push("--model", resolved);

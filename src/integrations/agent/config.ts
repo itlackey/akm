@@ -428,7 +428,11 @@ function parseAgentProfileConfig(name: string, value: unknown): AgentProfileConf
   if (typeof raw.modelAliases === "object" && raw.modelAliases !== null && !Array.isArray(raw.modelAliases)) {
     const aliases: Record<string, string> = {};
     for (const [k, v] of Object.entries(raw.modelAliases as Record<string, unknown>)) {
-      if (typeof v === "string") aliases[k.toLowerCase()] = v;
+      if (typeof v === "string") {
+        aliases[k.toLowerCase()] = v;
+      } else {
+        warn(`[akm] Ignoring non-string value for agent.profiles."${name}".modelAliases key "${k}".`);
+      }
     }
     if (Object.keys(aliases).length > 0) out.modelAliases = aliases;
   } else if (raw.modelAliases !== undefined) {

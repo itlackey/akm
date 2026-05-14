@@ -3134,19 +3134,33 @@ const agentCommand = defineCommand({
       const modelRaw = typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
       const model = modelRaw ?? assetModel;
 
+      const promptText = typeof args.prompt === "string" && args.prompt.trim() ? args.prompt : undefined;
+      const commandRef = typeof args.command === "string" && args.command.trim() ? args.command.trim() : undefined;
+      const workflowRef = typeof args.workflow === "string" && args.workflow.trim() ? args.workflow.trim() : undefined;
+
+      // Only build a dispatch request when there is something to dispatch — a
+      // prompt, an agent asset, or a model override. When none of these are
+      // present the agent is launched interactively (no injected prompt, no
+      // platform-specific flags beyond the profile's base args).
+      const hasDispatchContent = !!(promptText ?? commandRef ?? workflowRef ?? systemPrompt ?? model ?? assetTools);
+
       const result = await akmAgentDispatch({
         profileName: String(args.profile),
-        prompt: typeof args.prompt === "string" ? args.prompt : undefined,
-        commandRef: typeof args.command === "string" && args.command.trim() ? args.command.trim() : undefined,
-        workflowRef: typeof args.workflow === "string" && args.workflow.trim() ? args.workflow.trim() : undefined,
+        prompt: promptText,
+        commandRef,
+        workflowRef,
         agentConfig,
         llmConfig: config.llm,
-        dispatch: {
-          prompt: typeof args.prompt === "string" ? args.prompt : "",
-          systemPrompt,
-          model,
-          tools: assetTools,
-        },
+        ...(hasDispatchContent
+          ? {
+              dispatch: {
+                prompt: promptText ?? "",
+                systemPrompt,
+                model,
+                tools: assetTools,
+              },
+            }
+          : {}),
         ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
       });
 
