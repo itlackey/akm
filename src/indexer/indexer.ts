@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
 import { isHttpUrl, resolveStashDir, toErrorMessage } from "../core/common";
 import { concurrentMap } from "../core/concurrent";
 import type { AkmConfig, LlmConnectionConfig } from "../core/config";
@@ -808,7 +809,19 @@ async function indexEntries(
         reason: persistedReason,
       });
       if (persistedRows === 0) {
-        warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        // Warn only when the dir had files that *could* produce entries (.md or
+        // known script extensions). Dirs with only non-indexable types (.json,
+        // .yaml, .conf, .env, .gitkeep) or deduped-only rows are expected and
+        // not actionable at normal log level.
+        const hasIndexableExtension = files.some((f) => {
+          const ext = path.extname(f).toLowerCase();
+          return ext === ".md" || SCRIPT_EXTENSIONS.has(ext);
+        });
+        if (persistedReason !== "deduped-zero-row" && hasIndexableExtension) {
+          warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        } else {
+          warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        }
       }
     }
   });
