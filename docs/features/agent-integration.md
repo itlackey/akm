@@ -129,6 +129,45 @@ akm show workflow:deploy-to-prod
 akm feedback workflow:deploy-to-prod --positive --note "Completed without issues"
 ```
 
+## akm agent — dispatching with a stash agent asset
+
+`akm agent` can embody a stash agent asset (type `agent:`) to apply that
+agent's system prompt, model, and tool policy to any task. Pass the agent
+asset ref as the second positional argument after the profile name.
+
+```sh
+# Embody an agent asset and run a task:
+akm agent opencode agent:code-reviewer --prompt "review src/"
+
+# Model override with a built-in alias (overrides the asset's modelHint):
+akm agent claude agent:planner --model sonnet --prompt "plan the sprint"
+
+# Exact platform model ID override:
+akm agent opencode agent:code-reviewer --model opencode/claude-opus-4-7 --prompt "audit the API"
+
+# Interactive launch with an agent asset (no prompt — interactive session):
+akm agent opencode agent:architect
+```
+
+**Built-in model aliases** — `opus`, `sonnet`, and `haiku` are resolved
+per platform automatically:
+
+| Alias | opencode | claude |
+| --- | --- | --- |
+| `opus` | `opencode/claude-opus-4-7` | `claude-opus-4-7` |
+| `sonnet` | `opencode/claude-sonnet-4-7` | `claude-sonnet-4-7` |
+| `haiku` | `opencode/claude-haiku-4-5` | `claude-haiku-4-5` |
+
+Per-profile `modelAliases` in config can extend or override this table.
+
+**Platform dispatch** — when a system prompt, model, or tool policy is
+present, akm builds the CLI argv using the platform builder for the
+profile. `opencode` profiles use `opencode run [--system-prompt "..."]
+[--model <id>] "<prompt>"`. `claude` profiles use `claude
+[--system-prompt "..."] [--model <id>] [--allowedTools ...] --print
+"<prompt>"`. Custom profiles may set `commandBuilder` in config to map to
+a known builder.
+
 ## See also
 
 - [Search & Discovery](search-discovery.md) — the full curate → show retrieval path

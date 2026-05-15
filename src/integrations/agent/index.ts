@@ -7,10 +7,12 @@
  *   • Types: AgentProfile, AgentConfig, AgentRunResult, AgentFailureReason.
  *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
  *   • Config: parseAgentConfig, resolveProfileFromConfig, requireAgentProfile, listResolvedAgentProfiles, listAgentProfileNames.
- *   • Spawn: runAgent.
+ *   • Spawn: runAgent. Builders: getCommandBuilder, AgentCommandBuilder, AgentDispatchRequest — platform-specific argv construction.
  *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
  */
 
+export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builders";
+export { getCommandBuilder } from "./builders";
 export type {
   AgentConfig,
   AgentProfileConfig,
@@ -30,6 +32,8 @@ export type {
   WhichFn,
 } from "./detect";
 export { defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
+export type { PlatformModelMap } from "./model-aliases";
+export { listBuiltinModelAliases, resolveModel } from "./model-aliases";
 export type {
   AgentParseMode,
   AgentProfile,

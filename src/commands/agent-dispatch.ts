@@ -15,6 +15,7 @@ import fs from "node:fs";
 import { parseAssetRef } from "../core/asset-ref";
 import type { LlmConnectionConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
+import type { AgentDispatchRequest } from "../integrations/agent/builders";
 import type { AgentConfig } from "../integrations/agent/config";
 import { requireAgentProfile } from "../integrations/agent/config";
 import { runWithAgentRunner } from "../integrations/agent/runners";
@@ -29,6 +30,12 @@ export interface AkmAgentDispatchOptions {
   agentConfig?: AgentConfig;
   llmConfig?: LlmConnectionConfig;
   timeoutMs?: number;
+  /**
+   * When present, the platform-specific AgentCommandBuilder uses these fields
+   * to construct the argv (system prompt, model alias, tool policy). When
+   * absent, falls back to the legacy positional-prompt behaviour.
+   */
+  dispatch?: AgentDispatchRequest;
 }
 
 export interface AkmAgentDispatchResult {
@@ -114,6 +121,12 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
   // When prompt is undefined, the agent is launched interactively.
 
   const stdio = prompt === undefined && profile.sdkMode !== true ? ("interactive" as const) : profile.stdio;
+  // Build the final dispatch request: merge the caller-supplied dispatch with
+  // the resolved prompt so the builder has all context in one place.
+  const dispatchRequest: AgentDispatchRequest | undefined = options.dispatch
+    ? { ...options.dispatch, prompt: prompt ?? options.dispatch.prompt }
+    : undefined;
+
   const result: AgentRunResult = await runWithAgentRunner({
     profile,
     prompt,
@@ -123,6 +136,7 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
       parseOutput: "text",
       ...(options.args?.length && !options.commandRef && !options.workflowRef ? { args: options.args } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
     },
   });
 
