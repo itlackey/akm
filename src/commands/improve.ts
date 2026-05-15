@@ -1031,7 +1031,7 @@ async function runImprovePreparationStage(args: {
     }
   }
   if (validationFailures.length > 0) {
-    info(`[improve] ${validationFailures.length} assets have validation issues (will be skipped):`);
+    info(`[improve] ${validationFailures.length} assets have validation issues (will attempt schema repair):`);
     for (const f of validationFailures) info(`  ${f.ref}: ${f.reason}`);
   }
 
@@ -1057,6 +1057,11 @@ async function runImprovePreparationStage(args: {
   }
 
   const validationFailureRefs = new Set(validationFailures.filter((f) => !repairedRefs.has(f.ref)).map((f) => f.ref));
+  if (repairedRefs.size > 0) {
+    info(
+      `[improve] schema repair fixed ${repairedRefs.size}/${validationFailures.length} validation failures; ${validationFailureRefs.size} remain`,
+    );
+  }
 
   // Phase 0.5 — structural hygiene pass
   let lintSummary: { fixed: number; flagged: number } | undefined;
@@ -1226,18 +1231,25 @@ async function runImprovePreparationStage(args: {
   const allLoopRefs = [...reflectAndDistillRefs, ...distillOnlyRefs];
   const loopRefs = options.limit ? allLoopRefs.slice(0, options.limit) : allLoopRefs;
 
-  const reflectCooledCount = actionableRefs.filter(
+  const reflectCooledSkipCount = actionableRefs.filter(
     (r) => reflectCooledRefs.has(r.ref) && !distillOnlyRefs.some((d) => d.ref === r.ref),
   ).length;
-  if (reflectCooledCount > 0) {
-    info(`[improve] ${reflectCooledCount}/${actionableRefs.length} assets on reflect cooldown — skipping`);
-  }
-  if (distillOnlyRefs.length > 0) {
-    info(`[improve] ${distillOnlyRefs.length} reflect-cooled assets will run distill-only path`);
+  const totalReflectCooled = reflectCooledSkipCount + distillOnlyRefs.length;
+  if (totalReflectCooled > 0) {
+    info(
+      `[improve] ${totalReflectCooled}/${actionableRefs.length} on reflect cooldown ` +
+        `(${reflectCooledSkipCount} fully skipped, ${distillOnlyRefs.length} routed to distill-only)`,
+    );
   }
   if (validationFailureRefs.size > 0) {
     info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
   }
+  info(
+    `[improve] ${loopRefs.length} assets will be processed` +
+      (options.limit && allLoopRefs.length > options.limit
+        ? ` (--limit ${options.limit} applied; ${allLoopRefs.length - options.limit} eligible deferred)`
+        : ""),
+  );
 
   return {
     actions,
