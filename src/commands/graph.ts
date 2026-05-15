@@ -30,7 +30,7 @@ export interface GraphEntitiesResult {
   graphPath: string;
   generatedAt: string;
   total: number;
-  entities: Array<{ name: string; fileCount: number }>;
+  entities: Array<{ name: string; fileCount: number; confidence?: number }>;
 }
 
 export interface GraphRelationsResult {
@@ -40,7 +40,7 @@ export interface GraphRelationsResult {
   graphPath: string;
   generatedAt: string;
   total: number;
-  relations: Array<{ from: string; to: string; type?: string; count: number }>;
+  relations: Array<{ from: string; to: string; type?: string; count: number; confidence?: number }>;
 }
 
 export interface GraphExportResult {
@@ -62,8 +62,30 @@ export interface GraphRelatedResult {
   ref: string;
   path: string;
   total: number;
-  related: Array<{ path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  related: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
   tip?: string;
+}
+
+export interface GraphEntityResult {
+  schemaVersion: 1;
+  shape: "graph-entity";
+  stashPath: string;
+  graphPath: string;
+  generatedAt: string;
+  entity: string;
+  total: number;
+  matches: Array<{ ref?: string; path: string; type: string; confidence?: number }>;
+}
+
+export interface GraphOrphansResult {
+  schemaVersion: 1;
+  shape: "graph-orphans";
+  stashPath: string;
+  graphPath: string;
+  generatedAt: string;
+  totalConsidered: number;
+  total: number;
+  orphans: Array<{ ref?: string; path: string; type: string }>;
 }
 
 interface LoadedGraph {
@@ -136,6 +158,29 @@ function countEntitiesByFile(nodes: GraphFileNode[]): Map<string, number> {
   return counts;
 }
 
+function aggregateEntityStats(nodes: GraphFileNode[]): Map<string, { fileCount: number; confidence?: number }> {
+  const stats = new Map<string, { fileCount: number; confidence?: number }>();
+  for (const node of nodes) {
+    const seen = new Set<string>();
+    for (const entity of node.entities) {
+      if (seen.has(entity)) continue;
+      seen.add(entity);
+      const existing = stats.get(entity);
+      const nodeConf =
+        typeof node.confidence === "number" && Number.isFinite(node.confidence) ? node.confidence : undefined;
+      if (existing) {
+        existing.fileCount += 1;
+        if (nodeConf !== undefined && (existing.confidence === undefined || nodeConf > existing.confidence)) {
+          existing.confidence = nodeConf;
+        }
+      } else {
+        stats.set(entity, { fileCount: 1, ...(nodeConf !== undefined ? { confidence: nodeConf } : {}) });
+      }
+    }
+  }
+  return stats;
+}
+
 export function akmGraphSummary(options?: { source?: string }): GraphSummaryResult {
   const { graph, stashPath, graphPath } = loadGraph(options?.source);
   return {
@@ -159,9 +204,13 @@ export function akmGraphEntities(options?: { source?: string; limit?: number }):
   if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
     throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
   }
-  const counts = countEntitiesByFile(graph.files);
-  const entities = [...counts.entries()]
-    .map(([name, fileCount]) => ({ name, fileCount }))
+  const stats = aggregateEntityStats(graph.files);
+  const entities = [...stats.entries()]
+    .map(([name, info]) => ({
+      name,
+      fileCount: info.fileCount,
+      ...(info.confidence !== undefined ? { confidence: info.confidence } : {}),
+    }))
     .sort((a, b) => b.fileCount - a.fileCount || a.name.localeCompare(b.name));
   const sliced = typeof limit === "number" ? entities.slice(0, limit) : entities;
   return {
@@ -181,15 +230,26 @@ export function akmGraphRelations(options?: { source?: string; limit?: number })
   if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
     throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
   }
-  const counts = new Map<string, { from: string; to: string; type?: string; count: number }>();
+  const counts = new Map<string, { from: string; to: string; type?: string; count: number; confidence?: number }>();
   for (const node of graph.files) {
     for (const rel of node.relations) {
       const key = `${rel.from}\u0000${rel.to}\u0000${rel.type ?? ""}`;
+      const relConf =
+        typeof rel.confidence === "number" && Number.isFinite(rel.confidence) ? rel.confidence : undefined;
       const existing = counts.get(key);
       if (existing) {
         existing.count += 1;
+        if (relConf !== undefined && (existing.confidence === undefined || relConf > existing.confidence)) {
+          existing.confidence = relConf;
+        }
       } else {
-        counts.set(key, { from: rel.from, to: rel.to, ...(rel.type ? { type: rel.type } : {}), count: 1 });
+        counts.set(key, {
+          from: rel.from,
+          to: rel.to,
+          ...(rel.type ? { type: rel.type } : {}),
+          count: 1,
+          ...(relConf !== undefined ? { confidence: relConf } : {}),
+        });
       }
     }
   }
@@ -277,6 +337,136 @@ export async function akmGraphRelated(options: {
     total: related.length,
     related,
     ...(related.length === 0 ? { tip: "No related graph neighbors were found for this asset." } : {}),
+  };
+}
+
+function normalizeGraphName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+interface EntryRefLookupRow {
+  file_path: string;
+  entry_json: string;
+}
+
+function buildRefByPath(
+  stashRoot: string,
+  db: import("bun:sqlite").Database,
+): Map<string, { ref: string; type: string }> {
+  const rows = db
+    .prepare("SELECT file_path, entry_json FROM entries WHERE stash_dir = ? OR file_path LIKE ?")
+    .all(stashRoot, `${stashRoot}%`) as EntryRefLookupRow[];
+  const map = new Map<string, { ref: string; type: string }>();
+  for (const row of rows) {
+    if (map.has(row.file_path)) continue;
+    try {
+      const entry = JSON.parse(row.entry_json) as {
+        type?: string;
+        name?: string;
+      };
+      if (typeof entry.type === "string" && typeof entry.name === "string") {
+        map.set(row.file_path, { ref: `${entry.type}:${entry.name}`, type: entry.type });
+      }
+    } catch {
+      // ignore corrupt entry_json
+    }
+  }
+  return map;
+}
+
+export function akmGraphEntity(options: { name: string; source?: string; limit?: number }): GraphEntityResult {
+  const name = options.name?.trim();
+  if (!name) {
+    throw new UsageError("`akm graph entity` requires <name>.", "MISSING_REQUIRED_ARGUMENT");
+  }
+  const limit = options.limit;
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
+  }
+  const { graph, stashPath, graphPath } = loadGraph(options.source);
+  const target = normalizeGraphName(name);
+
+  let db: import("bun:sqlite").Database | undefined;
+  let refByPath: Map<string, { ref: string; type: string }>;
+  try {
+    db = openExistingDatabase();
+    refByPath = buildRefByPath(stashPath, db);
+  } finally {
+    if (db) closeDatabase(db);
+  }
+
+  const matches: Array<{ ref?: string; path: string; type: string; confidence?: number }> = [];
+  for (const node of graph.files) {
+    const found = node.entities.some((entity) => normalizeGraphName(entity) === target);
+    if (!found) continue;
+    const lookup = refByPath.get(node.path);
+    const conf = typeof node.confidence === "number" && Number.isFinite(node.confidence) ? node.confidence : undefined;
+    matches.push({
+      ...(lookup?.ref ? { ref: lookup.ref } : {}),
+      path: node.path,
+      type: node.type,
+      ...(conf !== undefined ? { confidence: conf } : {}),
+    });
+  }
+
+  matches.sort((a, b) => {
+    const ca = a.confidence ?? 0;
+    const cb = b.confidence ?? 0;
+    if (cb !== ca) return cb - ca;
+    return a.path.localeCompare(b.path);
+  });
+
+  const sliced = typeof limit === "number" ? matches.slice(0, limit) : matches;
+  return {
+    schemaVersion: 1,
+    shape: "graph-entity",
+    stashPath,
+    graphPath,
+    generatedAt: graph.generatedAt,
+    entity: name,
+    total: matches.length,
+    matches: sliced,
+  };
+}
+
+export function akmGraphOrphans(options?: { source?: string; limit?: number }): GraphOrphansResult {
+  const limit = options?.limit;
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    throw new UsageError("--limit must be a positive integer.", "INVALID_FLAG_VALUE");
+  }
+  const { graph, stashPath, graphPath } = loadGraph(options?.source);
+
+  let db: import("bun:sqlite").Database | undefined;
+  let refByPath: Map<string, { ref: string; type: string }>;
+  try {
+    db = openExistingDatabase();
+    refByPath = buildRefByPath(stashPath, db);
+  } finally {
+    if (db) closeDatabase(db);
+  }
+
+  const orphans: Array<{ ref?: string; path: string; type: string }> = [];
+  for (const node of graph.files) {
+    if (node.entities.length > 0) continue;
+    const lookup = refByPath.get(node.path);
+    orphans.push({
+      ...(lookup?.ref ? { ref: lookup.ref } : {}),
+      path: node.path,
+      type: node.type,
+    });
+  }
+
+  orphans.sort((a, b) => a.type.localeCompare(b.type) || a.path.localeCompare(b.path));
+  const sliced = typeof limit === "number" ? orphans.slice(0, limit) : orphans;
+  return {
+    schemaVersion: 1,
+    shape: "graph-orphans",
+    stashPath,
+    graphPath,
+    generatedAt: graph.generatedAt,
+    totalConsidered: graph.files.length,
+    total: orphans.length,
+    orphans: sliced,
   };
 }
 

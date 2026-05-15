@@ -32,7 +32,12 @@ import {
   searchVec,
 } from "./db";
 import { ensureIndex } from "./ensure-index";
-import { collectGraphRelatedHit, type GraphBoostContext, loadGraphBoostContext } from "./graph-boost";
+import {
+  collectGraphRelatedHit,
+  computeGraphBoost,
+  type GraphBoostContext,
+  loadGraphBoostContext,
+} from "./graph-boost";
 import { isProposedQuality, type StashEntry, type StashEntryScope } from "./metadata";
 import { applyRankingRules, combineSearchScores, normalizeFtsScores } from "./ranking";
 import { enrichSearchHit } from "./search-hit-enrichers";
@@ -441,6 +446,8 @@ export async function buildDbHit(input: {
   // Round to 4 decimal places, no boost multiplication
   const score = Math.round(input.score * 10000) / 10000;
 
+  const graphBoost = input.graphContext ? computeGraphBoost(input.graphContext, input.path) : 0;
+
   const whyMatched = buildWhyMatched(
     input.entry,
     input.query,
@@ -448,6 +455,7 @@ export async function buildDbHit(input: {
     qualityBoost,
     confidenceBoost,
     input.utilityBoosted,
+    graphBoost,
   );
 
   const graphHit = input.graphContext ? collectGraphRelatedHit(input.graphContext, input.path) : null;
@@ -500,6 +508,7 @@ export function buildWhyMatched(
   qualityBoost: number,
   confidenceBoost: number,
   utilityBoosted?: boolean,
+  graphBoost?: number,
 ): string[] {
   const reasons: string[] = [
     rankingMode === "hybrid"
@@ -542,6 +551,9 @@ export function buildWhyMatched(
   if (entry.beliefState === "contradicted") reasons.push("contradicted belief state");
   if (entry.beliefState === "superseded") reasons.push("superseded belief state");
   if (utilityBoosted) reasons.push("usage history boost");
+  if (typeof graphBoost === "number" && graphBoost > 0) {
+    reasons.push(`graph boost +${graphBoost.toFixed(2)}`);
+  }
 
   return reasons;
 }

@@ -237,10 +237,14 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
       return formatGraphSummaryPlain(r);
     case "graph-entities":
       return formatGraphEntitiesPlain(r);
+    case "graph-entity":
+      return formatGraphEntityPlain(r);
     case "graph-relations":
       return formatGraphRelationsPlain(r);
     case "graph-related":
       return formatGraphRelatedPlain(r);
+    case "graph-orphans":
+      return formatGraphOrphansPlain(r);
     case "graph-export":
       return formatGraphExportPlain(r);
     case "improve": {
@@ -549,12 +553,18 @@ export function formatGraphSummaryPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
+function formatConfidenceSuffix(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "";
+  return ` (conf ${value.toFixed(2)})`;
+}
+
 export function formatGraphEntitiesPlain(r: Record<string, unknown>): string {
   const entities = Array.isArray(r.entities) ? (r.entities as Array<Record<string, unknown>>) : [];
   if (entities.length === 0) return "No entities found in graph.";
   const lines = [`Entities (${String(r.total ?? entities.length)} total):`];
   for (const entity of entities) {
-    lines.push(`- ${String(entity.name ?? "?")} (${String(entity.fileCount ?? 0)} files)`);
+    const conf = formatConfidenceSuffix(entity.confidence);
+    lines.push(`- ${String(entity.name ?? "?")} (${String(entity.fileCount ?? 0)} files)${conf}`);
   }
   return lines.join("\n");
 }
@@ -565,9 +575,36 @@ export function formatGraphRelationsPlain(r: Record<string, unknown>): string {
   const lines = [`Relations (${String(r.total ?? relations.length)} total):`];
   for (const relation of relations) {
     const type = relation.type ? ` [${String(relation.type)}]` : "";
+    const conf = formatConfidenceSuffix(relation.confidence);
     lines.push(
-      `- ${String(relation.from ?? "?")} -> ${String(relation.to ?? "?")}${type} x${String(relation.count ?? 0)}`,
+      `- ${String(relation.from ?? "?")} -> ${String(relation.to ?? "?")}${type} x${String(relation.count ?? 0)}${conf}`,
     );
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphEntityPlain(r: Record<string, unknown>): string {
+  const matches = Array.isArray(r.matches) ? (r.matches as Array<Record<string, unknown>>) : [];
+  if (matches.length === 0) return `No assets contain entity ${String(r.entity ?? "?")}.`;
+  const lines = [`Assets containing entity ${String(r.entity ?? "?")} (${String(r.total ?? matches.length)} total):`];
+  for (const match of matches) {
+    const label = typeof match.ref === "string" && match.ref ? match.ref : String(match.path ?? "?");
+    const conf = formatConfidenceSuffix(match.confidence);
+    lines.push(`- ${String(match.type ?? "?")}: ${label}${conf}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatGraphOrphansPlain(r: Record<string, unknown>): string {
+  const orphans = Array.isArray(r.orphans) ? (r.orphans as Array<Record<string, unknown>>) : [];
+  const considered = String(r.totalConsidered ?? "?");
+  if (orphans.length === 0) {
+    return `No orphan assets (0 of ${considered} have zero extracted entities).`;
+  }
+  const lines = [`Orphans (${String(r.total ?? orphans.length)} of ${considered} considered):`];
+  for (const orphan of orphans) {
+    const label = typeof orphan.ref === "string" && orphan.ref ? orphan.ref : String(orphan.path ?? "?");
+    lines.push(`- ${String(orphan.type ?? "?")}: ${label}`);
   }
   return lines.join("\n");
 }
@@ -581,6 +618,13 @@ export function formatGraphRelatedPlain(r: Record<string, unknown>): string {
     lines.push(`- ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
     if (shared) lines.push(`  shared: ${shared}`);
     lines.push(`  relationCount: ${String(hit.relationCount ?? 0)}`);
+  }
+  const topHit = related[0];
+  if (topHit) {
+    const target = typeof topHit.ref === "string" && topHit.ref ? topHit.ref : formatRelatedLabel(topHit);
+    if (target && target !== "?") {
+      lines.push(`Next: akm show '${target}'`);
+    }
   }
   return lines.join("\n");
 }

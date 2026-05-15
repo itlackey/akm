@@ -220,6 +220,9 @@ akm graph                            # Alias for `akm graph summary`
 akm graph summary
 akm graph entities --limit 25
 akm graph relations --limit 25
+akm graph entity "React Router"
+akm graph related knowledge:react-router
+akm graph orphans --limit 20
 akm graph export --out ./graph.json
 akm graph export --out ./graph.jsonl --format jsonl
 ```
@@ -229,16 +232,32 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `summary` | Show graph counts and optional quality telemetry (`consideredFiles`, `extractedFiles`, `extractionCoverage`, `density`) |
-| `entities` | List deduplicated entities with per-file occurrence counts |
-| `relations` | List deduplicated relations with occurrence counts |
+| `entities` | List deduplicated entities with per-file occurrence counts and best confidence |
+| `entity <name>` | Show every asset that contains the given entity, ordered by per-asset confidence. Inverts the `entities` view |
+| `relations` | List deduplicated relations with occurrence counts and best confidence |
+| `related <ref>` | Show assets related to `<ref>` via shared graph entities (asset neighbors) |
+| `orphans` | List assets with zero extracted graph entities — useful for quality triage |
 | `export` | Write the graph to disk as `json` or `jsonl` |
+
+`akm graph related <ref>` returns the closest graph neighbors of an asset:
+each hit lists the asset's `type`, label, the `shared` entities, and the
+`relationCount` connecting them. The text formatter also appends a `Next:` hint
+pointing at the top hit so agents know which ref to load next.
+
+`akm graph entity <name>` lists assets that mention an entity, ordered by
+extraction confidence — useful when you have an entity name from
+`akm graph entities` and want to inspect every source that surfaced it.
+
+`akm graph orphans` lists assets that produced zero entities during the
+extraction pass. These are good candidates for re-extraction, content
+improvement, or pruning.
 
 Common flags:
 
 | Flag | Description |
 | --- | --- |
 | `--source <name\|path>` | Select which configured source stash to inspect (defaults to primary source) |
-| `--limit <n>` | Cap rows returned by `entities` / `relations` |
+| `--limit <n>` | Cap rows returned by `entities`, `entity`, `relations`, `related`, `orphans` |
 | `--out <path>` | Required for `export`; output file path |
 | `--format json\|jsonl` | Export format for `export` (default `json`) |
 

@@ -12,7 +12,9 @@ import { akmCurate } from "./commands/curate";
 import { akmEventsList, akmEventsTail } from "./commands/events";
 import {
   akmGraphEntities,
+  akmGraphEntity,
   akmGraphExport,
+  akmGraphOrphans,
   akmGraphRelated,
   akmGraphRelations,
   akmGraphSummary,
@@ -461,6 +463,41 @@ const graphCommand = defineCommand({
               source: args.source,
               limit: parsePositiveIntFlag(args.limit ?? undefined),
             }),
+          );
+        });
+      },
+    }),
+    entity: defineCommand({
+      meta: { name: "entity", description: "List assets that contain the given entity" },
+      args: {
+        name: { type: "positional", description: "Entity name", required: true },
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum matches to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-entity",
+            akmGraphEntity({
+              name: args.name ?? "",
+              source: args.source,
+              limit: parsePositiveIntFlag(args.limit ?? undefined),
+            }),
+          );
+        });
+      },
+    }),
+    orphans: defineCommand({
+      meta: { name: "orphans", description: "List assets with no extracted graph entities" },
+      args: {
+        source: { type: "string", description: "Source name/path (default: primary stash source)" },
+        limit: { type: "string", description: "Maximum orphans to return" },
+      },
+      run({ args }) {
+        return runWithJsonErrors(() => {
+          output(
+            "graph-orphans",
+            akmGraphOrphans({ source: args.source, limit: parsePositiveIntFlag(args.limit ?? undefined) }),
           );
         });
       },
@@ -3522,7 +3559,7 @@ const TASKS_SUBCOMMAND_SET = new Set([
   "sync",
   "doctor",
 ]);
-const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "relations", "related", "export"]);
+const GRAPH_SUBCOMMAND_SET = new Set(["summary", "entities", "entity", "relations", "related", "orphans", "export"]);
 
 const tasksAddCommand = defineCommand({
   meta: { name: "add", description: "Register a new scheduled task and install it in the OS scheduler" },
