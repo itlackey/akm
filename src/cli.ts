@@ -786,7 +786,7 @@ const addCommand = defineCommand({
                   let rollbackWarning: string | undefined;
                   try {
                     await akmRemove({ target: rollbackTarget });
-                  } catch {
+                  } catch (_rollbackErr) {
                     rollbackWarning =
                       `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
                       `Remove it manually with: akm remove ${rollbackTarget}`;
@@ -815,7 +815,7 @@ const addCommand = defineCommand({
                 let rollbackWarning: string | undefined;
                 try {
                   await akmRemove({ target: rollbackTarget });
-                } catch {
+                } catch (_rollbackErr) {
                   rollbackWarning =
                     `Rollback failed — stash may still be installed at ${installedStashRoot}. ` +
                     `Remove it manually with: akm remove ${rollbackTarget}`;
