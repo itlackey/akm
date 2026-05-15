@@ -10,6 +10,72 @@ import type { DetailLevel } from "./context";
 
 const NORMAL_DESCRIPTION_LIMIT = 250;
 
+const PASSTHROUGH_COMMANDS = new Set([
+  "add",
+  "agent-result",
+  "clone",
+  "config",
+  "consolidate",
+  "curate",
+  "disable",
+  "enable",
+  "feedback",
+  "graph-entities",
+  "graph-export",
+  "graph-related",
+  "graph-relations",
+  "graph-summary",
+  "health",
+  "import",
+  "improve",
+  "index",
+  "info",
+  "init",
+  "lint",
+  "list",
+  "registry-add",
+  "registry-build-index",
+  "registry-list",
+  "registry-remove",
+  "remember",
+  "remove",
+  "save",
+  "setup",
+  "tasks-add",
+  "tasks-disable",
+  "tasks-doctor",
+  "tasks-enable",
+  "tasks-history",
+  "tasks-list",
+  "tasks-remove",
+  "tasks-run",
+  "tasks-show",
+  "tasks-sync",
+  "update",
+  "upgrade",
+  "vault-create",
+  "vault-list",
+  "vault-set",
+  "vault-unset",
+  "wiki-create",
+  "wiki-ingest",
+  "wiki-lint",
+  "wiki-list",
+  "wiki-pages",
+  "wiki-register",
+  "wiki-remove",
+  "wiki-show",
+  "wiki-stash",
+  "workflow-complete",
+  "workflow-create",
+  "workflow-list",
+  "workflow-next",
+  "workflow-resume",
+  "workflow-start",
+  "workflow-status",
+  "workflow-validate",
+]);
+
 export function shapeForCommand(command: string, result: unknown, detail: DetailLevel, forAgent = false): unknown {
   switch (command) {
     case "search":
@@ -49,95 +115,23 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
     case "reflect":
     case "propose":
       return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
-    case "improve":
-      return result;
-    // Output shape registration for `akm distill <ref>` (#228). The shape is
-    // simple — outcome + ids + optional payload — so `brief` strips the full
-    // proposal blob, `normal` keeps the headline fields, and `full` projects
-    // everything for downstream automation.
     case "distill":
       return shapeDistillOutput(result as Record<string, unknown>, detail);
-    case "graph-summary":
-    case "graph-entities":
-    case "graph-relations":
-    case "graph-related":
-    case "graph-export":
-      return result;
-    // Identity-passthrough commands — registered here so the registry stays
-    // exhaustive (v1 spec §9). Each result object is already shaped at the
-    // command boundary; the registry just confirms there's no surprise
-    // command name slipping through.
-    case "add":
-    case "clone":
-    case "config":
-    case "curate":
-    case "disable":
-    case "enable":
-    case "feedback":
-    case "import":
-    case "index":
-    case "health":
-    case "info":
-    case "init":
-    case "list":
-    case "registry-add":
-    case "registry-build-index":
-    case "registry-list":
-    case "registry-remove":
-    case "remember":
-    case "remove":
-    case "save":
-    case "update":
-    case "upgrade":
-    case "vault-create":
-    case "vault-list":
-    case "vault-set":
-    case "vault-unset":
-    case "wiki-create":
-    case "wiki-ingest":
-    case "wiki-lint":
-    case "wiki-list":
-    case "wiki-pages":
-    case "wiki-register":
-    case "wiki-remove":
-    case "wiki-show":
-    case "wiki-stash":
-    case "workflow-complete":
-    case "workflow-create":
-    case "workflow-list":
-    case "workflow-next":
-    case "workflow-resume":
-    case "workflow-start":
-    case "workflow-status":
-    case "workflow-validate":
-    case "tasks-add":
-    case "tasks-list":
-    case "tasks-show":
-    case "tasks-remove":
-    case "tasks-enable":
-    case "tasks-disable":
-    case "tasks-run":
-    case "tasks-history":
-    case "tasks-sync":
-    case "tasks-doctor":
-      return result;
-    // Output shape registration for `akm lint`, `akm setup`, and `akm consolidate`.
-    // Each result is already fully shaped at the command boundary; pass through as-is.
-    case "lint":
-    case "setup":
-    case "consolidate":
-      return result;
-    // Output shape registration for `akm agent <profile>`. The result carries
-    // structured agent-run fields; the text renderer uses the interactive/
-    // captured distinction to decide what to print.
-    case "agent-result":
-      return result;
     default:
-      // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
-      // fallback. A missing case here is a registration bug — fail loudly so
-      // the caller (or its tests) sees the missing command name.
+      // v1 spec §9 (output-shape registry exhaustive): identity-passthrough
+      // commands are listed in PASSTHROUGH_COMMANDS; anything not in that set
+      // is a registration bug — fail loudly.
+      if (PASSTHROUGH_COMMANDS.has(command)) return result;
       throw new Error(`output shape not registered for command: ${command}`);
   }
+}
+
+function maybeAddSchema<T extends Record<string, unknown>>(
+  base: T,
+  detail: DetailLevel,
+  version?: number,
+): T | (T & { schemaVersion: number }) {
+  return detail === "full" ? { schemaVersion: version ?? 1, ...base } : base;
 }
 
 /**
@@ -179,10 +173,7 @@ export function shapeProposalProducerOutput(
     ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -213,10 +204,7 @@ export function shapeProposalListOutput(result: Record<string, unknown>, detail:
     totalCount: result.totalCount ?? shaped.length,
     proposals: shaped,
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalShowOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -226,10 +214,7 @@ export function shapeProposalShowOutput(result: Record<string, unknown>, detail:
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
     ...(validation ? { validation } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalAcceptOutput(
@@ -244,10 +229,7 @@ export function shapeProposalAcceptOutput(
     assetPath: result.assetPath,
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalRejectOutput(
@@ -262,10 +244,7 @@ export function shapeProposalRejectOutput(
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
     proposal: shapeProposalEntry(proposal, detail === "brief" ? "normal" : detail),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeDistillOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -283,10 +262,7 @@ export function shapeDistillOutput(result: Record<string, unknown>, detail: Deta
     ...(Array.isArray(result.findings) && result.findings.length > 0 ? { findings: result.findings } : {}),
     ...(proposal ? { proposal: shapeProposalEntry(proposal, detail === "summary" ? "normal" : detail) } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeProposalDiffOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -297,10 +273,7 @@ export function shapeProposalDiffOutput(result: Record<string, unknown>, detail:
     unified: result.unified,
     ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
   };
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeEventsOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
@@ -320,17 +293,11 @@ export function shapeEventsOutput(result: Record<string, unknown>, detail: Detai
   if (typeof result.reason === "string") {
     base.reason = result.reason;
   }
-  if (detail === "full") {
-    return { schemaVersion: result.schemaVersion ?? 1, ...base };
-  }
-  return base;
+  return maybeAddSchema(base, detail, result.schemaVersion as number | undefined);
 }
 
 export function shapeEventEntry(entry: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
-  if (detail === "brief") {
-    return pickFields(entry, ["eventType", "ref", "ts"]);
-  }
-  if (detail === "normal" || detail === "summary") {
+  if (detail === "brief" || detail === "normal" || detail === "summary") {
     return pickFields(entry, ["eventType", "ref", "ts"]);
   }
   // full / agent: project everything the reader emits.

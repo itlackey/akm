@@ -746,15 +746,23 @@ export function formatProposalDiffPlain(r: Record<string, unknown>): string {
   return `${header}\n${unified}`;
 }
 
+/**
+ * Build the summary header line shared by formatEventsPlain and formatHistoryPlain.
+ * Accumulates ref/type/since label parts then appends the count label.
+ */
+function buildEventHeader(r: Record<string, unknown>, countLabel: string, totalCount: number): string {
+  const parts: string[] = [];
+  if (typeof r.ref === "string" && r.ref) parts.push(`ref: ${r.ref}`);
+  if (typeof r.type === "string" && r.type) parts.push(`type: ${r.type}`);
+  if (typeof r.since === "string" && r.since) parts.push(`since: ${r.since}`);
+  parts.push(`${totalCount} ${countLabel}`);
+  return parts.join("  ");
+}
+
 export function formatEventsPlain(r: Record<string, unknown>): string {
   const events = Array.isArray(r.events) ? (r.events as Array<Record<string, unknown>>) : [];
-  const headerParts: string[] = [];
-  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
-  if (typeof r.type === "string" && r.type) headerParts.push(`type: ${r.type}`);
-  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : events.length;
-  headerParts.push(`${totalCount} event(s)`);
-  const header = headerParts.join("  ");
+  const header = buildEventHeader(r, "event(s)", totalCount);
   if (events.length === 0) {
     return `${header}\nNo events.`;
   }
@@ -779,11 +787,8 @@ export function formatEventLine(event: Record<string, unknown>): string {
 
 export function formatHistoryPlain(r: Record<string, unknown>): string {
   const entries = Array.isArray(r.entries) ? (r.entries as Array<Record<string, unknown>>) : [];
-  const headerParts: string[] = [];
-  if (typeof r.ref === "string" && r.ref) headerParts.push(`ref: ${r.ref}`);
-  if (typeof r.since === "string" && r.since) headerParts.push(`since: ${r.since}`);
   const totalCount = typeof r.totalCount === "number" ? r.totalCount : entries.length;
-  headerParts.push(`${totalCount} event(s)`);
+  const headerParts = [buildEventHeader(r, "event(s)", totalCount)];
   // Show active event sources so operators know which streams were consulted.
   if (Array.isArray(r.sources) && r.sources.length > 0) {
     headerParts.push(`sources: ${(r.sources as string[]).join(", ")}`);
