@@ -30,7 +30,7 @@ export function hasSubcommand(args: Record<string, unknown>, validSet: Set<strin
 /**
  * Parse a `--limit`-style flag value into a positive integer.
  *
- * Returns `undefined` when `raw` is `undefined` (flag not supplied).
+ * Returns `undefined` when `raw` is `undefined` or empty (flag not supplied).
  * Throws `UsageError` when the raw value is present but not a valid positive
  * integer so the caller gets a structured, machine-readable error response.
  *
@@ -39,9 +39,51 @@ export function hasSubcommand(args: Record<string, unknown>, validSet: Set<strin
  */
 export function parsePositiveIntFlag(raw: string | undefined, flagName = "--limit"): number | undefined {
   if (raw === undefined) return undefined;
-  const parsed = parseInt(raw, 10);
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const parsed = parseInt(trimmed, 10);
   if (Number.isNaN(parsed) || parsed <= 0) {
-    throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a positive integer.`);
+    throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
   }
   return parsed;
+}
+
+/**
+ * Parse a non-negative integer flag value (0 is allowed, unlike `parsePositiveIntFlag`).
+ *
+ * Returns `undefined` when `raw` is `undefined` or empty (flag not supplied).
+ * Throws `UsageError` when the raw value is present but not a valid non-negative
+ * integer (e.g. contains decimals, letters, or is negative).
+ *
+ * @param raw       The raw string value (may be undefined).
+ * @param flagName  The flag name to include in the error message.
+ */
+export function parseNonNegativeIntFlag(raw: string | undefined, flagName: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^\d+$/.test(trimmed)) {
+    throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a non-negative integer.`, "INVALID_FLAG_VALUE");
+  }
+  return parseInt(trimmed, 10);
+}
+
+// ── String flag parsing ──────────────────────────────────────────────────────
+
+/**
+ * Extract a string value from a parsed citty argument object by key.
+ *
+ * Returns the trimmed string when present and non-empty, or `undefined`
+ * otherwise. Eliminates the repeated
+ * `typeof args.X === "string" && args.X.trim() ? args.X.trim() : undefined`
+ * pattern throughout the CLI command handlers.
+ *
+ * @param args  The citty argument object (typed as unknown for flexibility).
+ * @param key   The argument key to look up.
+ */
+export function getStringArg(args: unknown, key: string): string | undefined {
+  const val = (args as Record<string, unknown>)[key];
+  if (typeof val !== "string") return undefined;
+  const trimmed = val.trim();
+  return trimmed || undefined;
 }
