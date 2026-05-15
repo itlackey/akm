@@ -1,31 +1,180 @@
 /**
  * Built-in asset matchers for the akm file classification system.
  *
- * Classification facts now live in `match-contributors.ts`. This module keeps
- * the existing matcher API and registration order intact by adapting those
- * facts back into `MatchResult` values.
+ * Each private `classifyBy*` function encapsulates the classification logic for
+ * one heuristic. The public `*Matcher` exports compose those facts into the
+ * `MatchResult` shape expected by the rest of the indexer.
  */
 
 import { defaultRendererRegistry } from "../core/asset-registry";
+import { SCRIPT_EXTENSIONS } from "../core/asset-spec";
+import { looksLikeWorkflow } from "../workflows/parser";
 import type { AssetMatcher, FileContext, MatchResult } from "./file-context";
 import { registerMatcher } from "./file-context";
-import {
-  directoryContributor,
-  extensionContributor,
-  parentDirHintContributor,
-  smartMdContributor,
-  wikiContributor,
-} from "./match-contributors";
 
-type MatcherContributor =
-  | typeof extensionContributor
-  | typeof directoryContributor
-  | typeof parentDirHintContributor
-  | typeof smartMdContributor
-  | typeof wikiContributor;
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
 
-function toMatchResult(ctx: FileContext, contributor: MatcherContributor): MatchResult | null {
-  const fact = contributor.classify(ctx);
+interface MatchFact {
+  type: string;
+  specificity: number;
+  meta?: Record<string, unknown>;
+}
+
+interface DirTypeRule {
+  dir: string;
+  type: MatchFact["type"];
+  test: (ext: string, fileName: string) => boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Private data
+// ---------------------------------------------------------------------------
+
+const DIR_TYPE_MAP: DirTypeRule[] = [
+  {
+    dir: "scripts",
+    type: "script",
+    test: (ext) => SCRIPT_EXTENSIONS.has(ext),
+  },
+  {
+    dir: "commands",
+    type: "command",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "agents",
+    type: "agent",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "knowledge",
+    type: "knowledge",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "workflows",
+    type: "workflow",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "memories",
+    type: "memory",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "lessons",
+    type: "lesson",
+    test: (ext) => ext === ".md",
+  },
+  {
+    dir: "vaults",
+    type: "vault",
+    test: (_, fileName) => fileName === ".env" || fileName.endsWith(".env"),
+  },
+  {
+    dir: "tasks",
+    type: "task",
+    test: (ext) => ext === ".md",
+  },
+];
+
+const COMMAND_PLACEHOLDER_RE = /\$ARGUMENTS|\$[123]\b/;
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+function matchDirectoryHint(dirName: string, ctx: FileContext, specificity: number): MatchFact | null {
+  if (dirName === "skills" && ctx.fileName === "SKILL.md") {
+    return { type: "skill", specificity };
+  }
+
+  for (const rule of DIR_TYPE_MAP) {
+    if (rule.dir === dirName && rule.test(ctx.ext, ctx.fileName)) {
+      return { type: rule.type, specificity };
+    }
+  }
+
+  return null;
+}
+
+function classifyByExtension(ctx: FileContext): MatchFact | null {
+  if (ctx.fileName === "SKILL.md" && !ctx.ancestorDirs.includes("wikis")) {
+    return { type: "skill", specificity: 25 };
+  }
+
+  if (SCRIPT_EXTENSIONS.has(ctx.ext)) {
+    return { type: "script", specificity: 3 };
+  }
+
+  return null;
+}
+
+function classifyByDirectory(ctx: FileContext): MatchFact | null {
+  for (const dir of ctx.ancestorDirs) {
+    const result = matchDirectoryHint(dir, ctx, 10);
+    if (result) return result;
+  }
+  return null;
+}
+
+function classifyByParentDirHint(ctx: FileContext): MatchFact | null {
+  const { parentDir, ext, fileName } = ctx;
+
+  if (parentDir === "skills" && (fileName === "SKILL.md" || ext === ".md")) {
+    return { type: "skill", specificity: 15 };
+  }
+
+  return matchDirectoryHint(parentDir, ctx, 15);
+}
+
+function classifyBySmartMd(ctx: FileContext): MatchFact | null {
+  if (ctx.ext !== ".md") return null;
+
+  const body = ctx.content();
+  if (looksLikeWorkflow(body)) {
+    return { type: "workflow", specificity: 19 };
+  }
+
+  const fm = ctx.frontmatter();
+
+  if (fm) {
+    if ("toolPolicy" in fm || "tools" in fm) {
+      return { type: "agent", specificity: 20 };
+    }
+
+    if ("agent" in fm) {
+      return { type: "command", specificity: 18 };
+    }
+  }
+
+  if (COMMAND_PLACEHOLDER_RE.test(body)) {
+    return { type: "command", specificity: 18 };
+  }
+
+  if (fm && "model" in fm) {
+    return { type: "agent", specificity: 8 };
+  }
+
+  return { type: "knowledge", specificity: 5 };
+}
+
+function classifyByWiki(ctx: FileContext): MatchFact | null {
+  if (ctx.ext !== ".md") return null;
+  const idx = ctx.ancestorDirs.indexOf("wikis");
+  if (idx < 0) return null;
+  if (idx + 1 >= ctx.ancestorDirs.length) return null;
+  return { type: "wiki", specificity: 20 };
+}
+
+// ---------------------------------------------------------------------------
+// Adapter: MatchFact → MatchResult
+// ---------------------------------------------------------------------------
+
+function toMatchResult(ctx: FileContext, classify: (ctx: FileContext) => MatchFact | null): MatchResult | null {
+  const fact = classify(ctx);
   if (!fact) return null;
   const renderer = defaultRendererRegistry.rendererNameFor(fact.type);
   if (!renderer) return null;
@@ -37,24 +186,28 @@ function toMatchResult(ctx: FileContext, contributor: MatcherContributor): Match
   };
 }
 
+// ---------------------------------------------------------------------------
+// Public matchers (API unchanged)
+// ---------------------------------------------------------------------------
+
 export function extensionMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, extensionContributor);
+  return toMatchResult(ctx, classifyByExtension);
 }
 
 export function directoryMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, directoryContributor);
+  return toMatchResult(ctx, classifyByDirectory);
 }
 
 export function parentDirHintMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, parentDirHintContributor);
+  return toMatchResult(ctx, classifyByParentDirHint);
 }
 
 export function smartMdMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, smartMdContributor);
+  return toMatchResult(ctx, classifyBySmartMd);
 }
 
 export function wikiMatcher(ctx: FileContext): MatchResult | null {
-  return toMatchResult(ctx, wikiContributor);
+  return toMatchResult(ctx, classifyByWiki);
 }
 
 const builtinMatchers: AssetMatcher[] = [
