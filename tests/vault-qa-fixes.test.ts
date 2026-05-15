@@ -128,10 +128,11 @@ describe("vault list", () => {
     expect(parsed.vaults).toEqual([
       expect.objectContaining({
         ref: "vault:prod",
-        path: path.join(stashDir, "vaults", "prod.env"),
         keys: ["API_KEY"],
       }),
     ]);
+    // path must not leak into structured JSON output (security fix M3)
+    expect(parsed.vaults[0]).not.toHaveProperty("path");
   });
 
   test("6. vault list aggregates vaults across configured stashes", () => {

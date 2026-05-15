@@ -54,7 +54,6 @@ const PASSTHROUGH_COMMANDS = new Set([
   "update",
   "upgrade",
   "vault-create",
-  "vault-list",
   "vault-set",
   "vault-unset",
   "wiki-create",
@@ -117,6 +116,17 @@ export function shapeForCommand(command: string, result: unknown, detail: Detail
       return shapeProposalProducerOutput(result as Record<string, unknown>, detail);
     case "distill":
       return shapeDistillOutput(result as Record<string, unknown>, detail);
+    case "vault-list": {
+      const r = result as Record<string, unknown>;
+      const vaults = Array.isArray(r.vaults) ? r.vaults : [];
+      return {
+        ...r,
+        vaults: vaults.map((v) => {
+          const { path: _path, ...rest } = v as Record<string, unknown>;
+          return rest;
+        }),
+      };
+    }
     default:
       // v1 spec §9 (output-shape registry exhaustive): identity-passthrough
       // commands are listed in PASSTHROUGH_COMMANDS; anything not in that set
@@ -535,7 +545,7 @@ export function shapeShowOutput(
     ]);
   }
 
-  const base = pickFields(result, [
+  const baseFields = [
     "type",
     "name",
     "origin",
@@ -561,9 +571,12 @@ export function shapeShowOutput(
     "related",
     // path and editable are always projected so JSON consumers can locate and
     // edit the asset without needing --detail full (QA #7).
-    "path",
+    // Exception: vault assets omit path to avoid leaking absolute disk paths
+    // into structured JSON output (security fix M3).
+    ...(result.type === "vault" ? [] : ["path"]),
     "editable",
-  ]);
+  ];
+  const base = pickFields(result, baseFields);
 
   if (detail !== "full") {
     return base;

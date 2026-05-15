@@ -34,7 +34,7 @@ import { writeFileAtomic } from "../core/common";
 function withVaultLock<T>(vaultPath: string, fn: () => T): T {
   const lockPath = `${vaultPath}.lock`;
   const deadline = Date.now() + 5000; // 5 s timeout
-  let fd: number | undefined;
+  let fd = -1;
 
   while (true) {
     try {
@@ -64,10 +64,12 @@ function withVaultLock<T>(vaultPath: string, fn: () => T): T {
   try {
     return fn();
   } finally {
-    try {
-      fs.closeSync(fd!);
-    } catch {
-      /* ignore */
+    if (fd !== -1) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
     }
     try {
       fs.unlinkSync(lockPath);

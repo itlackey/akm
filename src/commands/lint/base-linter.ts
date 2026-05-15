@@ -91,7 +91,13 @@ function refToRelPath(refType: string, refName: string): string | null {
     case "wiki":
       return path.join("wikis", `${refName}.md`);
     case "vault":
-      return path.join("vaults", `${refName}.md`);
+      // Vaults are .env files. The canonical name "default" (or empty) maps to
+      // ".env"; any other name maps to "<name>.env".  This mirrors the vault
+      // asset-spec toAssetPath logic in src/core/asset-spec.ts.
+      if (!refName || refName === "default") {
+        return path.join("vaults", ".env");
+      }
+      return path.join("vaults", `${refName}.env`);
     default:
       return null;
   }

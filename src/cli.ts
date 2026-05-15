@@ -2421,8 +2421,14 @@ const vaultSetCommand = defineCommand({
         }
         realValue = envVal;
       } else {
+        const MAX_VAULT_VALUE_BYTES = 1024 * 1024; // 1 MB
+        let totalBytes = 0;
         const chunks: Uint8Array[] = [];
         for await (const chunk of Bun.stdin.stream()) {
+          totalBytes += chunk.byteLength;
+          if (totalBytes > MAX_VAULT_VALUE_BYTES) {
+            throw new UsageError("Vault value exceeds 1 MB limit. Values must be provided via stdin.");
+          }
           chunks.push(chunk);
         }
         realValue = Buffer.concat(chunks).toString("utf8").replace(/\n$/, "");
