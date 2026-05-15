@@ -63,7 +63,7 @@ import {
 } from "./commands/tasks";
 import { parseAssetRef } from "./core/asset-ref";
 import { deriveCanonicalAssetName, resolveAssetPathFromName } from "./core/asset-spec";
-import { isHttpUrl, resolveStashDir } from "./core/common";
+import { isHttpUrl, isWithin, resolveStashDir } from "./core/common";
 import type { RegistryConfigEntry } from "./core/config";
 import { DEFAULT_CONFIG, loadConfig, loadUserConfig, resolveConfiguredSources, saveConfig } from "./core/config";
 import { ConfigError, NotFoundError, UsageError } from "./core/errors";
@@ -2281,6 +2281,13 @@ function resolveVaultPath(ref: string): {
   const source = findVaultSource(parsed.origin);
   const typeRoot = path.join(source.path, "vaults");
   const absPath = resolveAssetPathFromName("vault", typeRoot, parsed.name);
+  // Defense-in-depth: ensure the resolved path stays inside the vaults directory.
+  // validateName already rejects traversal patterns like "../../foo", but an
+  // absolute-path override or symlink-based attack could still escape without
+  // this second check.
+  if (!isWithin(absPath, typeRoot)) {
+    throw new UsageError(`Vault name "${parsed.name}" escapes the vault directory.`);
+  }
   return { name: parsed.name, absPath, source, parsedRef: parsed };
 }
 
