@@ -55,6 +55,20 @@ function collectMarkdownFiles(dir: string): string[] {
   return results;
 }
 
+function collectEnvFiles(dir: string): string[] {
+  const results: string[] = [];
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) results.push(...collectEnvFiles(full));
+      else if (entry.isFile() && entry.name.endsWith(".env")) results.push(full);
+    }
+  } catch {
+    /* dir may not exist */
+  }
+  return results;
+}
+
 /** True when the issue represents a file deletion that was successfully applied. */
 function isFileDeletion(issue: LintIssue): boolean {
   return issue.fixed === true && (issue.issue === "orphaned-stub" || issue.issue === "placeholder-stub");
@@ -136,15 +150,7 @@ export function akmLint(options: AkmLintOptions = {}): AkmLintResult {
   for (const root of vaultRoots) {
     const vaultsDir = path.join(root, "vaults");
     if (!fs.existsSync(vaultsDir)) continue;
-    let envFiles: string[];
-    try {
-      envFiles = fs
-        .readdirSync(vaultsDir)
-        .filter((f) => f.endsWith(".env"))
-        .map((f) => path.join(vaultsDir, f));
-    } catch {
-      continue;
-    }
+    const envFiles = collectEnvFiles(vaultsDir);
     for (const vaultPath of envFiles) {
       const baseName = path.basename(vaultPath, ".env");
       // canonical vault ref: "default" (or empty) maps to ".env" → vault:default

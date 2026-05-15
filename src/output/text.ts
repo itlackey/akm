@@ -286,7 +286,7 @@ export function formatPlain(command: string, result: unknown, detail: DetailLeve
     case "vault-list":
       return formatVaultListPlain(r);
     case "vault-create":
-      return `Created vault ${String(r.ref ?? "?")} at ${String(r.path ?? "?")}`;
+      return `Created vault ${String(r.ref ?? "?")}`;
     case "vault-set":
       return `Set ${String(r.key ?? "?")} in ${String(r.ref ?? "?")} (value not displayed)`;
     case "vault-unset": {

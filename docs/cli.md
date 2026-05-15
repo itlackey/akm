@@ -1247,6 +1247,10 @@ akm vault create prod
 Creates `vaults/prod.env` with mode 0600. If the vault already exists, the
 command exits 0 and reports `created: false` — it never overwrites.
 
+| Flag | Description |
+| --- | --- |
+| `--sensitive` | Hide vault from `vault list` output (does not affect direct access via `vault path` or `vault run`) |
+
 #### vault set
 
 ```sh

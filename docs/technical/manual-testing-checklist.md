@@ -433,7 +433,7 @@ that guarantee carefully.
 
 - [ ] `akm vault list` is empty initially.
 - [ ] `akm vault create test-vault` creates `vaults/test-vault.env`.
-- [ ] `akm vault set vault:test-vault MY_KEY=secret-value --comment "test secret"`
+- [ ] `printf '%s' "secret-value" | akm vault set vault:test-vault MY_KEY --comment "test secret"`
       succeeds.
 - [ ] `akm show vault:test-vault` lists keys/comments only.
 - [ ] `akm vault list --format json` contains the vault under `vaults[]` with

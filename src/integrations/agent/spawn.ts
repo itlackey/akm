@@ -59,7 +59,7 @@ export type SpawnFn = (
  * reaped alongside the node wrapper. The fallback keeps test fakes working
  * without modification.
  */
-export function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
+function killGroup(proc: SpawnedSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
   if (typeof proc.pid === "number") {
     try {
       process.kill(-proc.pid, signal);
