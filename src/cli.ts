@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as p from "@clack/prompts";
 import { defineCommand, runMain } from "citty";
-import { hasSubcommand, parsePositiveIntFlag } from "./cli/parse-args";
+import { getStringArg, hasSubcommand, parseNonNegativeIntFlag, parsePositiveIntFlag } from "./cli/parse-args";
 import { akmAgentDispatch } from "./commands/agent-dispatch";
 import { generateBashCompletions, installBashCompletions } from "./commands/completions";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "./commands/config-cli";
@@ -2898,9 +2898,12 @@ const eventsTailCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      const intervalMs = parsePositiveInt(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
-      const maxDurationMs = parsePositiveInt(getHyphenatedArg<string>(args, "max-duration-ms"), "--max-duration-ms");
-      const maxEvents = parsePositiveInt(getHyphenatedArg<string>(args, "max-events"), "--max-events");
+      const intervalMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "interval-ms"), "--interval-ms");
+      const maxDurationMs = parsePositiveIntFlag(
+        getHyphenatedArg<string>(args, "max-duration-ms"),
+        "--max-duration-ms",
+      );
+      const maxEvents = parsePositiveIntFlag(getHyphenatedArg<string>(args, "max-events"), "--max-events");
       const mode = getOutputMode();
       // In streaming text mode we want each event to print as soon as it
       // arrives. The polling loop emits via `onEvent`; the final result is
@@ -2953,17 +2956,6 @@ const eventsTailCommand = defineCommand({
     });
   },
 });
-
-function parsePositiveInt(raw: string | undefined, flag: string): number | undefined {
-  if (raw === undefined) return undefined;
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const value = Number.parseInt(trimmed, 10);
-  if (Number.isNaN(value) || value <= 0) {
-    throw new UsageError(`Invalid ${flag} value: "${raw}". Must be a positive integer.`, "INVALID_FLAG_VALUE");
-  }
-  return value;
-}
 
 const eventsCommand = defineCommand({
   meta: {
@@ -3106,17 +3098,14 @@ const agentCommand = defineCommand({
         );
       }
 
-      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
-      const timeoutMs =
-        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
 
       const config = loadConfig();
       const { parseAgentConfig } = await import("./integrations/agent/config.js");
       const agentConfig = parseAgentConfig(config.agent);
 
       // Resolve agent asset ref → extract system prompt, model, and tool policy.
-      const agentRefRaw = (args as Record<string, unknown>)["agent-ref"];
-      const agentRef = typeof agentRefRaw === "string" && agentRefRaw.trim() ? agentRefRaw.trim() : undefined;
+      const agentRef = getStringArg(args, "agent-ref");
 
       let systemPrompt: string | undefined;
       let assetModel: string | undefined;
@@ -3131,12 +3120,11 @@ const agentCommand = defineCommand({
       }
 
       // --model flag wins over the asset's modelHint.
-      const modelRaw = typeof args.model === "string" && args.model.trim() ? args.model.trim() : undefined;
-      const model = modelRaw ?? assetModel;
+      const model = getStringArg(args, "model") ?? assetModel;
 
-      const promptText = typeof args.prompt === "string" && args.prompt.trim() ? args.prompt : undefined;
-      const commandRef = typeof args.command === "string" && args.command.trim() ? args.command.trim() : undefined;
-      const workflowRef = typeof args.workflow === "string" && args.workflow.trim() ? args.workflow.trim() : undefined;
+      const promptText = getStringArg(args, "prompt");
+      const commandRef = getStringArg(args, "command");
+      const workflowRef = getStringArg(args, "workflow");
 
       // Only build a dispatch request when there is something to dispatch — a
       // prompt, an agent asset, or a model override. When none of these are
@@ -3187,7 +3175,7 @@ const lintCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const result = akmLint({
         fix: args.fix ?? false,
-        dir: typeof args.dir === "string" && args.dir.trim() ? args.dir.trim() : undefined,
+        dir: getStringArg(args, "dir"),
       });
       output("lint", result);
       if (!result.ok) process.exit(EXIT_GENERAL);
@@ -3258,36 +3246,25 @@ const improveCommand = defineCommand({
       if (autoAcceptRaw !== undefined && autoAcceptRaw !== "safe") {
         throw new UsageError("--auto-accept only supports the value 'safe'.", "INVALID_FLAG_VALUE");
       }
-      const targetArg = typeof args.target === "string" && args.target.trim() ? args.target.trim() : undefined;
-      const taskArg = typeof args.task === "string" && args.task.trim() ? args.task : undefined;
+      const targetArg = getStringArg(args, "target");
+      const taskArg = getStringArg(args, "task");
       const dryRun = getHyphenatedBoolean(args, "dry-run");
       const autoAccept = autoAcceptRaw === "safe" ? ("safe" as const) : undefined;
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
-      const timeoutRaw = getHyphenatedArg<string>(args, "timeout-ms");
-      const timeoutMs = timeoutRaw !== undefined ? parseInt(timeoutRaw, 10) : undefined;
-      if (timeoutMs !== undefined && (Number.isNaN(timeoutMs) || timeoutMs <= 0)) {
-        throw new UsageError(`Invalid --timeout-ms value: "${timeoutRaw}". Must be a positive integer.`);
-      }
-      const parseNonNegativeCooldownDays = (raw: string | undefined, flagName: string): number | undefined => {
-        if (raw === undefined) return undefined;
-        if (!/^\d+$/.test(raw.trim())) {
-          throw new UsageError(`Invalid ${flagName} value: "${raw}". Must be a non-negative integer.`);
-        }
-        return parseInt(raw, 10);
-      };
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
       const ignoreCooldown = getHyphenatedBoolean(args, "ignore-cooldown");
       const reflectCooldownRaw = getHyphenatedArg<string>(args, "reflect-cooldown-days");
       const reflectCooldownDays = ignoreCooldown
         ? 0
-        : parseNonNegativeCooldownDays(reflectCooldownRaw, "--reflect-cooldown-days");
+        : parseNonNegativeIntFlag(reflectCooldownRaw, "--reflect-cooldown-days");
       const distillCooldownRaw = getHyphenatedArg<string>(args, "distill-cooldown-days");
       const distillCooldownDays = ignoreCooldown
         ? 0
-        : parseNonNegativeCooldownDays(distillCooldownRaw, "--distill-cooldown-days");
+        : parseNonNegativeIntFlag(distillCooldownRaw, "--distill-cooldown-days");
       const consolidateCooldownRaw = getHyphenatedArg<string>(args, "consolidate-cooldown-days");
       const consolidateCooldownDays = ignoreCooldown
         ? 0
-        : parseNonNegativeCooldownDays(consolidateCooldownRaw, "--consolidate-cooldown-days");
+        : parseNonNegativeIntFlag(consolidateCooldownRaw, "--consolidate-cooldown-days");
       const consolidateRecoveryRaw = getHyphenatedArg<string>(args, "consolidate-recovery");
       const consolidateRecovery =
         consolidateRecoveryRaw === undefined
@@ -3300,7 +3277,7 @@ const improveCommand = defineCommand({
         );
       }
       const minRetrievalCountRaw = getHyphenatedArg<string>(args, "min-retrieval-count");
-      const minRetrievalCount = parseNonNegativeCooldownDays(minRetrievalCountRaw, "--min-retrieval-count");
+      const minRetrievalCount = parseNonNegativeIntFlag(minRetrievalCountRaw, "--min-retrieval-count");
       const requireFeedbackSignal = getHyphenatedBoolean(args, "require-feedback-signal");
 
       const improveLogFile = path.join(
@@ -3313,7 +3290,7 @@ const improveCommand = defineCommand({
       let improveResult: Awaited<ReturnType<typeof akmImprove>>;
       try {
         improveResult = await akmImprove({
-          scope: typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined,
+          scope: getStringArg(args, "scope"),
           task: taskArg,
           dryRun,
           target: targetArg,
@@ -3376,15 +3353,13 @@ const proposeCommand = defineCommand({
         throw new UsageError("Pass exactly one of --task or --file.", "INVALID_FLAG_VALUE");
       }
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
-      const timeoutRaw = (args as Record<string, unknown>)["timeout-ms"];
-      const timeoutMs =
-        typeof timeoutRaw === "string" && timeoutRaw.trim() ? Number.parseInt(timeoutRaw, 10) : undefined;
+      const timeoutMs = parsePositiveIntFlag(getHyphenatedArg<string>(args, "timeout-ms"), "--timeout-ms");
       const result = await akmPropose({
         type: String(args.type),
         name: String(args.name),
         task: taskText,
-        profile: typeof args.profile === "string" && args.profile.trim() ? args.profile : undefined,
-        ...(timeoutMs !== undefined && Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
+        profile: getStringArg(args, "profile"),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("propose", result);
       if (result.ok === false) {
@@ -3483,29 +3458,26 @@ const tasksRemoveCommand = defineCommand({
   },
 });
 
-const tasksEnableCommand = defineCommand({
-  meta: { name: "enable", description: "Enable a previously-disabled task" },
-  args: { id: { type: "positional", description: "Task id", required: true } },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const { id } = parseTaskRef(args.id);
-      const result = await akmTasksSetEnabled(id, true);
-      output("tasks-enable", result);
-    });
-  },
-});
+function makeTasksToggleCommand(enabled: boolean) {
+  const verb = enabled ? "enable" : "disable";
+  const description = enabled
+    ? "Enable a previously-disabled task"
+    : "Disable a task in the OS scheduler without removing the file";
+  return defineCommand({
+    meta: { name: verb, description },
+    args: { id: { type: "positional", description: "Task id", required: true } },
+    async run({ args }) {
+      await runWithJsonErrors(async () => {
+        const { id } = parseTaskRef(args.id);
+        const result = await akmTasksSetEnabled(id, enabled);
+        output(`tasks-${verb}`, result);
+      });
+    },
+  });
+}
 
-const tasksDisableCommand = defineCommand({
-  meta: { name: "disable", description: "Disable a task in the OS scheduler without removing the file" },
-  args: { id: { type: "positional", description: "Task id", required: true } },
-  async run({ args }) {
-    await runWithJsonErrors(async () => {
-      const { id } = parseTaskRef(args.id);
-      const result = await akmTasksSetEnabled(id, false);
-      output("tasks-disable", result);
-    });
-  },
-});
+const tasksEnableCommand = makeTasksToggleCommand(true);
+const tasksDisableCommand = makeTasksToggleCommand(false);
 
 const tasksRunCommand = defineCommand({
   meta: {
@@ -3681,15 +3653,7 @@ try {
   applyEarlyStderrFlags(process.argv);
   initOutputMode(process.argv, loadConfig().output ?? {});
 } catch (error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  const hint = extractHint(error);
-  const exitCode = classifyExitCode(error);
-  const code =
-    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
-      ? error.code
-      : undefined;
-  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
-  process.exit(exitCode);
+  emitJsonError(error);
 }
 runMain(main);
 
@@ -3698,25 +3662,6 @@ function classifyExitCode(error: unknown): number {
   if (error instanceof ConfigError) return EXIT_CONFIG;
   if (error instanceof NotFoundError) return EXIT_GENERAL;
   return EXIT_GENERAL;
-}
-
-async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
-  try {
-    applyEarlyStderrFlags(process.argv);
-    await fn();
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    const hint = extractHint(error);
-    const exitCode = classifyExitCode(error);
-    // Surface machine-readable error code from typed errors when present so
-    // scripts can branch on `.code` instead of message-string matching.
-    const code =
-      error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
-        ? error.code
-        : undefined;
-    console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
-    process.exit(exitCode);
-  }
 }
 
 /**
@@ -3729,6 +3674,30 @@ function extractHint(error: unknown): string | undefined {
     return (error as { hint: () => string | undefined }).hint();
   }
   return undefined;
+}
+
+/**
+ * Serialize an error to the standard JSON envelope and exit.
+ * Used in both the startup try/catch and `runWithJsonErrors`.
+ */
+function emitJsonError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  const hint = extractHint(error);
+  const exitCode = classifyExitCode(error);
+  const code =
+    error instanceof UsageError || error instanceof ConfigError || error instanceof NotFoundError
+      ? error.code
+      : undefined;
+  console.error(JSON.stringify({ ok: false, error: message, ...(code ? { code } : {}), hint }, null, 2));
+  process.exit(exitCode);
+}
+
+async function runWithJsonErrors(fn: (() => void) | (() => Promise<void>)): Promise<void> {
+  try {
+    await fn();
+  } catch (error: unknown) {
+    emitJsonError(error);
+  }
 }
 
 // ── Hints (embedded AGENTS.md) ──────────────────────────────────────────────
