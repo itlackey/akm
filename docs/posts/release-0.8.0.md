@@ -123,6 +123,45 @@ Built-in model aliases (`opus`, `sonnet`, `haiku`) resolve to the correct model 
 
 Without a prompt or agent-ref, `akm agent opencode` still launches the agent interactively — unchanged.
 
+## Graph Extraction: Faster, Cleaner, Schema-Stable
+
+0.8.0 reshapes how graph extraction is stored, queried, and refreshed. The
+visible wins:
+
+- **Schema cascade fix.** `graph_files` now keys on `entry_id INTEGER PRIMARY
+  KEY REFERENCES entries(id) ON DELETE CASCADE`, and the child tables
+  (`graph_file_entities`, `graph_file_relations`) cascade through. Removing a
+  stash or deleting an entry now correctly cleans up the graph rows — no more
+  orphans accumulating in `index.db`.
+- **Incremental refreshes.** Graph extraction now filters on a
+  `candidatePaths` set, so each `akm improve` cycle revisits only touched
+  assets instead of the whole stash. The default `graphExtractionBatchSize`
+  rose from 1 to 4 (auto-tuned against `llm.contextLength`).
+- **Fewer writes.** `replaceStoredGraph` is now incremental — unchanged entries
+  skip, changed entries swap their child rows in place, removed entries
+  cascade out. Roughly 700× fewer row writes per pass on typical re-extractions.
+- **Faster lookups.** `listRelatedPathsForFile` is a scoped SQL self-join
+  instead of a full snapshot load: ~30ms → ~2ms on a typical stash.
+- **New commands.** `akm graph entity <name>` inverts the entities view (every
+  asset that mentions a given entity, by confidence). `akm graph orphans`
+  surfaces assets that produced zero entities — quality-triage candidates.
+  Both are documented in [docs/cli.md](../cli.md#graph).
+- **Better output.** `akm graph relations` and `akm graph entities` now show
+  per-row confidence. Search hits annotate the graph-boost contribution in
+  `whyMatched`. Related results end with a `Next: akm show '<ref>'` hint
+  pointing at the top neighbor.
+- **Ref-form output.** Related results now show canonical refs
+  (e.g. `memory:incident-2026-05-12`) instead of raw file paths.
+
+**DB_VERSION bumped 12 → 13.** The schema change uses the existing
+DROP+rebuild upgrade path: non-graph tables (`entries`, embeddings, FTS) rebuild
+automatically the first time akm opens `index.db`; graph tables repopulate on
+the next `akm improve` cycle, which makes LLM calls. The first improve cycle
+after upgrade is slower than steady state, but the Phase 1 / Phase 2
+improvements above make it dramatically faster than equivalent re-extraction
+on 0.7.x. See the migration guide section
+[Graph extraction will re-run after upgrade](../migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+
 ## Migration Guidance
 
 Breaking changes in 0.8.0:

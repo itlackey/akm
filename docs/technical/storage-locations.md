@@ -371,7 +371,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 | `$CACHE/registry-index/<slug>.json` | Removed in v0.8.0 — data now stored in `registry_index_cache` table in `$DATA/index.db`. Delete these files after running the migration script. | — |
 | `$CACHE/registry-index/skills-sh-search-<md5>.json` | Skills.sh search result cache. Fresh 15min; stale 1d. Key = MD5 of `url + query + limit`. | TTL |
 | `$STASH/.akm/consolidate-journal.json` | Write-ahead journal for consolidation operations. Used to detect incomplete runs on restart. | Deleted on success |
-| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. | Refreshed by graph extraction / rebuilt on index DB reset |
+| `$DATA/index.db` (`graph_*` tables) | Knowledge graph index data: per-stash graph metadata plus per-file entities and relations extracted from assets via LLM. As of v0.8.0 (graph schema v2 / DB_VERSION 13), `graph_files` is keyed on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE` with `(stash_root, file_path)` as `UNIQUE`; `body_hash` is `NOT NULL`; `graph_file_entities` and `graph_file_relations` are re-keyed on `entry_id` and cascade through. `extraction_run_id` (on `graph_files` and `graph_meta`) and `extractor_id` (on `graph_meta`) record extraction provenance. Indexes: `idx_graph_files_stash_order`, `idx_graph_file_entities_entity(stash_root, entity)`, `idx_entries_file_path` on `entries(file_path)`. | Refreshed by graph extraction / dropped and repopulated on `DB_VERSION` upgrade (next `akm improve` re-extracts) |
 
 ---
 

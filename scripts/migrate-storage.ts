@@ -589,6 +589,15 @@ Old files at the original locations are safe to delete manually:
   ${path.join(configDir, "akm.lock")}
 
 Run 'akm' to verify everything works before deleting.
+
+Next step — repopulate graph data:
+  The 0.8.0 graph schema redesign (DB_VERSION 12 → 13) rebuilds the graph
+  tables in index.db. Non-graph tables regenerate automatically on first
+  open, but graph extraction requires LLM calls. Run:
+    akm improve
+  once after migration so graph-backed features (akm graph related/entity,
+  graph-boosted search ranking) have data to work with. See
+  docs/migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade.
 `);
   }
 }

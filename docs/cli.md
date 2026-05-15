@@ -263,6 +263,12 @@ Common flags:
 
 If no graph artifact exists yet, run the flow that refreshes graph extraction for your stash.
 
+Graph data is automatically re-extracted on the first `akm improve` cycle after
+a `DB_VERSION` upgrade. In v0.8.0 the graph schema was redesigned (entry-id
+primary key with FK cascade to `entries(id)`); upgrading from a 0.7.x install
+drops the graph tables and repopulates them on next improve. See
+[docs/migration/v0.7-to-v0.8.md](migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+
 Search ranking can optionally use graph-derived confidence-weighted boosts.
 Tune `search.graphBoost.confidenceMode` and `search.graphBoost.confidenceWeight`
 in [`docs/configuration.md#graph-boost-search-tuning`](configuration.md#graph-boost-search-tuning).

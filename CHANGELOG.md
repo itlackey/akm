@@ -84,6 +84,20 @@ All notable changes to this project will be documented in this file.
 - **Lint ref extension fix**: `akm lint` now correctly resolves `vault:<name>` refs to `vaults/<name>.env` (was incorrectly using `.md`).
 - **Dangerous vault key detection**: `akm lint` and `akm add` now scan vault files for 23 environment variable names that can be used for process-execution hijacking (`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, etc.). `akm lint` reports these as `dangerous-vault-key` findings (non-blocking). `akm add` pauses and prompts for confirmation (default: No) when dangerous keys are found; in non-interactive mode the install fails unless `--allow-insecure` is passed. `--allow-insecure` on `akm add` now covers both plain-HTTP sources and dangerous vault key bypass.
 
+### Graph Extraction Improvements
+
+- **`candidatePaths` filter**: Graph extraction now refreshes only touched assets per improve cycle. Massive perf win on cold cache and large stashes — extraction sweeps no longer revisit every asset on every run.
+- **Default `graphExtractionBatchSize` raised from 1 to 4**: Auto-tuned against `llm.contextLength`, so larger context windows produce wider batches without manual tuning.
+- **Incremental `replaceStoredGraph`**: Unchanged entries skip; only changed entries delete child rows and re-insert; removed entries get cleaned up. Roughly 700× fewer row writes on small re-extractions vs. the previous wipe-and-rewrite path.
+- **SQL-backed `listRelatedPathsForFile`**: Rewritten as a SQL self-join on `graph_file_entities` plus a relation-count subquery, scoped by `stash_root`. Cold-call latency on typical stashes drops from ~30ms to ~2ms.
+- **Graph schema redesign (DB_VERSION 12 → 13)**: `graph_files` now keys on `entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE`. Child tables (`graph_file_entities`, `graph_file_relations`) re-keyed on `entry_id` and cascade through. `body_hash` is now `NOT NULL`. New columns `extraction_run_id` (graph_files + graph_meta) and `extractor_id` (graph_meta) record extraction provenance. New indexes `idx_graph_file_entities_entity` and `idx_entries_file_path`; two redundant indexes dropped. Migration uses the existing DROP+rebuild path — graph data re-extracts on the first `akm improve` after upgrade; a warning is logged during the upgrade.
+- **Stash removal cleans up graph rows**: Removing a stash now correctly cascades through the graph tables. Earlier versions left orphaned graph rows behind.
+- **New: `akm graph entity <name>`**: Inverts the entities view — list every asset that mentions a given entity, ordered by per-asset extraction confidence.
+- **New: `akm graph orphans`**: List assets that produced zero entities during the extraction pass — useful for quality triage and re-extraction targeting.
+- **Confidence in graph output**: `akm graph relations` and `akm graph entities` now surface per-row confidence values.
+- **Graph-boost magnitude in `whyMatched`**: Search results now annotate the graph-boost contribution so agents can see why a hit ranked where it did.
+- **`Next: akm show '<ref>'` hint**: Related-results output appends a Next hint pointing at the top hit so agents know which ref to load next.
+
 ### Bug Fixes
 
 - **EISDIR on `akm improve`**: Fixed a crash when the improve pipeline encountered a directory entry where it expected a file. Directory paths are now validated and skipped with a warning rather than throwing an uncaught EISDIR error.
