@@ -39,8 +39,8 @@ import {
   runAgent,
 } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
-import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildReflectPrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { runAgentSdk } from "../integrations/agent/sdk-runner";
 import {
   baseFailureFields,
   enoentHintMessage,
@@ -315,8 +315,8 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   });
 
   // 5. Spawn the agent.
-  // Use runProposalAgentPipeline for the shared spawn step, but fall back to
-  // raw runAgent when a custom spawn function is injected (test seam).
+  // Fall back to raw runAgent when a custom spawn function is injected (test seam).
+  // Production path dispatches directly to runAgentSdk or runAgent.
   let result: AgentRunResult;
   if (options.runAgentOptions?.spawn) {
     // Test seam: use raw runAgent with injected spawn so tests remain deterministic.
@@ -328,23 +328,15 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     };
     result = await runAgent(profile, prompt, runOptions);
   } else {
-    // Production path: route through runProposalAgentPipeline (shared logic).
-    const pipelineResult = await runProposalAgentPipeline({
-      profile,
-      prompt,
-      // reflect always uses captured stdout (no draft file path).
-      draftFilePath: undefined,
-      timeoutMs: resolvedTimeoutMs,
-    });
-    result = {
-      ok: pipelineResult.ok,
-      exitCode: pipelineResult.exitCode,
-      stdout: pipelineResult.stdout,
-      stderr: pipelineResult.stderr,
-      durationMs: pipelineResult.durationMs,
-      error: pipelineResult.error,
-      reason: pipelineResult.reason as AgentFailureReason | undefined,
+    // Production path: dispatch directly to the appropriate runner.
+    const runOptions: RunAgentOptions = {
+      stdio: "captured",
+      parseOutput: "text",
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
     };
+    result = profile.sdkMode
+      ? await runAgentSdk(profile, prompt ?? "", runOptions)
+      : await runAgent(profile, prompt, runOptions);
   }
 
   if (!result.ok) {

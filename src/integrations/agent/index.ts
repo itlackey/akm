@@ -52,8 +52,6 @@ export {
   parseAgentProposalPayload,
   stripJsonFences,
 } from "./prompts";
-export type { AgentRunner, AgentRunRequest } from "./runners";
-export { runWithAgentRunner, selectAgentRunner } from "./runners";
 export { runAgentSdk } from "./sdk-runner";
 export type {
   AgentFailureReason,

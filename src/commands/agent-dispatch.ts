@@ -18,8 +18,9 @@ import { NotFoundError, UsageError } from "../core/errors";
 import type { AgentDispatchRequest } from "../integrations/agent/builders";
 import type { AgentConfig } from "../integrations/agent/config";
 import { requireAgentProfile } from "../integrations/agent/config";
-import { runWithAgentRunner } from "../integrations/agent/runners";
+import { runAgentSdk } from "../integrations/agent/sdk-runner";
 import type { AgentRunResult } from "../integrations/agent/spawn";
+import { runAgent } from "../integrations/agent/spawn";
 
 export interface AkmAgentDispatchOptions {
   profileName: string;
@@ -127,18 +128,16 @@ export async function akmAgentDispatch(options: AkmAgentDispatchOptions): Promis
     ? { ...options.dispatch, prompt: prompt ?? options.dispatch.prompt }
     : undefined;
 
-  const result: AgentRunResult = await runWithAgentRunner({
-    profile,
-    prompt,
-    llmConfig: options.llmConfig,
-    runOptions: {
-      stdio,
-      parseOutput: "text",
-      ...(options.args?.length && !options.commandRef && !options.workflowRef ? { args: options.args } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
-    },
-  });
+  const runOptions = {
+    stdio,
+    parseOutput: "text" as const,
+    ...(options.args?.length && !options.commandRef && !options.workflowRef ? { args: options.args } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(dispatchRequest !== undefined ? { dispatch: dispatchRequest } : {}),
+  };
+  const result: AgentRunResult = profile.sdkMode
+    ? await runAgentSdk(profile, prompt ?? "", runOptions, options.llmConfig)
+    : await runAgent(profile, prompt, runOptions);
 
   return {
     schemaVersion: 1 as const,

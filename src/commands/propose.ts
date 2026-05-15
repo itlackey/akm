@@ -25,8 +25,8 @@ import {
   runAgent,
 } from "../integrations/agent";
 import { resolveProcessAgentProfile } from "../integrations/agent/config";
-import { runProposalAgentPipeline } from "../integrations/agent/pipeline";
 import { buildProposePrompt, parseAgentProposalPayload } from "../integrations/agent/prompts";
+import { runAgentSdk } from "../integrations/agent/sdk-runner";
 import {
   baseFailureFields,
   enoentHintMessage,
@@ -186,22 +186,15 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     };
     result = await runAgent(profile, prompt, runOptions);
   } else {
-    // Production path: route through runProposalAgentPipeline (shared logic).
-    const pipelineResult = await runProposalAgentPipeline({
-      profile,
-      prompt,
-      draftFilePath: resolvedDraftPath,
-      timeoutMs: resolvedTimeoutMs,
-    });
-    result = {
-      ok: pipelineResult.ok,
-      exitCode: pipelineResult.exitCode,
-      stdout: pipelineResult.stdout,
-      stderr: pipelineResult.stderr,
-      durationMs: pipelineResult.durationMs,
-      error: pipelineResult.error,
-      reason: pipelineResult.reason as AgentFailureReason | undefined,
+    // Production path: dispatch directly to the appropriate runner.
+    const runOptions: RunAgentOptions = {
+      stdio: resolvedDraftPath ? "interactive" : "captured",
+      parseOutput: "text",
+      ...(resolvedTimeoutMs !== undefined ? { timeoutMs: resolvedTimeoutMs } : {}),
     };
+    result = profile.sdkMode
+      ? await runAgentSdk(profile, prompt ?? "", runOptions)
+      : await runAgent(profile, prompt, runOptions);
   }
 
   if (!result.ok) {
