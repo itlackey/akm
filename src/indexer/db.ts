@@ -46,9 +46,9 @@ export interface IndexDirState {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-export const DB_VERSION = 12;
+export const DB_VERSION = 13;
 export const EMBEDDING_DIM = 384;
-export const GRAPH_SCHEMA_VERSION = 1;
+export const GRAPH_SCHEMA_VERSION = 2;
 
 // ── Database lifecycle ──────────────────────────────────────────────────────
 
@@ -178,6 +178,7 @@ function ensureSchema(db: Database, embeddingDim: number): void {
 
     CREATE INDEX IF NOT EXISTS idx_entries_dir ON entries(dir_path);
     CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(entry_type);
+    CREATE INDEX IF NOT EXISTS idx_entries_file_path ON entries(file_path);
   `);
 
   // Validated WorkflowDocument JSON, one row per indexed workflow entry.
