@@ -615,13 +615,8 @@ const addCommand = defineCommand({
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },
     "allow-insecure": {
       type: "boolean",
-      description: "Allow a plain HTTP source URL (otherwise rejected for non-localhost hosts)",
-      default: false,
-    },
-    "allow-dangerous-keys": {
-      type: "boolean",
       description:
-        "Skip the interactive confirmation when a stash contains dangerous vault keys (e.g. LD_PRELOAD, PATH). Use in CI/non-interactive scripts after reviewing the vault.",
+        "Allow a plain HTTP source URL and skip confirmation for dangerous vault keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the stash.",
       default: false,
     },
   },
@@ -629,7 +624,7 @@ const addCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
       const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
-      const allowDangerousKeys = getHyphenatedBoolean(args, "allow-dangerous-keys");
+      const allowDangerousKeys = allowInsecure;
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
@@ -728,8 +723,8 @@ const addCommand = defineCommand({
       // Resolve the stash root from the install result and scan any vault files
       // for dangerous env var keys.  When findings are present the install is
       // gated: TTY → interactive confirmation prompt; non-TTY without
-      // --allow-dangerous-keys → hard failure (exit 1).  Pass
-      // --allow-dangerous-keys to skip the prompt non-interactively.
+      // --allow-insecure → hard failure (exit 1).  Pass
+      // --allow-insecure to skip the prompt non-interactively.
       try {
         const installedStashRoot =
           result.installed?.stashRoot ??
@@ -761,7 +756,7 @@ const addCommand = defineCommand({
                 // Operator has explicitly accepted the risk — warn and continue.
                 for (const f of allFindings) {
                   warn(
-                    `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-dangerous-keys was set.`,
+                    `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-insecure was set.`,
                   );
                 }
               } else if (process.stdout.isTTY) {
@@ -795,7 +790,7 @@ const addCommand = defineCommand({
                       {
                         ok: false,
                         error:
-                          "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-dangerous-keys to bypass.",
+                          "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-insecure to bypass.",
                         code: "DANGEROUS_VAULT_KEY",
                       },
                       null,
@@ -817,7 +812,7 @@ const addCommand = defineCommand({
                   JSON.stringify(
                     {
                       ok: false,
-                      error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-dangerous-keys to bypass this check after reviewing the vault.`,
+                      error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-insecure to bypass this check after reviewing the vault.`,
                       code: "DANGEROUS_VAULT_KEY",
                     },
                     null,
