@@ -435,8 +435,7 @@ export interface HealthResponse {
       graphExtraction: number;
       error: number;
     };
-    crossStepErrorsInjected: number;
-    feedbackRatioUsed: boolean;
+    reflectsWithErrorContext: number;
     coverageGapCount: number;
     executionLogCandidateCount: number;
     evalCasesWritten: number;

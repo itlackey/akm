@@ -45,7 +45,6 @@ export interface ImproveHealthMetrics {
     error: number;
   };
   reflectsWithErrorContext: number;
-  feedbackRatioUsed: boolean;
   coverageGapCount: number;
   executionLogCandidateCount: number;
   evalCasesWritten: number;
@@ -159,7 +158,6 @@ function createUnknownImproveMetrics(): ImproveHealthMetrics {
       error: 0,
     },
     reflectsWithErrorContext: 0,
-    feedbackRatioUsed: false,
     coverageGapCount: 0,
     executionLogCandidateCount: 0,
     evalCasesWritten: 0,
@@ -220,7 +218,6 @@ function summarizeImproveCompleted(events: ReturnType<typeof readEvents>["events
     metrics.memoryInference.durationMs += toFiniteNumber(meta.memoryInferenceDurationMs);
     metrics.graphExtraction.extractedFiles += toFiniteNumber(meta.graphExtractionExtractedFiles);
     metrics.graphExtraction.durationMs += toFiniteNumber(meta.graphExtractionDurationMs);
-    if (meta.feedbackRatioUsed === true) metrics.feedbackRatioUsed = true;
   }
   metrics.consolidation.ran = metrics.consolidation.processed > 0 || metrics.consolidation.durationMs > 0;
   metrics.memoryInference.ran = metrics.memoryInference.writes > 0 || metrics.memoryInference.durationMs > 0;

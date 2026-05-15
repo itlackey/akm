@@ -219,7 +219,11 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
  */
 function recentShowCount(ref: string): number {
   try {
-    const { events } = readEvents({ type: "show", ref });
+    const { events } = readEvents({
+      type: "show",
+      ref,
+      since: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
     return events.length;
   } catch {
     return 0;

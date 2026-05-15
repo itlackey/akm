@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { writeFileAtomic } from "../core/common";
+import { isProcessAlive, writeFileAtomic } from "../core/common";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
 
@@ -58,10 +58,7 @@ function withVaultLock<T>(vaultPath: string, fn: () => T): T {
         const rawPid = fs.readFileSync(lockPath, "utf8").trim();
         const pid = Number.parseInt(rawPid, 10);
         if (!Number.isNaN(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0); // throws ESRCH if process doesn't exist
-            // PID is alive — legitimate holder, wait
-          } catch {
+          if (!isProcessAlive(pid)) {
             // Process is dead — stale lock, remove and retry immediately
             try {
               fs.unlinkSync(lockPath);
@@ -70,6 +67,7 @@ function withVaultLock<T>(vaultPath: string, fn: () => T): T {
             }
             continue;
           }
+          // PID is alive — legitimate holder, wait
         }
       } catch {
         /* lock file unreadable, keep waiting */

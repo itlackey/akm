@@ -455,6 +455,28 @@ export function stringArray(value: unknown): string[] {
  * Group an array of values by a string key derived from each element.
  * Returns a `Map` so insertion order within each group is preserved.
  */
+/**
+ * Return true if a process with the given PID is currently alive.
+ * Uses `process.kill(pid, 0)` which does not deliver a signal but
+ * throws ESRCH when the process does not exist.
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Convert a number of days to milliseconds. Consolidates the
+ * `N * 24 * 60 * 60 * 1000` pattern used throughout the cooldown logic.
+ */
+export function daysToMs(days: number): number {
+  return days * 86_400_000;
+}
+
 export function groupBy<T>(values: T[], keyFn: (value: T) => string): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const value of values) {

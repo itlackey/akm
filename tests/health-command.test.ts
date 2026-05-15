@@ -66,7 +66,6 @@ describe("akmHealth", () => {
         graphExtractionActions: 1,
         errorActions: 0,
         reflectsWithErrorContext: 3,
-        feedbackRatioUsed: true,
         coverageGapCount: 2,
         executionLogCandidateCount: 5,
         evalCasesWritten: 7,
@@ -99,7 +98,6 @@ describe("akmHealth", () => {
     expect(result.improve.actions.distill).toBe(1);
     expect(result.improve.actions.distillSkipped).toBe(1);
     expect(result.improve.reflectsWithErrorContext).toBe(3);
-    expect(result.improve.feedbackRatioUsed).toBe(true);
     expect(result.improve.memorySummary).toEqual({ eligible: 6, derived: 2 });
     expect(result.improve.consolidation).toEqual({ ran: true, processed: 2, durationMs: 120 });
     expect(result.improve.memoryInference).toEqual({ ran: true, writes: 5, durationMs: 80 });

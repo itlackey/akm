@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileAtomic } from "../core/common";
+import { isProcessAlive, writeFileAtomic } from "../core/common";
 import { getDataDir } from "../core/paths";
 import type { KitSource } from "../registry/types";
 // `KitSource` is the typed alias for the legacy install-source strings
@@ -87,14 +87,12 @@ function tryReclaimStaleSentinel(sentinelPath: string): boolean {
       return true;
     }
     // Check if the process is still alive (signal 0 doesn't kill, just checks)
-    try {
-      process.kill(pid, 0);
+    if (isProcessAlive(pid)) {
       return false; // Process is alive — lock is valid
-    } catch {
-      // Process is dead — reclaim the stale lock
-      fs.unlinkSync(sentinelPath);
-      return true;
     }
+    // Process is dead — reclaim the stale lock
+    fs.unlinkSync(sentinelPath);
+    return true;
   } catch {
     return false; // Can't read or remove — leave it alone
   }

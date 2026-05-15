@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { makeAssetRef, parseAssetRef } from "../core/asset-ref";
+import { daysToMs, isProcessAlive } from "../core/common";
 import type { AkmConfig } from "../core/config";
 import { loadConfig } from "../core/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
@@ -489,15 +490,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
         // ignore
       }
 
-      let pidIsAlive = false;
-      if (lock !== null) {
-        try {
-          process.kill(lock.pid, 0);
-          pidIsAlive = true;
-        } catch {
-          /* dead */
-        }
-      }
+      const pidIsAlive = lock !== null ? isProcessAlive(lock.pid) : false;
 
       if (!pidIsAlive || lockAgeMs > MAX_LOCK_AGE_MS) {
         // Stale lock — remove and retry once with O_EXCL
@@ -565,11 +558,12 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       reindexFn,
       startMs,
       budgetMs,
+      eventsCtx,
     });
 
     // D6: pre-load all proposal_rejected events from the last 30 days once,
     // so the per-asset loop can use a Map lookup instead of N DB round trips.
-    const REJECTED_PROPOSAL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+    const REJECTED_PROPOSAL_WINDOW_MS = daysToMs(30);
     const rejectedProposalSince = new Date(Date.now() - REJECTED_PROPOSAL_WINDOW_MS).toISOString();
     const allRejectedProposalEvents = readEvents({ type: "proposal_rejected", since: rejectedProposalSince }).events;
     const rejectedProposalsByRef = new Map<string, EventEnvelope>();
@@ -594,6 +588,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       rejectedProposalsByRef,
       startMs,
       budgetMs,
+      eventsCtx,
     });
 
     const {
@@ -615,6 +610,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       memorySummary,
       memoryRefsForInference,
       reindexFn,
+      eventsCtx,
     });
 
     const finalActions =
@@ -672,14 +668,17 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     return result;
   } catch (err) {
     // D3: emit improve_failed on unexpected crash so dashboards can detect failures.
-    appendEvent({
-      eventType: "improve_failed",
-      ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-      metadata: {
-        error: err instanceof Error ? err.message : String(err),
-        durationMs: Date.now() - startMs,
+    appendEvent(
+      {
+        eventType: "improve_failed",
+        ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
+        metadata: {
+          error: err instanceof Error ? err.message : String(err),
+          durationMs: Date.now() - startMs,
+        },
       },
-    });
+      eventsCtx,
+    );
     throw err;
   } finally {
     try {
@@ -776,7 +775,6 @@ function emitImproveCompletedEvent(
         memoryInferenceDurationMs: durations.memoryInferenceDurationMs,
         graphExtractionExtractedFiles: result.graphExtraction?.quality.extractedFiles ?? 0,
         graphExtractionDurationMs: durations.graphExtractionDurationMs,
-        feedbackRatioUsed: true,
       },
     },
     eventsCtx,
@@ -794,6 +792,7 @@ async function runImprovePreparationStage(args: {
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
   startMs: number;
   budgetMs: number;
+  eventsCtx?: EventsContext;
 }): Promise<ImprovePreparationResult> {
   const {
     scope,
@@ -805,6 +804,7 @@ async function runImprovePreparationStage(args: {
     reindexFn,
     startMs,
     budgetMs,
+    eventsCtx,
   } = args;
 
   const actions: ImproveActionResult[] = [];
@@ -839,11 +839,14 @@ async function runImprovePreparationStage(args: {
 
   // eligibleCount = raw pre-filter count (before cooldown/signal/cleanup filters).
   // improve_completed.plannedRefs = post-filter count of refs that actually entered the loop.
-  appendEvent({
-    eventType: "improve_invoked",
-    ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
-    metadata: { scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
-  });
+  appendEvent(
+    {
+      eventType: "improve_invoked",
+      ref: scope.mode === "ref" ? scope.value : `improve:${scope.mode}:${scope.value ?? "all"}`,
+      metadata: { scope, dryRun: options.dryRun ?? false, eligibleCount: plannedRefs.length },
+    },
+    eventsCtx,
+  );
 
   if (primaryStashDir) {
     try {
@@ -870,17 +873,33 @@ async function runImprovePreparationStage(args: {
   // every improve run. Assets with only stale signals fall through to the
   // high-retrieval path (P0-A) or are skipped until new signals arrive.
   const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
-  const feedbackSinceCutoff = new Date(Date.now() - FEEDBACK_SIGNAL_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const feedbackSinceCutoff = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
 
-  const signalFiltered = postCleanupRefs.filter((candidate) => {
+  // Pre-compute feedback summary per ref in a single pass so we don't issue
+  // two readEvents({type:"feedback", ref}) per asset (one for signal filtering,
+  // one for ratio computation).
+  const feedbackSummary = new Map<string, { hasSignal: boolean; positive: number; negative: number }>();
+  for (const candidate of postCleanupRefs) {
     const { events } = readEvents({ type: "feedback", ref: candidate.ref });
-    return events.some(
-      (e) =>
+    let hasSignal = false;
+    let positive = 0;
+    let negative = 0;
+    for (const e of events) {
+      if (
+        !hasSignal &&
         (e.ts ?? "") >= feedbackSinceCutoff &&
-        ((e.metadata !== undefined && typeof e.metadata.signal === "string") ||
-          (e.metadata !== undefined && typeof e.metadata.note === "string")),
-    );
-  });
+        e.metadata !== undefined &&
+        (typeof e.metadata.signal === "string" || typeof e.metadata.note === "string")
+      ) {
+        hasSignal = true;
+      }
+      if (e.metadata?.signal === "positive") positive++;
+      else if (e.metadata?.signal === "negative") negative++;
+    }
+    feedbackSummary.set(candidate.ref, { hasSignal, positive, negative });
+  }
+
+  const signalFiltered = postCleanupRefs.filter((candidate) => feedbackSummary.get(candidate.ref)?.hasSignal === true);
 
   // P0-A: also surface zero-feedback assets that have been retrieved many times.
   const RETRIEVAL_COUNT_THRESHOLD = options.minRetrievalCount ?? 5;
@@ -934,12 +953,12 @@ async function runImprovePreparationStage(args: {
 
   const utilityMap = buildUtilityMap(mergedRefs);
 
-  // Load feedback ratio per ref and blend into sort key
+  // Load feedback ratio per ref from the pre-computed summary (no extra DB pass).
   const feedbackRatios = new Map<string, number>();
   for (const ref of mergedRefs) {
-    const { events } = readEvents({ type: "feedback", ref: ref.ref });
-    const positive = events.filter((e) => e.metadata?.signal === "positive").length;
-    const negative = events.filter((e) => e.metadata?.signal === "negative").length;
+    const summary = feedbackSummary.get(ref.ref);
+    const positive = summary?.positive ?? 0;
+    const negative = summary?.negative ?? 0;
     const total = positive + negative;
     // ratio = negative proportion (high = needs more improvement)
     feedbackRatios.set(ref.ref, total > 0 ? negative / total : 0);
@@ -1081,7 +1100,7 @@ async function runImprovePreparationStage(args: {
   const effectiveDistillCooldown = DISTILL_COOLDOWN_DAYS;
 
   if (effectiveReflectCooldown > 0 || effectiveDistillCooldown > 0) {
-    const bulkWindowMs = Math.max(effectiveReflectCooldown, effectiveDistillCooldown) * 24 * 60 * 60 * 1000;
+    const bulkWindowMs = daysToMs(Math.max(effectiveReflectCooldown, effectiveDistillCooldown));
     const bulkSince = new Date(Date.now() - bulkWindowMs).toISOString();
 
     const bulkReflects = readEvents({ type: "reflect_invoked", since: bulkSince }).events;
@@ -1110,17 +1129,17 @@ async function runImprovePreparationStage(args: {
         let effectiveCooldownDays = REFLECT_COOLDOWN_DAYS;
         if (hasAccepted) continue;
         else if (hasRejected) effectiveCooldownDays = Math.min(REFLECT_COOLDOWN_DAYS, 3);
-        if (Date.now() - new Date(lastTs).getTime() < effectiveCooldownDays * 24 * 60 * 60 * 1000) {
+        if (Date.now() - new Date(lastTs).getTime() < daysToMs(effectiveCooldownDays)) {
           reflectCooledRefs.add(ref);
         }
       }
     }
 
     if (DISTILL_COOLDOWN_DAYS > 0) {
-      const distillCooldownMs = DISTILL_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+      const distillCooldownMs = daysToMs(DISTILL_COOLDOWN_DAYS);
       // B5: track both queued and validation_failed outcomes for cooldown.
       // validation_failed assets previously were never cooled so they re-distilled on every run.
-      const validationFailedCooldownMs = Math.ceil(DISTILL_COOLDOWN_DAYS / 2) * 24 * 60 * 60 * 1000;
+      const validationFailedCooldownMs = daysToMs(Math.ceil(DISTILL_COOLDOWN_DAYS / 2));
       const latestQueuedDistill = new Map<string, string>();
       const latestValidationFailed = new Map<string, string>();
       for (const e of bulkDistills) {
@@ -1173,11 +1192,14 @@ async function runImprovePreparationStage(args: {
       if (onDistillCooldown && isDistillCandidate) {
         // Bug D1: pre-emit synthetic distill-skipped action before any LLM call.
         actions.push({ ref: r.ref, mode: "distill-skipped", result: { ok: true, reason: "distill cooldown" } });
-        appendEvent({
-          eventType: "improve_skipped",
-          ref: r.ref,
-          metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS_PREFILT },
-        });
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: r.ref,
+            metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS_PREFILT },
+          },
+          eventsCtx,
+        );
       }
       // Asset is not on reflect cooldown — allow reflect (distill guard is in the loop).
       reflectAndDistillRefs.push(r);
@@ -1192,7 +1214,7 @@ async function runImprovePreparationStage(args: {
           mode: "distill-skipped",
           result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
         });
-        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
+        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } }, eventsCtx);
       }
     }
   }
@@ -1250,6 +1272,7 @@ async function runImproveLoopStage(args: {
   rejectedProposalsByRef: Map<string, EventEnvelope>;
   startMs: number;
   budgetMs: number;
+  eventsCtx?: EventsContext;
 }): Promise<ImproveLoopResult> {
   const {
     scope,
@@ -1266,6 +1289,7 @@ async function runImproveLoopStage(args: {
     rejectedProposalsByRef,
     startMs,
     budgetMs,
+    eventsCtx,
   } = args;
 
   const RECENT_ERRORS_CAP = 3;
@@ -1275,27 +1299,41 @@ async function runImproveLoopStage(args: {
   let reflectsWithErrorContext = 0;
   const memoryRefsForInference = new Set<string>();
 
+  // Pre-load all pending proposals once instead of querying per asset in the loop.
+  const dedupeStashDirForProposals = primaryStashDir ?? options.stashDir;
+  const pendingProposalRefSet = new Set<string>(
+    dedupeStashDirForProposals
+      ? listProposals(dedupeStashDirForProposals, { status: "pending" }).map((p) => p.ref)
+      : [],
+  );
+
   for (const planned of loopRefs) {
     if (Date.now() - startMs >= budgetMs) {
       const remaining = loopRefs.length - completedCount;
       info(
         `[improve] budget exhausted after ${Math.round((Date.now() - startMs) / 60000)}min — ${remaining} assets skipped`,
       );
-      appendEvent({
-        eventType: "improve_skipped",
-        ref: planned.ref,
-        metadata: {
-          reason: "budget_exhausted",
-          remaining,
+      appendEvent(
+        {
+          eventType: "improve_skipped",
+          ref: planned.ref,
+          metadata: {
+            reason: "budget_exhausted",
+            remaining,
+          },
         },
-      });
+        eventsCtx,
+      );
       // B11: Emit improve_skipped for all remaining assets that will not be processed.
       for (const remainingRef of loopRefs.slice(completedCount + 1)) {
-        appendEvent({
-          eventType: "improve_skipped",
-          ref: remainingRef.ref,
-          metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
-        });
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: remainingRef.ref,
+            metadata: { reason: "budget_exhausted_batch", remaining: loopRefs.length - completedCount - 1 },
+          },
+          eventsCtx,
+        );
       }
       actions.push({
         ref: planned.ref,
@@ -1341,6 +1379,14 @@ async function runImproveLoopStage(args: {
           mode: "distill-skipped",
           result: { ok: true, reason: "derived-memory-reflect-skipped" },
         });
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: planned.ref,
+            metadata: { reason: "derived_memory_reflect_skipped" },
+          },
+          eventsCtx,
+        );
       }
       // isDistillOnly refs: no reflect action emitted — proceed directly to distill path below.
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
@@ -1348,7 +1394,7 @@ async function runImproveLoopStage(args: {
       const shouldAttemptDistill =
         isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir);
       const skipMemoryDistillForWeakSignal =
-        parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
+        !isDistillOnly && parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
 
       // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
       // refs; non-candidate refs in the set are blocked here.
@@ -1359,19 +1405,21 @@ async function runImproveLoopStage(args: {
         if (dedupeStashDir) {
           // B2: check both lesson ref and knowledge ref since auto-promoted memories
           // create knowledge: proposals, not lesson: proposals.
-          const pendingProposals = listProposals(dedupeStashDir, { status: "pending" });
-          const hasExistingPending = pendingProposals.some((p) => p.ref === lessonRef || p.ref === knowledgeRef);
+          const hasExistingPending = pendingProposalRefSet.has(lessonRef) || pendingProposalRefSet.has(knowledgeRef);
           if (hasExistingPending) {
             actions.push({
               ref: planned.ref,
               mode: "distill-skipped",
               result: { ok: true, reason: "pending proposal exists" },
             });
-            appendEvent({
-              eventType: "improve_skipped",
-              ref: planned.ref,
-              metadata: { reason: "pending_proposal_exists" },
-            });
+            appendEvent(
+              {
+                eventType: "improve_skipped",
+                ref: planned.ref,
+                metadata: { reason: "pending_proposal_exists" },
+              },
+              eventsCtx,
+            );
             completedCount++;
             info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref}`);
             continue;
@@ -1424,11 +1472,14 @@ async function runImproveLoopStage(args: {
           mode: "distill-skipped",
           result: { ok: true, reason: "memory requires recent feedback signal" },
         });
-        appendEvent({
-          eventType: "improve_skipped",
-          ref: planned.ref,
-          metadata: { reason: "memory_distill_requires_feedback" },
-        });
+        appendEvent(
+          {
+            eventType: "improve_skipped",
+            ref: planned.ref,
+            metadata: { reason: "memory_distill_requires_feedback" },
+          },
+          eventsCtx,
+        );
       }
     } catch (err) {
       // B7: UsageError thrown by akmDistill on validation_failed should be recorded
@@ -1465,6 +1516,7 @@ async function runImprovePostLoopStage(args: {
   memorySummary: { eligible: number; derived: number };
   memoryRefsForInference: Set<string>;
   reindexFn: (options: { stashDir: string }) => Promise<unknown>;
+  eventsCtx?: EventsContext;
 }): Promise<ImprovePostLoopResult> {
   const {
     scope,
@@ -1476,6 +1528,7 @@ async function runImprovePostLoopStage(args: {
     memorySummary,
     memoryRefsForInference,
     reindexFn,
+    eventsCtx,
   } = args;
   const allWarnings = [...cleanupWarnings, ...(appliedCleanup?.warnings ?? [])];
 
@@ -1499,8 +1552,9 @@ async function runImprovePostLoopStage(args: {
     : baseConfig;
 
   const consolidateCooldownDays = options.consolidateCooldownDays ?? 14;
-  const CONSOLIDATE_COOLDOWN_MS = consolidateCooldownDays * 24 * 60 * 60 * 1000;
-  const recentConsolidations = readEvents({ type: "consolidate_completed" });
+  const CONSOLIDATE_COOLDOWN_MS = daysToMs(consolidateCooldownDays);
+  const consolidationCutoff = new Date(Date.now() - CONSOLIDATE_COOLDOWN_MS).toISOString();
+  const recentConsolidations = readEvents({ type: "consolidate_completed", since: consolidationCutoff });
   const lastConsolidation = recentConsolidations.events
     .filter((e) => e.metadata?.processed && Number(e.metadata.processed) > 0)
     .sort((a, b) => new Date(b.ts ?? 0).getTime() - new Date(a.ts ?? 0).getTime())[0];
@@ -1533,24 +1587,30 @@ async function runImprovePostLoopStage(args: {
       autoAccept: "safe",
     });
     if (consolidation.processed > 0) {
-      appendEvent({
-        eventType: "consolidate_completed",
-        ref: "memory:_consolidation",
-        metadata: { processed: consolidation.processed, merged: consolidation.merged },
-      });
+      appendEvent(
+        {
+          eventType: "consolidate_completed",
+          ref: "memory:_consolidation",
+          metadata: { processed: consolidation.processed, merged: consolidation.merged },
+        },
+        eventsCtx,
+      );
     }
   } else {
     const daysAgo = Math.round((Date.now() - new Date(lastConsolidation?.ts ?? 0).getTime()) / 86400000);
-    appendEvent({
-      eventType: "improve_skipped",
-      ref: "memory:_consolidation",
-      metadata: {
-        reason: "consolidation_cooldown",
-        cooldownDays: 14,
-        lastEventTs: lastConsolidation?.ts ?? null,
+    appendEvent(
+      {
+        eventType: "improve_skipped",
+        ref: "memory:_consolidation",
+        metadata: {
+          reason: "consolidation_cooldown",
+          cooldownDays: consolidateCooldownDays,
+          lastEventTs: lastConsolidation?.ts ?? null,
+        },
       },
-    });
-    info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown 14d)`);
+      eventsCtx,
+    );
+    info(`[improve] consolidation skipped (last ran ${daysAgo}d ago, cooldown ${consolidateCooldownDays}d)`);
   }
 
   // D9: track whether consolidation wrote any data so graph extraction can reindex if needed
