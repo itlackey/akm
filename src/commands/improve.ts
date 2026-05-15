@@ -441,36 +441,88 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   const resolvedLockPath = primaryStashDir
     ? path.join(primaryStashDir, ".akm", "improve.lock")
     : path.join(options.stashDir ?? ".", ".akm", "improve.lock");
-  let staleLock = false;
-  if (fs.existsSync(resolvedLockPath)) {
-    let lock: { pid: number; startedAt: string } | null = null;
+  const MAX_LOCK_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+  fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
+
+  const acquireLock = (): void => {
+    let lockFd = -1;
     try {
-      lock = JSON.parse(fs.readFileSync(resolvedLockPath, "utf8")) as { pid: number; startedAt: string };
+      lockFd = fs.openSync(resolvedLockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      fs.writeSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+      fs.closeSync(lockFd);
     } catch {
-      staleLock = true;
-    }
-    if (lock !== null) {
-      try {
-        process.kill(lock.pid, 0);
-        throw new ConfigError(
-          `akm improve is already running (pid ${lock.pid}, started ${lock.startedAt}). Use SIGTERM to stop it.`,
-          "INVALID_CONFIG_FILE",
-        );
-      } catch (err) {
-        if (err instanceof ConfigError) throw err;
-        staleLock = true;
+      // Lock file already exists — read it and check staleness
+      if (lockFd !== -1) {
+        try {
+          fs.closeSync(lockFd);
+        } catch {
+          /* ignore */
+        }
       }
-    }
-    if (staleLock) {
+      let lock: { pid: number; startedAt: string } | null = null;
       try {
-        fs.unlinkSync(resolvedLockPath);
+        lock = JSON.parse(fs.readFileSync(resolvedLockPath, "utf8")) as { pid: number; startedAt: string };
+      } catch {
+        // Unreadable lock file — treat as stale
+      }
+
+      let lockAgeMs = MAX_LOCK_AGE_MS + 1; // default: treat as stale if stat fails
+      try {
+        const lockStat = fs.statSync(resolvedLockPath);
+        lockAgeMs = Date.now() - lockStat.mtimeMs;
       } catch {
         // ignore
       }
+
+      let pidIsAlive = false;
+      if (lock !== null) {
+        try {
+          process.kill(lock.pid, 0);
+          pidIsAlive = true;
+        } catch {
+          /* dead */
+        }
+      }
+
+      if (!pidIsAlive || lockAgeMs > MAX_LOCK_AGE_MS) {
+        // Stale lock — remove and retry once with O_EXCL
+        try {
+          fs.unlinkSync(resolvedLockPath);
+        } catch {
+          /* ignore */
+        }
+        let retryFd = -1;
+        try {
+          retryFd = fs.openSync(
+            resolvedLockPath,
+            fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+            0o600,
+          );
+          fs.writeSync(retryFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+          fs.closeSync(retryFd);
+        } catch {
+          if (retryFd !== -1) {
+            try {
+              fs.closeSync(retryFd);
+            } catch {
+              /* ignore */
+            }
+          }
+          throw new ConfigError(
+            `akm improve is already running. Delete ${resolvedLockPath} to force.`,
+            "INVALID_CONFIG_FILE",
+          );
+        }
+      } else {
+        throw new ConfigError(
+          `akm improve is already running (PID ${lock?.pid}, started ${lock?.startedAt}). Delete ${resolvedLockPath} to force.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
     }
-  }
-  fs.mkdirSync(path.dirname(resolvedLockPath), { recursive: true });
-  fs.writeFileSync(resolvedLockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  };
+  acquireLock();
 
   const budgetMs = options.timeoutMs ?? 2 * 60 * 60 * 1000; // default 2 hours
   const startMs = Date.now();
