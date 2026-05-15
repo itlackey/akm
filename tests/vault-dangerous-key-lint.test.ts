@@ -116,6 +116,21 @@ describe("checkVaultForDangerousKeys", () => {
     expect(findings).toHaveLength(0);
   });
 
+  test("detects dangerous key with export prefix", () => {
+    const stashDir = makeTempStash();
+    // Vault file uses the "export KEY=value" shell form
+    const vaultPath = writeVault(stashDir, "export.env", "export LD_PRELOAD=/evil.so\nSAFE=fine\n");
+    const findings = checkVaultForDangerousKeys(vaultPath, "vaults/export.env", "vault:export");
+
+    // The LD_PRELOAD key must be detected even when prefixed with "export "
+    expect(findings.length).toBeGreaterThan(0);
+    const keys = findings.map((f) => {
+      const m = f.detail.match(/Vault key `([^`]+)`/);
+      return m ? m[1] : null;
+    });
+    expect(keys).toContain("LD_PRELOAD");
+  });
+
   test("returns no findings for a non-existent vault file", () => {
     const stashDir = makeTempStash();
     const vaultPath = path.join(stashDir, "vaults", "missing.env");

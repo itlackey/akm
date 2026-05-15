@@ -130,6 +130,26 @@ describe("vault set: directory traversal rejection", () => {
     expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
   });
 
+  test("rejects ../../evil in vault unset", () => {
+    const stashDir = makeTempDir("akm-vtrav-stash7-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+
+    const { status, stderr } = runCli(["vault", "unset", "../../evil", "KEY"], stashDir);
+
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
+  });
+
+  test("rejects ../../evil in vault run", () => {
+    const stashDir = makeTempDir("akm-vtrav-stash8-");
+    fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
+
+    const { status, stderr } = runCli(["vault", "run", "../../evil", "--", "echo", "hi"], stashDir);
+
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/traversal|escapes|relative path|invalid/i);
+  });
+
   test("legitimate vault name succeeds", () => {
     const stashDir = makeTempDir("akm-vtrav-stash6-");
     fs.mkdirSync(path.join(stashDir, "vaults"), { recursive: true });
