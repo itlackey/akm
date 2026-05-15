@@ -199,6 +199,8 @@ interface ImprovePreparationResult {
   lintSummary?: { fixed: number; flagged: number };
   loopRefs: ImproveEligibleRef[];
   distillCooledRefs: Set<string>;
+  /** Refs on reflect cooldown but eligible for distill-only processing (Bug D2). */
+  distillOnlyRefs: ImproveEligibleRef[];
   coverageGaps: string[];
   recentErrors: string[];
 }
@@ -497,6 +499,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       actions: preparation.actions,
       signalBearingSet: preparation.signalBearingSet,
       distillCooledRefs: preparation.distillCooledRefs,
+      distillOnlyRefs: preparation.distillOnlyRefs,
       recentErrors: preparation.recentErrors,
       startMs,
       budgetMs,
@@ -832,7 +835,10 @@ async function runImprovePreparationStage(args: {
     // best-effort
   }
 
-  const actionableRefs = options.limit ? sorted.slice(0, options.limit) : sorted;
+  // Bug B1: keep the full sorted set for reporting/telemetry; --limit is applied
+  // AFTER all cooldown filters so that cooled assets cannot consume limit slots
+  // and displace uncooled assets that would receive LLM calls.
+  const actionableRefs = sorted;
 
   if (appliedCleanup) {
     for (const candidate of memoryCleanupPlan?.pruneCandidates ?? []) {
@@ -989,18 +995,67 @@ async function runImprovePreparationStage(args: {
     }
   }
 
-  const loopRefs = actionableRefs.filter((r) => !reflectCooledRefs.has(r.ref) && !validationFailureRefs.has(r.ref));
-  const reflectCooledLoop = actionableRefs.filter((r) => reflectCooledRefs.has(r.ref));
-  if (reflectCooledLoop.length > 0) {
-    info(`[improve] ${reflectCooledLoop.length}/${actionableRefs.length} assets on reflect cooldown — skipping`);
-    for (const r of reflectCooledLoop) {
-      actions.push({
-        ref: r.ref,
-        mode: "distill-skipped",
-        result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
-      });
-      appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
+  // ── Cooldown pre-filter (Bugs B1, D1, D2) ──────────────────────────────────
+  // Three buckets:
+  //   reflectAndDistillRefs  — not reflect-cooled, not validation-failed (normal path)
+  //   distillOnlyRefs        — reflect-cooled, distill-cooldown expired, is a distill
+  //                            candidate → skip reflect but allow distill (Bug D2)
+  //   emit-only              — reflect-cooled AND (distill-cooled OR not a candidate)
+  //                            → emit synthetic skip action and exclude entirely
+  //
+  // Bug D1: distill-cooled distill-candidates that are NOT reflect-cooled have their
+  // synthetic distill-skipped action emitted here before any LLM call or budget check.
+  const DISTILL_COOLDOWN_DAYS_PREFILT = options.distillCooldownDays ?? 30;
+  const reflectAndDistillRefs: ImproveEligibleRef[] = [];
+  const distillOnlyRefs: ImproveEligibleRef[] = [];
+
+  for (const r of actionableRefs) {
+    if (validationFailureRefs.has(r.ref)) continue;
+
+    const onReflectCooldown = reflectCooledRefs.has(r.ref);
+    const onDistillCooldown = DISTILL_COOLDOWN_DAYS_PREFILT > 0 && distillCooledRefs.has(r.ref);
+    const isDistillCandidate = isLessonCandidate(r.ref) || shouldDistillMemoryRef(r.ref, options.stashDir);
+
+    if (!onReflectCooldown) {
+      if (onDistillCooldown && isDistillCandidate) {
+        // Bug D1: pre-emit synthetic distill-skipped action before any LLM call.
+        actions.push({ ref: r.ref, mode: "distill-skipped", result: { ok: true, reason: "distill cooldown" } });
+        appendEvent({
+          eventType: "improve_skipped",
+          ref: r.ref,
+          metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS_PREFILT },
+        });
+      }
+      // Asset is not on reflect cooldown — allow reflect (distill guard is in the loop).
+      reflectAndDistillRefs.push(r);
+    } else {
+      if (!onDistillCooldown && isDistillCandidate) {
+        // Bug D2: reflect-cooled but distill cooldown expired and is a distill candidate.
+        distillOnlyRefs.push(r);
+      } else {
+        // Fully cooled or not a distill candidate — emit synthetic skip and exclude.
+        actions.push({
+          ref: r.ref,
+          mode: "distill-skipped",
+          result: { ok: true, reason: "reflect cooldown (pre-filtered)" },
+        });
+        appendEvent({ eventType: "improve_skipped", ref: r.ref, metadata: { reason: "reflect_cooldown" } });
+      }
     }
+  }
+
+  // Bug B1 final step: apply --limit to the actually-processable set.
+  const allLoopRefs = [...reflectAndDistillRefs, ...distillOnlyRefs];
+  const loopRefs = options.limit ? allLoopRefs.slice(0, options.limit) : allLoopRefs;
+
+  const reflectCooledCount = actionableRefs.filter(
+    (r) => reflectCooledRefs.has(r.ref) && !distillOnlyRefs.some((d) => d.ref === r.ref),
+  ).length;
+  if (reflectCooledCount > 0) {
+    info(`[improve] ${reflectCooledCount}/${actionableRefs.length} assets on reflect cooldown — skipping`);
+  }
+  if (distillOnlyRefs.length > 0) {
+    info(`[improve] ${distillOnlyRefs.length} reflect-cooled assets will run distill-only path`);
   }
   if (validationFailureRefs.size > 0) {
     info(`[improve] ${validationFailureRefs.size} assets with validation failures excluded from loop`);
@@ -1019,6 +1074,7 @@ async function runImprovePreparationStage(args: {
     lintSummary,
     loopRefs,
     distillCooledRefs,
+    distillOnlyRefs,
     coverageGaps,
     recentErrors,
   };
@@ -1034,6 +1090,8 @@ async function runImproveLoopStage(args: {
   actions: ImproveActionResult[];
   signalBearingSet: Set<string>;
   distillCooledRefs: Set<string>;
+  /** Refs that should only run the distill path (reflect-cooled but distill expired, Bug D2). */
+  distillOnlyRefs: ImproveEligibleRef[];
   recentErrors: string[];
   startMs: number;
   budgetMs: number;
@@ -1048,13 +1106,15 @@ async function runImproveLoopStage(args: {
     actions,
     signalBearingSet,
     distillCooledRefs,
+    distillOnlyRefs,
     recentErrors,
     startMs,
     budgetMs,
   } = args;
 
   const RECENT_ERRORS_CAP = 3;
-  const DISTILL_COOLDOWN_DAYS = options.distillCooldownDays ?? 30;
+  // Build a Set for O(1) membership test — these refs skip the reflect call (Bug D2).
+  const distillOnlyRefSet = new Set(distillOnlyRefs.map((r) => r.ref));
   let completedCount = 0;
   let crossStepErrorsInjected = 0;
   const memoryRefsForInference = new Set<string>();
@@ -1081,39 +1141,26 @@ async function runImproveLoopStage(args: {
       break;
     }
     try {
-      if (
-        DISTILL_COOLDOWN_DAYS > 0 &&
-        distillCooledRefs.has(planned.ref) &&
-        (isLessonCandidate(planned.ref) || shouldDistillMemoryRef(planned.ref, options.stashDir))
-      ) {
-        actions.push({
-          ref: planned.ref,
-          mode: "distill-skipped",
-          result: { ok: true, reason: "distill cooldown" },
-        });
-        completedCount++;
-        appendEvent({
-          eventType: "improve_skipped",
-          ref: planned.ref,
-          metadata: { reason: "distill_cooldown", cooldownDays: DISTILL_COOLDOWN_DAYS },
-        });
-        info(`[improve] ${completedCount}/${loopRefs.length} ${planned.ref} (distill cooldown)`);
-        continue;
-      }
+      // Bug D2: distillOnlyRefs skip the reflect call but still run the distill path.
+      // Bug D1: in-loop distill-cooldown check removed — distill-cooled candidates
+      //         have their synthetic actions emitted in runImprovePreparationStage.
+      const isDistillOnly = distillOnlyRefSet.has(planned.ref);
 
-      if (recentErrors.length > 0) crossStepErrorsInjected++;
-      const reflectResult = await reflectFn({
-        ref: planned.ref,
-        task: options.task,
-        ...(options.stashDir ? { stashDir: options.stashDir } : {}),
-        ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
-        agentProcess: options.agentProcess ?? "reflect",
-      });
-      actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
-      if (!reflectResult.ok) {
-        const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
-        recentErrors.push(errMsg);
-        if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+      if (!isDistillOnly) {
+        if (recentErrors.length > 0) crossStepErrorsInjected++;
+        const reflectResult = await reflectFn({
+          ref: planned.ref,
+          task: options.task,
+          ...(options.stashDir ? { stashDir: options.stashDir } : {}),
+          ...(recentErrors.length > 0 ? { avoidPatterns: [...recentErrors] } : {}),
+          agentProcess: options.agentProcess ?? "reflect",
+        });
+        actions.push({ ref: planned.ref, mode: "reflect", result: reflectResult });
+        if (!reflectResult.ok) {
+          const errMsg = reflectResult.error ?? reflectResult.reason ?? "unknown reflect error";
+          recentErrors.push(errMsg);
+          if (recentErrors.length > RECENT_ERRORS_CAP) recentErrors.shift();
+        }
       }
       const parsedPlannedRef = parseAssetRef(planned.ref);
       const hasRecentFeedbackSignal = signalBearingSet.has(planned.ref);
@@ -1123,7 +1170,9 @@ async function runImproveLoopStage(args: {
       const skipMemoryDistillForWeakSignal =
         parsedPlannedRef.type === "memory" && !hasRecentFeedbackSignal && !explicitRefScope;
 
-      if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal) {
+      // distillCooledRefs guard: pre-filter emitted synthetic actions for distill-candidate
+      // refs; non-candidate refs in the set are blocked here.
+      if (shouldAttemptDistill && !skipMemoryDistillForWeakSignal && !distillCooledRefs.has(planned.ref)) {
         const lessonRef = deriveLessonRef(planned.ref);
         const dedupeStashDir = primaryStashDir ?? options.stashDir;
         if (dedupeStashDir) {
