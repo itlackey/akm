@@ -808,7 +808,7 @@ async function indexEntries(
         reason: persistedReason,
       });
       if (persistedRows === 0) {
-        warnVerbose(`[index] zero-row ${dirPath}: ${persistedReason}`);
+        warn(`[index] zero-row ${dirPath}: ${persistedReason}`);
       }
     }
   });
