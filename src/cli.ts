@@ -618,11 +618,18 @@ const addCommand = defineCommand({
       description: "Allow a plain HTTP source URL (otherwise rejected for non-localhost hosts)",
       default: false,
     },
+    "allow-dangerous-keys": {
+      type: "boolean",
+      description:
+        "Skip the interactive confirmation when a stash contains dangerous vault keys (e.g. LD_PRELOAD, PATH). Use in CI/non-interactive scripts after reviewing the vault.",
+      default: false,
+    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const ref = args.ref.trim();
       const allowInsecure = getHyphenatedBoolean(args, "allow-insecure");
+      const allowDangerousKeys = getHyphenatedBoolean(args, "allow-dangerous-keys");
 
       // URL with --provider → stash source (remote or git provider)
       if (args.provider) {
@@ -719,8 +726,10 @@ const addCommand = defineCommand({
 
       // ── Post-install vault key audit ────────────────────────────────────────
       // Resolve the stash root from the install result and scan any vault files
-      // for dangerous env var keys.  This is warn-only — it never blocks the
-      // install or causes a non-zero exit.
+      // for dangerous env var keys.  When findings are present the install is
+      // gated: TTY → interactive confirmation prompt; non-TTY without
+      // --allow-dangerous-keys → hard failure (exit 1).  Pass
+      // --allow-dangerous-keys to skip the prompt non-interactively.
       try {
         const installedStashRoot =
           result.installed?.stashRoot ??
@@ -730,6 +739,9 @@ const addCommand = defineCommand({
           const vaultsDir = path.join(installedStashRoot, "vaults");
           if (fs.existsSync(vaultsDir)) {
             const envFiles = fs.readdirSync(vaultsDir).filter((f: string) => f.endsWith(".env"));
+
+            // Collect all dangerous-key findings across every vault file.
+            const allFindings: Array<{ vaultRef: string; keyName: string; relPath: string }> = [];
             for (const envFile of envFiles) {
               const vaultPath = path.join(vaultsDir, envFile);
               const baseName = path.basename(envFile, ".env");
@@ -737,13 +749,90 @@ const addCommand = defineCommand({
               const relPath = path.join("vaults", envFile);
               const findings = checkVaultForDangerousKeys(vaultPath, relPath, vaultRef);
               for (const finding of findings) {
-                warn(`[dangerous-vault-key] ${finding.file}: ${finding.detail}`);
+                // Extract the key name from the detail string for the summary line.
+                const keyMatch = finding.detail.match(/Vault key `([^`]+)`/);
+                const keyName = keyMatch ? keyMatch[1] : finding.file;
+                allFindings.push({ vaultRef, keyName, relPath });
+              }
+            }
+
+            if (allFindings.length > 0) {
+              if (allowDangerousKeys) {
+                // Operator has explicitly accepted the risk — warn and continue.
+                for (const f of allFindings) {
+                  warn(
+                    `[dangerous-vault-key] ${f.relPath}: key \`${f.keyName}\` in ${f.vaultRef} can hijack process execution via \`akm vault run\`. Proceeding because --allow-dangerous-keys was set.`,
+                  );
+                }
+              } else if (process.stdout.isTTY) {
+                // Interactive path: show findings and ask the user to confirm.
+                const stashLabel = ref;
+                const groupedByVault = new Map<string, string[]>();
+                for (const f of allFindings) {
+                  const existing = groupedByVault.get(f.vaultRef) ?? [];
+                  existing.push(f.keyName);
+                  groupedByVault.set(f.vaultRef, existing);
+                }
+                for (const [vaultRef, keys] of groupedByVault) {
+                  warn(`[warn] Vault "${vaultRef}" in stash "${stashLabel}" contains potentially dangerous keys:`);
+                  for (const key of keys) {
+                    warn(`  - ${key}: can hijack process execution via \`akm vault run\``);
+                  }
+                }
+                const confirmed = await p.confirm({
+                  message: "Install anyway?",
+                  initialValue: false,
+                });
+                if (p.isCancel(confirmed) || confirmed !== true) {
+                  // Roll back the install before aborting.
+                  try {
+                    await akmRemove({ target: ref });
+                  } catch {
+                    // Best-effort cleanup; don't mask the real abort message.
+                  }
+                  console.error(
+                    JSON.stringify(
+                      {
+                        ok: false,
+                        error:
+                          "Install aborted: stash contains dangerous vault keys. Remove the keys or re-run with --allow-dangerous-keys to bypass.",
+                        code: "DANGEROUS_VAULT_KEY",
+                      },
+                      null,
+                      2,
+                    ),
+                  );
+                  process.exit(1);
+                }
+              } else {
+                // Non-interactive path without bypass flag: fail hard.
+                // Roll back the install before exiting.
+                try {
+                  await akmRemove({ target: ref });
+                } catch {
+                  // Best-effort cleanup.
+                }
+                const keyList = allFindings.map((f) => `  - ${f.keyName} (${f.vaultRef})`).join("\n");
+                console.error(
+                  JSON.stringify(
+                    {
+                      ok: false,
+                      error: `Install blocked: stash "${ref}" contains dangerous vault keys that can hijack process execution via \`akm vault run\`:\n${keyList}\nRe-run with --allow-dangerous-keys to bypass this check after reviewing the vault.`,
+                      code: "DANGEROUS_VAULT_KEY",
+                    },
+                    null,
+                    2,
+                  ),
+                );
+                process.exit(1);
               }
             }
           }
         }
-      } catch {
-        // Vault key audit is best-effort; never fail the install on audit errors.
+      } catch (auditErr) {
+        // Only swallow errors that are NOT our intentional process.exit calls.
+        if (auditErr instanceof Error && auditErr.message === "process.exit called") throw auditErr;
+        // Vault key audit is best-effort; never fail the install on unexpected audit errors.
       }
 
       output("add", result);
