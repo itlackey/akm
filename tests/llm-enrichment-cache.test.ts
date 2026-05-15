@@ -69,9 +69,17 @@ mock.module("../src/llm/memory-infer", () => ({
 // Import AFTER mock.module so the passes pick up the stubs.
 const { runGraphExtractionPass } = await import("../src/indexer/graph-extraction");
 const { runMemoryInferencePass } = await import("../src/indexer/memory-inference");
-const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheEntries, openDatabase, closeDatabase } =
-  await import("../src/indexer/db");
+const {
+  computeBodyHash,
+  getLlmCacheEntry,
+  upsertLlmCacheEntry,
+  clearStaleCacheEntries,
+  openDatabase,
+  closeDatabase,
+  upsertEntry,
+} = await import("../src/indexer/db");
 const { loadStoredGraphSnapshot } = await import("../src/indexer/graph-db");
+const { buildSearchText } = await import("../src/indexer/search-fields");
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -105,6 +113,27 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
   const filePath = path.join(tmpStash, rel);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
+
+  // Schema v2: seed an entries row so replaceStoredGraph can resolve entry_id.
+  if (db) {
+    const typeDir = rel.split("/")[0] ?? "";
+    const type = typeDir === "memories" ? "memory" : typeDir === "knowledge" ? "knowledge" : typeDir;
+    const name = path.basename(rel, path.extname(rel));
+    const entry = { name, type, filename: path.basename(rel) };
+    try {
+      upsertEntry(
+        db,
+        `${tmpStash}:${type}:${name}`,
+        path.dirname(filePath),
+        filePath,
+        tmpStash,
+        entry as Parameters<typeof upsertEntry>[5],
+        buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
+      );
+    } catch {
+      /* db may be closed in some teardown paths */
+    }
+  }
   return filePath;
 }
 

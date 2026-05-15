@@ -315,7 +315,7 @@ export interface ShowResponse {
   comments?: string[];
   related?: {
     total: number;
-    hits: Array<{ path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+    hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
   };
 }
 

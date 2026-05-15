@@ -17,9 +17,10 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig, LlmConnectionConfig } from "../src/core/config";
-import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
 import { loadStoredGraphSnapshot } from "../src/indexer/graph-db";
 import type { GraphExtractionResult } from "../src/indexer/graph-extraction";
+import { buildSearchText } from "../src/indexer/search-fields";
 import type { GraphExtraction } from "../src/llm/graph-extract";
 
 // ── Local LLM server ─────────────────────────────────────────────────────────
@@ -108,7 +109,30 @@ afterAll(() => {
 
 function writeMemory(name: string, body: string): void {
   const content = `---\ntitle: ${name}\n---\n\n${body}\n`;
-  fs.writeFileSync(path.join(tmpStash, "memories", `${name}.md`), content, "utf8");
+  const filePath = path.join(tmpStash, "memories", `${name}.md`);
+  const dirPath = path.dirname(filePath);
+  fs.writeFileSync(filePath, content, "utf8");
+  // Schema v2: graph_files.entry_id FKs entries.id. Seed a minimal entry so
+  // replaceStoredGraph can resolve this file_path to an entry_id.
+  // Tests open multiple DB filenames per `withGraphDb` call; seed each one
+  // ahead of test execution so any DB the test opens already has the entry.
+  for (const dbName of ["graph-batch.db", "graph-default.db", "graph-chunked.db"]) {
+    const db = openDatabase(path.join(tmpStash, dbName));
+    try {
+      const entry = { name, type: "memory", filename: `${name}.md` };
+      upsertEntry(
+        db,
+        `${tmpStash}:memory:${name}`,
+        dirPath,
+        filePath,
+        tmpStash,
+        entry as Parameters<typeof upsertEntry>[5],
+        buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
+      );
+    } finally {
+      closeDatabase(db);
+    }
+  }
 }
 
 function sources() {

@@ -71,22 +71,60 @@ function seedGraphLookupIndex(): void {
 }
 
 function writeGraphArtifact(): string {
-  const graphDb = openDatabase(getDbPath());
+  // Graph rows are keyed on entries.id (schema v2). Seed the minimal
+  // entries the fixture references so replaceStoredGraph can resolve
+  // entry_ids for each file_path.
+  const knowledgeDir = path.join(stashDir, "knowledge");
+  const memoryDir = path.join(stashDir, "memories");
+  fs.mkdirSync(knowledgeDir, { recursive: true });
+  fs.mkdirSync(memoryDir, { recursive: true });
+  const k1Path = path.join(knowledgeDir, "k1.md");
+  const m1Path = path.join(memoryDir, "m1.md");
+  if (!fs.existsSync(k1Path)) fs.writeFileSync(k1Path, "# Alpha\n", "utf8");
+  if (!fs.existsSync(m1Path)) fs.writeFileSync(m1Path, "# Gamma\n", "utf8");
+
+  const dbPath = getDbPath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = openDatabase(dbPath);
   try {
-    replaceStoredGraph(graphDb, {
+    upsertEntry(
+      db,
+      `${stashDir}:knowledge:k1`,
+      knowledgeDir,
+      k1Path,
+      stashDir,
+      { name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" },
+      buildSearchText({ name: "k1", type: "knowledge", filename: "k1.md", description: "Knowledge alpha" }),
+    );
+    upsertEntry(
+      db,
+      `${stashDir}:memory:m1`,
+      memoryDir,
+      m1Path,
+      stashDir,
+      { name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" },
+      buildSearchText({ name: "m1", type: "memory", filename: "m1.md", description: "Memory gamma" }),
+    );
+    rebuildFts(db);
+    setMeta(db, "stashDir", stashDir);
+    setMeta(db, "builtAt", new Date().toISOString());
+    setMeta(db, "stashDirs", JSON.stringify([stashDir]));
+    replaceStoredGraph(db, {
       schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
       generatedAt: "2026-05-01T00:00:00.000Z",
       stashRoot: stashDir,
       files: [
         {
-          path: path.join(stashDir, "knowledge", "k1.md"),
+          path: k1Path,
           type: "knowledge",
+          bodyHash: "k1-body-hash",
           entities: ["alpha", "beta"],
           relations: [{ from: "alpha", to: "beta", type: "uses" }],
         },
         {
-          path: path.join(stashDir, "memories", "m1.md"),
+          path: m1Path,
           type: "memory",
+          bodyHash: "m1-body-hash",
           entities: ["alpha", "gamma"],
           relations: [{ from: "alpha", to: "gamma" }],
         },
@@ -106,7 +144,7 @@ function writeGraphArtifact(): string {
       },
     });
   } finally {
-    closeDatabase(graphDb);
+    closeDatabase(db);
   }
   return getDbPath();
 }
@@ -242,12 +280,14 @@ describe("akm graph", () => {
           {
             path: sharedPath,
             type: "knowledge",
+            bodyHash: "shared-body-hash",
             entities: ["Shared", "Guide"],
             relations: [{ from: "Shared", to: "Guide" }],
           },
           {
             path: neighborPath,
             type: "memory",
+            bodyHash: "neighbor-body-hash",
             entities: ["Shared"],
             relations: [{ from: "Shared", to: "Neighbor" }],
           },

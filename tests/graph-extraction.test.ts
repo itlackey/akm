@@ -19,8 +19,9 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AkmConfig } from "../src/core/config";
-import { closeDatabase, openDatabase } from "../src/indexer/db";
+import { closeDatabase, openDatabase, upsertEntry } from "../src/indexer/db";
 import { loadStoredGraphSnapshot, replaceStoredGraph } from "../src/indexer/graph-db";
+import { buildSearchText } from "../src/indexer/search-fields";
 import type { SearchSource } from "../src/indexer/search-source";
 
 // ── Local LLM server ────────────────────────────────────────────────────────
@@ -89,6 +90,34 @@ function writeFile(rel: string, frontmatter: Record<string, unknown>, body: stri
   const filePath = path.join(tmpStash, rel);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf8");
+
+  // Schema v2: graph_files.entry_id FKs to entries.id. Seed a minimal entry
+  // so replaceStoredGraph can resolve this file_path to an entry_id when
+  // the graph extraction pass runs.
+  const typeDir = rel.split("/")[0] ?? "";
+  const type = typeDir === "memories" ? "memory" : typeDir === "knowledge" ? "knowledge" : typeDir;
+  const name = path.basename(rel, path.extname(rel));
+  const dirPath = path.dirname(filePath);
+  const entry = {
+    name,
+    type,
+    filename: path.basename(rel),
+    ...(typeof frontmatter.description === "string" ? { description: frontmatter.description } : {}),
+  };
+  const db = openDatabase(path.join(tmpStash, "graph-test.db"));
+  try {
+    upsertEntry(
+      db,
+      `${tmpStash}:${type}:${name}`,
+      dirPath,
+      filePath,
+      tmpStash,
+      entry as Parameters<typeof upsertEntry>[5],
+      buildSearchText(entry as Parameters<typeof buildSearchText>[0]),
+    );
+  } finally {
+    closeDatabase(db);
+  }
   return filePath;
 }
 
@@ -520,9 +549,15 @@ describe("runGraphExtractionPass — enabled", () => {
   });
 
   test("leaves an existing stored graph untouched when every extraction returns no entities", async () => {
+    // Schema v2: graph_files.entry_id FKs entries.id. Use a single file
+    // (m1.md) that is both the eligible source AND the existing graph row's
+    // target — that way the prior snapshot survives the "no-op" path
+    // (replaceStoredGraph never runs because extracted=0, so the existing
+    // row stays).
     writeFile("memories/m1.md", {}, "Empty graph body.");
     extractor = () => ({ entities: [], relations: [] });
 
+    const m1Path = path.join(tmpStash, "memories", "m1.md");
     await withGraphDb("existing-graph-sentinel", (db) =>
       replaceStoredGraph(db, {
         schemaVersion: GRAPH_FILE_SCHEMA_VERSION,
@@ -530,8 +565,9 @@ describe("runGraphExtractionPass — enabled", () => {
         stashRoot: tmpStash,
         files: [
           {
-            path: path.join(tmpStash, "memories", "sentinel.md"),
+            path: m1Path,
             type: "memory",
+            bodyHash: "sentinel-hash",
             entities: ["Sentinel"],
             relations: [],
           },
@@ -626,7 +662,10 @@ describe("runGraphExtractionPass — enabled", () => {
 
     await withGraphDb("invalid-prior-corrupt", (db) => {
       const filePath = path.join(tmpStash, "memories", "m1.md");
-      db.prepare("UPDATE graph_files SET body_hash = NULL WHERE stash_root = ? AND file_path = ?").run(
+      // Schema v2 (DB_VERSION 13+) made body_hash NOT NULL. Corrupt it with
+      // a sentinel string so the hash-equality check still misses and the
+      // pass falls back to a fresh extraction.
+      db.prepare("UPDATE graph_files SET body_hash = '__corrupt__' WHERE stash_root = ? AND file_path = ?").run(
         tmpStash,
         filePath,
       );

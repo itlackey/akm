@@ -273,6 +273,15 @@ function ensureSchema(db: Database, embeddingDim: number): void {
        ON llm_enrichment_cache(updated_at);
   `);
 
+  // Graph extraction tables — schema v2 (entry_id PK).
+  //
+  // graph_files is keyed on entries.id so child tables cascade-delete cleanly
+  // when an entry is removed, and so JOINs from graph rows to entries are a
+  // direct PK lookup. (stash_root, file_path) is retained as UNIQUE so the
+  // extractor's path-based upsert still works.
+  //
+  // graph_file_entities and graph_file_relations no longer duplicate file_path;
+  // they reference entry_id and inherit stash scoping via graph_files.
   db.exec(`
     CREATE TABLE IF NOT EXISTS graph_meta (
       stash_root          TEXT PRIMARY KEY,
@@ -283,53 +292,46 @@ function ensureSchema(db: Database, embeddingDim: number): void {
       entity_count        INTEGER NOT NULL DEFAULT 0,
       relation_count      INTEGER NOT NULL DEFAULT 0,
       extraction_coverage REAL NOT NULL DEFAULT 0,
-      density             REAL NOT NULL DEFAULT 0
+      density             REAL NOT NULL DEFAULT 0,
+      extractor_id        TEXT,
+      extraction_run_id   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS graph_files (
-      stash_root  TEXT NOT NULL,
-      file_path   TEXT NOT NULL,
-      file_order  INTEGER NOT NULL,
-      file_type   TEXT NOT NULL,
-      body_hash   TEXT,
-      confidence  REAL,
-      PRIMARY KEY (stash_root, file_path),
-      FOREIGN KEY (stash_root) REFERENCES graph_meta(stash_root) ON DELETE CASCADE
+      entry_id          INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+      stash_root        TEXT NOT NULL,
+      file_path         TEXT NOT NULL,
+      file_order        INTEGER NOT NULL,
+      file_type         TEXT NOT NULL,
+      body_hash         TEXT NOT NULL,
+      confidence        REAL,
+      extraction_run_id TEXT,
+      UNIQUE(stash_root, file_path)
     );
 
     CREATE INDEX IF NOT EXISTS idx_graph_files_stash_order
       ON graph_files(stash_root, file_order);
 
     CREATE TABLE IF NOT EXISTS graph_file_entities (
-      stash_root   TEXT NOT NULL,
-      file_path    TEXT NOT NULL,
+      entry_id     INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
       entity_order INTEGER NOT NULL,
+      stash_root   TEXT NOT NULL,
       entity       TEXT NOT NULL,
-      PRIMARY KEY (stash_root, file_path, entity_order),
-      FOREIGN KEY (stash_root, file_path)
-        REFERENCES graph_files(stash_root, file_path)
-        ON DELETE CASCADE
+      PRIMARY KEY (entry_id, entity_order)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_lookup
-      ON graph_file_entities(stash_root, file_path, entity_order);
+    CREATE INDEX IF NOT EXISTS idx_graph_file_entities_entity
+      ON graph_file_entities(stash_root, entity);
 
     CREATE TABLE IF NOT EXISTS graph_file_relations (
-      stash_root      TEXT NOT NULL,
-      file_path       TEXT NOT NULL,
-      relation_order  INTEGER NOT NULL,
-      from_entity     TEXT NOT NULL,
-      to_entity       TEXT NOT NULL,
-      relation_type   TEXT,
-      confidence      REAL,
-      PRIMARY KEY (stash_root, file_path, relation_order),
-      FOREIGN KEY (stash_root, file_path)
-        REFERENCES graph_files(stash_root, file_path)
-        ON DELETE CASCADE
+      entry_id       INTEGER NOT NULL REFERENCES graph_files(entry_id) ON DELETE CASCADE,
+      relation_order INTEGER NOT NULL,
+      from_entity    TEXT NOT NULL,
+      to_entity      TEXT NOT NULL,
+      relation_type  TEXT,
+      confidence     REAL,
+      PRIMARY KEY (entry_id, relation_order)
     );
-
-    CREATE INDEX IF NOT EXISTS idx_graph_file_relations_lookup
-      ON graph_file_relations(stash_root, file_path, relation_order);
   `);
 
   // FTS-dirty queue. Created here (not lazily on first upsert) so the
