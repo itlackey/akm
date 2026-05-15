@@ -17,10 +17,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseAssetRef } from "../core/asset-ref";
+import { asNonEmptyString } from "../core/common";
 import { loadConfig } from "../core/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent, readEvents } from "../core/events";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { parseFrontmatter } from "../core/frontmatter";
 import { closeDatabase, findEntryIdByRef, openExistingDatabase } from "../indexer/db";
 import { ensureIndex } from "../indexer/ensure-index";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "../indexer/file-context";
@@ -205,7 +206,7 @@ function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntrySco
   ];
   for (const [key, expectedValue] of expected) {
     if (expectedValue === undefined) continue;
-    const actual = toStringOrUndefined(fm[`scope_${key}`]);
+    const actual = asNonEmptyString(fm[`scope_${key}`]);
     if (actual !== expectedValue) {
       throw new NotFoundError(`Asset "${ref}" exists but is out of scope (expected scope_${key}="${expectedValue}").`);
     }
@@ -440,7 +441,7 @@ function buildSummaryResponse(full: ShowResponse, assetPath?: string): ShowRespo
     const textContent = full.content ?? full.template ?? full.prompt;
     if (textContent && !description) {
       const parsed = parseFrontmatter(textContent);
-      description = toStringOrUndefined(parsed.data.description);
+      description = asNonEmptyString(parsed.data.description);
     }
   }
 

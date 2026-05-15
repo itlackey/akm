@@ -5,8 +5,8 @@ import {
   deriveCanonicalAssetNameFromStashRoot,
   isRelevantAssetFile,
 } from "../core/asset-spec";
-import { isAssetType, writeFileAtomic } from "../core/common";
-import { parseFrontmatter, toStringOrUndefined } from "../core/frontmatter";
+import { asNonEmptyString, isAssetType, writeFileAtomic } from "../core/common";
+import { parseFrontmatter } from "../core/frontmatter";
 import type { TocHeading } from "../core/markdown";
 import { isVerbose, warn } from "../core/warn";
 import { buildFileContext, buildRenderContext, getRenderer, runMatchers } from "./file-context";
@@ -284,39 +284,19 @@ export function validateStashEntry(entry: unknown): StashEntry | null {
   if (typeof e.pageKind === "string" && e.pageKind.trim().length > 0) {
     result.pageKind = e.pageKind.trim();
   }
-  if (Array.isArray(e.xrefs)) {
-    const filtered = e.xrefs
-      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-      .map((x) => x.trim());
-    if (filtered.length > 0) result.xrefs = filtered;
-  }
-  if (Array.isArray(e.sources)) {
-    const filtered = e.sources
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) result.sources = filtered;
-  }
+  const xrefs = normalizeNonEmptyStringList(e.xrefs);
+  if (xrefs) result.xrefs = xrefs;
+  const sources = normalizeNonEmptyStringList(e.sources);
+  if (sources) result.sources = sources;
   if (typeof e.beliefState === "string" && e.beliefState.trim().length > 0) {
     result.beliefState = e.beliefState.trim() as StashEntry["beliefState"];
   }
-  if (Array.isArray(e.supersededBy)) {
-    const filtered = e.supersededBy
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) result.supersededBy = filtered;
-  }
-  if (Array.isArray(e.contradictedBy)) {
-    const filtered = e.contradictedBy
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) result.contradictedBy = filtered;
-  }
-  if (Array.isArray(e.currentBeliefRefs)) {
-    const filtered = e.currentBeliefRefs
-      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      .map((s) => s.trim());
-    if (filtered.length > 0) result.currentBeliefRefs = filtered;
-  }
+  const supersededBy = normalizeNonEmptyStringList(e.supersededBy);
+  if (supersededBy) result.supersededBy = supersededBy;
+  const contradictedBy = normalizeNonEmptyStringList(e.contradictedBy);
+  if (contradictedBy) result.contradictedBy = contradictedBy;
+  const currentBeliefRefs = normalizeNonEmptyStringList(e.currentBeliefRefs);
+  if (currentBeliefRefs) result.currentBeliefRefs = currentBeliefRefs;
   if (typeof e.scope === "object" && e.scope !== null && !Array.isArray(e.scope)) {
     const scope = normalizeScopeObject(e.scope as Record<string, unknown>);
     if (scope) result.scope = scope;
@@ -385,9 +365,9 @@ function normalizeIntent(value: unknown): StashIntent | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
   const intent: StashIntent = {};
-  const when = toStringOrUndefined(raw.when);
-  const input = toStringOrUndefined(raw.input);
-  const output = toStringOrUndefined(raw.output);
+  const when = asNonEmptyString(raw.when);
+  const input = asNonEmptyString(raw.input);
+  const output = asNonEmptyString(raw.output);
   if (when) intent.when = when;
   if (input) intent.input = input;
   if (output) intent.output = output;
@@ -399,7 +379,7 @@ function normalizeStringListOrUndefined(value: unknown): string[] | undefined {
 }
 
 export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string, unknown>): void {
-  const description = toStringOrUndefined(fmData.description);
+  const description = asNonEmptyString(fmData.description);
   if (description) {
     entry.description = description;
     entry.source = "frontmatter";
@@ -421,17 +401,17 @@ export function applyCuratedFrontmatter(entry: StashEntry, fmData: Record<string
   const examples = normalizeStringListOrUndefined(fmData.examples);
   if (examples) entry.examples = examples;
 
-  const run = toStringOrUndefined(fmData.run);
+  const run = asNonEmptyString(fmData.run);
   if (run) entry.run = run;
-  const setup = toStringOrUndefined(fmData.setup);
+  const setup = asNonEmptyString(fmData.setup);
   if (setup) entry.setup = setup;
-  const cwd = toStringOrUndefined(fmData.cwd);
+  const cwd = asNonEmptyString(fmData.cwd);
   if (cwd) entry.cwd = cwd;
 
-  const quality = toStringOrUndefined(fmData.quality);
+  const quality = asNonEmptyString(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
 
-  const beliefState = toStringOrUndefined(fmData.beliefState);
+  const beliefState = asNonEmptyString(fmData.beliefState);
   if (beliefState) entry.beliefState = beliefState as StashEntry["beliefState"];
 
   const supersededBy = normalizeStringListOrUndefined(fmData.supersededBy);

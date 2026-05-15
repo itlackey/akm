@@ -1266,14 +1266,19 @@ function parseIndexConfig(value: unknown): IndexConfig | undefined {
   return out;
 }
 
-function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
+/**
+ * Parse an array of values with a per-item parser, filtering out undefined
+ * results. Returns undefined when the input is not an array, or (unless
+ * `allowEmpty` is true) when all items parse to undefined.
+ */
+function parseArray<T>(value: unknown, parseOne: (v: unknown) => T | undefined, allowEmpty = false): T[] | undefined {
   if (!Array.isArray(value)) return undefined;
+  const items = value.map(parseOne).filter((x): x is T => x !== undefined);
+  return items.length > 0 || allowEmpty ? items : undefined;
+}
 
-  const entries = value
-    .map((entry) => parseInstalledStashEntry(entry))
-    .filter((entry): entry is InstalledStashEntry => entry !== undefined);
-
-  return entries.length > 0 ? entries : undefined;
+function parseInstalledEntries(value: unknown): InstalledStashEntry[] | undefined {
+  return parseArray(value, parseInstalledStashEntry);
 }
 
 function parseInstalledStashEntry(value: unknown): InstalledStashEntry | undefined {
